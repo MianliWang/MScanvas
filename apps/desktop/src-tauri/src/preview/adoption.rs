@@ -33,10 +33,10 @@ use std::sync::Arc;
 use mscanvas_proteowizard::{FinalizedOutput, OutputDrift};
 use mscanvas_proteowizard::{MAX_CONVERSION_OUTPUTS_PER_SOURCE, SciexSampleCompleteness};
 
-use mscanvas_proteowizard::{BackendDiagnosticText, FinalizedOutputSet};
+use mscanvas_proteowizard::BackendDiagnosticText;
 
 use super::conversion::WorkspaceMultiOutputConversionReport;
-use super::destination::{DestinationHold, admit_destination_root};
+use super::destination::{DestinationHold, admit_folder_for_open};
 use super::operation::AdmittedDestination;
 use super::operation::ItemState;
 use super::selection::DatasetSourceKind;
@@ -107,7 +107,11 @@ impl AdoptionRefusal {
 ///
 /// Bounded by the queue that owns it — sixteen items at most, one ticket each —
 /// and dropped with it.
+static NEXT_OUTPUT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 pub(super) struct FinalizedOutputAdoptionTicket {
+    /// A session-only lookup handle, independent of mutable row positions.
+    output_id: String,
     /// The queue that produced this. An adoption names the queue it is for, and
     /// a ticket that outlived its queue must never answer for a later one.
     operation: u64,
@@ -125,7 +129,7 @@ pub(super) struct FinalizedOutputAdoptionTicket {
 }
 
 impl FinalizedOutputAdoptionTicket {
-    pub(super) const fn new(
+    pub(super) fn new(
         operation: u64,
         source: DatasetId,
         source_display_name: String,
@@ -133,7 +137,15 @@ impl FinalizedOutputAdoptionTicket {
         destination: AdmittedDestination,
         finalized: FinalizedOutput,
     ) -> Self {
+        let identity = NEXT_OUTPUT_ID
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |current| current.checked_add(1),
+            )
+            .expect("output identity space is not exhausted in one process");
         Self {
+            output_id: format!("finalized-{identity}"),
             operation,
             source,
             source_display_name,
@@ -141,6 +153,24 @@ impl FinalizedOutputAdoptionTicket {
             destination,
             finalized,
         }
+    }
+
+    pub(super) fn output_id(&self) -> &str {
+        &self.output_id
+    }
+
+    /// Folder recovery is independent of the file still existing. It validates
+    /// exactly the retained destination object and never climbs to an ancestor.
+    pub(super) fn folder_for_open(
+        &self,
+    ) -> Result<(std::path::PathBuf, DestinationHold), AdoptionRefusal> {
+        let (root, identity, held) =
+            super::destination::admit_folder_for_open(self.destination.root())
+                .map_err(|_| AdoptionRefusal::Missing)?;
+        if !self.destination.matches_current(&root, identity) {
+            return Err(AdoptionRefusal::Missing);
+        }
+        Ok((root, held))
     }
 
     pub(super) const fn operation(&self) -> u64 {
@@ -180,8 +210,9 @@ impl FinalizedOutputAdoptionTicket {
         // Proving the root and then reaching a name inside it are two steps, and
         // a directory that could be renamed away between them would leave the
         // proof describing one directory and the name resolving inside another.
-        // Admission withholds delete sharing on the directory, which is what
-        // stops that for as long as this lives.
+        // Read-only admission withholds delete and write sharing on the
+        // directory. This also excludes an in-place reparse write before the
+        // exact child file has been opened and pinned.
         let root = self.held_destination_root()?;
         let output = self.destination.root().join(&self.output_file_name);
         // Held for the same reason one level down. The retention this ticket
@@ -211,8 +242,8 @@ impl FinalizedOutputAdoptionTicket {
     /// MSCanvas does not look inside a folder it cannot show is the one it wrote
     /// to, so it has nothing to say about what is in there.
     fn held_destination_root(&self) -> Result<DestinationHold, AdoptionRefusal> {
-        let (root, identity, held) = admit_destination_root(self.destination.root())
-            .map_err(|_| AdoptionRefusal::Missing)?;
+        let (root, identity, held) =
+            admit_folder_for_open(self.destination.root()).map_err(|_| AdoptionRefusal::Missing)?;
         if self.destination.matches_current(&root, identity) {
             return Ok(held);
         }
@@ -384,15 +415,43 @@ impl FinalizedOutputSetAdoptionTicket {
         // is already internally consistent and already wrong.
         let ran_here = conversion.session() == session;
         let (report, retained, destination, run) = conversion.into_parts();
+        // Preserve each genuinely finalized member even when the complete-set
+        // adoption judgment refuses. Both consumers share the original holds.
+        let outputs = retained.into_outputs();
+        let finalized: Vec<_> = report
+            .members()
+            .iter()
+            .filter(|member| member.state() == FINALIZED)
+            .collect();
+        let source = DatasetId::parse(report.dataset());
+        let paired = ran_here
+            && source.is_some()
+            && outputs.len() <= MAX_CONVERSION_OUTPUTS_PER_SOURCE
+            && outputs.len() == finalized.len()
+            && outputs.iter().zip(&finalized).all(|(output, member)| {
+                member.byte_length() == Some(output.byte_length())
+                    && member.sha256() == Some(output.sha256().to_string().as_str())
+            });
+        let openable: Vec<_> = if paired {
+            outputs
+                .into_iter()
+                .zip(finalized)
+                .map(|(output, member)| {
+                    Arc::new(FinalizedOutputAdoptionTicket::new(
+                        run,
+                        source.expect("paired source"),
+                        source_display_name.clone(),
+                        member.file_name().to_owned(),
+                        destination.clone(),
+                        output,
+                    ))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let ticket = if ran_here {
-            Self::judge(
-                session,
-                source_display_name,
-                &report,
-                retained,
-                destination,
-                run,
-            )
+            Self::judge(session, &report, source, paired, &openable, run)
         } else {
             Err(OutputSetNotAdoptable::MembersDoNotPair)
         };
@@ -400,51 +459,32 @@ impl FinalizedOutputSetAdoptionTicket {
             report,
             run,
             ticket,
+            openable,
         }
     }
 
-    /// The judgement itself, over one conversion already taken apart.
-    ///
-    /// Private, and reached only from [`Self::of`] one line after it destroyed
-    /// the value these came out of, so there is no caller who could assemble
-    /// this argument list out of two runs.
+    /// Adoption still requires the whole, sample-complete output set. The
+    /// separately retained prefix only permits inspection/opening, never adoption.
     fn judge(
         session: u64,
-        source_display_name: String,
         report: &WorkspaceMultiOutputConversionReport,
-        retained: FinalizedOutputSet,
-        destination: AdmittedDestination,
+        source: Option<DatasetId>,
+        paired: bool,
+        openable: &[Arc<FinalizedOutputAdoptionTicket>],
         run: u64,
     ) -> Result<Self, OutputSetNotAdoptable> {
-        // The row and the family come from the report rather than from a
-        // parameter, for the reason every other crossing in this boundary was
-        // closed: a supplied row could be any live row, and a report that named
-        // one thing while the ticket named another would persist the wrong
-        // acquisition as where these files came from.
-        let Some(source) = DatasetId::parse(report.dataset()) else {
-            return Err(OutputSetNotAdoptable::MembersDoNotPair);
-        };
-        let source_kind = report.source_kind();
+        let source = source.ok_or(OutputSetNotAdoptable::MembersDoNotPair)?;
         if report.group_outcome() != FULLY_FINALIZED {
             return Err(OutputSetNotAdoptable::NotFullyFinalized);
         }
-        let Some(completeness) = report
+        let completeness = report
             .completeness()
             .and_then(SciexSampleCompleteness::established)
-        else {
-            return Err(OutputSetNotAdoptable::SampleCompletenessNotEstablished);
-        };
+            .ok_or(OutputSetNotAdoptable::SampleCompletenessNotEstablished)?;
         let sample_count = completeness.sample_count();
-
-        let outputs = retained.into_outputs();
-        // One object per reported member, in the same order, and every member
-        // finalized. The lifecycle publishes in the order it reports, so this
-        // is a check that the two agree rather than an attempt to match them
-        // up: a mismatch means something about this run is not understood, and
-        // pairing an object with the wrong member's name would be worse than
-        // refusing.
-        if outputs.len() != report.members().len()
-            || outputs.len() != sample_count
+        if !paired
+            || openable.len() != report.members().len()
+            || openable.len() != sample_count
             || report
                 .members()
                 .iter()
@@ -452,33 +492,13 @@ impl FinalizedOutputSetAdoptionTicket {
         {
             return Err(OutputSetNotAdoptable::MembersDoNotPair);
         }
-        if outputs.len() > MAX_CONVERSION_OUTPUTS_PER_SOURCE {
-            return Err(OutputSetNotAdoptable::MembersDoNotPair);
-        }
-
-        let members = report
-            .members()
-            .iter()
-            .zip(outputs)
-            .map(|(member, finalized)| {
-                Arc::new(FinalizedOutputAdoptionTicket::new(
-                    run,
-                    source,
-                    source_display_name.clone(),
-                    member.file_name().to_owned(),
-                    destination.clone(),
-                    finalized,
-                ))
-            })
-            .collect();
-
         Ok(Self {
             session,
             source,
-            source_kind,
+            source_kind: report.source_kind(),
             run,
             sample_count,
-            members,
+            members: openable.to_vec(),
         })
     }
 
@@ -553,6 +573,10 @@ impl AdmittedOutput {
     /// Two values rather than one, so the caller cannot accidentally release
     /// them before the row exists: dropping the second is a statement, and it
     /// has to be written where it happens.
+    pub(super) fn path(&self) -> &Path {
+        self.accepted.path()
+    }
+
     pub(super) fn into_parts(self) -> (AcceptedFile, AdmittedOutputHolds) {
         (
             self.accepted,
@@ -651,6 +675,7 @@ pub(super) struct JudgedOutputSet {
     /// The exact attempt this is about.
     pub(super) run: u64,
     pub(super) ticket: Result<FinalizedOutputSetAdoptionTicket, OutputSetNotAdoptable>,
+    pub(super) openable: Vec<Arc<FinalizedOutputAdoptionTicket>>,
 }
 
 /// One backend-named set attempt, settled into everything the queue keeps.
@@ -666,6 +691,7 @@ pub(super) struct JudgedOutputSet {
 /// eligibility judgement happens once, here, and the ticket either exists or
 /// the reason it does not is recorded beside the report that explains it.
 pub(super) struct SciexAttemptSettlement {
+    openable: Vec<Arc<FinalizedOutputAdoptionTicket>>,
     state: ItemState,
     retryable: bool,
     report: WorkspaceMultiOutputConversionReport,
@@ -697,6 +723,7 @@ impl SciexAttemptSettlement {
             report,
             run,
             ticket,
+            openable,
         } = FinalizedOutputSetAdoptionTicket::of(session, source_display_name, conversion);
         let outcome = report.group_outcome();
         let (adoption, not_adoptable) = match ticket {
@@ -716,6 +743,7 @@ impl SciexAttemptSettlement {
             ItemState::Failed
         };
         Self {
+            openable,
             state,
             retryable: state == ItemState::Failed && set_outcome_is_retryable(&report),
             report,
@@ -783,8 +811,9 @@ impl SciexAttemptSettlement {
     ) -> (
         WorkspaceMultiOutputConversionReport,
         Option<FinalizedOutputSetAdoptionTicket>,
+        Vec<Arc<FinalizedOutputAdoptionTicket>>,
     ) {
-        (self.report, self.adoption)
+        (self.report, self.adoption, self.openable)
     }
 }
 

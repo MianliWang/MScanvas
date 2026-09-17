@@ -16,6 +16,7 @@ const FREE: ProbeAdmissionFacts = {
   backendQuarantined: false,
   backendChanging: false,
   laneClaimed: false,
+  reclaimingStaging: false,
   previewReading: false,
   probeInFlight: false,
 };
@@ -67,6 +68,7 @@ describe("probe admission", () => {
       backendQuarantined: true,
       backendChanging: true,
       laneClaimed: true,
+      reclaimingStaging: false,
       previewReading: true,
       probeInFlight: true,
     };
@@ -100,6 +102,7 @@ describe("what admission deliberately does not consult", () => {
       "backendQuarantined",
       "backendChanging",
       "laneClaimed",
+      "reclaimingStaging",
       "previewReading",
       "probeInFlight",
     ]);

@@ -893,7 +893,9 @@ const DIAGNOSTICS_TEMPORARY_LEFT_BEHIND: &str = "MSCanvas also left a temporary 
 
 fn with_residue(error: PreviewErrorDto, temporary_left_behind: bool) -> PreviewErrorDto {
     if temporary_left_behind {
-        return error.with_detail(DIAGNOSTICS_TEMPORARY_LEFT_BEHIND);
+        return error
+            .with_detail(DIAGNOSTICS_TEMPORARY_LEFT_BEHIND)
+            .with_context(PreviewErrorContextDto::TemporaryExportLeftBehind);
     }
     error
 }
@@ -1297,6 +1299,9 @@ pub struct ConversionQueueDto {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversionQueueItemDto {
+    pub staging_recovery: Option<StagingRecoveryDto>,
+    /// Stable retained-object identities; a partial set may expose its prefix.
+    pub finalized_outputs: Vec<FinalizedOutputDto>,
     pub dataset_handle: String,
     pub file_name: String,
     pub source_kind: DatasetSourceKindDto,
@@ -3076,6 +3081,62 @@ pub struct FigureSettingsDto {
     pub theme: String,
 }
 
+/// A scientific question, with no caller-supplied arrays, path or markup.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum FigurePreviewSourceDto {
+    Spectrum {
+        token: String,
+        range: SpectrumRangeDto,
+    },
+    Chromatogram {
+        token: String,
+        range: ChromatogramRangeDto,
+        traces: ChromatogramTracesDto,
+    },
+    Linked {
+        chromatogram_token: String,
+        spectrum_token: String,
+        range: ChromatogramRangeDto,
+        traces: ChromatogramTracesDto,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FigurePreviewRequestDto {
+    pub request_id: u32,
+    pub source: FigurePreviewSourceDto,
+    pub settings: FigureSettingsDto,
+}
+
+/// An inert image document, authored by the same renderer as file export.
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FigurePreviewOutcomeDto {
+    Rendered {
+        request_id: u32,
+        spec_id: String,
+        svg: String,
+        empty: bool,
+        width: u32,
+        height: u32,
+    },
+    Refused {
+        request_id: u32,
+        error: PreviewErrorDto,
+    },
+}
+
 /// What a figure output was rendered as.
 ///
 /// Reported back so the interface can say what it produced rather than what it
@@ -3185,6 +3246,7 @@ pub fn figure_clipboard_unavailable() -> PreviewErrorDto {
          or a remote-desktop session, and it usually clears in a moment -- copy the \
          plot again.",
     )
+    .with_context(PreviewErrorContextDto::ClipboardBusy)
 }
 
 /// One answer from an operation that looks at the backend, and the authority it
@@ -3227,6 +3289,36 @@ pub struct PreviewErrorDto {
     pub summary: String,
     pub detail: Option<String>,
     pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<PreviewErrorContextDto>,
+}
+
+/// Owned recovery parameters. Provider text remains in the original fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PreviewErrorContextDto {
+    FigureSize {
+        min_width: u32,
+        min_height: u32,
+        max_edge: u32,
+    },
+    PngDpi {
+        min: u32,
+        max: u32,
+    },
+    RasterBudget {
+        max_pixels: u64,
+    },
+    FigureTheme,
+    ExportExtension {
+        extension: String,
+    },
+    TemporaryExportLeftBehind,
+    ClipboardBusy,
 }
 
 impl PreviewErrorDto {
@@ -3236,6 +3328,7 @@ impl PreviewErrorDto {
             summary: summary.into(),
             detail: None,
             retryable,
+            context: None,
         }
     }
 
@@ -3243,6 +3336,12 @@ impl PreviewErrorDto {
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
         let detail = detail.into();
         self.detail = Some(bounded_text(&detail, MAX_ERROR_DETAIL_CHARS));
+        self
+    }
+
+    #[must_use]
+    pub fn with_context(mut self, context: PreviewErrorContextDto) -> Self {
+        self.context = Some(context);
         self
     }
 }
@@ -3515,4 +3614,137 @@ pub fn require_finite(value: f64) -> Result<f64, PreviewErrorDto> {
 
 pub fn require_finite_option(value: Option<f64>) -> Result<Option<f64>, PreviewErrorDto> {
     value.map(require_finite).transpose()
+}
+
+/// A retained finalized member, not a claim about whole-set completeness.
+#[derive(Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FinalizedOutputDto {
+    pub output_id: String,
+    pub file_name: String,
+}
+
+impl std::fmt::Debug for FinalizedOutputDto {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FinalizedOutputDto")
+            .field("output_id", &"<opaque>")
+            .field("file_name", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OutputOpenActionDto {
+    File,
+    Folder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OutputOpenRefusalDto {
+    UnknownOutput,
+    OutputMissing,
+    OutputChanged,
+    OutputUnreadable,
+    FolderUnavailable,
+    NoAssociation,
+    AccessDenied,
+    PlatformUnavailable,
+    PlatformFailure,
+    InFlight,
+    StaleDocument,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum OutputOpenOutcomeDto {
+    Accepted,
+    Refused { reason: OutputOpenRefusalDto },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceClearPlanDto {
+    pub plan_id: String,
+    pub total_count: usize,
+    pub removable_count: usize,
+    pub protected_count: usize,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceClearActionDto {
+    RemoveNonRunning,
+    CancelAndClear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceClearRefusalDto {
+    StalePlan,
+    StaleDocument,
+    OwnershipChanged,
+    NothingRemovable,
+    ActionInFlight,
+    StopUnconfirmed,
+    Quarantined,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum WorkspaceClearOutcomeDto {
+    Removed { result: WorkspaceRemoveResultDto },
+    Refused { reason: WorkspaceClearRefusalDto },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StagingRecoveryDto {
+    pub recovery_id: String,
+    pub attempt: u64,
+    pub status: StagingRecoveryStatusDto,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StagingRecoveryStatusDto {
+    Active,
+    Recoverable,
+    Cleaned,
+    ProcessUnconfirmed,
+    ProofUnavailable,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StagingReclaimRefusalDto {
+    UnknownRecovery,
+    StaleDocument,
+    ActiveWork,
+    Quarantined,
+    ProofUnavailable,
+    StillBlocked,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum StagingReclaimOutcomeDto {
+    Cleaned,
+    Refused { reason: StagingReclaimRefusalDto },
+}
+
+pub(super) const fn staging_recovery_status(
+    status: mscanvas_proteowizard::StagingRecoveryStatus,
+) -> StagingRecoveryStatusDto {
+    use mscanvas_proteowizard::StagingRecoveryStatus as Source;
+    match status {
+        Source::Active => StagingRecoveryStatusDto::Active,
+        Source::Recoverable => StagingRecoveryStatusDto::Recoverable,
+        Source::Cleaned => StagingRecoveryStatusDto::Cleaned,
+        Source::ProcessUnconfirmed => StagingRecoveryStatusDto::ProcessUnconfirmed,
+        Source::ProofUnavailable => StagingRecoveryStatusDto::ProofUnavailable,
+    }
 }

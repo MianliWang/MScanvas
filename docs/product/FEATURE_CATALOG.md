@@ -21,7 +21,7 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 | WSP-004 | Duplicate prevention | P0 | Re-adding the same canonical logical dataset does not create another row. |
 | WSP-005 | Multi-selection | P0 | Ctrl/Shift highlights and roster-scoped Ctrl+A preserve hidden IDs; keyboard focus, viewed source and checkbox conversion membership remain independent. |
 | WSP-006 | Remove highlighted | P0 | Removes highlighted logical rows through Rust only; conversion checkboxes are not a deletion selection, and source files never change. |
-| WSP-007 | Clear workspace | P0 | One visible action clears idle rows without app restart or disk deletion; active runs require an explicit choice. |
+| WSP-007 | Clear workspace | P0 | Idle Clear releases rows; M7.4 exposes Remove non-running / Cancel and clear / Return for active work, with Rust revalidation and confirmed stop. Sources and finalized files are never deleted. Build 04 native active Clear acceptance passes. |
 | WSP-008 | Convert selected/all | P0 | Scope is visible before execution and unrelated rows remain intact. |
 | WSP-009 | Search/sort/filter | P1 | Search/collapse preserves hidden highlights and reports their count. Viewed/reading/queue rows retain existing pin facts. Browsing arrangement never replaces the complete roster's explicit execution sort. |
 | WSP-010 | Restore workspace | P1 | Restores logical state safely and marks missing files rather than deleting rows silently. |
@@ -275,6 +275,15 @@ CNV-002 remains unplannable by type, and **M6.10 made its disposition terminal**
 independent settings. This candidate does not change selected/all membership,
 source-family gates, scientific intent, receipt authority or viewer/export
 semantics.
+
+**M7.4 implementation update (2026-09-16).** Basic/advanced views edit one typed
+intent. Compact results retain all five judgments, per-member output opening,
+explicit adoption and bounded local diagnostics. Session-owned staging reclaim
+returns to a fresh reviewed plan; opening and reclaim do not change integrity
+or adoption. Canonical figure preview shares the export specification, while
+quick PNG/Copy plot and CSV/TSV remain separately reachable. All seven native
+scenarios pass; evidence boundaries and PR #124 publication attribution are in
+[the implementation record](../ux/M7_4_CONVERSION_RESULTS_FIGURES.md).
 
 **M6.9 makes what a conversion produced legible.** Every settled row offers a
 compact detail disclosure that answers five separate questions and collapses

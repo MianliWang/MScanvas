@@ -1,10 +1,16 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render as renderTree, screen, within } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConversionSettings } from "./ConversionSettings";
 import type { ConversionCatalogRow, ConversionConfiguration } from "./contracts";
 import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import { admittedIntents, shippedIntent } from "../../test/previewFixtures";
+import { SessionPreferencesProvider, useSessionPreferences } from "../preferences/SessionPreferencesProvider";
+
+function render(element: ReactElement) {
+  return renderTree(<SessionPreferencesProvider>{element}</SessionPreferencesProvider>);
+}
 
 afterEach(cleanup);
 
@@ -171,9 +177,10 @@ describe("a read that answered unusably", () => {
     expect(control).toBeDisabled();
     // Named, not restated. Nothing in this subtree carries the id, and nothing
     // in it describes the lane.
-    expect(control.getAttribute("aria-describedby")).toBe(
-      "conversion-settings-failure conversion-availability-conversion-running",
-    );
+    const descriptions = (control.getAttribute("aria-describedby") ?? "").split(" ");
+    expect(descriptions).toHaveLength(2);
+    expect(document.getElementById(descriptions[0])?.textContent).toBe(failed.error.summary);
+    expect(descriptions[1]).toBe("conversion-availability-conversion-running");
     expect(
       document.querySelectorAll("#conversion-availability-conversion-running"),
     ).toHaveLength(0);
@@ -201,7 +208,7 @@ describe("the four control groups", () => {
       const checked = within(groupFor(axis))
         .getAllByRole("radio")
         .filter((radio) => (radio as HTMLInputElement).checked);
-      expect(checked).toHaveLength(1);
+      expect(checked).toHaveLength(axis === "precision" ? 2 : 1);
     }
   });
 
@@ -212,7 +219,7 @@ describe("the four control groups", () => {
         onChoose={onChoose}
         refusalNoticeId={null}
       />);
-    fireEvent.click(within(groupFor("precision")).getByLabelText(/32-bit · intensity 32-bit/));
+    fireEvent.click(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("32-bit"));
     expect(onChoose).toHaveBeenCalledWith(FLAT_32);
   });
 
@@ -251,7 +258,7 @@ describe("the four control groups", () => {
         onChoose={vi.fn()}
         refusalNoticeId={null}
       />);
-    const note = document.getElementById("conversion-settings-selection-unavailable");
+    const note = document.querySelector('[data-selection-refusal="notEvidencedForSources"]');
     expect(note?.textContent).toContain("has not measured");
     expect(note?.textContent).not.toContain("ProteoWizard installation");
   });
@@ -322,7 +329,9 @@ describe("a build that lacks only the peak-picking grammar", () => {
         .find((radio) => (radio as HTMLInputElement).checked);
       expect(checked).toBeEnabled();
       const note = document.getElementById(checked?.getAttribute("aria-describedby") ?? "");
-      expect(note?.textContent).not.toContain("Not available");
+      // Basic view can omit a secondary explanation; it must never attach a
+      // combination refusal to an available selected value.
+      expect(note?.textContent ?? "").not.toContain("Not available");
     }
   });
 
@@ -389,5 +398,56 @@ describe("the output format", () => {
     expect(screen.getByText("Format")).toBeVisible();
     expect(screen.queryByLabelText(/mzXML/)).toBeNull();
     expect(within(panel()).queryAllByRole("radio", { name: /mzML/ })).toHaveLength(0);
+  });
+});
+
+function LocaleControl() {
+  const preferences = useSessionPreferences();
+  return <button type="button" onClick={() => {
+    preferences.open();
+    preferences.preview({ ...preferences.effective, locale: "zh-CN" });
+  }}>Change language</button>;
+}
+
+describe("compact settings over a retained intent", () => {
+  it("preserves the exact selection through basic, advanced and locale changes", () => {
+    const onChoose = vi.fn();
+    render(<><LocaleControl /><ConversionSettings configuration={view(ready(), { selectedIntentId: CENTROIDED_64 })} onChoose={onChoose} refusalNoticeId={null} /></>);
+    expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("64-bit")).toBeChecked();
+    // This pair has no admitted single-width transition. The advanced paired
+    // precision axis still exposes the catalog's legitimate diagonal change.
+    expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("32-bit")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(screen.getByLabelText("m/z 64-bit · intensity 64-bit")).toBeChecked();
+    expect(screen.getByLabelText("m/z 32-bit · intensity 32-bit")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Change language" }));
+    expect(screen.getByLabelText("m/z 64 位 · 强度 64 位")).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "基本" }));
+    expect(within(screen.getByRole("group", { name: "强度精度" })).getByLabelText("64 位")).toBeChecked();
+    expect(onChoose).not.toHaveBeenCalled();
+  });
+
+  it("preserves a valid coordinated precision transition without changing processing", () => {
+    const onChoose = vi.fn();
+    render(<ConversionSettings configuration={view(ready(), { selectedIntentId: CENTROIDED_64 })} onChoose={onChoose} refusalNoticeId={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    fireEvent.click(screen.getByLabelText("m/z 32-bit · intensity 32-bit"));
+    expect(onChoose).toHaveBeenCalledExactlyOnceWith(CENTROIDED_32);
+  });
+
+  it("keeps separate controls and descriptions for two live settings instances", () => {
+    const chooseFirst = vi.fn();
+    const chooseSecond = vi.fn();
+    render(<><ConversionSettings configuration={view(ready())} onChoose={chooseFirst} refusalNoticeId={null} />
+      <ConversionSettings configuration={view(ready())} onChoose={chooseSecond} refusalNoticeId={null} /></>);
+    const groups = screen.getAllByRole("group", { name: "m/z precision" });
+    fireEvent.click(within(groups[1]).getByLabelText("32-bit"));
+    expect(chooseFirst).not.toHaveBeenCalled();
+    expect(chooseSecond).toHaveBeenCalledExactlyOnceWith(FLAT_32);
+    const ids = [...document.querySelectorAll('[id]')].map(element => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const element of document.querySelectorAll('[aria-describedby]')) {
+      for (const id of element.getAttribute('aria-describedby')!.split(' ')) expect(document.getElementById(id)).not.toBeNull();
+    }
   });
 });

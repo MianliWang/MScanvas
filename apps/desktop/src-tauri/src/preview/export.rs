@@ -1248,6 +1248,16 @@ impl ScientificExportSlots {
             .map_err(|_| SpectrumProjectionRefusal::Stale)
     }
 
+    /// Both identities are observed under this single leaf acquisition.
+    pub(super) fn preview_sources_current(
+        &self,
+        spectrum: Option<&str>,
+        chromatogram: Option<&str>,
+    ) -> bool {
+        spectrum.is_none_or(|token| self.spectrum_for(token).is_ok())
+            && chromatogram.is_none_or(|token| self.chromatogram_for(token).is_ok())
+    }
+
     /// Reads back the retained chromatogram this token names.
     fn chromatogram_for(&self, token: &str) -> Result<ChromatogramSnapshot, BeginExportRefusal> {
         let requested =

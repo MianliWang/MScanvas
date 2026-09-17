@@ -665,7 +665,13 @@ targeted Build 05 native scenarios pass at measured 150% Windows scaling.
 Its [implementation record](docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md)
 binds source/build/harness evidence; protected publication, natural-main CI and
 local synchronization identities belong to PR #123 and the retained closeout record.
-M7.4 remains next and not started. This source slice builds or releases no public beta.
+M7.4 implements compact conversion/results, finalized-output opening,
+active-run Clear, session-owned staging recovery and canonical figure preview.
+All seven mandatory native scenarios pass on attributed Build 04 inputs. Its
+[implementation record](docs/ux/M7_4_CONVERSION_RESULTS_FIGURES.md) separates
+controlled/native evidence and retained failures. Protected publication,
+natural-main CI and local closeout identities belong to PR #124.
+M7.5 remains next and not started. This slice builds or releases no public beta.
 
 ### M8 — Artifact, run and QC foundation
 

@@ -747,7 +747,10 @@ pass at measured 150% scaling, including real retained CSV content and natural
 picker return. Its [implementation record](docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md)
 retains failures and exact attribution. Protected publication and natural-main
 CI/local closeout identities belong to PR #123 and the retained task closeout.
-M7.4 remains **NEXT / NOT STARTED**. M8/M9/M10
+M7.4 implementation and all seven mandatory native scenarios are verified in
+[the M7.4 record](docs/ux/M7_4_CONVERSION_RESULTS_FIGURES.md). Protected publication,
+natural-main CI and local closeout identities belong to PR #124. M7.5 remains
+**NEXT / NOT STARTED**. M8/M9/M10
 remain later owners. External support/signing/distribution/sample/release
 decisions have explicit owner deadlines in ADR 0047; they are not waived.
 

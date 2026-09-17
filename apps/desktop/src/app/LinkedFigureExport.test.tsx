@@ -1,3 +1,4 @@
+import { UI_RESOURCES } from "../features/preferences/i18n";
 /**
  * The linked chromatogram + spectrum surface, through the shipped composition.
  *
@@ -188,6 +189,7 @@ async function selectAScan(): Promise<void> {
   await waitFor(() => {
     expect(within(spectrumPanel()).queryByRole("button", { name: "Copy plot" })).not.toBeNull();
   }, SETTLING);
+  if (!spectrumPanel().querySelector("details")?.open) fireEvent.click(within(spectrumPanel()).getByText("Export spectrum"));
 }
 
 /** Presses every linked action, for the cases where none of them may fire. */
@@ -732,7 +734,7 @@ describe("what a finished linked export says", () => {
     });
   });
 
-  it("reads out a typed refusal in the words Rust chose", async () => {
+  it("localizes a known typed refusal and leaves its action available", async () => {
     const preview = api({
       linkedFigureExport: () =>
         Promise.reject({
@@ -751,7 +753,7 @@ describe("what a finished linked export says", () => {
     fireEvent.click(linkedButton("Export linked SVG…"));
 
     await waitFor(() => {
-      expect(linkedStatus()).toContain("The selected scan is outside the current chromatogram");
+      expect(linkedStatus()).toContain(UI_RESOURCES.en.m74ErrorLinkedRange);
     });
     // A refusal is not a state the surface stays stuck in.
     expect(linkedButton("Export linked SVG…").disabled).toBe(false);
@@ -782,7 +784,7 @@ describe("what a finished linked export says", () => {
     fireEvent.click(linkedButton("Export linked SVG…"));
 
     await waitFor(() => {
-      expect(linkedStatus()).toContain("The linked figure could not be written.");
+      expect(linkedStatus()).toContain(UI_RESOURCES.en.m74ErrorNotWritten);
     });
     expect(linkedStatus()).toContain(residue);
     expect(within(linkedSection()).getByText(residue)).toHaveClass("notice-detail");

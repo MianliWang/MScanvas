@@ -1,4 +1,5 @@
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import type { UiMessage } from "../preferences/i18n";
 import type { FigureSettingsValidation } from "./figureSettingsValidation";
 /**
@@ -100,6 +101,7 @@ const LINKED_FIGURE_FORMATS: readonly {
 ];
 
 export interface ChromatogramExportPanelProps {
+  readonly onOpenLinkedFigure: () => void;
   readonly exportState: ChromatogramExportState;
   /**
    * Whether the session's one scientific export lane is occupied.
@@ -150,6 +152,7 @@ export interface ChromatogramExportPanelProps {
 }
 
 export function ChromatogramExportPanel({
+  onOpenLinkedFigure,
   exportState,
   scientificExportBusy,
   rangeScope,
@@ -197,6 +200,12 @@ export function ChromatogramExportPanel({
   // A panel of no series is refused by the contract, so a figure with neither
   // trace visible is not offered either. The data exports are untouched.
   const nothingDrawn = !traces.tic && !traces.bpc;
+  // Scan and trace choices belong to the viewer. Range and size corrections
+  // remain available inside the figure dialog.
+  const linkedPreviewBlocked = linkedUnavailable !== null && (
+    linkedUnavailable.code === "noChromatogram" || linkedUnavailable.code === "loading" ||
+    linkedUnavailable.code === "noSpectrum" || linkedUnavailable.code === "noTrace"
+  );
 
   return (
     <div className="chromatogram-export-panel spectrum-export" id="chromatogram-export-panel">
@@ -318,6 +327,13 @@ export function ChromatogramExportPanel({
       >
         <ChromatogramExportResult onDismiss={onDismiss} state={exportState} />
       </div>
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={linkedPreviewBlocked}
+        aria-describedby={linkedPreviewBlocked ? LINKED_UNAVAILABLE_ID : undefined}
+        onClick={onOpenLinkedFigure}
+      >{t("figurePreviewLinked")}</button>
       <LinkedFigureSection
         linkedRunning={linkedRunning}
         onCopyLinkedPlot={onCopyLinkedPlot}
@@ -493,30 +509,30 @@ function LinkedFigureSection({
 }
 
 /** What one finished linked export says about itself. */
-function LinkedFigureResult({ state, onDismiss }: { readonly state: LinkedFigureExportState; readonly onDismiss: () => void }) {
+export function LinkedFigureResult({ state, onDismiss }: { readonly state: LinkedFigureExportState; readonly onDismiss: () => void }) {
   const t = useUiMessages();
   if (state.status === "idle" || state.status === "running") return null;
-  const message = state.status === "cancelled" ? t("viewerLinkedCancelled") : state.status === "failed" ? state.error.summary :
+  const message = state.status === "cancelled" ? t("viewerLinkedCancelled") : state.status === "failed" ? ownedErrorMessage(state.error, t) :
     state.status === "copied" ? t("viewerLinkedCopied", { width: String(state.figure.width), height: String(state.figure.height),
       theme: t(state.figure.theme), index: formatCount(state.selectedIndex), count: state.sourceScanCount }) :
     t("viewerLinkedSaved", { name: state.fileName, index: formatCount(state.selectedIndex),
       rt: String(state.selectedRetentionTime), count: state.sourceScanCount });
   return <p className="spectrum-export-message">{message}{" "}
-    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{state.error.detail}</span> : null}
+    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{ownedErrorDetail(state.error, t)}</span> : null}
     <DismissButton label={t("viewerLinkedDismiss")} onDismiss={onDismiss} />
   </p>;
 }
 
-function ChromatogramExportResult({ state, onDismiss }: { readonly state: ChromatogramExportState; readonly onDismiss: () => void }) {
+export function ChromatogramExportResult({ state, onDismiss }: { readonly state: ChromatogramExportState; readonly onDismiss: () => void }) {
   const t = useUiMessages();
   if (state.status === "idle" || state.status === "running") return null;
-  const message = state.status === "cancelled" ? t("viewerExportCancelled") : state.status === "failed" ? state.error.summary :
+  const message = state.status === "cancelled" ? t("viewerExportCancelled") : state.status === "failed" ? ownedErrorMessage(state.error, t) :
     state.status === "copied" ? t("viewerChromCopied", { width: String(state.figure.width), height: String(state.figure.height),
       theme: t(state.figure.theme), count: state.sourceScanCount }) :
     t("viewerChromSaved", { name: state.fileName, details: state.rowCount === null ?
       t("viewerChromSource", { count: state.sourceScanCount }) : t("viewerChromRows", { count: state.rowCount, total: state.sourceScanCount }) });
   return <p className="spectrum-export-message">{message}{" "}
-    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{state.error.detail}</span> : null}
+    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{ownedErrorDetail(state.error, t)}</span> : null}
     <DismissButton onDismiss={onDismiss} />
   </p>;
 }

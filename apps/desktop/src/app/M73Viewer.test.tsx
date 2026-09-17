@@ -66,7 +66,7 @@ function editRange(panel: HTMLElement, low: string, high: string) {
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("M7.3 through the delivered application", () => {
-  it("sorts and searches loaded facts, activates source indices from row bodies or keys, and preserves hidden selection", async () => {
+  it("sorts and searches loaded facts and activates source indices from row bodies or keys", async () => {
     const { api, preview } = await mount(); const sourceRows = [...preview.spectrumTable.rows];
     const search = screen.getByRole("searchbox", { name: "Search loaded scans" });
     fireEvent.click(within(grid()).getByRole("button", { name: "Total ion current" }));
@@ -88,6 +88,18 @@ describe("M7.3 through the delivered application", () => {
     selectRow(3, 5);
     await screen.findByRole("img", { name: /^Spectrum 3,/u });
     expect(api.requestedSpectra).toEqual([3, 7, 3]);
+    expect(preview.spectrumTable.rows).toEqual(sourceRows);
+  });
+
+  it("preserves a hidden selection and resumes navigation in the displayed sort order", async () => {
+    const { api, preview } = await mount(); const sourceRows = [...preview.spectrumTable.rows];
+    fireEvent.click(within(grid()).getByRole("button", { name: "Total ion current" }));
+    fireEvent.click(within(grid()).getByRole("button", { name: "Total ion current" }));
+    expect(rows().map(rowIndex)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
+    selectRow(3, 5);
+    await screen.findByRole("img", { name: /^Spectrum 3,/u });
+    expect(api.requestedSpectra).toEqual([3]);
+    const search = screen.getByRole("searchbox", { name: "Search loaded scans" });
     search.focus(); fireEvent.change(search, { target: { value: "raw-1" } });
     expect(screen.getByText(/Selected scan 3 is outside these results/u)).toBeVisible();
     expect(screen.getByRole("button", { name: "Previous scan" })).toBeDisabled();
@@ -97,7 +109,7 @@ describe("M7.3 through the delivered application", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear filters and reveal" }));
     fireEvent.click(screen.getByRole("button", { name: "Next scan" }));
     await screen.findByRole("img", { name: /^Spectrum 2,/u });
-    expect(api.requestedSpectra).toEqual([3, 7, 3, 2]);
+    expect(api.requestedSpectra).toEqual([3, 2]);
     expect(preview.spectrumTable.rows).toEqual(sourceRows);
   });
 
@@ -124,24 +136,24 @@ describe("M7.3 through the delivered application", () => {
     expect(api.spectrumProjectionRequests).toHaveLength(2);
     const confirmMz = within(mzPanel).getByRole("button", { name: "Zoom to selection — m/z 350 to 500" });
     expect(confirmMz).toBeVisible();
-    await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).toBeEnabled());
+    await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
     fireEvent.click(within(mzPanel).getByRole("button", { name: "Export CSV…" }));
     await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(2));
     expect(api.spectrumExportRequests[1].range).toEqual({ scope: "current", low: 200, high: 800 });
     fireEvent.click(confirmMz);
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(3));
     expect(api.spectrumProjectionRequests[2]).toEqual({ exportToken: "token-4", low: 350, high: 500 });
-    await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).toBeEnabled());
+    await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
     fireEvent.click(within(mzPanel).getByRole("button", { name: "Export CSV…" }));
     await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(3));
     expect(api.spectrumExportRequests[2]).toMatchObject({ exportToken: "token-4", range: { scope: "current", low: 350, high: 500 } });
     startBand(rtPlot, "rt"); releaseBand(rtPlot, "rt");
-    await waitFor(() => expect(within(rtPanel).getByRole("button", { name: "Export CSV…" })).toBeEnabled());
+    await waitFor(() => expect(within(rtPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
     fireEvent.click(within(rtPanel).getByRole("button", { name: "Export CSV…" }));
     await waitFor(() => expect(api.chromatogramExportRequests).toHaveLength(1));
     expect(api.chromatogramExportRequests[0].range).toEqual({ scope: "current", low: 1, high: 6 });
     fireEvent.keyDown(rtPlot, { key: "Enter" });
-    await waitFor(() => expect(within(rtPanel).getByRole("button", { name: "Export CSV…" })).toBeEnabled());
+    await waitFor(() => expect(within(rtPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
     fireEvent.click(within(rtPanel).getByRole("button", { name: "Export CSV…" }));
     await waitFor(() => expect(api.chromatogramExportRequests).toHaveLength(2));
     expect(api.chromatogramExportRequests[1].range).toEqual({ scope: "current", low: 2.25, high: 3.5 });
@@ -152,7 +164,7 @@ describe("M7.3 through the delivered application", () => {
     expect(api.linkedFigureRequests[0]).toMatchObject({ spectrumToken: "token-4", range: { scope: "full", low: null, high: null } });
     // Full export still delegates complete retained source; neither filtered rows nor vertices supply its data.
     fireEvent.click(within(mzPanel).getByRole("radio", { name: "Full spectrum" }));
-    await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).toBeEnabled());
+    await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
     fireEvent.click(within(mzPanel).getByRole("button", { name: "Export CSV…" }));
     await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(4));
     expect(api.spectrumExportRequests[3].range).toEqual({ scope: "full", low: null, high: null });

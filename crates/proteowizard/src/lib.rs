@@ -75,8 +75,9 @@ pub use conversion_run::{
     CancellationFailure, CancellationReport, ConflictPolicy, ConversionAttempt, ConversionPlan,
     ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
     ConversionSource, ConversionSourceKind, ConversionSourceRejection, OwnedTreeDisposition,
-    StagedContentObservation, StagingReclaimError, StagingResidue, provider_build_is_evidenced,
-    run_conversion, run_conversion_cancellable,
+    StagedContentObservation, StagingReclaimError, StagingRecovery, StagingRecoveryObserver,
+    StagingRecoveryStatus, StagingResidue, provider_build_is_evidenced, run_conversion,
+    run_conversion_cancellable,
 };
 pub use diagnostics::{
     BackendTextExcerpt, ExcerptSuppression, MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES, Redactor,

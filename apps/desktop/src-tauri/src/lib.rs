@@ -1,5 +1,71 @@
 mod preview;
 
+#[tauri::command]
+async fn open_finalized_output(
+    output_id: String,
+    action: preview::dto::OutputOpenActionDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::OutputOpenOutcomeDto, PreviewErrorDto> {
+    let document = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.open_finalized_output(&output_id, action, document)).await
+}
+
+#[tauri::command]
+async fn preview_figure(
+    request: preview::dto::FigurePreviewRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::FigurePreviewOutcomeDto, PreviewErrorDto> {
+    let document = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.preview_figure(&request, document)).await
+}
+
+#[tauri::command]
+async fn reclaim_conversion_staging(
+    recovery_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::StagingReclaimOutcomeDto, PreviewErrorDto> {
+    let document = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.reclaim_conversion_staging(&recovery_id, document)).await
+}
+
+use preview::dto::{
+    WorkspaceClearActionDto, WorkspaceClearOutcomeDto, WorkspaceClearPlanDto,
+    WorkspaceClearRefusalDto,
+};
+
+#[tauri::command]
+async fn plan_workspace_clear(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<Result<WorkspaceClearPlanDto, WorkspaceClearRefusalDto>, PreviewErrorDto> {
+    let document = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.plan_workspace_clear(document)).await
+}
+
+#[tauri::command]
+async fn execute_workspace_clear(
+    plan_id: String,
+    action: WorkspaceClearActionDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceClearOutcomeDto, PreviewErrorDto> {
+    let document = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.execute_workspace_clear(&plan_id, action, document)).await
+}
+
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
@@ -1274,6 +1340,11 @@ pub fn run() {
             subscribe_workspace_drop_updates,
             remove_workspace_datasets,
             clear_workspace,
+            plan_workspace_clear,
+            execute_workspace_clear,
+            reclaim_conversion_staging,
+            preview_figure,
+            open_finalized_output,
             open_mzml_preview,
             load_selected_spectrum,
             describe_workspace_conversion_queue,

@@ -529,6 +529,9 @@ pub(super) struct QueueItem {
     // for an item that finalized, dropped with the queue that made it, and
     /// never rebuilt from a name.
     adoption: Option<QueueAdoptionAuthority>,
+    /// Real finalized members, including a partial set; not adoption authority.
+    finalized_outputs: Vec<Arc<FinalizedOutputAdoptionTicket>>,
+    staging_recovery: Option<(u64, mscanvas_proteowizard::StagingRecovery)>,
     /// The names this item actually published, once it has.
     //
     // Only a backend-named set contributes to this. A known single output owns
@@ -622,6 +625,8 @@ impl QueueItem {
             attempt: AttemptFacts::NOTHING_RAN,
             adopted: ItemAdoption::NotRequested,
             adoption: None,
+            finalized_outputs: Vec::new(),
+            staging_recovery: None,
             published: Vec::new(),
             diagnostic: None,
         }
@@ -729,6 +734,13 @@ impl QueueItem {
 
     fn to_dto(&self, stop_requested: bool) -> ConversionQueueItemDto {
         ConversionQueueItemDto {
+            staging_recovery: self.staging_recovery.as_ref().map(|(attempt, record)| {
+                super::dto::StagingRecoveryDto {
+                    recovery_id: record.id(),
+                    attempt: *attempt,
+                    status: super::dto::staging_recovery_status(record.status()),
+                }
+            }),
             dataset_handle: self.dataset_dto.handle.clone(),
             file_name: self.dataset_dto.file_name.clone(),
             source_kind: self.dataset_dto.source_kind,
@@ -760,6 +772,14 @@ impl QueueItem {
             staged: staged_output_dto(self.attempt.staged),
             run_identity: self.attempt.identity.map(OperationRunIdentity::to_hex),
             adoption: self.adoption_dto(),
+            finalized_outputs: self
+                .finalized_outputs
+                .iter()
+                .map(|ticket| super::dto::FinalizedOutputDto {
+                    output_id: ticket.output_id().to_owned(),
+                    file_name: ticket.output_file_name().to_owned(),
+                })
+                .collect(),
         }
     }
 
@@ -1530,6 +1550,81 @@ impl Default for ConversionSlot {
 }
 
 impl ConversionSlot {
+    pub(super) fn attach_staging_recovery(
+        &mut self,
+        operation: u64,
+        index: usize,
+        attempt: u64,
+        recovery: Option<mscanvas_proteowizard::StagingRecovery>,
+    ) {
+        if self.operation != operation {
+            return;
+        }
+        let queue = match &mut self.state {
+            SlotState::Running { queue }
+            | SlotState::Stopping { queue }
+            | SlotState::Terminal { queue, .. } => queue,
+            SlotState::Idle | SlotState::AwaitingDestination { .. } => return,
+        };
+        if let Some(item) = queue
+            .items
+            .get_mut(index)
+            .filter(|item| item.attempts == attempt)
+            && let Some(recovery) = recovery
+        {
+            item.staging_recovery = Some((attempt, recovery));
+        }
+    }
+
+    pub(super) fn staging_recovery(
+        &self,
+        recovery_id: &str,
+    ) -> Option<mscanvas_proteowizard::StagingRecovery> {
+        if recovery_id.len() > 64 {
+            return None;
+        }
+        let SlotState::Terminal { queue, .. } = &self.state else {
+            return None;
+        };
+        queue
+            .items
+            .iter()
+            .filter_map(|item| item.staging_recovery.as_ref())
+            .find(|(_, record)| record.id() == recovery_id)
+            .map(|(_, record)| record.clone())
+    }
+
+    pub(super) fn note_staging_recovery(&mut self, recovery_id: &str) {
+        if self.staging_recovery(recovery_id).is_some() {
+            self.advance();
+        }
+    }
+    /// New queues and retries are distinct confirmations even when their rows
+    /// happen to be identical. Settling one attempt does not change this key.
+    pub(super) fn incarnation(&self) -> (u64, u64) {
+        let round = match &self.state {
+            SlotState::Idle => 0,
+            SlotState::AwaitingDestination { queue, .. }
+            | SlotState::Running { queue }
+            | SlotState::Stopping { queue }
+            | SlotState::Terminal { queue, .. } => queue.retry_round,
+        };
+        (self.operation, round)
+    }
+
+    /// A reserved picker has launched no process. Retiring its reservation
+    /// makes its eventual answer stale; it cannot start work after Clear.
+    pub(super) fn request_clear_stop(&mut self) -> Result<StopAccepted, PreviewErrorDto> {
+        if matches!(self.state, SlotState::AwaitingDestination { .. }) {
+            self.cancel(self.operation);
+            return Ok(StopAccepted::AlreadyRequested);
+        }
+        if !self.is_busy() {
+            return Ok(StopAccepted::AlreadyRequested);
+        }
+        self.request_stop(self.operation)
+    }
+
     /// Whether a queue currently occupies the machine or the workspace.
     //
     // A terminal queue does not: it is a thing to read, not work in flight.
@@ -1683,6 +1778,14 @@ impl ConversionSlot {
     /// a worker that only ever looked at the state it left behind.
     pub(super) fn stop_requested(&self, operation: u64) -> bool {
         self.operation == operation && self.stop_requested
+    }
+
+    #[cfg(test)]
+    pub(super) fn current_attempt_cancellation_requested_for_test(&self, operation: u64) -> bool {
+        self.stop_requested(operation)
+            && self.current_attempt.as_ref().is_some_and(|current| {
+                current.operation == operation && current.request.is_requested()
+            })
     }
 
     /// How long ago the stop was accepted, for the attempt that is settling.
@@ -2179,6 +2282,7 @@ impl ConversionSlot {
         let Some(item) = queue.items.get_mut(index) else {
             return false;
         };
+        item.finalized_outputs.clear();
         match outcome {
             ItemOutcome::Reported {
                 state,
@@ -2230,6 +2334,10 @@ impl ConversionSlot {
                         *finalized,
                     )))
                 });
+                item.finalized_outputs = match &item.adoption {
+                    Some(QueueAdoptionAuthority::Single(ticket)) => vec![Arc::clone(ticket)],
+                    _ => Vec::new(),
+                };
             }
             ItemOutcome::ReportedSet(settlement) => {
                 let settlement = *settlement;
@@ -2247,7 +2355,8 @@ impl ConversionSlot {
                 item.report = None;
                 item.set_state = Some(settlement.state());
                 item.set_run = Some(settlement.run());
-                let (set_report, adoption) = settlement.into_parts();
+                let (set_report, adoption, finalized_outputs) = settlement.into_parts();
+                item.finalized_outputs = finalized_outputs;
                 item.set_report = Some(Box::new(set_report));
                 item.adoption =
                     adoption.map(|ticket| QueueAdoptionAuthority::Set(Arc::new(ticket)));
@@ -2684,6 +2793,28 @@ impl ConversionSlot {
     // minted with, and the `Arc`s are cloned so the retained objects stay in
     // the set ticket. A second attempt asks the same objects the same
     /// questions.
+    pub(super) fn finalized_output(
+        &self,
+        output_id: &str,
+    ) -> Option<Arc<FinalizedOutputAdoptionTicket>> {
+        if output_id.len() > 64 {
+            return None;
+        }
+        let queue = match &self.state {
+            SlotState::AwaitingDestination { queue, .. }
+            | SlotState::Running { queue }
+            | SlotState::Stopping { queue }
+            | SlotState::Terminal { queue, .. } => queue,
+            SlotState::Idle => return None,
+        };
+        queue
+            .items
+            .iter()
+            .flat_map(|item| &item.finalized_outputs)
+            .find(|ticket| ticket.output_id() == output_id)
+            .cloned()
+    }
+
     pub(super) fn terminal_adoption_tickets(
         &self,
         operation: u64,

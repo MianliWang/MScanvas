@@ -995,6 +995,14 @@ export interface PreviewError {
   readonly summary: string;
   readonly detail: string | null;
   readonly retryable: boolean;
+  readonly context?:
+    | { readonly kind: "figureSize"; readonly minWidth: number; readonly minHeight: number; readonly maxEdge: number }
+    | { readonly kind: "pngDpi"; readonly min: number; readonly max: number }
+    | { readonly kind: "rasterBudget"; readonly maxPixels: number }
+    | { readonly kind: "figureTheme" }
+    | { readonly kind: "exportExtension"; readonly extension: string }
+    | { readonly kind: "temporaryExportLeftBehind" }
+    | { readonly kind: "clipboardBusy" };
 }
 
 /** The only output format this workflow produces. */
@@ -1377,6 +1385,8 @@ export type ConversionAttemptResult =
 
 /** One item of a queue. */
 export interface ConversionQueueItem {
+  readonly stagingRecovery: StagingRecovery | null;
+  readonly finalizedOutputs: readonly FinalizedOutput[];
   readonly datasetHandle: string;
   readonly fileName: string;
   readonly sourceKind: DatasetSourceKind;
@@ -1435,6 +1445,27 @@ export interface ConversionQueueItem {
   /** The fifth judgement: what an adoption did with this item's outputs. */
   readonly adoption: ConversionItemAdoption;
 }
+
+/** Session-owned finalized objects; these identifiers never encode paths. */
+export interface StagingRecovery { readonly recoveryId: string; readonly attempt: number; readonly status: "active" | "recoverable" | "cleaned" | "processUnconfirmed" | "proofUnavailable" }
+export type StagingReclaimRefusal = "unknownRecovery" | "staleDocument" | "activeWork" | "quarantined" | "proofUnavailable" | "stillBlocked";
+export type StagingReclaimOutcome = { readonly status: "cleaned" } | { readonly status: "refused"; readonly reason: StagingReclaimRefusal };
+export interface FinalizedOutput { readonly outputId: string; readonly fileName: string }
+export type OutputOpenAction = "file" | "folder";
+export type OutputOpenRefusal = "unknownOutput" | "outputMissing" | "outputChanged" | "outputUnreadable" | "folderUnavailable" | "noAssociation" | "accessDenied" | "platformUnavailable" | "platformFailure" | "inFlight" | "staleDocument";
+export type OutputOpenOutcome = { readonly status: "accepted" } | { readonly status: "refused"; readonly reason: OutputOpenRefusal };
+
+export interface WorkspaceClearPlan {
+  readonly planId: string;
+  readonly totalCount: number;
+  readonly removableCount: number;
+  readonly protectedCount: number;
+  readonly active: boolean;
+}
+export type WorkspaceClearAction = "removeNonRunning" | "cancelAndClear";
+export type WorkspaceClearRefusal = "stalePlan" | "staleDocument" | "ownershipChanged" | "nothingRemovable" | "actionInFlight" | "stopUnconfirmed" | "quarantined";
+export type WorkspaceClearPlanOutcome = { readonly Ok: WorkspaceClearPlan } | { readonly Err: WorkspaceClearRefusal };
+export type WorkspaceClearOutcome = { readonly status: "removed"; readonly result: WorkspaceRemoveResult } | { readonly status: "refused"; readonly reason: WorkspaceClearRefusal };
 
 /** One queue, in facts that name no location. */
 export interface ConversionQueue {
@@ -1925,3 +1956,14 @@ export interface WorkspaceOutputAdoptionResult {
    */
   readonly outcomes: readonly WorkspaceOutputAdoptionOutcome[];
 }
+/** A retained-source question. No arrays, paths or SVG are accepted as input. */
+export type FigurePreviewSource =
+  | { readonly kind: "spectrum"; readonly token: string; readonly range: SpectrumRange }
+  | { readonly kind: "chromatogram"; readonly token: string; readonly range: ChromatogramRange; readonly traces: ChromatogramTraceSet }
+  | { readonly kind: "linked"; readonly chromatogramToken: string; readonly spectrumToken: string; readonly range: ChromatogramRange; readonly traces: ChromatogramTraceSet };
+export type FigurePreviewKind = FigurePreviewSource["kind"];
+export interface FigurePreviewQuestion { readonly source: FigurePreviewSource; readonly settings: FigureSettings }
+export interface FigurePreviewRequest extends FigurePreviewQuestion { readonly requestId: number }
+export type FigurePreviewOutcome =
+  | { readonly status: "rendered"; readonly requestId: number; readonly specId: string; readonly svg: string; readonly empty: boolean; readonly width: number; readonly height: number }
+  | { readonly status: "refused"; readonly requestId: number; readonly error: PreviewError };

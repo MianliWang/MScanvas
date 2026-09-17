@@ -56,6 +56,7 @@ mod export;
 mod figure;
 mod installation;
 mod operation;
+mod output_opening;
 /// What a spectrum viewport may know about a retained spectrum: whether it has
 /// an m/z domain at all, and what one committed window of it looks like drawn.
 ///

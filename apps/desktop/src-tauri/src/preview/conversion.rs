@@ -871,12 +871,10 @@ impl MultiOutputMemberFacts {
         self.validation.as_ref()
     }
 
-    #[cfg(test)]
     pub(super) const fn byte_length(&self) -> Option<u64> {
         self.byte_length
     }
 
-    #[cfg(test)]
     pub(super) fn sha256(&self) -> Option<&str> {
         self.sha256.as_deref()
     }

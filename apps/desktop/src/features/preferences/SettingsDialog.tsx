@@ -16,16 +16,18 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
   const composing = useRef(false);
   const returnPending = useRef(false);
   const returnSuperseded = useRef(false);
+  const mounted = useRef(true);
   const open = preferences.state.draft !== null;
 
   useEffect(() => {
+    mounted.current = true;
     const recordDestination = (event: FocusEvent) => {
       if (returnPending.current && event.target instanceof HTMLElement &&
         event.target !== document.body && event.target !== opener.current &&
         !content.current?.contains(event.target)) returnSuperseded.current = true;
     };
     document.addEventListener("focusin", recordDestination);
-    return () => document.removeEventListener("focusin", recordDestination);
+    return () => { mounted.current = false; document.removeEventListener("focusin", recordDestination); };
   }, []);
 
   function closeWith(action: () => void) {
@@ -56,7 +58,7 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           returnPending.current = false;
-          if (returnSuperseded.current || !document.hasFocus()) return;
+          if (!mounted.current || returnSuperseded.current || !document.hasFocus()) return;
           const active = document.activeElement;
           // Radix schedules return after unmount. Do not overwrite a later
           // deliberate move or take focus away from a native window.
