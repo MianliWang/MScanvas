@@ -84,15 +84,32 @@ function pressKey(key: string): void {
   fireEvent.keyDown(document.activeElement ?? document.body, { key });
 }
 
+/**
+ * The whole installed-backend banner, from any element inside it.
+ *
+ * The localized banner puts the verdict, the build it names, the busy note and
+ * the actions in their own elements, so a release is no longer text content of
+ * the heading. Reading the banner is also the more honest assertion: what the
+ * product promises is that a verdict and the build it describes are presented
+ * together.
+ */
+function bannerOf(inside: HTMLElement): HTMLElement {
+  const banner = inside.closest("[data-backend-status]");
+  if (banner === null) {
+    throw new Error("that element is not inside the installed-backend banner");
+  }
+  return banner as HTMLElement;
+}
+
 describe("mzML preview workspace", () => {
   it("presents a missing ProteoWizard installation as a state with a corrective action", async () => {
     renderApp(createFakePreviewApi({ availability: unavailableBackend }));
 
-    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+    expect(await screen.findByText("No ProteoWizard installation was found")).toBeVisible();
     expect(
-      screen.getByText("No ProteoWizard installation was found on this machine."),
+      screen.getByText("ProteoWizard was not found on this computer."),
     ).toBeVisible();
-    expect(screen.getByText("Install ProteoWizard, then check again.")).toBeVisible();
+    expect(screen.getByText("Install or repair ProteoWizard yourself, or point MSCanvas at a folder that holds it.")).toBeVisible();
     // Reading a file cannot succeed without a backend, so it is not offered.
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // Curating the workspace is not backend work, so it stays available: the
@@ -120,7 +137,7 @@ describe("mzML preview workspace", () => {
   it("reports an available backend with the release the backend itself named", async () => {
     renderApp(createFakePreviewApi());
 
-    expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
+    expect(bannerOf(await screen.findByText(/ProteoWizard is available/))).toHaveTextContent("3.0.25000");
     expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
   });
 
@@ -130,11 +147,11 @@ describe("mzML preview workspace", () => {
       chosenInstallation: chosenBackend,
     });
     renderApp(api);
-    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+    expect(await screen.findByText("No ProteoWizard installation was found")).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
-    expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.26013");
+    expect(bannerOf(await screen.findByText(/ProteoWizard is available/))).toHaveTextContent("3.0.26013");
     expect(screen.getByText(/from the folder you chose/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
   });
@@ -261,7 +278,7 @@ describe("mzML preview workspace", () => {
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
     // The banner stops claiming a backend that no longer answers.
-    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+    expect(await screen.findByText("No ProteoWizard installation was found")).toBeVisible();
   });
 
   it("does not start a row read once the session has stopped trusting the backend", async () => {
@@ -296,9 +313,16 @@ describe("mzML preview workspace", () => {
     trusted = false;
     api.quarantineBackend();
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+    // A quarantined session has its own heading rather than borrowing the one
+    // for an unusable installation: nothing is wrong with ProteoWizard, and the
+    // recovery is a restart of MSCanvas rather than a repair of it.
     expect(
-      screen.getByText("MSCanvas could not confirm that a ProteoWizard process it started has ended."),
+      await screen.findByText("MSCanvas cannot use the backend until it restarts"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "MSCanvas could not confirm that a ProteoWizard process it started has ended. Restart MSCanvas before starting another preview or conversion.",
+      ),
     ).toBeVisible();
 
     // The table is still on screen, and clicking it launches nothing.
@@ -383,8 +407,8 @@ describe("mzML preview workspace", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
 
-    expect(await screen.findByText(/holds neither msconvert.exe nor msaccess.exe/)).toBeVisible();
-    expect(screen.getByText(/Choose a different folder, or go back to searching/)).toBeVisible();
+    expect(await screen.findByText(/has neither msconvert.exe nor msaccess.exe/)).toBeVisible();
+    expect(screen.getByText(/Install or repair ProteoWizard yourself/)).toBeVisible();
     // Both ways out, and nothing that asks for an executable path.
     expect(screen.getByRole("button", { name: "Search automatically" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Choose a different folder…" })).toBeEnabled();
@@ -396,12 +420,12 @@ describe("mzML preview workspace", () => {
     // verdict or with "checking" -- would say something happened that did not.
     const api = createFakePreviewApi({ chosenInstallation: null });
     renderApp(api);
-    expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
+    expect(bannerOf(await screen.findByText(/ProteoWizard is available/))).toHaveTextContent("3.0.25000");
 
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
+      expect(bannerOf(screen.getByText(/ProteoWizard is available/))).toHaveTextContent("3.0.25000");
     });
     expect(screen.queryByText(/from the folder you chose/)).toBeNull();
     expect(screen.queryByText(/Checking for an installed/)).toBeNull();
@@ -413,14 +437,14 @@ describe("mzML preview workspace", () => {
       chosenInstallation: chosenBackend,
     });
     renderApp(api);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
     await screen.findByText(/from the folder you chose/);
 
     fireEvent.click(screen.getByRole("button", { name: "Search automatically" }));
 
     // Back to what automatic discovery finds, and saying so.
-    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+    expect(await screen.findByText("No ProteoWizard installation was found")).toBeVisible();
     expect(screen.queryByText(/from the folder you chose/)).toBeNull();
   });
 
@@ -454,7 +478,7 @@ describe("mzML preview workspace", () => {
 
     // The failed open re-checks: the banner must not keep insisting the
     // backend is there after it has gone.
-    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+    expect(await screen.findByText("No ProteoWizard installation was found")).toBeVisible();
 
     // And once it is back, the user can say so without restarting.
     installed = true;

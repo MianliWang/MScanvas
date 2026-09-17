@@ -69,14 +69,13 @@ const BACKEND_REASON =
  */
 async function recheckTheBackend(verdict: unknown): Promise<void> {
   await setInvokeResult("inspect_backend", verdict);
-  const buttons = await browser.$$("button.link-button");
-  for (const button of buttons) {
-    if ((await button.getText()).trim() === "Check again") {
-      await button.click();
-      return;
-    }
+  // By the action's own identity: a label is not an identity once the
+  // interface has two languages, and the banner carries the identity.
+  const recheck = await browser.$('[data-backend-action="recheck"]');
+  if (!(await recheck.isExisting())) {
+    throw new Error("the backend banner offers no recheck action");
   }
-  throw new Error("the backend banner offers no Check again");
+  await recheck.click();
 }
 
 async function noticeText(): Promise<string | null> {

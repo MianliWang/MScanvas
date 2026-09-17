@@ -328,10 +328,8 @@ async function superseded(): Promise<string | null> {
 async function supersededRecheckEnabled(): Promise<boolean> {
   return browser.execute(() => {
     const banner = document.querySelector('[data-backend-reading="superseded"]');
-    const control = [...(banner?.querySelectorAll("button") ?? [])].find(
-      (candidate) => candidate.textContent?.trim() === "Check again",
-    );
-    return control !== undefined && !(control as HTMLButtonElement).disabled;
+    const control = banner?.querySelector('[data-backend-action="recheck"]');
+    return control !== null && control !== undefined && !(control as HTMLButtonElement).disabled;
   }) as Promise<boolean>;
 }
 
@@ -355,7 +353,8 @@ function terminalQueue(sequence: number, authority: typeof AUTHORITY_A) {
 
 /** Presses the backend banner's own recheck, which is not a conversion action. */
 async function pressCheckAgain(): Promise<void> {
-  await pressLinkButton("Check again");
+  const recheck = await browser.$('[data-backend-action="recheck"]');
+  await recheck.click();
 }
 
 async function pressLinkButton(label: string): Promise<void> {
@@ -1046,14 +1045,15 @@ describe("M6.4 — E11: the banner stops naming a build it has left", () => {
       // And the keyboard reaches the one the reader would press first.
       await browser.execute(() => {
         const banner = document.querySelector('[data-backend-reading="superseded"]');
-        const control = [...(banner?.querySelectorAll("button") ?? [])].find(
-          (candidate) => candidate.textContent?.trim() === "Check again",
-        );
-        (control as HTMLElement | undefined)?.focus();
+        const control = banner?.querySelector('[data-backend-action="recheck"]');
+        (control as HTMLElement | null | undefined)?.focus();
       });
+      // Asserted on the identity the control carries, not on its wording.
       expect(
-        await browser.execute(() => (document.activeElement?.textContent ?? "").trim()),
-      ).toBe("Check again");
+        await browser.execute(
+          () => (document.activeElement as HTMLElement | null)?.dataset.backendAction ?? "",
+        ),
+      ).toBe("recheck");
       expect(await unexpectedConsole()).toEqual([]);
     });
   }

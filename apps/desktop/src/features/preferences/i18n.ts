@@ -181,6 +181,10 @@ export interface MessageParameters {
   readonly dragTarget: { readonly name: string; readonly count: number; readonly position: number; readonly total: number };
   readonly resourceCode: { readonly code: string };
   readonly storageUnknownProblem: { readonly code: string };
+  readonly backendEarlierReading: { readonly reading: string };
+  readonly backendBuiltOn: { readonly date: string };
+  readonly backendProblemCode: { readonly code: string };
+  readonly backendUnknownProblem: { readonly code: string };
   readonly unknownFigureProblem: { readonly code: string };
 }
 export type MessageArguments<K extends MessageKey> = K extends keyof MessageParameters

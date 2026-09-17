@@ -66,14 +66,11 @@ async function recheckTheBackend(verdict: unknown): Promise<void> {
       table["inspect_backend"] = { kind: "resolve", value: answer };
     }
   }, verdict);
-  const buttons = await browser.$$("button.link-button");
-  for (const button of buttons) {
-    if ((await button.getText()).trim() === "Check again") {
-      await button.click();
-      return;
-    }
+  const recheck = await browser.$('[data-backend-action="recheck"]');
+  if (!(await recheck.isExisting())) {
+    throw new Error("the backend banner offers no recheck action");
   }
-  throw new Error("the backend banner offers no Check again");
+  await recheck.click();
 }
 
 describe("M5.7 — selection availability in the real shell", () => {

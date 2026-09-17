@@ -82,6 +82,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * The whole installed-backend banner, from any element inside it.
+ *
+ * The localized banner puts the verdict, the build it names, the busy note and
+ * the actions in their own elements, so a release is no longer text content of
+ * the heading. Reading the banner is also the more honest assertion: what the
+ * product promises is that a verdict and the build it describes are presented
+ * together.
+ */
+function bannerOf(inside: HTMLElement): HTMLElement {
+  const banner = inside.closest("[data-backend-status]");
+  if (banner === null) {
+    throw new Error("that element is not inside the installed-backend banner");
+  }
+  return banner as HTMLElement;
+}
+
 describe("keyboard focus across the native folder picker", () => {
   it("gives the keyboard back to Choose folder… when the picker is cancelled", async () => {
     const picker = deferred<BackendAvailability | null>();
@@ -126,7 +143,7 @@ describe("keyboard focus across the native folder picker", () => {
     // workspace under the user.
     expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
     // Cancelling changed nothing else: the verdict it had is the verdict it has.
-    expect(screen.getByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
+    expect(bannerOf(screen.getByText(/ProteoWizard is available/))).toHaveTextContent("3.0.25000");
     expect(screen.queryByText(/from the folder you chose/)).toBeNull();
 
     // And the restored control works: activating it again opens the picker
@@ -172,7 +189,7 @@ describe("keyboard focus across the native folder picker", () => {
     });
     // The chosen folder is still the chosen folder, and still unusable for the
     // same stated reason.
-    expect(screen.getByText(/holds neither msconvert.exe nor msaccess.exe/)).toBeVisible();
+    expect(screen.getByText(/has neither msconvert.exe nor msaccess.exe/)).toBeVisible();
 
     fireEvent.click(chooseAnother);
     await waitFor(() => {
@@ -208,28 +225,40 @@ describe("keyboard focus across the native folder picker", () => {
     });
     expect(requests).toBe(2);
     expect(chooseAnother).toBeEnabled();
-    expect(screen.getByText(/holds neither msconvert.exe nor msaccess.exe/)).toBeVisible();
+    expect(screen.getByText(/has neither msconvert.exe nor msaccess.exe/)).toBeVisible();
   });
 
-  it("does not move the keyboard onto the action that replaced the trigger", async () => {
-    // The banner keeps its shape when an automatic verdict becomes a chosen
-    // one, so React keeps the button the picker was opened from and renames it.
-    // `Search automatically` is one Enter away from undoing the choice that
-    // just landed, and it is not what the user reached for.
+  it("does not move the keyboard onto the action that took the trigger's place", async () => {
+    // The banner used to keep its shape when an automatic verdict became a
+    // chosen one, so React kept the button the picker was opened from and
+    // renamed it: `Search automatically` ended up one Enter away from undoing
+    // the choice that had just landed, in the slot `Choose folder…` was in.
+    //
+    // Each action is now keyed by its semantic identity, so the slot cannot be
+    // handed over at all -- the trigger leaves the document and the action that
+    // replaced it is a different node. The guard that compares identities is
+    // still there behind that, and both are asserted here: nothing was
+    // relabelled, and nothing took the keyboard.
     const api = createFakePreviewApi({
       availability: unavailableBackend,
       chosenInstallation: chosenFolderWithoutTools,
     });
     renderWorkspace(api);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const choose = screen.getByRole("button", { name: "Choose folder…" });
+    expect(choose.dataset.backendAction).toBe("choose");
 
     activate(choose);
     blurAsABrowserWould(choose);
 
     await screen.findByRole("button", { name: "Choose a different folder…" });
-    expect(choose).toHaveTextContent("Search automatically");
-    expect(screen.getByRole("button", { name: "Search automatically" })).not.toHaveFocus();
+    // Gone rather than renamed, and what is in its place is a different node
+    // carrying a different identity.
+    expect(choose.isConnected).toBe(false);
+    const automatic = screen.getByRole("button", { name: "Search automatically" });
+    expect(automatic).not.toBe(choose);
+    expect(automatic.dataset.backendAction).toBe("automatic");
+    expect(automatic).not.toHaveFocus();
     expect(document.body).toHaveFocus();
   });
 
@@ -257,7 +286,7 @@ describe("keyboard focus across the native folder picker", () => {
       chosenInstallation: chosenBackend,
     });
     renderWorkspace(api);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const choose = screen.getByRole("button", { name: "Choose folder…" });
 
     activate(choose);
@@ -274,29 +303,38 @@ describe("keyboard focus across the native folder picker", () => {
     expect(screen.getByRole("button", { name: "Search automatically" })).toBeEnabled();
   });
 
-  it("focuses nothing when the picker fails and takes the banner with it", async () => {
-    // A call that fails replaces the banner with the failed one, which offers
-    // the same recovery actions in new nodes. What is restored is the trigger,
-    // not something that reads like it: focusing a button in a banner the user
-    // has not seen yet would be a move of its own, and the failure is announced
-    // where they are rather than by taking the keyboard to it.
+  it("gives the keyboard back when the picker itself failed", async () => {
+    // A call that fails replaces the verdict with the failed banner, which says
+    // that the check itself failed and offers the same three ways forward. The
+    // action the user pressed is one of them, in the same place, meaning the
+    // same thing -- so it is a place worth giving back, and a keyboard user who
+    // wants to try again does not have to walk the tab order to reach it.
+    //
+    // The failure is announced where they are either way: the banner is a
+    // status region, so it speaks without taking the keyboard.
     const api = createFakePreviewApi({
       availability: unavailableBackend,
       chosenInstallation: () => Promise.reject(previewError({ kind: "folder_picker_failed" })),
     });
     renderWorkspace(api);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const choose = screen.getByRole("button", { name: "Choose folder…" });
 
     activate(choose);
     const focusing = vi.spyOn(choose, "focus");
     blurAsABrowserWould(choose);
 
-    expect(await screen.findByRole("button", { name: "Search automatically" })).toBeEnabled();
-    expect(choose.isConnected).toBe(false);
-    expect(screen.getByRole("button", { name: "Choose folder…" })).not.toBe(choose);
-    expect(focusing).not.toHaveBeenCalled();
-    expect(document.body).toHaveFocus();
+    expect(await screen.findByText("MSCanvas could not check the backend")).toBeVisible();
+    // Still the same node, and still the same semantic action. Neither is
+    // something to infer from its label: the label is what a translation
+    // changes without changing a single action.
+    expect(choose.isConnected).toBe(true);
+    expect(choose.dataset.backendAction).toBe("choose");
+    expect(screen.getByRole("button", { name: "Choose folder…" })).toBe(choose);
+    await waitFor(() => {
+      expect(choose).toHaveFocus();
+    });
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
   });
 
   it("leaves the keyboard where the user moved it during the request", async () => {

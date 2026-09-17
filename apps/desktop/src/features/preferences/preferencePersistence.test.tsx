@@ -121,7 +121,7 @@ describe("durable UI preferences", () => {
   it("starts a first run on the defaults without writing anything", async () => {
     const browserStorage = vi.spyOn(Storage.prototype, "setItem");
     const { preferences } = mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     expect(document.documentElement.lang).toBe("en");
     expect(density()).toBe("comfortable");
     // Absent is an ordinary state. Nothing is stored and nothing is written to
@@ -163,7 +163,7 @@ describe("durable UI preferences", () => {
 
   it("commits only the appearance group, with no path, roster or scientific field in the payload", async () => {
     const { preferences } = mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
@@ -183,7 +183,7 @@ describe("durable UI preferences", () => {
 
   it("does not persist a cancelled preview, or a reset that was then cancelled", async () => {
     const { preferences } = mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
@@ -222,7 +222,7 @@ describe("durable UI preferences", () => {
   it("freezes the dialog while a publish is in flight and dispatches exactly one write", async () => {
     const { preferences } = mount({ preferences: { deferred: true } });
     await preferences.release();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
 
@@ -254,7 +254,7 @@ describe("durable UI preferences", () => {
     const { preferences } = mount({
       preferences: { failWith: { problem: "notPublished", retryable: true } },
     });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
@@ -281,7 +281,7 @@ describe("durable UI preferences", () => {
     const withResidue = mount({
       preferences: { failWith: { problem: "notWritten", retryable: true, temporaryLeftBehind: true } },
     });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     press(dialog, zh.apply);
@@ -289,7 +289,7 @@ describe("durable UI preferences", () => {
     withResidue.view.unmount();
 
     mount({ preferences: { failWith: { problem: "unsafeTarget", retryable: false } } });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     press(dialog, zh.apply);
@@ -304,7 +304,7 @@ describe("durable UI preferences", () => {
     const { preferences } = mount({
       preferences: { failWith: { problem: "notWritten", retryable: true } },
     });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
@@ -323,7 +323,7 @@ describe("durable UI preferences", () => {
 
   it("keeps an unusable stored record until its replacement is confirmed", async () => {
     const { preferences } = mount({ preferences: { unusable: "unsupportedVersion" } });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     // Recoverable defaults, an accurate explanation, and no spinner.
     expect(document.documentElement.lang).toBe("en");
     expect(density()).toBe("comfortable");
@@ -355,14 +355,14 @@ describe("durable UI preferences", () => {
 
   it("names an unknown stored problem instead of guessing at it", async () => {
     mount({ preferences: { unusable: "somethingThisBuildHasNeverHeardOf" } });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const problem = within(openSettings()).getByRole("alert");
     expect(problem).toHaveTextContent(en.storageUnknownProblem.replace("{{code}}", "somethingThisBuildHasNeverHeardOf"));
   });
 
   it("stays usable with nowhere to store preferences, and never claims a write", async () => {
     const { preferences } = mount({ preferences: { unavailable: "rootUnresolved" } });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     let dialog = openSettings();
     expect(within(dialog).getByText(en.storageUnavailable)).toBeVisible();
     expect(within(dialog).getByText(en.storageRootUnresolved)).toBeVisible();
@@ -389,7 +389,7 @@ describe("durable UI preferences", () => {
 
   it("settles a failed read into recoverable defaults rather than an indefinite wait", async () => {
     const { preferences } = mount({ preferences: { readRejects: true } });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     await waitFor(() => expect(rosterToggle()).toBeEnabled());
     const dialog = openSettings();
     expect(within(dialog).getByText(en.storageReadFailed)).toBeVisible();
@@ -402,7 +402,7 @@ describe("durable UI preferences", () => {
     const { preferences } = mount({
       preferences: { stored: storedRecord({ appearance: { locale: "zh-CN", density: "compact" } }), deferred: true },
     });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     // The read is still outstanding, so the panels are not yet acting on
     // preferences nobody has seen. Checked before the modal opens, because a
     // modal hides the rest of the application from the accessibility tree.
@@ -425,7 +425,7 @@ describe("durable UI preferences", () => {
       preferences: { deferred: true, failWith: { problem: "notPublished", retryable: true } },
     });
     await preferences.release();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
 
     // Two layout commits. The first is refused; the second succeeds. Rust
     // decides both in the order they were made -- what a document can see out
@@ -446,7 +446,7 @@ describe("durable UI preferences", () => {
 
   it("drops every answer to a document that is gone", async () => {
     const { preferences, view } = mount({ preferences: { deferred: true } });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     expect(preferences.outstanding()).toBe(1);
     view.unmount();
     // The read answers into a document that no longer exists. Nothing renders
@@ -457,7 +457,7 @@ describe("durable UI preferences", () => {
 
   it("commits a panel toggle as its own group and leaves the Settings draft alone", async () => {
     const { preferences } = mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     // An unapplied Settings draft, open at the same time.
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
@@ -478,7 +478,7 @@ describe("durable UI preferences", () => {
 
   it("keeps a layout commit and an appearance commit from overwriting each other", async () => {
     const { preferences } = mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     fireEvent.click(rosterToggle());
     await waitFor(() => expect(preferences.stored()?.layout.roster).toBe("hidden"));
 
@@ -501,7 +501,7 @@ describe("durable UI preferences", () => {
     const { preferences } = mount({
       preferences: { failWith: { problem: "notPublished", retryable: true } },
     });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     fireEvent.click(rosterToggle());
     const notice = await screen.findByText(en.layoutUnsaved);
     // The arrangement the user asked for is on screen; what is reported is
@@ -522,7 +522,7 @@ describe("durable UI preferences", () => {
       const { preferences } = mount({
         preferences: { stored: storedRecord({ layout: { roster: "shown", details: "shown" } }) },
       });
-      await screen.findByText("ProteoWizard is not available");
+      await screen.findByText("No ProteoWizard installation was found");
       await waitFor(() => expect(shell()).toHaveAttribute("data-roster-open", "true"));
 
       // A window that cannot fit them folds both away, and stores nothing.
@@ -544,7 +544,7 @@ describe("durable UI preferences", () => {
     const { preferences } = mount({
       preferences: { stored: storedRecord({ layout: { roster: "hidden", details: "shown" } }) },
     });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     await waitFor(() => expect(shell()).toHaveAttribute("data-roster-open", "false"));
     // Asked for, nothing to show, and nothing loaded to make it showable.
     expect(shell()).toHaveAttribute("data-details-open", "false");
@@ -563,7 +563,7 @@ describe("durable UI preferences", () => {
   it("applies a preference change without asking the backend anything", async () => {
     const api = createFakePreviewApi({ availability: unavailableBackend });
     const { preferences } = mount({ api });
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     await waitFor(() => expect(api.calls()).toContain("readConversionConfiguration"));
     const calls = [...api.calls()];
 

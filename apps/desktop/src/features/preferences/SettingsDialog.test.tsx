@@ -75,7 +75,7 @@ describe("session Settings in the real application composition", () => {
   it("previews, applies, resets only a draft, cancels and reopens without requesting backend work", async () => {
     const api = createFakePreviewApi({ availability: unavailableBackend });
     mount(api);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     await waitFor(() => expect(api.calls()).toContain("readConversionConfiguration"));
     const calls = [...api.calls()];
     expect(document.documentElement.lang).toBe("en");
@@ -111,7 +111,7 @@ describe("session Settings in the real application composition", () => {
 
   it.each(["cancel", "close", "escape"] as const)("discards with %s and retains one modal and the opener", async (action) => {
     mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
@@ -132,7 +132,7 @@ describe("session Settings in the real application composition", () => {
 
   it("keeps composition Enter and Escape inside the dialog until composition ends", async () => {
     mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     const field = within(dialog).getByRole("radio", { name: en.english });
     fireEvent.compositionStart(field);
@@ -146,7 +146,7 @@ describe("session Settings in the real application composition", () => {
 
   it("does not revive a close return after a newer deliberate destination blurs", async () => {
     mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     const closed = new Promise<void>((resolve) => dialog.addEventListener("focusScope.autoFocusOnUnmount", () => resolve(), { once: true }));
     press(dialog, en.cancel);
@@ -161,14 +161,14 @@ describe("session Settings in the real application composition", () => {
   it("starts a new app session at defaults without writing preference storage", async () => {
     const storage = vi.spyOn(Storage.prototype, "setItem");
     const first = mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
     press(dialog, zh.apply);
     first.unmount();
     mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     expect(document.documentElement.lang).toBe("en");
     expect(density()).toBe("comfortable");
     expect(storage).not.toHaveBeenCalled();
@@ -176,7 +176,7 @@ describe("session Settings in the real application composition", () => {
 
   it("does not let a detached dialog return into a later app session", async () => {
     const first = mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     const closed = new Promise<void>(resolve => dialog.addEventListener("focusScope.autoFocusOnUnmount", () => resolve(), { once: true }));
     first.unmount();
@@ -188,7 +188,7 @@ describe("session Settings in the real application composition", () => {
 
   it("keeps an initialization resource failure reachable through validated recovery", async () => {
     mount(createFakePreviewApi({ availability: unavailableBackend }), createUiRuntime({ en: {}, "zh-CN": {} }));
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(en.resourceError);
     expect(within(dialog).getByRole("button", { name: en.apply })).toBeDisabled();
@@ -202,7 +202,7 @@ describe("session Settings in the real application composition", () => {
   it("rejects a missing supported bundle, retains applied preferences and recovers in the applied language", async () => {
     const runtime = createUiRuntime();
     mount(createFakePreviewApi({ availability: unavailableBackend }), runtime);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
@@ -226,7 +226,7 @@ describe("session Settings in the real application composition", () => {
     const runtime = createUiRuntime();
     const api = createFakePreviewApi({ availability: unavailableBackend });
     mount(api, runtime);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     await waitFor(() => expect(api.calls()).toContain("readConversionConfiguration"));
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
@@ -257,7 +257,7 @@ describe("session Settings in the real application composition", () => {
   it("replaces an invalid bundle exactly so recovery does not retain unexpected keys", async () => {
     const runtime = createUiRuntime();
     mount(createFakePreviewApi({ availability: unavailableBackend }), runtime);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     await act(async () => { runtime.instance.addResourceBundle("zh-CN", "ui", { unexpected: "Injected unexpected key" }, true, true); });
     choose(dialog, en.simplifiedChinese);

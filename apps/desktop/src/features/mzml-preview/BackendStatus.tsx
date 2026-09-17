@@ -1,6 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { presentBackend, type BackendActionId } from "./backendPresentation";
 import type { BackendState } from "./usePreviewWorkspace";
 
 /**
@@ -12,10 +14,16 @@ import type { BackendState } from "./usePreviewWorkspace";
  * the slot `Choose folder…` was in. Focusing that node would hand the keyboard
  * to an action the user never reached for, one Enter away from undoing the
  * choice they just made.
+ *
+ * What identifies the action is its semantic id, not its label. The label is
+ * not an identity at all once the interface has two languages: the same action
+ * reads differently in each, and applying a language while a picker is open
+ * would make every action look replaced. The id survives both, and it still
+ * changes when the *meaning* does.
  */
 interface PickerTrigger {
   readonly control: HTMLButtonElement;
-  readonly action: string;
+  readonly action: BackendActionId;
   /**
    * Whether the request this trigger belongs to has been seen outstanding.
    *
@@ -60,16 +68,21 @@ export interface BackendStatusProps {
 }
 
 /**
- * The installed-backend banner.
+ * The installed-backend banner, and the offline setup help beside it.
  *
- * MSCanvas never bundles or installs ProteoWizard, so "not installed" is an
- * ordinary state of the application rather than an error, and it always says
- * what the user can do about it.
+ * MSCanvas never bundles, downloads or installs ProteoWizard, so "not
+ * installed" is an ordinary state of the application rather than an error, and
+ * it always says what the user can do about it.
  *
  * Every state offers a way back to automatic discovery, including the state
- * where the call itself failed. A chosen folder is the only place MSCanvas
- * then looks, so a banner without that offer can leave a session unable to
- * reach an installation it would have found on its own.
+ * where the call itself failed. A chosen folder is the only place MSCanvas then
+ * looks, so a banner without that offer can leave a session unable to reach an
+ * installation it would have found on its own.
+ *
+ * The help is a disclosure in every state, closed to begin with, and it needs
+ * no network, no dataset and no backend to read. It is deliberately not an
+ * onboarding wizard: nothing here gates the workspace, and a session with no
+ * usable backend can still add, group and organise acquisitions.
  */
 export function BackendStatus({
   state,
@@ -79,7 +92,16 @@ export function BackendStatus({
   onChooseInstallation,
   onUseAutomaticDiscovery,
 }: BackendStatusProps) {
+  const t = useUiMessages();
   const pendingRestore = useRef<PickerTrigger | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const banner = presentBackend(state, readingSuperseded, t);
+
+  const run: Record<BackendActionId, () => void> = {
+    recheck: onRecheck,
+    choose: onChooseInstallation,
+    automatic: onUseAutomaticDiscovery,
+  };
 
   /**
    * Remembers the control the picker was opened from, so the keyboard can be
@@ -89,13 +111,13 @@ export function BackendStatus({
    * focus the button has no place to return to, and taking focus the user never
    * put here would be a move of its own rather than a restoration.
    */
-  const startChoosing = (event: MouseEvent<HTMLButtonElement>) => {
+  const start = (id: BackendActionId) => (event: MouseEvent<HTMLButtonElement>) => {
     const control = event.currentTarget;
     pendingRestore.current =
-      document.activeElement === control
-        ? { control, action: control.textContent ?? "", outstanding: false }
+      id === "choose" && document.activeElement === control
+        ? { control, action: id, outstanding: false }
         : null;
-    onChooseInstallation();
+    run[id]();
   };
 
   /**
@@ -135,10 +157,16 @@ export function BackendStatus({
     // request it says nothing about.
     pendingRestore.current = null;
     // Only a control that is still there, still usable and still the action the
-    // user pressed. A verdict can leave the button in place and rename it, and
-    // that node is a different control however unchanged the DOM looks -- while
-    // a folder that is chosen and turns out to be unusable leaves the same
-    // chooser exactly where it was, which is a place worth giving back.
+    // user pressed. A verdict can leave the button in place and give the slot
+    // to another action, and that node is a different control however unchanged
+    // the DOM looks -- while a folder that is chosen and turns out to be
+    // unusable leaves the same chooser exactly where it was, which is a place
+    // worth giving back.
+    //
+    // Compared on the semantic id the node carries, not on its text. A
+    // translation changes every label without changing a single action, and the
+    // reverse -- the same label over a different action -- is what this guard
+    // exists to catch.
     //
     // `isConnected` is redundant today, because React leaves a control it
     // unmounts with the `disabled` this request gave it. It is stated anyway:
@@ -147,7 +175,7 @@ export function BackendStatus({
     if (
       !pending.control.isConnected ||
       pending.control.disabled ||
-      pending.control.textContent !== pending.action
+      pending.control.dataset.backendAction !== pending.action
     ) {
       return;
     }
@@ -162,147 +190,98 @@ export function BackendStatus({
     pending.control.focus({ preventScroll: true });
   });
 
-  if (state.status === "checking") {
-    return (
-      <p className="notice notice-neutral" role="status">
-        Checking for an installed ProteoWizard backend…
-      </p>
-    );
-  }
-
-  if (state.status === "failed") {
-    return (
-      <p className="notice notice-danger" role="status">
-        <span>{state.error.summary}</span>{" "}
-        <button className="link-button" disabled={busy} onClick={onRecheck} type="button">
-          Check again
-        </button>
-        {/* Which installation was in use is exactly what a failed call does not
-            say, so both ways out are offered rather than guessed between. */}
-        <button className="link-button" disabled={busy} onClick={startChoosing} type="button">
-          Choose folder…
-        </button>
-        <button className="link-button" disabled={busy} onClick={onUseAutomaticDiscovery} type="button">
-          Search automatically
-        </button>
-      </p>
-    );
-  }
-
-  const { availability } = state;
-  // Read from the verdict in hand, never from a remembered choice, so a folder
-  // the user picked and a verdict about the previous installation cannot appear
-  // together.
-  const chosen = availability.origin === "chosen";
-  const originNote = chosen ? " · from the folder you chose" : "";
-  // Said in the banner rather than left to the disabled controls alone. The
-  // picker's dialog closes before the probes run, and without this the moment
-  // between reads as finished when it is not.
-  const busyNote = busy ? " · checking the installation…" : "";
-  const switchAway = chosen ? (
-    <button className="link-button" disabled={busy} onClick={onUseAutomaticDiscovery} type="button">
-      Search automatically
-    </button>
-  ) : (
-    <button className="link-button" disabled={busy} onClick={startChoosing} type="button">
-      Choose folder…
-    </button>
+  /**
+   * The offline setup help.
+   *
+   * Reachable in every state, including the states with no reading and no
+   * installation at all, and it explains the three things a reader actually
+   * needs: that ProteoWizard is theirs to install, that a folder they choose
+   * lasts for this session only, and which control does what.
+   */
+  const help = (
+    <details
+      className="backend-setup-help"
+      data-backend-help=""
+      open={helpOpen}
+      onToggle={(event) => setHelpOpen(event.currentTarget.open)}
+    >
+      <summary>{t("backendHelpTitle")}</summary>
+      <p>{t("backendHelpProvider")}</p>
+      <p>{t("backendHelpSessionScope")}</p>
+      <ul>
+        <li>{t("backendHelpChoose")}</li>
+        <li>{t("backendHelpAutomatic")}</li>
+        <li>{t("backendHelpRecheck")}</li>
+      </ul>
+      <p>{t("backendHelpTarget")}</p>
+      <p>{t("backendHelpWithoutBackend")}</p>
+    </details>
   );
 
-  if (readingSuperseded) {
-    // **Nothing here is presented as current.** Not the verdict, not the
-    // release, not the build date, and not the origin -- the reading describes
-    // a publication this session has moved past, and a banner that kept any of
-    // them would be naming a build the session has left.
-    //
-    // The reason text survives, attributed to the reading it belongs to rather
-    // than dropped: a reader who was told why the previous backend was unusable
-    // does not stop being owed that sentence because a newer publication
-    // arrived.
-    //
-    // Every action stays live. This state is a wait for a read MSCanvas already
-    // owes, and where that read is deferred behind a conversion the reader is
-    // still entitled to ask for one themselves.
+  if (banner.kind === "checking") {
     return (
-      <div className="notice notice-neutral" data-backend-reading="superseded" role="status">
-        <strong>The installed ProteoWizard changed</strong>
-        <span>
-          What MSCanvas knew about the backend was read before that change, so none of it
-          describes this session any more. MSCanvas reads it again as soon as the backend
-          is free.
-        </span>
-        {availability.failure === null ? null : (
-          <span>{`That earlier reading said: ${availability.failure.summary}`}</span>
-        )}
-        <button className="link-button" disabled={busy} onClick={onRecheck} type="button">
-          Check again
-        </button>
-        {/* Both ways out, rather than the one the reading's origin implies.
-            `switchAway` picks between them from `availability.origin`, and that
-            origin is part of what has stopped describing the session -- offering
-            `Search automatically` alone would tell a reader they are on a folder
-            they chose, which is exactly the claim this state exists to withdraw.
-            The failed branch above offers both for the same reason. */}
-        <button className="link-button" disabled={busy} onClick={startChoosing} type="button">
-          Choose folder…
-        </button>
-        <button
-          className="link-button"
-          disabled={busy}
-          onClick={onUseAutomaticDiscovery}
-          type="button"
-        >
-          Search automatically
-        </button>
+      <div className="notice notice-neutral" data-backend-status="checking">
+        <span role="status">{banner.title}</span>
+        {help}
       </div>
     );
   }
 
-  if (availability.state === "available") {
-    return (
-      <p className="notice notice-success" role="status">
-        <span aria-hidden="true">✓ </span>
-        <span>
-          ProteoWizard is available
-          {availability.release === null ? "" : ` · ${availability.release}`}
-          {availability.buildDate === null ? "" : ` · built ${availability.buildDate}`}
-          {availability.sameInstallation
-            ? ""
-            : " · msaccess and msconvert are separate installations"}
-          {originNote}
-          {busyNote}
-        </span>
-        {/* An installation can be moved, replaced or removed while MSCanvas is
-            running, and this banner would otherwise keep saying it is there. */}
-        <button className="link-button" disabled={busy} onClick={onRecheck} type="button">
-          Check again
-        </button>
-        {switchAway}
-      </p>
-    );
-  }
-
+  const named = banner.names;
   return (
-    <div className="notice notice-warning" role="status">
-      <strong>ProteoWizard is not available</strong>
-      <span>
-        {availability.failure?.summary ?? "No usable backend was found."}
-        {originNote}
-        {busyNote}
-      </span>
-      {availability.failure === null ? null : <span>{availability.failure.correctiveAction}</span>}
-      <button className="link-button" disabled={busy} onClick={onRecheck} type="button">
-        Check again
-      </button>
-      {switchAway}
-      {/* A chosen folder holding nothing usable still leaves the choice in
-          place, so this state needs both: pick a different folder, or stop
-          using one at all. */}
-      {chosen ? (
-        <button className="link-button" disabled={busy} onClick={startChoosing} type="button">
-          Choose a different folder…
-        </button>
-      ) : null}
+    <div
+      className={`notice notice-${banner.tone}`}
+      data-backend-status={banner.kind}
+      data-backend-reading={banner.kind === "staleReading" ? "superseded" : undefined}
+    >
+      {/* One live region for the whole banner, so a verdict, its reason and the
+          build it names are announced as one thing rather than as three. */}
+      <div role="status" className="backend-status-reading">
+        <strong>{banner.title}</strong>
+        {banner.body.map((sentence) => (
+          <span key={sentence}>{sentence}</span>
+        ))}
+        {named === null ? null : (
+          <span data-backend-build="">
+            {[
+              named.release,
+              named.buildDate === null ? null : t("backendBuiltOn", { date: named.buildDate }),
+              banner.separateInstallations ? t("backendSeparateInstallations") : null,
+              banner.chosen ? t("backendFromChosenFolder") : null,
+            ]
+              .filter((part): part is string => part !== null)
+              .join(" · ")}
+          </span>
+        )}
+        {/* Said in the banner rather than left to the disabled controls alone.
+            The picker's dialog closes before the probes run, and without this
+            the moment between reads as finished when it is not. */}
+        {busy ? <span data-backend-busy="">{t("backendCheckingInstallation")}</span> : null}
+        {/* Shown only where this build had no sentence of its own for the code,
+            so it stays inspectable instead of being paraphrased away. */}
+        {banner.code !== null && banner.kind === "requestFailed" ? (
+          <span data-backend-code="">{t("backendProblemCode", { code: banner.code })}</span>
+        ) : null}
+      </div>
+      <div className="backend-status-actions">
+        {banner.actions.map((entry, position) => (
+          <button
+            // The semantic id, not the position: React must not carry one
+            // action's node over to another when a verdict changes which ones
+            // are offered. The suffix separates the two `choose` offers a
+            // chosen-but-unusable folder shows.
+            key={`${entry.id}-${position}`}
+            className="link-button"
+            data-backend-action={entry.id}
+            disabled={busy}
+            onClick={start(entry.id)}
+            type="button"
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+      {help}
     </div>
   );
 }
