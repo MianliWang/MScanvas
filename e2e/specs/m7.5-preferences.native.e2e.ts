@@ -269,22 +269,29 @@ async function reveal(selector: string) {
 }
 
 /**
- * Ticks one roster row's conversion membership, the way a person can.
+ * Makes sure one roster row is a conversion member, the way a person can.
  *
- * The roster is a scrollport whose rows animate in, and a click aimed at a
- * checkbox that is still moving, still partly outside that scrollport or still
- * under something else is refused by the driver -- which is what happened the
- * first time this chain ran. So the row is brought into view, the checkbox's
- * own centre is confirmed to hit the checkbox and nothing else, the row is
- * confirmed to have settled, and the click is only then sent. The state is read
- * back afterwards, because a click that lands on nothing is otherwise
- * indistinguishable from one that lands.
+ * Conditional, because an acquisition the workspace has just added is already
+ * enrolled: clicking its checkbox unconditionally *removes* it, which is what
+ * this chain did to itself before -- the plan then had nothing in scope and
+ * Convert stayed disabled, with no sign of who had emptied it.
+ *
+ * When a click is needed, the row is brought into view first, the checkbox's
+ * own centre is confirmed to hit the checkbox and nothing else, and the row is
+ * confirmed to have settled: the roster is a scrollport whose rows animate in,
+ * and a click aimed at one that is still moving or still partly outside it is
+ * refused. The state is read back either way, because a click that lands on
+ * nothing is otherwise indistinguishable from one that lands.
  */
-async function pick(handle: string) {
+async function member(handle: string) {
   const row = `.dataset-roster-list [role="row"][data-handle="${handle}"]`;
   const selector = `${row} input[type="checkbox"]`;
   const checkbox = browser.$(selector);
   await checkbox.waitForDisplayed({ timeout: 30_000 });
+  if (await checkbox.isSelected()) {
+    record({ kind: "conversion membership already enrolled by the add", handle });
+    return;
+  }
   await reveal(row);
   const point = await browser.execute(async css => {
     const control = document.querySelector<HTMLInputElement>(css)!;
@@ -305,6 +312,7 @@ async function pick(handle: string) {
   expect(point.hit).toBe(true);
   expect(point.stable).toBe(true);
   expect(point.wholeRowVisible).toBe(true);
+  expect(point.checked).toBe(false);
   await checkbox.click();
   await browser.waitUntil(() => checkbox.isSelected(), { timeout: 15_000, timeoutMsg: "The membership checkbox did not take the click." });
 }
@@ -656,7 +664,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await browser.waitUntil(async () => (await roster()).datasets.length === 1, { timeout: 60_000 });
     const acquisition = (await roster()).datasets[0];
     if (acquisition === undefined) throw Error("The chosen acquisition is not in the roster.");
-    await pick(acquisition.handle);
+    await member(acquisition.handle);
 
     await browser.$(`button=${zh.conversionTask}`).click();
     await browser.$(PANEL).waitForDisplayed();
