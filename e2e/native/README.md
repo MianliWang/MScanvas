@@ -136,3 +136,5 @@ process rather than from inside.
 | `save-dialog.ps1` | Finds the application's dialog, types a destination and saves, or cancels. Reports what it saw when it finds nothing. |
 | `read-clipboard-image.ps1` | Reads the clipboard image from the test process, or clears it. |
 | `focus-window.ps1` | Brings the application's window to the foreground, which a real user's window always is. |
+| `m7.5-activate-window.ps1` | Gives one newly launched owned window the foreground: temporary topmost, one hit-tested caption click, restore. No manual step. |
+| `m7.5-hold-preferences.ps1` | Holds the campaign's own preference record open without delete sharing, so a publish is genuinely refused. Refuses any path outside that root. |

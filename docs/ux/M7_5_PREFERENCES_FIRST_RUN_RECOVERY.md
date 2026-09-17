@@ -104,6 +104,29 @@ A save is reported as `saved` only after the published record is read back and
 equals the record that was written. An uncertain outcome is `failed`
 (`notConfirmed`), not saved.
 
+### The root a QA campaign binds
+
+The faults this milestone has to prove — a record this build cannot read, one
+from a later schema, one the filesystem refuses to replace — are faults of a
+file in a person's own profile, and no test gets to corrupt, lock or delete
+that. So the non-default `e2e` build, and only it, resolves the preference root
+from `MSCANVAS_E2E_PREFERENCE_ROOT` instead of from the path resolver, and
+answers `unavailable` for the whole session when that directory is missing,
+relative or not a directory. It never falls back to the per-user profile.
+
+Below the binding nothing is substituted: the same record type, the same
+validation, the same bounded temporary, the same handle-bound replace, the same
+read-back. It is a different root, not a different store, and no renderer
+message carries a path, a key or a file name either way.
+
+Three things keep it out of a shipped build. `scripts/check_repo.py` fails if
+any Rust line naming the module, its binder or the variable sits outside the
+`cfg` that gates it, or if the name appears in the production frontend at all. A
+byte scan of two binaries built from the same tree finds the name once in the
+`e2e` build and not at all in an ordinary debug build, which keeps its string
+literals. And the native configuration refuses the campaign before a driver is
+spawned, and again for every session, when the binding is absent or unusable.
+
 ## Ordering and lanes
 
 Every write is serialized under the store's own mutex, and the merge base is

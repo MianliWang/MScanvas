@@ -44,6 +44,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PREFERENCE_ROOT_VARIABLE, requireOwnedPreferenceRoot } from "./support/m75PreferenceRoot";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -77,6 +79,9 @@ const NATIVE_DRIVER_PORT = configuredPort("MSCANVAS_TAURI_NATIVE_PORT", 4445);
 if (DRIVER_PORT === NATIVE_DRIVER_PORT) {
   throw new Error("The Tauri driver and native driver ports must differ.");
 }
+
+/** Whether this run is the authorized M7.5 native campaign. */
+const M75_CAMPAIGN = process.env.MSCANVAS_M75_NATIVE_READY === "true";
 
 let driver: ChildProcess | undefined;
 
@@ -118,7 +123,21 @@ export const config: WebdriverIO.Config = {
   ],
 
   async onPrepare(): Promise<void> {
-    if (await reachable(DRIVER_PORT)) {
+    // The application process is a grandchild: `tauri-driver` launches it, and
+    // it inherits the driver's environment. So an M7.5 campaign's isolated
+    // preference root has to be valid here, before the driver is spawned, and
+    // a driver somebody else started cannot be reused -- its environment is not
+    // this one's, and the difference would be an application writing into the
+    // operator's own profile while the run reported isolation.
+    if (M75_CAMPAIGN) {
+      requireOwnedPreferenceRoot(process.env[PREFERENCE_ROOT_VARIABLE]);
+      if (await reachable(DRIVER_PORT)) {
+        throw new Error(
+          `A tauri-driver is already listening on ${DRIVER_PORT}. An M7.5 campaign must start its ` +
+            `own, so that the application it launches inherits this run's ${PREFERENCE_ROOT_VARIABLE}.`,
+        );
+      }
+    } else if (await reachable(DRIVER_PORT)) {
       return;
     }
     driver = spawn(
@@ -140,6 +159,15 @@ export const config: WebdriverIO.Config = {
   },
 
   beforeSession(_configuration, _capabilities, specs): void {
+    if (specs.some(spec => spec.replaceAll("\\", "/").endsWith("/m7.5-preferences.native.e2e.ts"))) {
+      if (!M75_CAMPAIGN) {
+        throw new Error("Fresh user M7.5 native readiness is required before application session creation.");
+      }
+      // Again per session, because `reloadSession` launches another application
+      // process and the binding is what keeps it out of the real profile. A
+      // missing or unusable root refuses the campaign; it never falls back.
+      requireOwnedPreferenceRoot(process.env[PREFERENCE_ROOT_VARIABLE]);
+    }
     if (specs.some(spec => spec.replaceAll("\\", "/").endsWith("/m7.4-conversion-figures.native.e2e.ts")) &&
         process.env.MSCANVAS_M74_NATIVE_READY !== "true") {
       throw new Error("Fresh user M7.4 native readiness is required before application session creation.");

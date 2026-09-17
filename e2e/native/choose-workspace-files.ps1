@@ -5,7 +5,8 @@
   Start before the WebDriver click: the OS modal holds that click open. Match
   only this application's process and exact dialog title, then native control
   class and resource ID. No other application or unnamed dialog is a fallback.
-  The folder wrapper reuses this bounded mechanism with its different edit ID.
+  Each folder dialog reuses this bounded mechanism with its own exact title
+  and its different edit ID.
 #>
 [CmdletBinding()]
 param(
@@ -13,7 +14,7 @@ param(
   [Parameter(Mandatory = $true)][ValidateSet('choose', 'cancel', 'escape')][string] $Action,
   [string] $Path = '',
   [ValidateRange(1, 120)][int] $TimeoutSeconds = 60,
-  [ValidateSet('workspaceFiles', 'conversionFolder')][string] $DialogKind = 'workspaceFiles'
+  [ValidateSet('workspaceFiles', 'conversionFolder', 'installationFolder')][string] $DialogKind = 'workspaceFiles'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,8 +28,17 @@ Add-Type -Namespace MSCanvasPicker -Name Native -MemberDefinition @'
   [DllImport("user32.dll", SetLastError=true)] public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint message, System.UIntPtr wParam, System.IntPtr lParam, uint flags, uint timeout, out System.UIntPtr result);
 '@
 
-$title = if ($DialogKind -eq 'workspaceFiles') { 'Open acquisitions' } else { 'Choose where to save the converted mzML' }
-$editId = if ($DialogKind -eq 'workspaceFiles') { '1148' } else { '1152' }
+# One row per dialog this application actually opens: the exact title it gives
+# that window, the resource ID of that dialog's own path edit, and what a
+# chosen path has to be. A kind with no row here is a refusal rather than a
+# guess at some other window's title.
+$kinds = @{
+  workspaceFiles     = @{ title = 'Open acquisitions'; editId = '1148'; pathType = 'Leaf' }
+  conversionFolder   = @{ title = 'Choose where to save the converted mzML'; editId = '1152'; pathType = 'Container' }
+  installationFolder = @{ title = 'Choose the ProteoWizard installation folder'; editId = '1152'; pathType = 'Container' }
+}
+$title = $kinds[$DialogKind].title
+$editId = $kinds[$DialogKind].editId
 $result = [ordered]@{ kind = $DialogKind; action = $Action; processId = $ApplicationProcessId; found = $false; entered = $false; invoked = $false; closed = $false; method = ''; detail = '' }
 
 function Find-OwnedDialog {
@@ -85,7 +95,7 @@ try {
   if ($application.ProcessName -ne 'mscanvas-desktop') { throw 'The supplied process is not MSCanvas.' }
   if ($Action -eq 'choose') {
     if (-not [IO.Path]::IsPathRooted($Path)) { throw 'Choosing requires an absolute path.' }
-    $pathType = if ($DialogKind -eq 'workspaceFiles') { 'Leaf' } else { 'Container' }
+    $pathType = $kinds[$DialogKind].pathType
     if (-not (Test-Path -LiteralPath $Path -PathType $pathType)) { throw 'The supplied picker path does not exist with the expected kind.' }
     $Path = (Resolve-Path -LiteralPath $Path).Path
   }
