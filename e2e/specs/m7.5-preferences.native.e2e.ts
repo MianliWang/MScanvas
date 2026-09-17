@@ -463,13 +463,19 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     const seeded = noted("a future-schema record, seeded");
     await relaunch("12-unusable-record-startup");
     const recovered = await capture("13-unusable-record-recovery");
-    // Usable defaults, reachable controls, and no spinner.
+    // Usable defaults, a reachable interface, and no spinner. The workbench
+    // itself says nothing about storage -- being unable to save preferences is
+    // not a reason to put a notice over someone's work -- so what it has to
+    // show here is that everything is usable.
     expect(recovered.locale).toBe("en");
     expect(recovered.density).toBe("comfortable");
-    expect(recovered.storageNote?.text).toBe(en.storageNotSaving);
+    expect(recovered.layoutReset?.disabled).toBe(true);
+    expect(recovered.storageNote).toBeNull();
+    // The account of it is in Settings, which is where it can be acted on.
     await openSettings();
     const alerted = await capture("14-unusable-record-explained");
     expect(alerted.storedRecordAlert?.text).toContain(en.storedUnsupportedVersion);
+    expect(alerted.storageNote?.text).toBe(en.storageNotSaving);
     await press(en.cancel);
     await returned();
     // Reading it, starting on it and cancelling out of it all left it alone.
@@ -487,13 +493,22 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect((await saves()).at(-1)?.args).toEqual({ request: { appearance: { locale: "en", density: "compact" }, replaceUnusable: true } });
     const done = await capture("15-record-replaced");
     expect(done.preferenceRegion).toBe(en.storedReplaced);
-    expect(done.storageNote).toBeNull();
+
+    // And Settings no longer has anything to recover from: the alert and the
+    // note are both gone, which is the state a working store looks like.
+    await openSettings();
+    const settled = await capture("16-recovered-state-cleared");
+    expect(settled.storedRecordAlert).toBeNull();
+    expect(settled.storageNote).toBeNull();
+    await press(en.cancel);
+    await returned();
+    expect(sameBytes(replacement, noted("after confirming the recovery cleared"))).toBe(true);
   });
 
   it("explains the backend offline in both languages, recovers from a cancelled and an unusable folder, and converts, reads and exports through the real provider", async () => {
     // This host has ProteoWizard installed per-user, under the `%LOCALAPPDATA%`
     // root the discovery searches, so automatic discovery names it.
-    const initial = await capture("16-backend-as-this-host-is");
+    const initial = await capture("17-backend-as-this-host-is");
     record({ kind: "host backend availability", status: initial.backendStatus, actions: initial.backendActions,
       reading: initial.backendReading?.text });
     expect(initial.backendStatus).toBe("available");
@@ -502,7 +517,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     // The help, with no data loaded and no backend configured.
     await browser.$(`${HELP} summary`).click();
     await browser.waitUntil(() => browser.execute(help => document.querySelector<HTMLDetailsElement>(help)?.open === true, HELP));
-    const english = await capture("17-offline-help-en");
+    const english = await capture("18-offline-help-en");
     expect(english.helpOpen).toBe(true);
     expect(english.helpFitsWithoutScrolling).toBe(true);
     expect(english.help?.text).toContain("Windows 11 25H2 x64");
@@ -516,7 +531,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await choose("zh-CN");
     await press(zh.apply);
     await returned();
-    const chinese = await capture("18-offline-help-zh");
+    const chinese = await capture("19-offline-help-zh");
     expect(chinese.locale).toBe("zh-CN");
     expect(chinese.help?.text).toContain(zh.backendHelpProvider);
     expect(chinese.help?.text).toContain("msconvert.exe");
@@ -535,7 +550,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     ]);
     expect(cancelled.found).toBe(true); expect(cancelled.invoked).toBe(true);
     await naturalReturn("installation folder cancel");
-    const afterCancel = await capture("19-folder-choice-cancelled");
+    const afterCancel = await capture("20-folder-choice-cancelled");
     expect(afterCancel.backendStatus).toBe(initial.backendStatus);
     expect(await probes()).toBe(beforeCancel);
 
@@ -548,9 +563,9 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
       browser.$('[data-backend-action="choose"]').click(),
     ]);
     expect(chosen.invoked).toBe(true);
-    await browser.waitUntil(async () => (await capture("20-unusable-folder", false)).backendStatus === "unsupported",
+    await browser.waitUntil(async () => (await capture("21-unusable-folder", false)).backendStatus === "unsupported",
       { timeout: 30_000, interval: 500, timeoutMsg: "A folder with no tools in it did not read as unsupported." });
-    const unsupported = await capture("21-unusable-folder-read");
+    const unsupported = await capture("22-unusable-folder-read");
     expect(unsupported.backendStatus).toBe("unsupported");
     expect(unsupported.backendActions).toContain("automatic");
     expect(unsupported.backendReading?.clipped).toBe(false);
@@ -563,7 +578,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await browser.$('[data-backend-action="automatic"]').click();
     await browser.waitUntil(async () => (await browser.execute(banner => document.querySelector(banner)?.getAttribute("data-backend-status"), BANNER)) === initial.backendStatus,
       { timeout: 30_000, interval: 500, timeoutMsg: "Automatic discovery did not return to this host's own verdict." });
-    const rediscovered = await capture("22-rediscovered");
+    const rediscovered = await capture("23-rediscovered");
     expect(rediscovered.backendStatus).toBe(initial.backendStatus);
 
     // And the real provider path, in the Chinese session: a small retained
@@ -595,7 +610,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     if (converted.status !== "terminal") throw Error("No terminal conversion.");
     record({ kind: "real provider conversion in a Chinese session", state: converted });
     expect(converted.queue.finalizedCount).toBe(1);
-    await capture("23-real-conversion-zh");
+    await capture("24-real-conversion-zh");
 
     // The output it produced is the mzML this leg reads.
     await browser.$(PANEL + " .conversion-adoption button").click();
@@ -610,7 +625,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
       return browser.$('div.spectrum-table-row[data-row-position="0"]').isDisplayed();
     }, { timeout: 120_000, interval: 2_000, timeoutMsg: "The converted mzML never opened." });
     await browser.$('div.spectrum-table-row[data-row-position="0"]').click();
-    const opened = await capture("24-converted-file-open-zh");
+    const opened = await capture("25-converted-file-open-zh");
     expect(opened.locale).toBe("zh-CN");
     expect(opened.bodyText).toContain(zh.viewerData);
 
@@ -634,7 +649,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(lines).toContain("mz,intensity");
     expect(text).toMatch(/^\d+(\.\d+)?,\d+(\.\d+)?$/mu);
     expect(text).not.toMatch(/[一-鿿]/u);
-    const exportedFinal = await capture("25-exported-zh");
+    const exportedFinal = await capture("26-exported-zh");
     expect(exportedFinal.locale).toBe("zh-CN");
 
     // Nothing about the file, the folder or the selection is in the record.
