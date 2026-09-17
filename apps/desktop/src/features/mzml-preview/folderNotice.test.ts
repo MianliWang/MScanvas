@@ -223,7 +223,7 @@ describe("accounting for one folder import", () => {
 
     expect(notice.details).toEqual([
       "first.mzML is already in the workspace.",
-      "second.mzML: MSCanvas could not open that file.",
+      "second.mzML: That file could not be opened. It may have been moved or renamed.",
       "third.mzML is already in the workspace.",
     ]);
   });

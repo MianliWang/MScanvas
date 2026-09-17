@@ -96,9 +96,11 @@ test("the hold refuses every target that is not this campaign's own record", () 
   assert.notEqual(escaped.code, 0);
   assert.match(escaped.stderr, /escaped this campaign/u);
 
-  // Inside it, but not a root this campaign created.
-  const foreign = join(EVIDENCE, "not-a-preference-root");
-  mkdirSync(foreign, { recursive: true });
+  // Inside it, but not a root this campaign created. An `mkdtemp` name rather
+  // than a fixed one: this test deletes what it makes, and a fixed name inside
+  // the retained evidence area is a name something else may already own.
+  mkdirSync(EVIDENCE, { recursive: true });
+  const foreign = mkdtempSync(join(EVIDENCE, "not-a-preference-root-"));
   created.push(foreign);
   seedStoredBytes(foreign, RECORD);
   const unowned = run(HOLD, ["-PreferenceRoot", foreign, "-Journal", journal, "-ReleaseSignal", signal]);

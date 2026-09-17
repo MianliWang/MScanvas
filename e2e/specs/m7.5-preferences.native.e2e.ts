@@ -44,7 +44,7 @@ import type { WorkspaceConversionUpdate, WorkspaceRoster } from "../../apps/desk
 import { nativeResourceOrigins } from "../support/nativeResourceOrigins";
 import {
   PREFERENCE_ROOT_VARIABLE, preferenceFile, readStoredRecord, recordViolations, replaced,
-  requireOwnedPreferenceRoot, sameBytes, seedStoredBytes, type StoredRecordFacts,
+  requireOwnedPreferenceRoot, sameBytes, seedStoredBytes, untouched, type StoredRecordFacts,
 } from "../support/m75PreferenceRoot";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
@@ -66,6 +66,11 @@ type Rect = { left: number; top: number; right: number; bottom: number };
 type Metrics = { dpi: number; mainWindow: number; foregroundProcessId: number; executable: string; bounds: { client: Rect; visibleFrameInsideWorkArea: boolean } };
 
 function digest(path: string) { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
+/** The operator's own record, read only, by content rather than by size. */
+function realProfileFacts() {
+  const exists = existsSync(realProfile);
+  return { exists, bytes: exists ? statSync(realProfile).size : null, sha256: exists ? digest(realProfile) : null };
+}
 function saveEvidence() { if (output) writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2)); }
 function record(value: unknown) { evidence.push(value); saveEvidence(); }
 function metrics(): Metrics {
@@ -154,7 +159,10 @@ async function capture(label: string, validate = true) {
       return { left: rect.left, top: rect.top, width: rect.width, height: rect.height,
         insideViewport: rect.top >= 0 && rect.left >= 0 && rect.bottom <= innerHeight + 1 && rect.right <= innerWidth + 1,
         clipped: element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1,
-        text: (element.textContent ?? "").trim(), disabled: (element as HTMLButtonElement).disabled ?? null };
+        text: (element.textContent ?? "").trim(), disabled: (element as HTMLButtonElement).disabled ?? null,
+        // Refused but reachable, which is the state these controls take while
+        // the stored record is still being read.
+        refused: element.getAttribute("aria-disabled") === "true" };
     };
     const shell = document.querySelector(".workbench-shell"), dialog = document.querySelector<HTMLElement>("[data-settings-dialog]");
     return {
@@ -229,6 +237,10 @@ async function capture(label: string, validate = true) {
  */
 async function establish(label: string) {
   launches += 1;
+  // Per launched process, not per worker session: `reloadSession` starts
+  // another application without re-running the configuration's hooks, so this
+  // is the check that covers the relaunches these chains depend on.
+  requireOwnedPreferenceRoot(process.env[PREFERENCE_ROOT_VARIABLE]);
   processId = Number((browser.capabilities as unknown as Record<string, unknown>)["goog:processID"]);
   if (!Number.isSafeInteger(processId) || processId <= 0) throw Error("Missing owned application PID.");
   await browser.$(ENTRY).waitForDisplayed({ timeout: 90_000 });
@@ -347,14 +359,22 @@ async function naturalReturn(label: string) {
 describe("M7.5 native preferences, first-run recovery and bilingual coverage", function () {
   this.bail(true); this.timeout(900_000);
 
-  let profileBefore: { exists: boolean; bytes: number | null };
+  /**
+   * The operator's own record, by content.
+   *
+   * Existence and length would not do. This store writes a fixed-shape record,
+   * so a replacement of one operator's settings with another's is the same
+   * length as what it replaced -- the one file in this campaign that must not
+   * change would have been the only one compared without a digest.
+   */
+  let profileBefore: { exists: boolean; bytes: number | null; sha256: string | null };
 
   before(async () => {
     if (process.env.MSCANVAS_M75_NATIVE_READY !== "true") throw Error("Fresh user M7.5 native readiness is required.");
     if (!input) throw Error("Prebuilt task-owned retained inputs are required.");
     output = mkdtempSync(join(REPO, ".tmp/m75-evidence/native-"));
     writeFileSync(join(output, "owned-run.json"), JSON.stringify({ createdUtc: new Date().toISOString(), purpose: "M7.5 authorized native campaign" }));
-    profileBefore = { exists: existsSync(realProfile), bytes: existsSync(realProfile) ? statSync(realProfile).size : null };
+    profileBefore = realProfileFacts();
     record({ kind: "campaign identity", sourceHead: process.env.MSCANVAS_M75_SOURCE_HEAD, binarySha256: process.env.MSCANVAS_M75_BINARY_SHA,
       harnessSha256: digest(fileURLToPath(import.meta.url)), rootIsolation: "MSCANVAS_E2E_PREFERENCE_ROOT, task-owned",
       realPerUserRecord: { path: realProfile, ...profileBefore },
@@ -369,7 +389,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
 
   after(() => {
     // The one thing a campaign about isolation has to end on.
-    const profileAfter = { exists: existsSync(realProfile), bytes: existsSync(realProfile) ? statSync(realProfile).size : null };
+    const profileAfter = realProfileFacts();
     record({ kind: "real per-user record untouched", before: profileBefore, after: profileAfter });
     expect(profileAfter).toEqual(profileBefore);
     saveEvidence();
@@ -384,7 +404,8 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     const defaults = await capture("01-first-run-defaults");
     expect(defaults.locale).toBe("en");
     expect(defaults.density).toBe("comfortable");
-    expect(defaults.layoutReset?.disabled).toBe(true);
+    expect(defaults.layoutReset?.refused).toBe(true);
+    expect(defaults.layoutReset?.disabled).toBe(false);
 
     // One explicit choice, applied.
     await openSettings();
@@ -424,7 +445,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(layout.json).toEqual({ schemaVersion: 1, appearance: { locale: "zh-CN", density: "compact" },
       layout: { roster: wasOpen ? "hidden" : "shown", details: "automatic" } });
     const committed = await capture("04-panel-committed");
-    expect(committed.layoutReset?.disabled).toBe(false);
+    expect(committed.layoutReset?.refused).toBe(false);
     expect(committed.layoutUnsaved).toBeNull();
     expect((await saves()).at(-1)?.args).toEqual({ request: { layout: { roster: wasOpen ? "hidden" : "shown", details: "automatic" } } });
 
@@ -439,6 +460,32 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     // it, and saved nothing of its own.
     expect(sameBytes(layout, noted("after a restart"))).toBe(true);
     expect(await saves()).toEqual([]);
+
+    // The layout reset, on real Windows, with the keyboard.
+    //
+    // Activating it is what makes it redundant, so this is the control whose
+    // refusal a reader is most likely to meet while standing on it. Pressed
+    // from the keyboard, it commits the defaults, announces what it did, and
+    // keeps the reader where they were -- the repair for that was made against
+    // a browser, and this is the measurement that it holds against a real
+    // window manager.
+    await reveal("[data-layout-reset]");
+    // Focused without clicking, then activated from the keyboard, because the
+    // question is what a keyboard user gets.
+    await browser.execute(() => document.querySelector<HTMLButtonElement>("[data-layout-reset]")?.focus());
+    await browser.keys("Enter");
+    await browser.waitUntil(() => {
+      const json = disk().json as { layout?: unknown } | null;
+      return json !== null && JSON.stringify(json.layout) === JSON.stringify({ roster: "automatic", details: "automatic" });
+    }, { timeout: 30_000, timeoutMsg: "The layout reset did not commit the defaults." });
+    const afterReset = await capture("06b-layout-reset-native");
+    expect(afterReset.layoutRegion).toBe(zh.layoutResetDone);
+    expect(afterReset.layoutReset?.refused).toBe(true);
+    expect(afterReset.layoutReset?.disabled).toBe(false);
+    // Still where the reader left it, rather than on the body with their next
+    // Tab starting from the top of the page.
+    expect(await browser.execute(() => document.activeElement?.hasAttribute("data-layout-reset") === true)).toBe(true);
+    expect(recordViolations(noted("after the layout reset").json)).toEqual([]);
   });
 
   it("leaves the saved file exactly as it found it through Cancel, a refused write and a record it cannot use", async () => {
@@ -452,7 +499,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(draft.locale).toBe("en");
     await press(en.cancel);
     await returned();
-    expect(sameBytes(before, noted("after Cancel"))).toBe(true);
+    expect(untouched(before, noted("after Cancel"))).toEqual({ bytes: true, entries: true, temporaries: [] });
     expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
 
     // Reset, then Cancel. Reset changes the draft only.
@@ -461,9 +508,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await capture("08-reset-draft-only");
     await press(en.cancel);
     await returned();
-    const untouched = noted("after Reset then Cancel");
-    expect(sameBytes(before, untouched)).toBe(true);
-    expect(untouched.temporaries).toEqual([]);
+    expect(untouched(before, noted("after Reset then Cancel"))).toEqual({ bytes: true, entries: true, temporaries: [] });
     expect(await saves()).toEqual([]);
 
     // A refusal from the filesystem itself, on this campaign's own file.
@@ -481,14 +526,17 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
       expect(refused.storageNote?.text).toBe(zh.storageNotSaving);
       // The choices are still on screen, and the dialog is still open.
       expect(refused.dialog).not.toBeNull();
-      expect(sameBytes(before, noted("during a refused write"))).toBe(true);
+      // The record and the directory around it. A publish that was refused
+      // after creating its private sibling would leave the record identical
+      // and the profile dirty, and only one of those is visible in the bytes.
+      expect(untouched(before, noted("during a refused write"))).toEqual({ bytes: true, entries: true, temporaries: [] });
 
       // Retry, while the refusal is still in force.
       await press(zh.saveRetry);
       await browser.waitUntil(async () => (await saves()).length >= 2);
       const retried = await capture("10-retry-refused-again");
       expect(retried.saveFailure?.text).toContain(zh.writeNotPublished);
-      expect(sameBytes(before, disk())).toBe(true);
+      expect(untouched(before, noted("after a refused retry"))).toEqual({ bytes: true, entries: true, temporaries: [] });
 
       // And the session-only way out, which claims nothing about disk.
       await press(zh.saveSessionOnly);
@@ -496,7 +544,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
       const sessionOnly = await capture("11-session-only-applied");
       expect(sessionOnly.density).toBe("comfortable");
       expect(sessionOnly.preferenceRegion).toBe(zh.sessionOnlyApplied);
-      expect(sameBytes(before, noted("after using preferences for this session only"))).toBe(true);
+      expect(untouched(before, noted("after using preferences for this session only"))).toEqual({ bytes: true, entries: true, temporaries: [] });
     } finally {
       await hold.release();
     }
@@ -522,7 +570,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     // show here is that everything is usable.
     expect(recovered.locale).toBe("en");
     expect(recovered.density).toBe("comfortable");
-    expect(recovered.layoutReset?.disabled).toBe(true);
+    expect(recovered.layoutReset?.refused).toBe(true);
     expect(recovered.storageNote).toBeNull();
     // The account of it is in Settings, which is where it can be acted on.
     await openSettings();
@@ -532,7 +580,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await press(en.cancel);
     await returned();
     // Reading it, starting on it and cancelling out of it all left it alone.
-    expect(sameBytes(seeded, noted("after a startup that could not use it"))).toBe(true);
+    expect(untouched(seeded, noted("after a startup that could not use it"))).toEqual({ bytes: true, entries: true, temporaries: [] });
 
     // Only the explicit replacement overwrites it.
     await openSettings();

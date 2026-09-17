@@ -982,7 +982,11 @@ export const en = {
   errorUnexpected: "Something went wrong while talking to the MSCanvas backend.",
   errorPlanMismatch: "The conversion description did not match this request. Describe it again.",
   errorUnknownProblem: "MSCanvas does not recognise this problem: {{code}}",
-  errorReportedAsSent: "What the backend reported, untranslated: {{summary}}",
+  // The boundary's own words, which in an English session are already in the
+  // reader's language: there is nothing to explain and a provenance label
+  // would only displace the problem. Simplified Chinese keeps the label,
+  // because there it is the one thing that says why these words are English.
+  errorReportedAsSent: "{{summary}}",
 
   // --- M7.5: the boundary's owned error sentences, moved into the bundle.
   // Each English value is the sentence Rust already sent for that code, so an
@@ -1053,6 +1057,24 @@ export const en = {
   errIncompletePreviewResult: "The preview did not return every requested result.",
   errUnexpectedPreviewResult: "The preview returned a result MSCanvas did not request.",
   errNonFiniteValue: "The backend result contained a value that cannot be displayed.",
+  // Owned sentences that were classified as ones this build does not word,
+  // when it words every one of them -- in Rust, in English, with no
+  // interpolated evidence. A wrapper marking them as untranslated original
+  // told a Chinese reader why the words were English; it did not give them
+  // words they could read, and this build has them.
+  errSourceChangedDuringPreview: "The file changed while it was being read, so the preview was discarded rather than combining results from before and after the change.",
+  errSourceChangedSincePreview: "The file has changed since it was opened, so this spectrum was not shown beside metadata that no longer describes it. Open the file again to continue.",
+  errInstallationChangedSincePreview: "The ProteoWizard installation changed after this file was opened, so this spectrum was not compared against a table that a different installation produced. Open the file again to continue.",
+  errConfigurationWithoutBinding: "MSCanvas has not established which ProteoWizard installation it is using, so there are no conversion settings to describe yet.",
+  errSpectrumIdentityConflict: "The spectrum list and this spectrum disagree about which scan that row is, so MSCanvas did not show one beside the other.",
+  errSpectrumFactsConflict: "The spectrum list and this spectrum disagree about what that row measures, so MSCanvas did not show one beside the other.",
+  errDropCandidateChanged: "That file changed while MSCanvas was adding the dropped items, so it was not added. Drop it again to inspect what is there now.",
+  errFolderCandidateChanged: "That file changed while MSCanvas was scanning the folder, so it was not added. Scan the folder again to pick up what is there now.",
+  errSciexCompanionAlone: "That is the companion half of a SCIEX WIFF acquisition. Select the .wiff file instead; MSCanvas adds its matching .wiff.scan with it.",
+  errProviderBuildNotEvidenced: "MSCanvas has no conversion evidence for that acquisition format on the installed ProteoWizard build.",
+  errSpectrumProjectionStale: "That spectrum is no longer the one MSCanvas has loaded, so nothing was drawn. Select the spectrum again.",
+  errSpectrumProjectionNoDomain: "This spectrum has no m/z range MSCanvas can navigate without changing the measurement, so it has no viewport. Its data can still be exported as CSV or TSV.",
+  errSpectrumProjectionWindowRefused: "That m/z range is not one this spectrum has, so nothing was drawn. Reset the range to see the whole spectrum.",
 
   // --- M7.5 repair pass: the storage states and outcomes the first pass
   // reported with the wrong sentence or with none at all.

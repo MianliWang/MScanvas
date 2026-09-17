@@ -941,9 +941,11 @@ describe("stopping a running conversion queue", () => {
     await waitFor(() => {
       expect(within(panel).getByText("Queue stopped")).toBeVisible();
     });
-    // An unmapped code: kept whole, and labelled as untranslated original.
+    // An unmapped code: the boundary's words are kept whole. This session
+    // reads English, which is the language they are written in, so they are
+    // shown as they are -- the provenance label belongs to a session whose
+    // language they are not, and `ownedErrorMessages.test.ts` holds that rule.
     expect(within(panel).getByText(/MSCanvas cannot write to that folder\./u)).toBeVisible();
-    expect(within(panel).getByText(/untranslated/u)).toBeVisible();
     await waitFor(() => {
       expect(liveRegion()).toContain(
         "Queue stopped. 1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run, 0 skipped by you.",

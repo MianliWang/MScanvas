@@ -52,14 +52,27 @@ foreach ($candidate in @($root, [IO.Path]::GetFullPath($Journal), [IO.Path]::Get
 if ((Split-Path -Leaf $root) -notlike 'preference-root-*') {
   throw 'Only a root this campaign created may be held.'
 }
+# This helper writes exactly one thing -- its journal -- and that may never be
+# the record. Checked rather than left to the caller: the containment rules
+# above would accept a journal path that *is* the published name, and
+# Save-Record would then truncate the record being held open.
+foreach ($taskArtifact in @([IO.Path]::GetFullPath($Journal), [IO.Path]::GetFullPath($ReleaseSignal))) {
+  $taskLeaf = Split-Path -Leaf $taskArtifact
+  if ($taskLeaf -eq 'ui-preferences.json' -or $taskLeaf.StartsWith('.mscanvas-ui-preferences-')) {
+    throw 'A hold artifact may not be named like a preference record or its private sibling.'
+  }
+}
 if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw 'The task-owned preference root does not exist.' }
 $target = Join-Path $root 'ui-preferences.json'
 if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
   throw 'The published preference record must already exist; this helper never creates one.'
 }
-# No reparse traversal, from the held file up to the evidence area.
+# No reparse traversal, from the held file all the way to the drive root.
+# The containment check above compares strings, and a junction anywhere
+# above the evidence area -- at .tmp, or at the repository itself -- would
+# make that comparison say "inside" about somewhere else entirely.
 $node = Get-Item -LiteralPath $target -Force
-while ($null -ne $node -and $node.FullName.TrimEnd('\').Length -ge $evidence.Length) {
+while ($null -ne $node) {
   if (($node.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'No reparse traversal in the preference hold.' }
   $node = if ($node -is [IO.DirectoryInfo]) { $node.Parent } else { $node.Directory }
 }

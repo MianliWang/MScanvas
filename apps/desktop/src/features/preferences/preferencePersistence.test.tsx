@@ -413,9 +413,13 @@ describe("durable UI preferences", () => {
     });
     await screen.findByText("No ProteoWizard installation was found");
     // The read is still outstanding, so the panels are not yet acting on
-    // preferences nobody has seen. Checked before the modal opens, because a
-    // modal hides the rest of the application from the accessibility tree.
-    expect(rosterToggle()).toBeDisabled();
+    // preferences nobody has seen. Refused rather than removed from the tab
+    // order: a keyboard user can still reach the control and be told why it is
+    // dimmed. Checked before the modal opens, because a modal hides the rest
+    // of the application from the accessibility tree.
+    expect(rosterToggle()).toHaveAttribute("aria-disabled", "true");
+    expect(rosterToggle()).toBeEnabled();
+    expect(rosterToggle()).toHaveAttribute("title", en.panelsLoading);
     const loading = openSettings();
     expect(within(loading).getByText(en.storageLoading)).toBeVisible();
     expect(within(loading).getByRole("radio", { name: en.english })).toBeDisabled();
@@ -570,13 +574,14 @@ describe("durable UI preferences", () => {
     await waitFor(() => expect(preferences.stored()?.layout).toEqual({ roster: "automatic", details: "automatic" }));
     expect(shell()).toHaveAttribute("data-roster-open", "true");
     // Nothing left to reset, so the control stands down -- and stays in the
-    // document, because activating it is what makes it redundant and a control
-    // that removed itself would take the keyboard with it.
-    await waitFor(() => expect(reset).toBeDisabled());
+    // document and in the tab order, because activating it is what makes it
+    // redundant. A `disabled` control would be blurred by the browser and drop
+    // the reader at the top of the page; this one keeps them where they were
+    // and says why it is dimmed.
+    await waitFor(() => expect(reset).toHaveAttribute("aria-disabled", "true"));
     expect(reset.isConnected).toBe(true);
     expect(reset).toHaveAttribute("title", en.layoutNothingToReset);
-    // And the keyboard is on the adjacent durable control rather than the body.
-    await waitFor(() => expect(rosterToggle()).toHaveFocus());
+    expect(reset).toHaveFocus();
     // The one panel action with nothing left on screen to read says so.
     expect(document.querySelector('[data-live-region="layout"]')).toHaveTextContent(en.layoutResetDone);
   });

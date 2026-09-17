@@ -49,11 +49,12 @@ All notable changes will be documented here once versioned releases begin.
   than sending you to repair an installation that is fine.
 
 - **The whole interface reads in Simplified Chinese.** The installed-backend
-  banner, the inspector panel and sixty-three of the explanations behind a
+  banner, the inspector panel and seventy-six of the explanations behind a
   refused action were English in every session until now, whatever language you
-  had chosen. A small number of rare internal faults are still shown in the
-  words the backend sent, and are now labelled as untranslated original instead
-  of being passed off as translated.
+  had chosen. Nine rare internal faults are still shown in the words the
+  backend sent, because each of them quotes a folder, a count or a process
+  detail that a paraphrase would lose; in a Chinese session they are labelled
+  as the backend's untranslated original rather than passed off as translated.
 
 - **What a conversion produced, said in five separate answers.** Every settled
   row in the queue offers `Details`. It says whether a converter ran and how it

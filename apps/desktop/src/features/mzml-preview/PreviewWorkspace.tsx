@@ -783,7 +783,7 @@ export function PreviewWorkspace() {
             ) : preview.status === "failed" ? (
               <div className="empty-state">
                 <strong>{ownedErrorMessage(preview.error, t)}</strong>
-                {preview.error.detail === null ? null : <span>{preview.error.detail}</span>}
+                {ownedErrorDetail(preview.error, t) === null ? null : <span>{ownedErrorDetail(preview.error, t)}</span>}
                 <div className="empty-state-actions">
                   {/* Reading is idempotent, so a retry is offered when the
                       backend said the failure was retryable — and it repeats

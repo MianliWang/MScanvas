@@ -1033,6 +1033,24 @@ export const zhCN = {
   errIncompletePreviewResult: "预览未返回所有请求的结果。",
   errUnexpectedPreviewResult: "预览返回了 MSCanvas 未请求的结果。",
   errNonFiniteValue: "后端结果中包含无法显示的数值。",
+  // Owned sentences that were classified as ones this build does not word,
+  // when it words every one of them -- in Rust, in English, with no
+  // interpolated evidence. A wrapper marking them as untranslated original
+  // told a Chinese reader why the words were English; it did not give them
+  // words they could read, and this build has them.
+  errSourceChangedDuringPreview: "读取过程中文件发生了变化，因此预览已被丢弃，而不是把变化前后的结果混在一起。",
+  errSourceChangedSincePreview: "文件自打开以来已发生变化，因此此谱图未与不再描述它的元数据并列显示。请重新打开该文件以继续。",
+  errInstallationChangedSincePreview: "此文件打开之后 ProteoWizard 安装发生了变化，因此未将此谱图与另一安装生成的谱图列表进行比对。请重新打开该文件以继续。",
+  errConfigurationWithoutBinding: "MSCanvas 尚未确定它正在使用哪个 ProteoWizard 安装，因此暂时没有可描述的转换设置。",
+  errSpectrumIdentityConflict: "谱图列表与此谱图对该行属于哪次扇描的判断不一致，因此 MSCanvas 没有将两者并列显示。",
+  errSpectrumFactsConflict: "谱图列表与此谱图对该行测量内容的判断不一致，因此 MSCanvas 没有将两者并列显示。",
+  errDropCandidateChanged: "MSCanvas 正在添加拖入项时该文件发生了变化，因此未被添加。请再次拖入以查看它现在的内容。",
+  errFolderCandidateChanged: "MSCanvas 正在扇描该文件夹时该文件发生了变化，因此未被添加。请重新扇描文件夹以获取它现在的内容。",
+  errSciexCompanionAlone: "这是 SCIEX WIFF 采集的配套文件。请改为选择 .wiff 文件；MSCanvas 会连同其匹配的 .wiff.scan 一起添加。",
+  errProviderBuildNotEvidenced: "对于已安装的 ProteoWizard 构建，MSCanvas 没有该采集格式的转换证据。",
+  errSpectrumProjectionStale: "该谱图已不是 MSCanvas 当前加载的谱图，因此未绘制任何内容。请重新选择谱图。",
+  errSpectrumProjectionNoDomain: "此谱图没有 MSCanvas 可以在不改变测量值的前提下导航的 m/z 范围，因此没有视口。其数据仍可导出为 CSV 或 TSV。",
+  errSpectrumProjectionWindowRefused: "该 m/z 范围不是此谱图拥有的范围，因此未绘制任何内容。请重置范围以查看整张谱图。",
 
   // --- M7.5 repair pass: the storage states and outcomes the first pass
   // reported with the wrong sentence or with none at all.

@@ -8,13 +8,20 @@ describe("owned errors and original evidence", () => {
     const t = bindUiMessages(createUiRuntime().instance.getFixedT(locale, "ui"));
     const raw: PreviewError = { kind: "provider_specific", summary: "Provider text Ω <unmodified>", detail: "sample 名称.raw: third-party diagnostic", retryable: true };
     // A code this build has no sentence for. The words are kept whole -- byte
-    // for byte, provider glyphs included -- and *labelled* as untranslated
-    // original, so a Chinese reader is told why they are reading English
-    // instead of being handed it as though it were coverage.
+    // for byte, provider glyphs included. In Simplified Chinese they are
+    // *labelled* as untranslated original, so a reader is told why they are
+    // reading English instead of being handed it as though it were coverage;
+    // in English the words are already the reader's language, so a provenance
+    // label would explain nothing and would only displace the problem.
     const unknown = ownedErrorMessage(raw, t);
     expect(unknown).toContain(raw.summary);
     expect(unknown).toBe(t("errorReportedAsSent", { summary: raw.summary }));
-    expect(unknown).not.toBe(raw.summary);
+    if (locale === "en") {
+      expect(unknown).toBe(raw.summary);
+    } else {
+      expect(unknown).not.toBe(raw.summary);
+      expect(unknown.startsWith(raw.summary)).toBe(false);
+    }
     expect(ownedErrorDetail(raw, t)).toBe(raw.detail);
     // With no words at all there is nothing to label, so the code is named.
     expect(ownedErrorMessage({ ...raw, summary: "   " }, t)).toBe(
@@ -56,20 +63,6 @@ const SHOWN_AS_UNTRANSLATED_ORIGINAL: readonly string[] = [
   "folder_scan_unreadable",
   "file_unreadable",
   "spectrum_failed",
-  // Names a specific reading, receipt or identity this build does not word.
-  "configuration_without_a_binding",
-  "provider_build_not_evidenced",
-  "installation_changed_since_preview",
-  "source_changed_during_preview",
-  "source_changed_since_preview",
-  "drop_candidate_changed",
-  "folder_candidate_changed",
-  "sciex_companion_selected_alone",
-  "spectrum_facts_conflict",
-  "spectrum_identity_conflict",
-  "spectrum_projection_no_domain",
-  "spectrum_projection_stale",
-  "spectrum_projection_window_refused",
   // Test seams. Not reachable from any shipped path.
   "synthetic_drop_failure",
   "test_exhausted",

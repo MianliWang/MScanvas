@@ -145,8 +145,21 @@ export const config: WebdriverIO.Config = {
       ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_DRIVER_PORT)],
       { stdio: "ignore", windowsHide: true },
     );
+    // What the child did, not only what the port answers. A driver left over
+    // from an aborted run can hold the port and answer it, and this spawn
+    // would then exit unable to bind while the loop below saw "reachable" and
+    // handed the session to a process whose environment is not this run's.
+    let failed: Error | undefined;
+    driver.once("error", (cause: Error) => { failed = cause; });
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
+      if (failed !== undefined) throw failed;
+      if (driver.exitCode !== null) {
+        throw new Error(
+          `tauri-driver exited with ${driver.exitCode} instead of listening on ${DRIVER_PORT}. ` +
+            "A driver from an earlier run may already hold that port; stop it rather than reusing it.",
+        );
+      }
       if (await reachable(DRIVER_PORT)) {
         return;
       }
@@ -163,9 +176,11 @@ export const config: WebdriverIO.Config = {
       if (!M75_CAMPAIGN) {
         throw new Error("Fresh user M7.5 native readiness is required before application session creation.");
       }
-      // Again per session, because `reloadSession` launches another application
-      // process and the binding is what keeps it out of the real profile. A
-      // missing or unusable root refuses the campaign; it never falls back.
+      // Once per worker session. `reloadSession` starts another application
+      // without re-running this hook, so it is the spec's own per-launch check
+      // that covers a relaunch -- this one covers the session the worker
+      // creates. A missing or unusable root refuses the campaign either way;
+      // neither ever falls back.
       requireOwnedPreferenceRoot(process.env[PREFERENCE_ROOT_VARIABLE]);
     }
     if (specs.some(spec => spec.replaceAll("\\", "/").endsWith("/m7.4-conversion-figures.native.e2e.ts")) &&

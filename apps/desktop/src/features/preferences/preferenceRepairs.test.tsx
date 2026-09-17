@@ -261,13 +261,16 @@ describe("a read that never arrived", () => {
     const { preferences } = mount({ deferred: true });
     await vi.waitFor(() => expect(document.querySelector(".workbench-shell")).not.toBeNull());
     // Gated to begin with, which is the contract: no default is written and no
-    // editor is enabled before the read resolves.
-    expect(rosterToggle()).toBeDisabled();
+    // editor acts before the read resolves. The control is refused rather than
+    // taken out of the tab order, so the reason is reachable without a pointer.
+    expect(rosterToggle()).toHaveAttribute("aria-disabled", "true");
+    expect(rosterToggle()).toHaveAttribute("title", en.panelsLoading);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(10_500); });
     // Bounded. Settings and the toggles are usable again, on the defaults, with
     // an accurate reason -- rather than inert for the rest of the session.
     expect(rosterToggle()).toBeEnabled();
+    expect(rosterToggle()).not.toHaveAttribute("aria-disabled");
     const dialog = openSettings();
     expect(within(dialog).getByText(en.storageReadTimedOut)).toBeVisible();
     expect(within(dialog).getByRole("radio", { name: en.english })).toBeEnabled();
@@ -369,14 +372,14 @@ describe("the panel reset and its own control", () => {
     await waitFor(() => expect(reset).toBeEnabled());
     reset.focus();
     fireEvent.click(reset);
-    // Refused rather than removed -- activating it is what makes it redundant
-    // -- and the keyboard goes to the adjacent durable control. A browser
-    // blurs a control it has just disabled, so staying mounted is not on its
-    // own enough: a keyboard user would be left on the body with their next
-    // Tab starting from the top of the page.
-    await waitFor(() => expect(reset).toBeDisabled());
+    // Refused rather than removed, and refused in a way that keeps the reader
+    // where they are: activating it is what makes it redundant, and a browser
+    // blurs a control it has just `disabled`, which would leave a keyboard
+    // user on the body with their next Tab starting from the top of the page.
+    // `aria-disabled` keeps the focus and still announces the state.
+    await waitFor(() => expect(reset).toHaveAttribute("aria-disabled", "true"));
     expect(reset.isConnected).toBe(true);
-    await waitFor(() => expect(rosterToggle()).toHaveFocus());
+    expect(reset).toHaveFocus();
     // The one panel action with nothing left on screen to read.
     expect(layoutRegion()).toHaveTextContent(en.layoutResetDone);
   });

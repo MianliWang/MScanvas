@@ -64,7 +64,7 @@ Add-Type -Namespace M75Activate -Name Native -MemberDefinition @'
   public sealed class Activation {
     public int clickX, clickY, pointOwnerProcessId, captionHitTest, cursorEvents;
     public long pointWindow;
-    public bool topmostApplied, clicked, topmostCleared, cursorRestored;
+    public bool topmostApplied, clicked, topmostCleared, cursorRestored, topmostAfter;
   }
 
   /// One click on the caption of exactly this window, and nothing else.
@@ -122,8 +122,11 @@ Add-Type -Namespace M75Activate -Name Native -MemberDefinition @'
       SetThreadDpiAwarenessContext(previous);
     }
     if (!result.topmostCleared) throw new InvalidOperationException("The owned window could not be returned to ordinary Z order.");
-    // WS_EX_TOPMOST, read back rather than assumed.
-    if ((GetWindowLong(window, -20) & 0x00000008) != 0) throw new InvalidOperationException("The owned window is still topmost.");
+    // WS_EX_TOPMOST, read back and reported. The throw is the guarantee; the
+    // field is what a reader of the evidence can check it against, so it holds
+    // the reading rather than a constant that could not be anything else.
+    result.topmostAfter = (GetWindowLong(window, -20) & 0x00000008) != 0;
+    if (result.topmostAfter) throw new InvalidOperationException("The owned window is still topmost.");
     return result;
   }
 '@
@@ -162,7 +165,7 @@ if ($after.minimized -or $after.maximized -or
   method = 'temporary HWND_TOPMOST; one WM_NCHITTEST-confirmed caption SendInput click; HWND_NOTOPMOST'
   activation = $activation
   foregroundProcessId = $after.foregroundProcessId
-  topmostAfter = $false
+  topmostAfter = $activation.topmostAfter
   activatedUtc = [DateTime]::UtcNow.ToString('o')
   before = $before
   after = $after

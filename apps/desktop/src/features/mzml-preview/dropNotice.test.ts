@@ -57,7 +57,10 @@ describe("drop result notice", () => {
     expect(notice.message).toBe(
       "No supported mzML files were found in the dropped items.",
     );
-    expect(notice.details).toEqual(["notes.txt: Only mzML files are supported."]);
+    // The refusal reads in this build's own words for the code, not in the
+    // boundary's -- which is what makes the same line Chinese in a Chinese
+    // session instead of English with a Chinese name in front of it.
+    expect(notice.details).toEqual(["notes.txt: MSCanvas opens .mzML files in this version."]);
   });
 
   it("distinguishes an incomplete no-add result and names only aggregate causes", () => {

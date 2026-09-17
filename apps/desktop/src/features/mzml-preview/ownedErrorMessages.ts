@@ -27,6 +27,22 @@ const MESSAGE = {
   // in a Chinese session. `unexpected_error` is this side's own normalization
   // of anything thrown across the boundary; the plan mismatch is the reply
   // guard's.
+  // Owned sentences, by code. Each is fixed copy this build authors in Rust
+  // with nothing interpolated into it, so each has its own resource here
+  // rather than being handed over as the boundary wrote it.
+  source_changed_during_preview: "errSourceChangedDuringPreview",
+  source_changed_since_preview: "errSourceChangedSincePreview",
+  installation_changed_since_preview: "errInstallationChangedSincePreview",
+  configuration_without_a_binding: "errConfigurationWithoutBinding",
+  spectrum_identity_conflict: "errSpectrumIdentityConflict",
+  spectrum_facts_conflict: "errSpectrumFactsConflict",
+  drop_candidate_changed: "errDropCandidateChanged",
+  folder_candidate_changed: "errFolderCandidateChanged",
+  sciex_companion_selected_alone: "errSciexCompanionAlone",
+  provider_build_not_evidenced: "errProviderBuildNotEvidenced",
+  spectrum_projection_stale: "errSpectrumProjectionStale",
+  spectrum_projection_no_domain: "errSpectrumProjectionNoDomain",
+  spectrum_projection_window_refused: "errSpectrumProjectionWindowRefused",
   unexpected_error: "errorUnexpected",
   conversion_plan_mismatch: "errorPlanMismatch",
   // The boundary's own owned sentences, by code. Added in M7.5: before this

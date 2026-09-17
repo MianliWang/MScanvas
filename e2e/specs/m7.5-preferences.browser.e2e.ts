@@ -101,6 +101,10 @@ async function capture(label: string, expectedDpr?: number) {
         text: (element.textContent ?? "").trim(),
         fontSize: style.fontSize,
         disabled: (element as HTMLButtonElement).disabled ?? null,
+        // The refusal that keeps a control reachable. `disabled` would take it
+        // out of the tab order and put its reason behind a pointer.
+        refused: element.getAttribute("aria-disabled") === "true",
+        focusable: (element as HTMLButtonElement).disabled === false,
       };
     };
     const dialog = document.querySelector<HTMLElement>("[data-settings-dialog]");
@@ -125,16 +129,31 @@ async function capture(label: string, expectedDpr?: number) {
       // The help's scroll owner. The notices area is a bounded scrollport by
       // design, so "the details element is not clipped" says nothing about
       // whether the reader can see what they opened.
+      //
+      // Two different questions, because they have different answers at
+      // different heights. Whether it fits is the one that matters where there
+      // is room. Where there is not -- a 640px window cannot show eight
+      // paragraphs at once whatever the bound is -- the question is whether
+      // scrolling reaches the end of it, which is measured by actually
+      // scrolling to the bottom and looking, then putting the scroll back.
       helpScrollport: (() => {
         const help = document.querySelector("[data-backend-help]");
         const port = help?.closest(".shell-notices") ?? null;
         if (help === null || port === null) return null;
         const outer = port.getBoundingClientRect();
         const inner = help.getBoundingClientRect();
+        const fits = inner.bottom <= outer.bottom + 1;
+        const restore = port.scrollTop;
+        port.scrollTop = port.scrollHeight;
+        const scrolled = help.getBoundingClientRect(), after = port.getBoundingClientRect();
+        port.scrollTop = restore;
         return {
           scrollHeight: port.scrollHeight, clientHeight: port.clientHeight,
-          helpFitsWithoutScrolling: inner.bottom <= outer.bottom + 1,
-          reachableByScrolling: port.scrollHeight - port.clientHeight >= 0,
+          scrollable: port.scrollHeight > port.clientHeight + 1,
+          helpFitsWithoutScrolling: fits,
+          // The end of what the reader opened, after scrolling as far as the
+          // port goes. False is content cut off with no way to reach it.
+          endReachable: scrolled.bottom <= after.bottom + 1,
         };
       })(),
       storageNote: box(document.querySelector("[data-storage-note]")),
@@ -369,18 +388,24 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     // Gated: no default is written and no editor is enabled before the read
     // resolves. Every refused control says why.
     const loading = await capture("11-startup-gated");
-    expect(loading.layoutReset?.disabled).toBe(true);
+    expect(loading.layoutReset?.refused).toBe(true);
+    expect(loading.layoutReset?.focusable).toBe(true);
     const toggles = await browser.execute(() => [...document.querySelectorAll(".workbench-global-actions button")]
-      .map(control => ({ text: (control.textContent ?? "").trim(), disabled: (control as HTMLButtonElement).disabled, title: control.getAttribute("title") })));
+      .map(control => ({ text: (control.textContent ?? "").trim(), disabled: (control as HTMLButtonElement).disabled,
+        refused: control.getAttribute("aria-disabled") === "true", title: control.getAttribute("title") })));
     evidence.push({ kind: "startup gating", toggles });
-    expect(toggles.filter(control => control.disabled).every(control => control.title === en.panelsLoading)).toBe(true);
+    // Every refused control says why, and can be reached to be told: a
+    // `disabled` button is not in the tab order, so a tooltip on one is a
+    // reason only a pointer user can read.
+    expect(toggles.filter(control => control.refused).length).toBeGreaterThan(0);
+    expect(toggles.filter(control => control.refused).every(control => control.title === en.panelsLoading && !control.disabled)).toBe(true);
     expect((await ipcCalls()).filter(call => call.command === "save_ui_preferences")).toEqual([]);
 
     await releaseInvokeHold("load_ui_preferences");
     await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
     const settled = await capture("12-startup-settled");
     expect(settled.density).toBe("compact");
-    expect(settled.layoutReset?.disabled).toBe(true);
+    expect(settled.layoutReset?.refused).toBe(true);
   });
 
   it("commits a panel arrangement, reports one that would not survive, and resets it", async () => {
@@ -392,7 +417,7 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await browser.$(`button=${en.rosterToggle}`).click();
     await browser.waitUntil(() => browser.execute(() => document.querySelector(".workbench-shell")?.getAttribute("data-roster-open") === "false"));
     const committed = await capture("13-roster-hidden-committed");
-    expect(committed.layoutReset?.disabled).toBe(false);
+    expect(committed.layoutReset?.refused).toBe(false);
     const layoutCalls = (await ipcCalls()).filter(call => call.command === "save_ui_preferences");
     expect(layoutCalls.at(-1)?.args).toEqual({ request: { layout: { roster: "hidden", details: "automatic" } } });
 
@@ -452,6 +477,7 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       // What the reader opened is visible without having to discover that the
       // notices area scrolls.
       expect(opened.helpScrollport?.helpFitsWithoutScrolling).toBe(true);
+      expect(opened.helpScrollport?.endReachable).toBe(true);
       expect(opened.help?.text).toContain("Windows 11 25H2 x64");
       expect(opened.help?.text).toContain(en.backendHelpSessionScope);
     }
@@ -503,11 +529,15 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     // value exists. Named sentences rather than a heuristic: each is a value
     // this build owns, each has a translation, and each has reached a Chinese
     // session in English at some point in this milestone.
+    // Only sentences this session can actually render: naming an error
+    // sentence here would assert the absence of something the scenario has no
+    // way to produce. The boundary errors are swept in their own case below,
+    // where one is on screen.
     const english = [
       en.backendMissing, en.backendNotFound, en.backendHelpProvider,
       en.summaryRun, en.summaryRetentionTime, en.summaryTiming, en.summaryNotMeasured,
-      en.errorUnexpected, en.rosterToggle, en.layoutReset, en.settings,
-      "(unit not reported)", "Other", "bytes",
+      en.rosterToggle, en.layoutReset, en.settings, en.viewerData,
+      "(unit not reported)",
     ].filter(sentence => (state.bodyText ?? "").includes(sentence));
     evidence.push({ kind: "english still reachable in a Chinese session", english });
     expect(english).toEqual([]);
@@ -528,6 +558,20 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     // advisory in the console proves.
     const advisories = (await consoleEntries()).filter(entry => entry.text.startsWith(REDUCED_MOTION_ADVISORY));
     evidence.push({ kind: "reduced motion reached the animation library", count: advisories.length });
+
+    // The help, at the shortest viewport this milestone supports. A 640px
+    // window cannot show eight paragraphs at once whatever the bound is, so
+    // the requirement here is that the end of what the reader opened can be
+    // reached -- not that it all fits.
+    await browser.$("[data-backend-help] summary").click();
+    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === true));
+    const narrowHelp = await capture("20b-narrow-help-open");
+    expect(narrowHelp.helpOpen).toBe(true);
+    expect(narrowHelp.help?.clipped).toBe(false);
+    expect(narrowHelp.helpScrollport?.endReachable).toBe(true);
+    expect(narrowHelp.help?.text).toContain(en.backendHelpSessionScope);
+    await browser.$("[data-backend-help] summary").click();
+    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === false));
     expect(advisories.length).toBeGreaterThan(0);
     // Nothing animates into place at this setting.
     expect(narrow.rosterOpen).toBe("false");

@@ -561,6 +561,10 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
    * honoured. One press, one publish, in either mode.
    */
   const movePanels = useCallback((action: PanelAction) => {
+    // Refused while the stored record is still being read, so that the
+    // interface's own dimming is not the only thing standing between a click
+    // and a layout committed over a record nobody has seen yet.
+    if (storage.status === "loading") return;
     const next = panelReducer(panelStateRef.current, action);
     panelStateRef.current = next;
     setPanelState(next);
@@ -570,7 +574,7 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
     // `aria-expanded`, which is the platform's job rather than a region's.
     setLayoutAnnouncement(action.type === "reset" ? "reset" : null);
     if (commits(action)) commitLayout(next.requested);
-  }, [commitLayout]);
+  }, [commitLayout, storage.status]);
 
   const present = useMemo(() => presentPanels(panelState, fit), [panelState, fit]);
 

@@ -11,7 +11,8 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 
 import {
@@ -29,8 +30,12 @@ import {
 } from "./m75PreferenceRoot";
 
 const scratch = mkdtempSync(join(tmpdir(), "m75-helper-"));
+const REPOSITORY = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+/** Everything this file creates inside the repository, removed at the end. */
+const created: string[] = [];
 after(() => {
   rmSync(scratch, { recursive: true, force: true });
+  for (const path of created) rmSync(path, { recursive: true, force: true });
 });
 
 function root(label: string): string {
@@ -56,9 +61,21 @@ test("refuses every binding a campaign must not run on", () => {
   assert.equal(PREFERENCE_ROOT_VARIABLE, "MSCANVAS_E2E_PREFERENCE_ROOT");
 });
 
-test("accepts only a directory that already exists", () => {
-  const owned = root("accepted");
+test("accepts only a directory this campaign created, inside its own evidence area", () => {
+  // An existing directory is not enough. The application writes into whatever
+  // this returns, and `seedStoredBytes` writes fault fixtures there, so a
+  // binding that pointed somewhere real would send both somewhere real.
+  const elsewhere = root("outside-the-evidence-area");
+  assert.throws(() => requireOwnedPreferenceRoot(elsewhere), /inside this campaign's own evidence area/u);
+
+  const owned = createOwnedPreferenceRoot(REPOSITORY, "accepted");
+  created.push(owned);
   assert.equal(requireOwnedPreferenceRoot(owned), owned);
+
+  // Inside the evidence area but not one of this campaign's roots.
+  const foreign = mkdtempSync(join(REPOSITORY, ".tmp/m75-evidence", "not-a-root-"));
+  created.push(foreign);
+  assert.throws(() => requireOwnedPreferenceRoot(foreign), /preference-root-\* directory/u);
 });
 
 test("creates a root inside the repository's own scratch, and a fresh one each time", () => {
@@ -66,12 +83,17 @@ test("creates a root inside the repository's own scratch, and a fresh one each t
   mkdirSync(repository, { recursive: true });
   const first = createOwnedPreferenceRoot(repository, "chain-one");
   const second = createOwnedPreferenceRoot(repository, "chain-one");
+  created.push(first, second);
   assert.notEqual(first, second);
-  for (const created of [first, second]) {
-    assert.equal(requireOwnedPreferenceRoot(created), created);
-    assert.match(created.replaceAll("\\", "/"), /\/\.tmp\/m75-evidence\/preference-root-chain-one-/u);
+  for (const made of [first, second]) {
+    assert.match(made.replaceAll("\\", "/"), /\/\.tmp\/m75-evidence\/preference-root-chain-one-/u);
     // Empty, which is what a clean isolated profile is.
-    assert.deepEqual(readStoredRecord(created).entries, []);
+    assert.deepEqual(readStoredRecord(made).entries, []);
+    // Named like one of this campaign's roots, and still refused: the binding
+    // is anchored to this repository's own evidence area rather than to
+    // whatever directory was passed in, so a root made under some other tree
+    // cannot be bound by naming it correctly.
+    assert.throws(() => requireOwnedPreferenceRoot(made), /inside this campaign's own evidence area/u);
   }
   assert.throws(() => createOwnedPreferenceRoot("relative", "x"), /absolute/u);
 });

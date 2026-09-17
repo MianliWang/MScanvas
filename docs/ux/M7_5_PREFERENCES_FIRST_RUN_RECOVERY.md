@@ -124,8 +124,11 @@ any Rust line naming the module, its binder or the variable sits outside the
 `cfg` that gates it, or if the name appears in the production frontend at all. A
 byte scan of two binaries built from the same tree finds the name once in the
 `e2e` build and not at all in an ordinary debug build, which keeps its string
-literals. And the native configuration refuses the campaign before a driver is
-spawned, and again for every session, when the binding is absent or unusable.
+literals. And the campaign refuses to run without a usable binding: the
+configuration checks it before a driver is spawned and again for the session
+its worker creates, and the spec checks it once more for every application
+process it launches — which is what covers a restart, since reloading a session
+does not re-run a configuration hook.
 
 ## Ordering and lanes
 
@@ -255,16 +258,28 @@ shape of it:
   the acquisition spells them; an MS level and a retention time are
   measurements; `Not reported` stays the unreported state rather than becoming a
   zero in either language.
-- Sixty-three owned boundary error sentences. `ownedErrorMessage` used to fall
+- Seventy-six owned boundary error sentences. `ownedErrorMessage` used to fall
   through to `error.summary`, and every summary is authored in English, so those
   codes had been reaching Chinese sessions in English. The English values are
   the boundary's own words copied exactly.
+
+  Thirteen of the seventy-six were first classified as sentences this build does
+  not word and left to the wrapper. They were the wrong side of that line: each
+  is fixed copy MSCanvas itself authors in Rust with nothing interpolated into
+  it -- a spectrum list disagreeing with a spectrum, a file that changed while
+  it was being read, an m/z range a spectrum does not have -- so each now has
+  its own resource. The affected-delta review found that misclassification.
 - The storage and preference states M7.5 adds: 39 strings.
 
-Twenty-four boundary codes keep the boundary's own words through a wrapper that
-labels them as untranslated original. Nine interpolate evidence a paraphrase
-would lose — a folder, a count, a process detail — thirteen name a specific
-reading, receipt or identity this build does not word, and two are test seams.
+Eleven boundary codes keep the boundary's own words. Nine interpolate evidence a
+paraphrase would lose — a folder, a count, a process detail — and two are test
+seams. In a Simplified Chinese session those nine are wrapped in a label that
+says they are the boundary's untranslated original, which is the one thing that
+explains why they are in English. In an English session there is nothing to
+explain, so the words are shown as written: a provenance label there would name
+nothing the reader can use and would displace the problem from the start of the
+sentence.
+
 This is a declared limit, not a closure: it is listed with reasons in
 `ownedErrorMessages.test.ts`, and `check_repo.py` fails if a new boundary code
 appears without either a resource or an entry there, or if an entry names a code
@@ -311,8 +326,9 @@ Installed-candidate qualification on the target belongs to M7.6.
 - Panel dimensions are inapplicable, as recorded above, not deferred.
 - No migration path exists or is needed: no earlier schema was ever published,
   and a later one belongs to the build that wrote it.
-- The twenty-four declared boundary codes above are shown through the honest
-  untranslated-original wrapper rather than translated.
+- The eleven declared boundary codes above are shown in the boundary's own
+  words rather than translated, labelled as untranslated original where the
+  reader's language is not the one they are written in.
 - jsdom lays nothing out, so clipping, hit-target size, reflow at a constrained
   width, reduced motion and Windows focus are not proved by the unit suites.
   They belong to the browser and native campaigns.
@@ -323,6 +339,32 @@ Installed-candidate qualification on the target belongs to M7.6.
   profile root in the native campaign.
 
 ## Acceptance
+
+Two isolated read-only reviewers made one full-scope pass each over
+storage/authority/lifetime and UI/setup/i18n/accessibility, returning 20
+findings and 18 distinct defects, all repaired and pinned. A second pass over
+the delta after the native campaign found six more, and they are worth naming
+because they were defects in the repairs themselves:
+
+- the localization repair had been applied to the one branch the boundary cannot
+  reach — every real projection failure still read in English, because all three
+  of those refusals are built without a detail and the branch that localized
+  them required one;
+- thirteen owned sentences had been classified as copy this build does not word,
+  when it words every one of them;
+- the untranslated-original wrapper was being used as a failure *title*, where
+  in an English session it named nothing the reader could use;
+- three refused-candidate notice lines still interpolated the boundary's own
+  prose;
+- the refused header controls carried their reason only in a tooltip, on
+  buttons `disabled` out of the tab order, so a keyboard user was told nothing;
+- and the layout reset's focus hand-off fired for pointer activation too,
+  moving the keyboard to a control the reader had not touched.
+
+The last two are now one repair: those controls are refused with
+`aria-disabled` and stay focusable, so the reason is reachable without a
+pointer and a reader who presses the reset keeps their place. The store refuses
+the action as well, so the dimming is not the only guard.
 
 Browser acceptance drove production React in real Chrome across 1920×1080,
 1366×768, an intermediate window at a 1.5 device pixel ratio and 960×640, in

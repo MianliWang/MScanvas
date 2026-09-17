@@ -36,7 +36,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** The variable the `e2e` build reads, and nothing else does. */
 export const PREFERENCE_ROOT_VARIABLE = "MSCANVAS_E2E_PREFERENCE_ROOT";
@@ -60,12 +61,31 @@ export const ALLOWED_KEYS = {
   layout: ["roster", "details"],
 } as const;
 
+/**
+ * Every value each allowlisted field may hold.
+ *
+ * Checked as well as the key names, because a key that is allowed to exist is
+ * not the same as a key that is allowed to hold anything: a path smuggled in as
+ * `layout.roster` would satisfy a name-only check.
+ */
+const ALLOWED_VALUES = {
+  schemaVersion: [1],
+  locale: ["en", "zh-CN"],
+  density: ["comfortable", "compact"],
+  roster: ["automatic", "shown", "hidden"],
+  details: ["automatic", "shown", "hidden"],
+} as const;
+
+/** Where a campaign's own roots live: the repository's ignored evidence area. */
+const EVIDENCE = resolve(dirname(fileURLToPath(import.meta.url)), "../..", ".tmp/m75-evidence");
+const ROOT_PREFIX = "preference-root-";
+
 /** Creates a directory this campaign owns, under the repository's own scratch. */
 export function createOwnedPreferenceRoot(repository: string, label: string): string {
   if (!isAbsolute(repository)) throw new Error("The repository root must be absolute.");
   const parent = resolve(repository, ".tmp/m75-evidence");
   mkdirSync(parent, { recursive: true });
-  return mkdtempSync(join(parent, `preference-root-${label}-`));
+  return mkdtempSync(join(parent, `${ROOT_PREFIX}${label}-`));
 }
 
 /**
@@ -74,6 +94,13 @@ export function createOwnedPreferenceRoot(repository: string, label: string): st
  * Refuses before anything is launched. A campaign that cannot isolate itself
  * must not start: an isolation that silently stopped isolating would be worse
  * than none, because the run would still report success.
+ *
+ * "A directory this campaign created" is enforced rather than trusted -- it has
+ * to be one of the `preference-root-*` directories under the repository's
+ * ignored evidence area. Accepting any existing directory would let a mistaken
+ * binding send the application's writes, and this module's own byte seeding,
+ * somewhere real; the PowerShell side enforces the same containment, and these
+ * two are the only things standing between a fault fixture and a profile.
  */
 export function requireOwnedPreferenceRoot(value: string | undefined): string {
   if (value === undefined || value.trim() === "") {
@@ -82,7 +109,14 @@ export function requireOwnedPreferenceRoot(value: string | undefined): string {
   if (!isAbsolute(value)) {
     throw new Error(`${PREFERENCE_ROOT_VARIABLE} must be an absolute path.`);
   }
-  if (!existsSync(value) || !statSync(value).isDirectory()) {
+  const full = resolve(value);
+  if (!full.startsWith(EVIDENCE + "\\") && !full.startsWith(EVIDENCE + "/")) {
+    throw new Error(`${PREFERENCE_ROOT_VARIABLE} must name a directory inside this campaign's own evidence area.`);
+  }
+  if (!basename(full).startsWith(ROOT_PREFIX)) {
+    throw new Error(`${PREFERENCE_ROOT_VARIABLE} must name a ${ROOT_PREFIX}* directory this campaign created.`);
+  }
+  if (!existsSync(full) || !statSync(full).isDirectory()) {
     throw new Error(`${PREFERENCE_ROOT_VARIABLE} must name a directory this campaign already created.`);
   }
   return value;
@@ -153,17 +187,31 @@ export function seedStoredBytes(root: string, bytes: Buffer | string): void {
 export type RecordViolation =
   | { readonly kind: "notAnObject" }
   | { readonly kind: "unknownKey"; readonly at: string; readonly key: string }
-  | { readonly kind: "missingKey"; readonly at: string; readonly key: string };
+  | { readonly kind: "missingKey"; readonly at: string; readonly key: string }
+  | { readonly kind: "badValue"; readonly at: string; readonly key: string; readonly value: unknown };
 
 /**
- * Whether the stored record carries only the allowlisted fields.
+ * Whether the stored record carries only the allowlisted fields, holding only
+ * the values those fields may hold.
+ *
+ * Both halves matter. Checking names alone would accept
+ * `layout: { roster: { mode: "shown", lastFolder: "D:\\data" } }` -- every name
+ * allowlisted, a path stored anyway -- so every leaf is checked against its own
+ * finite domain, and a leaf that is not one of those values is a violation
+ * whatever its shape.
  *
  * Every violation is reported rather than the first, so a campaign's evidence
  * names each one. An empty list is the assertion the milestone rests on: the
- * bytes in the operator's profile hold five values and nothing else.
+ * bytes in the operator's profile hold five values, from five fixed sets, and
+ * nothing else.
  */
 export function recordViolations(json: unknown): readonly RecordViolation[] {
   const found: RecordViolation[] = [];
+  const leaf = (at: string, key: keyof typeof ALLOWED_VALUES, value: unknown) => {
+    if (!(ALLOWED_VALUES[key] as readonly unknown[]).includes(value)) {
+      found.push({ kind: "badValue", at, key, value });
+    }
+  };
   const object = (value: unknown, at: string, allowed: readonly string[]) => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       found.push({ kind: "notAnObject" });
@@ -180,14 +228,46 @@ export function recordViolations(json: unknown): readonly RecordViolation[] {
   };
   const root = object(json, "root", ALLOWED_KEYS.root);
   if (root === null) return found;
-  object(root.appearance, "appearance", ALLOWED_KEYS.appearance);
-  object(root.layout, "layout", ALLOWED_KEYS.layout);
+  if (Object.hasOwn(root, "schemaVersion")) leaf("root", "schemaVersion", root.schemaVersion);
+  const appearance = object(root.appearance, "appearance", ALLOWED_KEYS.appearance);
+  if (appearance !== null) {
+    if (Object.hasOwn(appearance, "locale")) leaf("appearance", "locale", appearance.locale);
+    if (Object.hasOwn(appearance, "density")) leaf("appearance", "density", appearance.density);
+  }
+  const layout = object(root.layout, "layout", ALLOWED_KEYS.layout);
+  if (layout !== null) {
+    if (Object.hasOwn(layout, "roster")) leaf("layout", "roster", layout.roster);
+    if (Object.hasOwn(layout, "details")) leaf("layout", "details", layout.details);
+  }
   return found;
 }
 
 /** Whether two readings are the same bytes. Absent equals absent. */
 export function sameBytes(before: StoredRecordFacts, after: StoredRecordFacts): boolean {
   return before.exists === after.exists && before.sha256 === after.sha256 && before.byteLength === after.byteLength;
+}
+
+/**
+ * Whether the record *and the directory around it* are as they were found.
+ *
+ * `sameBytes` answers about the published file alone, and that is not the whole
+ * of "left exactly as it was found": a publish that was refused after creating
+ * its private sibling leaves the record byte-identical and the profile dirty.
+ * A scenario that claims both should assert both, which is what this is for --
+ * the residue is returned rather than reduced to a boolean so a failure names
+ * the file that was left behind.
+ */
+export function untouched(before: StoredRecordFacts, after: StoredRecordFacts): {
+  readonly bytes: boolean;
+  readonly entries: boolean;
+  readonly temporaries: readonly string[];
+} {
+  return {
+    bytes: sameBytes(before, after),
+    entries: before.entries.length === after.entries.length
+      && before.entries.every((name, index) => name === after.entries[index]),
+    temporaries: after.temporaries,
+  };
 }
 
 /**

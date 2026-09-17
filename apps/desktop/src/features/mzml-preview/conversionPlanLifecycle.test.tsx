@@ -563,10 +563,10 @@ describe("the plan the panel is showing", () => {
     });
     await waitFor(() => {
       // A code this build has no sentence for. The boundary's words are kept
-      // whole and labelled as untranslated original, rather than handed over
-      // as though they were this build's localized copy.
+      // whole, and in this English session they are shown as written: the
+      // untranslated-original label exists to explain a language the reader
+      // did not choose, which is not this case.
       expect(within(panel).getByText(/The plan was not read\./u)).toBeVisible();
-      expect(within(panel).getByText(/untranslated/u)).toBeVisible();
     });
     // A refused plan reads as failed, not as one being reread -- and it offers
     // the reader the one control that changes it.

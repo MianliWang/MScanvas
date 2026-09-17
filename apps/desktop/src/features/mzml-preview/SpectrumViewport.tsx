@@ -434,11 +434,14 @@ function describeViewport(
       return t("viewerMzLoading", { low: formatMz(window.low), high: formatMz(window.high) });
     }
     case "failed":
+      // Every refusal, not only the ones that carry a detail. All three
+      // projection refusals this boundary can answer with are built without
+      // one, so a branch that localized only the detailed case localized the
+      // case that never happens and left every real failure reading in the
+      // boundary's own words.
       return projectionError === null
         ? t("viewerMzFailed")
-        : projectionError.detail === null
-          ? projectionError.summary
-          : `${ownedErrorMessage(projectionError, t)} ${ownedErrorDetail(projectionError, t) ?? ""}`.trim();
+        : `${ownedErrorMessage(projectionError, t)} ${ownedErrorDetail(projectionError, t) ?? ""}`.trim();
     case "ready":
       return state.projection.projection.sourcePoints === 0
         ? t("viewerMzEmpty", { low: formatMz(state.projection.window.low), high: formatMz(state.projection.window.high) })

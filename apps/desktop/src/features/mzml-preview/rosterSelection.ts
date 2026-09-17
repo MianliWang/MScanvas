@@ -103,7 +103,7 @@ export function describeAddResult(result: WorkspaceAddResult): WorkspaceNotice {
   if (full > 0) message.push(["noticeFull", { count: full }]);
   const details: WorkspaceNoticePart[] = [
     ...duplicates.map(outcome => ["noticeDuplicate", { name: formatDatasetLabel(outcome.existing) }] as const),
-    ...rejected.map(outcome => ["noticeRejected", { name: outcome.candidateName, summary: outcome.error.summary }] as const),
+    ...rejected.map(outcome => ({ rejected: { name: outcome.candidateName, error: outcome.error } }) as const),
   ];
   return { tone: duplicates.length + rejected.length > 0 ? "warning" : "info", message,
     details: details.slice(0, MAX_NOTICE_DETAILS), more: Math.max(0, details.length - MAX_NOTICE_DETAILS), sequence: 0 };

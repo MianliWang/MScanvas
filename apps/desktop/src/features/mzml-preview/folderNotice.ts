@@ -44,7 +44,7 @@ export function describeFolderResult(result: FolderIngestionResult): WorkspaceNo
   // Preserve scan outcome order and a bounded prefix of original names/prose.
   const details = outcomes.flatMap<WorkspaceNoticePart>(outcome => outcome.outcome === "duplicate"
     ? [["noticeDuplicate", { name: nameOf(outcome.existing) }]]
-    : outcome.outcome === "rejected" ? [["noticeRejected", { name: outcome.candidateName, summary: outcome.error.summary }]] : []);
+    : outcome.outcome === "rejected" ? [{ rejected: { name: outcome.candidateName, error: outcome.error } }] : []);
   return { tone: !discovery.complete || duplicates + rejected.length > 0 ? "warning" : "info", message,
     details: details.slice(0, MAX_NOTICE_DETAILS), more: Math.max(0, details.length - MAX_NOTICE_DETAILS), sequence: 0 };
 }
