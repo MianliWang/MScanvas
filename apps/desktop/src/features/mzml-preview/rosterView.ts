@@ -27,13 +27,7 @@ export const SORT_MODES: readonly SortMode[] = [
 ];
 
 /** What each sort mode is called where the user chooses it. */
-export const SORT_MODE_LABEL: Record<SortMode, string> = {
-  added: "Added order",
-  "name-asc": "Name A–Z",
-  "name-desc": "Name Z–A",
-  "size-asc": "Size: smallest first",
-  "size-desc": "Size: largest first",
-};
+
 
 export function isSortMode(value: string): value is SortMode {
   return (SORT_MODES as readonly string[]).includes(value);
@@ -50,15 +44,9 @@ export function isSortMode(value: string): value is SortMode {
  */
 export type PinReason = "converting" | "queued" | "reading" | "showing" | "selected" | "kept";
 
-/** What each reason says beside the row, in words rather than in colour. */
-export const PIN_REASON_LABEL: Record<PinReason, string> = {
-  converting: "Converting — outside search",
-  queued: "Queued — outside search",
-  reading: "Reading — outside search",
-  showing: "Showing — outside search",
-  selected: "Selected — outside search",
-  kept: "Kept for the viewer — outside search",
-};
+// What each reason says beside the row is the resource bundle's, looked up
+// where the row is rendered. The words used to be here as well, which was a
+// second authority for them and English wherever anything read it.
 
 export interface RosterProjectionInput {
   /** Rust's roster, in Rust's order. Read only. */

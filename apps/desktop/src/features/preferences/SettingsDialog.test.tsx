@@ -6,14 +6,29 @@ import { PreviewApiProvider } from "../mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../mzml-preview/dropTransport";
 import type { SelectedSpectrumOutcome } from "../mzml-preview/contracts";
 import { availableBackend, unavailableBackend, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, deferred, type FakePreviewApi } from "../../test/previewFixtures";
+import { createFakePreferencesApi, type FakePreferencesApi } from "../../test/preferenceFixtures";
+import { PreferencesApiProvider } from "./preferencesApi";
 import { createUiRuntime, UI_RESOURCES, validateBundle, type UiRuntime } from "./i18n";
 
 const en = UI_RESOURCES.en;
 const zh = UI_RESOURCES["zh-CN"];
 
-function mount(api: FakePreviewApi = createFakePreviewApi({ availability: unavailableBackend }), runtime: UiRuntime = createUiRuntime()) {
+/**
+ * The real composition over a working preference store.
+ *
+ * A store is installed rather than left to the context default, because what
+ * these tests exercise is the applied path: a session that can save is the one
+ * a user has, and the session that cannot is covered explicitly below.
+ */
+function mount(
+  api: FakePreviewApi = createFakePreviewApi({ availability: unavailableBackend }),
+  runtime: UiRuntime = createUiRuntime(),
+  preferences: FakePreferencesApi = createFakePreferencesApi(),
+) {
   return render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
-    <PreviewApiProvider value={api}><App uiRuntime={runtime} /></PreviewApiProvider>
+    <PreferencesApiProvider value={preferences}>
+      <PreviewApiProvider value={api}><App uiRuntime={runtime} /></PreviewApiProvider>
+    </PreferencesApiProvider>
   </WorkspaceDropTransportProvider>);
 }
 
@@ -27,6 +42,18 @@ function openSettings() {
 
 function choose(dialog: HTMLElement, name: string) { fireEvent.click(within(dialog).getByRole("radio", { name })); }
 function press(dialog: HTMLElement, name: string) { fireEvent.click(within(dialog).getByRole("button", { name })); }
+/**
+ * Applies, and waits for the durable commit to be confirmed.
+ *
+ * Apply publishes before it closes, so the dialog is still modal until the
+ * store answers -- and while it is, Radix hides the rest of the application
+ * from the accessibility tree. Waiting for the close is waiting for the save,
+ * which is exactly the guarantee the button now makes.
+ */
+async function applyAndClose(dialog: HTMLElement, name: string) {
+  press(dialog, name);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+}
 const density = () => document.querySelector(".dataset-roster-panel")?.getAttribute("data-density");
 
 async function loadedApp(api = createFakePreviewApi({ availability: availableBackend })) {
@@ -48,7 +75,7 @@ describe("session Settings in the real application composition", () => {
   it("previews, applies, resets only a draft, cancels and reopens without requesting backend work", async () => {
     const api = createFakePreviewApi({ availability: unavailableBackend });
     mount(api);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     await waitFor(() => expect(api.calls()).toContain("readConversionConfiguration"));
     const calls = [...api.calls()];
     expect(document.documentElement.lang).toBe("en");
@@ -60,7 +87,7 @@ describe("session Settings in the real application composition", () => {
     expect(dialog).toHaveAccessibleName(zh.settings);
     expect(document.documentElement.lang).toBe("zh-CN");
     expect(density()).toBe("compact");
-    expect(within(dialog).getByText(zh.sessionOnly)).toBeVisible();
+    expect(within(dialog).getByText(zh.storageSaved)).toBeVisible();
     press(dialog, zh.apply);
     await waitFor(() => expect(screen.getByRole("button", { name: zh.settings })).toHaveFocus());
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -84,7 +111,7 @@ describe("session Settings in the real application composition", () => {
 
   it.each(["cancel", "close", "escape"] as const)("discards with %s and retains one modal and the opener", async (action) => {
     mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
@@ -105,7 +132,7 @@ describe("session Settings in the real application composition", () => {
 
   it("keeps composition Enter and Escape inside the dialog until composition ends", async () => {
     mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     const field = within(dialog).getByRole("radio", { name: en.english });
     fireEvent.compositionStart(field);
@@ -119,7 +146,7 @@ describe("session Settings in the real application composition", () => {
 
   it("does not revive a close return after a newer deliberate destination blurs", async () => {
     mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     const closed = new Promise<void>((resolve) => dialog.addEventListener("focusScope.autoFocusOnUnmount", () => resolve(), { once: true }));
     press(dialog, en.cancel);
@@ -134,14 +161,14 @@ describe("session Settings in the real application composition", () => {
   it("starts a new app session at defaults without writing preference storage", async () => {
     const storage = vi.spyOn(Storage.prototype, "setItem");
     const first = mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
     press(dialog, zh.apply);
     first.unmount();
     mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     expect(document.documentElement.lang).toBe("en");
     expect(density()).toBe("comfortable");
     expect(storage).not.toHaveBeenCalled();
@@ -149,7 +176,7 @@ describe("session Settings in the real application composition", () => {
 
   it("does not let a detached dialog return into a later app session", async () => {
     const first = mount();
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     const closed = new Promise<void>(resolve => dialog.addEventListener("focusScope.autoFocusOnUnmount", () => resolve(), { once: true }));
     first.unmount();
@@ -161,7 +188,7 @@ describe("session Settings in the real application composition", () => {
 
   it("keeps an initialization resource failure reachable through validated recovery", async () => {
     mount(createFakePreviewApi({ availability: unavailableBackend }), createUiRuntime({ en: {}, "zh-CN": {} }));
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(en.resourceError);
     expect(within(dialog).getByRole("button", { name: en.apply })).toBeDisabled();
@@ -175,11 +202,11 @@ describe("session Settings in the real application composition", () => {
   it("rejects a missing supported bundle, retains applied preferences and recovers in the applied language", async () => {
     const runtime = createUiRuntime();
     mount(createFakePreviewApi({ availability: unavailableBackend }), runtime);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
-    press(dialog, zh.apply);
+    await applyAndClose(dialog, zh.apply);
     await act(async () => { runtime.instance.removeResourceBundle("en", "ui"); });
     dialog = openSettings();
     choose(dialog, zh.english);
@@ -199,12 +226,12 @@ describe("session Settings in the real application composition", () => {
     const runtime = createUiRuntime();
     const api = createFakePreviewApi({ availability: unavailableBackend });
     mount(api, runtime);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     await waitFor(() => expect(api.calls()).toContain("readConversionConfiguration"));
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
-    press(dialog, zh.apply);
+    await applyAndClose(dialog, zh.apply);
     dialog = openSettings();
     if (fault === "removed") {
       choose(dialog, zh.english);
@@ -230,7 +257,7 @@ describe("session Settings in the real application composition", () => {
   it("replaces an invalid bundle exactly so recovery does not retain unexpected keys", async () => {
     const runtime = createUiRuntime();
     mount(createFakePreviewApi({ availability: unavailableBackend }), runtime);
-    await screen.findByText("ProteoWizard is not available");
+    await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     await act(async () => { runtime.instance.addResourceBundle("zh-CN", "ui", { unexpected: "Injected unexpected key" }, true, true); });
     choose(dialog, en.simplifiedChinese);
@@ -327,7 +354,7 @@ describe("session Settings in the real application composition", () => {
     fireEvent.click(within(figure).getByRole("radio", { name: en.dark }));
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
+    await applyAndClose(dialog, zh.apply);
     expect(dpi).toHaveAccessibleDescription(zh.invalidDpi);
     expect(width).not.toHaveAttribute("aria-invalid");
     const spectrum = document.getElementById("spectrum-widthPx")?.closest("section") ?? width.closest("section")!;

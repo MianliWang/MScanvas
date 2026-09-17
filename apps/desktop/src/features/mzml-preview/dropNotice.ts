@@ -28,7 +28,7 @@ export function describeDropResult(result: DropIngestionResult): WorkspaceNotice
   if (summary.limitsReached.length > 0) message.push({ source: "drop", limits: [...summary.limitsReached] });
   const details = outcomes.flatMap<WorkspaceNoticePart>(outcome => outcome.outcome === "duplicate"
     ? [["noticeDuplicate", { name: outcome.existing.fileName }]]
-    : outcome.outcome === "rejected" ? [["noticeRejected", { name: outcome.candidateName, summary: outcome.error.summary }]] : []);
+    : outcome.outcome === "rejected" ? [{ rejected: { name: outcome.candidateName, error: outcome.error } }] : []);
   const warnings = summary.skippedReparseRootCount + summary.inaccessibleRootCount + summary.remoteRootCount + summary.unsupportedRootCount + summary.skippedReparseEntryCount + summary.inaccessibleEntryCount;
   return { tone: !summary.complete || duplicates + rejected.length + warnings > 0 ? "warning" : "info", message,
     details: details.slice(0, MAX_NOTICE_DETAILS), more: Math.max(0, details.length - MAX_NOTICE_DETAILS), sequence: 0 };

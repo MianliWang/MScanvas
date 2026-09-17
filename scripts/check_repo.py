@@ -5403,6 +5403,160 @@ def _validate_the_claim_guard_detects_bypasses(errors: list[str]) -> None:
                 )
 
 
+def validate_the_preference_store_ships_bound_and_isolated(errors: list[str]) -> None:
+    """Two things a preference store can silently get wrong, checked rather than
+    remembered.
+
+    **The QA root must never ship.** Under the `e2e` feature the store binds a
+    task-owned directory taken from the process environment instead of the
+    user's own profile, and refuses outright when that directory is missing or
+    unusable. That is what lets a campaign corrupt, lock and replace a
+    preference file without touching the operator's real configuration. In a
+    shipped build it would be an environment variable that redirects where a
+    user's settings live, so every reference to it must sit under the `cfg` that
+    gates it -- a reference that drifts out from under the attribute compiles
+    into every build with no other symptom -- and the variable's own name must
+    appear nowhere in the production frontend, whose bundle ships either way.
+
+    **The real store must be installed.** The preference API's context default
+    deliberately claims no storage, so that a render with no provider cannot
+    reach for an IPC boundary that may not be there and cannot pretend to
+    remember anything. The consequence is that the application's own entry point
+    is what makes a shipped build save preferences at all, and a bundle that
+    quietly stopped saving them would look exactly like one that saves them.
+
+    Both failures are invisible from the outside, which is why they are here.
+    """
+    gate = '#[cfg(feature = "e2e")]'
+    watched = ("qa_root", "bind_qa_root", "MSCANVAS_E2E_PREFERENCE_ROOT")
+
+    source = ROOT / "apps" / "desktop" / "src-tauri" / "src"
+    if source.is_dir():
+        for rust in sorted(source.glob("**/*.rs")):
+            # The module that *is* the QA root is gated at its declaration,
+            # which the scan below sees where that declaration is written;
+            # inside it every mention is already behind that gate.
+            if rust.name == "qa_root.rs":
+                continue
+            lines = rust.read_text(encoding="utf-8").splitlines()
+            gated = _gated_lines(lines, gate)
+            for number, line in enumerate(lines, start=1):
+                if not any(name in line for name in watched):
+                    continue
+                if line.lstrip().startswith("//"):
+                    continue
+                if number not in gated:
+                    relative = rust.relative_to(ROOT).as_posix()
+                    errors.append(
+                        f"{relative}:{number} names the QA preference root outside {gate}; "
+                        "a shipped build must resolve preferences from the user's own "
+                        "per-user directory and nowhere else"
+                    )
+
+    frontend = ROOT / "apps" / "desktop" / "src"
+    if frontend.is_dir():
+        for candidate in sorted(frontend.glob("**/*")):
+            if not candidate.is_file() or candidate.suffix not in {
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".css",
+                ".html",
+            }:
+                continue
+            content = candidate.read_text(encoding="utf-8")
+            if "MSCANVAS_E2E_PREFERENCE_ROOT" in content:
+                relative = candidate.relative_to(ROOT).as_posix()
+                errors.append(
+                    f"{relative} names MSCANVAS_E2E_PREFERENCE_ROOT; the QA preference "
+                    "root is resolved in Rust and is not something the renderer may name"
+                )
+
+    entry = ROOT / "apps" / "desktop" / "src" / "main.tsx"
+    if entry.is_file():
+        content = entry.read_text(encoding="utf-8")
+        if "tauriPreferencesApi" not in content or "PreferencesApiProvider" not in content:
+            errors.append(
+                "apps/desktop/src/main.tsx does not install tauriPreferencesApi through "
+                "PreferencesApiProvider; the preference API's context default claims no "
+                "storage, so without this a shipped build would silently stop remembering "
+                "preferences"
+            )
+
+
+def validate_every_boundary_error_code_is_accounted_for(errors: list[str]) -> None:
+    """Every code the Rust boundary can send is either localized or declared.
+
+    A `PreviewErrorDto` carries an owned code and an owned English sentence. The
+    frontend looks the code up in a resource map; a code that is not there falls
+    through to the sentence, which is English -- so in a Chinese session the
+    difference between "translated" and "not translated" is whether someone
+    remembered to add a key. Nothing announced it either way, and M7.5 found
+    sixty-two codes that had quietly been reaching readers in English.
+
+    So the remainder is declared rather than discovered.
+    `ownedErrorMessages.test.ts` lists the codes that are deliberately shown
+    through the honest untranslated-original wrapper -- the ones whose message
+    interpolates evidence a paraphrase would lose, and the test seams -- and
+    this requires every code Rust can produce to be in one list or the other.
+
+    Adding a boundary code therefore fails here until it is either given a
+    resource or written into the declared remainder with the rest.
+    """
+    source = ROOT / "apps" / "desktop" / "src-tauri" / "src"
+    frontend = ROOT / "apps" / "desktop" / "src" / "features" / "mzml-preview"
+    if not source.is_dir() or not frontend.is_dir():
+        return
+
+    produced: set[str] = set()
+    for rust in sorted(source.glob("**/*.rs")):
+        text = rust.read_text(encoding="utf-8")
+        produced.update(re.findall(r'PreviewErrorDto::new\(\s*"([a-z0-9_]+)"', text))
+        produced.update(re.findall(r'kind:\s*"([a-z0-9_]+)"\.to_owned\(\)', text))
+
+    localized: set[str] = set()
+    for name in ("ownedErrorMessages.ts", "conversionMessages.ts", "backendPresentation.ts"):
+        path = frontend / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        # Each map entry is `some_code: "resourceKey"`. The code is snake_case
+        # and the key is camelCase, which is what tells one from the other --
+        # and several entries share a line in the oldest of these tables, so
+        # this is deliberately not anchored to the start of one.
+        localized.update(
+            re.findall(r'([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\s*:\s*"[a-z][A-Za-z0-9]*"', text)
+        )
+        # And the two that are worded from their recovery *context* rather than
+        # from the code alone: a refused figure setting and a misnamed export
+        # both need the parameters Rust decided, so they are branches rather
+        # than map entries.
+        localized.update(re.findall(r'error\.kind === "([a-z0-9_]+)"', text))
+
+    declared: set[str] = set()
+    test = frontend / "ownedErrorMessages.test.ts"
+    if test.is_file():
+        body = test.read_text(encoding="utf-8")
+        listing = body.partition("SHOWN_AS_UNTRANSLATED_ORIGINAL: readonly string[] = [")[2]
+        declared.update(re.findall(r'"([a-z0-9_]+)"', listing.partition("];")[0]))
+
+    for code in sorted(produced - localized - declared):
+        errors.append(
+            f"the boundary can send the error code {code} and nothing accounts for it: give "
+            "it a resource in apps/desktop/src/features/mzml-preview/ownedErrorMessages.ts, or "
+            "add it to SHOWN_AS_UNTRANSLATED_ORIGINAL in that module's test with the reason it "
+            "keeps the boundary's own words"
+        )
+    # And the declared remainder stays a list of codes that exist. A stale entry
+    # is a claim that something is handled which nothing produces.
+    for code in sorted(declared - produced):
+        errors.append(
+            f"SHOWN_AS_UNTRANSLATED_ORIGINAL names {code}, which the Rust boundary no longer "
+            "sends; the declared remainder must describe codes that exist"
+        )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -5416,6 +5570,8 @@ def main() -> int:
         validate_user_facing_strings(errors)
         validate_test_support_stays_a_dev_dependency(errors)
         validate_e2e_capability_never_ships(errors)
+        validate_the_preference_store_ships_bound_and_isolated(errors)
+        validate_every_boundary_error_code_is_accounted_for(errors)
         validate_clipboard_stays_write_only(errors)
         validate_no_font_is_bundled_or_fetched(errors)
         validate_every_raster_entry_point_asks_the_budget(errors)

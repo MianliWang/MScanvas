@@ -1,5 +1,6 @@
 import { memo } from "react";
 
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { Metadata, RunSummary, SelectedFile } from "./contracts";
 import {
   formatByteLength,
@@ -8,8 +9,14 @@ import {
   formatDuration,
   formatMsLevel,
   formatRetentionTime,
+  formatRetentionTimeValue,
 } from "./format";
-import { latestMeasurement, type PreviewMeasurement } from "./instrumentation";
+import {
+  latestMeasurement,
+  type PreviewMeasurement,
+  type PreviewMeasurementDetail,
+} from "./instrumentation";
+import type { MessageKey, UiMessage } from "../preferences/i18n";
 
 export interface PreviewSummaryProps {
   readonly file: SelectedFile;
@@ -27,6 +34,15 @@ export interface PreviewSummaryProps {
  * whenever the pointer crosses from one scan to another, which at a full-run
  * zoom is most pointer frames. None of that reaches these props, and this is
  * what makes "does not reach" mean "does not re-render".
+ *
+ * ## What is translated here and what is not
+ *
+ * The labels, the headings and the two truncation sentences are this
+ * application's own copy and are resources. Everything they sit beside is not:
+ * a section title and its lines come from the file, an MS level and a retention
+ * time are measurements, and `Not reported` stays the *unreported state* rather
+ * than becoming a zero in either language. A metadata section read out of an
+ * acquisition is shown as the file spells it, in any locale.
  */
 export const PreviewSummary = memo(function PreviewSummary({
   file,
@@ -35,6 +51,7 @@ export const PreviewSummary = memo(function PreviewSummary({
   spectrumListTotal,
   measurements,
 }: PreviewSummaryProps) {
+  const t = useUiMessages();
   // The run summary and the spectrum list are two separate reads of the same
   // file. When they disagree, showing one number here and a different one over
   // the table would present a single acquisition with two sizes.
@@ -44,65 +61,68 @@ export const PreviewSummary = memo(function PreviewSummary({
     <section aria-labelledby="preview-summary-heading" className="panel inspector-panel">
       <header className="panel-header">
         <div>
-          <h2 id="preview-summary-heading">Run</h2>
+          <h2 id="preview-summary-heading">{t("summaryRun")}</h2>
           {/* The filename plus only the bounded context Rust says the current
               roster needs. No absolute path crosses, and no location is
               reconstructed here. */}
           <p className="preview-file-identity" title={fileLabel}>
-            {fileLabel} · {formatByteLength(file.byteLength)}
+            {t("summaryIdentity", { name: fileLabel, size: formatByteLength(file.byteLength, t) })}
           </p>
         </div>
       </header>
 
       <div className="inspector-section">
-        <h3>Summary</h3>
+        <h3>{t("summarySummary")}</h3>
         {countsDisagree ? (
           <p className="notice notice-warning" role="note">
-            The run summary reports {formatCount(runSummary.totalSpectrumCount)} spectra and the
-            spectrum list contains {formatCount(spectrumListTotal)}. They are separate readings of
-            the same file and MSCanvas does not decide which is right.
+            {t("summaryCountsDisagree", {
+              summary: formatCount(runSummary.totalSpectrumCount),
+              list: formatCount(spectrumListTotal),
+            })}
           </p>
         ) : null}
         <dl className="metadata-list">
           <div>
-            <dt>Spectra</dt>
+            <dt>{t("summarySpectra")}</dt>
             <dd>{formatCount(runSummary.totalSpectrumCount)}</dd>
           </div>
           <div>
-            <dt>Chromatograms</dt>
+            <dt>{t("summaryChromatograms")}</dt>
             {/* Absent, not zero: the backend reports no chromatogram count. */}
             <dd>
               {runSummary.chromatogramCount === null
-                ? "Not reported"
+                ? t("viewerNotReported")
                 : formatCount(runSummary.chromatogramCount)}
             </dd>
           </div>
           <div>
-            <dt>Retention time</dt>
+            <dt>{t("summaryRetentionTime")}</dt>
             <dd>
               {runSummary.retentionTimeRange === null
-                ? "Not reported"
-                : `${formatRetentionTime(runSummary.retentionTimeRange.minimum)} – ${runSummary.retentionTimeRange.maximum.value.toFixed(4)}`}
+                ? t("viewerNotReported")
+                : `${formatRetentionTimeValue(runSummary.retentionTimeRange.minimum)} – ${formatRetentionTime(runSummary.retentionTimeRange.maximum, t)}`}
             </dd>
           </div>
         </dl>
       </div>
 
       <div className="inspector-section">
-        <h3>MS levels</h3>
+        <h3>{t("summaryMsLevels")}</h3>
         {runSummary.msLevelsTruncated ? (
           <p className="notice notice-warning" role="note">
-            Showing the first {formatCount(runSummary.msLevels.length)} of{" "}
-            {formatCount(runSummary.totalMsLevelCount)} MS levels the summary reported.
+            {t("summaryMsLevelsTruncated", {
+              shown: formatCount(runSummary.msLevels.length),
+              total: formatCount(runSummary.totalMsLevelCount),
+            })}
           </p>
         ) : null}
         {runSummary.msLevels.length === 0 ? (
-          <p className="quiet-text">No MS level breakdown was reported.</p>
+          <p className="quiet-text">{t("summaryNoMsLevels")}</p>
         ) : (
           <dl className="metadata-list">
             {runSummary.msLevels.map((level) => (
               <div key={level.msLevel ?? "other"}>
-                <dt>{formatMsLevel(level.msLevel)}</dt>
+                <dt>{formatMsLevel(level.msLevel, t)}</dt>
                 <dd>{formatCount(level.spectrumCount)}</dd>
               </div>
             ))}
@@ -112,15 +132,18 @@ export const PreviewSummary = memo(function PreviewSummary({
 
       {metadata.sections.map((section) => (
         <div className="inspector-section" key={section.id}>
+          {/* The file's own heading, in the file's own words. */}
           <h3>{section.title}</h3>
           {section.truncated ? (
             <p className="notice notice-warning" role="note">
-              Showing the first {formatCount(section.entries.length)} of{" "}
-              {formatCount(section.totalEntryCount)} lines in this section.
+              {t("summarySectionTruncated", {
+                shown: formatCount(section.entries.length),
+                total: formatCount(section.totalEntryCount),
+              })}
             </p>
           ) : null}
           {section.entries.length === 0 ? (
-            <p className="quiet-text">This section is empty in the file.</p>
+            <p className="quiet-text">{t("summaryEmptySection")}</p>
           ) : (
             <ul className="metadata-lines">
               {section.entries.map((entry, entryIndex) => (
@@ -132,23 +155,23 @@ export const PreviewSummary = memo(function PreviewSummary({
       ))}
 
       <div className="inspector-section">
-        <h3>Timing</h3>
-        <p className="quiet-text">
-          Descriptive measurements from this session on this machine. They are not budgets and
-          nothing is cached to improve them.
-        </p>
+        <h3>{t("summaryTiming")}</h3>
+        <p className="quiet-text">{t("summaryTimingHelp")}</p>
         <dl className="metadata-list">
           <MeasurementRow
-            label="Open to first preview"
+            label="summaryOpenToPreview"
             measurement={latestMeasurement(measurements, "openToFirstPreview")}
+            t={t}
           />
           <MeasurementRow
-            label="Row select to rendered"
+            label="summaryRowToRendered"
             measurement={latestMeasurement(measurements, "rowSelectToRendered")}
+            t={t}
           />
           <MeasurementRow
-            label="Spectrum table render"
+            label="summaryTableRender"
             measurement={latestMeasurement(measurements, "spectrumTableRender")}
+            t={t}
           />
         </dl>
       </div>
@@ -156,18 +179,27 @@ export const PreviewSummary = memo(function PreviewSummary({
   );
 })
 
+/** The tooltip for one measurement, worded here because here has a locale. */
+function detailText(detail: PreviewMeasurementDetail, t: UiMessage): string {
+  return detail.key === "measureRowDetail"
+    ? t("measureRowDetail", { index: detail.index })
+    : t(detail.key, { rows: detail.rows });
+}
+
 function MeasurementRow({
   label,
   measurement,
+  t,
 }: {
-  readonly label: string;
+  readonly label: MessageKey;
   readonly measurement: PreviewMeasurement | null;
+  readonly t: UiMessage;
 }) {
   return (
     <div>
-      <dt>{label}</dt>
-      <dd title={measurement?.detail ?? undefined}>
-        {measurement === null ? "Not measured yet" : formatDuration(measurement.milliseconds)}
+      <dt>{t(label)}</dt>
+      <dd title={measurement === null ? undefined : detailText(measurement.detail, t)}>
+        {measurement === null ? t("summaryNotMeasured") : formatDuration(measurement.milliseconds)}
       </dd>
     </div>
   );

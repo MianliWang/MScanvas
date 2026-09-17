@@ -180,6 +180,21 @@ export interface MessageParameters {
   readonly groupDisclosure: { readonly name: string; readonly count: number };
   readonly dragTarget: { readonly name: string; readonly count: number; readonly position: number; readonly total: number };
   readonly resourceCode: { readonly code: string };
+  readonly storageUnknownProblem: { readonly code: string };
+  readonly backendEarlierReading: { readonly reading: string };
+  readonly backendBuiltOn: { readonly date: string };
+  readonly backendProblemCode: { readonly code: string };
+  readonly backendUnknownProblem: { readonly code: string };
+  readonly summaryIdentity: { readonly name: string; readonly size: string };
+  readonly summaryCountsDisagree: { readonly summary: string; readonly list: string };
+  readonly summaryMsLevelsTruncated: { readonly shown: string; readonly total: string };
+  readonly summarySectionTruncated: { readonly shown: string; readonly total: string };
+  readonly errorUnknownProblem: { readonly code: string };
+  readonly errorReportedAsSent: { readonly summary: string };
+  readonly formatBytes: { readonly count: number };
+  readonly measureOpenDetail: { readonly rows: string };
+  readonly measureRowDetail: { readonly index: string };
+  readonly measureTableDetail: { readonly rows: string };
   readonly unknownFigureProblem: { readonly code: string };
 }
 export type MessageArguments<K extends MessageKey> = K extends keyof MessageParameters

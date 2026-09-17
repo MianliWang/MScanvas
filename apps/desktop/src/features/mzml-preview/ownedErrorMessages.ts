@@ -23,6 +23,94 @@ const MESSAGE = {
   linked_figure_too_short: "m74ErrorLinkedHeight", figure_font_unavailable: "m74ErrorFont",
   figure_not_rasterizable: "m74ErrorRaster", figure_clipboard_unavailable: "m74ErrorClipboard",
   figure_preview_too_large: "m74ErrorPreviewSize",
+  // Reachable and previously unmapped, so both showed the boundary's English
+  // in a Chinese session. `unexpected_error` is this side's own normalization
+  // of anything thrown across the boundary; the plan mismatch is the reply
+  // guard's.
+  // Owned sentences, by code. Each is fixed copy this build authors in Rust
+  // with nothing interpolated into it, so each has its own resource here
+  // rather than being handed over as the boundary wrote it.
+  source_changed_during_preview: "errSourceChangedDuringPreview",
+  source_changed_since_preview: "errSourceChangedSincePreview",
+  installation_changed_since_preview: "errInstallationChangedSincePreview",
+  configuration_without_a_binding: "errConfigurationWithoutBinding",
+  spectrum_identity_conflict: "errSpectrumIdentityConflict",
+  spectrum_facts_conflict: "errSpectrumFactsConflict",
+  drop_candidate_changed: "errDropCandidateChanged",
+  folder_candidate_changed: "errFolderCandidateChanged",
+  sciex_companion_selected_alone: "errSciexCompanionAlone",
+  provider_build_not_evidenced: "errProviderBuildNotEvidenced",
+  spectrum_projection_stale: "errSpectrumProjectionStale",
+  spectrum_projection_no_domain: "errSpectrumProjectionNoDomain",
+  spectrum_projection_window_refused: "errSpectrumProjectionWindowRefused",
+  unexpected_error: "errorUnexpected",
+  conversion_plan_mismatch: "errorPlanMismatch",
+  // The boundary's own owned sentences, by code. Added in M7.5: before this
+  // they reached a Chinese session as English, because `ownedErrorMessage`
+  // fell through to `error.summary` and the summary is authored in English.
+  backend_changed_after_check: "errBackendChangedAfterCheck",
+  backend_environment_invalid: "errBackendEnvironmentInvalid",
+  backend_launch_denied: "errBackendLaunchDenied",
+  backend_launch_failed: "errBackendLaunchFailed",
+  backend_not_accounted_for: "errBackendNotAccountedFor",
+  backend_not_started: "errBackendNotStarted",
+  backend_not_found: "errBackendNotFound",
+  backend_not_found_at_launch: "errBackendNotFoundAtLaunch",
+  backend_not_inspectable: "errBackendNotInspectable",
+  backend_output_capture_failed: "errBackendOutputCaptureFailed",
+  backend_termination_failed: "errBackendTerminationFailed",
+  backend_wait_failed: "errBackendWaitFailed",
+  capability_evidence_unavailable: "errCapabilityEvidenceUnavailable",
+  conversion_capability_unavailable: "errConversionCapabilityUnavailable",
+  conversion_unsupported: "errConversionUnsupported",
+  dataset_not_multi_output: "errDatasetNotMultiOutput",
+  dataset_not_previewable: "errDatasetNotPreviewable",
+  source_requires_bundle_handoff: "errSourceRequiresBundle",
+  source_identity_unavailable: "errSourceIdentityUnavailable",
+  source_not_inspectable: "errSourceNotInspectable",
+  source_changed_during_read: "errSourceChangedDuringRead",
+  source_in_use: "errSourceInUse",
+  selection_superseded: "errSelectionSuperseded",
+  unknown_file_handle: "errUnknownFileHandle",
+  unsupported_extension: "errUnsupportedExtension",
+  not_a_regular_file: "errNotARegularFile",
+  file_has_no_name: "errFileHasNoName",
+  file_not_resolvable: "errFileNotResolvable",
+  file_not_inspectable: "errFileNotInspectable",
+  file_identity_unavailable: "errFileIdentityUnavailable",
+  file_identity_changed: "errFileIdentityChanged",
+  file_content_changed: "errFileContentChanged",
+  file_picker_unavailable: "errFilePickerUnavailable",
+  file_picker_failed: "errFilePickerFailed",
+  folder_picker_unavailable: "errFolderPickerUnavailable",
+  folder_picker_failed: "errFolderPickerFailed",
+  folder_discovery_unavailable: "errFolderDiscoveryUnavailable",
+  drop_ingestion_unavailable: "errDropIngestionUnavailable",
+  drop_worker_unavailable: "errDropWorkerUnavailable",
+  invalid_folder_import_reservation: "errInvalidFolderImport",
+  invalid_workspace_drop_subscription: "errInvalidDropSubscription",
+  invalid_conversion_reservation: "errInvalidConversionReservation",
+  import_superseded: "errImportSuperseded",
+  workspace_full: "errWorkspaceFull",
+  folder_not_readable: "errFolderNotReadable",
+  folder_not_directory: "errFolderNotDirectory",
+  folder_link_unsupported: "errFolderLinkUnsupported",
+  network_folder_unsupported: "errNetworkFolderUnsupported",
+  destination_not_a_folder: "errDestinationNotAFolder",
+  destination_unusable: "errDestinationUnusable",
+  destination_is_a_link: "errDestinationIsALink",
+  destination_is_remote: "errDestinationIsRemote",
+  queue_is_empty: "errQueueIsEmpty",
+  queue_duplicate_dataset: "errQueueDuplicateDataset",
+  preview_worker_unavailable: "errPreviewWorkerUnavailable",
+  preview_not_plannable: "errPreviewNotPlannable",
+  preview_workspace_unavailable: "errPreviewWorkspaceUnavailable",
+  preview_workspace_unusable: "errPreviewWorkspaceUnusable",
+  preview_output_not_inspectable: "errPreviewOutputNotInspectable",
+  preview_result_missing: "errPreviewResultMissing",
+  incomplete_preview_result: "errIncompletePreviewResult",
+  unexpected_preview_result: "errUnexpectedPreviewResult",
+  non_finite_value: "errNonFiniteValue",
 } as const;
 
 /** Parameters come from the Rust decision; no translated-string parsing. */
@@ -40,7 +128,25 @@ export function ownedErrorMessage(error: PreviewError, t: UiMessage): string {
     return t("m74ErrorExtension", { extension: context.extension });
   }
   const key = MESSAGE[error.kind as keyof typeof MESSAGE];
-  return key === undefined ? error.summary : t(key);
+  if (key !== undefined) {
+    return t(key);
+  }
+  // A code this build has no sentence for.
+  //
+  // The boundary's own words are kept whole and are *labelled* as what they
+  // are: untranslated original. Two things are wrong with the alternatives.
+  // Handing the English over bare tells a Chinese reader nothing about why it
+  // is in English, and fallback English presented as coverage is the one
+  // outcome a bilingual product must not have. Paraphrasing it would be worse:
+  // some of these sentences carry specific detail about a folder, a file or a
+  // process, and a wrapper that replaced them would lose the only part the
+  // reader can act on.
+  //
+  // With no words at all there is nothing to label, so the code is named
+  // instead -- inspectable, and honest about being unrecognised.
+  return error.summary.trim() === ""
+    ? t("errorUnknownProblem", { code: error.kind })
+    : t("errorReportedAsSent", { summary: error.summary });
 }
 
 /** A known recovery context localizes only that owned detail. Names and unknown evidence stay original. */

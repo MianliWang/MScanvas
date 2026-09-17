@@ -249,13 +249,13 @@ const AcquisitionRow = memo(function AcquisitionRow({ row, group, state, project
   const viewed = state.active === row.handle && presentation === "loaded";
   const status = presentation === "opening" ? t("rowReading") : presentation === "replaced" ? t("rowReplaced") : presentation === "missing" ? t("rowMissing") : presentation === "failed" ? t("rowFailed") : pin === "converting" ? t("rowConverting") : pin === "queued" ? t("rowQueued") : pin === "kept" ? t("rowKept") : "";
   const tabIndex = state.focused === row.handle ? 0 : -1;
-  const label = [row.fileName, row.relativeContext, SOURCE_KIND_LABEL[row.sourceKind], formatByteLength(row.byteLength), viewed ? t("showingRow") : null, status, pin ? t("outsideSearch") : null].filter(Boolean).join(", ");
+  const label = [row.fileName, row.relativeContext, SOURCE_KIND_LABEL[row.sourceKind], formatByteLength(row.byteLength, t), viewed ? t("showingRow") : null, status, pin ? t("outsideSearch") : null].filter(Boolean).join(", ");
   return <div role="row" aria-level={2} aria-selected={highlighted} aria-label={label} tabIndex={tabIndex} data-handle={row.handle} data-group={group.id} data-drag-source={isDragSource}
     className={`dataset-row${highlighted ? " is-selected" : ""}${viewed ? " is-active" : ""}${isDropTarget ? " is-drop-target" : ""}`} ref={setRef} onClick={event => onPress(event, row.handle)}>
     <div role="gridcell"><MembershipCheckbox tabIndex={tabIndex} label={t("checkAcquisition", { name: row.fileName })} checked={state.conversionMembership.has(row.handle)} onChange={checked => dispatch({ type: "membershipChanged", handles: [row.handle], checked })} /></div>
     <div role="gridcell" className="dataset-row-label"><span className="dataset-row-name" title={row.fileName}>{row.fileName}</span>
       {row.relativeContext !== null ? <span className="dataset-row-context" title={row.relativeContext}>{row.relativeContext}</span> : null}
-      <span className="dataset-row-facts"><span>{SOURCE_KIND_LABEL[row.sourceKind]}</span><span>{formatByteLength(row.byteLength)}</span>{viewed ? <span>{t("showingRow")}</span> : null}{status ? <span>{status}</span> : null}{pin ? <span>{t("outsideSearch")}</span> : null}</span></div>
+      <span className="dataset-row-facts"><span>{SOURCE_KIND_LABEL[row.sourceKind]}</span><span>{formatByteLength(row.byteLength, t)}</span>{viewed ? <span>{t("showingRow")}</span> : null}{status ? <span>{status}</span> : null}{pin ? <span>{t("outsideSearch")}</span> : null}</span></div>
     <div role="gridcell" className="roster-row-controls"><button ref={handleRef} tabIndex={tabIndex} type="button" data-drag-handle aria-describedby="roster-drag-instructions" aria-label={t("moveHandle", { name: row.fileName })} className="row-drag-handle">⠿</button>
       <Menu.Root><Menu.Trigger asChild><button ref={menuTrigger} tabIndex={tabIndex} type="button" className="row-menu-trigger" aria-label={t("rowActions", { name: row.fileName })}>⋯</button></Menu.Trigger><Menu.Portal><Menu.Content className="roster-menu" sideOffset={4}
         onCloseAutoFocus={event => {

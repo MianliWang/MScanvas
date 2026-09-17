@@ -837,13 +837,10 @@ describe("stopping a running conversion queue", () => {
     expect(await screen.findByText(/ProteoWizard is available/)).toBeVisible();
     fireEvent.click(await within(panel).findByRole("button", { name: "Stop queue" }));
 
-    const banner = (await screen.findByText("ProteoWizard is not available"))
+    const banner = (await screen.findByText("MSCanvas cannot use the backend until it restarts"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
-      "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
-    );
-    expect(banner.textContent ?? "").toContain(
-      "Restart MSCanvas before starting another preview or conversion.",
+      "MSCanvas could not confirm that a ProteoWizard process it started has ended. Restart MSCanvas before starting another preview or conversion.",
     );
     // And the gates derived from that verdict close with it.
     await waitFor(() => {
@@ -944,7 +941,11 @@ describe("stopping a running conversion queue", () => {
     await waitFor(() => {
       expect(within(panel).getByText("Queue stopped")).toBeVisible();
     });
-    expect(within(panel).getByText("MSCanvas cannot write to that folder.")).toBeVisible();
+    // An unmapped code: the boundary's words are kept whole. This session
+    // reads English, which is the language they are written in, so they are
+    // shown as they are -- the provenance label belongs to a session whose
+    // language they are not, and `ownedErrorMessages.test.ts` holds that rule.
+    expect(within(panel).getByText(/MSCanvas cannot write to that folder\./u)).toBeVisible();
     await waitFor(() => {
       expect(liveRegion()).toContain(
         "Queue stopped. 1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run, 0 skipped by you.",
@@ -1100,13 +1101,10 @@ describe("stopping a running conversion queue", () => {
     // The backend banner says the same thing, because a user who has scrolled
     // past the queue still needs to know why nothing will start. It is never a
     // stale "available" beside a session that refuses every backend action.
-    const banner = (await screen.findByText("ProteoWizard is not available"))
+    const banner = (await screen.findByText("MSCanvas cannot use the backend until it restarts"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
-      "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
-    );
-    expect(banner.textContent ?? "").toContain(
-      "Restart MSCanvas before starting another preview or conversion.",
+      "MSCanvas could not confirm that a ProteoWizard process it started has ended. Restart MSCanvas before starting another preview or conversion.",
     );
   });
 

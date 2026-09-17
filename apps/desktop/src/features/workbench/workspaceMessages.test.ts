@@ -23,8 +23,21 @@ describe("render-time workbench messages", () => {
       { outcome: "duplicate", existing: { ...selectedFile, fileName: name } },
       { outcome: "rejected", candidateName: "未改名.mzML", error: { kind: "test_error", summary, detail: null, retryable: false } },
     ] });
+    // An unmapped code: the prose is kept whole either way, labelled as
+    // untranslated original where the reader's language is not the one it is
+    // written in.
     expect(formatWorkspaceNotice(notice, en).details).toEqual([`${name} is already in the workspace.`, `未改名.mzML: ${summary}`]);
-    expect(formatWorkspaceNotice(notice, zh).details).toEqual([`${name} 已在工作区中。`, `未改名.mzML：${summary}`]);
+    expect(formatWorkspaceNotice(notice, zh).details).toEqual([`${name} 已在工作区中。`, `未改名.mzML：后端的原始报告（未翻译）：${summary}`]);
+  });
+  it("reads a refusal this build words in the reader's own language", () => {
+    // The reason this detail carries the error rather than its sentence: a
+    // code with a resource is rendered from that resource, so the same refusal
+    // is English in an English session and Chinese in a Chinese one.
+    const notice = describeAddResult({ roster: { datasets: [], capacity: 1024 }, outcomes: [
+      { outcome: "rejected", candidateName: "notes.txt", error: { kind: "unsupported_extension", summary: "Only mzML files are supported.", detail: null, retryable: false } },
+    ] });
+    expect(formatWorkspaceNotice(notice, en).details).toEqual(["notes.txt: MSCanvas opens .mzML files in this version."]);
+    expect(formatWorkspaceNotice(notice, zh).details).toEqual(["notes.txt：此版本的 MSCanvas 可打开 .mzML 文件。"]);
   });
   it("keeps incomplete refusal distinct from an empty complete folder in both locales", () => {
     const result = { roster: { datasets: [], capacity: 1024 }, outcomes: [], discovery: { complete: false, skippedReparseCount: 0, inaccessibleEntryCount: 0, limitsReached: ["depth" as const] } };

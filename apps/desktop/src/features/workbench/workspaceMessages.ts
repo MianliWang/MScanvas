@@ -1,4 +1,6 @@
 import type { MessageArguments, MessageKey, UiMessage } from "../preferences/i18n";
+import type { PreviewError } from "../mzml-preview/contracts";
+import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import type { WorkspaceNotice } from "../mzml-preview/rosterSelection";
 
 type NoticeKey = Extract<MessageKey, `notice${string}`>;
@@ -7,11 +9,26 @@ type MessagePart = { [K in NoticeKey]: readonly [key: K, ...args: MessageArgumen
 export type WorkspaceNoticePart = MessagePart | {
   readonly source: "folder" | "drop";
   readonly limits: readonly string[];
+} | {
+  /**
+   * A candidate the workspace refused, carried as the error rather than as its
+   * sentence.
+   *
+   * Interpolating `error.summary` straight into the detail line put the
+   * boundary's English into a Chinese session for every refusal this build has
+   * a sentence for -- an unsupported extension, a full workspace, a file that
+   * is not a regular file. Keeping the error here defers the choice to the
+   * moment there is a `t` to make it with.
+   */
+  readonly rejected: { readonly name: string; readonly error: PreviewError };
 };
 const folderLimits = { depth: "noticeFolderDepth", entries: "noticeFolderEntries", directories: "noticeFolderDirectories", candidates: "noticeFolderCandidates" } as const;
 const dropLimits = { roots: "noticeDropRoots", depth: "noticeDropDepth", entries: "noticeDropEntries", directories: "noticeDropDirectories", candidates: "noticeDropCandidates" } as const;
 
 function renderPart(part: WorkspaceNoticePart, t: UiMessage): string {
+  if ("rejected" in part) {
+    return t("noticeRejected", { name: part.rejected.name, summary: ownedErrorMessage(part.rejected.error, t) });
+  }
   if ("source" in part) {
     const mapping = part.source === "folder" ? folderLimits : dropLimits;
     const reasons = part.limits.map(limit => t(mapping[limit as keyof typeof mapping] ?? "noticeLimitUnknown"));

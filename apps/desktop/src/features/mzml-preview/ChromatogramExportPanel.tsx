@@ -59,29 +59,29 @@ const FIGURE_PREFIX = "chromatogram";
  * reader comparing the two has no way to know they are the same scan.
  */
 
-const RANGE_SCOPES: readonly {
-  readonly scope: ChromatogramRangeScope;
-  readonly label: string;
-}[] = [
-  { scope: "full", label: "Full run" },
-  { scope: "current", label: "Current range" },
+/**
+ * The scopes and formats this panel offers, and nothing about how they read.
+ *
+ * Each control is named from the resource bundle where it is rendered. These
+ * lists used to carry the English beside the scope, which was a second
+ * authority for text the bundle already owned and which no renderer read.
+ */
+const RANGE_SCOPES: readonly { readonly scope: ChromatogramRangeScope }[] = [
+  { scope: "full" },
+  { scope: "current" },
 ];
 
 const FIGURE_FORMATS: readonly {
   readonly format: ChromatogramExportFormat;
-  readonly label: string;
   readonly recordsDpi: boolean;
 }[] = [
-  { format: "svg", label: "Export SVG…", recordsDpi: false },
-  { format: "png", label: "Export PNG…", recordsDpi: true },
+  { format: "svg", recordsDpi: false },
+  { format: "png", recordsDpi: true },
 ];
 
-const DATA_FORMATS: readonly {
-  readonly format: ChromatogramExportFormat;
-  readonly label: string;
-}[] = [
-  { format: "csv", label: "Export CSV…" },
-  { format: "tsv", label: "Export TSV…" },
+const DATA_FORMATS: readonly { readonly format: ChromatogramExportFormat }[] = [
+  { format: "csv" },
+  { format: "tsv" },
 ];
 
 /**
@@ -93,11 +93,10 @@ const DATA_FORMATS: readonly {
  */
 const LINKED_FIGURE_FORMATS: readonly {
   readonly format: LinkedFigureFormat;
-  readonly label: string;
   readonly recordsDpi: boolean;
 }[] = [
-  { format: "svg", label: "Export linked SVG…", recordsDpi: false },
-  { format: "png", label: "Export linked PNG…", recordsDpi: true },
+  { format: "svg", recordsDpi: false },
+  { format: "png", recordsDpi: true },
 ];
 
 export interface ChromatogramExportPanelProps {

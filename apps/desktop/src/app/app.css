@@ -196,6 +196,51 @@ button:disabled,
   color: var(--color-danger);
 }
 
+/* M7.5 installed-backend banner. The verdict, the build it names and the
+   recovery actions are separate elements now: one live region for what is
+   being claimed, and one row for what can be done about it. Both wrap, so a
+   long Chinese or English sentence reflows instead of pushing an action out of
+   reach at a narrow width. */
+.backend-status-reading {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 22em;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.backend-status-reading > span { overflow-wrap: anywhere; }
+.backend-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+/* Comfortable to hit with a pointer without changing the banner's density:
+   the link buttons sit on their own baseline row when the banner wraps. */
+.backend-status-actions > .link-button { min-height: 32px; }
+
+/* The offline setup help. Its own row in the banner, closed to begin with, and
+   readable with no dataset, no backend and no network. Deliberately not a
+   dialog: nothing here gates the workspace. */
+.backend-setup-help {
+  flex-basis: 100%;
+  min-width: 0;
+  margin: 2px 0 0;
+  color: var(--color-text-secondary);
+}
+.backend-setup-help > summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  cursor: pointer;
+}
+.backend-setup-help > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.backend-setup-help p, .backend-setup-help ul { margin: 4px 0; max-width: 72ch; overflow-wrap: anywhere; }
+.backend-setup-help ul { padding-inline-start: 1.4em; }
+.backend-setup-help li { margin: 2px 0; }
+
 .workspace-layout {
   display: grid;
   min-height: 0;

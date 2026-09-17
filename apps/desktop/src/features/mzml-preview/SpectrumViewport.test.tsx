@@ -29,6 +29,8 @@
  */
 
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { bindUiMessages, UI_RESOURCES } from "../preferences/i18n";
+import type { UiMessage } from "../preferences/i18n";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { useLayoutEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -475,6 +477,16 @@ afterEach(() => {
   plotBox = null;
 });
 
+/** The typed message binding over one bundled locale's own values. */
+function messages(locale: "en" | "zh-CN"): UiMessage {
+  const bundle = UI_RESOURCES[locale] as Record<string, string>;
+  return bindUiMessages(((key: string, values?: Record<string, unknown>) =>
+    Object.entries(values ?? {}).reduce<string>(
+      (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+      bundle[key],
+    )) as never);
+}
+
 describe("what each m/z control would do", () => {
   const cases: readonly {
     readonly name: string;
@@ -562,7 +574,7 @@ describe("what each m/z control would do", () => {
           expect(state(), `${label} while closed, clicked`).toBe(before);
 
           const action = VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.find(
-            (entry) => entry.label === label,
+            (entry) => messages("en")(entry.messageKey) === label,
           )?.action;
           expect(action, `${label} is a known action`).toBeDefined();
           let dispatched = true;
@@ -595,7 +607,7 @@ describe("what each m/z control would do", () => {
     renderViewport();
 
     expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      ...VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map((entry) => entry.label),
+      ...VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map((entry) => messages("en")(entry.messageKey)),
     ]);
     expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
       ...CONTROLS,
@@ -1774,7 +1786,10 @@ describe("what the plot draws, and what it says it is drawing", () => {
     failProjection(true);
 
     expect(screen.getByRole("button", { name: RETRY })).toBeVisible();
-    expect(statusText()).toBe(
+    // An unmapped code reaches this caption through the labelled original,
+    // which is what keeps its evidence intact in a Chinese session rather than
+    // handing it over as though it were this build's own copy.
+    expect(statusText()).toContain(
       "The retained spectrum did not answer. The reader was busy with another request.",
     );
     expect(sticks()).toBeNull();

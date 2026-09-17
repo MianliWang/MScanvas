@@ -1,4 +1,59 @@
+/// The narrow, Rust-owned UI preference store. Separate from `preview` on
+/// purpose: it holds no scientific state, confers no authority and shares no
+/// lane with the conversion, process or roster locks.
+mod preferences;
 mod preview;
+
+use preferences::UiPreferenceStore;
+use preferences::dto::{UiPreferenceReadDto, UiPreferenceSaveDto, UiPreferenceWriteDto};
+
+/// The session's preference store, shared so a command can take it onto a
+/// blocking thread.
+type SharedPreferences = Arc<UiPreferenceStore>;
+
+/// Reads the stored UI preferences for a starting document.
+///
+/// Reads and never writes: a first run is answered as absent rather than given
+/// a file, and a record this build cannot use is reported and left exactly as
+/// found. The webview names no path, no file and no key -- there is no argument
+/// to name one with.
+///
+/// Bound to the calling document like every other owned operation here. A
+/// preference commit is authority over a file in the user's profile, and the
+/// answer to a read is what the next commit merges onto.
+#[tauri::command]
+async fn load_ui_preferences(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    preferences: State<'_, SharedPreferences>,
+) -> Result<UiPreferenceReadDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let preferences = Arc::clone(&preferences);
+    // A profile volume can be slow, and a preference read is not something to
+    // hold an async worker for.
+    off_the_async_runtime(move || preferences.load()).await
+}
+
+/// Commits one half of the UI preference record.
+///
+/// The payload names a field group and nothing else: no path, no file name, no
+/// arbitrary document and no filesystem capability. Which group is committed is
+/// what keeps a Settings apply and a panel toggle from overwriting each other,
+/// and the answer identifies the exact snapshot that was published and read
+/// back -- an uncertain outcome is reported as a failure rather than as saved.
+#[tauri::command]
+async fn save_ui_preferences(
+    request: UiPreferenceWriteDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    preferences: State<'_, SharedPreferences>,
+) -> Result<UiPreferenceSaveDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let preferences = Arc::clone(&preferences);
+    off_the_async_runtime(move || preferences.save(&request)).await
+}
 
 #[tauri::command]
 async fn open_finalized_output(
@@ -1280,20 +1335,29 @@ pub fn run() {
     // it appends can answer this application's own commands from a table the
     // page can write, which is not a capability a shipped binary should carry.
     #[cfg(feature = "e2e")]
-    let builder = builder
-        .append_invoke_initialization_script(E2E_IPC_BOUNDARY_SCRIPT)
-        .setup(|app| {
-            // One synthetic spectrum in the ordinary export slot, so a rendered
-            // test can reach the real export path on a machine with no
-            // ProteoWizard installation and no mzML file. Not a command: there
-            // is nothing here for a webview to call, in any build.
-            preview::seed_spectrum_for_e2e(&app.state::<SharedService>());
-            Ok(())
-        });
+    let builder = builder.append_invoke_initialization_script(E2E_IPC_BOUNDARY_SCRIPT);
     builder
         .manage(SharedService::new(PreviewService::new(Box::new(
             ProteoWizardProvider::new(),
         ))))
+        // One startup hook, because `Builder::setup` replaces rather than
+        // appends: a second call would silently drop the first.
+        .setup(|app| {
+            // The preference store is bound once, from the application's own
+            // resolved per-user directory. A binding that cannot be made leaves
+            // a store that answers `unavailable`, so the application stays
+            // completely usable on defaults rather than failing to start.
+            app.manage(SharedPreferences::new(UiPreferenceStore::bind(
+                app.handle(),
+            )));
+            // One synthetic spectrum in the ordinary export slot, so a rendered
+            // test can reach the real export path on a machine with no
+            // ProteoWizard installation and no mzML file. Not a command: there
+            // is nothing here for a webview to call, in any build.
+            #[cfg(feature = "e2e")]
+            preview::seed_spectrum_for_e2e(&app.state::<SharedService>());
+            Ok(())
+        })
         // Locked Tauri routing contract: stable tauri-runtime-wry 2.11.4
         // creates a configured WebviewWindow as `WindowContent` and converts
         // its Wry drag callback into `WindowEvent::DragDrop`. Child webviews
@@ -1329,6 +1393,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_status,
+            load_ui_preferences,
+            save_ui_preferences,
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,

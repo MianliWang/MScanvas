@@ -22,6 +22,10 @@
 
 import { describe, expect, it } from "vitest";
 
+import { bindUiMessages, UI_RESOURCES } from "../preferences/i18n";
+import type { UiMessage } from "../preferences/i18n";
+import { conversionNoticeMessage } from "./conversionMessages";
+
 import { acceptProjection, backendIsUsable, describesRenderedBinding } from "./backendAuthority";
 import type { ConversionCatalogRow } from "./contracts";
 import type { ConversionLane } from "./conversionAvailability";
@@ -108,6 +112,16 @@ function intentOf(catalog: readonly ConversionCatalogRow[], intentId: string) {
 const A = settledAt(1, firstBindingReceipt);
 const A_LATER = settledAt(2, firstBindingReceipt);
 const B = settledAt(3, firstBindingReceipt + 1);
+
+/** The typed message binding over one bundled locale's own values. */
+function messages(locale: "en" | "zh-CN"): UiMessage {
+  const bundle = UI_RESOURCES[locale] as Record<string, string>;
+  return bindUiMessages(((key: string, values?: Record<string, unknown>) =>
+    Object.entries(values ?? {}).reduce<string>(
+      (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+      bundle[key],
+    )) as never);
+}
 
 describe("the PR #95 blocker families, and what now prevents each", () => {
   it("1. preserved unsupported selection stays recoverable (ledger row 2)", () => {
@@ -295,7 +309,9 @@ describe("the PR #95 blocker families, and what now prevents each", () => {
     // can do: wait, press something, or change something above.
     const failed = startOn({}, "failed");
     expect(failed.status === "unavailable" && failed.reason).toBe("plan-failed");
-    expect(failed.status === "unavailable" && failed.message).toContain("Try describing it again");
+    expect(
+      failed.status === "unavailable" && conversionNoticeMessage(failed.reason, messages("en")),
+    ).toContain("Try describing it again");
     const reading = startOn({}, "reading");
     expect(reading.status === "unavailable" && reading.reason).toBe("plan-reading");
     const unknown = startOn({}, "settingsUnknown");

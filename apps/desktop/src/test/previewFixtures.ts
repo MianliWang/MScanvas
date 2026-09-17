@@ -38,7 +38,6 @@ import type {
   ConversionBeginRequest,
   ConversionPlanOutcome,
   ConversionPlanRequest,
-  ConversionQueuePlan,
   ConversionStartOutcome,
   ConversionQueue,
   ConversionQueueItem,

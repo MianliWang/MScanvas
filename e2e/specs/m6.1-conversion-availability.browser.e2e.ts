@@ -175,14 +175,11 @@ function conversionStarts(calls: { command: string }[]): number {
  */
 async function recheckTheBackend(verdict: unknown): Promise<void> {
   await setInvokeResult("inspect_backend", verdict);
-  const buttons = await browser.$$("button.link-button");
-  for (const button of buttons) {
-    if ((await button.getText()).trim() === "Check again") {
-      await button.click();
-      return;
-    }
+  const recheck = await browser.$('[data-backend-action="recheck"]');
+  if (!(await recheck.isExisting())) {
+    throw new Error("the backend banner offers no recheck action");
   }
-  throw new Error("the backend banner offers no Check again");
+  await recheck.click();
 }
 
 async function blockTheLane(): Promise<void> {

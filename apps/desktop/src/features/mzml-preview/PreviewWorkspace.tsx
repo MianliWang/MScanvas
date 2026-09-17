@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
-import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 import { ActiveClearDialog } from "./ActiveClearDialog";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
@@ -15,12 +15,13 @@ import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
-import { ownedErrorDetail } from "./ownedErrorMessages";
+import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
 import { QuickFigureActions } from "./QuickFigureActions";
 import type { FigurePreviewKind } from "./contracts";
 import { SpectrumTable } from "./SpectrumTable";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
+import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
@@ -34,19 +35,19 @@ export function PreviewWorkspace() {
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
-  const [constrained, setConstrained] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 1050px)").matches);
-  const [rosterOpen, setRosterOpen] = useState(() => typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 1050px)").matches);
-  const [detailsRequested, setDetailsOpen] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1700px)").matches);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 1050px)");
-    const fold = () => { setConstrained(query.matches); if (query.matches) { setRosterOpen(false); setDetailsOpen(false); } };
-    query.addEventListener("change", fold);
-    return () => query.removeEventListener("change", fold);
-  }, []);
+  // The panels are owned by the preference provider, which is the one place
+  // that knows both what the user asked for and what the window can fit. What
+  // is left here is the session fact the provider has no business knowing:
+  // whether the inspector currently has anything to inspect.
+  const { panels } = useSessionPreferences();
+  const constrained = panels.fit.constrained;
+  const rosterOpen = panels.present.roster;
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
   const detailsAvailable = preview.status === "loaded";
-  const detailsOpen = detailsRequested && detailsAvailable;
+  // The request is the preference; availability is not. A details panel asked
+  // for while nothing is loaded stays asked for, and appears the moment a run
+  // does -- it never becomes authority to load one.
+  const detailsOpen = panels.present.details && detailsAvailable;
   const evidenceRef = useRef<HTMLElement | null>(null);
   const pendingRevealFocus = useRef(false);
   useLayoutEffect(() => {
@@ -253,7 +254,9 @@ export function PreviewWorkspace() {
       recordMeasurement(
         "spectrumTableRender",
         milliseconds,
-        `Rendering ${formatCount(renderedRowCount)} windowed rows.`,
+        // Which sentence and its parameter, not the sentence: the inspector
+        // that renders this tooltip is the surface with a locale.
+        { key: "measureTableDetail", rows: formatCount(renderedRowCount) },
       );
     },
     [recordMeasurement],
@@ -261,8 +264,8 @@ export function PreviewWorkspace() {
 
   return (
     <div className="app-shell workbench-shell" data-surface={surface} data-roster-open={rosterOpen} data-details-open={detailsOpen} data-settings-return-target="" tabIndex={-1}>
-      <WorkbenchHeader surface={surface} onNavigate={next => { setSurface(next); if (constrained) { setRosterOpen(false); setDetailsOpen(false); } }} rosterOpen={rosterOpen} onToggleRoster={() => { setRosterOpen(open => !open); if (constrained) setDetailsOpen(false); }}
-        detailsOpen={detailsOpen} detailsAvailable={detailsAvailable} onToggleDetails={() => { setDetailsOpen(open => !open); if (constrained) setRosterOpen(false); }} rowCount={roster.datasets.length}
+      <WorkbenchHeader surface={surface} onNavigate={setSurface}
+        detailsAvailable={detailsAvailable} rowCount={roster.datasets.length}
         busy={workspace.conversion.busy}
         retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus} />
 
@@ -304,7 +307,7 @@ export function PreviewWorkspace() {
         {workspace.pickerError === null ? null : (
           <div className="notice notice-danger" role="status">
             <strong>{t("pickerFailed")}</strong>
-            <span>{workspace.pickerError.summary}</span>
+            <span>{ownedErrorMessage(workspace.pickerError, t)}</span>
             {/* The same action as `Add files…`, so it is refused in the same
                 states. An enabled control that returns at a guard tells the
                 user their retry failed again. */}
@@ -331,7 +334,7 @@ export function PreviewWorkspace() {
         {workspace.folderError === null ? null : (
           <div className="notice notice-danger" role="status">
             <strong>{t("folderFailed")}</strong>
-            <span>{workspace.folderError.summary}</span>
+            <span>{ownedErrorMessage(workspace.folderError, t)}</span>
             <button
               className="link-button"
               disabled={!canAddFolder}
@@ -392,7 +395,7 @@ export function PreviewWorkspace() {
           // wording separate from the error for one accepted Drop below.
           <div className="notice notice-danger">
             <strong>{t("dropUnavailable")}</strong>
-            <span>{workspace.dropSubscriptionError.summary}</span>
+            <span>{ownedErrorMessage(workspace.dropSubscriptionError, t)}</span>
             <button
               className="link-button"
               onClick={(event) => {
@@ -417,7 +420,7 @@ export function PreviewWorkspace() {
           // the same failure twice.
           <div className="notice notice-danger">
             <strong>{t("dropFailed")}</strong>
-            <span>{workspace.dropError.summary}</span>
+            <span>{ownedErrorMessage(workspace.dropError, t)}</span>
             <button
               className="link-button"
               onClick={(event) => {
@@ -436,7 +439,7 @@ export function PreviewWorkspace() {
         {workspace.workspaceError === null ? null : (
           <div className="notice notice-danger" role="status">
             <strong>{t("workspaceFailed")}</strong>
-            <span>{workspace.workspaceError.summary}</span>
+            <span>{ownedErrorMessage(workspace.workspaceError, t)}</span>
             <button className="link-button" onClick={workspace.dismissWorkspaceError} type="button">
               {t("dismiss")}
             </button>
@@ -484,7 +487,7 @@ export function PreviewWorkspace() {
         {workspace.rosterLoad.status === "failed" && roster.datasets.length > 0 ? (
           <div className="notice notice-danger" role="status">
             <strong>{t("rosterFailed")}</strong>
-            <span>{workspace.rosterLoad.error.summary}</span>
+            <span>{ownedErrorMessage(workspace.rosterLoad.error, t)}</span>
             {/* Refused while a mutation or an import is unresolved. Rust returns
                 a pure, gate-linearized snapshot; native page-load start owns
                 reload ordering. During an import the folder reply or
@@ -597,7 +600,9 @@ export function PreviewWorkspace() {
               if (!workspace.activateDataset(handle)) return;
               pendingRevealFocus.current = constrained && rosterOpen;
               setSurface("workbench");
-              if (constrained) { setRosterOpen(false); setDetailsOpen(false); }
+              // Folded for space, not chosen: the stored request is untouched,
+              // so widening the window brings the roster back.
+              panels.navigate();
             }}
             onAddFiles={workspace.addFiles}
             onAddFolder={workspace.addFolder}
@@ -665,7 +670,7 @@ export function PreviewWorkspace() {
               }
             >
               {workspace.spectrumSelection.status === "unavailable"
-                ? t(({ "no-loaded-run": "viewerSelectionEmpty", "backend-unavailable": "viewerSelectionBackend", "backend-changing": "viewerSelectionChecking", "conversion-running": "viewerSelectionConverting" } as const)[workspace.spectrumSelection.reason])
+                ? spectrumSelectionMessage(workspace.spectrumSelection.reason, t)
                 : ""}
             </p>
             <div className="viewer-stack">
@@ -777,8 +782,8 @@ export function PreviewWorkspace() {
               </div>
             ) : preview.status === "failed" ? (
               <div className="empty-state">
-                <strong>{preview.error.summary}</strong>
-                {preview.error.detail === null ? null : <span>{preview.error.detail}</span>}
+                <strong>{ownedErrorMessage(preview.error, t)}</strong>
+                {ownedErrorDetail(preview.error, t) === null ? null : <span>{ownedErrorDetail(preview.error, t)}</span>}
                 <div className="empty-state-actions">
                   {/* Reading is idempotent, so a retry is offered when the
                       backend said the failure was retryable — and it repeats
@@ -844,10 +849,10 @@ function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
  * percentage: nothing measures one.
  */
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessage): string {
-  if (workspace.dropSubscriptionStatus === "unavailable") return `${t("dropUnavailable")}. ${workspace.dropSubscriptionError?.summary ?? t("addFiles")}`;
+  if (workspace.dropSubscriptionStatus === "unavailable") return `${t("dropUnavailable")}. ${workspace.dropSubscriptionError === null ? t("addFiles") : ownedErrorMessage(workspace.dropSubscriptionError, t)}`;
   if (workspace.dropSubscriptionStatus === "connecting") return t("shellDropConnecting");
   if (workspace.dropRejectedToken > 0) return `${t(workspace.dropRejectedReason === "drop_busy" ? "dropBusy" : "dropConversionBusy")}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
-  if (workspace.dropError !== null) return `${t("dropFailed")}. ${workspace.dropError.summary}`;
+  if (workspace.dropError !== null) return `${t("dropFailed")}. ${ownedErrorMessage(workspace.dropError, t)}`;
   switch (workspace.dropPresentation.status) {
     case "idle": return "";
     case "hovering": return t("dropRelease", { count: workspace.dropPresentation.itemCount });
@@ -861,7 +866,7 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     return t("readingSelected");
   }
   if (preview.status === "failed") {
-    return `${t("readFailed")} ${preview.error.summary}`;
+    return `${t("readFailed")} ${ownedErrorMessage(preview.error, t)}`;
   }
   if (preview.status === "empty") {
     if (rosterLoad.status === "loading") {
@@ -873,7 +878,7 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     if (rosterLoad.status === "failed" && roster.datasets.length === 0) {
       // Nor after the read failed, which is the same ignorance by another
       // route -- and the failure itself is worth hearing.
-      return `${t("rosterFailed")}. ${rosterLoad.error.summary}`;
+      return `${t("rosterFailed")}. ${ownedErrorMessage(rosterLoad.error, t)}`;
     }
     return roster.datasets.length === 0
       ? t("rosterEmptyAnnouncement")
@@ -894,6 +899,6 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     case "unavailable":
       return t("viewerSpectrumUnavailable", { index: String(spectrum.requestedIndex) });
     case "failed":
-      return `${t("viewerSpectrumFailed", { index: String(spectrum.index) })}. ${spectrum.error.summary}`;
+      return `${t("viewerSpectrumFailed", { index: String(spectrum.index) })}. ${ownedErrorMessage(spectrum.error, t)}`;
   }
 }

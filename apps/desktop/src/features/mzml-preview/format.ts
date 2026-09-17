@@ -1,11 +1,15 @@
 /**
- * Locale-independent display formatting.
+ * Display formatting.
  *
- * Locale-aware numerics are a named later gate, so nothing here consults the
- * host locale: the same value renders identically on every machine and in
- * every test run.
+ * Locale-*aware numerics* are a named later gate, so nothing here consults the
+ * host locale: the same value renders identically on every machine and in every
+ * test run. Three of these do take the message binding, and that is a different
+ * thing -- the digits and the units are unchanged, and what the binding
+ * supplies is the English word beside them. `bytes` and `Other` are words; the
+ * number, `KiB`, `s`, `ms`, `MS1` and `MS2` are not.
  */
 
+import type { UiMessage } from "../preferences/i18n";
 import type { RetentionTime, SelectedFile } from "./contracts";
 
 /**
@@ -49,10 +53,15 @@ export function formatIntensity(value: number): string {
 /**
  * Renders a retention time with no unit, because the backend emits none.
  * Inventing "min" or "s" here would present a guess as a measurement.
+ *
+ * The caveat is a resource, and it is the same one the spectrum panel already
+ * used for this field. Held here as English it was the one value in the
+ * localized inspector that a Chinese session read in English -- on every run,
+ * because the measured formatter never reports a unit.
  */
-export function formatRetentionTime(retentionTime: RetentionTime): string {
+export function formatRetentionTime(retentionTime: RetentionTime, t: UiMessage): string {
   const value = retentionTime.value.toFixed(4);
-  return retentionTime.unitKnown ? value : `${value} (unit not reported)`;
+  return retentionTime.unitKnown ? value : t("viewerRetentionValue", { value });
 }
 
 /** The compact retention-time form for a dense table cell. */
@@ -60,9 +69,15 @@ export function formatRetentionTimeValue(retentionTime: RetentionTime): string {
   return retentionTime.value.toFixed(4);
 }
 
-export function formatByteLength(bytes: number): string {
+/**
+ * A file size.
+ *
+ * The binary units are units in any language and stay as they are. `bytes` is
+ * an English word, so below a kibibyte the sentence is a resource.
+ */
+export function formatByteLength(bytes: number, t: UiMessage): string {
   if (bytes < 1024) {
-    return `${formatCount(bytes)} bytes`;
+    return t("formatBytes", { count: bytes });
   }
   const units = ["KiB", "MiB", "GiB", "TiB"] as const;
   let value = bytes / 1024;
@@ -74,8 +89,15 @@ export function formatByteLength(bytes: number): string {
   return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-export function formatMsLevel(msLevel: number | null): string {
-  return msLevel === null ? "Other" : `MS${msLevel}`;
+/**
+ * An MS level, or the backend's own *other* bucket.
+ *
+ * `MS1` and `MS2` are identifiers. `Other` is a word, and it names a bucket a
+ * real run reaches -- `msLevel: null` is that bucket rather than a missing
+ * value -- so it is a resource.
+ */
+export function formatMsLevel(msLevel: number | null, t: UiMessage): string {
+  return msLevel === null ? t("formatMsOther") : `MS${msLevel}`;
 }
 
 export function formatDuration(milliseconds: number): string {

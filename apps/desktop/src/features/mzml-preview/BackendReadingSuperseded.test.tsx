@@ -194,10 +194,10 @@ describe("a reading that has stopped describing the session", () => {
       />,
     );
     const said = document.querySelector(SUPERSEDED)?.textContent ?? "";
-    expect(said).toContain(unavailableBackend.failure?.summary ?? "");
+    expect(said).toContain("ProteoWizard was not found on this computer.");
     // Said as history rather than as the current state of the session.
     expect(said).toContain("That earlier reading said");
-    expect(said).not.toContain("ProteoWizard is not available");
+    expect(said).not.toContain("No ProteoWizard installation was found");
   });
 });
 
