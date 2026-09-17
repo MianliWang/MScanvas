@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createContext, useContext } from "react";
 
+import { DOCUMENT_AUTHORITY_HEADER, currentDocumentAuthority } from "../ipc/documentAuthority";
+
 import type { FigurePreviewRequest, FigurePreviewOutcome, StagingReclaimOutcome, OutputOpenAction, OutputOpenOutcome, WorkspaceClearAction, WorkspaceClearOutcome, WorkspaceClearPlanOutcome } from "./contracts";
 
 import type {
@@ -44,25 +46,6 @@ interface DiagnosticsReservation {
   readonly reservationId: string;
 }
 
-const DOCUMENT_AUTHORITY_HEADER = "mscanvas-document-authority";
-const DOCUMENT_AUTHORITY_PROPERTY = "__MSCANVAS_DOCUMENT_AUTHORITY__";
-
-/**
- * The per-document secret Rust installs before any script runs.
- *
- * A conversion reservation is authority over a native picker and over a file
- * this application creates, so it is bound to a document exactly as tightly as
- * the drop subscription is. Read from this JavaScript realm before any queued
- * work, so a delayed call from a replaced document keeps its old header and
- * fails Rust's current-document proof.
- */
-function currentDocumentAuthority(): string {
-  const authority = Reflect.get(globalThis, DOCUMENT_AUTHORITY_PROPERTY);
-  if (typeof authority !== "string" || !/^[0-9a-f]{32}$/.test(authority)) {
-    throw new Error("The current page does not have conversion authority.");
-  }
-  return authority;
-}
 
 /**
  * What the webview may ask the desktop backend.

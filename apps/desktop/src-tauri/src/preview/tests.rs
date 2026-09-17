@@ -3959,6 +3959,10 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     let host = include_str!("../lib.rs");
     let api = include_str!("../../../src/features/mzml-preview/api.ts");
     let drop_transport = include_str!("../../../src/features/mzml-preview/dropTransport.ts");
+    // The preference store has its own narrow boundary rather than a corner of
+    // the preview API: it holds no scientific state and confers no authority
+    // over a backend, a dataset or a conversion.
+    let preferences = include_str!("../../../src/features/preferences/preferencesApi.ts");
 
     let registered = host
         .split_once("generate_handler![")
@@ -3977,6 +3981,13 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         registered,
         [
             "get_bootstrap_status",
+            // The UI preference store. Two commands, and deliberately not
+            // three: reading and committing are the whole boundary, and the
+            // reset-and-replace of an unusable record is a commit that carries
+            // its confirmation rather than a separate operation a document
+            // could reach for on its own.
+            "load_ui_preferences",
+            "save_ui_preferences",
             "inspect_backend",
             "choose_backend_installation",
             "use_automatic_backend_discovery",
@@ -4076,7 +4087,9 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // caller here and is deliberately not in this list.
     for name in &registered[1..] {
         assert!(
-            api.contains(&format!("\"{name}\"")) || drop_transport.contains(&format!("\"{name}\"")),
+            api.contains(&format!("\"{name}\""))
+                || drop_transport.contains(&format!("\"{name}\""))
+                || preferences.contains(&format!("\"{name}\"")),
             "the frontend never calls {name}"
         );
     }

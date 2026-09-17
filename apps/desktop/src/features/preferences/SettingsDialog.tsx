@@ -4,6 +4,11 @@ import { useEffect, useId, useRef } from "react";
 import { ChoiceField } from "../../components/fields/ChoiceField";
 import { SettingField } from "../../components/fields/SettingField";
 import { useSessionPreferences, useUiMessages } from "./SessionPreferencesProvider";
+import {
+  explainStoredProblem,
+  explainUnavailableProblem,
+  explainWriteProblem,
+} from "./storageMessages";
 
 /** The only Settings entry and modal; Radix stays behind this owned surface. */
 export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
@@ -18,6 +23,19 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
   const returnSuperseded = useRef(false);
   const mounted = useRef(true);
   const open = preferences.state.draft !== null;
+  const { storage, save } = preferences;
+  /**
+   * Whether one apply is in flight.
+   *
+   * While it is, every action that would change what is being published is
+   * frozen and Apply itself is inert, so a second activation cannot dispatch a
+   * second write of a snapshot the first is already publishing. Cancel is
+   * frozen too, deliberately: once the bytes are on their way, a button that
+   * looked like it could call them back would be a lie about disk.
+   */
+  const saving = save.status === "saving";
+  const hydrating = storage.status === "loading";
+  const frozen = saving || hydrating;
 
   useEffect(() => {
     mounted.current = true;
@@ -30,13 +48,27 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
     return () => { mounted.current = false; document.removeEventListener("focusin", recordDestination); };
   }, []);
 
+  useEffect(() => {
+    // An apply that did not close the dialog has nothing pending. Cleared here
+    // rather than left set, so a later real close still returns the keyboard.
+    if (save.status === "failed" || save.status === "storedRecordUnusable" || save.status === "unavailable") {
+      returnPending.current = false;
+      returnSuperseded.current = false;
+    }
+  }, [save.status]);
+
   function closeWith(action: () => void) {
     returnPending.current = true;
     returnSuperseded.current = false;
     action();
   }
 
-  return <Dialog.Root open={open} onOpenChange={(next) => next ? preferences.open() : closeWith(preferences.discard)}>
+  return <Dialog.Root open={open} onOpenChange={(next) => {
+    if (next) { preferences.open(); return; }
+    // Escape, the close control and the overlay all route here. A publish in
+    // flight is not cancellable, so the dialog stays until it settles.
+    if (!saving) closeWith(preferences.discard);
+  }}>
     <Dialog.Trigger asChild>
       <button className="secondary-button settings-entry" ref={opener} type="button" data-settings-entry="">
         {message("settings")}
@@ -82,6 +114,9 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
           // React's field handlers. The dialog owns Escape, including IME.
           event.stopImmediatePropagation();
           if (composing.current || event.isComposing || event.keyCode === 229) event.preventDefault();
+          // A publish in flight cannot be recalled, so Escape does not pretend
+          // to. The dialog reports the outcome instead.
+          if (saving) event.preventDefault();
         }}>
         <header className="settings-dialog-header">
           <div>
@@ -89,7 +124,7 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
             <Dialog.Description>{message("description")}</Dialog.Description>
           </div>
           <Dialog.Close asChild>
-            <button className="settings-close" type="button" aria-label={message("close")}>
+            <button className="settings-close" type="button" disabled={saving} aria-label={message("close")}>
               <span aria-hidden="true">×</span>
             </button>
           </Dialog.Close>
@@ -102,11 +137,13 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
           <div className="settings-fields">
             <SettingField labelId={languageId} label={message("language")} help={message("languageHelp")}>
               <ChoiceField labelledBy={languageId} describedBy={`${languageId}-help`} value={preferences.effective.locale}
+                disabled={frozen}
                 options={[{ value: "en", label: message("english") }, { value: "zh-CN", label: message("simplifiedChinese") }]}
                 onChange={(locale) => preferences.preview({ ...preferences.effective, locale })} />
             </SettingField>
             <SettingField labelId={densityId} label={message("density")} help={message("densityHelp")}>
               <ChoiceField labelledBy={densityId} describedBy={`${densityId}-help`} value={preferences.effective.density}
+                disabled={frozen}
                 options={[{ value: "comfortable", label: message("comfortable") }, { value: "compact", label: message("compact") }]}
                 onChange={(density) => preferences.preview({ ...preferences.effective, density })} />
               <p className="setting-field-help" data-density-row-count="">{message("rosterRows", { count: rowCount })}</p>
@@ -116,14 +153,59 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
               <p>{message("resourceCode", { code: preferences.problem.code })}</p>
               <button type="button" className="secondary-button" onClick={preferences.recover}>{message("recover")}</button>
             </div>}
+            {/* The stored record is not this build's and has been left exactly
+                as found. Replacing it is the user's to confirm, and it is the
+                only thing that overwrites it -- nothing about reading,
+                cancelling or resizing does. */}
+            {storage.status === "unusable" ? <div className="settings-storage-problem" role="alert" data-stored-record="unusable">
+              <p><strong>{message("storedUnusableTitle")}</strong></p>
+              <p>{explainStoredProblem(storage.problem, message)}</p>
+              <p>{message("storedUnusableBody")}</p>
+              <button type="button" className="secondary-button" data-stored-replace="" disabled={frozen} onClick={preferences.replaceStoredRecord}>
+                {message("storedReplace")}
+              </button>
+            </div> : null}
+            {/* Nothing is wrong with the workspace, and nothing is claimed about
+                disk. Reported as a status rather than an alert for that reason. */}
+            {storage.status === "unavailable" ? <div className="settings-storage-note" role="status" data-storage="unavailable">
+              <p>{message("storageUnavailable")}</p>
+              <p>{explainUnavailableProblem(storage.problem, message)}</p>
+            </div> : null}
+            {save.status === "failed" ? <div className="settings-storage-problem" role="alert" data-save="failed">
+              <p><strong>{message("saveFailedTitle")}</strong></p>
+              <p>{explainWriteProblem(save.problem, message)}</p>
+              {save.temporaryLeftBehind ? <p>{message("saveTemporaryLeftBehind")}</p> : null}
+              <p>{message("saveFailedKeeps")}</p>
+              <div className="settings-storage-actions">
+                {save.retryable ? <button type="button" className="secondary-button" data-save-retry="" onClick={preferences.retrySave}>
+                  {message("saveRetry")}
+                </button> : null}
+                {/* Named, not a silent fallback, and it claims no write: what it
+                    says is that a restart still uses the last saved record. */}
+                <button type="button" className="secondary-button" data-save-session-only="" onClick={preferences.useForThisSession}>
+                  {message("saveSessionOnly")}
+                </button>
+              </div>
+            </div> : null}
           </div>
         </div>
         <footer className="settings-dialog-footer">
-          <p>{message("sessionOnly")}</p>
+          <p data-storage-note="">{
+            save.sessionOnly ? message("sessionOnlyNote")
+              : hydrating ? message("storageLoading")
+                : storage.status === "unavailable" ? message("storageSessionOnly")
+                  : message("storageSaved")
+          }</p>
           <div className="settings-dialog-actions">
-            <button className="secondary-button settings-reset" type="button" onClick={preferences.reset}>{message("reset")}</button>
-            <Dialog.Close asChild><button className="secondary-button" type="button">{message("cancel")}</button></Dialog.Close>
-            <button className="primary-button" type="button" disabled={preferences.problem !== null} onClick={() => closeWith(preferences.apply)}>{message("apply")}</button>
+            <button className="secondary-button settings-reset" type="button" disabled={frozen} onClick={preferences.reset}>{message("reset")}</button>
+            <Dialog.Close asChild><button className="secondary-button" type="button" disabled={saving}>{message("cancel")}</button></Dialog.Close>
+            {/* Inert while a publish is in flight, so a second activation --
+                pointer, keyboard or both -- cannot dispatch a second write. */}
+            <button className="primary-button" type="button" aria-busy={saving || undefined}
+              disabled={preferences.problem !== null || frozen}
+              onClick={() => closeWith(preferences.apply)}>
+              {saving ? message("savePending") : message("apply")}
+            </button>
           </div>
         </footer>
       </Dialog.Content>

@@ -47,6 +47,13 @@ resvg = { version = "=0.48.1", default-features = false, features = [
   "system-fonts",
 ] }
 serde.workspace = true
+# The UI preference record's only serialization. Promoted from the test-only
+# declaration below to an ordinary dependency for M7.5: the store reads and
+# writes one small JSON document, and the alternatives were hand-rolling a
+# parser beside a reviewed one already in the locked graph, or adding a store
+# library to avoid a one-line manifest change. The resolved version is
+# unchanged.
+serde_json.workspace = true
 tauri.workspace = true
 # Copy plot writes an image to the clipboard from Rust. The official plugin's
 # Rust API is used directly; its generic commands stay denied to the webview,
@@ -56,6 +63,11 @@ tauri-plugin-clipboard-manager = "=2.3.3"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.61.3", features = [
   "Win32_Foundation",
+  # `SetFileInformationByHandle` with `FileRenameInfo`, and the
+  # `FILE_RENAME_INFO` layout it takes. The preference store publishes its
+  # record by replacing the published name from the handle the bytes went into,
+  # which is the one storage API this feature is enabled for.
+  "Win32_Storage_FileSystem",
   "Win32_System_Com",
   "Win32_UI_Shell",
 ] }
@@ -69,4 +81,3 @@ windows = { version = "=0.61.3", features = [
 mscanvas-proteowizard = { path = "../../../crates/proteowizard", features = [
   "test-support",
 ] }
-serde_json.workspace = true

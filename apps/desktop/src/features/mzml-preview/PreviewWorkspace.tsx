@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
-import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 import { ActiveClearDialog } from "./ActiveClearDialog";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
@@ -34,19 +34,19 @@ export function PreviewWorkspace() {
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
-  const [constrained, setConstrained] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 1050px)").matches);
-  const [rosterOpen, setRosterOpen] = useState(() => typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 1050px)").matches);
-  const [detailsRequested, setDetailsOpen] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1700px)").matches);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 1050px)");
-    const fold = () => { setConstrained(query.matches); if (query.matches) { setRosterOpen(false); setDetailsOpen(false); } };
-    query.addEventListener("change", fold);
-    return () => query.removeEventListener("change", fold);
-  }, []);
+  // The panels are owned by the preference provider, which is the one place
+  // that knows both what the user asked for and what the window can fit. What
+  // is left here is the session fact the provider has no business knowing:
+  // whether the inspector currently has anything to inspect.
+  const { panels } = useSessionPreferences();
+  const constrained = panels.fit.constrained;
+  const rosterOpen = panels.present.roster;
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
   const detailsAvailable = preview.status === "loaded";
-  const detailsOpen = detailsRequested && detailsAvailable;
+  // The request is the preference; availability is not. A details panel asked
+  // for while nothing is loaded stays asked for, and appears the moment a run
+  // does -- it never becomes authority to load one.
+  const detailsOpen = panels.present.details && detailsAvailable;
   const evidenceRef = useRef<HTMLElement | null>(null);
   const pendingRevealFocus = useRef(false);
   useLayoutEffect(() => {
@@ -261,8 +261,8 @@ export function PreviewWorkspace() {
 
   return (
     <div className="app-shell workbench-shell" data-surface={surface} data-roster-open={rosterOpen} data-details-open={detailsOpen} data-settings-return-target="" tabIndex={-1}>
-      <WorkbenchHeader surface={surface} onNavigate={next => { setSurface(next); if (constrained) { setRosterOpen(false); setDetailsOpen(false); } }} rosterOpen={rosterOpen} onToggleRoster={() => { setRosterOpen(open => !open); if (constrained) setDetailsOpen(false); }}
-        detailsOpen={detailsOpen} detailsAvailable={detailsAvailable} onToggleDetails={() => { setDetailsOpen(open => !open); if (constrained) setRosterOpen(false); }} rowCount={roster.datasets.length}
+      <WorkbenchHeader surface={surface} onNavigate={setSurface}
+        detailsAvailable={detailsAvailable} rowCount={roster.datasets.length}
         busy={workspace.conversion.busy}
         retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus} />
 
@@ -597,7 +597,9 @@ export function PreviewWorkspace() {
               if (!workspace.activateDataset(handle)) return;
               pendingRevealFocus.current = constrained && rosterOpen;
               setSurface("workbench");
-              if (constrained) { setRosterOpen(false); setDetailsOpen(false); }
+              // Folded for space, not chosen: the stored request is untouched,
+              // so widening the window brings the roster back.
+              panels.navigate();
             }}
             onAddFiles={workspace.addFiles}
             onAddFolder={workspace.addFolder}

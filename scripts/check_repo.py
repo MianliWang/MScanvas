@@ -5403,6 +5403,88 @@ def _validate_the_claim_guard_detects_bypasses(errors: list[str]) -> None:
                 )
 
 
+def validate_the_preference_store_ships_bound_and_isolated(errors: list[str]) -> None:
+    """Two things a preference store can silently get wrong, checked rather than
+    remembered.
+
+    **The QA root must never ship.** Under the `e2e` feature the store binds a
+    task-owned directory taken from the process environment instead of the
+    user's own profile, and refuses outright when that directory is missing or
+    unusable. That is what lets a campaign corrupt, lock and replace a
+    preference file without touching the operator's real configuration. In a
+    shipped build it would be an environment variable that redirects where a
+    user's settings live, so every reference to it must sit under the `cfg` that
+    gates it -- a reference that drifts out from under the attribute compiles
+    into every build with no other symptom -- and the variable's own name must
+    appear nowhere in the production frontend, whose bundle ships either way.
+
+    **The real store must be installed.** The preference API's context default
+    deliberately claims no storage, so that a render with no provider cannot
+    reach for an IPC boundary that may not be there and cannot pretend to
+    remember anything. The consequence is that the application's own entry point
+    is what makes a shipped build save preferences at all, and a bundle that
+    quietly stopped saving them would look exactly like one that saves them.
+
+    Both failures are invisible from the outside, which is why they are here.
+    """
+    gate = '#[cfg(feature = "e2e")]'
+    watched = ("qa_root", "bind_qa_root", "MSCANVAS_E2E_PREFERENCE_ROOT")
+
+    source = ROOT / "apps" / "desktop" / "src-tauri" / "src"
+    if source.is_dir():
+        for rust in sorted(source.glob("**/*.rs")):
+            # The module that *is* the QA root is gated at its declaration,
+            # which the scan below sees where that declaration is written;
+            # inside it every mention is already behind that gate.
+            if rust.name == "qa_root.rs":
+                continue
+            lines = rust.read_text(encoding="utf-8").splitlines()
+            gated = _gated_lines(lines, gate)
+            for number, line in enumerate(lines, start=1):
+                if not any(name in line for name in watched):
+                    continue
+                if line.lstrip().startswith("//"):
+                    continue
+                if number not in gated:
+                    relative = rust.relative_to(ROOT).as_posix()
+                    errors.append(
+                        f"{relative}:{number} names the QA preference root outside {gate}; "
+                        "a shipped build must resolve preferences from the user's own "
+                        "per-user directory and nowhere else"
+                    )
+
+    frontend = ROOT / "apps" / "desktop" / "src"
+    if frontend.is_dir():
+        for candidate in sorted(frontend.glob("**/*")):
+            if not candidate.is_file() or candidate.suffix not in {
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".css",
+                ".html",
+            }:
+                continue
+            content = candidate.read_text(encoding="utf-8")
+            if "MSCANVAS_E2E_PREFERENCE_ROOT" in content:
+                relative = candidate.relative_to(ROOT).as_posix()
+                errors.append(
+                    f"{relative} names MSCANVAS_E2E_PREFERENCE_ROOT; the QA preference "
+                    "root is resolved in Rust and is not something the renderer may name"
+                )
+
+    entry = ROOT / "apps" / "desktop" / "src" / "main.tsx"
+    if entry.is_file():
+        content = entry.read_text(encoding="utf-8")
+        if "tauriPreferencesApi" not in content or "PreferencesApiProvider" not in content:
+            errors.append(
+                "apps/desktop/src/main.tsx does not install tauriPreferencesApi through "
+                "PreferencesApiProvider; the preference API's context default claims no "
+                "storage, so without this a shipped build would silently stop remembering "
+                "preferences"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -5416,6 +5498,7 @@ def main() -> int:
         validate_user_facing_strings(errors)
         validate_test_support_stays_a_dev_dependency(errors)
         validate_e2e_capability_never_ships(errors)
+        validate_the_preference_store_ships_bound_and_isolated(errors)
         validate_clipboard_stays_write_only(errors)
         validate_no_font_is_bundled_or_fetched(errors)
         validate_every_raster_entry_point_asks_the_budget(errors)

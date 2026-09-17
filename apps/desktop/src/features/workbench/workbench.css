@@ -147,3 +147,18 @@
 .roster-help { font-size: 12px; color: var(--color-text-secondary); }
 .roster-help summary { cursor: pointer; }
 .roster-help p { margin: 6px 0; }
+
+/* The panel arrangement is on screen either way; this says it will not survive
+   a restart. Takes its own header row, as the drop hint does, so a long label
+   wraps instead of pushing the global actions out of reach. */
+.workbench-header .workspace-layout-unsaved {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}

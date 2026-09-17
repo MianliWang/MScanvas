@@ -21,13 +21,27 @@ export type PreferenceAction =
   | { readonly type: "preview"; readonly preferences: SessionPreferences }
   | { readonly type: "apply" }
   | { readonly type: "discard" }
-  | { readonly type: "reset" };
+  | { readonly type: "reset" }
+  /**
+   * The stored record arrived from disk.
+   *
+   * It replaces what is applied, and it re-snapshots an *unedited* draft so an
+   * open dialog is not left previewing the defaults it opened on. A draft the
+   * user has edited never reaches here: the provider drops a hydration answer
+   * once the record is the user's, because a slow read must not undo a choice.
+   */
+  | { readonly type: "hydrate"; readonly preferences: SessionPreferences };
 
 /** This reducer owns only two UI preferences, never a workspace snapshot. */
 export function preferenceReducer(state: PreferenceState, action: PreferenceAction): PreferenceState {
   switch (action.type) {
     case "open":
       return state.draft === null ? { ...state, draft: { ...state.applied } } : state;
+    case "hydrate":
+      return {
+        applied: action.preferences,
+        draft: state.draft === null ? null : { ...action.preferences },
+      };
     case "preview":
       return state.draft === null ? state : { ...state, draft: action.preferences };
     case "apply":

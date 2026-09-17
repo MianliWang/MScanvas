@@ -6,14 +6,29 @@ import { PreviewApiProvider } from "../mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../mzml-preview/dropTransport";
 import type { SelectedSpectrumOutcome } from "../mzml-preview/contracts";
 import { availableBackend, unavailableBackend, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, deferred, type FakePreviewApi } from "../../test/previewFixtures";
+import { createFakePreferencesApi, type FakePreferencesApi } from "../../test/preferenceFixtures";
+import { PreferencesApiProvider } from "./preferencesApi";
 import { createUiRuntime, UI_RESOURCES, validateBundle, type UiRuntime } from "./i18n";
 
 const en = UI_RESOURCES.en;
 const zh = UI_RESOURCES["zh-CN"];
 
-function mount(api: FakePreviewApi = createFakePreviewApi({ availability: unavailableBackend }), runtime: UiRuntime = createUiRuntime()) {
+/**
+ * The real composition over a working preference store.
+ *
+ * A store is installed rather than left to the context default, because what
+ * these tests exercise is the applied path: a session that can save is the one
+ * a user has, and the session that cannot is covered explicitly below.
+ */
+function mount(
+  api: FakePreviewApi = createFakePreviewApi({ availability: unavailableBackend }),
+  runtime: UiRuntime = createUiRuntime(),
+  preferences: FakePreferencesApi = createFakePreferencesApi(),
+) {
   return render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
-    <PreviewApiProvider value={api}><App uiRuntime={runtime} /></PreviewApiProvider>
+    <PreferencesApiProvider value={preferences}>
+      <PreviewApiProvider value={api}><App uiRuntime={runtime} /></PreviewApiProvider>
+    </PreferencesApiProvider>
   </WorkspaceDropTransportProvider>);
 }
 
@@ -27,6 +42,18 @@ function openSettings() {
 
 function choose(dialog: HTMLElement, name: string) { fireEvent.click(within(dialog).getByRole("radio", { name })); }
 function press(dialog: HTMLElement, name: string) { fireEvent.click(within(dialog).getByRole("button", { name })); }
+/**
+ * Applies, and waits for the durable commit to be confirmed.
+ *
+ * Apply publishes before it closes, so the dialog is still modal until the
+ * store answers -- and while it is, Radix hides the rest of the application
+ * from the accessibility tree. Waiting for the close is waiting for the save,
+ * which is exactly the guarantee the button now makes.
+ */
+async function applyAndClose(dialog: HTMLElement, name: string) {
+  press(dialog, name);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+}
 const density = () => document.querySelector(".dataset-roster-panel")?.getAttribute("data-density");
 
 async function loadedApp(api = createFakePreviewApi({ availability: availableBackend })) {
@@ -60,7 +87,7 @@ describe("session Settings in the real application composition", () => {
     expect(dialog).toHaveAccessibleName(zh.settings);
     expect(document.documentElement.lang).toBe("zh-CN");
     expect(density()).toBe("compact");
-    expect(within(dialog).getByText(zh.sessionOnly)).toBeVisible();
+    expect(within(dialog).getByText(zh.storageSaved)).toBeVisible();
     press(dialog, zh.apply);
     await waitFor(() => expect(screen.getByRole("button", { name: zh.settings })).toHaveFocus());
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -179,7 +206,7 @@ describe("session Settings in the real application composition", () => {
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
-    press(dialog, zh.apply);
+    await applyAndClose(dialog, zh.apply);
     await act(async () => { runtime.instance.removeResourceBundle("en", "ui"); });
     dialog = openSettings();
     choose(dialog, zh.english);
@@ -204,7 +231,7 @@ describe("session Settings in the real application composition", () => {
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
-    press(dialog, zh.apply);
+    await applyAndClose(dialog, zh.apply);
     dialog = openSettings();
     if (fault === "removed") {
       choose(dialog, zh.english);
@@ -327,7 +354,7 @@ describe("session Settings in the real application composition", () => {
     fireEvent.click(within(figure).getByRole("radio", { name: en.dark }));
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
+    await applyAndClose(dialog, zh.apply);
     expect(dpi).toHaveAccessibleDescription(zh.invalidDpi);
     expect(width).not.toHaveAttribute("aria-invalid");
     const spectrum = document.getElementById("spectrum-widthPx")?.closest("section") ?? width.closest("section")!;
