@@ -490,16 +490,28 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(replaced(seeded, replacement)).toBe(true);
     expect(recordViolations(replacement.json)).toEqual([]);
     expect(replacement.json).toEqual({ schemaVersion: 1, appearance: { locale: "en", density: "compact" }, layout: { roster: "automatic", details: "automatic" } });
-    expect((await saves()).at(-1)?.args).toEqual({ request: { appearance: { locale: "en", density: "compact" }, replaceUnusable: true } });
+    // A replacement publishes the whole record, not just the group Settings
+    // owns. Merging one group into bytes this build cannot read would mean
+    // nothing, so the arrangement on screen goes with it -- and the store then
+    // invalidates any layout reply still in flight, because it describes a file
+    // that no longer exists.
+    expect((await saves()).at(-1)?.args).toEqual({
+      request: {
+        appearance: { locale: "en", density: "compact" },
+        layout: { roster: "automatic", details: "automatic" },
+        replaceUnusable: true,
+      },
+    });
     const done = await capture("15-record-replaced");
     expect(done.preferenceRegion).toBe(en.storedReplaced);
 
-    // And Settings no longer has anything to recover from: the alert and the
-    // note are both gone, which is the state a working store looks like.
+    // And Settings no longer has anything to recover from: the alert is gone,
+    // and the note -- which is always there, and has to agree with whatever is
+    // above it -- now says the preferences are saved.
     await openSettings();
     const settled = await capture("16-recovered-state-cleared");
     expect(settled.storedRecordAlert).toBeNull();
-    expect(settled.storageNote).toBeNull();
+    expect(settled.storageNote?.text).toBe(en.storageSaved);
     await press(en.cancel);
     await returned();
     expect(sameBytes(replacement, noted("after confirming the recovery cleared"))).toBe(true);
@@ -588,9 +600,11 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     mkdirSync(dirname(raw), { recursive: true });
     copyFileSync(join(input!, "retained-thermo.raw"), raw);
     if (await browser.$(ROSTER).getAttribute("aria-expanded") !== "true") await browser.$(ROSTER).click();
+    // Scoped to the roster, because the shell offers this action in more than
+    // one place and a text match would pick whichever came first.
     const [added] = await Promise.all([
       helper("choose-workspace-files", ["-Action", "choose", "-Path", raw, "-TimeoutSeconds", "35"]),
-      browser.$(`button=${zh.addFiles}`).click(),
+      browser.$("#workbench-roster").$(`button=${zh.addFiles}`).click(),
     ]);
     expect(added.invoked).toBe(true);
     await browser.$(ROW).waitForDisplayed({ timeout: 60_000 });
@@ -631,9 +645,11 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
 
     const csv = join(output, "M75-spectrum.csv");
     const label = zh.viewerExportFormat.replace("{{name}}", "CSV");
+    // The spectrum's own data export. Scoped, because the chromatogram panel
+    // labels its exports from the same resource.
     const [exported] = await Promise.all([
       helper("save-dialog", ["-Title", "Export spectrum data", "-Action", "save", "-Path", csv, "-TimeoutSeconds", "35"]),
-      browser.$(`button=${label}`).click(),
+      browser.$("section.spectrum-panel").$(`button=${label}`).click(),
     ]);
     expect(exported.found).toBe(true); expect(exported.invoked).toBe(true);
     await browser.waitUntil(() => existsSync(csv), { timeout: 60_000 });
