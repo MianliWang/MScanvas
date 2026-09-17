@@ -52,12 +52,13 @@ and must not be added to their totals. Raw evidence remains ignored under
 | Required outcome | Current evidence | Outcome and boundary |
 | --- | --- | --- |
 | One intent and exact plan/retry | Configuration/lifecycle suites and `M74ConversionComposition`; Build 04 native Fail/Skip conversion and fresh plans after single/set recovery | Passed for the current native conversion scenarios |
-| Five judgments and inspectable result details | Current frontend run: 1867 tests in 89 files; Build 04 native diagnostics and explicit single-output adoption | Passed: real ten-member set, first 10 added, repeat 10 already present |
+| Five judgments and inspectable result details | Current frontend run: 1882 tests in 89 files; Build 04 native diagnostics and explicit single-output adoption | Passed: real ten-member set, first 10 added, repeat 10 already present |
 | File/folder opening | Seven platform/service tests, unknown/replaced/modified/locked controls and real directory write exclusion; final read-only adoption hold: ten focused tests | Passed: actual Windows accepted file/folder handoff; Explorer task folder verified; no external viewer rendering claimed |
 | Active Clear | Seven Rust service/control tests plus dialog/composition checks; Build 04 exact eight-member native Return/Escape, nonrunning removal, confirmed cancellation and Clear | Passed; earlier failed selection attempt retained |
 | G18 live staging recovery | Real lock/unlock/reclaim controls; forged/foreign/reparse/hard-link refusals; Build 04 actual provider single/set lock → refused reclaim → unlock → reclaim → fresh conversion | Passed for these native paths; set publication was refused before any member finalized |
 | Canonical figure preview | Five service tests: actual exported SVG equals preview, current/full/empty, linked/chromatogram, late source/document change and DPI scope | Passed: actual native SVG equality, PNG dimensions/DPI/CRC, data rows, clipboard dimensions/colors and 14 natural Save/Cancel returns |
 | Linked-preview prerequisite repair | Build 05 one affected native case; current source/trace tokens, saved SVG byte/digest equality, cancellation and initiating-control focus | Passed: three natural picker returns; missing/loading and dialog-correctable states retain composition/browser coverage |
+| Active Clear focus repair | Build 06 one affected native case; passive busy-initiator focus samples, exact eight-member admission through Return/Escape and outsider removal, confirmed cancellation and empty-roster Add-files return | Passed: nine natural picker returns; one finalized and one cancelled member; `output_only`, `fullyVerified: false` retained |
 | Bilingual layout and keyboard | Browser run 07: 9 passing scenarios across 1920×1080, 1366×768, 1200×800 and 960×640; DPR 1/1.5/1.25/2, both densities, reduced motion; native host-scale checks pass for completed scenarios | All seven native scenarios pass at measured 150% Windows scaling |
 | Conversion focus / #122 | Before-failing foreground obligation; stable mounted frame, current commit facts, user-intent and detached Settings-owner controls; Build 04 cancelled destination and diagnostics Save return naturally | Publication and issue closure remain pending; historical external-foreground failure remains undetermined |
 
@@ -99,8 +100,9 @@ Prepared inputs are task-owned copies: the retained Thermo acquisition
 (78,309 bytes, SHA-256 `b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b`)
 and newly generated synthetic mzML with 12 and 250,000 scans. Preparation
 caught and corrected a harness mistake: mzML is a viewer input, not an admitted
-vendor queue member. Active Clear uses eight lawful RAW copies; staging locks
-target actual RAW/set outputs. The unused long synthetic fixture remains
+vendor queue member. Active Clear uses eight lawful RAW copies admitted to the
+queue and one identical outsider copy; staging locks target actual RAW/set
+outputs. The unused long synthetic fixture remains
 retained preparation evidence. The 12-scan synthetic fixture supplies figure
 content checks, not representative scientific evidence. The narrowly authorized
 Enolase pair is now available in ignored local storage. Both objects match their
@@ -349,7 +351,7 @@ filter. Resource and overflow checks pass.
 The first two new outside-range test attempts reached the assertion before a
 range was committed; their logs show the whole-run state. The final test uses
 an explicit typed RT commit and waits for the positive outside-range reason.
-Failed attempts remain preserved. The current full frontend run passes
+Failed attempts remain preserved. At that point the full frontend run passed
 **1867 tests in 89 files**; focused subsets are not extra totals. Build05 is
 **16,580,096 bytes**, SHA-256
 `a82a3f60d2c107da8198fa7a018802e45e5445f50ff3b9e423e7db00678fa399`,
@@ -394,11 +396,12 @@ the native log SHA-256 is
 
 At that checkpoint, local acceptance was complete. Ordinary task push and PR updates were rejected
 before execution because approval was required while the active policy was
-`Never`. The remote PR still describes the earlier candidate; current-candidate
-natural PR CI and public finding disposition remain pending. No rejected write
-was rerouted or retried during this continuation. Protected true merge,
-natural-main CI, ff-only synchronization and inclusion-proved task-branch
-cleanup remain mandatory. M7.4 is incomplete until that sequence finishes.
+`Never`. The remote PR still described the earlier candidate, and
+current-candidate natural PR CI and public finding disposition were then
+pending. No rejected write was rerouted or retried during this continuation.
+Protected true merge, natural-main CI, ff-only synchronization and
+inclusion-proved task-branch cleanup remain mandatory. M7.4 is incomplete
+until that sequence finishes.
 
 ## Active Clear focus delta after final-head review
 
@@ -447,15 +450,52 @@ from application console observations. The bounded read-only UI delta review
 accepted the final source and ownership controls without executing tests.
 
 Build05 binary/frontend originals were copied and verified before replacement.
-Build06 preparation and one affected real eight-member active Clear scenario
-remain required. Its harness retains the original membership, Return/Escape,
-outsider removal, confirmed cancellation and non-quarantine obligations, adds
-passive busy-focus observation and final Add-files focus, and checks natural
-input picker returns. It introduces no provider hold or focus rescue. No
-Build06 native acceptance is yet claimed; readiness04 is consumed. A fresh
-actual operator reply is required after preparation, followed by final-head
-checks, review disposition and protected publication. Unrelated Build04 and
-Build05 campaigns are not repeated or relabeled.
+Build06 completed at ordinary published repair
+`a90b18b80216d3af7a97af337c7658033668ed9d`, tree
+`3b350c411c152221ab20bc7e7f05cffec88026b6`: **16,580,608 bytes**, binary SHA-256
+`cbfd73c48887366acc29f3d4000268993ed66abd9cbdf8fd15fd04044f8f30b0`.
+The production inventory is
+`e8e21d5d09aa0d29d6e6c985e9c16757cd288c4cf4cabc5e10f79650be82ad5c`,
+unchanged during build. All three natural PR checks on that repair passed at
+attempt 1: Frontend `35164158860`, Rust `35164158859`, Repository quality
+`35164158883`. They do not replace checks on the final documentation successor.
+
+Fresh actual readiness was first clock-observed at 2026-09-17 00:11:20 UTC.
+Following normal launch approval, the guarded run
+`native-launch-20260917T004003687Z` / `native-jPwHqj` passed **one affected
+case in 28 seconds, direct exit 0** at CSS1366x768/DPR1.5. Initial owned
+PID 19048/HWND 526502 received one temporary-TOPMOST click, with non-topmost
+state restored before the business case. No provider hold or post-picker
+focus rescue exists in the harness; those two recorded fields are declared
+rather than measured, and the launcher separately recorded no post-picker
+rescue for the initial input and its restoration.
+
+All nine copied Thermo inputs returned naturally to Add files. The admitted
+queue contained exactly eight named members; the outsider stayed outside it.
+Return/Escape performed no mutation. Remove non-running removed only the
+outsider and restored Clear focus. Passive samples captured both actual busy
+initiators as natively focusable, `aria-disabled` rather than `disabled`,
+focused and document-focused. Cancel and clear settled the process tree and
+removed the eight rows, leaving an empty roster with Add files focused.
+Exactly two execute-clear calls were observed. The terminal queue was stopped:
+one finalized, one cancelled with `confirmed_gone`, six not run, no
+quarantined backend. The one 28,603-byte mzML this case finalized remains on
+disk with SHA-256
+`b0a39f29877f822babfc5929427acf3276c71ee6239c363a4274a13acdf61fae`;
+its validation is `output_only`, `fullyVerified: false`.
+
+All four original inputs and the nine copied sources retain their identities.
+Native snapshots have no application console entries, external resources or
+horizontal overflow; the final screenshot was inspected. Processes and owned
+ports are gone. This operator window ended and readiness05 is consumed.
+Primary evidence SHA-256 is
+`1d7da13570c436b2149996b299a763a43f134a5c7bebc7090e89add57c336821`;
+native log SHA-256 is
+`94143a510b5fe511294f2b5cc02f2b686c21f345199164d4f8db6a192b18ca71`.
+This is active Clear acceptance, not a set/adoption or partial-set preservation
+refresh. Unrelated Build04 and Build05 campaigns retain their original
+attribution. Final-head checks, review disposition and protected publication
+remain mandatory.
 
 ## Retained failures and attribution
 
