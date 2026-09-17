@@ -254,7 +254,9 @@ export function PreviewWorkspace() {
       recordMeasurement(
         "spectrumTableRender",
         milliseconds,
-        `Rendering ${formatCount(renderedRowCount)} windowed rows.`,
+        // Which sentence and its parameter, not the sentence: the inspector
+        // that renders this tooltip is the surface with a locale.
+        { key: "measureTableDetail", rows: formatCount(renderedRowCount) },
       );
     },
     [recordMeasurement],

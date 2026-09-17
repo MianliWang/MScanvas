@@ -8,12 +8,14 @@ the accepted v5.11 design. M7.0 is Markdown only. Its completion means **ROUTE
 PUBLISHED**, after review and protected publication, not UI complete or beta
 released. Every implementation slice below needs its own authorization.
 
-Implementation update, 2026-09-16: the separately authorized M7.4 implementation
-delivers the consumers described below. Controlled/browser checks and all seven
-mandatory Build 04 native scenarios pass. Publication attribution is linked in
-[its record](../../ux/M7_4_CONVERSION_RESULTS_FIGURES.md). At M7.0 route
-publication, implementation had not started. M7.5 remains next/not started;
-there is no public beta build or release from M7.4.
+Implementation update, 2026-09-17: M7.4 is published and locally closed; its
+publication attribution is in [its record](../../ux/M7_4_CONVERSION_RESULTS_FIGURES.md).
+The separately authorized M7.5 implementation delivers durable allowlisted UI
+preferences, first-run backend setup and recovery, and localization and
+accessibility closure over every delivered surface; see
+[its record](../../ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md). At M7.0 route
+publication, implementation had not started. M7.6 is next/not started, and
+there is no public beta build or release from M7.4 or M7.5.
 
 ## Goal and fixed boundary
 
@@ -49,7 +51,7 @@ the subsequently authorized implementation state.
 | TIC/BPC, spectrum, scans | mzML linked selection, bounded table, admitted RT/m/z viewports; TIC/BPC from a complete loaded scan table, with unreported units preserved | M7.3 whole-row activation, bounded search/sort, range adapter | Direct vendor preview, whole-file scan query, XIC, overlays/comparison |
 | Compact configuration and results | Source-qualified typed intent, selected/all queue, destination policies, cancellation, five judgements, explicit adoption | M7.4 basic/advanced views, compact result/details and Open file / Open folder; Build 04 native acceptance verified | Arbitrary methods/graphs, additional centroiding admission, mzXML, overwrite, ETA |
 | Figures/data | Rust full-source/current-range SVG, direct native-save PNG, clipboard Copy plot, CSV/TSV; linked figure with full-source lower spectrum | M7.4 retains quick Copy plot/PNG entry points beside the new Export figure dialog/preview; shared controls; M7.3 proves committed-range handoff | New formats, feature/statistics export, saved FigureSpec/composer |
-| Settings and layout | Session backend choice and existing figure settings | M7.1 real localized settings; M7.5 allowlisted UI preferences/restoration | Durable project/artifact/run/classification/provenance store; scientific-run resume |
+| Settings and layout | Session backend choice and existing figure settings | M7.1 real localized settings; M7.5 allowlisted UI preferences/restoration, delivered as one versioned record of locale, roster density and the two panel presentation requests | Durable project/artifact/run/classification/provenance store; scientific-run resume |
 | Analysis, nodes, code, AI | No production consumer | Omit future navigation or state honest unavailability where context requires it | Smoothing, peak detection/alignment/gap filling, matching, statistics, arbitrary execution, Python/R and AI automation |
 
 Supported conversion remains the three evidenced vendor families to mzML under
@@ -172,7 +174,13 @@ framework comparison, table library or PX scratch dependency enters by default.
 The implementation/evidence owner is the named slice and its concrete consumer
 below; an implementer is assigned when that slice is authorized. Each published
 slice preserves a usable product and supplies both local languages for its
-changed surface. M7.5 closes coverage over every remaining delivered UI string.
+changed surface. M7.5 closed that coverage over every delivered surface,
+including the installed-backend banner, the inspector panel and sixty-three
+owned boundary error sentences that had been reaching Chinese sessions in
+English. Twenty-four boundary codes whose messages interpolate evidence keep
+the boundary's own words through a wrapper that labels them as untranslated
+original; that remainder is declared, counted and guarded by
+`scripts/check_repo.py` rather than left to be discovered.
 
 | Slice and user-visible outcome | Owner/consumer and prerequisite | Allowed change kind under separate authority | Focused evidence and recovery |
 | --- | --- | --- | --- |
@@ -284,7 +292,7 @@ Windows/WebView2/provider identities, lawful fixtures and raw results.
 | Active workspace recovery | M7.4 implements; M7.6 exercises installed single/queue flows | Every Clear choice, outside-queue removal/no-eligible-row explanation, protected bound members, confirmed stop/completion races/quarantine/Return and stale-import refusal; no delayed removal of new rows or source/finalized-output deletion |
 | Figure quick paths and preview | M7.3 supplies committed range; M7.4 owns actions/renderer; M7.6 validates installed outputs | Quick Copy plot/PNG bypass the full Export figure dialog with shown committed scope/settings; native PNG picker cancellation/DPI refusal/write-failure recovery; current/full preview/export specification agreement, stale-preview recovery and honest empty/refused/failed rendering |
 | Offline, readable, accessible UI | M7.1–5 own changed surfaces; M7.6 audits all delivered UI | Complete local en/zh-CN including recovery/aria/live regions; keyboard/focus and physical pointer/touch results separately recorded; three viewport targets, scaling, reduced motion and bounded-data disclosures pass |
-| Safe preference lifetime | M7.5 implements/tests; M7.6 repeats installed restart | Allowlisted locale/density/appearance/layout defaults and explicit reset; corrupt, unsupported-version and write-failure recovery; valid panel sizes on changed display; no paths, dataset roster, scientific drafts, receipts, queue, classification or live work restored |
+| Safe preference lifetime | M7.5 implements/tests; M7.6 repeats installed restart | Allowlisted locale/density/layout-request defaults and explicit reset; corrupt, unsupported-version, oversized, unreadable and write-failure recovery; responsive projection on a changed display, with panel *dimensions* found inapplicable because the shell offers no resize affordance; no paths, dataset roster, scientific drafts, receipts, queue, classification or live work restored |
 | Installable Windows x64 candidate | M7.6 packaging and clean-machine QA | One real installer; standard user with no Node/Rust/Git installs, launches and uninstalls; WebView2 present/missing/offline paths, user-installed provider setup, denied permissions and Unicode/space paths tested; sources and finalized scientific outputs survive uninstall |
 | Production configuration | M7.6 build owner and independent package inspection | Distributed application loads bundled frontend without dev server; no `e2e` feature/bridge, mock provider, test-only IPC or synthetic success. Check both build configuration and actual packaged runtime; QA-enabled executable is not the release candidate |
 | Release custody and recovery | M7.6 release owner/QA, repository owner approves | Version/changelog, artifact hashes, source/lock/toolchain/build-command provenance, dependency notices and vendor boundary; documented name-review result accepted by the owner; approved signature/posture; consent/redaction diagnostics, feedback destination, smoke record and uninstall/reinstall rollback instructions tied to retained approved artifacts |
@@ -331,13 +339,26 @@ See [the M7.3 record](../../ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md) for attr
 
 ## External release decisions
 
+### Decided: supported Windows versions
+
+**Decision, 2026-09-17, by MianliWang, repository/product owner: the first
+beta's support target is Windows 11 25H2 x64.** Other Windows versions and
+ARM64 are not promised supported. This is a support target and nothing more: it
+is not evidence of compatibility, and it is not installation qualification.
+M7.5's setup wording states it in both bundled locales, and M7.6 owns
+installed-candidate qualification on it.
+
+The M7.5 QA host is recorded with its own edition, version, build and
+architecture in that milestone's record. Mechanism evidence produced on any
+other Windows x64 development host is labelled as such rather than presented as
+25H2 qualification. No hard OS-version rejection was added to the product.
+
 M7.0 may close with the following decisions scheduled; M7's release exit cannot
 waive them. **MianliWang, repository/product owner**, is the exact decision owner
 for each row; M7.6 implements and records the answer, not an agent guessing it.
 
 | Decision | Recommendation, not approval | Blocks / latest decision point |
 | --- | --- | --- |
-| Supported Windows versions | Initially maintained Windows 11 x64 versions, explicitly enumerated and tested; no implicit Windows 10/ARM/all-platform support | Support matrix, M7.5 setup wording; decide before M7.5 acceptance and freeze before M7.6 candidate QA |
 | Signing identity/certificate or unsigned posture | Owner chooses an identity and budget, or explicitly approves an unsigned beta with accurate warning/setup guidance; do not promise warning-free signing | Signing configuration and final-candidate trust tests; before M7.6 candidate production |
 | Distribution host/audience | Owner-approved beta channel and stated audience; GitHub prerelease is a possible host. Live repository API on 2026-09-12 reports public, superseding the request/preflight's private assumption; visibility was not changed here | Download/support instructions and access tests; before M7.6 candidate acceptance. Public source is not release consent |
 | Lawful redistributable samples | Minimal licensed samples with attributable permission; maintainer-only vendor inputs remain local and unbundled | Shareable sample pack and reproducible public smoke instructions; decide before M7.6 release-fixture freeze |

@@ -14,12 +14,25 @@ MSCanvas aims to be a Windows-first, local-first desktop application for importi
 
 Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (public; visibility verified 2026-09-12).
 
-The **M7.4 working candidate** adds compact bilingual conversion/results,
-identity-checked output opening, active-run Clear, same-session staging
-cleanup and export-specific figure preview with separate quick PNG/Copy plot
-and data actions. Native acceptance and protected publication are pending;
-see [the implementation record](docs/ux/M7_4_CONVERSION_RESULTS_FIGURES.md).
-No public beta is built or released by this slice.
+The **M7.5 working candidate** keeps the UI preferences you set across a
+restart — language, roster density and which workspace panels you asked for —
+recovers from a stored record it cannot read or cannot write, explains offline
+what ProteoWizard is yours to install and how long a folder you choose lasts,
+and reads in English or Simplified Chinese throughout, including the
+installed-backend banner and the inspector panel. Nothing about a dataset, a
+path, a selection, a range or a conversion is stored. See
+[the implementation record](docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md).
+
+It builds on the published **M7.4** slice: compact bilingual
+conversion/results, identity-checked output opening, active-run Clear,
+same-session staging cleanup and export-specific figure preview with separate
+quick PNG/Copy plot and data actions
+([record](docs/ux/M7_4_CONVERSION_RESULTS_FIGURES.md)).
+
+The first beta's support target is **Windows 11 25H2 x64**; other Windows
+versions and ARM64 are not promised supported. That is a support target, not a
+compatibility claim, and installed-candidate qualification belongs to M7.6.
+No public beta is built or released by either slice.
 
 ## What works today
 
@@ -105,11 +118,36 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   preview that did not load the complete spectrum table draws **no** trace rather
   than a prefix presented as the whole run, and says which of those it is.
 
+- Set the interface language, the roster's row spacing and which of the two
+  workspace panels you want, and find them the way you left them the next time
+  MSCanvas starts. That record holds those five things and nothing else: no
+  path, no file list, no selection, no range, no conversion and no backend
+  choice. A window that gets too narrow folds a panel away for space without
+  changing what you asked for, so widening it again brings the panel back.
+- Be told the truth when those preferences cannot be read or cannot be written.
+  A stored record MSCanvas does not understand is left exactly as it found it,
+  reported with the reason, and replaced only when you say so; a write that
+  fails keeps your choices on screen, offers to try again, and lets you use
+  them for this session while saying plainly that a restart will not.
+- Read every part of the application in English or Simplified Chinese,
+  including the installed-backend banner, the inspector panel and the
+  explanations behind a refused action. A handful of rare internal faults are
+  shown in the words the backend sent, labelled as untranslated original rather
+  than passed off as translated.
+- Find out what MSCanvas needs from ProteoWizard without a network connection,
+  a dataset or a working backend: how to install it, how long a folder you
+  choose lasts, what each recovery control does, and which Windows the first
+  beta is supported on.
+
 Not implemented yet: vendor RAW preview; XIC — refused on measured evidence for
 the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
-session, which includes remembering a search or a sort; conversion progress as a
+session, which includes remembering a search, a sort, a selection, a range or
+the folder you chose for ProteoWizard -- the preferences that do survive a
+restart are the five listed above and nothing else; a dark theme, or any
+appearance setting beyond language and row spacing; a remembered panel *size*,
+which the workspace has no way to set; conversion progress as a
 percentage; resuming a stopped queue; removing a row from a queue that is
 already running; a conversion queue that survives closing the application;
 diagnostics for anything but the latest attempt of each item, a diagnostics

@@ -1033,4 +1033,26 @@ export const zhCN = {
   errIncompletePreviewResult: "预览未返回所有请求的结果。",
   errUnexpectedPreviewResult: "预览返回了 MSCanvas 未请求的结果。",
   errNonFiniteValue: "后端结果中包含无法显示的数值。",
+
+  // --- M7.5 repair pass: the storage states and outcomes the first pass
+  // reported with the wrong sentence or with none at all.
+  storageNotSaving: "这些偏好当前未保存到本机。其他功能均正常。",
+  storageReadTimedOut: "MSCanvas 没有收到自己的设置文件夹的响应。",
+  storageReadFailedNote: "MSCanvas 无法读取已保存的偏好，因此以默认值启动。应用修改时仍会尝试保存。",
+  saveUncertainTitle: "MSCanvas 无法确定保存了什么",
+  saveUncertainKeeps: "文件已写入，但 MSCanvas 无法回读以确认，因此不会声称任一版本。请重试保存以明确结果。",
+  saveRefusedTitle: "这些偏好未被保存",
+  saveUnavailableBody: "本机没有可保存偏好的位置，因此此修改仅对本次会话生效。",
+  layoutUncertain: "MSCanvas 无法确认此面板布局保存了什么。",
+  layoutResetDone: "面板布局已恢复为默认值。",
+  layoutNothingToReset: "面板布局已是默认值。",
+  panelsLoading: "正在读取已保存的偏好…",
+
+  // --- M7.5 repair pass: words that were inside a pure formatter or a
+  // measurement detail, and so reached a Chinese session in English.
+  formatBytes: "{{count, number}} 字节",
+  formatMsOther: "其他",
+  measureOpenDetail: "从选择文件到 {{rows}} 出现在文档中。",
+  measureRowDetail: "从选中第 {{index}} 行到该质谱出现在文档中。",
+  measureTableDetail: "渲染 {{rows}} 个窗口内行。",
 } as const;

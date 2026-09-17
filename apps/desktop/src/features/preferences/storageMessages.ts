@@ -39,6 +39,7 @@ const WRITE_PROBLEMS = {
 const UNAVAILABLE_PROBLEMS = {
   rootUnresolved: "storageRootUnresolved",
   readFailed: "storageReadFailed",
+  readTimedOut: "storageReadTimedOut",
   qaRootUnbound: "storageQaRoot",
   qaRootNotAbsolute: "storageQaRoot",
   qaRootNotADirectory: "storageQaRoot",

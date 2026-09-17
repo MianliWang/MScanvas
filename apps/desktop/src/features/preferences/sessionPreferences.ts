@@ -30,7 +30,18 @@ export type PreferenceAction =
    * user has edited never reaches here: the provider drops a hydration answer
    * once the record is the user's, because a slow read must not undo a choice.
    */
-  | { readonly type: "hydrate"; readonly preferences: SessionPreferences };
+  | { readonly type: "hydrate"; readonly preferences: SessionPreferences }
+  /**
+   * The store confirmed this exact snapshot.
+   *
+   * `apply` with the committed record rather than with the draft that asked
+   * for it. They are the same whenever the store is behaving, and using the
+   * confirmed one is what makes "this is what a restart will find" a statement
+   * about disk rather than about the dialog. It closes the dialog, which is
+   * what tells it from `hydrate`: a read that arrives while Settings is open
+   * re-snapshots the draft, and a save that is confirmed is the end of it.
+   */
+  | { readonly type: "committed"; readonly preferences: SessionPreferences };
 
 /** This reducer owns only two UI preferences, never a workspace snapshot. */
 export function preferenceReducer(state: PreferenceState, action: PreferenceAction): PreferenceState {
@@ -42,6 +53,8 @@ export function preferenceReducer(state: PreferenceState, action: PreferenceActi
         applied: action.preferences,
         draft: state.draft === null ? null : { ...action.preferences },
       };
+    case "committed":
+      return { applied: action.preferences, draft: null };
     case "preview":
       return state.draft === null ? state : { ...state, draft: action.preferences };
     case "apply":

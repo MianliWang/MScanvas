@@ -357,7 +357,9 @@ describe("mzML preview workspace", () => {
     });
     renderApp(api);
 
-    await screen.findByRole("button", { name: "Search automatically" });
+    // The failed banner, not the checking one: the ways out are offered in
+    // both, and while a check is running every one of them is refused.
+    await screen.findByText("MSCanvas could not check the backend");
 
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // Curating is not reading, so it is not closed by a backend nobody can
@@ -388,7 +390,12 @@ describe("mzML preview workspace", () => {
     renderApp(api);
 
     // Nothing to act on and nothing to act with while the first check runs.
-    expect(screen.queryByRole("button", { name: "Choose folder…" })).toBeNull();
+    // The ways out are on screen rather than absent -- a control that appears
+    // and disappears takes a keyboard user's place with it -- and every one of
+    // them is refused for the length of the request.
+    for (const action of ["recheck", "choose", "automatic"]) {
+      expect(document.querySelector(`[data-backend-action="${action}"]`)).toBeDisabled();
+    }
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
 
     recheck.resolve(availableBackend);
@@ -1901,10 +1908,11 @@ describe("the session workspace roster", () => {
     renderApp(api);
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
     await screen.findByRole("button", { name: "Add files…" });
-    // Existing workspace/operation announcements and the session Settings
-    // announcement all stay mounted for the life of this application.
+    // Existing workspace/operation announcements, the session Settings
+    // announcement and the shell's panel announcement all stay mounted for the
+    // life of this application.
     const applicationRegions = regions();
-    expect(applicationRegions).toHaveLength(11);
+    expect(applicationRegions).toHaveLength(12);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -2288,7 +2296,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
-    expect(regions()).toHaveLength(11);
+    expect(regions()).toHaveLength(12);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
@@ -2301,7 +2309,7 @@ describe("the session workspace roster", () => {
     // A search that found nothing is not an empty workspace, and the two must
     // not sound alike.
     expect(spoken).not.toContain("The workspace is empty.");
-    expect(regions()).toHaveLength(11);
+    expect(regions()).toHaveLength(12);
   });
 
   it("says the search was cleared rather than falling silent", async () => {

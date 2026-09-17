@@ -339,7 +339,16 @@ describe("durable UI preferences", () => {
     expect(preferences.requests[0]).toEqual({ appearance: { locale: "zh-CN", density: "comfortable" } });
     expect(preferences.stored()).toBeNull();
     expect(screen.getByRole("dialog")).toBe(dialog);
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(zh.storedUnusableTitle);
+    // Two things to say and both are said: the record cannot be used, and
+    // *this press* was refused. Saying only the first left the reader with no
+    // answer about the button they had just pressed.
+    const alerts = within(dialog).getAllByRole("alert");
+    expect(alerts.map(alert => alert.dataset.storedRecord ?? alert.dataset.save))
+      .toEqual(["unusable", "refused"]);
+    expect(alerts[0]).toHaveTextContent(zh.storedUnusableTitle);
+    expect(alerts[1]).toHaveTextContent(zh.saveRefusedTitle);
+    // And the footer stops claiming the preferences are saved.
+    expect(within(dialog).getByText(zh.storageNotSaving)).toBeVisible();
 
     // The confirmed replacement is the only thing that does.
     press(dialog, zh.storedReplace);
@@ -503,12 +512,14 @@ describe("durable UI preferences", () => {
     });
     await screen.findByText("No ProteoWizard installation was found");
     fireEvent.click(rosterToggle());
-    const notice = await screen.findByText(en.layoutUnsaved);
+    const notice = await screen.findByText(en.layoutUnsaved, { selector: "span" });
     // The arrangement the user asked for is on screen; what is reported is
     // that it will not survive a restart.
     expect(shell()).toHaveAttribute("data-roster-open", "false");
     expect(notice.closest("[data-layout-unsaved]")).not.toBeNull();
     expect(notice.closest("[role=alert]")).toBeNull();
+    // Announced through the region that was mounted from the first render.
+    expect(document.querySelector('[data-live-region="layout"]')).toHaveTextContent(en.layoutUnsaved);
 
     preferences.recover();
     fireEvent.click(screen.getByRole("button", { name: en.layoutRetry }));
@@ -553,11 +564,19 @@ describe("durable UI preferences", () => {
 
     // The reset is reachable from here, with no dataset and no backend.
     const reset = screen.getByRole("button", { name: en.layoutReset });
+    expect(reset).toBeEnabled();
+    reset.focus();
     fireEvent.click(reset);
     await waitFor(() => expect(preferences.stored()?.layout).toEqual({ roster: "automatic", details: "automatic" }));
     expect(shell()).toHaveAttribute("data-roster-open", "true");
-    // Nothing left to reset, so the control stands down.
-    await waitFor(() => expect(screen.queryByRole("button", { name: en.layoutReset })).toBeNull());
+    // Nothing left to reset, so the control stands down -- and stays in the
+    // document, because activating it is what makes it redundant and a control
+    // that removed itself would take the keyboard with it.
+    await waitFor(() => expect(reset).toBeDisabled());
+    expect(reset.isConnected).toBe(true);
+    expect(reset).toHaveAttribute("title", en.layoutNothingToReset);
+    // The one panel action with nothing left on screen to read says so.
+    expect(document.querySelector('[data-live-region="layout"]')).toHaveTextContent(en.layoutResetDone);
   });
 
   it("applies a preference change without asking the backend anything", async () => {

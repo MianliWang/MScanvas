@@ -22,6 +22,17 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
   const returnPending = useRef(false);
   const returnSuperseded = useRef(false);
   const mounted = useRef(true);
+  /**
+   * The block a failed or refused apply renders, so the keyboard can be given
+   * to it.
+   *
+   * Pressing Apply disables it, which is what blurs it, and on failure the
+   * dialog stays open with focus on the body -- so the two controls the alert
+   * has just told the reader about are a full tab traversal away. Focusing the
+   * block rather than one of its buttons puts the explanation in front of the
+   * decision, and leaves which action to take to the reader.
+   */
+  const failureRef = useRef<HTMLDivElement | null>(null);
   const open = preferences.state.draft !== null;
   const { storage, save } = preferences;
   /**
@@ -55,6 +66,15 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
       returnPending.current = false;
       returnSuperseded.current = false;
     }
+    // And the keyboard goes to the explanation, which is where the recovery
+    // actions are. Only from the body: a reader who has since moved keeps
+    // their place.
+    if (save.status === "failed" || save.status === "storedRecordUnusable") {
+      const active = document.activeElement;
+      if (active === null || active === document.body) {
+        failureRef.current?.focus({ preventScroll: true });
+      }
+    }
   }, [save.status]);
 
   function closeWith(action: () => void) {
@@ -85,7 +105,15 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
           event.preventDefault();
           composing.current = false;
           returnPending.current = false;
-          content.current?.querySelector<HTMLInputElement>('input[type="radio"]:checked')?.focus();
+          // The current value, so the keyboard starts where the reader's
+          // attention is. While the stored record is still being read every
+          // radio is disabled, and `focus()` on a disabled control does
+          // nothing -- so the dialog itself takes the keyboard rather than
+          // leaving it on a trigger that is now inside an `aria-hidden`
+          // subtree, with the title and description never announced.
+          const checked = content.current?.querySelector<HTMLInputElement>('input[type="radio"]:checked');
+          if (checked !== null && checked !== undefined && !checked.disabled) checked.focus();
+          else content.current?.focus({ preventScroll: true });
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
@@ -171,11 +199,23 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
               <p>{message("storageUnavailable")}</p>
               <p>{explainUnavailableProblem(storage.problem, message)}</p>
             </div> : null}
-            {save.status === "failed" ? <div className="settings-storage-problem" role="alert" data-save="failed">
-              <p><strong>{message("saveFailedTitle")}</strong></p>
+            {/* A read that never arrived, or a call that failed on the way.
+                That is not a store that does not exist, so it says what
+                happened and that applying a change still tries to save it. */}
+            {storage.status === "readFailed" ? <div className="settings-storage-note" role="status" data-storage="read-failed">
+              <p>{explainUnavailableProblem(storage.problem, message)}</p>
+              <p>{message("storageReadFailedNote")}</p>
+            </div> : null}
+            {/* Every outcome an apply can have, each said once.
+                `notConfirmed` is separated out deliberately: the bytes were
+                published and only the read-back failed, so telling the reader
+                that a restart keeps the old record would be the one statement
+                MSCanvas cannot make. */}
+            {save.status === "failed" ? <div className="settings-storage-problem" role="alert" data-save="failed" ref={failureRef} tabIndex={-1}>
+              <p><strong>{message(save.problem === "notConfirmed" ? "saveUncertainTitle" : "saveFailedTitle")}</strong></p>
               <p>{explainWriteProblem(save.problem, message)}</p>
               {save.temporaryLeftBehind ? <p>{message("saveTemporaryLeftBehind")}</p> : null}
-              <p>{message("saveFailedKeeps")}</p>
+              <p>{message(save.problem === "notConfirmed" ? "saveUncertainKeeps" : "saveFailedKeeps")}</p>
               <div className="settings-storage-actions">
                 {save.retryable ? <button type="button" className="secondary-button" data-save-retry="" onClick={preferences.retrySave}>
                   {message("saveRetry")}
@@ -187,14 +227,30 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
                 </button>
               </div>
             </div> : null}
+            {/* Refused because the stored record is not this build's. The
+                recovery is the confirmed replacement above; what this adds is
+                that *this press* was refused, which the pre-existing alert
+                does not say. */}
+            {save.status === "storedRecordUnusable" ? <div className="settings-storage-problem" role="alert" data-save="refused" ref={failureRef} tabIndex={-1}>
+              <p><strong>{message("saveRefusedTitle")}</strong></p>
+              <p>{explainStoredProblem(save.problem, message)}</p>
+              <p>{message("storedUnusableBody")}</p>
+            </div> : null}
           </div>
         </div>
         <footer className="settings-dialog-footer">
+          {/* The durability note, which has to agree with the block above it.
+              Consulting only `storage.status` put "these preferences are saved
+              on this computer" directly under an alert saying the write had
+              failed, and under the alert saying the stored record cannot be
+              read at all. */}
           <p data-storage-note="">{
             save.sessionOnly ? message("sessionOnlyNote")
               : hydrating ? message("storageLoading")
-                : storage.status === "unavailable" ? message("storageSessionOnly")
-                  : message("storageSaved")
+                : save.status === "failed" || save.status === "storedRecordUnusable" ? message("storageNotSaving")
+                  : storage.status === "unavailable" || save.status === "unavailable" ? message("storageSessionOnly")
+                    : storage.status === "unusable" || storage.status === "readFailed" ? message("storageNotSaving")
+                      : message("storageSaved")
           }</p>
           <div className="settings-dialog-actions">
             <button className="secondary-button settings-reset" type="button" disabled={frozen} onClick={preferences.reset}>{message("reset")}</button>

@@ -6,6 +6,55 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **The interface remembers how you set it up, and nothing else.** Language,
+  the roster's row spacing and which of the two workspace panels you asked for
+  survive a restart. That is the whole record: five fields, each with a fixed
+  set of values, in one small file MSCanvas owns. Nothing about a dataset, a
+  path, a selection, a range, a conversion or the ProteoWizard folder you chose
+  is in it, and none of those things can be -- the record has no shape for
+  them. A folder you choose for ProteoWizard still lasts for one session, and
+  the next start searches automatically again.
+
+  A window that gets too narrow folds a panel away to make room. That is about
+  space, not about what you asked for, so it is not saved: widening the window
+  brings the panel back without you asking again.
+
+  When it cannot be read, you are told. A stored record MSCanvas does not
+  understand -- corrupt, from a newer version, too large, unreadable -- is left
+  exactly as it was found, explained with the reason, and replaced only when
+  you confirm it. Reading it, cancelling a dialog, resizing the window and
+  moving a panel all leave it alone.
+
+  When it cannot be written, you are told that too, and your choices stay on
+  screen. You can try again, cancel, or use them for this session -- and that
+  last one says plainly that a restart will still use the last saved record. It
+  is never a silent fallback, and a save is only ever reported as saved after
+  MSCanvas has read back what it wrote and found it whole.
+
+- **What MSCanvas needs from ProteoWizard, explained without a network
+  connection.** The installed-backend banner now has a compact help panel in
+  every state, readable with no dataset and no working backend: that
+  ProteoWizard is yours to install and license and MSCanvas never downloads or
+  bundles it, that a folder you choose here lasts for this app session only,
+  what each of the three recovery controls does, and which Windows the first
+  beta is supported on. It is not a wizard and it gates nothing -- a session
+  without a backend can still add, group and organise acquisitions.
+
+  The banner itself now tells apart six situations it used to blur into three.
+  A check that failed says so, and no longer reads as ProteoWizard being
+  absent. A reading the session has moved past presents nothing as current --
+  not the verdict, not the release, not the build date, not where it came from
+  -- while keeping the reason it carried. And a session that lost track of a
+  converter process says that a restart of MSCanvas is what fixes it, rather
+  than sending you to repair an installation that is fine.
+
+- **The whole interface reads in Simplified Chinese.** The installed-backend
+  banner, the inspector panel and sixty-three of the explanations behind a
+  refused action were English in every session until now, whatever language you
+  had chosen. A small number of rare internal faults are still shown in the
+  words the backend sent, and are now labelled as untranslated original instead
+  of being passed off as translated.
+
 - **What a conversion produced, said in five separate answers.** Every settled
   row in the queue offers `Details`. It says whether a converter ran and how it
   ended; what MSCanvas's own temporary working folder held; what obtained a

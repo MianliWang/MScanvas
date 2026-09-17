@@ -12,9 +12,15 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
   const { panels } = useSessionPreferences();
   const rosterOpen = panels.present.roster;
   const detailsOpen = panels.present.details && detailsAvailable;
-  // Shown exactly when there is something to reset. An arrangement that is
-  // still the responsive default has nothing to return to, and a control that
-  // does nothing is a control to explain rather than to offer.
+  // Refused only while the stored record is still being read. Every refused
+  // control here says why: a disabled toggle with no reason is a control a
+  // reader has to guess about, and the sentence that explains this one lives
+  // inside Settings, which they have not opened.
+  const loading = panels.busy ? t("panelsLoading") : undefined;
+  // Enabled exactly when there is something to reset. Kept mounted either way:
+  // activating it is what makes the arrangement default again, so a control
+  // that removed itself on activation would take a keyboard user's place in
+  // the tab order with it and leave them at the top of the page.
   const resettable = panels.requested.roster !== "automatic" || panels.requested.details !== "automatic";
   const unsaved = panels.save.status === "unsaved";
   return <header className="topbar workbench-header">
@@ -32,19 +38,30 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
     <div className="workbench-global-actions">
       {/* Immediate presentation actions, as they were. What M7.5 adds is that
           the arrangement they produce is committed, and that a narrow window
-          folding a panel away is not: see `panelPresentation`. Disabled only
-          while the stored record is still being read, because a toggle before
-          then would be a choice made against preferences nobody has seen. */}
-      <button type="button" className="secondary-button" aria-expanded={rosterOpen} aria-controls="workbench-roster" disabled={panels.busy} onClick={() => panels.toggle("roster")}>{t("rosterToggle")}</button>
-      <button type="button" className="secondary-button" aria-expanded={detailsOpen} aria-controls="workbench-inspector" disabled={panels.busy || !detailsAvailable} title={detailsAvailable ? undefined : t("inspectorUnavailable")} onClick={() => panels.toggle("details")}>{t("inspectorToggle")}</button>
-      {resettable ? <button type="button" className="secondary-button" data-layout-reset="" disabled={panels.busy} onClick={panels.reset}>{t("layoutReset")}</button> : null}
+          folding a panel away is not: see `panelPresentation`. */}
+      <button type="button" className="secondary-button" aria-expanded={rosterOpen} aria-controls="workbench-roster" disabled={panels.busy} title={loading} onClick={() => panels.toggle("roster")}>{t("rosterToggle")}</button>
+      <button type="button" className="secondary-button" aria-expanded={detailsOpen} aria-controls="workbench-inspector" disabled={panels.busy || !detailsAvailable}
+        title={loading ?? (detailsAvailable ? undefined : t("inspectorUnavailable"))} onClick={() => panels.toggle("details")}>{t("inspectorToggle")}</button>
+      <button type="button" className="secondary-button" data-layout-reset="" disabled={panels.busy || !resettable}
+        title={loading ?? (resettable ? undefined : t("layoutNothingToReset"))} onClick={panels.reset}>{t("layoutReset")}</button>
       <SettingsDialog rowCount={rowCount} />
     </div>
+    {/* Mounted from the first render and empty until there is something to
+        say. A region that arrives with its text already in it is the one
+        mutation screen readers do not announce, which is how the unsaved-layout
+        notice came to be visible and silent. */}
+    <p aria-live="polite" className="visually-hidden" data-live-region="layout">
+      {panels.announcement === null
+        ? ""
+        : t(panels.announcement === "reset" ? "layoutResetDone"
+          : panels.announcement === "uncertain" ? "layoutUncertain" : "layoutUnsaved")}
+    </p>
     {/* The arrangement is on screen either way; what this says is that it will
         not survive a restart, and offers the one action that could change that.
-        Never an alert: nothing is wrong with the workspace. */}
-    {unsaved ? <p className="workspace-layout-unsaved" role="status" data-layout-unsaved="">
-      <span>{t("layoutUnsaved")}</span>
+        Never an alert: nothing is wrong with the workspace. The announcement is
+        the region above, so this element carries no role of its own. */}
+    {unsaved ? <p className="workspace-layout-unsaved" data-layout-unsaved="">
+      <span>{t(panels.save.problem === "notConfirmed" ? "layoutUncertain" : "layoutUnsaved")}</span>
       {panels.save.retryable ? <button type="button" className="link-button" onClick={panels.retry}>{t("layoutRetry")}</button> : null}
     </p> : null}
     <p className="workspace-drop-hint">{t(dropStatus === "available" ? "shellDropHint" : dropStatus === "connecting" ? "shellDropConnecting" : "shellDropUnavailable")}</p>

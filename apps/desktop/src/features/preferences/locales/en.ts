@@ -1053,4 +1053,26 @@ export const en = {
   errIncompletePreviewResult: "The preview did not return every requested result.",
   errUnexpectedPreviewResult: "The preview returned a result MSCanvas did not request.",
   errNonFiniteValue: "The backend result contained a value that cannot be displayed.",
+
+  // --- M7.5 repair pass: the storage states and outcomes the first pass
+  // reported with the wrong sentence or with none at all.
+  storageNotSaving: "These preferences are not being saved on this computer. Everything else works normally.",
+  storageReadTimedOut: "MSCanvas is not getting an answer from its own settings folder.",
+  storageReadFailedNote: "MSCanvas could not read its saved preferences, so it started on the defaults. Applying a change still tries to save it.",
+  saveUncertainTitle: "MSCanvas cannot say what was saved",
+  saveUncertainKeeps: "The file was written and MSCanvas could not read it back to confirm it, so it will not claim either record. Try saving again to settle it.",
+  saveRefusedTitle: "These preferences were not saved",
+  saveUnavailableBody: "There is nowhere to save preferences on this computer, so this change applies to this session only.",
+  layoutUncertain: "MSCanvas cannot confirm what was saved for this panel arrangement.",
+  layoutResetDone: "Panel arrangement reset to the defaults.",
+  layoutNothingToReset: "The panel arrangement is already the default.",
+  panelsLoading: "Reading your saved preferences…",
+
+  // --- M7.5 repair pass: words that were inside a pure formatter or a
+  // measurement detail, and so reached a Chinese session in English.
+  formatBytes: "{{count, number}} bytes",
+  formatMsOther: "Other",
+  measureOpenDetail: "Choosing the file through {{rows}} being in the document.",
+  measureRowDetail: "Selecting row {{index}} through that spectrum being in the document.",
+  measureTableDetail: "Rendering {{rows}} windowed rows.",
 } as const;

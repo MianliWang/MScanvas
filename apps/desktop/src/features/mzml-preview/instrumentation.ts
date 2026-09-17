@@ -13,11 +13,24 @@ export type PreviewMeasurementName =
   | "rowSelectToRendered"
   | "spectrumTableRender";
 
+/**
+ * What a measurement covered, as a resource and its parameters.
+ *
+ * Not a sentence. A measurement is recorded by a hook that has no message
+ * binding, and a sentence written there would be English wherever it was later
+ * rendered -- which is what the inspector's tooltips were. The panel that
+ * renders the tooltip is the one with a locale, so it does the wording.
+ */
+export type PreviewMeasurementDetail =
+  | { readonly key: "measureOpenDetail"; readonly rows: string }
+  | { readonly key: "measureRowDetail"; readonly index: string }
+  | { readonly key: "measureTableDetail"; readonly rows: string };
+
 export interface PreviewMeasurement {
   readonly name: PreviewMeasurementName;
   readonly milliseconds: number;
   /** What the measurement covered, so a number is never read out of context. */
-  readonly detail: string;
+  readonly detail: PreviewMeasurementDetail;
 }
 
 /** Kept small on purpose: this is a live readout, not a metrics history. */

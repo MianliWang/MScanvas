@@ -40,16 +40,26 @@ import {
 /**
  * What this session knows about the stored record.
  *
- * `loading` is a distinct bounded state rather than an assumed default: writing
- * defaults before the read resolves would publish settings nobody chose, and
- * enabling the editors would let an edit be overwritten by an answer already in
- * flight. `unusable` keeps the stored bytes and offers an explicit replacement;
+ * `loading` is a distinct *bounded* state rather than an assumed default:
+ * writing defaults before the read resolves would publish settings nobody
+ * chose, and enabling the editors would let an edit be overwritten by an answer
+ * already in flight. It is bounded because it gates controls -- a profile
+ * volume that never answers must not leave Settings and the panel toggles
+ * inert for the rest of the session.
+ *
+ * `unusable` keeps the stored bytes and offers an explicit replacement.
  * `unavailable` means there is nowhere to store anything, which changes nothing
  * about being able to use the application.
+ *
+ * `readFailed` is deliberately neither of those. A read that never arrived, or
+ * a call that failed on the way, says nothing about whether a store exists --
+ * so the defaults apply and the reason is reported, but a save is still
+ * attempted. Treating a dropped call as "there is nowhere to write" would turn
+ * one lost message into a session-long silent loss of the user's choices.
  */
 export interface PreferenceStorageState {
-  readonly status: "loading" | "ready" | "unusable" | "unavailable";
-  /** An owned code for `unusable` and `unavailable`, and nothing else. */
+  readonly status: "loading" | "ready" | "unusable" | "unavailable" | "readFailed";
+  /** An owned code for every status but `loading` and `ready`. */
   readonly problem: string | null;
   /**
    * The highest committed revision this document has adopted.
@@ -84,6 +94,16 @@ const IDLE_APPEARANCE: AppearanceSaveState = {
   sessionOnly: false,
 };
 
+/**
+ * What the shell has to say about the panels, once.
+ *
+ * `null` renders an empty region rather than no region: a live region that
+ * arrives with its text already in it is the one mutation screen readers do not
+ * announce, so the element is mounted from the first render and only its
+ * contents change.
+ */
+export type LayoutAnnouncement = "reset" | "unsaved" | "uncertain" | null;
+
 /** Where a panel toggle's commit has got to. */
 export interface LayoutSaveState {
   readonly status: "idle" | "saving" | "unsaved";
@@ -93,6 +113,15 @@ export interface LayoutSaveState {
 
 const IDLE_LAYOUT: LayoutSaveState = { status: "idle", problem: null, retryable: false };
 
+/**
+ * How long the gated startup state may last.
+ *
+ * Generous, because the read is one small local file and anything slower than
+ * this is a filesystem that is not answering rather than one that is busy. It
+ * bounds the *waiting* and not the read: a later answer is still adopted.
+ */
+const HYDRATION_DEADLINE_MS = 10_000;
+
 /** The workspace panels, and the actions that move them. */
 export interface PanelsValue {
   readonly requested: LayoutPreferences;
@@ -101,6 +130,7 @@ export interface PanelsValue {
   /** Whether a toggle would be acting before the stored record is known. */
   readonly busy: boolean;
   readonly save: LayoutSaveState;
+  readonly announcement: LayoutAnnouncement;
   readonly toggle: (panel: keyof LayoutPreferences) => void;
   readonly navigate: () => void;
   readonly reset: () => void;
@@ -167,6 +197,7 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
   const [save, setSave] = useState<AppearanceSaveState>(IDLE_APPEARANCE);
   const [panelState, setPanelState] = useState<PanelState>(INITIAL_PANEL_STATE);
   const [layoutSave, setLayoutSave] = useState<LayoutSaveState>(IDLE_LAYOUT);
+  const [layoutAnnouncement, setLayoutAnnouncement] = useState<LayoutAnnouncement>(null);
   const [fit, setFit] = useState<ViewportFit>(measureFit);
   const restoring = useRef(false);
   const effective = effectivePreferences(state);
@@ -185,8 +216,19 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
   /** The newest outstanding request in each lane. Older replies are ignored. */
   const appearanceTicket = useRef(0);
   const layoutTicket = useRef(0);
-  /** The exact draft an apply captured, so Retry retries that and not a newer one. */
-  const captured = useRef<SessionPreferences | null>(null);
+  /**
+   * The exact request an apply captured, so Retry retries that and not a newer
+   * one.
+   *
+   * The replacement confirmation travels with it. A retry that dropped it would
+   * be a different request: the record on disk is still the one this build
+   * refused, so Rust would refuse the retry too -- and the button would be
+   * offering something that provably cannot work.
+   */
+  const captured = useRef<{
+    readonly snapshot: SessionPreferences;
+    readonly replaceUnusable: boolean;
+  } | null>(null);
   /**
    * The storage status as a ref, for the callbacks that must read it without
    * being rebuilt when it changes.
@@ -197,6 +239,29 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
    */
   const storageStatus = useRef(storage.status);
   storageStatus.current = storage.status;
+  /**
+   * The panel state, for the one caller that must read it without being a
+   * `setState` updater.
+   *
+   * `movePanels` computes the next arrangement and publishes it, and an updater
+   * that published would be impure. Kept in step with every write to the state
+   * below.
+   */
+  const panelStateRef = useRef(panelState);
+  panelStateRef.current = panelState;
+
+  /**
+   * Moves the panels without publishing anything.
+   *
+   * For the actions that are not a choice: a breakpoint, and a record arriving
+   * from disk. Keeps the ref and the state in step, so the next choice is
+   * computed from what is actually on screen.
+   */
+  const movePanelsQuietly = useCallback((action: PanelAction) => {
+    const next = panelReducer(panelStateRef.current, action);
+    panelStateRef.current = next;
+    setPanelState(next);
+  }, []);
 
   useLayoutEffect(() => { document.documentElement.lang = effective.locale; }, [effective.locale]);
 
@@ -259,7 +324,7 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
       setFit(next);
       // A breakpoint moves the session-only collapse and never the stored
       // request, so a window that got narrow cannot publish a preference.
-      setPanelState(current => panelReducer(current, { type: "fit", constrained: next.constrained }));
+      movePanelsQuietly({ type: "fit", constrained: next.constrained });
     };
     constrained.addEventListener("change", remeasure);
     roomy.addEventListener("change", remeasure);
@@ -273,6 +338,18 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
 
   useEffect(() => {
     let superseded = false;
+    // A bound on the gated state, not on the read. The read is still allowed to
+    // answer afterwards -- and it is adopted when it does, because a slow
+    // answer is still the truth about the store. What the deadline ends is the
+    // *waiting*: Settings and the panel toggles stop being inert, on the
+    // defaults, with an accurate reason.
+    const deadline = window.setTimeout(() => {
+      if (superseded || !mounted.current) return;
+      setStorage(current =>
+        current.status === "loading"
+          ? { status: "readFailed", problem: "readTimedOut", revision: current.revision }
+          : current);
+    }, HYDRATION_DEADLINE_MS);
     api.loadPreferences().then(
       outcome => {
         if (superseded || !mounted.current) return;
@@ -282,8 +359,7 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
           // the user has since chosen.
           if (!userOwnsTheRecord.current) {
             dispatch({ type: "hydrate", preferences: outcome.preferences.appearance });
-            setPanelState(current =>
-              panelReducer(current, { type: "hydrate", layout: outcome.preferences.layout }));
+            movePanelsQuietly({ type: "hydrate", layout: outcome.preferences.layout });
           }
           setStorage({ status: "ready", problem: null, revision: outcome.revision });
           return;
@@ -304,12 +380,35 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
       },
       () => {
         if (superseded || !mounted.current) return;
-        // The read itself failed. Recoverable defaults, and an honest state.
-        setStorage({ status: "unavailable", problem: "readFailed", revision: 0 });
+        // The call failed on the way. That is not a store that does not exist:
+        // recoverable defaults, an accurate reason, and a save is still
+        // attempted rather than suppressed for the session.
+        setStorage(current => ({ status: "readFailed", problem: "readFailed", revision: current.revision }));
       },
     );
-    return () => { superseded = true; };
+    return () => {
+      superseded = true;
+      window.clearTimeout(deadline);
+    };
   }, [api]);
+
+  /**
+   * Applies a status a reply reports, unless a newer commit has overtaken it.
+   *
+   * The two lanes are serialized in Rust but delivered independently, so a
+   * refusal decided before a commit can arrive after it. Its revision is the
+   * store's revision at the moment it was decided, so one lower than the
+   * highest adopted describes a store this session has already moved past --
+   * and applying it would put the recovery alert back over a record that was
+   * just written.
+   */
+  const regress = useCallback(
+    (revision: number, status: PreferenceStorageState["status"], problem: string) => {
+      setStorage(current =>
+        revision < current.revision ? current : { ...current, status, problem });
+    },
+    [],
+  );
 
   /** Adopts a committed revision, never regressing to an older one. */
   const adopt = useCallback((revision: number) => {
@@ -323,7 +422,7 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
 
   const commitAppearance = useCallback((snapshot: SessionPreferences, replaceUnusable: boolean) => {
     userOwnsTheRecord.current = true;
-    captured.current = snapshot;
+    captured.current = { snapshot, replaceUnusable };
     const ticket = appearanceTicket.current + 1;
     appearanceTicket.current = ticket;
     setSave({ ...IDLE_APPEARANCE, status: "saving" });
@@ -338,12 +437,27 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
           adopt(outcome.revision);
           captured.current = null;
           setSave(IDLE_APPEARANCE);
-          dispatch({ type: "apply" });
+          if (replaceUnusable) {
+            // This request published the layout group too, and it has just been
+            // confirmed. Any outstanding layout reply describes a store that no
+            // longer exists, and any unsaved claim the shell is showing is
+            // about an arrangement that is now on disk.
+            layoutTicket.current += 1;
+            setLayoutSave(IDLE_LAYOUT);
+          }
+          // The snapshot that was committed and read back, not the draft that
+          // asked for it. They are the same record whenever the store is
+          // behaving, and adopting the confirmed one is what makes "this is
+          // what a restart will find" a statement about disk rather than about
+          // this dialog.
+          dispatch(isStoredPreferences(outcome.preferences)
+            ? { type: "committed", preferences: outcome.preferences.appearance }
+            : { type: "apply" });
           setAnnouncement(replaceUnusable ? "storedReplaced" : "applied");
           return;
         }
         if (outcome.outcome === "storedRecordUnusable") {
-          setStorage(current => ({ ...current, status: "unusable", problem: outcome.problem }));
+          regress(outcome.revision, "unusable", outcome.problem);
           setSave({
             ...IDLE_APPEARANCE,
             status: "storedRecordUnusable",
@@ -352,8 +466,14 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
           return;
         }
         if (outcome.outcome === "unavailable") {
-          setStorage(current => ({ ...current, status: "unavailable", problem: outcome.problem }));
-          setSave({ ...IDLE_APPEARANCE, status: "unavailable", problem: outcome.problem });
+          regress(outcome.revision, "unavailable", outcome.problem);
+          // The change the user asked for still happens, and it is named for
+          // what it is. Leaving the draft unapplied made the first press a
+          // no-op that the footer then reported as a session-only
+          // application, and made a second press the one that worked.
+          dispatch({ type: "apply" });
+          setSave({ ...IDLE_APPEARANCE, sessionOnly: true });
+          setAnnouncement("sessionOnlyApplied");
           return;
         }
         setSave({
@@ -369,7 +489,7 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
         setSave({ ...IDLE_APPEARANCE, status: "failed", problem: "requestFailed", retryable: true });
       },
     );
-  }, [adopt, api, panelState.requested]);
+  }, [adopt, api, panelState.requested, regress]);
 
   // ---------------------------------------------------------------- layout
 
@@ -377,10 +497,13 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
     userOwnsTheRecord.current = true;
     if (storageStatus.current === "unavailable") {
       // Nowhere to write, and Settings has already said so for the whole
-      // session. A banner on every toggle would repeat that in the one place
-      // it cannot be acted on; this notice is for a save that should have
-      // worked and did not.
-      setLayoutSave(IDLE_LAYOUT);
+      // session. A notice on every toggle would repeat that in the one place
+      // it cannot be acted on -- but a *retry* that lands here must not read
+      // as having worked, so the claim stands and only its retry is withdrawn.
+      setLayoutSave(current =>
+        current.status === "idle"
+          ? IDLE_LAYOUT
+          : { status: "unsaved", problem: "rootUnresolved", retryable: false });
       return;
     }
     const ticket = layoutTicket.current + 1;
@@ -394,14 +517,21 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
         if (outcome.outcome === "saved") {
           adopt(outcome.revision);
           setLayoutSave(IDLE_LAYOUT);
+          setLayoutAnnouncement(current => (current === "reset" ? current : null));
+          // The committed layout, for the same reason: what is on screen after
+          // a save is what the store confirmed, not what this document asked
+          // for a moment earlier.
+          if (isStoredPreferences(outcome.preferences)) {
+            movePanelsQuietly({ type: "hydrate", layout: outcome.preferences.layout });
+          }
           return;
         }
         if (outcome.outcome === "unavailable" || outcome.outcome === "storedRecordUnusable") {
-          setStorage(current => ({
-            ...current,
-            status: outcome.outcome === "unavailable" ? "unavailable" : "unusable",
-            problem: outcome.problem,
-          }));
+          regress(
+            outcome.revision,
+            outcome.outcome === "unavailable" ? "unavailable" : "unusable",
+            outcome.problem,
+          );
         }
         // The panels keep the arrangement the user asked for; what is reported
         // is that it will not survive a restart, with a way to try again.
@@ -410,20 +540,36 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
           problem: outcome.problem,
           retryable: outcome.outcome === "failed" ? outcome.retryable : false,
         });
+        setLayoutAnnouncement(outcome.problem === "notConfirmed" ? "uncertain" : "unsaved");
       },
       () => {
         if (!mounted.current || ticket !== layoutTicket.current) return;
         setLayoutSave({ status: "unsaved", problem: "requestFailed", retryable: true });
+        setLayoutAnnouncement("unsaved");
       },
     );
-  }, [adopt, api]);
+  }, [adopt, api, regress]);
 
+  /**
+   * Moves the panels, and publishes the arrangement where the action is a
+   * choice.
+   *
+   * The next state is computed from a ref rather than inside a `setState`
+   * updater. An updater that dispatched a disk write would be an impure one,
+   * and React is entitled to call it twice -- which `StrictMode` does in
+   * development, so every toggle published twice and only the second answer was
+   * honoured. One press, one publish, in either mode.
+   */
   const movePanels = useCallback((action: PanelAction) => {
-    setPanelState(current => {
-      const next = panelReducer(current, action);
-      if (commits(action)) commitLayout(next.requested);
-      return next;
-    });
+    const next = panelReducer(panelStateRef.current, action);
+    panelStateRef.current = next;
+    setPanelState(next);
+    // A reset removes its own control and its own visible effect is a layout
+    // returning to the default, so it is the one panel action with nothing left
+    // on screen to read. The toggles announce themselves through
+    // `aria-expanded`, which is the platform's job rather than a region's.
+    setLayoutAnnouncement(action.type === "reset" ? "reset" : null);
+    if (commits(action)) commitLayout(next.requested);
   }, [commitLayout]);
 
   const present = useMemo(() => presentPanels(panelState, fit), [panelState, fit]);
@@ -434,11 +580,12 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
     fit,
     busy: storage.status === "loading",
     save: layoutSave,
+    announcement: layoutAnnouncement,
     toggle: panel => movePanels({ type: "toggle", panel, fit }),
     navigate: () => movePanels({ type: "navigate", constrained: fit.constrained }),
     reset: () => movePanels({ type: "reset" }),
     retry: () => commitLayout(panelState.requested),
-  }), [commitLayout, fit, layoutSave, movePanels, panelState, present, storage.status]);
+  }), [commitLayout, fit, layoutAnnouncement, layoutSave, movePanels, panelState, present, storage.status]);
 
   // ----------------------------------------------------------------- actions
 
@@ -476,7 +623,16 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
       // reported is this snapshot and not whatever the dialog shows later.
       commitAppearance(effective, false);
     },
-    discard: () => { setSave(IDLE_APPEARANCE); captured.current = null; dispatch({ type: "discard" }); setAnnouncement("cancelled"); },
+    discard: () => {
+      // A cancelled draft clears the failure and its actions, and keeps
+      // `sessionOnly`. That is a fact about this session, not about this press:
+      // wiping it left the footer claiming the preferences were saved while the
+      // session was running on ones that never reached disk.
+      setSave(current => ({ ...IDLE_APPEARANCE, sessionOnly: current.sessionOnly }));
+      captured.current = null;
+      dispatch({ type: "discard" });
+      setAnnouncement("cancelled");
+    },
     reset: () => {
       if (save.status === "saving") return;
       if (usable(SESSION_DEFAULTS.locale)) { dispatch({ type: "reset" }); setAnnouncement("resetPreview"); }
@@ -488,17 +644,20 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
       setProblem(null); setAnnouncement("recovered");
     },
     retrySave: () => {
-      const snapshot = captured.current;
-      if (snapshot === null || save.status === "saving") return;
-      commitAppearance(snapshot, false);
+      const request = captured.current;
+      if (request === null || save.status === "saving") return;
+      // The same request, confirmation included. A retry that dropped it would
+      // be asking Rust to write over a record it has already refused, so it
+      // would be refused too -- a button that cannot work.
+      commitAppearance(request.snapshot, request.replaceUnusable);
     },
     useForThisSession: () => {
-      const snapshot = captured.current;
-      if (snapshot === null || save.status === "saving") return;
+      const request = captured.current;
+      if (request === null || save.status === "saving") return;
       // Applied to the session, and nothing is claimed about disk. The draft
       // becomes the applied preferences; the last saved record is what a
       // restart still finds.
-      dispatch({ type: "preview", preferences: snapshot });
+      dispatch({ type: "preview", preferences: request.snapshot });
       dispatch({ type: "apply" });
       setSave({ ...IDLE_APPEARANCE, sessionOnly: true });
       captured.current = null;

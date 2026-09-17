@@ -191,6 +191,10 @@ export interface MessageParameters {
   readonly summarySectionTruncated: { readonly shown: string; readonly total: string };
   readonly errorUnknownProblem: { readonly code: string };
   readonly errorReportedAsSent: { readonly summary: string };
+  readonly formatBytes: { readonly count: number };
+  readonly measureOpenDetail: { readonly rows: string };
+  readonly measureRowDetail: { readonly index: string };
+  readonly measureTableDetail: { readonly rows: string };
   readonly unknownFigureProblem: { readonly code: string };
 }
 export type MessageArguments<K extends MessageKey> = K extends keyof MessageParameters

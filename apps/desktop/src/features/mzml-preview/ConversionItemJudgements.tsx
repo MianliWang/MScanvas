@@ -384,7 +384,7 @@ export function ConversionItemJudgements({
                   <td>{(MEMBER_STATE_LABEL[member.state as keyof typeof MEMBER_STATE_LABEL] === undefined ? member.state : t(MEMBER_STATE_LABEL[member.state as keyof typeof MEMBER_STATE_LABEL]))}</td>
                   {/* Nothing measured is nothing shown. A zero here would read
                       as a measured empty document. */}
-                  <td>{member.output === null ? "—" : formatByteLength(member.output.byteLength)}</td>
+                  <td>{member.output === null ? "—" : formatByteLength(member.output.byteLength, t)}</td>
                   <td>{member.output === null ? "—" : formatCount(member.output.spectrumCount)}</td>
                   <td>
                     {member.output === null ? "—" : formatCount(member.output.chromatogramCount)}

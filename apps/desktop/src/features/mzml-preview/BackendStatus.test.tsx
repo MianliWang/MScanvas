@@ -267,17 +267,20 @@ describe("keyboard focus across the native folder picker", () => {
     renderWorkspace(api);
     await screen.findByText(/ProteoWizard is available/);
 
-    // Checking replaces the banner with the neutral one, so this control leaves
-    // the document and the keyboard is on the body with or without a browser's
-    // blur-on-disable.
-    activate(screen.getByRole("button", { name: "Check again" }));
+    // One banner element across every state, `checking` included, so this
+    // control is the same node throughout its own request and keeps the
+    // keyboard the user gave it. Nothing restores anything here: a recheck is
+    // not a folder choice, and the restore machinery must not fire for it.
+    const recheck = screen.getByRole("button", { name: "Check again" });
+    activate(recheck);
+    const focusing = vi.spyOn(recheck, "focus");
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+      expect(recheck).toBeEnabled();
     });
-    // A recheck is not a folder choice. Nothing here asked for the keyboard, so
-    // nothing here may claim it.
-    expect(document.body).toHaveFocus();
+    expect(recheck.isConnected).toBe(true);
+    expect(recheck).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
   });
 
   it("does not reach for a trigger the successful choice removed", async () => {

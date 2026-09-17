@@ -186,7 +186,18 @@ export function presentBackend(
   };
 
   if (state.status === "checking") {
-    return { ...base, kind: "checking", tone: "neutral", title: message("backendChecking"), actions: [] };
+    // The ways out are offered here too. `busy` disables them for the length of
+    // the request, so they cost nothing while one is running -- and a check
+    // that ends without producing a verdict, which an authority delivered by a
+    // conversion can cause, would otherwise leave this banner reading
+    // "checking" with no control of any kind and no way to ask again.
+    return {
+      ...base,
+      kind: "checking",
+      tone: "neutral",
+      title: message("backendChecking"),
+      actions: bothWaysOut(message),
+    };
   }
 
   if (state.status === "failed") {

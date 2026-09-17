@@ -1298,7 +1298,7 @@ function QueueState({
                 <>
                   <span className="visually-hidden">, </span>
                   <span className="conversion-queue-facts">
-                    {t("m74CnvOutputMetrics", { bytes: formatByteLength(single.output.byteLength), spectra: formatCount(single.output.spectrumCount), chromatograms: formatCount(single.output.chromatogramCount) })}
+                    {t("m74CnvOutputMetrics", { bytes: formatByteLength(single.output.byteLength, t), spectra: formatCount(single.output.spectrumCount), chromatograms: formatCount(single.output.chromatogramCount) })}
                     {single.backend === null
                       ? ""
                       : `, ${formatDuration(single.backend.elapsedMilliseconds)}`}

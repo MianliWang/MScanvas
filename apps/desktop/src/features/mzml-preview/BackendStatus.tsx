@@ -218,16 +218,14 @@ export function BackendStatus({
     </details>
   );
 
-  if (banner.kind === "checking") {
-    return (
-      <div className="notice notice-neutral" data-backend-status="checking">
-        <span role="status">{banner.title}</span>
-        {help}
-      </div>
-    );
-  }
-
   const named = banner.names;
+  // One banner element and one live region, for every state including
+  // `checking`. Two branches returning different element types put a *new*
+  // region in the document on each transition, already containing its text --
+  // which is the one mutation a screen reader does not announce. So pressing
+  // `Check again` used to be silent, and so was the verdict that followed it.
+  // The `<details>` help keeps its identity for the same reason: a verdict
+  // arriving on its own must not take a reader's place in the tab order.
   return (
     <div
       className={`notice notice-${banner.tone}`}

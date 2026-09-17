@@ -207,18 +207,31 @@ describe("the workspace shell, by keyboard", () => {
     expect(liveRegion()).toHaveTextContent("");
   });
 
-  it("reports an unsaved layout as a status rather than as an alert", async () => {
+  it("announces an unsaved layout through a region that was already mounted", async () => {
     const { preferences } = mount(
       createFakePreferencesApi({ failWith: { problem: "notPublished", retryable: true } }),
     );
     await screen.findByText(en.backendMissing);
+    // Mounted and empty from the first render. A region inserted together with
+    // its text is the one mutation screen readers do not announce, which is how
+    // this notice came to be visible and silent.
+    const region = document.querySelector('[data-live-region="layout"]')!;
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toHaveTextContent("");
+
     fireEvent.click(screen.getByRole("button", { name: en.rosterToggle }));
-    const notice = await screen.findByText(en.layoutUnsaved);
-    const region = notice.closest('[role="status"]');
-    expect(region).not.toBeNull();
+    await waitFor(() => expect(region).toHaveTextContent(en.layoutUnsaved));
+    // Still the same node, which is what makes it an announcement.
+    expect(document.querySelector('[data-live-region="layout"]')).toBe(region);
+    // The visible notice carries no role of its own: two elements announcing
+    // one fact would read it twice.
+    const notice = screen.getByText(en.layoutUnsaved, { selector: "span" });
+    expect(notice.closest('[role="status"]')).toBeNull();
     expect(notice.closest('[role="alert"]')).toBeNull();
+
     // And the retry is a real control in that notice, reachable by keyboard.
-    const retry = within(region as HTMLElement).getByRole("button", { name: en.layoutRetry });
+    const visible = notice.closest("[data-layout-unsaved]") as HTMLElement;
+    const retry = within(visible).getByRole("button", { name: en.layoutRetry });
     retry.focus();
     expect(retry).toHaveFocus();
     preferences.recover();

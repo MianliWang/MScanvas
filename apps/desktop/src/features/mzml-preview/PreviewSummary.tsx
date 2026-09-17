@@ -9,8 +9,13 @@ import {
   formatDuration,
   formatMsLevel,
   formatRetentionTime,
+  formatRetentionTimeValue,
 } from "./format";
-import { latestMeasurement, type PreviewMeasurement } from "./instrumentation";
+import {
+  latestMeasurement,
+  type PreviewMeasurement,
+  type PreviewMeasurementDetail,
+} from "./instrumentation";
 import type { MessageKey, UiMessage } from "../preferences/i18n";
 
 export interface PreviewSummaryProps {
@@ -61,7 +66,7 @@ export const PreviewSummary = memo(function PreviewSummary({
               roster needs. No absolute path crosses, and no location is
               reconstructed here. */}
           <p className="preview-file-identity" title={fileLabel}>
-            {t("summaryIdentity", { name: fileLabel, size: formatByteLength(file.byteLength) })}
+            {t("summaryIdentity", { name: fileLabel, size: formatByteLength(file.byteLength, t) })}
           </p>
         </div>
       </header>
@@ -95,7 +100,7 @@ export const PreviewSummary = memo(function PreviewSummary({
             <dd>
               {runSummary.retentionTimeRange === null
                 ? t("viewerNotReported")
-                : `${formatRetentionTime(runSummary.retentionTimeRange.minimum)} – ${runSummary.retentionTimeRange.maximum.value.toFixed(4)}`}
+                : `${formatRetentionTimeValue(runSummary.retentionTimeRange.minimum)} – ${formatRetentionTime(runSummary.retentionTimeRange.maximum, t)}`}
             </dd>
           </div>
         </dl>
@@ -117,7 +122,7 @@ export const PreviewSummary = memo(function PreviewSummary({
           <dl className="metadata-list">
             {runSummary.msLevels.map((level) => (
               <div key={level.msLevel ?? "other"}>
-                <dt>{formatMsLevel(level.msLevel)}</dt>
+                <dt>{formatMsLevel(level.msLevel, t)}</dt>
                 <dd>{formatCount(level.spectrumCount)}</dd>
               </div>
             ))}
@@ -174,6 +179,13 @@ export const PreviewSummary = memo(function PreviewSummary({
   );
 })
 
+/** The tooltip for one measurement, worded here because here has a locale. */
+function detailText(detail: PreviewMeasurementDetail, t: UiMessage): string {
+  return detail.key === "measureRowDetail"
+    ? t("measureRowDetail", { index: detail.index })
+    : t(detail.key, { rows: detail.rows });
+}
+
 function MeasurementRow({
   label,
   measurement,
@@ -186,7 +198,7 @@ function MeasurementRow({
   return (
     <div>
       <dt>{t(label)}</dt>
-      <dd title={measurement?.detail ?? undefined}>
+      <dd title={measurement === null ? undefined : detailText(measurement.detail, t)}>
         {measurement === null ? t("summaryNotMeasured") : formatDuration(measurement.milliseconds)}
       </dd>
     </div>

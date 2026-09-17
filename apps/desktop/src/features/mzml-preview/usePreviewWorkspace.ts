@@ -70,6 +70,7 @@ import {
   appendMeasurement,
   now,
   type PreviewMeasurement,
+  type PreviewMeasurementDetail,
   type PreviewMeasurementName,
 } from "./instrumentation";
 import {
@@ -917,7 +918,7 @@ export interface PreviewWorkspace {
   readonly recordMeasurement: (
     name: PreviewMeasurementName,
     milliseconds: number,
-    detail: string,
+    detail: PreviewMeasurementDetail,
   ) => void;
 }
 
@@ -1250,7 +1251,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   }, []);
 
   const recordMeasurement = useCallback(
-    (name: PreviewMeasurementName, milliseconds: number, detail: string) => {
+    (name: PreviewMeasurementName, milliseconds: number, detail: PreviewMeasurementDetail) => {
       setMeasurements((current) => appendMeasurement(current, { name, milliseconds, detail }));
     },
     [],
@@ -2669,7 +2670,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       recordMeasurement(
         "openToFirstPreview",
         now() - openPending.startedAt,
-        `Choosing the file through ${formatRows(openPending.rowCount)} being in the document.`,
+        // A resource key and its parameters rather than a sentence. This hook
+        // has no message binding -- and should not: the tooltip is rendered in
+        // the inspector, which does.
+        { key: "measureOpenDetail", rows: formatRows(openPending.rowCount) },
       );
     }
     const spectrumPending = pendingSpectrumRender.current;
@@ -2678,7 +2682,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       recordMeasurement(
         "rowSelectToRendered",
         now() - spectrumPending.startedAt,
-        `Selecting row ${String(spectrumPending.index)} through that spectrum being in the document.`,
+        { key: "measureRowDetail", index: String(spectrumPending.index) },
       );
     }
   }, [recordMeasurement, viewerAwaitingDomain]);

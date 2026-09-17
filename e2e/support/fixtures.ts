@@ -226,6 +226,20 @@ export function ipcTable(
             : spectrumWithPeaks();
   return {
     inspect_backend: availableBackend,
+    // The UI preference store, asked once on mount. A first run is what a
+    // browser session is: nothing is stored, so the defaults apply and nothing
+    // is written to make them stored. A spec that needs a stored record or a
+    // refusal replaces this answer for itself.
+    load_ui_preferences: { outcome: "absent", revision: 0 },
+    save_ui_preferences: {
+      outcome: "saved",
+      revision: 1,
+      preferences: {
+        schemaVersion: 1,
+        appearance: { locale: "en", density: "comfortable" },
+        layout: { roster: "automatic", details: "automatic" },
+      },
+    },
     get_workspace_roster: {
       datasets: [MZML_ROW, VENDOR_ROW],
       capacity: FAKE_WORKSPACE_CAPACITY,
