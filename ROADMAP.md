@@ -752,9 +752,16 @@ M7.4 implementation and all seven mandatory native scenarios are verified in
 and locally closed, and its protected publication, natural-main CI and local
 closeout identities belong to PR #124. M7.5 implements durable allowlisted UI
 preferences, first-run backend setup and recovery, and localization and
-accessibility closure over every delivered surface; see
-[the M7.5 record](docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md) for what it
-delivers, what it declares as a limit and where its evidence is. The first
+accessibility closure over every delivered surface; its implementation, browser
+acceptance and three-chain native campaign are verified in
+[the M7.5 record](docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md), which also
+states what it declares as a limit and where its evidence is. That campaign, at
+measured 150% scaling against a task-owned preference root, showed a real
+restart starting on the stored record, the saved file left byte-identical
+through Cancel, a genuinely refused write and a record the build cannot use, and
+a real ProteoWizard conversion read and exported in Simplified Chinese with the
+exported document unchanged. Its protected publication, natural-main CI and
+local closeout identities belong to PR #125. The first
 beta's support target is decided: **Windows 11 25H2 x64**, with other Windows
 versions and ARM64 not promised supported. M7.6 remains
 **NEXT / NOT STARTED** and owns installed-candidate qualification on that

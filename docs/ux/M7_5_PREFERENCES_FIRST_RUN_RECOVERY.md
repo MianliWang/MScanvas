@@ -322,9 +322,56 @@ Installed-candidate qualification on the target belongs to M7.6.
   `apps/desktop/src-tauri/src/preferences/tests.rs` and against a task-owned
   profile root in the native campaign.
 
+## Acceptance
+
+Browser acceptance drove production React in real Chrome across 1920×1080,
+1366×768, an intermediate window at a 1.5 device pixel ratio and 960×640, in
+both languages and both densities, with reduced motion emulated — 8 cases,
+33 screenshots. It found three defects, all repaired here: a help disclosure
+clipped by its scrollport, fifteen render sites showing a boundary error's own
+English words in a Chinese session, and a layout reset that lost the keyboard
+when it disabled itself.
+
+The native campaign ran the compiled build on real Windows at 144 DPI
+(150 % scaling), CSS viewport 1366×768, against a preference root the campaign
+owned rather than the operator's: three launches, each given the foreground by
+one temporary topmost, one hit-tested caption click and a restore. Three chains
+passed.
+
+- **A record, and a restart that starts on it.** A first run had no file and
+  wrote none. One applied choice produced a 126-byte record of exactly the five
+  allowed values, requested as the appearance group alone. A panel toggle
+  committed only the layout group. A restart — a different process, a different
+  window — started on that file and did not rewrite it.
+- **The file is left exactly as it is found.** Cancel, Reset-then-Cancel, a
+  publish the filesystem genuinely refused (the record held open without delete
+  sharing), a refused Retry, and `Use for this session` all left the same
+  digest on disk with no temporary behind them, and the dialog named the exact
+  refusal rather than claiming a save. The same apply landed once the hold was
+  released. A `schemaVersion: 2` record written by something that is not this
+  build survived a real startup and a Cancel byte for byte while the session ran
+  on usable defaults; only the confirmed replacement overwrote it.
+- **First-run help, recovery, and the real provider.** The backend read
+  `available` and named its release. The offline help opened unclipped in both
+  languages, carrying the support target, the user-installed-ProteoWizard
+  explanation and the session-only lifetime of a chosen folder. A language
+  change probed the backend zero extra times. A cancelled native
+  installation-folder dialog returned the keyboard to the `choose` action by
+  that action's identity; a folder holding neither tool read as `unsupported`
+  and never reached the saved record; automatic discovery returned to the host's
+  real verdict. Then a retained acquisition converted through the real
+  `msconvert`, was adopted, opened and read in Simplified Chinese, and exported
+  to CSV whose keys, header, `unreported` unit states and 1,504 full-precision
+  rows contain no Chinese at all.
+
+Every capture asserted the owned process in the foreground with document focus,
+the measured DPI and viewport, a raster equal to the client rect, no external
+resource, an empty mock IPC table so that every command reached Rust, a
+non-writable `invoke`, and an empty console.
+
 ## Evidence
 
 Retained, ignored and local under `.tmp/m75-evidence/`: the checkpoint, the
 per-unit gate records with their serial reversion controls, the localization
-inventory, and the browser and native acceptance records with their own bytes,
-runs and attribution.
+inventory, the source-review findings, and the browser and native acceptance
+records with their own bytes, runs, screenshots and attribution.
