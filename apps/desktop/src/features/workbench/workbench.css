@@ -14,6 +14,11 @@
 .workbench-global-actions button[aria-expanded="true"] { background: var(--color-surface-selected); border-color: var(--color-border); }
 .workbench-header .workspace-drop-hint { flex-basis: 100%; white-space: normal; margin: 5px 0 0; font-size: 12px; }
 .workbench-shell .shell-notices { max-height: min(24vh, 180px); overflow: auto; padding: 6px 16px 0; }
+/* A status that appears is bounded so it cannot take the workspace's height.
+   A disclosure the reader opened is a different thing: it was asked for, and
+   at 180px the setup help was eight paragraphs inside a scrollport the height
+   of two. So the bound relaxes while it is open, and returns when it is not. */
+.workbench-shell .shell-notices:has([data-backend-help][open]) { max-height: min(60vh, 520px); }
 .workbench-shell .workspace-layout { display: grid; gap: 12px; padding: 12px 16px 16px; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; }
 .workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 280px minmax(0, 1fr); grid-template-areas: "roster main"; }
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }

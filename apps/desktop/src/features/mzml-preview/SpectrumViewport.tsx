@@ -23,6 +23,7 @@ import {
   isFullMzDomain,
   renderedMzDomain,
 } from "./viewer/spectrumViewport";
+import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import type {
   SpectrumViewportActionPlan,
   VisibleSpectrumViewportAction,
@@ -437,7 +438,7 @@ function describeViewport(
         ? t("viewerMzFailed")
         : projectionError.detail === null
           ? projectionError.summary
-          : `${projectionError.summary} ${projectionError.detail}`;
+          : `${ownedErrorMessage(projectionError, t)} ${ownedErrorDetail(projectionError, t) ?? ""}`.trim();
     case "ready":
       return state.projection.projection.sourcePoints === 0
         ? t("viewerMzEmpty", { low: formatMz(state.projection.window.low), high: formatMz(state.projection.window.high) })

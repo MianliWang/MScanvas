@@ -1,4 +1,5 @@
 import { motion, useReducedMotion } from "motion/react";
+import { useEffect, useRef } from "react";
 import { SettingsDialog } from "../preferences/SettingsDialog";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 
@@ -23,6 +24,29 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
   // the tab order with it and leave them at the top of the page.
   const resettable = panels.requested.roster !== "automatic" || panels.requested.details !== "automatic";
   const unsaved = panels.save.status === "unsaved";
+  /**
+   * Where the keyboard goes when the reset has nothing left to do.
+   *
+   * Activating it is what makes it redundant, and a browser blurs a control it
+   * has just disabled -- so a keyboard user who pressed it would be left on the
+   * body, with their next Tab starting from the top of the page. The roster
+   * toggle is the truthful destination: adjacent, durable, and the control
+   * whose state the reset just changed.
+   */
+  const reset = useRef<HTMLButtonElement>(null);
+  const roster = useRef<HTMLButtonElement>(null);
+  const pressedReset = useRef(false);
+  useEffect(() => {
+    if (!pressedReset.current) return;
+    const control = reset.current;
+    if (control === null || !control.disabled) return;
+    pressedReset.current = false;
+    // Only from the body, and only while this document still has the keyboard:
+    // a reader who has since moved keeps their place.
+    const active = document.activeElement;
+    if (!document.hasFocus() || (active !== null && active !== document.body && active !== control)) return;
+    roster.current?.focus({ preventScroll: true });
+  });
   return <header className="topbar workbench-header">
     <button type="button" className="workbench-home" aria-label={t("home")} onClick={() => { onNavigate("workbench"); panels.navigate(); }}>
       <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M3 22h22M5 20v-5m4 5V9m5 11V3m5 17v-8m4 8v-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
@@ -39,11 +63,12 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
       {/* Immediate presentation actions, as they were. What M7.5 adds is that
           the arrangement they produce is committed, and that a narrow window
           folding a panel away is not: see `panelPresentation`. */}
-      <button type="button" className="secondary-button" aria-expanded={rosterOpen} aria-controls="workbench-roster" disabled={panels.busy} title={loading} onClick={() => panels.toggle("roster")}>{t("rosterToggle")}</button>
+      <button type="button" className="secondary-button" ref={roster} aria-expanded={rosterOpen} aria-controls="workbench-roster" disabled={panels.busy} title={loading} onClick={() => panels.toggle("roster")}>{t("rosterToggle")}</button>
       <button type="button" className="secondary-button" aria-expanded={detailsOpen} aria-controls="workbench-inspector" disabled={panels.busy || !detailsAvailable}
         title={loading ?? (detailsAvailable ? undefined : t("inspectorUnavailable"))} onClick={() => panels.toggle("details")}>{t("inspectorToggle")}</button>
-      <button type="button" className="secondary-button" data-layout-reset="" disabled={panels.busy || !resettable}
-        title={loading ?? (resettable ? undefined : t("layoutNothingToReset"))} onClick={panels.reset}>{t("layoutReset")}</button>
+      <button type="button" className="secondary-button" ref={reset} data-layout-reset="" disabled={panels.busy || !resettable}
+        title={loading ?? (resettable ? undefined : t("layoutNothingToReset"))}
+        onClick={() => { pressedReset.current = true; panels.reset(); }}>{t("layoutReset")}</button>
       <SettingsDialog rowCount={rowCount} />
     </div>
     {/* Mounted from the first render and empty until there is something to

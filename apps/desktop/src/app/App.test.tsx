@@ -572,7 +572,9 @@ describe("mzML preview workspace", () => {
       }),
     );
 
-    expect(await screen.findByText("The preview could not be produced.")).toBeVisible();
+    expect(
+      await screen.findByText(/The preview could not be produced\./u, { selector: "strong" }),
+    ).toBeVisible();
     expect(screen.getByText("malformed_output")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Try reading this file again" }),
@@ -1124,11 +1126,14 @@ describe("native Explorer drop presentation", () => {
       error: previewError({ summary: "The dropped item changed before it could be added." }),
     });
 
-    const visible = screen.getByText("The dropped item changed before it could be added.");
+    const visible = screen.getByText(/The dropped item changed before it could be added\./u, { selector: "span:not([class])" });
     expect(visible).toBeVisible();
     expect(visible.closest("[role='status']")).toBeNull();
+    // The announcement carries the same words the notice does, through the
+    // same owned lookup -- so an unmapped code reaches both as the labelled
+    // original rather than as bare English in a Chinese session.
     expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
-      "The dropped items could not be added. The dropped item changed before it could be added.",
+      /The dropped items could not be added\..*The dropped item changed before it could be added\./u,
     );
 
     const addFiles = screen.getByRole("button", { name: "Add files…" });
@@ -1203,10 +1208,12 @@ describe("native Explorer drop presentation", () => {
     renderApp(api, transport);
 
     expect(await screen.findByText("Explorer drag-and-drop is unavailable")).toBeVisible();
-    expect(screen.getByText("Explorer drag-and-drop could not connect.")).toBeVisible();
+    expect(
+      screen.getByText(/Explorer drag-and-drop could not connect\./u, { selector: "span:not([class])" }),
+    ).toBeVisible();
     expect(screen.getByText("File drop unavailable; use Add files")).toBeVisible();
     expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
-      "Explorer drag-and-drop is unavailable. Explorer drag-and-drop could not connect.",
+      /Explorer drag-and-drop is unavailable\..*Explorer drag-and-drop could not connect\./u,
     );
     expect(screen.queryByText("The dropped items could not be added")).toBeNull();
     const addFiles = screen.getByRole("button", { name: "Add files…" });
@@ -3037,7 +3044,7 @@ describe("adding a folder of mzML files", () => {
     );
 
     expect(await screen.findByText("The folder could not be added")).toBeVisible();
-    expect(screen.getByText("That folder could not be scanned safely.")).toBeVisible();
+    expect(screen.getByText(/That folder could not be scanned safely\./u)).toBeVisible();
     expect(rosterRows()).toHaveLength(0);
     expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
   });

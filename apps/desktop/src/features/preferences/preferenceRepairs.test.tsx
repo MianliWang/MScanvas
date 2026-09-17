@@ -369,11 +369,14 @@ describe("the panel reset and its own control", () => {
     await waitFor(() => expect(reset).toBeEnabled());
     reset.focus();
     fireEvent.click(reset);
-    // Still there, still focused, and refused rather than removed: activating
-    // it is what makes it redundant, and a control that deleted itself took a
-    // keyboard user back to the top of the page.
+    // Refused rather than removed -- activating it is what makes it redundant
+    // -- and the keyboard goes to the adjacent durable control. A browser
+    // blurs a control it has just disabled, so staying mounted is not on its
+    // own enough: a keyboard user would be left on the body with their next
+    // Tab starting from the top of the page.
     await waitFor(() => expect(reset).toBeDisabled());
-    expect(reset).toHaveFocus();
+    expect(reset.isConnected).toBe(true);
+    await waitFor(() => expect(rosterToggle()).toHaveFocus());
     // The one panel action with nothing left on screen to read.
     expect(layoutRegion()).toHaveTextContent(en.layoutResetDone);
   });

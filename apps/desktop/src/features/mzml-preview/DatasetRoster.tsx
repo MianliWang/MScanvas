@@ -8,6 +8,7 @@ import type { RosterAction, RosterState } from "./rosterSelection";
 import { isSortMode, SORT_MODES, type RosterProjection } from "./rosterView";
 import type { RosterLoadState } from "./usePreviewWorkspace";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
+import { ownedErrorMessage } from "./ownedErrorMessages";
 
 export interface DatasetRosterProps {
   readonly activeClearFocusReturn?: ActiveClearFocusReturn | null;
@@ -992,7 +993,7 @@ export const DatasetRoster = memo(function DatasetRoster({
           <strong>{t("rosterNoMatches")}</strong><span>{t("rosterNoMatchesHelp")}</span>
           {state.query ? <button className="secondary-button" onClick={clearSearch} type="button">{t("clearSearch")}</button> : null}
         </div> : rowCount === 0 ? <div className="empty-state roster-empty">
-          {load.status === "failed" ? <><strong>{t("rosterFailed")}</strong><span>{load.error.summary}</span>
+          {load.status === "failed" ? <><strong>{t("rosterFailed")}</strong><span>{ownedErrorMessage(load.error, t)}</span>
             <button className="secondary-button" disabled={!canReloadRoster} onClick={onReloadRoster} type="button">{t("rosterRetry")}</button></> :
             load.status === "loading" ? <><strong>{t("rosterLoading")}</strong><span>{t("rosterLoadingHelp")}</span></> :
               <><strong>{t("rosterEmpty")}</strong><span>{t("rosterEmptyHelp")}</span></>}

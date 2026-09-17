@@ -15,7 +15,7 @@ import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
-import { ownedErrorDetail } from "./ownedErrorMessages";
+import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
 import { QuickFigureActions } from "./QuickFigureActions";
 import type { FigurePreviewKind } from "./contracts";
@@ -307,7 +307,7 @@ export function PreviewWorkspace() {
         {workspace.pickerError === null ? null : (
           <div className="notice notice-danger" role="status">
             <strong>{t("pickerFailed")}</strong>
-            <span>{workspace.pickerError.summary}</span>
+            <span>{ownedErrorMessage(workspace.pickerError, t)}</span>
             {/* The same action as `Add files…`, so it is refused in the same
                 states. An enabled control that returns at a guard tells the
                 user their retry failed again. */}
@@ -334,7 +334,7 @@ export function PreviewWorkspace() {
         {workspace.folderError === null ? null : (
           <div className="notice notice-danger" role="status">
             <strong>{t("folderFailed")}</strong>
-            <span>{workspace.folderError.summary}</span>
+            <span>{ownedErrorMessage(workspace.folderError, t)}</span>
             <button
               className="link-button"
               disabled={!canAddFolder}
@@ -395,7 +395,7 @@ export function PreviewWorkspace() {
           // wording separate from the error for one accepted Drop below.
           <div className="notice notice-danger">
             <strong>{t("dropUnavailable")}</strong>
-            <span>{workspace.dropSubscriptionError.summary}</span>
+            <span>{ownedErrorMessage(workspace.dropSubscriptionError, t)}</span>
             <button
               className="link-button"
               onClick={(event) => {
@@ -420,7 +420,7 @@ export function PreviewWorkspace() {
           // the same failure twice.
           <div className="notice notice-danger">
             <strong>{t("dropFailed")}</strong>
-            <span>{workspace.dropError.summary}</span>
+            <span>{ownedErrorMessage(workspace.dropError, t)}</span>
             <button
               className="link-button"
               onClick={(event) => {
@@ -439,7 +439,7 @@ export function PreviewWorkspace() {
         {workspace.workspaceError === null ? null : (
           <div className="notice notice-danger" role="status">
             <strong>{t("workspaceFailed")}</strong>
-            <span>{workspace.workspaceError.summary}</span>
+            <span>{ownedErrorMessage(workspace.workspaceError, t)}</span>
             <button className="link-button" onClick={workspace.dismissWorkspaceError} type="button">
               {t("dismiss")}
             </button>
@@ -487,7 +487,7 @@ export function PreviewWorkspace() {
         {workspace.rosterLoad.status === "failed" && roster.datasets.length > 0 ? (
           <div className="notice notice-danger" role="status">
             <strong>{t("rosterFailed")}</strong>
-            <span>{workspace.rosterLoad.error.summary}</span>
+            <span>{ownedErrorMessage(workspace.rosterLoad.error, t)}</span>
             {/* Refused while a mutation or an import is unresolved. Rust returns
                 a pure, gate-linearized snapshot; native page-load start owns
                 reload ordering. During an import the folder reply or
@@ -782,7 +782,7 @@ export function PreviewWorkspace() {
               </div>
             ) : preview.status === "failed" ? (
               <div className="empty-state">
-                <strong>{preview.error.summary}</strong>
+                <strong>{ownedErrorMessage(preview.error, t)}</strong>
                 {preview.error.detail === null ? null : <span>{preview.error.detail}</span>}
                 <div className="empty-state-actions">
                   {/* Reading is idempotent, so a retry is offered when the
@@ -849,10 +849,10 @@ function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
  * percentage: nothing measures one.
  */
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessage): string {
-  if (workspace.dropSubscriptionStatus === "unavailable") return `${t("dropUnavailable")}. ${workspace.dropSubscriptionError?.summary ?? t("addFiles")}`;
+  if (workspace.dropSubscriptionStatus === "unavailable") return `${t("dropUnavailable")}. ${workspace.dropSubscriptionError === null ? t("addFiles") : ownedErrorMessage(workspace.dropSubscriptionError, t)}`;
   if (workspace.dropSubscriptionStatus === "connecting") return t("shellDropConnecting");
   if (workspace.dropRejectedToken > 0) return `${t(workspace.dropRejectedReason === "drop_busy" ? "dropBusy" : "dropConversionBusy")}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
-  if (workspace.dropError !== null) return `${t("dropFailed")}. ${workspace.dropError.summary}`;
+  if (workspace.dropError !== null) return `${t("dropFailed")}. ${ownedErrorMessage(workspace.dropError, t)}`;
   switch (workspace.dropPresentation.status) {
     case "idle": return "";
     case "hovering": return t("dropRelease", { count: workspace.dropPresentation.itemCount });
@@ -866,7 +866,7 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     return t("readingSelected");
   }
   if (preview.status === "failed") {
-    return `${t("readFailed")} ${preview.error.summary}`;
+    return `${t("readFailed")} ${ownedErrorMessage(preview.error, t)}`;
   }
   if (preview.status === "empty") {
     if (rosterLoad.status === "loading") {
@@ -878,7 +878,7 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     if (rosterLoad.status === "failed" && roster.datasets.length === 0) {
       // Nor after the read failed, which is the same ignorance by another
       // route -- and the failure itself is worth hearing.
-      return `${t("rosterFailed")}. ${rosterLoad.error.summary}`;
+      return `${t("rosterFailed")}. ${ownedErrorMessage(rosterLoad.error, t)}`;
     }
     return roster.datasets.length === 0
       ? t("rosterEmptyAnnouncement")
@@ -899,6 +899,6 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     case "unavailable":
       return t("viewerSpectrumUnavailable", { index: String(spectrum.requestedIndex) });
     case "failed":
-      return `${t("viewerSpectrumFailed", { index: String(spectrum.index) })}. ${spectrum.error.summary}`;
+      return `${t("viewerSpectrumFailed", { index: String(spectrum.index) })}. ${ownedErrorMessage(spectrum.error, t)}`;
   }
 }

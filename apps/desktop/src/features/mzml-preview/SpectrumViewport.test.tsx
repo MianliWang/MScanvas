@@ -1786,7 +1786,10 @@ describe("what the plot draws, and what it says it is drawing", () => {
     failProjection(true);
 
     expect(screen.getByRole("button", { name: RETRY })).toBeVisible();
-    expect(statusText()).toBe(
+    // An unmapped code reaches this caption through the labelled original,
+    // which is what keeps its evidence intact in a Chinese session rather than
+    // handing it over as though it were this build's own copy.
+    expect(statusText()).toContain(
       "The retained spectrum did not answer. The reader was busy with another request.",
     );
     expect(sticks()).toBeNull();

@@ -158,7 +158,7 @@ function renderBody(state: SpectrumState, onRetry: () => void, binding: Selected
       <span>{t("viewerSpectrumReading")}</span></div>;
     case "unavailable": return <div className="empty-state"><strong>{t("viewerSpectrumUnavailable", { index: formatCount(state.requestedIndex) })}</strong>
       <span>{t("viewerSpectrumUnavailableHelp")}</span></div>;
-    case "failed": return <div className="empty-state"><strong>{state.error.summary}</strong>
+    case "failed": return <div className="empty-state"><strong>{ownedErrorMessage(state.error, t)}</strong>
       {state.error.detail === null ? null : <span>{state.error.detail}</span>}
       {state.error.retryable ? <button className="secondary-button" onClick={onRetry} type="button">{t("viewerSpectrumRetry")}</button> : null}</div>;
     case "loaded": return <SpectrumDetail binding={binding} spectrum={state.spectrum} />;

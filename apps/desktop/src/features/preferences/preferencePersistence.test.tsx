@@ -575,6 +575,8 @@ describe("durable UI preferences", () => {
     await waitFor(() => expect(reset).toBeDisabled());
     expect(reset.isConnected).toBe(true);
     expect(reset).toHaveAttribute("title", en.layoutNothingToReset);
+    // And the keyboard is on the adjacent durable control rather than the body.
+    await waitFor(() => expect(rosterToggle()).toHaveFocus());
     // The one panel action with nothing left on screen to read says so.
     expect(document.querySelector('[data-live-region="layout"]')).toHaveTextContent(en.layoutResetDone);
   });
