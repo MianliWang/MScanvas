@@ -28,16 +28,19 @@
  *   2. that Cancel, Reset-then-Cancel, a genuinely refused write and a record
  *      this build cannot use all leave the saved file exactly as they found it,
  *      and that only an explicit replacement overwrites one;
- *   3. that an unconfigured backend is explained offline in both languages,
- *      that a cancelled and an unusable folder choice both recover, and that a
- *      real file still opens, reads and exports -- with its exported numbers
- *      unchanged by the interface language.
+ *   3. that the backend is explained offline in both languages, that a
+ *      cancelled and an unusable folder choice both recover to the reading this
+ *      host really has, and that a retained acquisition still converts through
+ *      the installed ProteoWizard, opens, reads and exports -- with the
+ *      exported document's keys, unit states and numbers unchanged by the
+ *      interface language.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { WorkspaceConversionUpdate, WorkspaceRoster } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { nativeResourceOrigins } from "../support/nativeResourceOrigins";
 import {
   PREFERENCE_ROOT_VARIABLE, preferenceFile, readStoredRecord, recordViolations, replaced,
@@ -51,6 +54,7 @@ const DIALOG = "[data-settings-dialog]", ENTRY = "[data-settings-entry]";
 const ROSTER = '[aria-controls="workbench-roster"]', SHELL = ".workbench-shell";
 const ROW = '.dataset-roster-list [role="row"][data-handle]';
 const BANNER = "[data-backend-status]", HELP = "[data-backend-help]";
+const PANEL = ".conversion-panel", CONVERT = PANEL + " .conversion-plan button.primary-button";
 const input = process.env.MSCANVAS_M75_INPUT_ROOT;
 const root = requireOwnedPreferenceRoot(process.env[PREFERENCE_ROOT_VARIABLE]);
 /** The real per-user record, read only to show this campaign never made one. */
@@ -128,6 +132,15 @@ async function holdPreferences(label: string) {
 }
 
 async function calls() { return browser.execute(() => Reflect.get(window, "__mscanvasIpcCalls__") as { command: string; args: Record<string, unknown> }[]); }
+/** Rust's own answer, asked directly, rather than read off the screen. */
+async function read<T>(command: "get_workspace_conversion_state" | "get_workspace_roster"): Promise<T> {
+  return browser.execute(async cmd => {
+    const api = Reflect.get(window, "__TAURI_INTERNALS__") as { invoke: (command: string) => Promise<T> };
+    return api.invoke(cmd);
+  }, command);
+}
+async function conversion() { return (await read<WorkspaceConversionUpdate>("get_workspace_conversion_state")).state; }
+async function roster() { return read<WorkspaceRoster>("get_workspace_roster"); }
 async function saves() { return (await calls()).filter(call => call.command === "save_ui_preferences"); }
 async function probes() { return (await calls()).filter(call => call.command === "inspect_backend").length; }
 
@@ -477,12 +490,14 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(done.storageNote).toBeNull();
   });
 
-  it("explains an unconfigured backend offline in both languages, recovers from a cancelled and an unusable folder, and still exports unchanged numbers", async () => {
-    // Whatever this host actually is, recorded rather than arranged.
+  it("explains the backend offline in both languages, recovers from a cancelled and an unusable folder, and converts, reads and exports through the real provider", async () => {
+    // This host has ProteoWizard installed per-user, under the `%LOCALAPPDATA%`
+    // root the discovery searches, so automatic discovery names it.
     const initial = await capture("16-backend-as-this-host-is");
     record({ kind: "host backend availability", status: initial.backendStatus, actions: initial.backendActions,
-      providerInstalled: initial.backendStatus === "available" });
-    expect(initial.backendActions).toContain("recheck");
+      reading: initial.backendReading?.text });
+    expect(initial.backendStatus).toBe("available");
+    expect(initial.backendActions).toEqual(["recheck", "choose"]);
 
     // The help, with no data loaded and no backend configured.
     await browser.$(`${HELP} summary`).click();
@@ -551,24 +566,51 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     const rediscovered = await capture("22-rediscovered");
     expect(rediscovered.backendStatus).toBe(initial.backendStatus);
 
-    // And the real file path, in the Chinese session: a small retained mzML
-    // opens, reads, and exports numbers the interface language did not touch.
-    const file = join(output, "sources", "M75-retained.mzML");
-    mkdirSync(dirname(file), { recursive: true });
-    copyFileSync(join(input!, "synthetic-12-scans.mzML"), file);
+    // And the real provider path, in the Chinese session: a small retained
+    // acquisition converted by the installation this host actually has, then
+    // opened, read and exported.
+    const raw = join(output, "sources", "M75-retained.raw");
+    mkdirSync(dirname(raw), { recursive: true });
+    copyFileSync(join(input!, "retained-thermo.raw"), raw);
     if (await browser.$(ROSTER).getAttribute("aria-expanded") !== "true") await browser.$(ROSTER).click();
     const [added] = await Promise.all([
-      helper("choose-workspace-files", ["-Action", "choose", "-Path", file, "-TimeoutSeconds", "35"]),
+      helper("choose-workspace-files", ["-Action", "choose", "-Path", raw, "-TimeoutSeconds", "35"]),
       browser.$(`button=${zh.addFiles}`).click(),
     ]);
     expect(added.invoked).toBe(true);
     await browser.$(ROW).waitForDisplayed({ timeout: 60_000 });
+    await browser.$(`${ROW} input[type="checkbox"]`).click();
+
+    await browser.$(`button=${zh.conversionTask}`).click();
+    await browser.$(PANEL).waitForDisplayed();
+    await browser.$(CONVERT).waitForEnabled();
+    const into = join(output, "converted"); mkdirSync(into, { recursive: true });
+    const [destination] = await Promise.all([
+      helper("choose-conversion-folder", ["-Action", "choose", "-Path", into, "-TimeoutSeconds", "35"]),
+      browser.$(CONVERT).click(),
+    ]);
+    expect(destination.invoked).toBe(true);
+    await browser.waitUntil(async () => (await conversion()).status === "terminal", { timeout: 300_000, interval: 500, timeoutMsg: "The real conversion never reached a terminal state." });
+    const converted = await conversion();
+    if (converted.status !== "terminal") throw Error("No terminal conversion.");
+    record({ kind: "real provider conversion in a Chinese session", state: converted });
+    expect(converted.queue.finalizedCount).toBe(1);
+    await capture("23-real-conversion-zh");
+
+    // The output it produced is the mzML this leg reads.
+    await browser.$(PANEL + " .conversion-adoption button").click();
+    await browser.waitUntil(async () => (await roster()).datasets.length === 2, { timeout: 60_000 });
+    const produced = (await roster()).datasets.find(dataset => dataset.fileName.toLowerCase().endsWith(".mzml"));
+    if (produced === undefined) throw Error("The adopted provider output is not in the roster.");
+    record({ kind: "adopted provider output", fileName: produced.fileName });
+    const producedRow = `.dataset-roster-list [role="row"][data-handle="${produced.handle}"]`;
+    await browser.$(producedRow).waitForDisplayed({ timeout: 60_000 });
     await browser.waitUntil(async () => {
-      await browser.$(ROW).doubleClick();
+      await browser.$(producedRow).doubleClick();
       return browser.$('div.spectrum-table-row[data-row-position="0"]').isDisplayed();
-    }, { timeout: 120_000, interval: 2_000, timeoutMsg: "The retained mzML never opened." });
+    }, { timeout: 120_000, interval: 2_000, timeoutMsg: "The converted mzML never opened." });
     await browser.$('div.spectrum-table-row[data-row-position="0"]').click();
-    const opened = await capture("23-retained-file-open-zh");
+    const opened = await capture("24-converted-file-open-zh");
     expect(opened.locale).toBe("zh-CN");
     expect(opened.bodyText).toContain(zh.viewerData);
 
@@ -592,13 +634,13 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(lines).toContain("mz,intensity");
     expect(text).toMatch(/^\d+(\.\d+)?,\d+(\.\d+)?$/mu);
     expect(text).not.toMatch(/[一-鿿]/u);
-    const exportedFinal = await capture("24-exported-zh");
+    const exportedFinal = await capture("25-exported-zh");
     expect(exportedFinal.locale).toBe("zh-CN");
 
     // Nothing about the file, the folder or the selection is in the record.
     const final = noted("at the end of the campaign");
     expect(recordViolations(final.json)).toEqual([]);
     expect(typeof final.text).toBe("string");
-    for (const secret of [file, empty, output, input!]) expect(final.text ?? "").not.toContain(basename(secret));
+    for (const secret of [raw, into, empty, output, input!]) expect(final.text ?? "").not.toContain(basename(secret));
   });
 });
