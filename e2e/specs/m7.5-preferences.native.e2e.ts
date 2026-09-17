@@ -264,6 +264,51 @@ async function returned() {
     { timeout: 15_000, timeoutMsg: "Settings did not return the keyboard to its own entry point." });
 }
 
+async function reveal(selector: string) {
+  await browser.execute(css => document.querySelector(css)!.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }), selector);
+}
+
+/**
+ * Ticks one roster row's conversion membership, the way a person can.
+ *
+ * The roster is a scrollport whose rows animate in, and a click aimed at a
+ * checkbox that is still moving, still partly outside that scrollport or still
+ * under something else is refused by the driver -- which is what happened the
+ * first time this chain ran. So the row is brought into view, the checkbox's
+ * own centre is confirmed to hit the checkbox and nothing else, the row is
+ * confirmed to have settled, and the click is only then sent. The state is read
+ * back afterwards, because a click that lands on nothing is otherwise
+ * indistinguishable from one that lands.
+ */
+async function pick(handle: string) {
+  const row = `.dataset-roster-list [role="row"][data-handle="${handle}"]`;
+  const selector = `${row} input[type="checkbox"]`;
+  const checkbox = browser.$(selector);
+  await checkbox.waitForDisplayed({ timeout: 30_000 });
+  await reveal(row);
+  const point = await browser.execute(async css => {
+    const control = document.querySelector<HTMLInputElement>(css)!;
+    const node = control.closest<HTMLElement>("[data-handle]")!;
+    const root = control.closest<HTMLElement>(".dataset-roster-list")!;
+    const before = node.getBoundingClientRect();
+    await new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+    const after = node.getBoundingClientRect(), bounds = root.getBoundingClientRect();
+    const rect = control.getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    return {
+      x, y, checked: control.checked, hit: document.elementFromPoint(x, y) === control,
+      stable: Math.abs(before.top - after.top) <= 1 && Math.abs(before.bottom - after.bottom) <= 1,
+      wholeRowVisible: after.top >= bounds.top - 1 && after.bottom <= bounds.bottom + 1,
+    };
+  }, selector);
+  record({ kind: "conversion membership click target", handle, point });
+  expect(point.hit).toBe(true);
+  expect(point.stable).toBe(true);
+  expect(point.wholeRowVisible).toBe(true);
+  await checkbox.click();
+  await browser.waitUntil(() => checkbox.isSelected(), { timeout: 15_000, timeoutMsg: "The membership checkbox did not take the click." });
+}
+
 /** Remembers a backend recovery action by its identity, not its label. */
 async function remember(action: string) {
   await browser.execute(id => {
@@ -608,7 +653,10 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     ]);
     expect(added.invoked).toBe(true);
     await browser.$(ROW).waitForDisplayed({ timeout: 60_000 });
-    await browser.$(`${ROW} input[type="checkbox"]`).click();
+    await browser.waitUntil(async () => (await roster()).datasets.length === 1, { timeout: 60_000 });
+    const acquisition = (await roster()).datasets[0];
+    if (acquisition === undefined) throw Error("The chosen acquisition is not in the roster.");
+    await pick(acquisition.handle);
 
     await browser.$(`button=${zh.conversionTask}`).click();
     await browser.$(PANEL).waitForDisplayed();
@@ -634,10 +682,12 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     record({ kind: "adopted provider output", fileName: produced.fileName });
     const producedRow = `.dataset-roster-list [role="row"][data-handle="${produced.handle}"]`;
     await browser.$(producedRow).waitForDisplayed({ timeout: 60_000 });
+    await reveal(producedRow);
     await browser.waitUntil(async () => {
       await browser.$(producedRow).doubleClick();
       return browser.$('div.spectrum-table-row[data-row-position="0"]').isDisplayed();
     }, { timeout: 120_000, interval: 2_000, timeoutMsg: "The converted mzML never opened." });
+    await reveal('div.spectrum-table-row[data-row-position="0"]');
     await browser.$('div.spectrum-table-row[data-row-position="0"]').click();
     const opened = await capture("25-converted-file-open-zh");
     expect(opened.locale).toBe("zh-CN");
