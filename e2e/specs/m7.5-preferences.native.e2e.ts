@@ -709,6 +709,14 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(opened.locale).toBe("zh-CN");
     expect(opened.bodyText).toContain(zh.viewerData);
 
+    // The data exports are behind the panel's own disclosure, so they have to
+    // be opened before they can be used -- in the DOM but `hidden` is exactly
+    // the state a driver refuses to click.
+    const disclosure = "section.spectrum-panel details.spectrum-export-disclosure";
+    await browser.$(`${disclosure} summary`).click();
+    await browser.waitUntil(() => browser.execute(css => document.querySelector<HTMLDetailsElement>(css)?.open === true, disclosure),
+      { timeout: 15_000, timeoutMsg: "The spectrum export disclosure did not open." });
+
     const csv = join(output, "M75-spectrum.csv");
     const label = zh.viewerExportFormat.replace("{{name}}", "CSV");
     // The spectrum's own data export. Scoped, because the chromatogram panel
