@@ -491,6 +491,10 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
   it("leaves the saved file exactly as it found it through Cancel, a refused write and a record it cannot use", async () => {
     const before = noted("before the untouched-file scenarios");
     expect(before.exists).toBe(true);
+    // The call log belongs to the page, and this scenario shares a page with
+    // the one before it, so "nothing was written" is measured against what had
+    // already been written rather than against an empty list.
+    const writesBefore = (await saves()).length;
 
     // Cancel. A draft is a draft: the language previews, and nothing is written.
     await openSettings();
@@ -509,7 +513,8 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await press(en.cancel);
     await returned();
     expect(untouched(before, noted("after Reset then Cancel"))).toEqual({ bytes: true, entries: true, temporaries: [] });
-    expect(await saves()).toEqual([]);
+    // A draft is a draft: neither Cancel dispatched a write of any kind.
+    expect((await saves()).length).toBe(writesBefore);
 
     // A refusal from the filesystem itself, on this campaign's own file.
     const hold = await holdPreferences("apply");
