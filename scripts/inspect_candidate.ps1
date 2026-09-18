@@ -38,8 +38,17 @@ try {
         [ordered]@{ name = "e2eIpcSeed"; needle = "__mscanvasIpcSeed__"; why = "the pre-mount QA answer seed" }
         [ordered]@{ name = "e2eBoundary"; needle = "__mscanvasBoundary__"; why = "the QA boundary handle" }
         [ordered]@{ name = "qaPreferenceRoot"; needle = "MSCANVAS_E2E_PREFERENCE_ROOT"; why = "the QA preference-root override variable" }
-        [ordered]@{ name = "devServer"; needle = "127.0.0.1:1420"; why = "the development server origin" }
     )
+
+    # The development origin is deliberately NOT one of the markers above.
+    # `generate_context!` embeds the whole configuration, `devUrl` and `devCsp`
+    # included, so the string is in every release binary as inert data. A
+    # whole-binary search for it therefore cannot distinguish "we shipped a
+    # development build" from "the config was embedded", and a check that
+    # always fires says nothing. The two checks that can actually fail are
+    # below: a dev origin reaching the shipped frontend, or reaching the
+    # production CSP that is the one applied in a release build.
+    $developmentOrigin = "127.0.0.1:1420"
 
     function Test-Marker {
         param([string]$Path, [string]$Needle)
@@ -109,6 +118,14 @@ try {
             }
         }
 
+    # The CSP a release build actually applies, read from the same file the
+    # bundler embedded. `devCsp` is not consulted here on purpose.
+    $configuration = Get-Content -LiteralPath "apps/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+    $productionCsp = $configuration.app.security.csp
+    $productionCspDirectives = @($productionCsp.PSObject.Properties | ForEach-Object { "$($_.Name) $($_.Value)" })
+    $developmentOriginInProductionCsp = @($productionCspDirectives | Where-Object { $_ -like "*$developmentOrigin*" })
+    $developmentOriginInFrontend = @($frontendAssets | Where-Object { $_.devOrigin })
+
     $signature = Get-AuthenticodeSignature -LiteralPath $Executable
 
     $report = [ordered]@{
@@ -117,6 +134,13 @@ try {
         executableSha256     = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash.ToLowerInvariant()
         qaControlAvailable   = $controlAvailable
         markers              = @($findings)
+        developmentOrigin    = [ordered]@{
+            origin                = $developmentOrigin
+            inShippedFrontend     = @($developmentOriginInFrontend | ForEach-Object { $_.path })
+            inProductionCsp       = @($developmentOriginInProductionCsp)
+            productionCsp         = @($productionCspDirectives)
+            embeddedInBinaryAsConfig = "expected: generate_context! embeds devUrl and devCsp as inert data"
+        }
         bundleFiles          = @($bundleFiles)
         frontendAssets       = @($frontendAssets)
         authenticodeStatus   = $signature.Status.ToString()
@@ -139,8 +163,16 @@ try {
         $proof = if ($finding.detectabilityProven) { "detectability proven" } else { "DETECTABILITY UNPROVEN" }
         Write-Host ("  {0,-20} {1,-8} ({2})" -f $finding.name, $state, $proof)
     }
+    Write-Host ("  {0,-20} {1}" -f "devOriginFrontend", $(if ($developmentOriginInFrontend.Count -gt 0) { "PRESENT" } else { "absent" }))
+    Write-Host ("  {0,-20} {1}" -f "devOriginProdCsp", $(if ($developmentOriginInProductionCsp.Count -gt 0) { "PRESENT" } else { "absent" }))
     if ($unproven.Count -gt 0) {
         Write-Warning "$($unproven.Count) marker search(es) unproven; build the QA control to make absence meaningful."
+    }
+    if ($developmentOriginInFrontend.Count -gt 0) {
+        throw "The shipped frontend references $developmentOrigin in: $(($developmentOriginInFrontend.path) -join ', ')."
+    }
+    if ($developmentOriginInProductionCsp.Count -gt 0) {
+        throw "The production CSP allows $developmentOrigin : $($developmentOriginInProductionCsp -join '; ')."
     }
     if ($leaked.Count -gt 0) {
         throw "$($leaked.Count) QA-only marker(s) present in the candidate: $(($leaked.name) -join ', ')."
