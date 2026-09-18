@@ -96,10 +96,41 @@ try {
     $finishedUtc = [DateTime]::UtcNow.ToString("o")
     Assert-NativeSuccess -Step $command -ExitCode $buildExit
 
-    $installers = Get-ChildItem -LiteralPath "$bundleDirectory/nsis" -Filter *.exe -File |
-        ForEach-Object { Get-FileIdentity -Path $_.FullName }
+    # `@()` matters: a single Get-FileIdentity result is an OrderedDictionary,
+    # whose `.Count` is its key count, not one.
+    $installers = @(Get-ChildItem -LiteralPath "$bundleDirectory/nsis" -Filter *-setup.exe -File |
+        ForEach-Object { Get-FileIdentity -Path $_.FullName })
     if ($installers.Count -ne 1) {
         throw "Expected exactly one NSIS installer; found $($installers.Count)."
+    }
+
+    # The bundler fetches these and checks them against its own pinned hashes.
+    # Recorded because they are shipped or run, not merely consulted.
+    $bundlerCache = Join-Path $env:LOCALAPPDATA "tauri"
+    $webview2Setup = Join-Path $bundlerCache "MicrosoftEdgeWebview2Setup.exe"
+    $tooling = [ordered]@{
+        cacheDirectory = $bundlerCache
+        webview2Bootstrapper = if (Test-Path -LiteralPath $webview2Setup) {
+            $identity = [ordered]@{
+                bytes       = (Get-Item -LiteralPath $webview2Setup).Length
+                sha256      = (Get-FileHash -LiteralPath $webview2Setup -Algorithm SHA256).Hash.ToLowerInvariant()
+                fileVersion = (Get-Item -LiteralPath $webview2Setup).VersionInfo.FileVersion
+                company     = (Get-Item -LiteralPath $webview2Setup).VersionInfo.CompanyName
+            }
+            $signature = Get-AuthenticodeSignature -LiteralPath $webview2Setup
+            $identity.authenticodeStatus = $signature.Status.ToString()
+            $identity.signer = $signature.SignerCertificate.Subject
+            $identity
+        } else { $null }
+        nsisMakensis = $(
+            $makensis = Join-Path $bundlerCache "NSIS/makensis.exe"
+            if (Test-Path -LiteralPath $makensis) {
+                [ordered]@{
+                    bytes  = (Get-Item -LiteralPath $makensis).Length
+                    sha256 = (Get-FileHash -LiteralPath $makensis -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+            } else { $null }
+        )
     }
 
     $manifest = [ordered]@{
@@ -117,6 +148,7 @@ try {
         iconInputs       = @($iconInputs)
         executable       = Get-FileIdentity -Path "target/release/mscanvas-desktop.exe"
         installer        = $installers[0]
+        tooling          = $tooling
         signed           = $false
     }
 
