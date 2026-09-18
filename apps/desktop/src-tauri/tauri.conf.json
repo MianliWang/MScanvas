@@ -58,6 +58,10 @@
     "homepage": "https://github.com/MianliWang/MScanvas",
     "copyright": "Copyright MSCanvas contributors. Licensed under Apache-2.0.",
     "licenseFile": "../../../LICENSE",
+    "resources": {
+      "../../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../../../LICENSE": "LICENSE"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper"
