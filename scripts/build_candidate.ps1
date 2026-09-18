@@ -157,7 +157,7 @@ try {
     $featureGraph = if ($fingerprint) {
         $record = Get-Content -LiteralPath $fingerprint -Raw | ConvertFrom-Json
         [ordered]@{
-            source           = [IO.Path]::GetRelativePath($RepositoryRoot, $fingerprint) -replace '\', '/'
+            source           = [IO.Path]::GetRelativePath($RepositoryRoot, $fingerprint) -replace '\\', '/'
             enabledFeatures  = $record.features
             declaredFeatures = $record.declared_features
             note             = "measured from cargo's fingerprint for the built binary; an empty enabled set is what shows e2e is off"
