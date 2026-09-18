@@ -75,6 +75,16 @@ try {
     }
 
     $controlAvailable = Test-Path -LiteralPath $ControlExecutable
+    # Name the control, so "detectability proven" has an attributable basis
+    # rather than resting on an unidentified file being present on disk.
+    $controlIdentity = if ($controlAvailable) {
+        [ordered]@{
+            path   = $ControlExecutable
+            bytes  = (Get-Item -LiteralPath $ControlExecutable).Length
+            sha256 = (Get-FileHash -LiteralPath $ControlExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
+            note   = "a QA build from an earlier milestone, at a different source revision; used only to show these five markers are findable"
+        }
+    } else { $null }
     $findings = @()
     foreach ($marker in $markers) {
         $present = Test-Marker -Path $Executable -Needle $marker.needle
@@ -88,8 +98,10 @@ try {
             why              = $marker.why
             presentInCandidate = $present
             presentInQaControl = $controlPresent
-            # A marker absent from the candidate AND absent from the QA build
+            # A marker absent from the candidate AND absent from the control
             # proves nothing about the candidate: the search itself is unproven.
+            # Proven here means only "this scanner finds THIS marker when it is
+            # there" -- not that the candidate carries no test capability at all.
             detectabilityProven = if ($null -eq $controlPresent) { $false } else { [bool]$controlPresent }
         }
     }
@@ -114,7 +126,7 @@ try {
                 path      = [IO.Path]::GetRelativePath($RepositoryRoot, $_.FullName).Replace('\', '/')
                 bytes     = $_.Length
                 sha256    = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-                devOrigin = (Select-String -LiteralPath $_.FullName -Pattern "127\.0\.0\.1:1420" -SimpleMatch -Quiet) -eq $true
+                devOrigin = (Select-String -LiteralPath $_.FullName -Pattern $developmentOrigin -SimpleMatch -Quiet) -eq $true
             }
         }
 
@@ -126,6 +138,27 @@ try {
     $developmentOriginInProductionCsp = @($productionCspDirectives | Where-Object { $_ -like "*$developmentOrigin*" })
     $developmentOriginInFrontend = @($frontendAssets | Where-Object { $_.devOrigin })
 
+    # Both development-origin predicates are expected to find nothing, and a
+    # predicate that has never fired is indistinguishable from one that cannot.
+    # Run each against a synthetic input that should trip it.
+    $controlDirectory = Join-Path ([IO.Path]::GetTempPath()) ("mscanvas-devorigin-control-" + [Guid]::NewGuid().ToString("n"))
+    $null = New-Item -ItemType Directory -Force -Path $controlDirectory
+    try {
+        $seededAsset = Join-Path $controlDirectory "seeded-asset.js"
+        Set-Content -LiteralPath $seededAsset -Value "fetch('http://$developmentOrigin/');" -Encoding utf8NoBOM
+        $frontendPredicateFires = (Select-String -LiteralPath $seededAsset -Pattern $developmentOrigin -SimpleMatch -Quiet) -eq $true
+
+        $seededCsp = [pscustomobject]@{ "connect-src" = "'self' http://$developmentOrigin" }
+        $seededDirectives = @($seededCsp.PSObject.Properties | ForEach-Object { "$($_.Name) $($_.Value)" })
+        $cspPredicateFires = @($seededDirectives | Where-Object { $_ -like "*$developmentOrigin*" }).Count -gt 0
+    }
+    finally {
+        Remove-Item -LiteralPath $controlDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (-not $frontendPredicateFires -or -not $cspPredicateFires) {
+        throw "Development-origin controls did not fire (frontend=$frontendPredicateFires, csp=$cspPredicateFires); the checks below would be meaningless."
+    }
+
     $signature = Get-AuthenticodeSignature -LiteralPath $Executable
 
     $report = [ordered]@{
@@ -133,13 +166,16 @@ try {
         executable           = [IO.Path]::GetRelativePath($RepositoryRoot, (Resolve-Path $Executable)).Replace('\', '/')
         executableSha256     = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash.ToLowerInvariant()
         qaControlAvailable   = $controlAvailable
+        qaControl            = $controlIdentity
         markers              = @($findings)
+        markerScopeNote      = "Absence shows this scanner did not find these five known QA markers. It is not proof that the candidate carries no test capability, and it is not runtime acceptance."
         developmentOrigin    = [ordered]@{
             origin                = $developmentOrigin
             inShippedFrontend     = @($developmentOriginInFrontend | ForEach-Object { $_.path })
             inProductionCsp       = @($developmentOriginInProductionCsp)
             productionCsp         = @($productionCspDirectives)
             embeddedInBinaryAsConfig = "expected: generate_context! embeds devUrl and devCsp as inert data"
+            controlsFired         = [ordered]@{ frontendPredicate = $frontendPredicateFires; productionCspPredicate = $cspPredicateFires }
         }
         bundleFiles          = @($bundleFiles)
         frontendAssets       = @($frontendAssets)
