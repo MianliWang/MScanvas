@@ -6,6 +6,20 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **MSCanvas installs like an ordinary Windows application.** One installer,
+  for the current user only, so it needs no administrator and does not touch
+  anyone else's machine account. It offers English and Simplified Chinese, and
+  it carries the licence and the third-party notices for everything compiled
+  into it. ProteoWizard is still yours to install and is never bundled.
+
+  The build that is packaged is a production build. It contains none of the
+  test-only machinery the rendered QA runs rely on, and the check that says so
+  proves it can actually find that machinery before reporting it absent.
+
+  The first beta is **unsigned**, so Windows will warn about it. There is no
+  advice here for getting around that, and none for overriding a policy your
+  organisation set.
+
 - **The interface remembers how you set it up, and nothing else.** Language,
   the roster's row spacing and which of the two workspace panels you asked for
   survive a restart. That is the whole record: five fields, each with a fixed
