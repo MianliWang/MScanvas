@@ -25,19 +25,22 @@ Shipped Rust packages: **260**. Shipped frontend packages: **66**.
   this project.
 - **Unicode-3.0.** The ICU packages carry the Unicode licence and its
   disclaimer, reproduced through their own distributions.
-- **MPL-2.0 source availability.** These crates are used unmodified, as
-  published on crates.io. Source for the exact versions is obtainable from
-  <https://crates.io> and the upstream repository each package declares.
-  This project modifies no MPL-2.0 file, so no modified source is withheld.
-  Each arrives transitively through Tauri rather than being chosen here:
+- **MPL-2.0 source availability.** MPL-2.0 section 3.2 requires the source
+  of the covered files to be available to recipients of a binary. The exact
+  shipped versions are named below, each with a location that serves that
+  source: the crates.io page for the version, which offers the published
+  `.crate` archive, and the upstream repository the package declares.
+  Availability is what discharges the obligation; the fact that this project
+  modifies none of these files is additional, not a substitute for it.
+  Each arrives transitively through Tauri rather than being chosen here.
 
-  | Crate | Reached through |
-  | --- | --- |
-  | `cssparser v0.36.0` | tauri-codegen -> tauri-utils -> dom_query |
-  | `cssparser-macros v0.6.1` | tauri-codegen -> tauri-utils -> dom_query -> cssparser |
-  | `dtoa-short v0.3.5` | tauri-codegen -> tauri-utils -> dom_query -> cssparser |
-  | `option-ext v0.2.0` | tauri -> dirs -> dirs-sys |
-  | `selectors v0.36.1` | tauri-codegen -> tauri-utils -> dom_query |
+  | Crate and shipped version | Source for that version | Upstream repository | Reached through |
+  | --- | --- | --- | --- |
+  | `cssparser v0.36.0` | <https://crates.io/crates/cssparser/0.36.0> | <https://github.com/servo/rust-cssparser> | tauri-codegen -> tauri-utils -> dom_query |
+  | `cssparser-macros v0.6.1` | <https://crates.io/crates/cssparser-macros/0.6.1> | <https://github.com/servo/rust-cssparser> | tauri-codegen -> tauri-utils -> dom_query -> cssparser |
+  | `dtoa-short v0.3.5` | <https://crates.io/crates/dtoa-short/0.3.5> | <https://github.com/upsuper/dtoa-short> | tauri-codegen -> tauri-utils -> dom_query -> cssparser |
+  | `option-ext v0.2.0` | <https://crates.io/crates/option-ext/0.2.0> | <https://github.com/soc/option-ext.git> | tauri -> dirs -> dirs-sys |
+  | `selectors v0.36.1` | <https://crates.io/crates/selectors/0.36.1> | <https://github.com/servo/stylo> | tauri-codegen -> tauri-utils -> dom_query |
 
 ## Inventory
 

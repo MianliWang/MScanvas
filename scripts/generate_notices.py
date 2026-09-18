@@ -83,26 +83,28 @@ def run(command: list[str]) -> str:
     return result.stdout
 
 
-def parse_row(line: str) -> tuple[str | None, str]:
-    """One `{p}|{l}` row, or `(None, "")` for a row that is not third-party.
+def parse_row(line: str) -> tuple[str | None, str, str]:
+    """One `{p}|{l}|{r}` row, or a `None` package for a row that is not third-party.
 
     cargo marks a repeated subtree with `(*)`, a proc-macro with `(proc-macro)`
     and a path dependency with its directory. None of those belong in a package
     identity, and leaving them in splits one package into several rows.
     """
     if "|" not in line:
-        return None, ""
-    package, licence = line.rsplit("|", 1)
+        return None, "", ""
+    fields = line.split("|")
+    package, licence = fields[0], fields[1] if len(fields) > 1 else ""
+    repository = fields[2].strip() if len(fields) > 2 else ""
     package = re.sub(r"\s*\(\*\)\s*$", "", package).strip()
     package = re.sub(r"\s*\((?:[A-Za-z]:|/)[^)]*\)\s*$", "", package).strip()
     package = re.sub(r"\s*\(proc-macro\)\s*$", "", package).strip()
     licence = re.sub(r"\s*\(\*\)\s*$", "", licence).strip()
     if not package or package.startswith("mscanvas-"):
-        return None, ""
-    return package, licence or "UNDECLARED"
+        return None, "", ""
+    return package, licence or "UNDECLARED", repository
 
 
-def shipped_crates() -> dict[str, set[str]]:
+def shipped_crates() -> tuple[dict[str, set[str]], dict[str, str]]:
     """Crates reachable from the desktop binary on Windows, normal edges only."""
     output = run(
         [
@@ -111,15 +113,18 @@ def shipped_crates() -> dict[str, set[str]]:
             "--target", TARGET,
             "-e", "normal",
             "--prefix", "none",
-            "-f", "{p}|{l}",
+            "-f", "{p}|{l}|{r}",
         ]
     )
     by_licence: dict[str, set[str]] = defaultdict(set)
+    repositories: dict[str, str] = {}
     for line in output.splitlines():
-        package, licence = parse_row(line)
+        package, licence, repository = parse_row(line)
         if package is not None:
             by_licence[licence].add(package)
-    return by_licence
+            if repository:
+                repositories.setdefault(package, repository)
+    return by_licence, repositories
 
 
 def shipped_frontend() -> dict[str, set[str]]:
@@ -145,7 +150,7 @@ def section(title: str, blurb: str, by_licence: dict[str, set[str]]) -> list[str
     return lines
 
 
-def render(crates: dict[str, set[str]], frontend: dict[str, set[str]]) -> str:
+def render(crates: dict[str, set[str]], frontend: dict[str, set[str]], repositories: dict[str, str]) -> str:
     crate_count = sum(len(v) for v in crates.values())
     frontend_count = sum(len(v) for v in frontend.values())
     source_offer = sorted(
@@ -186,18 +191,26 @@ def render(crates: dict[str, set[str]], frontend: dict[str, set[str]]) -> str:
     ]
     if source_offer:
         lines += [
-            "- **MPL-2.0 source availability.** These crates are used unmodified, as",
-            "  published on crates.io. Source for the exact versions is obtainable from",
-            "  <https://crates.io> and the upstream repository each package declares.",
-            "  This project modifies no MPL-2.0 file, so no modified source is withheld.",
-            "  Each arrives transitively through Tauri rather than being chosen here:",
+            "- **MPL-2.0 source availability.** MPL-2.0 section 3.2 requires the source",
+            "  of the covered files to be available to recipients of a binary. The exact",
+            "  shipped versions are named below, each with a location that serves that",
+            "  source: the crates.io page for the version, which offers the published",
+            "  `.crate` archive, and the upstream repository the package declares.",
+            "  Availability is what discharges the obligation; the fact that this project",
+            "  modifies none of these files is additional, not a substitute for it.",
+            "  Each arrives transitively through Tauri rather than being chosen here.",
             "",
-            "  | Crate | Reached through |",
-            "  | --- | --- |",
+            "  | Crate and shipped version | Source for that version | Upstream repository | Reached through |",
+            "  | --- | --- | --- | --- |",
         ]
         for package in source_offer:
-            name = package.split(" v")[0]
-            lines.append(f"  | `{package}` | {MPL_ARRIVAL.get(name, 'unrecorded')} |")
+            name, _, version = package.partition(" v")
+            crates_io = f"https://crates.io/crates/{name}/{version}"
+            repository = repositories.get(package, "not declared")
+            lines.append(
+                f"  | `{package}` | <{crates_io}> | <{repository}> | "
+                f"{MPL_ARRIVAL.get(name, 'unrecorded')} |"
+            )
     lines += [
         "",
         "## Inventory",
@@ -253,20 +266,25 @@ def assert_known_licences(*inventories: dict[str, set[str]]) -> None:
 def selftest() -> None:
     """Guards the line parsing, which is where a package name gets mangled."""
     sample = [
-        "serde v1.0.229|MIT OR Apache-2.0",
-        "serde v1.0.229|MIT OR Apache-2.0 (*)",
-        "serde_derive v1.0.229 (proc-macro)|MIT OR Apache-2.0",
-        "mscanvas-core v0.1.0 (D:\\Github repo\\MScanvas\\crates\\core)|Apache-2.0",
-        "cssparser v0.36.0|MPL-2.0",
+        "serde v1.0.229|MIT OR Apache-2.0|https://github.com/serde-rs/serde",
+        "serde v1.0.229|MIT OR Apache-2.0 (*)|https://github.com/serde-rs/serde",
+        "serde_derive v1.0.229 (proc-macro)|MIT OR Apache-2.0|https://github.com/serde-rs/serde",
+        "mscanvas-core v0.1.0 (D:\\Github repo\\MScanvas\\crates\\core)|Apache-2.0|",
+        "cssparser v0.36.0|MPL-2.0|https://github.com/servo/rust-cssparser",
     ]
     parsed: dict[str, set[str]] = defaultdict(set)
+    found: dict[str, str] = {}
     for line in sample:
-        package, licence = parse_row(line)
+        package, licence, repository = parse_row(line)
         if package is not None:
             parsed[licence].add(package)
+            if repository:
+                found.setdefault(package, repository)
 
     assert parsed["MIT OR Apache-2.0"] == {"serde v1.0.229", "serde_derive v1.0.229"}, parsed
     assert parsed["MPL-2.0"] == {"cssparser v0.36.0"}, parsed
+    # An MPL crate without a usable source location would ship an unmet obligation.
+    assert found["cssparser v0.36.0"] == "https://github.com/servo/rust-cssparser", found
     # The workspace's own crates are not third-party and must not be listed.
     assert "Apache-2.0" not in parsed, parsed
     # Deduplicated rows must collapse, not produce a second spelling.
@@ -288,9 +306,10 @@ def main() -> int:
         selftest()
         return 0
 
-    crates, frontend = shipped_crates(), shipped_frontend()
+    crates, repositories = shipped_crates()
+    frontend = shipped_frontend()
     assert_known_licences(crates, frontend)
-    rendered = render(crates, frontend)
+    rendered = render(crates, frontend, repositories)
 
     if arguments.check:
         current = NOTICES.read_text(encoding="utf-8") if NOTICES.exists() else ""
