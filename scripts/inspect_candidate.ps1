@@ -4,11 +4,15 @@
 #
 # This is deliberately adversarial against our own build configuration. A
 # `#[cfg(feature = "e2e")]` in the source and an empty `permissions` array are
-# statements of intent; this script looks at the bytes that would actually be
-# installed. It searches both the compiled executable and every file the
-# installer carries, and it treats a *missing* marker as the claim to prove --
-# so it first confirms each marker is detectable at all by finding it in the QA
-# build, when one is present. A test that cannot fail proves nothing.
+# statements of intent; this script looks at the bytes of the compiled
+# executable, and treats a *missing* marker as the claim to prove -- so it first
+# confirms each marker is detectable at all by finding it in a QA build. A test
+# that cannot fail proves nothing.
+#
+# It does NOT search inside the installer: NSIS compresses its payload, so a
+# byte search there cannot tell absent from compressed. Installer payload
+# membership is a guest read-back item, and the report says so rather than
+# letting this script's silence read as coverage.
 #
 # What it cannot establish: runtime behaviour. No static check shows that the
 # installed application refuses a forged IPC call or that no dev server is
@@ -29,16 +33,34 @@ $ErrorActionPreference = "Stop"
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $RepositoryRoot
 try {
-    # Each marker is a string that exists only because a QA-only code path was
-    # compiled in. `mustNotAppear` is the whole point; `control` says whether we
-    # are able to prove the search works.
-    $markers = @(
-        [ordered]@{ name = "e2eIpcTable"; needle = "__mscanvasIpcTable__"; why = "the rendered-QA IPC interception table" }
-        [ordered]@{ name = "e2eIpcCalls"; needle = "__mscanvasIpcCalls__"; why = "the QA call log the page can read" }
-        [ordered]@{ name = "e2eIpcSeed"; needle = "__mscanvasIpcSeed__"; why = "the pre-mount QA answer seed" }
-        [ordered]@{ name = "e2eBoundary"; needle = "__mscanvasBoundary__"; why = "the QA boundary handle" }
-        [ordered]@{ name = "qaPreferenceRoot"; needle = "MSCANVAS_E2E_PREFERENCE_ROOT"; why = "the QA preference-root override variable" }
-    )
+    # Needles are read out of the QA-only sources rather than transcribed, so a
+    # rename cannot leave this searching for a string nobody emits any more.
+    # A hand-written list had already drifted: it covered four of the boundary
+    # script's five globals and none of the seeded-spectrum or QA-root literals,
+    # so a build with `e2e` on but the boundary script omitted would have passed.
+    $markers = @()
+    $boundary = Get-Content -LiteralPath "apps/desktop/src-tauri/src/e2e_boundary.js" -Raw
+    foreach ($global in [regex]::Matches($boundary, '__mscanvas[A-Za-z0-9]+__') | ForEach-Object { $_.Value } | Sort-Object -Unique) {
+        $markers += [ordered]@{ name = "boundary:$global"; needle = $global; why = "a global the rendered-QA IPC boundary installs" }
+    }
+    $qaRoot = Get-Content -LiteralPath "apps/desktop/src-tauri/src/preferences/qa_root.rs" -Raw
+    foreach ($literal in [regex]::Matches($qaRoot, '"(MSCANVAS_E2E_[A-Z_]+|qaRoot[A-Za-z]+)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique) {
+        $markers += [ordered]@{ name = "qaRoot:$literal"; needle = $literal; why = "a literal only the QA preference-root path emits" }
+    }
+    $seed = "apps/desktop/src-tauri/src/preview/e2e_seed.rs"
+    if (Test-Path -LiteralPath $seed) {
+        $seedText = Get-Content -LiteralPath $seed -Raw
+        # Cut at the first backslash: these are Rust source literals, so an
+        # embedded `\n` is an escape in the source and not a byte in the binary.
+        # Searching for the escape text finds nothing anywhere, which the
+        # detectability control correctly refused to accept.
+        foreach ($literal in [regex]::Matches($seedText, '(mscanvas-e2e[^"\\]*|# filterString: synthetic[^"\\]*)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique) {
+            $markers += [ordered]@{ name = "seed:$literal"; needle = $literal; why = "a literal only the synthetic seeded spectrum emits" }
+        }
+    }
+    if ($markers.Count -lt 5) {
+        throw "Derived only $($markers.Count) QA marker(s); the QA sources moved and this scanner would be searching for almost nothing."
+    }
 
     # The development origin is deliberately NOT one of the markers above.
     # `generate_context!` embeds the whole configuration, `devUrl` and `devCsp`
@@ -82,7 +104,7 @@ try {
             path   = $ControlExecutable
             bytes  = (Get-Item -LiteralPath $ControlExecutable).Length
             sha256 = (Get-FileHash -LiteralPath $ControlExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
-            note   = "a QA build from an earlier milestone, at a different source revision; used only to show these five markers are findable"
+            note   = "a QA build from an earlier milestone, at a different source revision; used only to show the derived markers are findable"
         }
     } else { $null }
     $findings = @()
@@ -202,7 +224,12 @@ try {
     Write-Host ("  {0,-20} {1}" -f "devOriginFrontend", $(if ($developmentOriginInFrontend.Count -gt 0) { "PRESENT" } else { "absent" }))
     Write-Host ("  {0,-20} {1}" -f "devOriginProdCsp", $(if ($developmentOriginInProductionCsp.Count -gt 0) { "PRESENT" } else { "absent" }))
     if ($unproven.Count -gt 0) {
-        Write-Warning "$($unproven.Count) marker search(es) unproven; build the QA control to make absence meaningful."
+        # A needle nobody can find proves nothing about the candidate, so this
+        # fails rather than warns. Previously it warned and still exited 0,
+        # which let the whole marker section degrade to meaningless silently.
+        throw ("$($unproven.Count) marker search(es) unproven: " +
+            (($unproven.name) -join ', ') +
+            ". Build the QA control, or the absence below establishes nothing.")
     }
     if ($developmentOriginInFrontend.Count -gt 0) {
         throw "The shipped frontend references $developmentOrigin in: $(($developmentOriginInFrontend.path) -join ', ')."

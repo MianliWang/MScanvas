@@ -113,6 +113,17 @@ try {
     # bundle lands here rather than under src-tauri.
     $bundleDirectory = "target/release/bundle"
     if ($ManifestOnly) {
+        # Every identity field below is read now, while the installer was built
+        # earlier. Refuse when they cannot belong together, so a re-derivation
+        # cannot confidently attribute yesterday's installer to today's HEAD.
+        $manifestPathExisting = Join-Path $EvidenceRoot "candidate-manifest.json"
+        if (Test-Path -LiteralPath $manifestPathExisting) {
+            $previous = Get-Content -LiteralPath $manifestPathExisting -Raw | ConvertFrom-Json
+            if ($previous.head -ne $head) {
+                throw ("The retained manifest was built at $($previous.head) but HEAD is now $head. " +
+                    "Re-deriving would attribute an installer to source it was not built from; rebuild instead.")
+            }
+        }
         $command = "(manifest re-derived; not rebuilt)"
         $buildExit = 0
         $startedUtc = $null
@@ -131,6 +142,28 @@ try {
         $buildExit = $LASTEXITCODE
         $finishedUtc = [DateTime]::UtcNow.ToString("o")
         Assert-NativeSuccess -Step $command -ExitCode $buildExit
+    }
+
+    # Cargo's own record of what this binary was built with, rather than a
+    # sentence about what we believe was passed. The earlier hand-written claim
+    # ("no --features flag is passed") was wrong: `tauri build` does enable
+    # `custom-protocol` on the tauri dependency, and that flag is exactly what
+    # selects the production CSP over the development one.
+    $fingerprint = Get-ChildItem -LiteralPath "target/release/.fingerprint" -Directory -Filter "mscanvas-desktop-*" -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName "bin-mscanvas-desktop.json" } |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Sort-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc } -Descending |
+        Select-Object -First 1
+    $featureGraph = if ($fingerprint) {
+        $record = Get-Content -LiteralPath $fingerprint -Raw | ConvertFrom-Json
+        [ordered]@{
+            source           = [IO.Path]::GetRelativePath($RepositoryRoot, $fingerprint) -replace '\', '/'
+            enabledFeatures  = $record.features
+            declaredFeatures = $record.declared_features
+            note             = "measured from cargo's fingerprint for the built binary; an empty enabled set is what shows e2e is off"
+        }
+    } else {
+        [ordered]@{ note = "no cargo fingerprint found for the built binary; feature graph NOT established" }
     }
 
     # `@()` matters: a single Get-FileIdentity result is an OrderedDictionary,
@@ -180,7 +213,7 @@ try {
         startedUtc       = $startedUtc
         toolchain        = $toolchain
         taskEnvironment  = @($taskEnvironment)
-        featureGraph     = 'default features; no --features flag is passed, so e2e and test-support are off'
+        featureGraph     = $featureGraph
         buildInputs      = @($buildInputs)
         shippedResources = @($shippedResources | ForEach-Object { [IO.Path]::GetRelativePath($RepositoryRoot, $_) -replace '\\', '/' })
         frontendInputs   = @($frontendInputs)

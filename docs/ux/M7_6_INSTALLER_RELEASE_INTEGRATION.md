@@ -43,43 +43,75 @@ binary require their notices to accompany a binary distribution, so that was a
 compliance gap rather than missing polish.
 
 `scripts/generate_notices.py` regenerates the inventory from what actually
-ships — the release binary's normal dependency edges for
-`x86_64-pc-windows-msvc`, and the production frontend bundle — rather than from
-`Cargo.lock`'s 504 entries, almost none of which reach a user. That is **260**
-Rust and **66** frontend packages. It refuses to generate when a package
-declares a licence term the inventory has no obligation text for, so a new
-licence family stops the build instead of landing in a table unremarked.
+ships rather than from `Cargo.lock`'s 504 entries, almost none of which reach a
+user: the release binary's normal, non-proc-macro dependency edges for
+`x86_64-pc-windows-msvc`, and the frontend. That is **188** Rust and **66**
+frontend packages.
 
-Five MPL-2.0 crates arrive transitively through Tauri — four through its HTML
-processing, one through its directory resolution. MPL-2.0 section 3.2 obliges us
-to make their source available to whoever receives the binary, so the file names
-each shipped version with a location that serves that source. Being unmodified
-is recorded as an additional fact, not as a substitute for availability.
+`no-proc-macro` is not cosmetic. Without it, `normal` edges descend into
+proc-macro crates' own dependency trees, which are compiled for the host and
+never linked into the shipped binary. That added 72 packages, including four
+MPL-2.0 crates reached only through `tauri-codegen` — crates a recipient of the
+binary never receives. An earlier version of this file claimed all five as
+shipped; only `option-ext`, reached through `tauri -> dirs -> dirs-sys`, is.
+MPL-2.0 section 3.2 obliges us to make its source available to whoever receives
+the binary, so the file names the shipped version with a location that serves
+that source. Being unmodified is an additional fact, not a substitute for
+availability.
+
+Walking declared production dependencies is not enough for the frontend either.
+Vite bundles what is imported, and a build tool can emit its own licensed text
+into the output it generates: `tailwindcss` is a devDependency whose MIT banner
+and verbatim base styles ship inside the stylesheet, so no production-dependency
+walk would ever have found it. It is now listed as a build tool whose output
+ships, and the generator fails if a shipped asset names a package the inventory
+does not cover.
+
+The generator also refuses when a package declares a licence term it has no
+obligation text for, so a new licence family stops generation instead of landing
+in a table unremarked.
 
 ## Production configuration
 
-`scripts/inspect_candidate.ps1` inspects the built bytes rather than the source's
-intent. A `#[cfg(feature = "e2e")]` and an empty capability `permissions` array
-say what we meant to build.
+`scripts/inspect_candidate.ps1` inspects the compiled executable's bytes. A
+`#[cfg(feature = "e2e")]` and an empty capability `permissions` array say what we
+meant to build; this says what was built. It does not search inside the
+installer, because NSIS compresses its payload and a byte search there cannot
+tell absent from compressed.
 
-It searches the candidate for five strings that exist only because a QA-only
-path was compiled in: the rendered-QA IPC interception table, its call log, its
-pre-mount answer seed, its boundary handle, and the QA preference-root
-environment variable. None is present.
+It searches the candidate for every string that exists only because a QA-only
+path was compiled in, **derived from the QA sources rather than transcribed**:
+the five globals the rendered-QA IPC boundary installs, the QA preference-root
+variable and its three refusal codes, and the two literals only the synthetic
+seeded spectrum emits. Eleven in total; none is present. A hand-written list had
+already drifted — it covered four of the boundary's five globals and none of the
+others — so a build with `e2e` on but the boundary script omitted would have
+passed it.
 
 Absence is the claim, so the scanner first proves it can find each marker, using
 a QA build from an earlier milestone as a positive control. That control's
 identity is recorded with the result, because "detectability proven" means
-nothing without knowing what proved it. The scope of that claim is narrow: it
-shows the scanner did not find **those five** markers. It is not proof that the
-candidate carries no test capability, and it is not runtime acceptance.
+nothing without knowing what proved it, and a marker the control cannot confirm
+now **fails** the run rather than warning: a needle nobody can find establishes
+nothing. The scope stays narrow even so. It shows the scanner did not find those
+strings. It is not proof that the candidate carries no test capability, it says
+nothing about a QA difference that is an omission rather than an addition, and
+it is not runtime acceptance.
+
+The candidate's feature graph is read from cargo's own fingerprint for the built
+binary — enabled features empty, declared features `["e2e"]` — rather than
+asserted. An earlier hand-written claim that no feature flag is passed was
+wrong: `tauri build` enables `custom-protocol`, which is precisely what selects
+the production CSP.
 
 ### The development origin, stated precisely
 
-`127.0.0.1:1420` **is present** in the executable, seven times, entirely inside
-the embedded `tauri.conf.json` — the `devCsp` block and `devUrl`, adjacent to
-`/dist` and `LICENSE`. `generate_context!` embeds the whole configuration, so a
-release binary contains it as inert data.
+`127.0.0.1:1420` **is present** in the executable, seven times.
+`generate_context!` embeds the configuration as a compiled structure, so the
+*values* survive while the JSON keys do not: `devCsp` and `devUrl` appear zero
+times as text. Tauri selects between `csp` and `devCsp` at build time on whether
+`custom-protocol` is enabled, and takes `frontendDist` rather than `devUrl` in a
+release build, so what remains is inert data.
 
 A whole-binary search for that string therefore cannot distinguish "a
 development build shipped" from "the configuration was embedded", and a check

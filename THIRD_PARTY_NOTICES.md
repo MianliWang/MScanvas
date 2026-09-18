@@ -13,7 +13,7 @@ scope, because attribution follows distribution.
 
 Regenerate with `python -B scripts/generate_notices.py`; verify with `--check`.
 
-Shipped Rust packages: **260**. Shipped frontend packages: **66**.
+Shipped Rust packages: **188**. Shipped frontend packages: **66**.
 
 ## Obligations this inventory creates
 
@@ -36,11 +36,7 @@ Shipped Rust packages: **260**. Shipped frontend packages: **66**.
 
   | Crate and shipped version | Source for that version | Upstream repository | Reached through |
   | --- | --- | --- | --- |
-  | `cssparser v0.36.0` | <https://crates.io/crates/cssparser/0.36.0> | <https://github.com/servo/rust-cssparser> | tauri-codegen -> tauri-utils -> dom_query |
-  | `cssparser-macros v0.6.1` | <https://crates.io/crates/cssparser-macros/0.6.1> | <https://github.com/servo/rust-cssparser> | tauri-codegen -> tauri-utils -> dom_query -> cssparser |
-  | `dtoa-short v0.3.5` | <https://crates.io/crates/dtoa-short/0.3.5> | <https://github.com/upsuper/dtoa-short> | tauri-codegen -> tauri-utils -> dom_query -> cssparser |
   | `option-ext v0.2.0` | <https://crates.io/crates/option-ext/0.2.0> | <https://github.com/soc/option-ext.git> | tauri -> dirs -> dirs-sys |
-  | `selectors v0.36.1` | <https://crates.io/crates/selectors/0.36.1> | <https://github.com/servo/stylo> | tauri-codegen -> tauri-utils -> dom_query |
 
 ## Inventory
 
@@ -50,22 +46,19 @@ Walked from `mscanvas-desktop` for `x86_64-pc-windows-msvc` over normal dependen
 
 | Licence | Count | Packages |
 | --- | ---: | --- |
-| `MIT OR Apache-2.0` | 123 | `anyhow v1.0.104`, `arboard v3.6.1`, `arrayvec v0.7.8`, `base64 v0.22.1`, `base64 v0.23.1`, `bitflags v2.13.1`, `block-buffer v0.10.4`, `camino v1.2.5`, `cargo-platform v0.1.9`, `cfg-if v1.0.4`, `cookie v0.18.2`, `cpufeatures v0.2.17`, `crc32fast v1.5.1`, `crossbeam-channel v0.5.17`, `crossbeam-utils v0.8.23`, `crypto-common v0.1.7`, `data-url v0.3.2`, `deranged v0.5.8`, `digest v0.10.7`, `dirs v6.0.0`, `dirs-sys v0.5.0`, `displaydoc v0.2.7`, `dtoa v1.0.11`, `dyn-clone v1.0.20`, `erased-serde v0.4.10`, `fdeflate v0.3.7`, `flate2 v1.1.10`, `font-types v0.12.4`, `form_urlencoded v1.2.2`, `getrandom v0.3.4`, `getrandom v0.4.3`, `glob v0.3.4`, `hashbrown v0.12.3`, `hashbrown v0.17.1`, `heck v0.5.0`, `html5ever v0.38.0`, `http v1.5.0`, `idna v1.1.0`, `image v0.25.10`, `itoa v1.0.18`, `jsonptr v0.6.3`, `keyboard-types v0.7.0`, `libc v0.2.189`, `lock_api v0.4.14`, `log v0.4.34`, `markup5ever v0.38.0`, `mime v0.3.17`, `num-conv v0.2.2`, `num-traits v0.2.19`, `once_cell v1.21.4`, `parking_lot v0.12.5`, `parking_lot_core v0.9.12`, `percent-encoding v2.3.2`, `png v0.17.16`, `png v0.18.1`, `polycool v0.4.0`, `powerfmt v0.2.0`, `proc-macro2 v1.0.107`, `quote v1.0.47`, `read-fonts v0.41.0`, `regex v1.13.1`, `regex-automata v0.4.18`, `regex-syntax v0.8.11`, `roxmltree v0.21.1`, `scopeguard v1.2.0`, `semver v1.0.28`, `serde v1.0.229`, `serde-untagged v0.1.9`, `serde_core v1.0.229`, `serde_derive v1.0.229`, `serde_derive_internals v0.29.1`, `serde_json v1.0.151`, `serde_repr v0.1.21`, `serde_spanned v1.1.1`, `serde_with v3.23.0`, `serde_with_macros v3.23.0`, `serialize-to-javascript v0.1.2`, `serialize-to-javascript-impl v0.1.2`, `servo_arc v0.4.3`, `sha2 v0.10.9`, `skrifa v0.44.0`, `smallvec v1.16.0`, `softbuffer v0.4.8`, `stable_deref_trait v1.2.1`, `string_cache v0.9.0`, `syn v2.0.119`, `syn v3.0.3`, `tendril v0.5.1`, `thiserror v1.0.69`, `thiserror v2.0.20`, `thiserror-impl v1.0.69`, `thiserror-impl v2.0.20`, `time v0.3.55`, `time-core v0.1.9`, `time-macros v0.2.32`, `toml v1.1.3+spec-1.1.0`, `toml_datetime v1.1.1+spec-1.1.0`, `toml_parser v1.1.3+spec-1.1.0`, `toml_writer v1.1.2+spec-1.1.0`, `typeid v1.0.3`, `typenum v1.20.1`, `unicode-bidi v0.3.18`, `unicode-script v0.5.8`, `unicode-segmentation v1.13.3`, `url v2.5.8`, `web_atoms v0.2.6`, `windows v0.61.3`, `windows-collections v0.2.0`, `windows-core v0.61.2`, `windows-future v0.2.1`, `windows-implement v0.60.2`, `windows-interface v0.59.3`, `windows-link v0.1.3`, `windows-link v0.2.1`, `windows-numerics v0.2.0`, `windows-result v0.3.4`, `windows-strings v0.4.2`, `windows-sys v0.59.0`, `windows-sys v0.61.2`, `windows-targets v0.52.6`, `windows-threading v0.1.0`, `windows-version v0.1.7`, `windows_x86_64_msvc v0.52.6` |
-| `MIT` | 43 | `bytes v1.12.1`, `cargo_metadata v0.19.2`, `cfb v0.7.3`, `darling v0.24.1`, `darling_core v0.24.1`, `darling_macro v0.24.1`, `derive_more v2.1.1`, `derive_more-impl v2.1.1`, `dom_query v0.27.0`, `float-cmp v0.9.0`, `fontdb v0.24.0`, `generic-array v0.14.7`, `harfrust v0.12.0`, `ico v0.5.0`, `imagesize v0.15.0`, `infer v0.19.0`, `new_debug_unreachable v1.0.6`, `phf v0.13.1`, `phf_generator v0.13.1`, `phf_macros v0.13.1`, `phf_shared v0.13.1`, `pico-args v0.5.0`, `plist v1.10.1`, `precomputed-hash v0.1.1`, `quick-xml v0.41.0`, `quick-xml v0.42.0`, `rgb v0.8.53`, `schemars v0.8.22`, `schemars_derive v0.8.22`, `simd-adler32 v0.3.10`, `strict-num v0.1.1`, `strsim v0.11.1`, `synstructure v0.13.2`, `tokio v1.53.1`, `tracing v0.1.44`, `tracing-core v0.1.36`, `urlpattern v0.3.0`, `webview2-com v0.38.2`, `webview2-com-macros v0.8.1`, `webview2-com-sys v0.38.2`, `winnow v1.0.4`, `xmlwriter v0.1.0`, `zmij v1.0.23` |
-| `Apache-2.0 OR MIT` | 28 | `bit-set v0.8.0`, `bit-vec v0.8.0`, `ctor v0.8.0`, `ctor-proc-macro v0.0.7`, `equivalent v1.0.2`, `fastrand v2.5.0`, `idna_adapter v1.2.2`, `indexmap v1.9.3`, `indexmap v2.14.0`, `kurbo v0.13.1`, `muda v0.19.3`, `pin-project-lite v0.2.17`, `resvg v0.48.1`, `rustc-hash v2.1.3`, `simplecss v0.2.2`, `svgtypes v0.16.1`, `tauri v2.11.5`, `tauri-codegen v2.6.3`, `tauri-macros v2.6.3`, `tauri-plugin-clipboard-manager v2.3.3`, `tauri-runtime v2.11.3`, `tauri-runtime-wry v2.11.4`, `tauri-utils v2.9.3`, `usvg v0.48.1`, `utf8_iter v1.0.4`, `uuid v1.26.1`, `window-vibrancy v0.6.0`, `wry v0.55.1` |
-| `Unicode-3.0` | 18 | `icu_collections v2.3.0`, `icu_locale_core v2.3.0`, `icu_normalizer v2.3.0`, `icu_normalizer_data v2.3.0`, `icu_properties v2.3.0`, `icu_properties_data v2.3.0`, `icu_provider v2.3.1`, `litemap v0.8.3`, `potential_utf v0.1.6`, `tinystr v0.8.4`, `writeable v0.6.4`, `yoke v0.8.3`, `yoke-derive v0.8.2`, `zerofrom v0.1.8`, `zerofrom-derive v0.1.7`, `zerotrie v0.2.5`, `zerovec v0.11.8`, `zerovec-derive v0.11.6` |
-| `MIT/Apache-2.0` | 10 | `bitflags v1.3.2`, `ident_case v1.0.1`, `json-patch v3.0.1`, `siphasher v1.0.3`, `unic-char-property v0.9.0`, `unic-char-range v0.9.0`, `unic-common v0.9.0`, `unic-ucd-ident v0.9.0`, `unic-ucd-version v0.9.0`, `unicode-vo v0.1.0` |
-| `MPL-2.0` | 5 | `cssparser v0.36.0`, `cssparser-macros v0.6.1`, `dtoa-short v0.3.5`, `option-ext v0.2.0`, `selectors v0.36.1` |
+| `MIT OR Apache-2.0` | 89 | `anyhow v1.0.104`, `arboard v3.6.1`, `arrayvec v0.7.8`, `base64 v0.23.1`, `bitflags v2.13.1`, `cfg-if v1.0.4`, `cookie v0.18.2`, `crc32fast v1.5.1`, `crossbeam-channel v0.5.17`, `crossbeam-utils v0.8.23`, `data-url v0.3.2`, `deranged v0.5.8`, `dirs v6.0.0`, `dirs-sys v0.5.0`, `erased-serde v0.4.10`, `fdeflate v0.3.7`, `flate2 v1.1.10`, `font-types v0.12.4`, `form_urlencoded v1.2.2`, `getrandom v0.3.4`, `getrandom v0.4.3`, `glob v0.3.4`, `hashbrown v0.17.1`, `heck v0.5.0`, `http v1.5.0`, `idna v1.1.0`, `image v0.25.10`, `itoa v1.0.18`, `jsonptr v0.6.3`, `keyboard-types v0.7.0`, `libc v0.2.189`, `lock_api v0.4.14`, `log v0.4.34`, `mime v0.3.17`, `num-conv v0.2.2`, `num-traits v0.2.19`, `once_cell v1.21.4`, `parking_lot v0.12.5`, `parking_lot_core v0.9.12`, `percent-encoding v2.3.2`, `png v0.18.1`, `polycool v0.4.0`, `powerfmt v0.2.0`, `read-fonts v0.41.0`, `regex v1.13.1`, `regex-automata v0.4.18`, `regex-syntax v0.8.11`, `roxmltree v0.21.1`, `scopeguard v1.2.0`, `semver v1.0.28`, `serde v1.0.229`, `serde-untagged v0.1.9`, `serde_core v1.0.229`, `serde_json v1.0.151`, `serde_spanned v1.1.1`, `serde_with v3.23.0`, `serialize-to-javascript v0.1.2`, `skrifa v0.44.0`, `smallvec v1.16.0`, `softbuffer v0.4.8`, `stable_deref_trait v1.2.1`, `thiserror v1.0.69`, `thiserror v2.0.20`, `time v0.3.55`, `time-core v0.1.9`, `toml v1.1.3+spec-1.1.0`, `toml_datetime v1.1.1+spec-1.1.0`, `toml_parser v1.1.3+spec-1.1.0`, `toml_writer v1.1.2+spec-1.1.0`, `typeid v1.0.3`, `unicode-bidi v0.3.18`, `unicode-script v0.5.8`, `unicode-segmentation v1.13.3`, `url v2.5.8`, `windows v0.61.3`, `windows-collections v0.2.0`, `windows-core v0.61.2`, `windows-future v0.2.1`, `windows-link v0.1.3`, `windows-link v0.2.1`, `windows-numerics v0.2.0`, `windows-result v0.3.4`, `windows-strings v0.4.2`, `windows-sys v0.59.0`, `windows-sys v0.61.2`, `windows-targets v0.52.6`, `windows-threading v0.1.0`, `windows-version v0.1.7`, `windows_x86_64_msvc v0.52.6` |
+| `MIT` | 25 | `bytes v1.12.1`, `cfb v0.7.3`, `float-cmp v0.9.0`, `fontdb v0.24.0`, `harfrust v0.12.0`, `imagesize v0.15.0`, `infer v0.19.0`, `phf v0.13.1`, `phf_shared v0.13.1`, `pico-args v0.5.0`, `plist v1.10.1`, `quick-xml v0.41.0`, `quick-xml v0.42.0`, `rgb v0.8.53`, `simd-adler32 v0.3.10`, `strict-num v0.1.1`, `tokio v1.53.1`, `tracing v0.1.44`, `tracing-core v0.1.36`, `urlpattern v0.3.0`, `webview2-com v0.38.2`, `webview2-com-sys v0.38.2`, `winnow v1.0.4`, `xmlwriter v0.1.0`, `zmij v1.0.23` |
+| `Apache-2.0 OR MIT` | 20 | `ctor v0.8.0`, `equivalent v1.0.2`, `idna_adapter v1.2.2`, `indexmap v2.14.0`, `kurbo v0.13.1`, `muda v0.19.3`, `pin-project-lite v0.2.17`, `resvg v0.48.1`, `simplecss v0.2.2`, `svgtypes v0.16.1`, `tauri v2.11.5`, `tauri-plugin-clipboard-manager v2.3.3`, `tauri-runtime v2.11.3`, `tauri-runtime-wry v2.11.4`, `tauri-utils v2.9.3`, `usvg v0.48.1`, `utf8_iter v1.0.4`, `uuid v1.26.1`, `window-vibrancy v0.6.0`, `wry v0.55.1` |
+| `Unicode-3.0` | 15 | `icu_collections v2.3.0`, `icu_locale_core v2.3.0`, `icu_normalizer v2.3.0`, `icu_normalizer_data v2.3.0`, `icu_properties v2.3.0`, `icu_properties_data v2.3.0`, `icu_provider v2.3.1`, `litemap v0.8.3`, `potential_utf v0.1.6`, `tinystr v0.8.4`, `writeable v0.6.4`, `yoke v0.8.3`, `zerofrom v0.1.8`, `zerotrie v0.2.5`, `zerovec v0.11.8` |
+| `MIT/Apache-2.0` | 8 | `json-patch v3.0.1`, `siphasher v1.0.3`, `unic-char-property v0.9.0`, `unic-char-range v0.9.0`, `unic-common v0.9.0`, `unic-ucd-ident v0.9.0`, `unic-ucd-version v0.9.0`, `unicode-vo v0.1.0` |
 | `Unlicense OR MIT` | 5 | `aho-corasick v1.1.5`, `byteorder v1.5.0`, `byteorder-lite v0.1.0`, `memchr v2.8.3`, `winapi-util v0.1.11` |
 | `BSD-3-Clause` | 4 | `alloc-no-stdlib v2.0.4`, `alloc-stdlib v0.2.4`, `tiny-skia v0.12.0`, `tiny-skia-path v0.12.0` |
-| `Zlib OR Apache-2.0 OR MIT` | 3 | `bytemuck v1.25.2`, `bytemuck_derive v1.12.0`, `tinyvec v1.13.2` |
 | `BSD-3-Clause OR Apache-2.0` | 2 | `moxcms v0.8.1`, `pxfm v0.1.30` |
 | `BSL-1.0` | 2 | `clipboard-win v5.4.1`, `error-code v3.4.0` |
 | `MIT OR Apache-2.0 OR Zlib` | 2 | `raw-window-handle v0.6.2`, `tinyvec_macros v0.1.1` |
 | `MIT OR Zlib OR Apache-2.0` | 2 | `miniz_oxide v0.8.9`, `miniz_oxide v0.9.1` |
 | `Unlicense/MIT` | 2 | `same-file v1.0.6`, `walkdir v2.5.0` |
-| `Zlib` | 2 | `foldhash v0.2.0`, `slotmap v1.1.1` |
-| `(MIT OR Apache-2.0) AND Unicode-3.0` | 1 | `unicode-ident v1.0.24` |
+| `Zlib OR Apache-2.0 OR MIT` | 2 | `bytemuck v1.25.2`, `tinyvec v1.13.2` |
 | `0BSD OR MIT OR Apache-2.0` | 1 | `adler2 v2.0.1` |
 | `Apache-2.0` | 1 | `tao v0.35.3` |
 | `Apache-2.0 / MIT` | 1 | `fnv v1.0.7` |
@@ -74,10 +67,12 @@ Walked from `mscanvas-desktop` for `x86_64-pc-windows-msvc` over normal dependen
 | `BSD-3-Clause AND MIT` | 1 | `brotli v8.0.4` |
 | `BSD-3-Clause/MIT` | 1 | `brotli-decompressor v5.0.3` |
 | `CC0-1.0 OR MIT-0 OR Apache-2.0` | 1 | `dunce v1.0.5` |
+| `MPL-2.0` | 1 | `option-ext v0.2.0` |
+| `Zlib` | 1 | `slotmap v1.1.1` |
 
 ### Frontend packages in the shipped bundle
 
-Production dependencies of `@mscanvas/desktop`, which Vite compiles into the bundled assets.
+Production dependencies of `@mscanvas/desktop`. Vite bundles what is imported rather than what is declared, so this is the declared set; the generator separately fails if a shipped asset names a package not covered here.
 
 | Licence | Count | Packages |
 | --- | ---: | --- |
@@ -85,6 +80,14 @@ Production dependencies of `@mscanvas/desktop`, which Vite compiles into the bun
 | `Apache-2.0` | 2 | `@typescript/typescript-win32-x64 v7.0.2`, `typescript v7.0.2` |
 | `0BSD` | 1 | `tslib v2.8.1` |
 | `Apache-2.0 OR MIT` | 1 | `@tauri-apps/api v2.11.1` |
+
+### Build tools whose output ships
+
+These are not dependencies of the application. They run at build time and are listed because their own text ends up inside a shipped artifact, which is distribution of that text.
+
+| Tool | Version | Licence | What actually ships |
+| --- | --- | --- | --- |
+| `tailwindcss` | 4.3.3 | `MIT` | the generated stylesheet, including its MIT banner and the verbatim Preflight base styles |
 
 ## Reviewed direct dependencies and their approved scope
 

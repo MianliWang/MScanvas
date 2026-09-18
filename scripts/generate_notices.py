@@ -46,11 +46,23 @@ KNOWN_LICENCE_TERMS = {
 # Why an MPL-2.0 crate is in a mass-spectrometry application at all. Recorded
 # because it is the first question a reviewer asks.
 MPL_ARRIVAL = {
-    "cssparser": "tauri-codegen -> tauri-utils -> dom_query",
-    "cssparser-macros": "tauri-codegen -> tauri-utils -> dom_query -> cssparser",
-    "dtoa-short": "tauri-codegen -> tauri-utils -> dom_query -> cssparser",
-    "selectors": "tauri-codegen -> tauri-utils -> dom_query",
     "option-ext": "tauri -> dirs -> dirs-sys",
+}
+
+# Packages that are not dependencies of anything shipped, yet whose own text
+# ends up inside a shipped artifact. A build tool that emits a licence banner
+# into its output is distributing that banner, so the obligation travels with
+# the output even though the tool itself never ships.
+#
+# Declared explicitly rather than discovered, because each one is a judgement:
+# what exactly ships, and under what licence.
+BUILD_TOOLS_WHOSE_OUTPUT_SHIPS = {
+    "tailwindcss": {
+        "version": "4.3.3",
+        "licence": "MIT",
+        "what_ships": "the generated stylesheet, including its MIT banner and "
+        "the verbatim Preflight base styles",
+    },
 }
 
 
@@ -111,8 +123,13 @@ def shipped_crates() -> tuple[dict[str, set[str]], dict[str, str]]:
             "cargo", "tree",
             "-p", "mscanvas-desktop",
             "--target", TARGET,
-            "-e", "normal",
             "--prefix", "none",
+            # `no-proc-macro` matters more than it looks. Without it, `normal`
+            # descends into proc-macro crates' own dependency trees, which are
+            # compiled for the host and never linked into the shipped binary.
+            # That pulled in the whole `tauri-codegen` subtree -- 72 extra
+            # packages, including four MPL-2.0 crates that do not ship at all.
+            "-e", "normal,no-proc-macro",
             "-f", "{p}|{l}|{r}",
         ]
     )
@@ -224,10 +241,26 @@ def render(crates: dict[str, set[str]], frontend: dict[str, set[str]], repositor
     )
     lines += section(
         "Frontend packages in the shipped bundle",
-        "Production dependencies of `@mscanvas/desktop`, which Vite compiles into the "
-        "bundled assets.",
+        "Production dependencies of `@mscanvas/desktop`. Vite bundles what is imported "
+        "rather than what is declared, so this is the declared set; the generator "
+        "separately fails if a shipped asset names a package not covered here.",
         frontend,
     )
+    lines += [
+        "### Build tools whose output ships",
+        "",
+        "These are not dependencies of the application. They run at build time and are "
+        "listed because their own text ends up inside a shipped artifact, which is "
+        "distribution of that text.",
+        "",
+        "| Tool | Version | Licence | What actually ships |",
+        "| --- | --- | --- | --- |",
+    ]
+    for tool, facts in sorted(BUILD_TOOLS_WHOSE_OUTPUT_SHIPS.items()):
+        lines.append(
+            f"| `{tool}` | {facts['version']} | `{facts['licence']}` | {facts['what_ships']} |"
+        )
+    lines.append("")
     lines += [
         "## Reviewed direct dependencies and their approved scope",
         "",
@@ -263,6 +296,41 @@ def assert_known_licences(*inventories: dict[str, set[str]]) -> None:
         )
 
 
+def assert_frontend_banners_are_covered(frontend: dict[str, set[str]]) -> None:
+    """Fails when a shipped asset names a package the inventory does not cover.
+
+    Walking declared production dependencies misses a whole class: Vite bundles
+    what is imported, not what is declared, and a build tool can emit its own
+    licence banner into the output it generates. `tailwindcss` is a
+    devDependency whose MIT banner and verbatim base styles ship inside the
+    stylesheet, so no production-dependency walk would ever have found it.
+    """
+    dist = REPOSITORY_ROOT / "apps/desktop/dist"
+    if not dist.is_dir():
+        return
+
+    banner = re.compile(r"([A-Za-z0-9@._/-]+)\s+v?\d[\w.+-]*\s*\|\s*[A-Za-z0-9.\- ]*Licen[cs]e")
+    declared = {name.split(" v")[0] for packages in frontend.values() for name in packages}
+    known = declared | set(BUILD_TOOLS_WHOSE_OUTPUT_SHIPS)
+
+    uncovered: dict[str, str] = {}
+    for asset in sorted(dist.rglob("*")):
+        if not asset.is_file() or asset.suffix.lower() not in {".js", ".css", ".mjs"}:
+            continue
+        for match in banner.finditer(asset.read_text(encoding="utf-8", errors="replace")):
+            package = match.group(1)
+            if package not in known:
+                uncovered.setdefault(package, f"{asset.relative_to(REPOSITORY_ROOT)}: {match.group(0)}")
+
+    if uncovered:
+        report = "\n".join(f"  {name}: {where}" for name, where in sorted(uncovered.items()))
+        raise SystemExit(
+            "A shipped frontend asset names a package the inventory does not cover.\n"
+            "Decide its obligation and add it to BUILD_TOOLS_WHOSE_OUTPUT_SHIPS, or to the\n"
+            "production dependencies if that is what it really is:\n" + report
+        )
+
+
 def selftest() -> None:
     """Guards the line parsing, which is where a package name gets mangled."""
     sample = [
@@ -290,6 +358,15 @@ def selftest() -> None:
     # Deduplicated rows must collapse, not produce a second spelling.
     assert len(parsed) == 2, parsed
 
+    # The banner pattern must match the real thing it was written for, or the
+    # guard silently covers nothing. This is the literal text Tailwind emits.
+    banner = re.compile(r"([A-Za-z0-9@._/-]+)\s+v?\d[\w.+-]*\s*\|\s*[A-Za-z0-9.\- ]*Licen[cs]e")
+    real = "tailwindcss v4.3.3 | MIT License | https://tailwindcss.com"
+    found = banner.search(real)
+    assert found is not None and found.group(1) == "tailwindcss", real
+    assert banner.search("/*! normalize.css v8.0.1 | MIT License | github.com */") is not None
+    assert banner.search("just some minified code without a banner") is None
+
     assert licence_terms("MIT/Apache-2.0") == {"MIT", "Apache-2.0"}
     assert licence_terms("(MIT OR Apache-2.0) AND Unicode-3.0") == {"MIT", "Apache-2.0", "Unicode-3.0"}
     assert licence_terms("Unlicense OR MIT") == {"Unlicense", "MIT"}
@@ -309,6 +386,7 @@ def main() -> int:
     crates, repositories = shipped_crates()
     frontend = shipped_frontend()
     assert_known_licences(crates, frontend)
+    assert_frontend_banners_are_covered(frontend)
     rendered = render(crates, frontend, repositories)
 
     if arguments.check:
