@@ -81,7 +81,9 @@ try {
         Where-Object { $_.Name -like "MSCANVAS_*" -or $_.Name -like "TAURI_*" } |
         ForEach-Object { "$($_.Name)=$($_.Value)" }
 
-    $bundleDirectory = "apps/desktop/src-tauri/target/release/bundle"
+    # One shared workspace target directory at the repository root, so the
+    # bundle lands here rather than under src-tauri.
+    $bundleDirectory = "target/release/bundle"
     if (Test-Path -LiteralPath $bundleDirectory) {
         Remove-Item -LiteralPath $bundleDirectory -Recurse -Force
     }
@@ -110,10 +112,10 @@ try {
         startedUtc       = $startedUtc
         toolchain        = $toolchain
         taskEnvironment  = @($taskEnvironment)
-        featureGraph     = "default features; no --features flag is passed, so `e2e` and `test-support` are off"
+        featureGraph     = 'default features; no --features flag is passed, so e2e and test-support are off'
         buildInputs      = @($buildInputs)
         iconInputs       = @($iconInputs)
-        executable       = Get-FileIdentity -Path "apps/desktop/src-tauri/target/release/mscanvas-desktop.exe"
+        executable       = Get-FileIdentity -Path "target/release/mscanvas-desktop.exe"
         installer        = $installers[0]
         signed           = $false
     }

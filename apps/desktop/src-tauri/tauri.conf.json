@@ -51,7 +51,7 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "category": "Science",
+    "category": "Productivity",
     "shortDescription": "A modern workspace for mass spectrometry data.",
     "longDescription": "MSCanvas is a local-first mass spectrometry viewer, converter and scientific figure workspace.",
     "publisher": "MSCanvas contributors",
