@@ -32,6 +32,36 @@ TARGET = "x86_64-pc-windows-msvc"
 # new one shows up as an unclassified licence rather than passing unnoticed.
 SOURCE_OFFER_LICENCES = {"MPL-2.0"}
 
+# Every licence family this inventory knows how to describe an obligation for.
+# A declared licence outside this set stops generation rather than landing in
+# the table as an unremarked row: an inventory that quietly accepts anything is
+# not a compliance record. Non-SPDX spellings (`/` for `OR`) are included
+# because packages really declare them.
+KNOWN_LICENCE_TERMS = {
+    "MIT", "MIT-0", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "0BSD",
+    "Zlib", "MPL-2.0", "BSL-1.0", "Unicode-3.0", "Unlicense", "CC0-1.0",
+    "ISC", "CDLA-Permissive-2.0",
+}
+
+# Why an MPL-2.0 crate is in a mass-spectrometry application at all. Recorded
+# because it is the first question a reviewer asks.
+MPL_ARRIVAL = {
+    "cssparser": "tauri-codegen -> tauri-utils -> dom_query",
+    "cssparser-macros": "tauri-codegen -> tauri-utils -> dom_query -> cssparser",
+    "dtoa-short": "tauri-codegen -> tauri-utils -> dom_query -> cssparser",
+    "selectors": "tauri-codegen -> tauri-utils -> dom_query",
+    "option-ext": "tauri -> dirs -> dirs-sys",
+}
+
+
+def licence_terms(expression: str) -> set[str]:
+    """The individual licence identifiers named in a declared expression."""
+    return {
+        stripped
+        for term in re.split(r"\s+(?:OR|AND)\s+|[/()]", expression)
+        if (stripped := term.strip())
+    }
+
 GENERATED_MARKER = "<!-- generated: scripts/generate_notices.py -->"
 
 
@@ -53,6 +83,25 @@ def run(command: list[str]) -> str:
     return result.stdout
 
 
+def parse_row(line: str) -> tuple[str | None, str]:
+    """One `{p}|{l}` row, or `(None, "")` for a row that is not third-party.
+
+    cargo marks a repeated subtree with `(*)`, a proc-macro with `(proc-macro)`
+    and a path dependency with its directory. None of those belong in a package
+    identity, and leaving them in splits one package into several rows.
+    """
+    if "|" not in line:
+        return None, ""
+    package, licence = line.rsplit("|", 1)
+    package = re.sub(r"\s*\(\*\)\s*$", "", package).strip()
+    package = re.sub(r"\s*\((?:[A-Za-z]:|/)[^)]*\)\s*$", "", package).strip()
+    package = re.sub(r"\s*\(proc-macro\)\s*$", "", package).strip()
+    licence = re.sub(r"\s*\(\*\)\s*$", "", licence).strip()
+    if not package or package.startswith("mscanvas-"):
+        return None, ""
+    return package, licence or "UNDECLARED"
+
+
 def shipped_crates() -> dict[str, set[str]]:
     """Crates reachable from the desktop binary on Windows, normal edges only."""
     output = run(
@@ -67,18 +116,9 @@ def shipped_crates() -> dict[str, set[str]]:
     )
     by_licence: dict[str, set[str]] = defaultdict(set)
     for line in output.splitlines():
-        if "|" not in line:
-            continue
-        package, licence = line.rsplit("|", 1)
-        # cargo marks a repeated subtree with `(*)` and a path dependency with
-        # its directory; neither belongs in an identity.
-        package = re.sub(r"\s*\(\*\)\s*$", "", package).strip()
-        package = re.sub(r"\s*\([A-Za-z]:[^)]*\)\s*$", "", package).strip()
-        package = re.sub(r"\s*\(proc-macro\)\s*$", "", package).strip()
-        licence = re.sub(r"\s*\(\*\)\s*$", "", licence).strip()
-        if not package or package.startswith("mscanvas-"):
-            continue
-        by_licence[licence or "UNDECLARED"].add(package)
+        package, licence = parse_row(line)
+        if package is not None:
+            by_licence[licence].add(package)
     return by_licence
 
 
@@ -146,13 +186,18 @@ def render(crates: dict[str, set[str]], frontend: dict[str, set[str]]) -> str:
     ]
     if source_offer:
         lines += [
-            "- **MPL-2.0 source availability.** "
-            + ", ".join(f"`{p}`" for p in source_offer)
-            + " are used unmodified, as published on crates.io. Their source for the",
-            "  exact versions above is obtainable from <https://crates.io> and the",
-            "  upstream repositories each package declares. This project makes no",
-            "  modification to any MPL-2.0 file, so no modified source is withheld.",
+            "- **MPL-2.0 source availability.** These crates are used unmodified, as",
+            "  published on crates.io. Source for the exact versions is obtainable from",
+            "  <https://crates.io> and the upstream repository each package declares.",
+            "  This project modifies no MPL-2.0 file, so no modified source is withheld.",
+            "  Each arrives transitively through Tauri rather than being chosen here:",
+            "",
+            "  | Crate | Reached through |",
+            "  | --- | --- |",
         ]
+        for package in source_offer:
+            name = package.split(" v")[0]
+            lines.append(f"  | `{package}` | {MPL_ARRIVAL.get(name, 'unrecorded')} |")
     lines += [
         "",
         "## Inventory",
@@ -189,12 +234,63 @@ def render(crates: dict[str, set[str]], frontend: dict[str, set[str]]) -> str:
     return "\n".join(lines)
 
 
+def assert_known_licences(*inventories: dict[str, set[str]]) -> None:
+    unknown: dict[str, set[str]] = defaultdict(set)
+    for inventory in inventories:
+        for expression, packages in inventory.items():
+            for term in licence_terms(expression) - KNOWN_LICENCE_TERMS:
+                unknown[term] |= packages
+    if unknown:
+        report = "\n".join(
+            f"  {term}: {', '.join(sorted(packages))}" for term, packages in sorted(unknown.items())
+        )
+        raise SystemExit(
+            "Unclassified licence term(s); decide the obligation and add it to "
+            f"KNOWN_LICENCE_TERMS before shipping:\n{report}"
+        )
+
+
+def selftest() -> None:
+    """Guards the line parsing, which is where a package name gets mangled."""
+    sample = [
+        "serde v1.0.229|MIT OR Apache-2.0",
+        "serde v1.0.229|MIT OR Apache-2.0 (*)",
+        "serde_derive v1.0.229 (proc-macro)|MIT OR Apache-2.0",
+        "mscanvas-core v0.1.0 (D:\\Github repo\\MScanvas\\crates\\core)|Apache-2.0",
+        "cssparser v0.36.0|MPL-2.0",
+    ]
+    parsed: dict[str, set[str]] = defaultdict(set)
+    for line in sample:
+        package, licence = parse_row(line)
+        if package is not None:
+            parsed[licence].add(package)
+
+    assert parsed["MIT OR Apache-2.0"] == {"serde v1.0.229", "serde_derive v1.0.229"}, parsed
+    assert parsed["MPL-2.0"] == {"cssparser v0.36.0"}, parsed
+    # The workspace's own crates are not third-party and must not be listed.
+    assert "Apache-2.0" not in parsed, parsed
+    # Deduplicated rows must collapse, not produce a second spelling.
+    assert len(parsed) == 2, parsed
+
+    assert licence_terms("MIT/Apache-2.0") == {"MIT", "Apache-2.0"}
+    assert licence_terms("(MIT OR Apache-2.0) AND Unicode-3.0") == {"MIT", "Apache-2.0", "Unicode-3.0"}
+    assert licence_terms("Unlicense OR MIT") == {"Unlicense", "MIT"}
+    print("generate_notices selftest passed.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="fail if the committed file has drifted")
+    parser.add_argument("--selftest", action="store_true", help="check the row parsing and exit")
     arguments = parser.parse_args()
 
-    rendered = render(shipped_crates(), shipped_frontend())
+    if arguments.selftest:
+        selftest()
+        return 0
+
+    crates, frontend = shipped_crates(), shipped_frontend()
+    assert_known_licences(crates, frontend)
+    rendered = render(crates, frontend)
 
     if arguments.check:
         current = NOTICES.read_text(encoding="utf-8") if NOTICES.exists() else ""

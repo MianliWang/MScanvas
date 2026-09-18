@@ -25,10 +25,19 @@ Shipped Rust packages: **260**. Shipped frontend packages: **66**.
   this project.
 - **Unicode-3.0.** The ICU packages carry the Unicode licence and its
   disclaimer, reproduced through their own distributions.
-- **MPL-2.0 source availability.** `cssparser v0.36.0`, `cssparser-macros v0.6.1`, `dtoa-short v0.3.5`, `option-ext v0.2.0`, `selectors v0.36.1` are used unmodified, as published on crates.io. Their source for the
-  exact versions above is obtainable from <https://crates.io> and the
-  upstream repositories each package declares. This project makes no
-  modification to any MPL-2.0 file, so no modified source is withheld.
+- **MPL-2.0 source availability.** These crates are used unmodified, as
+  published on crates.io. Source for the exact versions is obtainable from
+  <https://crates.io> and the upstream repository each package declares.
+  This project modifies no MPL-2.0 file, so no modified source is withheld.
+  Each arrives transitively through Tauri rather than being chosen here:
+
+  | Crate | Reached through |
+  | --- | --- |
+  | `cssparser v0.36.0` | tauri-codegen -> tauri-utils -> dom_query |
+  | `cssparser-macros v0.6.1` | tauri-codegen -> tauri-utils -> dom_query -> cssparser |
+  | `dtoa-short v0.3.5` | tauri-codegen -> tauri-utils -> dom_query -> cssparser |
+  | `option-ext v0.2.0` | tauri -> dirs -> dirs-sys |
+  | `selectors v0.36.1` | tauri-codegen -> tauri-utils -> dom_query |
 
 ## Inventory
 

@@ -13,7 +13,11 @@ param(
     [string]$EvidenceRoot = ".tmp/m76-evidence",
     # Only for deliberately re-measuring an unchanged tree. A rebuilt installer
     # is a new candidate regardless, because the bundler stamps it.
-    [switch]$AllowDirtyTree
+    [switch]$AllowDirtyTree,
+    # Re-derive the manifest for artifacts already on disk. For when the
+    # manifest's own content was wrong: rebuilding to fix bookkeeping would
+    # discard a candidate for no reason and produce a different installer.
+    [switch]$ManifestOnly
 )
 
 Set-StrictMode -Version Latest
@@ -48,8 +52,11 @@ try {
     $tree = (& git rev-parse "HEAD^{tree}").Trim()
     Assert-NativeSuccess -Step "Read HEAD tree" -ExitCode $LASTEXITCODE
 
-    # The bundler embeds these, so they are build inputs, not just metadata.
-    $buildInputs = @(
+    $configuration = Get-Content -LiteralPath "apps/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+
+    # Configuration, lockfiles and toolchain pins: change any and the output
+    # changes.
+    $configuredInputs = @(
         "apps/desktop/src-tauri/tauri.conf.json",
         "apps/desktop/src-tauri/Cargo.toml",
         "apps/desktop/src-tauri/capabilities/default.json",
@@ -59,10 +66,31 @@ try {
         "Cargo.lock",
         "pnpm-lock.yaml",
         "rust-toolchain.toml",
-        ".node-version",
-        "LICENSE",
-        "THIRD_PARTY_NOTICES.md"
-    ) | ForEach-Object { Get-FileIdentity -Path $_ }
+        ".node-version"
+    )
+
+    # Files the bundler puts *into* the package. Derived from the configuration
+    # rather than listed by hand, so a resource added later cannot silently stay
+    # out of the manifest.
+    $bundleRoot = "apps/desktop/src-tauri"
+    $shippedResources = @()
+    if ($configuration.bundle.PSObject.Properties.Name -contains "licenseFile") {
+        $shippedResources += (Join-Path $bundleRoot $configuration.bundle.licenseFile)
+    }
+    if ($configuration.bundle.PSObject.Properties.Name -contains "resources") {
+        $shippedResources += @($configuration.bundle.resources.PSObject.Properties |
+            ForEach-Object { Join-Path $bundleRoot $_.Name })
+    }
+    $shippedResources = @($shippedResources | ForEach-Object { (Resolve-Path -LiteralPath $_).Path } | Sort-Object -Unique)
+
+    $buildInputs = @($configuredInputs | ForEach-Object { Get-FileIdentity -Path $_ }) +
+        @($shippedResources | ForEach-Object { Get-FileIdentity -Path $_ })
+
+    # The compiled frontend is the largest thing the installer carries and
+    # `beforeBuildCommand` regenerates it every build, so without it the
+    # manifest cannot answer which frontend this installer was built from.
+    $frontendInputs = @(Get-ChildItem -LiteralPath "apps/desktop/dist" -Recurse -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-FileIdentity -Path $_.FullName })
 
     $iconInputs = Get-ChildItem -LiteralPath "apps/desktop/src-tauri/icons" -File |
         ForEach-Object { Get-FileIdentity -Path $_.FullName }
@@ -84,17 +112,26 @@ try {
     # One shared workspace target directory at the repository root, so the
     # bundle lands here rather than under src-tauri.
     $bundleDirectory = "target/release/bundle"
-    if (Test-Path -LiteralPath $bundleDirectory) {
-        Remove-Item -LiteralPath $bundleDirectory -Recurse -Force
+    if ($ManifestOnly) {
+        $command = "(manifest re-derived; not rebuilt)"
+        $buildExit = 0
+        $startedUtc = $null
+        $finishedUtc = [DateTime]::UtcNow.ToString("o")
+        Write-Host "Re-deriving the manifest for the artifacts already on disk ..."
     }
+    else {
+        if (Test-Path -LiteralPath $bundleDirectory) {
+            Remove-Item -LiteralPath $bundleDirectory -Recurse -Force
+        }
 
-    $command = "pnpm tauri build"
-    $startedUtc = [DateTime]::UtcNow.ToString("o")
-    Write-Host "Building release candidate at $head ..."
-    & pnpm tauri build
-    $buildExit = $LASTEXITCODE
-    $finishedUtc = [DateTime]::UtcNow.ToString("o")
-    Assert-NativeSuccess -Step $command -ExitCode $buildExit
+        $command = "pnpm tauri build"
+        $startedUtc = [DateTime]::UtcNow.ToString("o")
+        Write-Host "Building release candidate at $head ..."
+        & pnpm tauri build
+        $buildExit = $LASTEXITCODE
+        $finishedUtc = [DateTime]::UtcNow.ToString("o")
+        Assert-NativeSuccess -Step $command -ExitCode $buildExit
+    }
 
     # `@()` matters: a single Get-FileIdentity result is an OrderedDictionary,
     # whose `.Count` is its key count, not one.
@@ -145,6 +182,8 @@ try {
         taskEnvironment  = @($taskEnvironment)
         featureGraph     = 'default features; no --features flag is passed, so e2e and test-support are off'
         buildInputs      = @($buildInputs)
+        shippedResources = @($shippedResources | ForEach-Object { [IO.Path]::GetRelativePath($RepositoryRoot, $_) -replace '\\', '/' })
+        frontendInputs   = @($frontendInputs)
         iconInputs       = @($iconInputs)
         executable       = Get-FileIdentity -Path "target/release/mscanvas-desktop.exe"
         installer        = $installers[0]
