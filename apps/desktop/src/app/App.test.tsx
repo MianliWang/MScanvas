@@ -1916,10 +1916,13 @@ describe("the session workspace roster", () => {
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
     await screen.findByRole("button", { name: "Add files…" });
     // Existing workspace/operation announcements, the session Settings
-    // announcement and the shell's panel announcement all stay mounted for the
-    // life of this application.
+    // announcement, the shell's panel announcement and the project surface's
+    // refusal announcement all stay mounted for the life of this application.
+    // M8.1 added the last of those: a project refusal that appeared beside an
+    // unmounted region would be visible and silent, which is the failure this
+    // whole census exists to catch.
     const applicationRegions = regions();
-    expect(applicationRegions).toHaveLength(12);
+    expect(applicationRegions).toHaveLength(13);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -2303,7 +2306,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
-    expect(regions()).toHaveLength(12);
+    expect(regions()).toHaveLength(13);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
@@ -2316,7 +2319,7 @@ describe("the session workspace roster", () => {
     // A search that found nothing is not an empty workspace, and the two must
     // not sound alike.
     expect(spoken).not.toContain("The workspace is empty.");
-    expect(regions()).toHaveLength(12);
+    expect(regions()).toHaveLength(13);
   });
 
   it("says the search was cleared rather than falling silent", async () => {

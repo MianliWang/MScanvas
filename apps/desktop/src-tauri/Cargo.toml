@@ -59,6 +59,11 @@ tauri.workspace = true
 # Rust API is used directly; its generic commands stay denied to the webview,
 # which never receives the pixels and has no clipboard capability of its own.
 tauri-plugin-clipboard-manager = "=2.3.3"
+# Already in the locked graph through `mscanvas-core`, which uses it for
+# `ArtifactId`. Declared here so the project store can mint the sibling
+# identifiers beside it rather than inventing a second identity scheme. No
+# package is added to the lock file and no version changes.
+uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.61.3", features = [

@@ -2,6 +2,8 @@ import { announceConversion } from "./conversionMessages";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
+import { ProjectPanel } from "../project/ProjectPanel";
+import { useProject } from "../project/useProject";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 
@@ -35,6 +37,10 @@ export function PreviewWorkspace() {
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
+  // Held at the shell so the project outlives navigating away from its surface.
+  // Rust is authoritative either way; this only keeps the page from re-reading
+  // the whole project every time the user looks at something else.
+  const project = useProject();
   // The panels are owned by the preference provider, which is the one place
   // that knows both what the user asked for and what the window can fit. What
   // is left here is the session fact the provider has no business knowing:
@@ -623,6 +629,14 @@ export function PreviewWorkspace() {
 
         </aside>
 
+        {/* The project surface. Deliberately its own region rather than a
+            corner of the workbench: a project references files, the roster
+            admits them, and the two collections are not the same list. It needs
+            no provider, so it is reachable on a machine with no converter
+            installed. */}
+        <section id="workbench-project" className="workbench-project" hidden={surface !== "project" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("projectSurface")}>
+          <ProjectPanel session={project} />
+        </section>
         <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("conversionTask")}>
           <ConversionPanel
             configuration={workspace.conversionConfiguration}

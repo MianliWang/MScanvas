@@ -213,6 +213,87 @@ pub fn read_bounded(target: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>, Re
     Ok(Some(bytes))
 }
 
+/// What the filesystem calls one object, wide enough to tell it apart from
+/// every other object on its volume.
+///
+/// The whole 128-bit file ID from `FILE_ID_INFO`, not the 64-bit index
+/// `GetFileInformationByHandle` returns: that index is documented as unique
+/// only on volumes that have one, and ReFS is the counter-example the API's own
+/// successor exists for. A caller asking whether two names mean one file wants
+/// the answer that is right on every volume.
+///
+/// Read through an open handle, so a name whose meaning changed between two
+/// calls cannot make two different objects look like one. `None` where the name
+/// does not resolve, cannot be opened, or sits on a filesystem that has no
+/// identity to give -- all of which mean the same thing to a caller: this
+/// question was not answered, so do not act as though it was.
+#[cfg(windows)]
+#[must_use]
+pub fn object_identity(path: &Path) -> Option<(u64, [u8; 16])> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle as _;
+
+    /// `FileIdInfo`, the information class that answers with the whole file ID.
+    const FILE_ID_INFO_CLASS: i32 = 0x12;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileIdInformation {
+        volume_serial_number: u64,
+        file_id: [u8; 16],
+    }
+
+    // The equivalent std accessors are still unstable, and the ones that are
+    // stable answer with the truncated index this deliberately does not use.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetFileInformationByHandleEx"]
+        fn get_file_information_by_handle_ex(
+            file: *mut c_void,
+            information_class: i32,
+            information: *mut c_void,
+            information_size: u32,
+        ) -> i32;
+    }
+
+    let file = open_for_read(path).ok()?;
+    let mut information = FileIdInformation::default();
+    // SAFETY: the file outlives the call, so its handle stays valid, and the
+    // out parameter is a fully initialized value of the exact FILE_ID_INFO
+    // layout the class requires, whose size is passed with it.
+    let answered = unsafe {
+        get_file_information_by_handle_ex(
+            file.as_raw_handle().cast(),
+            FILE_ID_INFO_CLASS,
+            (&raw mut information).cast(),
+            u32::try_from(std::mem::size_of::<FileIdInformation>())
+                .expect("FILE_ID_INFO fits in a DWORD"),
+        )
+    };
+    // A filesystem that cannot answer this has no identity to compare, which is
+    // the same position as not having been asked.
+    if answered == 0 || information.file_id == [0; 16] {
+        return None;
+    }
+    Some((information.volume_serial_number, information.file_id))
+}
+
+/// The device and inode this name resolves to.
+///
+/// Narrower than the Windows form above and stated as such: this platform is
+/// not one this application ships on, and the guarantee is whatever `stat`
+/// gives.
+#[cfg(not(windows))]
+#[must_use]
+pub fn object_identity(path: &Path) -> Option<(u64, [u8; 16])> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let metadata = std::fs::metadata(path).ok()?;
+    let mut file_id = [0_u8; 16];
+    file_id[..8].copy_from_slice(&metadata.ino().to_le_bytes());
+    Some((metadata.dev(), file_id))
+}
+
 /// Why a name that exists could not be opened.
 fn unopenable_name(target: &Path) -> ReadRefusal {
     match std::fs::symlink_metadata(target) {

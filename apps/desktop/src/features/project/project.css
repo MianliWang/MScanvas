@@ -1,0 +1,241 @@
+/*
+ * The project surface.
+ *
+ * Built from the same tokens as every other region: the page background, the
+ * white surface, the 6px/8px radii, the 4/8/12/16 spacing scale, the 36px and
+ * 32px control minimums, and the same 2px focus outline with offset. Nothing
+ * here introduces a colour, a radius or a density of its own.
+ *
+ * The verification tone is a left accent and a coloured word, never colour
+ * alone: each row also carries its outcome in text, and `data-verification`
+ * carries it for anything reading the state rather than looking at it.
+ */
+
+.workbench-project {
+  grid-area: main;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.project-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 2px rgb(23 35 55 / 0.03);
+  padding: 16px;
+  min-height: 100%;
+}
+
+.project-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-header h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--color-text-primary);
+}
+
+.project-privacy {
+  margin: 4px 0 0;
+  max-width: 62ch;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.project-actions button {
+  min-height: 32px;
+}
+
+.project-unsaved,
+.project-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.project-unsaved {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.project-problem {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.project-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-section h3 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.project-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.project-note,
+.project-empty {
+  margin: 0;
+  max-width: 72ch;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-row,
+.project-run {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  /* Wrapping rather than truncation: a file name is the thing a reader is
+     looking for, and the roster made the same choice for the same reason. */
+  overflow-wrap: anywhere;
+}
+
+.project-row.is-unchecked {
+  border-left-color: var(--color-border-strong);
+}
+
+.project-row.is-matching {
+  border-left-color: var(--color-success);
+}
+
+.project-row.is-different {
+  border-left-color: var(--color-warning);
+}
+
+.project-row.is-unavailable {
+  border-left-color: var(--color-danger);
+}
+
+.project-row-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+.project-row-label {
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.project-row-facts,
+.project-run-head,
+.project-run-relationship {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.project-row.is-matching .project-verification {
+  color: var(--color-success);
+}
+
+.project-row.is-different .project-verification {
+  color: var(--color-warning);
+}
+
+.project-row.is-unavailable .project-verification {
+  color: var(--color-danger);
+}
+
+.project-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-row-actions button {
+  min-height: 32px;
+}
+
+.project-proposal {
+  font-size: 12px;
+  color: var(--color-text-primary);
+  background: var(--color-accent-soft);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.project-run[data-outcome="completed"] {
+  border-left-color: var(--color-success);
+}
+
+.project-run[data-outcome="failed"] {
+  border-left-color: var(--color-danger);
+}
+
+.project-run[data-outcome="cancelled"] {
+  border-left-color: var(--color-border-strong);
+}
+
+.project-run-operation {
+  color: var(--color-text-primary);
+}
+
+.project-run-version {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* At the narrow end the action rows stack rather than shrinking their targets:
+   a 32px control that reflows is still reachable, one squeezed to 24px is not. */
+@media (width <= 1050px) {
+  .project-header,
+  .project-section-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

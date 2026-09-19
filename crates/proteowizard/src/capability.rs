@@ -45,7 +45,18 @@ impl Sha256Digest {
 
     /// Calculates a digest from an already-open object, so a caller that holds
     /// the exact file it means to measure never reopens it by name.
-    pub(crate) fn calculate_reader<R: std::io::Read>(reader: R) -> Result<Self, Sha256Error> {
+    ///
+    /// Public because that distinction is the whole point of it, and the
+    /// project store needs it for the same reason a conversion does: a
+    /// verification that hashes a *name* proves nothing about the object it
+    /// just inspected. Reads from wherever the caller left the object, so a
+    /// caller measuring a whole file rewinds first.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the platform's SHA-256 implementation reported, including that
+    /// there is none outside Windows.
+    pub fn calculate_reader<R: std::io::Read>(reader: R) -> Result<Self, Sha256Error> {
         crate::sha256::digest_reader(reader).map(Self)
     }
 }

@@ -349,7 +349,11 @@ fn has_shimadzu_lcd_extension(path: &Path) -> bool {
 /// `.wiff2` is a different container read by a different vendor assembly, and
 /// this boundary has no acquisition, no measurement and therefore no admission
 /// for it.
-fn has_sciex_wiff_extension(path: &Path) -> bool {
+///
+/// Crate-visible because the project store needs the same routing question: an
+/// input record has to know whether the file it is registering is one whose
+/// family mandates a companion member. One spelling of the rule, asked by both.
+pub(crate) fn has_sciex_wiff_extension(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("wiff"))
 }

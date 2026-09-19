@@ -3963,6 +3963,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // the preview API: it holds no scientific state and confers no authority
     // over a backend, a dataset or a conversion.
     let preferences = include_str!("../../../src/features/preferences/preferencesApi.ts");
+    // The project store's own boundary, beside the preference store's.
+    let projects = include_str!("../../../src/features/project/projectApi.ts");
 
     let registered = host
         .split_once("generate_handler![")
@@ -3988,6 +3990,30 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // could reach for on its own.
             "load_ui_preferences",
             "save_ui_preferences",
+            // The M8.1 project store, on its own boundary for the same reason
+            // the preference store has one: a project references files and the
+            // roster admits them, and keeping the two boundaries apart is what
+            // makes "opening a project admits nothing" structural rather than a
+            // convention. Every one of these addresses records by identifier;
+            // none of them can name a path, which the PathBuf assertion below
+            // checks for the whole surface.
+            "get_project_state",
+            "create_project",
+            "close_project",
+            "open_project",
+            "save_project",
+            "save_project_as",
+            "add_project_input",
+            "remove_project_input",
+            "check_project_links",
+            "cancel_project_job",
+            "capture_project_file_facts",
+            // Relinking is two commands, and deliberately not one. A proposal
+            // is what the user is shown; the commit is what they confirm. One
+            // command would be a relink that happened because a dialog closed.
+            "propose_project_relink",
+            "commit_project_relink",
+            "abandon_project_relink",
             "inspect_backend",
             "choose_backend_installation",
             "use_automatic_backend_discovery",
@@ -4089,7 +4115,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         assert!(
             api.contains(&format!("\"{name}\""))
                 || drop_transport.contains(&format!("\"{name}\""))
-                || preferences.contains(&format!("\"{name}\"")),
+                || preferences.contains(&format!("\"{name}\""))
+                || projects.contains(&format!("\"{name}\"")),
             "the frontend never calls {name}"
         );
     }

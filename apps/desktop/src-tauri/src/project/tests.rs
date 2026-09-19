@@ -1,0 +1,1037 @@
+//! Tests for the project record store.
+//!
+//! Everything here runs against real files in a task-owned temporary directory
+//! under the system temp root. No VM is launched, no provider is called, no
+//! installer runs, and nothing outside the directory each test creates is read
+//! or written.
+//!
+//! Where a claim is about a Windows filesystem mechanism the test says so and
+//! is gated to Windows. Where a claim cannot be tested on this machine -- a
+//! second physical volume, most obviously -- the limit is recorded beside the
+//! test rather than approximated by something that would read as proof.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use super::observe::UnavailableReason;
+use super::record::{
+    ContentBaseline, DocumentProblem, InputId, Locator, MemberRecord, MemberRole, ProjectDocument,
+    RecordedOperation, RunId, RunRecord, TerminalOutcome,
+};
+use super::{ProjectError, ProjectStore, record};
+
+/// A directory this test owns, removed when the test ends.
+struct Scratch {
+    path: PathBuf,
+}
+
+impl Scratch {
+    fn new(label: &str) -> Self {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "mscanvas-project-{label}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("create the scratch directory");
+        Self { path }
+    }
+
+    fn join(&self, name: &str) -> PathBuf {
+        self.path.join(name)
+    }
+
+    /// Writes a file and answers where it is.
+    fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = self.join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create the parent directory");
+        }
+        fs::write(&path, bytes).expect("write the fixture");
+        path
+    }
+
+    fn directory(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+/// A store with one open project and one registered reference.
+fn store_with_reference(scratch: &Scratch, name: &str, bytes: &[u8]) -> (ProjectStore, InputId) {
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    let path = scratch.write(name, bytes);
+    let id = store.register_input(&path).expect("register");
+    (store, id)
+}
+
+fn verification(store: &ProjectStore, id: InputId) -> &'static str {
+    let described = store.describe();
+    described
+        .inputs
+        .iter()
+        .find(|input| input.id == id.to_string())
+        .map(|input| input.verification)
+        .expect("the reference is described")
+}
+
+fn unavailable_reason(store: &ProjectStore, id: InputId) -> Option<&'static str> {
+    let described = store.describe();
+    described
+        .inputs
+        .iter()
+        .find(|input| input.id == id.to_string())
+        .and_then(|input| input.unavailable_reason)
+}
+
+// ---------------------------------------------------------------------------
+// Identity through a roundtrip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn every_identifier_survives_a_save_and_reopen_unchanged() {
+    let scratch = Scratch::new("identity");
+    let (store, input_id) = store_with_reference(&scratch, "sample.txt", b"one acquisition");
+    store
+        .capture_file_facts(&[input_id])
+        .expect("the capture completes");
+
+    let before = store.describe();
+    let project_document = scratch.join("project.mscanvas");
+    store.save_as(&project_document).expect("save as");
+
+    let reopened = ProjectStore::new();
+    reopened
+        .open_document(&project_document, false)
+        .expect("open");
+    let after = reopened.describe();
+
+    assert_eq!(before.inputs[0].id, after.inputs[0].id);
+    assert_eq!(before.artifacts[0].id, after.artifacts[0].id);
+    assert_eq!(before.runs[0].id, after.runs[0].id);
+    // The run still names the artifact it produced, in the spelling the
+    // artifact itself carries.
+    assert_eq!(
+        after.runs[0].output_artifact_ids,
+        vec![after.artifacts[0].id.clone()]
+    );
+}
+
+#[test]
+fn a_reopened_project_starts_with_every_reference_unchecked() {
+    let scratch = Scratch::new("fresh-handles");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let project_document = scratch.join("project.mscanvas");
+    store.save_as(&project_document).expect("save as");
+
+    let reopened = ProjectStore::new();
+    reopened
+        .open_document(&project_document, false)
+        .expect("open");
+
+    // Opening resolves nothing and reads nothing. Whatever the saving session
+    // had established about these files is not a fact this session holds.
+    assert!(
+        reopened
+            .describe()
+            .inputs
+            .iter()
+            .all(|input| input.verification == "notChecked")
+    );
+}
+
+#[test]
+fn a_recorded_completed_run_is_history_and_not_a_schedule() {
+    let scratch = Scratch::new("history");
+    let (store, input_id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    store.capture_file_facts(&[input_id]).expect("capture");
+    let project_document = scratch.join("project.mscanvas");
+    store.save_as(&project_document).expect("save as");
+
+    let reopened = ProjectStore::new();
+    reopened
+        .open_document(&project_document, false)
+        .expect("open");
+    let described = reopened.describe();
+
+    assert_eq!(described.runs.len(), 1);
+    assert_eq!(described.runs[0].outcome, "completed");
+    // Opening produced no second run, and the references it names are still
+    // unchecked -- so nothing about opening ran anything.
+    assert!(
+        described
+            .inputs
+            .iter()
+            .all(|input| input.verification == "notChecked")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Content verification
+// ---------------------------------------------------------------------------
+
+#[test]
+fn altered_bytes_at_the_same_length_and_modified_time_are_detected() {
+    let scratch = Scratch::new("same-length");
+    let path = scratch.write("sample.txt", b"AAAAAAAAAA");
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    let id = store.register_input(&path).expect("register");
+
+    let original = fs::metadata(&path).expect("metadata");
+    let modified = original.modified().expect("modified time");
+
+    // The same number of bytes, different content.
+    fs::write(&path, b"BBBBBBBBBB").expect("rewrite");
+    let handle = fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("reopen to restore the timestamp");
+    handle
+        .set_modified(modified)
+        .expect("restore the modified time");
+    drop(handle);
+
+    let after = fs::metadata(&path).expect("metadata again");
+    assert_eq!(after.len(), original.len(), "the length is unchanged");
+    assert_eq!(
+        after.modified().expect("modified"),
+        modified,
+        "the modified time is unchanged"
+    );
+
+    store.check_linked_files().expect("check");
+
+    // Length and modified time are hints and both say nothing changed. Only the
+    // digest of a stable read decides, which is why this is `differentContent`.
+    assert_eq!(verification(&store, id), "differentContent");
+}
+
+#[test]
+fn identical_content_in_a_different_object_is_not_proof_of_the_same_object() {
+    let scratch = Scratch::new("copy");
+    let original = scratch.write("original.txt", b"identical bytes");
+    let copy = scratch.write("copy.txt", b"identical bytes");
+
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    let first = store.register_input(&original).expect("register original");
+    let second = store.register_input(&copy).expect("register copy");
+
+    // Two records, not one. A digest is a fact about bytes, and two files with
+    // the same bytes are still two acquisitions, two events and two objects.
+    assert_ne!(first, second);
+    assert_eq!(store.describe().inputs.len(), 2);
+
+    #[cfg(windows)]
+    {
+        let original_identity = crate::local_document::object_identity(&original);
+        let copy_identity = crate::local_document::object_identity(&copy);
+        assert!(original_identity.is_some());
+        assert_ne!(
+            original_identity, copy_identity,
+            "the filesystem calls these two different objects"
+        );
+    }
+}
+
+#[test]
+fn a_deleted_reference_is_missing_and_not_unreadable() {
+    let scratch = Scratch::new("missing");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    fs::remove_file(scratch.join("sample.txt")).expect("remove");
+
+    store.check_linked_files().expect("check");
+
+    assert_eq!(verification(&store, id), "unavailable");
+    assert_eq!(
+        unavailable_reason(&store, id),
+        Some("missingAtCheckedLocation")
+    );
+}
+
+#[test]
+fn a_directory_at_the_reference_location_is_unsafe_and_not_missing() {
+    let scratch = Scratch::new("unsafe");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let path = scratch.join("sample.txt");
+    fs::remove_file(&path).expect("remove the file");
+    fs::create_dir(&path).expect("put a directory at the same name");
+
+    store.check_linked_files().expect("check");
+
+    assert_eq!(unavailable_reason(&store, id), Some("unsafeReference"));
+}
+
+/// Windows-specific. A file another process holds open for writing cannot be
+/// read stably, and the answer is that rather than a content judgement.
+///
+/// This exercises exactly one mechanism: a mandatory share mode on one file
+/// this test created. It is not a claim that every unreadable file on every
+/// filesystem reports this way.
+#[cfg(windows)]
+#[test]
+fn a_file_held_writable_elsewhere_reports_an_unstable_read() {
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    let scratch = Scratch::new("unstable");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+
+    // Another writer holds it, sharing reads only -- so this build cannot get
+    // the write-denying handle a stable read requires.
+    let held = fs::OpenOptions::new()
+        .write(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(scratch.join("sample.txt"))
+        .expect("hold the file writable");
+
+    store.check_linked_files().expect("check");
+    assert_eq!(unavailable_reason(&store, id), Some("unstableRead"));
+
+    drop(held);
+    store.check_linked_files().expect("check again");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+}
+
+#[test]
+fn an_incomplete_required_member_set_is_its_own_outcome() {
+    let scratch = Scratch::new("incomplete");
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+
+    // A record with a mandatory companion, built directly: the SCIEX rule is
+    // what decides that a `.wiff` has one, and this test is about what a check
+    // does with the record, not about the family rule.
+    let primary = scratch.write("run.wiff", b"primary bytes");
+    scratch.write("run.wiff.scan", b"companion bytes");
+    let id = store.register_input(&primary).expect("register");
+
+    let described = store.describe();
+    assert_eq!(
+        described.inputs[0].members.len(),
+        2,
+        "the companion the family mandates is recorded as a member"
+    );
+
+    store.check_linked_files().expect("check");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+
+    // The primary is still there; the companion is not. That is not a missing
+    // input and not changed content.
+    fs::remove_file(scratch.join("run.wiff.scan")).expect("remove the companion");
+    store.check_linked_files().expect("check again");
+    assert_eq!(
+        unavailable_reason(&store, id),
+        Some("incompleteRequiredMembers")
+    );
+}
+
+#[test]
+fn a_wiff_primary_without_its_companion_is_refused_at_registration() {
+    let scratch = Scratch::new("half-bundle");
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    let primary = scratch.write("lonely.wiff", b"primary bytes");
+
+    let refusal = store.register_input(&primary).expect_err("a refusal");
+
+    // A primary alone is not a verified complete acquisition, and registering
+    // one as though it were would make every later check lie about it.
+    assert_eq!(
+        refusal,
+        ProjectError::Unavailable(UnavailableReason::IncompleteRequiredMembers)
+    );
+    assert!(store.describe().inputs.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Locators and relinking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_project_and_its_data_copied_together_still_resolve() {
+    let origin = Scratch::new("origin");
+    let store = ProjectStore::new();
+    store.create("Portable".to_owned(), false).expect("new");
+    let data = origin.write("data/sample.txt", b"portable bytes");
+    store.register_input(&data).expect("register");
+
+    let project_document = origin.join("project.mscanvas");
+    store.save_as(&project_document).expect("save as");
+
+    // Saved beside its data, the reference became relative.
+    assert_eq!(
+        store.describe().inputs[0].locator_kind,
+        super::dto::LocatorKind::InsideProject
+    );
+
+    // Copy both to a different directory, as a user moving a project would.
+    let elsewhere = Scratch::new("elsewhere");
+    fs::create_dir_all(elsewhere.join("data")).expect("create the data directory");
+    fs::copy(&data, elsewhere.join("data/sample.txt")).expect("copy the data");
+    fs::copy(&project_document, elsewhere.join("project.mscanvas")).expect("copy the project");
+
+    let moved = ProjectStore::new();
+    moved
+        .open_document(&elsewhere.join("project.mscanvas"), false)
+        .expect("open the copy");
+    moved.check_linked_files().expect("check");
+
+    assert_eq!(
+        moved.describe().inputs[0].verification,
+        "matchingRecordedContent",
+        "a relative locator resolves against wherever the project now is"
+    );
+}
+
+#[test]
+fn save_as_rebases_external_references_rather_than_reinterpreting_them() {
+    let data_home = Scratch::new("external-data");
+    let first_home = Scratch::new("first-home");
+    let data = data_home.write("sample.txt", b"external bytes");
+
+    let store = ProjectStore::new();
+    store.create("External".to_owned(), false).expect("new");
+    store.register_input(&data).expect("register");
+    store
+        .save_as(&first_home.join("project.mscanvas"))
+        .expect("first save");
+    assert_eq!(
+        store.describe().inputs[0].locator_kind,
+        super::dto::LocatorKind::OutsideProject
+    );
+
+    // A decoy at the same relative name under the new directory. If Save As
+    // reinterpreted a stored string instead of rebasing a resolved path, the
+    // reference would silently start pointing at this instead.
+    let second_home = Scratch::new("second-home");
+    second_home.write("sample.txt", b"a completely different file");
+    store
+        .save_as(&second_home.join("project.mscanvas"))
+        .expect("second save");
+
+    store.check_linked_files().expect("check");
+    assert_eq!(
+        store.describe().inputs[0].verification,
+        "matchingRecordedContent",
+        "the reference still names the external file it always named"
+    );
+    assert_eq!(
+        store.describe().inputs[0].locator_kind,
+        super::dto::LocatorKind::OutsideProject
+    );
+}
+
+#[test]
+fn relinking_a_matching_candidate_moves_the_locator_and_keeps_the_identifier() {
+    let scratch = Scratch::new("relink-match");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"stable bytes");
+    store.capture_file_facts(&[id]).expect("capture");
+    let artifact_before = store.describe().artifacts[0].id.clone();
+
+    // The file moves. Same bytes, new location.
+    let moved = scratch.join("moved/sample.txt");
+    fs::create_dir_all(moved.parent().expect("parent")).expect("create");
+    fs::rename(scratch.join("sample.txt"), &moved).expect("move it");
+
+    store.check_linked_files().expect("check");
+    assert_eq!(
+        unavailable_reason(&store, id),
+        Some("missingAtCheckedLocation")
+    );
+
+    let matches = store.propose_relink(id, &moved).expect("propose");
+    assert!(matches, "the candidate holds the recorded bytes");
+
+    // Proposing commits nothing.
+    assert_eq!(
+        unavailable_reason(&store, id),
+        Some("missingAtCheckedLocation")
+    );
+    assert!(store.describe().inputs[0].relink_proposed);
+
+    store.commit_relink(id).expect("commit");
+    store.check_linked_files().expect("check again");
+
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+    // The logical record is the same record, and the history that named it
+    // still names it.
+    assert_eq!(store.describe().inputs[0].id, id.to_string());
+    assert_eq!(store.describe().artifacts[0].id, artifact_before);
+    assert_eq!(store.describe().runs[0].input_ids, vec![id.to_string()]);
+}
+
+#[test]
+fn relinking_a_differing_candidate_does_not_replace_the_recorded_baseline() {
+    let scratch = Scratch::new("relink-differs");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"original bytes");
+    let recorded = store.describe().inputs[0].members[0].recorded_byte_length;
+
+    let candidate = scratch.write("other/sample.txt", b"different bytes entirely");
+    let matches = store.propose_relink(id, &candidate).expect("propose");
+    assert!(!matches, "the candidate does not hold the recorded bytes");
+
+    store.commit_relink(id).expect("commit anyway");
+
+    // Committed, because where a file is and what it contains are independent:
+    // a user may well be pointing at a file that has since been edited.
+    assert_eq!(verification(&store, id), "differentContent");
+    // And the baseline is untouched. A check saw new bytes; it did not get to
+    // rewrite what the record claims was registered.
+    assert_eq!(
+        store.describe().inputs[0].members[0].recorded_byte_length,
+        recorded
+    );
+}
+
+#[test]
+fn a_relink_examines_only_the_candidate_it_was_given() {
+    let scratch = Scratch::new("relink-scope");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    // A decoy with identical bytes sits in the same directory. Nothing scans
+    // for it, so nothing finds it.
+    scratch.write("decoy.txt", b"bytes");
+    fs::remove_file(scratch.join("sample.txt")).expect("remove");
+
+    store.check_linked_files().expect("check");
+    assert_eq!(
+        unavailable_reason(&store, id),
+        Some("missingAtCheckedLocation")
+    );
+    // No proposal appeared on its own.
+    assert!(!store.describe().inputs[0].relink_proposed);
+}
+
+// ---------------------------------------------------------------------------
+// The untrusted document
+// ---------------------------------------------------------------------------
+
+/// Builds one minimal valid document, for a test to then break in one place.
+fn valid_document() -> ProjectDocument {
+    let mut document = ProjectDocument::new("Fixture".to_owned());
+    let input_id = InputId::new();
+    document.inputs.push(super::record::InputRecord {
+        id: input_id,
+        label: "sample.txt".to_owned(),
+        locator: Locator::ProjectRelative {
+            path: "sample.txt".to_owned(),
+        },
+        members: vec![MemberRecord {
+            role: MemberRole::Primary,
+            relative_name: String::new(),
+            baseline: ContentBaseline {
+                byte_length: 5,
+                sha256: "A".repeat(64),
+            },
+        }],
+    });
+    document.runs.push(RunRecord {
+        id: RunId::new(),
+        operation: RecordedOperation::CaptureFileFactsV1,
+        input_ids: vec![input_id],
+        output_artifact_ids: Vec::new(),
+        outcome: TerminalOutcome::Failed,
+        application_version: "0.1.0".to_owned(),
+        started_at: "2026-09-19T00:00:00Z".to_owned(),
+        finished_at: "2026-09-19T00:00:01Z".to_owned(),
+    });
+    document
+}
+
+fn refused(document: &ProjectDocument) -> DocumentProblem {
+    let bytes = record::serialize(document).expect("serialize");
+    record::parse(&bytes).expect_err("a refusal")
+}
+
+#[test]
+fn the_fixture_document_is_accepted_so_the_refusals_below_mean_something() {
+    let bytes = record::serialize(&valid_document()).expect("serialize");
+    record::parse(&bytes).expect("the unbroken fixture parses");
+}
+
+#[test]
+fn a_duplicate_identifier_is_refused() {
+    let mut document = valid_document();
+    let duplicate = document.inputs[0].clone();
+    document.inputs.push(duplicate);
+    assert_eq!(refused(&document), DocumentProblem::DuplicateIdentifier);
+}
+
+#[test]
+fn a_dangling_run_reference_is_refused() {
+    let mut document = valid_document();
+    document.runs[0].input_ids = vec![InputId::new()];
+    assert_eq!(refused(&document), DocumentProblem::DanglingReference);
+}
+
+#[test]
+fn a_failed_run_carrying_an_artifact_is_refused() {
+    let mut document = valid_document();
+    document.runs[0].output_artifact_ids = vec![mscanvas_core::ArtifactId::new()];
+    // Dangling first, which is itself the point: a failed run cannot name an
+    // artifact because a failed run produced none to name.
+    assert_eq!(refused(&document), DocumentProblem::DanglingReference);
+}
+
+#[test]
+fn a_completed_run_producing_nothing_is_refused() {
+    let mut document = valid_document();
+    document.runs[0].outcome = TerminalOutcome::Completed;
+    assert_eq!(refused(&document), DocumentProblem::InconsistentRecord);
+}
+
+#[test]
+fn an_unknown_schema_version_is_refused_as_unsupported_rather_than_malformed() {
+    let mut document = valid_document();
+    document.schema_version = record::SCHEMA_VERSION + 1;
+    assert_eq!(refused(&document), DocumentProblem::UnsupportedVersion);
+}
+
+#[test]
+fn a_truncated_document_is_refused() {
+    let bytes = record::serialize(&valid_document()).expect("serialize");
+    let truncated = &bytes[..bytes.len() / 2];
+    assert_eq!(
+        record::parse(truncated).expect_err("a refusal"),
+        DocumentProblem::Malformed
+    );
+}
+
+#[test]
+fn an_oversized_document_is_refused_without_being_parsed() {
+    let scratch = Scratch::new("oversized");
+    let path = scratch.join("project.mscanvas");
+    let oversized = vec![b'{'; (record::MAX_DOCUMENT_BYTES + 1) as usize];
+    fs::write(&path, &oversized).expect("write");
+
+    let store = ProjectStore::new();
+    let refusal = store.open_document(&path, false).expect_err("a refusal");
+
+    assert_eq!(refusal, ProjectError::Document(DocumentProblem::Oversized));
+}
+
+#[test]
+fn a_traversal_locator_is_refused_and_reaches_nothing() {
+    for path in ["../escape.txt", "sub/../../escape.txt", "/absolute.txt"] {
+        let locator = Locator::ProjectRelative {
+            path: path.to_owned(),
+        };
+        assert_eq!(
+            record::validate_locator(&locator).expect_err("a refusal"),
+            DocumentProblem::InvalidLocator,
+            "{path} must not be a project-relative locator"
+        );
+    }
+}
+
+#[test]
+fn unc_and_device_references_are_refused_by_shape() {
+    for path in [
+        r"\\server\share\file.txt",
+        r"\\?\C:\file.txt",
+        r"\\.\PhysicalDrive0",
+        "//server/share/file.txt",
+    ] {
+        let locator = Locator::LocalAbsolute {
+            path: PathBuf::from(path),
+        };
+        assert_eq!(
+            record::validate_locator(&locator).expect_err("a refusal"),
+            DocumentProblem::InvalidLocator,
+            "{path} must not be an absolute locator"
+        );
+    }
+}
+
+#[test]
+fn a_refused_document_leaves_the_open_project_exactly_as_it_was() {
+    let scratch = Scratch::new("refusal-preserves");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let before = store.describe();
+
+    let broken = scratch.join("broken.mscanvas");
+    fs::write(&broken, b"{ this is not a project document").expect("write");
+
+    let refusal = store.open_document(&broken, true).expect_err("a refusal");
+    assert_eq!(refusal, ProjectError::Document(DocumentProblem::Malformed));
+
+    let after = store.describe();
+    assert_eq!(after.name, before.name);
+    assert_eq!(after.inputs.len(), 1);
+    assert_eq!(after.inputs[0].id, id.to_string());
+}
+
+#[test]
+fn a_member_name_carrying_a_separator_is_refused() {
+    let mut document = valid_document();
+    document.inputs[0].members.push(MemberRecord {
+        role: MemberRole::RequiredCompanion,
+        relative_name: "../outside.txt".to_owned(),
+        baseline: ContentBaseline {
+            byte_length: 1,
+            sha256: "B".repeat(64),
+        },
+    });
+    assert_eq!(refused(&document), DocumentProblem::InvalidLocator);
+}
+
+// ---------------------------------------------------------------------------
+// Write authority
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_destination_not_named_as_a_project_is_refused() {
+    let scratch = Scratch::new("bad-name");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let refusal = store
+        .save_as(&scratch.join("project.txt"))
+        .expect_err("a refusal");
+    assert_eq!(refusal, ProjectError::DestinationNotNamed);
+}
+
+#[test]
+fn saving_over_an_unrelated_existing_file_is_refused_and_preserves_it() {
+    let scratch = Scratch::new("unrelated");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let occupied = scratch.join("somebody-elses.mscanvas");
+    fs::write(&occupied, b"important content that is not a project").expect("write");
+
+    let refusal = store.save_as(&occupied).expect_err("a refusal");
+
+    assert_eq!(refusal, ProjectError::DestinationNotAProject);
+    assert_eq!(
+        fs::read(&occupied).expect("read"),
+        b"important content that is not a project",
+        "the file is exactly as it was"
+    );
+}
+
+#[test]
+fn saving_over_a_referenced_acquisition_is_refused_and_preserves_it() {
+    let scratch = Scratch::new("over-source");
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    // A referenced file that is *also* named as a project document, which is
+    // the one case the "is it a project" rule alone cannot catch.
+    let referenced = scratch.write("acquisition.mscanvas", b"acquisition bytes");
+    store.register_input(&referenced).expect("register");
+
+    let refusal = store.save_as(&referenced).expect_err("a refusal");
+
+    assert!(
+        matches!(
+            refusal,
+            ProjectError::DestinationAliasesInput | ProjectError::DestinationNotAProject
+        ),
+        "refused, by identity or by shape: {refusal:?}"
+    );
+    assert_eq!(
+        fs::read(&referenced).expect("read"),
+        b"acquisition bytes",
+        "the referenced file is exactly as it was"
+    );
+}
+
+/// Windows-specific. A hard link is a second name for one object, so a
+/// destination that is a hard-linked alias of a referenced file must be refused
+/// by identity rather than by name.
+#[cfg(windows)]
+#[test]
+fn a_hard_linked_alias_of_a_referenced_file_is_refused_by_identity() {
+    let scratch = Scratch::new("hard-link");
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    let referenced = scratch.write("acquisition.dat", b"acquisition bytes");
+    store.register_input(&referenced).expect("register");
+
+    let alias = scratch.join("alias.mscanvas");
+    if fs::hard_link(&referenced, &alias).is_err() {
+        // Hard links need both names on one volume and a filesystem that
+        // supports them. Where this machine cannot make one, the mechanism is
+        // untested rather than reported as passing.
+        eprintln!("skipped: this filesystem did not create a hard link");
+        return;
+    }
+
+    let refusal = store.save_as(&alias).expect_err("a refusal");
+    assert_eq!(refusal, ProjectError::DestinationAliasesInput);
+    assert_eq!(
+        fs::read(&referenced).expect("read"),
+        b"acquisition bytes",
+        "the referenced object is exactly as it was, under either name"
+    );
+}
+
+#[test]
+fn save_before_any_save_as_is_refused_rather_than_guessing_a_location() {
+    let scratch = Scratch::new("unpublished");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    assert_eq!(
+        store.save().expect_err("a refusal"),
+        ProjectError::NotYetPublished
+    );
+}
+
+#[test]
+fn a_stale_save_does_not_overwrite_another_writers_state() {
+    let scratch = Scratch::new("stale");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("first save");
+
+    // A second session opens the same document and publishes over it.
+    let other = ProjectStore::new();
+    other.open_document(&document, false).expect("open");
+    other.save().expect("the other session saves");
+    let other_bytes = fs::read(&document).expect("read");
+
+    // The first session still believes it holds the current revision.
+    let refusal = store.save().expect_err("a refusal");
+
+    assert_eq!(refusal, ProjectError::StaleDocument);
+    assert_eq!(
+        fs::read(&document).expect("read again"),
+        other_bytes,
+        "the other session's document is exactly as it left it"
+    );
+}
+
+#[test]
+fn an_external_replacement_at_the_bound_name_is_refused() {
+    let scratch = Scratch::new("replaced");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+
+    // Something else entirely now occupies the bound name.
+    fs::write(&document, b"not a project at all").expect("replace");
+
+    assert_eq!(
+        store.save().expect_err("a refusal"),
+        ProjectError::StaleDocument
+    );
+    assert_eq!(
+        fs::read(&document).expect("read"),
+        b"not a project at all",
+        "whatever is there is left alone"
+    );
+}
+
+#[test]
+fn a_repeated_save_advances_the_revision_and_stays_bound() {
+    let scratch = Scratch::new("revisions");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    store.save().expect("second save");
+    store.save().expect("third save");
+
+    let bytes = fs::read(&document).expect("read");
+    let parsed = record::parse(&bytes).expect("parse");
+    assert_eq!(parsed.revision, 3);
+    assert!(!store.describe().dirty);
+}
+
+#[test]
+fn unsaved_changes_block_a_replacement_until_the_caller_says_to_discard() {
+    let scratch = Scratch::new("unsaved");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    assert!(store.describe().dirty);
+
+    assert_eq!(
+        store
+            .create("Another".to_owned(), false)
+            .expect_err("a refusal"),
+        ProjectError::UnsavedChanges
+    );
+    assert_eq!(store.describe().inputs.len(), 1);
+
+    store
+        .create("Another".to_owned(), true)
+        .expect("discarding");
+    assert!(store.describe().inputs.is_empty());
+}
+
+#[test]
+fn a_save_leaves_no_temporary_beside_the_document() {
+    let scratch = Scratch::new("no-residue");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("save as");
+
+    let residue: Vec<_> = fs::read_dir(scratch.directory())
+        .expect("list")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(residue.is_empty(), "no temporary was left behind");
+}
+
+// ---------------------------------------------------------------------------
+// The capture operation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_capture_records_the_bytes_it_actually_observed() {
+    let scratch = Scratch::new("capture");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"twelve bytes");
+    store.capture_file_facts(&[id]).expect("capture");
+
+    let described = store.describe();
+    assert_eq!(described.artifacts.len(), 1);
+    assert_eq!(described.artifacts[0].observed_input_count, 1);
+    assert_eq!(described.artifacts[0].observed_member_count, 1);
+    assert_eq!(described.runs.len(), 1);
+    assert_eq!(described.runs[0].operation, "captureFileFactsV1");
+    assert_eq!(described.runs[0].outcome, "completed");
+    assert_eq!(
+        described.runs[0].application_version,
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+#[test]
+fn a_capture_over_a_missing_reference_records_a_failure_and_no_artifact() {
+    let scratch = Scratch::new("capture-fails");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    fs::remove_file(scratch.join("sample.txt")).expect("remove");
+
+    let refusal = store.capture_file_facts(&[id]).expect_err("a refusal");
+    assert_eq!(
+        refusal,
+        ProjectError::Unavailable(UnavailableReason::MissingAtCheckedLocation)
+    );
+
+    let described = store.describe();
+    assert!(
+        described.artifacts.is_empty(),
+        "a failed observation fabricates nothing"
+    );
+    assert_eq!(described.runs.len(), 1);
+    assert_eq!(described.runs[0].outcome, "failed");
+    assert!(described.runs[0].output_artifact_ids.is_empty());
+}
+
+#[test]
+fn a_cancelled_capture_records_a_cancellation_and_no_artifact() {
+    let scratch = Scratch::new("capture-cancelled");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    store.cancel();
+
+    let refusal = store.capture_file_facts(&[id]).expect_err("a refusal");
+    assert_eq!(refusal, ProjectError::Cancelled);
+
+    let described = store.describe();
+    assert!(described.artifacts.is_empty());
+    assert_eq!(described.runs[0].outcome, "cancelled");
+}
+
+#[test]
+fn a_capture_of_nothing_is_refused() {
+    let scratch = Scratch::new("capture-nothing");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    assert_eq!(
+        store.capture_file_facts(&[]).expect_err("a refusal"),
+        ProjectError::NothingSelected
+    );
+    assert!(store.describe().runs.is_empty(), "no run was invented");
+}
+
+#[test]
+fn removing_a_reference_removes_the_history_that_named_it_and_no_file() {
+    let scratch = Scratch::new("remove");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    store.capture_file_facts(&[id]).expect("capture");
+    assert_eq!(store.describe().artifacts.len(), 1);
+
+    store.remove_input(id).expect("remove");
+
+    let described = store.describe();
+    assert!(described.inputs.is_empty());
+    assert!(described.runs.is_empty());
+    assert!(described.artifacts.is_empty());
+    assert!(
+        scratch.join("sample.txt").exists(),
+        "removing a record never removes a file"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Cancellation leaves nothing established
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_cancelled_check_leaves_references_unchecked() {
+    let scratch = Scratch::new("cancel-check");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    // Registration established a match. A cancelled check must not turn that
+    // into a weaker claim, and must not leave a partial one either.
+    store.check_linked_files().expect("a real check");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+
+    store.cancel();
+    store.check_linked_files().expect("the cancelled check");
+
+    assert_eq!(verification(&store, id), "notChecked");
+}
+
+// ---------------------------------------------------------------------------
+// The recorded timestamp
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_recorded_instant_is_a_real_rfc_3339_date() {
+    assert_eq!(super::format_rfc3339(0), "1970-01-01T00:00:00Z");
+    assert_eq!(super::format_rfc3339(86_399), "1970-01-01T23:59:59Z");
+    assert_eq!(super::format_rfc3339(86_400), "1970-01-02T00:00:00Z");
+    // A leap day, which is the case the civil-date conversion exists for.
+    assert_eq!(super::format_rfc3339(1_709_164_800), "2024-02-29T00:00:00Z");
+    assert_eq!(super::format_rfc3339(1_758_240_000), "2025-09-19T00:00:00Z");
+}
+
+// ---------------------------------------------------------------------------
+// Physical limits this machine cannot test
+// ---------------------------------------------------------------------------
+
+/// Recorded rather than approximated.
+///
+/// A second physical volume is what would settle whether a project copied
+/// across volumes behaves as the relative-locator tests suggest, and whether
+/// the 128-bit file ID distinguishes objects that collide on a truncated index.
+/// This machine has one volume available to the test process, so both remain
+/// untested here. Copying between two directories is not copying between two
+/// volumes, and this test exists so that the difference is written down rather
+/// than assumed away by a test that reads like cross-volume coverage.
+#[test]
+fn cross_volume_behaviour_is_not_covered_by_these_tests() {
+    // Deliberately asserts only the thing that is true: the tests above use one
+    // volume.
+    let scratch = Scratch::new("one-volume");
+    let first = scratch.write("a.txt", b"a");
+    let second = scratch.write("b/c.txt", b"c");
+
+    #[cfg(windows)]
+    {
+        let first_volume = crate::local_document::object_identity(&first).map(|(volume, _)| volume);
+        let second_volume =
+            crate::local_document::object_identity(&second).map(|(volume, _)| volume);
+        assert_eq!(
+            first_volume, second_volume,
+            "both fixtures are on one volume, which is the limit this records"
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (first, second);
+    }
+}
