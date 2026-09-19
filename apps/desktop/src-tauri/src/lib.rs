@@ -1,3 +1,7 @@
+/// Reading and replacing one small local document. Shared by the preference
+/// store and the project store so that the same-directory replacement sequence
+/// exists once.
+mod local_document;
 /// The narrow, Rust-owned UI preference store. Separate from `preview` on
 /// purpose: it holds no scientific state, confers no authority and shares no
 /// lane with the conversion, process or roster locks.
