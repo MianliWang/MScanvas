@@ -339,8 +339,12 @@ pub fn verify_input(
             if cancelled.load(Ordering::Relaxed) {
                 return InputVerification::NotChecked;
             }
+            // Case-insensitively, for the reason `ContentBaseline::matches`
+            // gives: a digest has no case to carry meaning in, and comparing
+            // spellings would report identical bytes as changed.
             let matching = observed.iter().all(|(seen, baseline)| {
-                baseline.byte_length == seen.byte_length && baseline.sha256 == seen.sha256
+                baseline.byte_length == seen.byte_length
+                    && baseline.sha256.eq_ignore_ascii_case(&seen.sha256)
             });
             if matching {
                 InputVerification::MatchingRecordedContent

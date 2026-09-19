@@ -26,6 +26,15 @@ export interface FakeProjectApi extends ProjectApi {
   readonly refuseOnce: (operation: keyof ProjectApi, code: string) => void;
   /** Makes the next dialog operation answer as cancelled. */
   readonly cancelOnce: (operation: keyof ProjectApi) => void;
+  /**
+   * Withholds the next answer to one operation until the returned function is
+   * called.
+   *
+   * A claim about what the interface says *while* an operation runs cannot be
+   * made against a boundary that answers in the same microtask: the state never
+   * exists on screen. This is how a check in flight can be looked at.
+   */
+  readonly holdOnce: (operation: keyof ProjectApi) => () => void;
   readonly calls: string[];
 }
 
@@ -60,6 +69,9 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
   let state = initial;
   const refusals = new Map<string, string>();
   const cancellations = new Set<string>();
+  const held = new Map<string, () => void>();
+  /** How a held call is let go, once it has actually been made. */
+  const release = new Map<string, () => void>();
   const calls: string[] = [];
 
   /** One answer, after recording the call and honouring any staged outcome. */
@@ -75,6 +87,14 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
       cancellations.delete(operation);
       return Promise.resolve(null);
     }
+    const gate = held.get(operation);
+    if (gate !== undefined) {
+      held.delete(operation);
+      return new Promise((resolve) => {
+        release.set(operation, () => resolve(state));
+        gate();
+      });
+    }
     return Promise.resolve(state);
   }
 
@@ -84,8 +104,15 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     },
     refuseOnce: (operation, code) => refusals.set(operation, code),
     cancelOnce: (operation) => cancellations.add(operation),
+    holdOnce: (operation) => {
+      held.set(operation, () => undefined);
+      return () => {
+        release.get(operation)?.();
+        release.delete(operation);
+      };
+    },
     calls,
-    getProjectState: vi.fn(() => Promise.resolve(state)),
+    getProjectState: vi.fn(() => answer("getProjectState") as Promise<ProjectState>),
     createProject: vi.fn(() => answer("createProject") as Promise<ProjectState>),
     closeProject: vi.fn(() => answer("closeProject") as Promise<ProjectState>),
     openProject: vi.fn(() => answer("openProject")),

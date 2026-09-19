@@ -20,6 +20,15 @@
   scrollbar-gutter: stable;
 }
 
+/* Every control on this surface, including the link-styled ones inside a
+   notice. A text link is a smaller affordance, not a smaller target: at its
+   natural line height the Dismiss control measured 19.5px, which is under the
+   24px WCAG 2.2 floor and well under the compact 32px this design system sets.
+   One rule rather than three, so a control added later cannot miss it. */
+.project-surface button {
+  min-height: 32px;
+}
+
 .project-surface {
   display: flex;
   flex-direction: column;
@@ -59,10 +68,8 @@
   gap: 8px;
 }
 
-.project-actions button {
-  min-height: 32px;
-}
 
+.project-busy,
 .project-unsaved,
 .project-problem {
   display: flex;
@@ -73,6 +80,11 @@
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   font-size: 13px;
+}
+
+.project-busy {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
 }
 
 .project-unsaved {
@@ -196,9 +208,6 @@
   gap: 8px;
 }
 
-.project-row-actions button {
-  min-height: 32px;
-}
 
 .project-proposal {
   font-size: 12px;

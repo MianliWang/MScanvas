@@ -7,16 +7,27 @@
  * them is a supported acquisition is a question the roster answers, separately,
  * when a user asks it to.
  *
- * Three states are visually distinct and labelled, because telling them apart
- * is the point of the surface: a reference whose bytes match the record, one
- * whose bytes differ, and one that could not be read at all -- with the reason
- * for the last, since "not there" and "somebody else has it open" are different
- * things to do something about.
+ * Three things this surface owes a reader who cannot see it:
+ *
+ * The outcomes are words. A reference whose bytes match, one whose bytes
+ * differ, and one that could not be read are three sentences, not three
+ * colours, and the reason for the last is given because "not there" and
+ * "another program has it open" need different actions.
+ *
+ * Every per-row control names its reference. Five references produce five
+ * "Locate" buttons, and a button list that reads "Locate, Remove, Locate,
+ * Remove" is one a reader can act on wrongly.
+ *
+ * What is happening is announced. A check reads every referenced file whole, so
+ * the controls can be dim for a long time; the live region says which operation
+ * is running rather than leaving silence to stand for it.
  */
+
+import { useEffect, useRef } from "react";
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { ProjectInput } from "./projectApi";
-import type { ProjectSession } from "./useProject";
+import type { ProjectBusy, ProjectSession } from "./useProject";
 
 /** The message key for one verification outcome. */
 function verificationKey(input: ProjectInput) {
@@ -41,6 +52,59 @@ function verificationKey(input: ProjectInput) {
 }
 
 /**
+ * The sentence for one refusal identifier.
+ *
+ * Every identifier Rust can send, mapped to what it means for the person
+ * reading it. The fallback exists for an identifier a future build adds, and is
+ * the only case where the surface says something as vague as "that was
+ * refused".
+ */
+const REFUSALS = {
+  unsavedChanges: "projectRefusedUnsavedChanges",
+  noOpenProject: "projectRefusedNoOpenProject",
+  notYetPublished: "projectRefusedNotYetPublished",
+  unknownRecord: "projectRefusedUnknownRecord",
+  destinationNotNamed: "projectRefusedDestinationNotNamed",
+  destinationNotAProject: "projectRefusedDestinationNotAProject",
+  destinationAliasesInput: "projectRefusedDestinationAliasesInput",
+  staleDocument: "projectRefusedStaleDocument",
+  notPublished: "projectRefusedNotPublished",
+  oversized: "projectRefusedOversized",
+  missingAtCheckedLocation: "projectRefusedMissing",
+  unreadable: "projectRefusedUnreadable",
+  unsafeReference: "projectRefusedUnsafe",
+  incompleteRequiredMembers: "projectRefusedIncomplete",
+  unstableRead: "projectRefusedUnstable",
+  nothingSelected: "projectRefusedNothingSelected",
+  alreadyRunning: "projectRefusedAlreadyRunning",
+  malformed: "projectRefusedMalformed",
+  unsupportedVersion: "projectRefusedUnsupportedVersion",
+  duplicateIdentifier: "projectRefusedDuplicate",
+  danglingReference: "projectRefusedDangling",
+  invalidLocator: "projectRefusedInvalidLocator",
+  inconsistentRecord: "projectRefusedInconsistent",
+  unsafeTarget: "projectRefusedUnsafe",
+} as const;
+
+function refusalKey(code: string) {
+  return code in REFUSALS
+    ? REFUSALS[code as keyof typeof REFUSALS]
+    : ("projectRefusedUnknown" as const);
+}
+
+const BUSY = {
+  opening: "projectBusyOpening",
+  saving: "projectBusySaving",
+  checking: "projectBusyChecking",
+  capturing: "projectBusyCapturing",
+  linking: "projectBusyLinking",
+} as const;
+
+function busyKey(busy: ProjectBusy) {
+  return busy === "idle" ? null : BUSY[busy];
+}
+
+/**
  * The class that carries the outcome visually.
  *
  * Never the only cue: the label beside it says the same thing in words, and the
@@ -54,13 +118,72 @@ function verificationTone(input: ProjectInput): string {
   return "is-unchecked";
 }
 
+/**
+ * A recorded instant, in the reader's own locale.
+ *
+ * The document stores RFC 3339 in UTC, which is the right thing to store and
+ * the wrong thing to show. An instant this cannot parse is shown as it was
+ * stored rather than replaced with a guess.
+ */
+function recordedAt(value: string, locale: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(
+    parsed,
+  );
+}
+
 export function ProjectPanel({ session }: { readonly session: ProjectSession }) {
   const t = useUiMessages();
-  const { state, busy, problem, selected } = session;
+  const { state, busy, problem, cancelled, pending, selected } = session;
   const working = busy !== "idle";
+  const locale = document.documentElement.lang || "en";
+
+  /**
+   * Keeps the keyboard where the user put it across a relink proposal.
+   *
+   * Pressing Locate unmounts that button and mounts the confirmation in its
+   * place, which drops focus to `<body>` -- so a keyboard user would have to
+   * tab in from the top of the page to reach the control the flow just created
+   * for them. Focus follows to that control instead.
+   */
+  const proposed = state.inputs.find((input) => input.relinkProposed)?.id ?? null;
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const lastProposed = useRef<string | null>(null);
+  useEffect(() => {
+    if (proposed !== null && proposed !== lastProposed.current) {
+      confirmRef.current?.focus();
+    }
+    lastProposed.current = proposed;
+  }, [proposed]);
+
+  /**
+   * The one live region, carrying whatever the surface most recently has to
+   * say: what is running, what a proposal found, or why something was refused.
+   *
+   * One region and one voice. The visible notices below deliberately carry no
+   * role of their own, so nothing is announced twice.
+   */
+  const proposalInput = state.inputs.find((input) => input.id === proposed);
+  const announcement =
+    busyKey(busy) !== null
+      ? t(busyKey(busy) as "projectBusySaving")
+      : pending !== null
+        ? t("projectUnsavedQuestion")
+        : problem !== null
+          ? t(refusalKey(problem))
+          : cancelled
+            ? t("projectCancelled")
+            : proposalInput !== undefined
+              ? t(
+                  proposalInput.relinkCandidateMatches
+                    ? "projectRelinkMatches"
+                    : "projectRelinkDiffers",
+                )
+              : "";
 
   return (
-    <div className="project-surface" data-project-surface="">
+    <div className="project-surface" data-project-surface="" aria-busy={working || undefined}>
       <header className="project-header">
         <div>
           <h2>{state.open ? state.name : t("projectNone")}</h2>
@@ -73,68 +196,126 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
           <button
             type="button"
             className="secondary-button"
-            disabled={working}
-            onClick={() => void session.createProject(t("projectDefaultName"), !state.dirty)}
+            aria-disabled={working || undefined}
+            onClick={() => {
+              if (!working) void session.createProject(t("projectDefaultName"));
+            }}
           >
             {t("projectNew")}
           </button>
           <button
             type="button"
             className="secondary-button"
-            disabled={working}
-            onClick={() => void session.openProject(!state.dirty)}
+            aria-disabled={working || undefined}
+            onClick={() => {
+              if (!working) void session.openProject();
+            }}
           >
             {t("projectOpen")}
           </button>
+          {/* `aria-disabled` rather than `disabled`, for the reason the
+              workbench header gives: a disabled button leaves the tab order, so
+              the sentence explaining why Save is unavailable could only be read
+              with a pointer. Never having been saved is a passing refusal --
+              Save As fixes it. */}
           <button
             type="button"
             className="secondary-button"
-            disabled={working || !state.open || !state.published}
+            aria-disabled={working || !state.open || !state.published || undefined}
             title={state.open && !state.published ? t("projectSaveNeedsLocation") : undefined}
-            onClick={() => void session.saveProject()}
+            onClick={() => {
+              if (!working && state.open && state.published) void session.saveProject();
+            }}
           >
             {t("projectSave")}
           </button>
           <button
             type="button"
             className="secondary-button"
-            disabled={working || !state.open}
-            onClick={() => void session.saveProjectAs()}
+            aria-disabled={working || !state.open || undefined}
+            onClick={() => {
+              if (!working && state.open) void session.saveProjectAs();
+            }}
           >
             {t("projectSaveAs")}
           </button>
           <button
             type="button"
             className="secondary-button"
-            disabled={working || !state.open}
-            onClick={() => void session.closeProject(!state.dirty)}
+            aria-disabled={working || !state.open || undefined}
+            onClick={() => {
+              if (!working && state.open) void session.closeProject();
+            }}
           >
             {t("projectClose")}
           </button>
         </div>
       </header>
 
-      {state.dirty ? (
+      {/* Mounted from the first render and empty until there is something to
+          say, so what arrives is announced rather than appearing silently. */}
+      <p aria-live="polite" className="visually-hidden" data-live-region="project">
+        {announcement}
+      </p>
+
+      {busyKey(busy) === null ? null : (
+        <p className="project-busy" data-project-busy={busy}>
+          {t(busyKey(busy) as "projectBusySaving")}
+          <button type="button" className="link-button" onClick={() => void session.cancelJob()}>
+            {t("projectCancel")}
+          </button>
+        </p>
+      )}
+
+      {/* Unsaved changes are a question, not a failure, and the answer is the
+          user's. Without this the refusal is a loop: the action is refused and
+          nothing on screen offers a way through it. */}
+      {pending === null ? null : (
+        <p className="project-unsaved" data-project-pending={pending.kind}>
+          <span>{t("projectUnsavedQuestion")}</span>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() =>
+              void (state.published ? session.saveProject() : session.saveProjectAs())
+            }
+          >
+            {t("projectUnsavedSaveFirst")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            data-project-discard=""
+            onClick={() => void session.discardAndContinue()}
+          >
+            {t("projectUnsavedDiscard")}
+          </button>
+          <button type="button" className="link-button" onClick={session.keepEditing}>
+            {t("projectUnsavedKeepEditing")}
+          </button>
+        </p>
+      )}
+
+      {state.dirty && pending === null ? (
         <p className="project-unsaved" data-project-unsaved="">
           {t("projectUnsaved")}
         </p>
       ) : null}
 
-      {/* Mounted from the first render and empty until there is something to
-          say, so a refusal that arrives is announced rather than appearing
-          silently. */}
-      <p aria-live="polite" className="visually-hidden" data-live-region="project">
-        {problem === null ? "" : t("projectRefused")}
-      </p>
-
       {problem === null ? null : (
-        <p className="project-problem" role="status" data-project-problem={problem}>
-          <span>{t("projectRefused")}</span>
+        <p className="project-problem" data-project-problem={problem}>
+          <span>{t(refusalKey(problem))}</span>
           <button type="button" className="link-button" onClick={session.dismissProblem}>
             {t("projectDismiss")}
           </button>
         </p>
       )}
+
+      {cancelled ? (
+        <p className="project-note" data-project-cancelled="">
+          {t("projectCancelled")}
+        </p>
+      ) : null}
 
       {state.open ? (
         <>
@@ -145,38 +326,39 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
                 <button
                   type="button"
                   className="secondary-button"
-                  disabled={working}
-                  onClick={() => void session.addInput()}
+                  aria-disabled={working || undefined}
+                  onClick={() => {
+                    if (!working) void session.addInput();
+                  }}
                 >
                   {t("projectAddReference")}
                 </button>
                 <button
                   type="button"
                   className="secondary-button"
-                  disabled={working || state.inputs.length === 0}
+                  aria-disabled={working || state.inputs.length === 0 || undefined}
                   data-project-check=""
-                  onClick={() => void session.checkLinks()}
+                  onClick={() => {
+                    if (!working && state.inputs.length > 0) void session.checkLinks();
+                  }}
                 >
                   {t("projectCheckLinks")}
                 </button>
+                {/* The primary action, and the one whose unavailability needed
+                    explaining most: without a reason a reader finds it dim and
+                    nothing anywhere says a reference has to be ticked. */}
                 <button
                   type="button"
                   className="primary-button"
-                  disabled={working || selected.length === 0}
+                  aria-disabled={working || selected.length === 0 || undefined}
+                  title={selected.length === 0 ? t("projectCaptureNeedsSelection") : undefined}
                   data-project-capture=""
-                  onClick={() => void session.capture()}
+                  onClick={() => {
+                    if (!working && selected.length > 0) void session.capture();
+                  }}
                 >
                   {t("projectCapture")}
                 </button>
-                {working ? (
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => void session.cancelJob()}
-                  >
-                    {t("projectCancel")}
-                  </button>
-                ) : null}
               </div>
             </div>
 
@@ -196,6 +378,7 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
                       <input
                         type="checkbox"
                         checked={selected.includes(input.id)}
+                        aria-label={t("projectSelectNamed", { name: input.label })}
                         onChange={() => session.toggleSelected(input.id)}
                       />
                       <span className="project-row-label">{input.label}</span>
@@ -227,18 +410,23 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
                           </span>
                           <button
                             type="button"
+                            ref={confirmRef}
                             className="secondary-button"
-                            disabled={working}
+                            aria-disabled={working || undefined}
                             data-project-relink-commit={input.id}
-                            onClick={() => void session.commitRelink(input.id)}
+                            onClick={() => {
+                              if (!working) void session.commitRelink(input.id);
+                            }}
                           >
                             {t("projectRelinkConfirm")}
                           </button>
                           <button
                             type="button"
                             className="link-button"
-                            disabled={working}
-                            onClick={() => void session.abandonRelink()}
+                            aria-disabled={working || undefined}
+                            onClick={() => {
+                              if (!working) void session.abandonRelink();
+                            }}
                           >
                             {t("projectRelinkAbandon")}
                           </button>
@@ -247,9 +435,12 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
                         <button
                           type="button"
                           className="secondary-button"
-                          disabled={working}
+                          aria-disabled={working || undefined}
+                          aria-label={t("projectRelinkNamed", { name: input.label })}
                           data-project-relink={input.id}
-                          onClick={() => void session.proposeRelink(input.id)}
+                          onClick={() => {
+                            if (!working) void session.proposeRelink(input.id);
+                          }}
                         >
                           {t("projectRelink")}
                         </button>
@@ -257,8 +448,11 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
                       <button
                         type="button"
                         className="link-button"
-                        disabled={working}
-                        onClick={() => void session.removeInput(input.id)}
+                        aria-disabled={working || undefined}
+                        aria-label={t("projectRemoveNamed", { name: input.label })}
+                        onClick={() => {
+                          if (!working) void session.removeInput(input.id);
+                        }}
                       >
                         {t("projectRemoveReference")}
                       </button>
@@ -300,16 +494,25 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
                                 : "projectRunCancelled",
                           )}
                         </span>
-                        <span className="project-run-when">{run.finishedAt}</span>
+                        {/* Formatted for the reader. The document stores
+                            RFC 3339 in UTC, which is what a record should hold
+                            and not what a person should be shown. */}
+                        <span className="project-run-when">
+                          <time dateTime={run.finishedAt}>{recordedAt(run.finishedAt, locale)}</time>
+                        </span>
                       </p>
                       <p className="project-run-relationship">
                         {t("projectRunInputs", { count: run.inputIds.length })}
                         {artifacts.length === 0 ? (
                           <span data-project-no-artifact="">{t("projectRunNoArtifact")}</span>
                         ) : (
+                          // Described from the counts rather than from the
+                          // label the document stores: that label is written in
+                          // English by the backend, and echoing it would put
+                          // English into a Chinese session.
                           artifacts.map((artifact) => (
                             <span key={artifact.id} data-project-artifact={artifact.id}>
-                              {artifact.label}
+                              {t("projectArtifactFileFacts")}
                               {" — "}
                               {t("projectArtifactMembers", {
                                 count: artifact.observedMemberCount,

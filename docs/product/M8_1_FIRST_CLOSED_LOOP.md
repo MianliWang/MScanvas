@@ -247,6 +247,21 @@ Run with development, not deferred to an acceptance window.
   distinguishably, relinking is explicit, and the roundtrip works in both
   locales where affected.
 
+Two further groups came out of the review pass and belong in the list:
+
+- **Concurrency**: a reference registered, a capture committed, a Save As
+  published or a relink proposed while the project underneath was replaced,
+  closed or had a record removed is discarded rather than applied to whatever is
+  open when the work finishes. The failure it avoids is not a wrong pixel: a run
+  committed against a removed reference makes the document permanently
+  unsaveable, because the dangling reference it creates is one the reader
+  refuses on every later Save and nothing can delete.
+- **Names that are not what they look like**: on Windows a single path component
+  can be an alternate data stream (`sample.txt:payload`), a name that resolves
+  to its neighbour (`sample.txt ` and `sample.txt.`) or a device (`NUL`,
+  `COM1`). A component check alone admits all of them, so the rule is the
+  stricter one and is applied to member names and locator components alike.
+
 Native Windows file-mechanism tests run on task-owned fixtures only, without the
 VM and without the provider. Filesystem-specific observations are described as
 such: one editor's replace behaviour is not a universal ability to infer how any

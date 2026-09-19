@@ -1151,4 +1151,52 @@ export const en = {
   projectArtifactMembers_one: "{{count}} file recorded",
   projectArtifactMembers_other: "{{count}} files recorded",
   projectRunVersion: "Recorded by MSCanvas {{version}}",
+  // --- M8.1 review pass. One sentence per refusal, because "that was refused"
+  // is the same sentence for a stale document, a file this project references
+  // and a disk that would not take the write -- and only one of those is a
+  // thing the reader can do anything about.
+  projectRefusedUnsavedChanges: "This project has changes that have not been saved.",
+  projectRefusedNoOpenProject: "No project is open.",
+  projectRefusedNotYetPublished: "This project has not been saved anywhere yet. Use Save As to choose where.",
+  projectRefusedUnknownRecord: "That reference is no longer part of this project.",
+  projectRefusedDestinationNotNamed: "Choose a filename ending in .mscanvas.",
+  projectRefusedDestinationNotAProject: "That file is not this project, so MSCanvas did not replace it. Choose another name.",
+  projectRefusedDestinationAliasesInput: "That file is one this project references. MSCanvas did not replace it.",
+  projectRefusedStaleDocument: "That project file changed since it was opened, so MSCanvas did not replace it. Save As under another name to keep this copy.",
+  projectRefusedNotPublished: "The project could not be written. The last saved copy is unchanged.",
+  projectRefusedOversized: "This project is larger than MSCanvas saves.",
+  projectRefusedMissing: "That file was not found where this project recorded it. Use Locate to point at it.",
+  projectRefusedUnreadable: "That file could not be read.",
+  projectRefusedUnsafe: "That reference is not an ordinary file.",
+  projectRefusedIncomplete: "A companion file this acquisition requires is missing.",
+  projectRefusedUnstable: "That file is in use by another program, so it could not be read reliably. Close it and try again.",
+  projectRefusedNothingSelected: "Select at least one reference first.",
+  projectRefusedAlreadyRunning: "Finish or cancel the current check before starting another.",
+  projectRefusedMalformed: "That file is not a project MSCanvas can read. Nothing was changed.",
+  projectRefusedUnsupportedVersion: "That project was written by a newer version of MSCanvas. Nothing was changed.",
+  projectRefusedDuplicate: "That project file contains duplicate records. Nothing was changed.",
+  projectRefusedDangling: "That project file refers to records it does not contain. Nothing was changed.",
+  projectRefusedInvalidLocator: "That project file refers to a file location MSCanvas will not open. Nothing was changed.",
+  projectRefusedInconsistent: "That project file contains a record that contradicts itself. Nothing was changed.",
+  projectRefusedUnknown: "That action was refused and nothing was changed.",
+  projectCancelled: "Cancelled. Nothing was recorded.",
+  // Unsaved changes are a question, not a failure.
+  projectUnsavedQuestion: "Save this project before continuing?",
+  projectUnsavedSaveFirst: "Save first",
+  projectUnsavedDiscard: "Discard changes",
+  projectUnsavedKeepEditing: "Keep editing",
+  // What the surface is doing, for a reader who cannot see the buttons dim.
+  projectBusyOpening: "Reading…",
+  projectBusySaving: "Saving…",
+  projectBusyChecking: "Checking linked files…",
+  projectBusyCapturing: "Reading file contents…",
+  projectBusyLinking: "Checking the selected file…",
+  // Per-row controls, named for the reference they act on.
+  projectRelinkNamed: "Locate {{name}}",
+  projectRemoveNamed: "Remove {{name}} from this project",
+  projectSelectNamed: "Include {{name}} in the next capture",
+  projectCaptureNeedsSelection: "Tick at least one reference to capture its file facts.",
+  // The artifact a capture produced, described here rather than echoed from the
+  // document -- the document stores its label in English.
+  projectArtifactFileFacts: "File facts",
 } as const;

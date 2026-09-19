@@ -1124,4 +1124,52 @@ export const zhCN = {
   projectRunInputs_other: "{{count}} 个引用",
   projectArtifactMembers_other: "已记录 {{count}} 个文件",
   projectRunVersion: "由 MSCanvas {{version}} 记录",
+  // --- M8.1 review pass. One sentence per refusal, because "that was refused"
+  // is the same sentence for a stale document, a file this project references
+  // and a disk that would not take the write -- and only one of those is a
+  // thing the reader can do anything about.
+  projectRefusedUnsavedChanges: "该项目有尚未保存的更改。",
+  projectRefusedNoOpenProject: "未打开任何项目。",
+  projectRefusedNotYetPublished: "该项目尚未保存到任何位置。请使用“另存为”选择保存位置。",
+  projectRefusedUnknownRecord: "该引用已不属于此项目。",
+  projectRefusedDestinationNotNamed: "请选择以 .mscanvas 结尾的文件名。",
+  projectRefusedDestinationNotAProject: "该文件不是此项目，MSCanvas 未替换它。请另选名称。",
+  projectRefusedDestinationAliasesInput: "该文件是此项目引用的文件，MSCanvas 未替换它。",
+  projectRefusedStaleDocument: "该项目文件自打开后已更改，MSCanvas 未替换它。可使用“另存为”以其他名称保留当前副本。",
+  projectRefusedNotPublished: "项目未能写入。上次保存的副本保持不变。",
+  projectRefusedOversized: "该项目超出 MSCanvas 可保存的大小。",
+  projectRefusedMissing: "在此项目记录的位置未找到该文件。请使用“定位”指向它。",
+  projectRefusedUnreadable: "无法读取该文件。",
+  projectRefusedUnsafe: "该引用不是普通文件。",
+  projectRefusedIncomplete: "缺少该采集所需的配套文件。",
+  projectRefusedUnstable: "该文件正被其他程序占用，无法可靠读取。请关闭该程序后重试。",
+  projectRefusedNothingSelected: "请先至少选择一个引用。",
+  projectRefusedAlreadyRunning: "请先完成或取消当前检查，再开始新的检查。",
+  projectRefusedMalformed: "该文件不是 MSCanvas 能读取的项目。未更改任何内容。",
+  projectRefusedUnsupportedVersion: "该项目由更高版本的 MSCanvas 写入。未更改任何内容。",
+  projectRefusedDuplicate: "该项目文件中存在重复记录。未更改任何内容。",
+  projectRefusedDangling: "该项目文件引用了其中不存在的记录。未更改任何内容。",
+  projectRefusedInvalidLocator: "该项目文件引用了 MSCanvas 不会打开的文件位置。未更改任何内容。",
+  projectRefusedInconsistent: "该项目文件中存在自相矛盾的记录。未更改任何内容。",
+  projectRefusedUnknown: "该操作已被拒绝，未更改任何内容。",
+  projectCancelled: "已取消。未记录任何内容。",
+  // Unsaved changes are a question, not a failure.
+  projectUnsavedQuestion: "在继续之前保存该项目吗？",
+  projectUnsavedSaveFirst: "先保存",
+  projectUnsavedDiscard: "放弃更改",
+  projectUnsavedKeepEditing: "继续编辑",
+  // What the surface is doing, for a reader who cannot see the buttons dim.
+  projectBusyOpening: "正在读取…",
+  projectBusySaving: "正在保存…",
+  projectBusyChecking: "正在检查已链接的文件…",
+  projectBusyCapturing: "正在读取文件内容…",
+  projectBusyLinking: "正在检查所选文件…",
+  // Per-row controls, named for the reference they act on.
+  projectRelinkNamed: "定位 {{name}}",
+  projectRemoveNamed: "从此项目中移除 {{name}}",
+  projectSelectNamed: "在下次记录中包含 {{name}}",
+  projectCaptureNeedsSelection: "请至少勾选一个引用，以记录其文件事实。",
+  // The artifact a capture produced, described here rather than echoed from the
+  // document -- the document stores its label in English.
+  projectArtifactFileFacts: "文件事实",
 } as const;

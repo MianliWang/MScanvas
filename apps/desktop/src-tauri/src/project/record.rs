@@ -180,9 +180,15 @@ impl ContentBaseline {
     /// Length first, because it separates "rewritten" from "identical" without
     /// comparing anything else, and the digest second because it is the half
     /// that actually decides.
+    ///
+    /// Compared without regard to case. [`parse`] normalises every stored
+    /// digest to the upper-case form this build writes, so both sides already
+    /// agree -- but the cost of being wrong here is telling someone their data
+    /// changed when it did not, and a hexadecimal digest has no case to carry
+    /// meaning in.
     #[must_use]
     pub fn matches(&self, byte_length: u64, digest: Sha256Digest) -> bool {
-        self.byte_length == byte_length && self.sha256 == digest.to_string()
+        self.byte_length == byte_length && self.sha256.eq_ignore_ascii_case(&digest.to_string())
     }
 }
 
@@ -422,8 +428,16 @@ pub fn parse(bytes: &[u8]) -> Result<ProjectDocument, DocumentProblem> {
         Some(_) => return Err(DocumentProblem::UnsupportedVersion),
         None => return Err(DocumentProblem::Malformed),
     }
-    let document: ProjectDocument =
+    let mut document: ProjectDocument =
         serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?;
+    // One spelling for a digest, from here on.
+    //
+    // `valid_digest` accepts either case, because a hexadecimal digest written
+    // by `sha256sum`, by a hand edit or by another tool is the same digest.
+    // Comparisons downstream would then be comparing spellings rather than
+    // values, and would report byte-identical files as changed forever.
+    // Normalised once, at the boundary, to the form this build writes.
+    normalize_digests(&mut document);
     // Defence in depth rather than a second opinion: the strict deserialization
     // above cannot admit another version, and a document whose version
     // disagrees with the fields beside it is exactly the thing not to load.
@@ -432,6 +446,22 @@ pub fn parse(bytes: &[u8]) -> Result<ProjectDocument, DocumentProblem> {
     }
     validate(&document)?;
     Ok(document)
+}
+
+/// Rewrites every stored digest in the one spelling this build produces.
+fn normalize_digests(document: &mut ProjectDocument) {
+    for input in &mut document.inputs {
+        for member in &mut input.members {
+            member.baseline.sha256 = member.baseline.sha256.to_ascii_uppercase();
+        }
+    }
+    for artifact in &mut document.artifacts {
+        for observation in &mut artifact.file_facts.observations {
+            for member in &mut observation.members {
+                member.sha256 = member.sha256.to_ascii_uppercase();
+            }
+        }
+    }
 }
 
 /// The bytes one validated document is stored as.
@@ -600,27 +630,74 @@ fn valid_digest(value: &str) -> Result<(), DocumentProblem> {
     Ok(())
 }
 
-/// Whether a member's name beside its input is one this build will join.
+/// Whether one string is a plain file name this build will join onto a
+/// directory.
 ///
-/// The empty name is the single-file case and is allowed. Anything else must be
-/// one ordinary file name: no separator, no traversal, no drive, no root.
-/// Joining is the only thing this string is ever used for, so the rule is the
-/// rule for what may be joined.
-fn bounded_member_name(value: &str) -> Result<(), DocumentProblem> {
-    if value.is_empty() {
-        return Ok(());
-    }
-    if value.chars().count() > MAX_LABEL_CHARS {
-        return Err(DocumentProblem::InvalidLocator);
+/// One `Component::Normal` is necessary and is **not** sufficient on Windows,
+/// which is the trap this exists for. `Path` parses each of the following as a
+/// single normal component, and each is something other than the ordinary file
+/// the name appears to be:
+///
+/// - `sample.txt:payload` names an *alternate data stream* of `sample.txt`. It
+///   opens, reports itself as an ordinary file and has its own length, so a
+///   document carrying one would have MSCanvas measure and record content that
+///   does not appear in any directory listing, labelled as the file beside it.
+///   The same colon spells a drive in `C:`.
+/// - `sample.txt ` and `sample.txt.` resolve to `sample.txt`, because Win32
+///   strips trailing spaces and dots. Two members spelled that way are one file
+///   and would pass the duplicate-member check as two.
+/// - `NUL`, `CON`, `COM1` and the rest are device names in every directory.
+///
+/// So the rule is the stricter one: one normal component, and no character or
+/// shape that makes the name mean something other than a file in that
+/// directory. The remaining characters Win32 reserves are refused with them,
+/// because a name that cannot be created is not a name a record can describe.
+fn ordinary_file_name(value: &str) -> bool {
+    /// Device names, which are reserved in every directory, with or without an
+    /// extension.
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+
+    if value.is_empty() || value.chars().count() > MAX_LABEL_CHARS {
+        return false;
     }
     if value.chars().any(char::is_control) {
-        return Err(DocumentProblem::InvalidLocator);
+        return false;
     }
+    if value.contains([':', '<', '>', '"', '|', '?', '*', '/', '\\']) {
+        return false;
+    }
+    if value.ends_with(' ') || value.ends_with('.') {
+        return false;
+    }
+    let stem = value.split('.').next().unwrap_or(value);
+    if RESERVED
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+    {
+        return false;
+    }
+    // And after all of that, it must still be exactly one ordinary component:
+    // the checks above describe the characters, this one describes the shape.
     let mut components = Path::new(value).components();
-    match (components.next(), components.next()) {
-        (Some(Component::Normal(_)), None) => Ok(()),
-        _ => Err(DocumentProblem::InvalidLocator),
+    matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(_)), None)
+    )
+}
+
+/// Whether a member\'s name beside its input is one this build will join.
+///
+/// The empty name is the single-file case and is allowed, because the locator
+/// names the primary itself. Anything else must be one ordinary file name by
+/// [`ordinary_file_name`].
+fn bounded_member_name(value: &str) -> Result<(), DocumentProblem> {
+    if value.is_empty() || ordinary_file_name(value) {
+        return Ok(());
     }
+    Err(DocumentProblem::InvalidLocator)
 }
 
 /// Whether a locator is a form this build resolves.
@@ -648,15 +725,25 @@ pub fn validate_locator(locator: &Locator) -> Result<(), DocumentProblem> {
             if path.contains('\\') {
                 return Err(DocumentProblem::InvalidLocator);
             }
-            // Every component must be an ordinary name. `..` escapes the root,
-            // `.` is noise, a leading `/` is absolute, and a `C:` prefix is a
-            // drive -- none of which is a path below the project's directory.
+            // Every component must be an ordinary name, by the same rule a
+            // member name is held to. `..` escapes the root, `.` is noise, a
+            // leading `/` is absolute and a `C:` prefix is a drive -- and a
+            // component carrying a colon, a trailing dot or a device name is
+            // not the directory entry it looks like. See
+            // [`ordinary_file_name`].
             let candidate = Path::new(path);
-            if candidate
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-            {
+            let mut components = candidate.components().peekable();
+            if components.peek().is_none() {
                 return Err(DocumentProblem::InvalidLocator);
+            }
+            for component in components {
+                let Component::Normal(name) = component else {
+                    return Err(DocumentProblem::InvalidLocator);
+                };
+                match name.to_str() {
+                    Some(text) if ordinary_file_name(text) => {}
+                    _ => return Err(DocumentProblem::InvalidLocator),
+                }
             }
             Ok(())
         }
@@ -683,12 +770,22 @@ pub fn validate_locator(locator: &Locator) -> Result<(), DocumentProblem> {
             }
             // A `..` anywhere in an absolute locator means the stored string
             // and the object it reaches are two different things, which is
-            // exactly what a stored reference may not be.
-            if path
-                .components()
-                .any(|component| matches!(component, Component::ParentDir))
-            {
-                return Err(DocumentProblem::InvalidLocator);
+            // exactly what a stored reference may not be. Every named component
+            // is held to the same rule as a relative one, so a stream, a
+            // trailing dot or a device name cannot enter by this door either --
+            // the prefix and the root are the two parts an absolute path is
+            // allowed to have that a relative one is not.
+            for component in path.components() {
+                match component {
+                    Component::Prefix(_) | Component::RootDir => {}
+                    Component::Normal(name) => match name.to_str() {
+                        Some(text) if ordinary_file_name(text) => {}
+                        _ => return Err(DocumentProblem::InvalidLocator),
+                    },
+                    Component::CurDir | Component::ParentDir => {
+                        return Err(DocumentProblem::InvalidLocator);
+                    }
+                }
             }
             Ok(())
         }
@@ -743,8 +840,11 @@ pub fn locator_for(target: &Path, base_directory: &Path) -> Locator {
         let mut ordinary = true;
         for component in relative.components() {
             match component {
+                // Held to the same rule the reader applies, so this can never
+                // mint a relative locator that `validate_locator` would refuse
+                // and that would make the document unsaveable.
                 Component::Normal(part) => match part.to_str() {
-                    Some(text) if !text.contains('\\') => parts.push(text.to_owned()),
+                    Some(text) if ordinary_file_name(text) => parts.push(text.to_owned()),
                     _ => ordinary = false,
                 },
                 _ => ordinary = false,

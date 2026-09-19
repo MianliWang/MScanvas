@@ -1035,3 +1035,303 @@ fn cross_volume_behaviour_is_not_covered_by_these_tests() {
         let _ = (first, second);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Review findings: a document that cannot be saved again
+// ---------------------------------------------------------------------------
+
+#[test]
+fn removing_a_reference_also_removes_an_artifact_no_run_produced() {
+    let scratch = Scratch::new("orphan-artifact");
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    let path = scratch.write("sample.txt", b"bytes");
+    let id = store.register_input(&path).expect("register");
+
+    // An artifact observing this input with no run naming it. `validate`
+    // accepts such a document -- an earlier build, another tool, a hand edit --
+    // so this is a shape a user can legitimately be holding.
+    {
+        let mut session = store
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let project = session.project.as_mut().expect("the open project");
+        project
+            .document
+            .artifacts
+            .push(super::record::ArtifactRecord {
+                id: mscanvas_core::ArtifactId::new(),
+                label: "File facts: sample.txt".to_owned(),
+                file_facts: super::record::FileFactsV1 {
+                    observations: vec![super::record::ObservedInput {
+                        input_id: id,
+                        members: vec![super::record::ObservedMember {
+                            role: MemberRole::Primary,
+                            relative_name: String::new(),
+                            byte_length: 5,
+                            sha256: "A".repeat(64),
+                        }],
+                    }],
+                },
+            });
+    }
+
+    store.remove_input(id).expect("remove");
+
+    // If that artifact had survived, its observation would name an input the
+    // document no longer has -- and every later save would be refused with
+    // `DanglingReference`, with no way to remove it.
+    assert!(store.describe().artifacts.is_empty());
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("the project is still saveable");
+}
+
+#[test]
+fn a_capture_over_a_reference_removed_while_it_ran_is_discarded() {
+    let scratch = Scratch::new("capture-stale");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+
+    // What a removal does to work that is already in flight, exercised through
+    // the one thing that decides it: the session generation. Removing a record
+    // advances it, and a capture that started earlier must not commit a run
+    // naming a record the document no longer has.
+    let before = {
+        let session = store
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        session.generation
+    };
+    store.remove_input(id).expect("remove");
+    let after = {
+        let session = store
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        session.generation
+    };
+    assert_ne!(
+        before, after,
+        "a removal must be visible to work that is already running"
+    );
+
+    // And the document is saveable, which is the failure the guard prevents.
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("the project is still saveable");
+}
+
+#[test]
+fn a_save_as_over_a_newer_revision_of_the_same_project_is_refused() {
+    let scratch = Scratch::new("save-as-stale");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("first save");
+
+    // A second session opens the same document and publishes over it.
+    let other = ProjectStore::new();
+    other.open_document(&document, false).expect("open");
+    other.save().expect("the other session saves");
+    let other_bytes = fs::read(&document).expect("read");
+
+    // The first session picks Save As and points at that same name. Publishing
+    // would not only discard the other writer: it would leave two documents
+    // claiming this project at the same revision, after which neither session
+    // could tell a stale save from a fresh one ever again.
+    let refusal = store.save_as(&document).expect_err("a refusal");
+
+    assert_eq!(refusal, ProjectError::StaleDocument);
+    assert_eq!(fs::read(&document).expect("read again"), other_bytes);
+}
+
+#[test]
+fn a_save_as_over_a_different_project_is_refused() {
+    let scratch = Scratch::new("save-as-other");
+    let (mine, _) = store_with_reference(&scratch, "mine.txt", b"mine");
+    let (theirs, _) = store_with_reference(&scratch, "theirs.txt", b"theirs");
+
+    let occupied = scratch.join("theirs.mscanvas");
+    theirs.save_as(&occupied).expect("their save");
+    let their_bytes = fs::read(&occupied).expect("read");
+
+    let refusal = mine.save_as(&occupied).expect_err("a refusal");
+
+    // A project document is still somebody else's file. The save dialog carries
+    // no overwrite prompt, so there is no confirmation behind which replacing
+    // one could be the right answer.
+    assert_eq!(refusal, ProjectError::DestinationNotAProject);
+    assert_eq!(fs::read(&occupied).expect("read again"), their_bytes);
+}
+
+#[test]
+fn saving_repeatedly_to_the_same_chosen_name_keeps_working() {
+    // The rule above must not break the ordinary case: Save As twice to the
+    // same place is a user replacing their own current document.
+    let scratch = Scratch::new("save-as-twice");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("first");
+    store.save_as(&document).expect("second");
+    store.save_as(&document).expect("third");
+
+    let parsed = record::parse(&fs::read(&document).expect("read")).expect("parse");
+    assert_eq!(parsed.revision, 3);
+}
+
+// ---------------------------------------------------------------------------
+// Review findings: digests, and names that are not what they look like
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_lower_case_recorded_digest_still_matches_identical_bytes() {
+    let scratch = Scratch::new("digest-case");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"stable bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+
+    // A digest written in lower case -- by `sha256sum`, by another tool, or by
+    // a hand edit. `valid_digest` accepts either case, so this document opens.
+    let text = String::from_utf8(fs::read(&document).expect("read")).expect("utf-8");
+    let lowered = text
+        .split('"')
+        .map(|piece| {
+            if piece.len() == 64 && piece.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                piece.to_ascii_lowercase()
+            } else {
+                piece.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\"");
+    assert!(lowered != text, "the fixture actually changed case");
+    fs::write(&document, lowered.as_bytes()).expect("write");
+
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    reopened.check_linked_files().expect("check");
+
+    // The bytes are identical. Telling the user their data changed because two
+    // spellings of one digest were compared as strings would be a false alarm
+    // they could never clear.
+    assert_eq!(
+        reopened.describe().inputs[0].verification,
+        "matchingRecordedContent"
+    );
+}
+
+#[test]
+fn a_name_that_is_not_the_file_it_looks_like_is_refused() {
+    // Each of these parses as a single `Component::Normal`, and none of them is
+    // the ordinary directory entry it appears to be on Windows.
+    for name in [
+        // An alternate data stream of the file beside it: it opens, reports
+        // itself as an ordinary file, and has content no directory listing
+        // shows.
+        "sample.txt:payload",
+        // Trailing dots and spaces are stripped, so these are `sample.txt` --
+        // which would let one file be recorded as two distinct members.
+        "sample.txt ",
+        "sample.txt.",
+        // Device names are reserved in every directory.
+        "NUL",
+        "con",
+        "COM1.raw",
+        // Characters Win32 does not permit in a name at all.
+        "why?.txt",
+        "pipe|.txt",
+    ] {
+        let mut document = valid_document();
+        document.inputs[0].members.push(MemberRecord {
+            role: MemberRole::RequiredCompanion,
+            relative_name: name.to_owned(),
+            baseline: ContentBaseline {
+                byte_length: 1,
+                sha256: "B".repeat(64),
+            },
+        });
+        assert_eq!(
+            refused(&document),
+            DocumentProblem::InvalidLocator,
+            "{name} must not be accepted as a member name"
+        );
+
+        let locator = Locator::ProjectRelative {
+            path: name.to_owned(),
+        };
+        assert_eq!(
+            record::validate_locator(&locator).expect_err("a refusal"),
+            DocumentProblem::InvalidLocator,
+            "{name} must not be accepted as a relative locator"
+        );
+    }
+}
+
+#[test]
+fn ordinary_names_are_still_accepted() {
+    // The rule above must not refuse the names a real acquisition carries.
+    for name in [
+        "QC_pool_01.mzML",
+        "batch 07.wiff.scan",
+        "run-2026-09-19.raw",
+        "\u{91c7}\u{96c6}_01.raw",
+        ".hidden",
+        "console.txt",
+        "com1x.raw",
+    ] {
+        let locator = Locator::ProjectRelative {
+            path: format!("data/{name}"),
+        };
+        assert_eq!(
+            record::validate_locator(&locator),
+            Ok(()),
+            "{name} is an ordinary file name"
+        );
+    }
+}
+
+#[test]
+fn an_alternate_data_stream_is_refused_before_anything_reads_it() {
+    let scratch = Scratch::new("ads");
+    let host = scratch.write("host.txt", b"visible");
+    // Written only so the refusal is about a name that would otherwise resolve.
+    // On a filesystem without streams this write simply fails, and the refusal
+    // below is the same either way.
+    let stream = scratch.join("host.txt:payload");
+    let stream_exists = fs::write(&stream, b"content nothing lists").is_ok();
+
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    store.register_input(&host).expect("register the host");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+
+    // A received document naming the stream as a member of the host.
+    let text = String::from_utf8(fs::read(&document).expect("read")).expect("utf-8");
+    let tampered = text.replace(
+        "\"relativeName\": \"\"",
+        "\"relativeName\": \"host.txt:payload\"",
+    );
+    assert!(tampered != text, "the fixture actually changed");
+    fs::write(&document, tampered.as_bytes()).expect("write");
+
+    let reopened = ProjectStore::new();
+    let refusal = reopened
+        .open_document(&document, false)
+        .expect_err("a refusal");
+
+    assert_eq!(
+        refusal,
+        ProjectError::Document(DocumentProblem::InvalidLocator)
+    );
+    // Nothing was loaded, so nothing went on to measure a stream and record it
+    // as an ordinary member.
+    assert!(!reopened.describe().open);
+    if stream_exists {
+        assert!(
+            fs::read(&stream).is_ok(),
+            "the refusal touched nothing on disk"
+        );
+    }
+}
