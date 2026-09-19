@@ -1269,6 +1269,33 @@ fn a_name_that_is_not_the_file_it_looks_like_is_refused() {
 }
 
 #[test]
+fn a_legitimately_long_file_name_is_still_registerable() {
+    // Windows allows 255 characters in one name. Holding a *name* to the bound
+    // this application uses for a *label* would make a real acquisition
+    // impossible to reference at all, which is a refusal with no remedy: the
+    // user cannot shorten a name their instrument wrote.
+    let scratch = Scratch::new("long-name");
+    let long = format!("{}.raw", "a".repeat(240));
+    let path = scratch.write(&long, b"acquisition bytes");
+
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    let id = store.register_input(&path).expect("register");
+
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("save as");
+    store.check_linked_files().expect("check");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+    // And saved beside its data, so the reference is portable rather than
+    // silently falling back to an absolute one.
+    assert_eq!(
+        store.describe().inputs[0].locator_kind,
+        super::dto::LocatorKind::InsideProject
+    );
+}
+
+#[test]
 fn ordinary_names_are_still_accepted() {
     // The rule above must not refuse the names a real acquisition carries.
     for name in [

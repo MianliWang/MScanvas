@@ -59,6 +59,16 @@ pub const MAX_LABEL_CHARS: usize = 200;
 /// it ever touches the filesystem.
 pub const MAX_LOCATOR_CHARS: usize = 1024;
 
+/// The longest single path component this build will join.
+///
+/// Windows allows 255 characters in one name, so this is that and not the
+/// label bound beside it. A file is not less real for having a long name, and
+/// refusing one would make a legitimate acquisition unregisterable -- a
+/// refusal with no remedy, because a user cannot shorten the name their
+/// instrument wrote. A *label* is something this application renders and may
+/// bound; a *name* is something the filesystem decided and this build repeats.
+pub const MAX_NAME_CHARS: usize = 255;
+
 /// A durable identifier for one project.
 ///
 /// A UUID, like [`ArtifactId`] beside it, because the identity of a record must
@@ -660,7 +670,7 @@ fn ordinary_file_name(value: &str) -> bool {
         "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
 
-    if value.is_empty() || value.chars().count() > MAX_LABEL_CHARS {
+    if value.is_empty() || value.chars().count() > MAX_NAME_CHARS {
         return false;
     }
     if value.chars().any(char::is_control) {
