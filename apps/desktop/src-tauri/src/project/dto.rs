@@ -14,8 +14,8 @@
 
 use serde::Serialize;
 
-use super::OpenProject;
 use super::record::{Locator, MemberRole, ProjectDocument, TerminalOutcome};
+use super::{OpenProject, lineage};
 
 /// Whether a reference travels with the project or points outside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -58,6 +58,12 @@ pub struct InputDto {
     /// Whether that proposal's candidate holds the recorded bytes. Meaningless
     /// unless `relink_proposed`.
     pub relink_candidate_matches: bool,
+    /// The runs that consumed this reference, oldest first.
+    ///
+    /// Derived in Rust rather than left for the page to work out. The reverse
+    /// of an edge is still the edge, and computing it in one place is what
+    /// stops two consumers disagreeing about who used what.
+    pub consumed_by_run_ids: Vec<String>,
 }
 
 /// One recorded artifact.
@@ -70,7 +76,18 @@ pub struct ArtifactDto {
     pub observed_input_count: usize,
     /// How many files in total.
     pub observed_member_count: usize,
+    /// The run that produced it, or `null` where no run in this project claims
+    /// it -- which is a state to show, not a fault. Never two: a document in
+    /// which two runs claimed one artifact is refused at the boundary.
+    pub produced_by_run_id: Option<String>,
+    /// The references this artifact actually recorded observations of.
+    pub source_input_ids: Vec<String>,
 }
+
+// An artifact carries no locator and no current file state, and there is
+// deliberately no field here for one. `FileFactsV1` is a payload inside the
+// document; a "current file" line beside an artifact would be describing a
+// file that does not exist.
 
 /// One recorded run.
 #[derive(Debug, Clone, Serialize)]
@@ -180,6 +197,10 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
                 relink_proposed: proposed,
                 relink_candidate_matches: proposed
                     && proposal.is_some_and(|pending| pending.matches_baseline),
+                consumed_by_run_ids: lineage::consuming_runs(document, input.id)
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
             }
         })
         .collect();
@@ -197,6 +218,12 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
                 .iter()
                 .map(|observation| observation.members.len())
                 .sum(),
+            produced_by_run_id: lineage::producing_run(document, artifact.id)
+                .map(|run| run.to_string()),
+            source_input_ids: lineage::source_inputs(document, artifact.id)
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
         })
         .collect();
 

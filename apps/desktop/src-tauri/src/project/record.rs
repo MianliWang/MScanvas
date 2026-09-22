@@ -372,6 +372,11 @@ pub enum DocumentProblem {
     /// A run names an input or an artifact the document does not contain, or an
     /// artifact observes one.
     DanglingReference,
+    /// Two runs claim to have produced one artifact, so "what produced this"
+    /// has two answers. Refused rather than resolved: picking one would be
+    /// inventing provenance, and dropping the edge would be hiding that the
+    /// document disagrees with itself.
+    AmbiguousProducer,
     /// A locator is not a form this build resolves: empty, escaping its root,
     /// absolute where it must be relative, relative where it must be absolute,
     /// or a UNC or device reference.
@@ -400,6 +405,7 @@ impl DocumentProblem {
             Self::Oversized => "oversized",
             Self::DuplicateIdentifier => "duplicateIdentifier",
             Self::DanglingReference => "danglingReference",
+            Self::AmbiguousProducer => "ambiguousProducer",
             Self::InvalidLocator => "invalidLocator",
             Self::InconsistentRecord => "inconsistentRecord",
             Self::Unreadable => "unreadable",
@@ -526,10 +532,18 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
         if artifact.file_facts.observations.len() > MAX_INPUTS {
             return Err(DocumentProblem::Oversized);
         }
+        // One observation per input. Two observations of one input would give
+        // the artifact two accounts of the same file with no rule for which is
+        // the artifact's answer.
+        let mut observed_ids = Vec::with_capacity(artifact.file_facts.observations.len());
         for observation in &artifact.file_facts.observations {
             if !input_ids.contains(&observation.input_id) {
                 return Err(DocumentProblem::DanglingReference);
             }
+            if observed_ids.contains(&observation.input_id) {
+                return Err(DocumentProblem::DuplicateIdentifier);
+            }
+            observed_ids.push(observation.input_id);
             if observation.members.is_empty() || observation.members.len() > MAX_MEMBERS {
                 return Err(DocumentProblem::InconsistentRecord);
             }
@@ -541,6 +555,8 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
     }
 
     let mut run_ids = Vec::with_capacity(document.runs.len());
+    // Which artifacts a run has already claimed, across the whole document.
+    let mut claimed: Vec<ArtifactId> = Vec::with_capacity(document.artifacts.len());
     for run in &document.runs {
         if run_ids.contains(&run.id) {
             return Err(DocumentProblem::DuplicateIdentifier);
@@ -552,15 +568,30 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
         if run.output_artifact_ids.len() > MAX_ARTIFACTS {
             return Err(DocumentProblem::Oversized);
         }
+        // A run consumes each input once and produces each artifact once. A
+        // repeated identifier in either list is a relationship the document
+        // states twice, and lineage counted from it would be wrong in a way
+        // nothing on screen could reveal.
+        let mut consumed = Vec::with_capacity(run.input_ids.len());
         for id in &run.input_ids {
             if !input_ids.contains(id) {
                 return Err(DocumentProblem::DanglingReference);
             }
+            if consumed.contains(id) {
+                return Err(DocumentProblem::DuplicateIdentifier);
+            }
+            consumed.push(*id);
         }
         for id in &run.output_artifact_ids {
             if !artifact_ids.contains(id) {
                 return Err(DocumentProblem::DanglingReference);
             }
+            // Across every run, not only within this one: the artifact is
+            // claimed by exactly one producer or the document is refused.
+            if claimed.contains(id) {
+                return Err(DocumentProblem::AmbiguousProducer);
+            }
+            claimed.push(*id);
         }
         // The rule that stops a document from claiming a result it never
         // produced. A failed or cancelled observation has no artifact, and a

@@ -1760,3 +1760,487 @@ fn an_alternate_data_stream_is_refused_before_anything_reads_it() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// M8.2: lineage, and the integrity that makes it unambiguous
+// ---------------------------------------------------------------------------
+
+/// The lineage of one artifact, as the interface receives it.
+fn artifact_lineage(store: &ProjectStore, index: usize) -> (Option<String>, Vec<String>) {
+    let described = store.describe();
+    let artifact = &described.artifacts[index];
+    (
+        artifact.produced_by_run_id.clone(),
+        artifact.source_input_ids.clone(),
+    )
+}
+
+#[test]
+fn an_input_reaches_its_run_and_that_run_reaches_its_artifact() {
+    let scratch = Scratch::new("lineage-forward");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    // A second reference the run does not consume, so "used by" is a lookup
+    // rather than "everything in the project".
+    let other = scratch.write("unused.txt", b"other bytes");
+    let unused = store.register_input(&other).expect("register");
+    capture(&store, &[id]).expect("capture");
+
+    let described = store.describe();
+    let input = described
+        .inputs
+        .iter()
+        .find(|candidate| candidate.id == id.to_string())
+        .expect("the reference");
+    let run = &described.runs[0];
+    let artifact = &described.artifacts[0];
+
+    // input -> run
+    assert_eq!(input.consumed_by_run_ids, vec![run.id.clone()]);
+    // run -> input, and run -> artifact
+    assert_eq!(run.input_ids, vec![id.to_string()]);
+    assert_eq!(run.output_artifact_ids, vec![artifact.id.clone()]);
+    // The reference nothing used says so, rather than borrowing the other's run.
+    let untouched = described
+        .inputs
+        .iter()
+        .find(|candidate| candidate.id == unused.to_string())
+        .expect("the unused reference");
+    assert!(untouched.consumed_by_run_ids.is_empty());
+}
+
+#[test]
+fn an_artifact_reaches_its_producing_run_and_its_source_inputs() {
+    let scratch = Scratch::new("lineage-backward");
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    let first = store
+        .register_input(&scratch.write("one.txt", b"one"))
+        .expect("register");
+    let second = store
+        .register_input(&scratch.write("two.txt", b"two"))
+        .expect("register");
+    capture(&store, &[first, second]).expect("capture");
+
+    let described = store.describe();
+    let (produced_by, sources) = artifact_lineage(&store, 0);
+
+    assert_eq!(produced_by, Some(described.runs[0].id.clone()));
+    // In the artifact's own order, and both of them: an artifact that observed
+    // two references names two.
+    assert_eq!(sources, vec![first.to_string(), second.to_string()]);
+    assert_eq!(described.artifacts[0].observed_input_count, 2);
+}
+
+#[test]
+fn lineage_survives_save_close_and_reopen() {
+    let scratch = Scratch::new("lineage-roundtrip");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    capture(&store, &[id]).expect("capture");
+    let before = store.describe();
+
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    store.close(false).expect("close");
+    assert!(!store.describe().open);
+    store.open_document(&document, false).expect("reopen");
+
+    let after = store.describe();
+    // Every edge, by identifier, unchanged.
+    assert_eq!(
+        after.inputs[0].consumed_by_run_ids,
+        before.inputs[0].consumed_by_run_ids
+    );
+    assert_eq!(after.runs[0].input_ids, before.runs[0].input_ids);
+    assert_eq!(
+        after.runs[0].output_artifact_ids,
+        before.runs[0].output_artifact_ids
+    );
+    assert_eq!(
+        after.artifacts[0].produced_by_run_id,
+        before.artifacts[0].produced_by_run_id
+    );
+    assert_eq!(
+        after.artifacts[0].source_input_ids,
+        before.artifacts[0].source_input_ids
+    );
+    // And the reopened session establishes nothing about the files.
+    assert_eq!(after.inputs[0].verification, "notChecked");
+}
+
+#[test]
+fn a_changed_or_missing_file_leaves_the_lineage_it_was_used_by_intact() {
+    let scratch = Scratch::new("lineage-vs-current");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"original bytes");
+    capture(&store, &[id]).expect("capture");
+    let recorded = store.describe();
+    let run = recorded.runs[0].id.clone();
+    let artifact = recorded.artifacts[0].id.clone();
+    let baseline = recorded.inputs[0].members[0].recorded_byte_length;
+
+    // The file changes under the project.
+    fs::write(scratch.join("sample.txt"), b"different bytes entirely").expect("rewrite");
+    check(&store).expect("check");
+    assert_eq!(verification(&store, id), "differentContent");
+
+    let after_change = store.describe();
+    assert_eq!(
+        after_change.inputs[0].consumed_by_run_ids,
+        vec![run.clone()]
+    );
+    assert_eq!(after_change.runs[0].outcome, "completed");
+    assert_eq!(
+        after_change.artifacts[0].produced_by_run_id,
+        Some(run.clone())
+    );
+    assert_eq!(
+        after_change.inputs[0].members[0].recorded_byte_length, baseline,
+        "a current-state check rewrote no history"
+    );
+
+    // And then it is gone entirely.
+    fs::remove_file(scratch.join("sample.txt")).expect("remove");
+    check(&store).expect("check again");
+    assert_eq!(
+        unavailable_reason(&store, id),
+        Some("missingAtCheckedLocation")
+    );
+
+    let after_missing = store.describe();
+    assert_eq!(
+        after_missing.inputs[0].consumed_by_run_ids,
+        vec![run.clone()]
+    );
+    assert_eq!(after_missing.artifacts[0].produced_by_run_id, Some(run));
+    assert_eq!(
+        after_missing.artifacts[0].source_input_ids,
+        vec![id.to_string()]
+    );
+    assert_eq!(
+        after_missing.artifacts[0].id, artifact,
+        "a file that is gone did not erase what was recorded from it"
+    );
+}
+
+#[test]
+fn an_artifact_no_run_claims_says_so_rather_than_naming_one() {
+    let scratch = Scratch::new("lineage-orphan");
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    let kept = store
+        .register_input(&scratch.write("kept.txt", b"kept"))
+        .expect("register");
+    let dropped = store
+        .register_input(&scratch.write("dropped.txt", b"dropped"))
+        .expect("register");
+    capture(&store, &[kept]).expect("capture the kept one");
+
+    // An artifact whose producing run is gone but which observes a reference
+    // the project still has. The schema permits it, so the projection must
+    // have an answer for it that is neither an error nor a guess.
+    {
+        let mut session = store
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let project = session.project.as_mut().expect("the open project");
+        project
+            .document
+            .artifacts
+            .push(super::record::ArtifactRecord {
+                id: mscanvas_core::ArtifactId::new(),
+                label: "File facts: dropped.txt".to_owned(),
+                file_facts: super::record::FileFactsV1 {
+                    observations: vec![super::record::ObservedInput {
+                        input_id: dropped,
+                        members: vec![super::record::ObservedMember {
+                            role: MemberRole::Primary,
+                            relative_name: String::new(),
+                            byte_length: 7,
+                            sha256: "A".repeat(64),
+                        }],
+                    }],
+                },
+            });
+    }
+
+    let described = store.describe();
+    assert_eq!(described.artifacts.len(), 2);
+    assert!(
+        described.artifacts[1].produced_by_run_id.is_none(),
+        "no run claims it, and naming one would be inventing provenance"
+    );
+    // It still knows what it observed.
+    assert_eq!(
+        described.artifacts[1].source_input_ids,
+        vec![dropped.to_string()]
+    );
+    // The one that does have a producer is unaffected.
+    assert_eq!(
+        described.artifacts[0].produced_by_run_id,
+        Some(described.runs[0].id.clone())
+    );
+    // And the document is still one this build publishes.
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("an artifact without a producer is a valid document");
+}
+
+#[test]
+fn a_document_the_capture_path_wrote_still_opens_under_the_new_rules() {
+    // The positive control for every refusal below: the shapes M8.2 refuses
+    // must be shapes this build cannot produce, or a project saved by M8.1
+    // would stop opening.
+    let scratch = Scratch::new("lineage-positive-control");
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    let first = store
+        .register_input(&scratch.write("one.txt", b"one"))
+        .expect("register");
+    let second = store
+        .register_input(&scratch.write("two.txt", b"two"))
+        .expect("register");
+    // Several runs over overlapping selections, which is the shape a real
+    // session produces: two artifacts, two runs, one shared reference.
+    capture(&store, &[first]).expect("first capture");
+    capture(&store, &[first, second]).expect("second capture");
+    fs::remove_file(scratch.join("two.txt")).expect("remove");
+    assert!(capture(&store, &[second]).is_err(), "a failed run too");
+
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+
+    let bytes = fs::read(&document).expect("read");
+    let parsed = record::parse(&bytes).expect("a document this build wrote still parses");
+    assert_eq!(parsed.runs.len(), 3);
+    assert_eq!(parsed.artifacts.len(), 2);
+
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("reopen");
+    let described = reopened.describe();
+    // Each artifact has exactly one producer, and the shared reference names
+    // both completed runs.
+    assert!(
+        described
+            .artifacts
+            .iter()
+            .all(|a| a.produced_by_run_id.is_some())
+    );
+    let shared = described
+        .inputs
+        .iter()
+        .find(|input| input.id == first.to_string())
+        .expect("the shared reference");
+    assert_eq!(shared.consumed_by_run_ids.len(), 2);
+}
+
+#[test]
+fn two_runs_claiming_one_artifact_are_refused_rather_than_resolved() {
+    let mut document = valid_document();
+    let artifact_id = mscanvas_core::ArtifactId::new();
+    document.artifacts.push(super::record::ArtifactRecord {
+        id: artifact_id,
+        label: "File facts".to_owned(),
+        file_facts: super::record::FileFactsV1 {
+            observations: Vec::new(),
+        },
+    });
+    let input_id = document.inputs[0].id;
+    for _ in 0..2 {
+        document.runs.push(RunRecord {
+            id: RunId::new(),
+            operation: RecordedOperation::CaptureFileFactsV1,
+            input_ids: vec![input_id],
+            output_artifact_ids: vec![artifact_id],
+            outcome: TerminalOutcome::Completed,
+            application_version: "0.1.0".to_owned(),
+            started_at: "2026-09-22T00:00:00Z".to_owned(),
+            finished_at: "2026-09-22T00:00:01Z".to_owned(),
+        });
+    }
+
+    // "What produced this" would have two answers. Picking one is inventing
+    // provenance and dropping the edge is hiding the disagreement, so the
+    // document is refused whole.
+    assert_eq!(refused(&document), DocumentProblem::AmbiguousProducer);
+}
+
+#[test]
+fn one_run_claiming_one_artifact_twice_is_refused() {
+    let mut document = valid_document();
+    let artifact_id = mscanvas_core::ArtifactId::new();
+    document.artifacts.push(super::record::ArtifactRecord {
+        id: artifact_id,
+        label: "File facts".to_owned(),
+        file_facts: super::record::FileFactsV1 {
+            observations: Vec::new(),
+        },
+    });
+    document.runs[0].outcome = TerminalOutcome::Completed;
+    document.runs[0].output_artifact_ids = vec![artifact_id, artifact_id];
+
+    assert_eq!(refused(&document), DocumentProblem::AmbiguousProducer);
+}
+
+#[test]
+fn a_run_consuming_one_input_twice_is_refused() {
+    let mut document = valid_document();
+    let input_id = document.inputs[0].id;
+    document.runs[0].input_ids = vec![input_id, input_id];
+
+    assert_eq!(refused(&document), DocumentProblem::DuplicateIdentifier);
+}
+
+#[test]
+fn an_artifact_observing_one_input_twice_is_refused() {
+    let mut document = valid_document();
+    let input_id = document.inputs[0].id;
+    let member = super::record::ObservedMember {
+        role: MemberRole::Primary,
+        relative_name: String::new(),
+        byte_length: 5,
+        sha256: "A".repeat(64),
+    };
+    document.artifacts.push(super::record::ArtifactRecord {
+        id: mscanvas_core::ArtifactId::new(),
+        label: "File facts".to_owned(),
+        file_facts: super::record::FileFactsV1 {
+            observations: vec![
+                super::record::ObservedInput {
+                    input_id,
+                    members: vec![member.clone()],
+                },
+                super::record::ObservedInput {
+                    input_id,
+                    members: vec![member],
+                },
+            ],
+        },
+    });
+
+    assert_eq!(refused(&document), DocumentProblem::DuplicateIdentifier);
+}
+
+#[test]
+fn a_capture_asked_for_one_reference_twice_is_refused_before_it_runs() {
+    let scratch = Scratch::new("lineage-duplicate-capture");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+
+    // Refused at the entry, not at the next Save. A run that consumed one
+    // reference twice is a document `validate` will not publish, and writing
+    // one would leave a project that cannot be saved and has no repair.
+    assert_eq!(
+        capture(&store, &[id, id]).expect_err("a refusal"),
+        ProjectError::UnknownRecord
+    );
+    let described = store.describe();
+    assert!(described.runs.is_empty(), "no run was recorded");
+    assert!(described.artifacts.is_empty());
+
+    // Control: the same reference once still captures.
+    capture(&store, &[id]).expect("completes");
+    assert_eq!(store.describe().runs.len(), 1);
+}
+
+#[test]
+fn an_unknown_schema_version_still_governs_a_document_with_lineage() {
+    // The M8.1 open policy is unchanged by anything M8.2 added: the version is
+    // decided before any relationship is examined.
+    let mut document = valid_document();
+    document.schema_version = record::SCHEMA_VERSION + 1;
+    let artifact_id = mscanvas_core::ArtifactId::new();
+    document.artifacts.push(super::record::ArtifactRecord {
+        id: artifact_id,
+        label: "File facts".to_owned(),
+        file_facts: super::record::FileFactsV1 {
+            observations: Vec::new(),
+        },
+    });
+    // Ambiguous as well, so that whichever rule answers first is visible.
+    for _ in 0..2 {
+        document.runs.push(RunRecord {
+            id: RunId::new(),
+            operation: RecordedOperation::CaptureFileFactsV1,
+            input_ids: vec![document.inputs[0].id],
+            output_artifact_ids: vec![artifact_id],
+            outcome: TerminalOutcome::Completed,
+            application_version: "0.1.0".to_owned(),
+            started_at: "2026-09-22T00:00:00Z".to_owned(),
+            finished_at: "2026-09-22T00:00:01Z".to_owned(),
+        });
+    }
+
+    assert_eq!(
+        refused(&document),
+        DocumentProblem::UnsupportedVersion,
+        "the version decides before the relationships are read"
+    );
+}
+
+#[test]
+fn a_lineage_query_answers_fully_for_files_that_are_not_there() {
+    let scratch = Scratch::new("lineage-no-io");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    capture(&store, &[id]).expect("capture");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+
+    // Every referenced file is gone, and so is the directory they were in.
+    // Anything that touched the filesystem to answer would now answer
+    // differently -- or not at all.
+    fs::remove_file(scratch.join("sample.txt")).expect("remove");
+
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    let described = reopened.describe();
+
+    assert_eq!(described.inputs[0].consumed_by_run_ids.len(), 1);
+    assert_eq!(
+        described.artifacts[0].produced_by_run_id,
+        Some(described.runs[0].id.clone())
+    );
+    assert_eq!(
+        described.artifacts[0].source_input_ids,
+        vec![id.to_string()]
+    );
+    // And nothing was established about the files, because nothing looked.
+    assert_eq!(described.inputs[0].verification, "notChecked");
+}
+
+#[test]
+fn removing_a_reference_removes_the_lineage_that_named_it_and_leaves_the_rest() {
+    let scratch = Scratch::new("lineage-remove");
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    let kept = store
+        .register_input(&scratch.write("kept.txt", b"kept"))
+        .expect("register");
+    let removed = store
+        .register_input(&scratch.write("removed.txt", b"removed"))
+        .expect("register");
+    capture(&store, &[kept]).expect("capture kept");
+    capture(&store, &[removed]).expect("capture removed");
+    assert_eq!(store.describe().runs.len(), 2);
+
+    store.remove_input(removed).expect("remove");
+
+    let described = store.describe();
+    // The run and artifact that named it are gone with it -- a dangling edge
+    // is what `validate` refuses, so leaving one would make the project
+    // unsaveable.
+    assert_eq!(described.inputs.len(), 1);
+    assert_eq!(described.runs.len(), 1);
+    assert_eq!(described.artifacts.len(), 1);
+    // And the lineage that did not name it is untouched.
+    assert_eq!(described.inputs[0].id, kept.to_string());
+    assert_eq!(
+        described.inputs[0].consumed_by_run_ids,
+        vec![described.runs[0].id.clone()]
+    );
+    assert_eq!(
+        described.artifacts[0].produced_by_run_id,
+        Some(described.runs[0].id.clone())
+    );
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("still saveable");
+}

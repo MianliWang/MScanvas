@@ -30,6 +30,7 @@
 //! message -- every refusal below is an enumerated identifier, never a path.
 
 pub mod dto;
+pub mod lineage;
 pub mod observe;
 pub mod record;
 
@@ -941,8 +942,15 @@ impl ProjectStore {
             {
                 return Err(ProjectError::Oversized);
             }
-            let mut chosen = Vec::with_capacity(selected.len());
+            let mut chosen: Vec<InputRecord> = Vec::with_capacity(selected.len());
             for id in selected {
+                // Refused here rather than only at the next Save. A run that
+                // consumed one input twice is a document `validate` will not
+                // publish, and a capture that wrote one would leave a project
+                // that cannot be saved and has no operation that repairs it.
+                if chosen.iter().any(|input| input.id == *id) {
+                    return Err(ProjectError::UnknownRecord);
+                }
                 chosen.push(
                     project
                         .document
