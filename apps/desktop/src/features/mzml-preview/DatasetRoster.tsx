@@ -28,6 +28,18 @@ export interface DatasetRosterProps {
   readonly onClearList: () => boolean;
   readonly onActivate: (handle: string) => void;
   /**
+   * A row another surface has asked to reveal, with the activation that asked.
+   *
+   * The roving tab stop only follows the keyboard while the keyboard is
+   * already in the list, which is the right rule for a list navigating itself
+   * and the wrong one for arriving from somewhere else: a reader who pressed
+   * `Add to Workbench` on the Project surface is not in the list, and the row
+   * they were sent to has to take the keyboard for the navigation to have
+   * happened at all. The token is what makes a second request for the same
+   * row a second reveal.
+   */
+  readonly revealRow?: { readonly handle: string; readonly token: number } | null;
+  /**
    * Whether the picker may be opened. Curating a workspace does not need a
    * backend, so this is not about ProteoWizard being installed.
    */
@@ -127,6 +139,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   onRemoveSelected,
   onClearList,
   onActivate,
+  revealRow = null,
   canAddFiles,
   canAddFolder,
   folderBusy,
@@ -224,6 +237,8 @@ export const DatasetRoster = memo(function DatasetRoster({
   const keyboardOn = useRef<string | null>(null);
   /** The focused handle the roving tab stop was last moved to follow. */
   const followed = useRef(state.focused);
+  /** The newest reveal this list has actually put the keyboard on. */
+  const revealed = useRef(revealRow?.token ?? 0);
 
   /**
    * Whether `Clear list` has anything to do, which is when it is offered.
@@ -327,6 +342,33 @@ export const DatasetRoster = memo(function DatasetRoster({
       return;
     }
     searchRef.current?.focus({ preventScroll: true });
+  });
+
+  /**
+   * Puts the keyboard on a row another surface asked to reveal.
+   *
+   * Deliberately without a dependency list, like the recovery above it, and
+   * deliberately not marked done until the focus actually landed. The request
+   * can arrive a render before the row can take it: the list may be behind a
+   * panel this reveal has just asked to be opened, and an element inside a
+   * hidden subtree cannot be focused. Retrying on the next commit is what
+   * makes "show it" arrive rather than silently do nothing, and clearing the
+   * token only on success is what stops it from firing twice.
+   *
+   * Nothing here starts a read. The row is scrolled to and focused; whether
+   * anything is opened is still the reader's next decision.
+   */
+  useEffect(() => {
+    if (revealRow === null || revealRow.token === revealed.current) return;
+    const row = listRef.current?.querySelector<HTMLElement>(
+      `[data-handle="${revealRow.handle}"]`,
+    );
+    if (row === null || row === undefined) return;
+    row.focus({ preventScroll: false });
+    if (document.activeElement !== row) return;
+    revealed.current = revealRow.token;
+    keyboardOn.current = revealRow.handle;
+    followed.current = state.focused;
   });
 
   /**

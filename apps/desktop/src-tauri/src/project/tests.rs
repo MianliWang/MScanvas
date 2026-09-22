@@ -23,12 +23,12 @@ use super::record::{
 use super::{CancelOutcome, ProjectError, ProjectJobId, ProjectStore, record};
 
 /// A directory this test owns, removed when the test ends.
-struct Scratch {
+pub(crate) struct Scratch {
     path: PathBuf,
 }
 
 impl Scratch {
-    fn new(label: &str) -> Self {
+    pub(crate) fn new(label: &str) -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
@@ -39,12 +39,12 @@ impl Scratch {
         Self { path }
     }
 
-    fn join(&self, name: &str) -> PathBuf {
+    pub(crate) fn join(&self, name: &str) -> PathBuf {
         self.path.join(name)
     }
 
     /// Writes a file and answers where it is.
-    fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {
+    pub(crate) fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.join(name);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("create the parent directory");
@@ -53,7 +53,7 @@ impl Scratch {
         path
     }
 
-    fn directory(&self) -> &Path {
+    pub(crate) fn directory(&self) -> &Path {
         &self.path
     }
 }

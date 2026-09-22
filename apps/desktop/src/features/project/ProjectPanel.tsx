@@ -70,6 +70,8 @@ const REFUSALS = {
   staleDocument: "projectRefusedStaleDocument",
   notPublished: "projectRefusedNotPublished",
   oversized: "projectRefusedOversized",
+  notChecked: "projectRefusedNotChecked",
+  contentChanged: "projectRefusedContentChanged",
   missingAtCheckedLocation: "projectRefusedMissing",
   unreadable: "projectRefusedUnreadable",
   unsafeReference: "projectRefusedUnsafe",
@@ -99,10 +101,29 @@ const BUSY = {
   checking: "projectBusyChecking",
   capturing: "projectBusyCapturing",
   linking: "projectBusyLinking",
+  admitting: "projectBusyAdmitting",
 } as const;
 
 function busyKey(busy: ProjectBusy) {
   return busy === "idle" ? null : BUSY[busy];
+}
+
+/**
+ * Why this reference cannot be added to the Workbench, or `null` where it can.
+ *
+ * Keyed on the same current state the row already displays, because that is
+ * what decides it: the Workbench takes the file the project recorded, and
+ * "which file is that" is a question only a check answers. Every state gets
+ * its own sentence, since "check it first", "it changed" and "it is not there"
+ * need three different things from the reader.
+ */
+function unavailableToAddKey(input: ProjectInput) {
+  if (input.verification === "matchingRecordedContent") return null;
+  if (input.verification === "notChecked") return "projectAddNeedsCheck" as const;
+  if (input.verification === "differentContent") return "projectAddChanged" as const;
+  return input.unavailableReason === "missingAtCheckedLocation"
+    ? ("projectAddMissing" as const)
+    : ("projectAddUnavailable" as const);
 }
 
 /**
@@ -140,12 +161,31 @@ export interface ProjectPanelProps {
   readonly detailsPresent?: boolean;
   /** Asks the shell to show it, through the same control the header uses. */
   readonly onRevealDetails?: () => void;
+  /**
+   * Every row the workspace currently holds.
+   *
+   * The roster is the only authority on which rows exist, so a remembered
+   * handle is resolved against this rather than trusted. A row the user
+   * removed, or a workspace they cleared, therefore turns "show it" back into
+   * "add it" with no extra bookkeeping anywhere.
+   */
+  readonly liveDatasetHandles?: ReadonlySet<string>;
+  /**
+   * Takes the reader to one row that is already in the Workbench.
+   *
+   * Navigation and nothing else: no request is sent, no file is read and no
+   * backend is touched, which is why it is a shell callback rather than an
+   * operation on the session.
+   */
+  readonly onShowInWorkbench?: (handle: string) => void;
 }
 
 export function ProjectPanel({
   session,
   detailsPresent = false,
   onRevealDetails,
+  liveDatasetHandles,
+  onShowInWorkbench,
 }: ProjectPanelProps) {
   const t = useUiMessages();
   const { state, busy, problem, cancelled, pending, selected, inspecting } = session;
@@ -177,6 +217,19 @@ export function ProjectPanel({
    * One region and one voice. The visible notices below deliberately carry no
    * role of their own, so nothing is announced twice.
    */
+  /**
+   * The live workspace row for one reference, or `null`.
+   *
+   * Remembered in Rust, resolved here. A handle naming no row the roster
+   * currently holds means the row has gone, which is the same position as
+   * never having admitted one.
+   */
+  function inWorkbench(input: ProjectInput): string | null {
+    const handle = input.workbenchDatasetHandle;
+    if (handle === null || liveDatasetHandles === undefined) return null;
+    return liveDatasetHandles.has(handle) ? handle : null;
+  }
+
   const proposalInput = state.inputs.find((input) => input.id === proposed);
   const announcement =
     busyKey(busy) !== null
@@ -443,7 +496,9 @@ export function ProjectPanel({
                       </button>
                     </div>
                     <p className="project-row-facts">
-                      <span className="project-verification">{t(verificationKey(input))}</span>
+                      <span className="project-verification" id={`project-state-${input.id}`}>
+                        {t(verificationKey(input))}
+                      </span>
                       <span className="project-locator">
                         {t(
                           input.locatorKind === "insideProject"
@@ -458,6 +513,58 @@ export function ProjectPanel({
                       ) : null}
                     </p>
                     <div className="project-row-actions">
+                      {/* The bridge to the session workspace, and the only
+                          control here that touches it. A reference already
+                          represented by a live row offers to show that row
+                          instead of offering to add a second one -- and
+                          showing it sends nothing at all. */}
+                      {inWorkbench(input) !== null ? (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          aria-label={t("projectShowInWorkbenchNamed", { name: input.label })}
+                          data-project-show-in-workbench={input.id}
+                          onClick={() => {
+                            const handle = inWorkbench(input);
+                            if (handle !== null) onShowInWorkbench?.(handle);
+                          }}
+                        >
+                          {t("projectShowInWorkbench")}
+                        </button>
+                      ) : (
+                        // `aria-disabled` rather than `disabled`, for the
+                        // reason every other inert control on this surface
+                        // gives: a disabled button leaves the tab order, and
+                        // the sentence saying why would then be readable only
+                        // with a pointer. The state that decides it is
+                        // already on the row in words, and the control points
+                        // at that text rather than restating it silently.
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          aria-disabled={working || unavailableToAddKey(input) !== null || undefined}
+                          aria-describedby={
+                            unavailableToAddKey(input) === null
+                              ? undefined
+                              : `project-state-${input.id}`
+                          }
+                          title={
+                            unavailableToAddKey(input) === null
+                              ? undefined
+                              : t(unavailableToAddKey(input) as "projectAddNeedsCheck")
+                          }
+                          aria-label={t("projectAddToWorkbenchNamed", { name: input.label })}
+                          data-project-add-to-workbench={input.id}
+                          data-project-add-unavailable={unavailableToAddKey(input) ?? undefined}
+                          onClick={() => {
+                            if (!working && unavailableToAddKey(input) === null) {
+                              void session.addToWorkbench(input.id);
+                            }
+                          }}
+                        >
+                          {t("projectAddToWorkbench")}
+                        </button>
+                      )}
                       {input.relinkProposed ? (
                         <>
                           <span className="project-proposal" data-project-proposal={input.id}>

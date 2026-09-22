@@ -72,6 +72,7 @@ use super::dto::{
     WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
 };
 use super::dto::{MAX_SPECTRUM_POINTS, SpectrumDomainRefusalDto, SpectrumViewportDomainDto};
+use super::idle_provider::NoProcess;
 use super::installation::InstallationIdentity;
 use super::operation::SettledItemAdoption;
 use super::operation::{
@@ -2441,33 +2442,6 @@ fn choosing_a_file_keeps_the_session_holding_exactly_one_dataset() {
     );
 }
 
-/// Fails the test outright if anything workspace-shaped tries to start a
-/// process or probe an installation.
-///
-/// The whole roster is meant to be free of the machine: reading it, adding to
-/// it, removing from it and emptying it are decisions about what the session
-/// lists, and a user curating twenty rows must not be twenty ProteoWizard
-/// launches.
-struct NoProcess;
-
-impl PreviewProvider for NoProcess {
-    fn use_installation(&self, _home: Option<PathBuf>) {
-        panic!("holding datasets must not reconfigure the backend");
-    }
-
-    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
-        panic!("holding datasets must not probe the backend");
-    }
-
-    fn run(
-        &self,
-        _source: &Path,
-        _operation: &PreviewOperation,
-    ) -> Result<OperationAttempt, PreviewErrorDto> {
-        panic!("holding datasets must not launch a process");
-    }
-}
-
 #[test]
 fn managing_the_workspace_never_reaches_the_backend() {
     let file = TestFile::new("no-process");
@@ -4019,6 +3993,11 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "propose_project_relink",
             "commit_project_relink",
             "abandon_project_relink",
+            // The M8.3 bridge. One command, and on this side of the boundary
+            // rather than the workspace's: it is the project that decides
+            // whether a reference may be handed over, and the workspace's own
+            // admission is what it is handed to.
+            "add_project_input_to_workspace",
             "inspect_backend",
             "choose_backend_installation",
             "use_automatic_backend_discovery",

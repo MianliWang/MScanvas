@@ -1138,6 +1138,8 @@ export const zhCN = {
   projectRefusedStaleDocument: "该项目文件自打开后已更改，MSCanvas 未替换它。可使用“另存为”以其他名称保留当前副本。",
   projectRefusedNotPublished: "项目未能写入。上次保存的副本保持不变。",
   projectRefusedOversized: "该项目超出 MSCanvas 可保存的大小。",
+  projectRefusedNotChecked: "请先检查此文件，然后再将其添加到工作台。",
+  projectRefusedContentChanged: "自项目记录以来，该文件已更改，因此未被添加。",
   projectRefusedMissing: "在此项目记录的位置未找到该文件。请使用“定位”指向它。",
   projectRefusedUnreadable: "无法读取该文件。",
   projectRefusedUnsafe: "该引用不是普通文件。",
@@ -1164,6 +1166,7 @@ export const zhCN = {
   projectBusyChecking: "正在检查已链接的文件…",
   projectBusyCapturing: "正在读取文件内容…",
   projectBusyLinking: "正在检查所选文件…",
+  projectBusyAdmitting: "正在添加到工作台…",
   // Per-row controls, named for the reference they act on.
   projectRelinkNamed: "定位 {{name}}",
   projectRemoveNamed: "从此项目中移除 {{name}}",
@@ -1172,6 +1175,20 @@ export const zhCN = {
   // The artifact a capture produced, described here rather than echoed from the
   // document -- the document stores its label in English.
   projectArtifactFileFacts: "文件事实",
+  // --- M8.3. The bridge from a recorded reference to a live Workbench row.
+  // Adding is an explicit act on one reference: opening a project still admits
+  // nothing, and neither control here reads an acquisition or starts a
+  // converter.
+  projectAddToWorkbench: "添加到工作台",
+  projectAddToWorkbenchNamed: "将 {{name}} 添加到工作台",
+  projectShowInWorkbench: "在工作台中显示",
+  projectShowInWorkbenchNamed: "在工作台中显示 {{name}}",
+  // Why the action is unavailable. Four states and four sentences: what the
+  // reader should do next is different in each.
+  projectAddNeedsCheck: "请先检查此文件，然后再将其添加到工作台。",
+  projectAddChanged: "自项目记录以来，此文件已更改。",
+  projectAddMissing: "找不到所记录的文件。",
+  projectAddUnavailable: "无法读取此文件，因此无法添加。",
   // --- M8.2 provenance. What the selected project object is, and what it is
   // related to. Recorded history and current file state are named apart,
   // because a reference whose bytes changed still has the run that used it.

@@ -27,6 +27,7 @@ import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
+import type { WorkspaceAddResult } from "./contracts";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 
 /** The session workspace: a curated roster of mzML files, and one open preview. */
@@ -41,10 +42,6 @@ export function PreviewWorkspace() {
   /** The contextual region, so focus can follow a request to reveal it. */
   const inspectorRef = useRef<HTMLElement | null>(null);
   const pendingInspectorFocus = useRef(false);
-  // Held at the shell so the project outlives navigating away from its surface.
-  // Rust is authoritative either way; this only keeps the page from re-reading
-  // the whole project every time the user looks at something else.
-  const project = useProject();
   // The panels are owned by the preference provider, which is the one place
   // that knows both what the user asked for and what the window can fit. What
   // is left here is the session fact the provider has no business knowing:
@@ -52,6 +49,72 @@ export function PreviewWorkspace() {
   const { panels } = useSessionPreferences();
   const constrained = panels.fit.constrained;
   const rosterOpen = panels.present.roster;
+  /**
+   * The roster row a reveal is waiting to put the keyboard on.
+   *
+   * A token rather than a boolean, because revealing the same row twice is
+   * two reveals: a reader who pressed `Show in Workbench`, wandered off and
+   * pressed it again asked for the same thing a second time.
+   */
+  const [revealRow, setRevealRow] = useState<{ handle: string; token: number } | null>(null);
+  const revealToken = useRef(0);
+  /**
+   * Takes the reader to one roster row.
+   *
+   * Navigation and nothing else. No request is sent, no file is read and no
+   * backend is touched -- everything this needs is already on the page, which
+   * is what keeps showing a row usable on a machine with no converter.
+   *
+   * The roster is opened where it is not on screen, through the same control
+   * the header owns rather than a layout of this function's own. `navigate`
+   * would be the wrong verb here: it folds the side panels away to give a
+   * surface the column, and the row *is* the destination.
+   */
+  const revealInWorkbench = useCallback(
+    (handle: string) => {
+      setSurface("workbench");
+      // A row the current search hides cannot be revealed, and a reveal that
+      // reveals nothing is worse than no reveal. Clearing is deliberate and
+      // only where it is needed: a row already on screen keeps the reader's
+      // query exactly as they left it.
+      if (!rosterProjection(workspace.roster).handles.has(handle)) {
+        workspace.dispatchRoster({ type: "searchCleared" });
+      }
+      // The same thing pressing the row does: it becomes the focused row and
+      // the highlighted one. It starts no read -- that is the component's
+      // separate response to a press, not the reducer's.
+      workspace.dispatchRoster({
+        type: "rowPressed",
+        handle,
+        modifiers: { ctrl: false, shift: false },
+      });
+      revealToken.current += 1;
+      setRevealRow({ handle, token: revealToken.current });
+      if (!rosterOpen && !panels.busy) panels.toggle("roster");
+    },
+    [panels, rosterOpen, workspace],
+  );
+  // Held at the shell so the project outlives navigating away from its surface.
+  // Rust is authoritative either way; this only keeps the page from re-reading
+  // the whole project every time the user looks at something else.
+  const project = useProject(
+    useCallback(
+      (result: WorkspaceAddResult) => {
+        const landed = workspace.admitProjectInput(result);
+        // Nothing was admitted -- an unsupported file, a full workspace. The
+        // notice above the surfaces says which, where the reader already is,
+        // and sending them to a list with nothing new in it would be the
+        // wrong answer to a refusal.
+        if (landed !== null) revealInWorkbench(landed);
+      },
+      [revealInWorkbench, workspace],
+    ),
+  );
+  /** Every row the workspace currently holds, for the Project surface. */
+  const liveDatasetHandles = useMemo(
+    () => new Set(workspace.roster.datasets.map((dataset) => dataset.handle)),
+    [workspace.roster.datasets],
+  );
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
   /**
    * Whether the contextual region has anything to describe *on this surface*.
@@ -636,6 +699,7 @@ export function PreviewWorkspace() {
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
             projection={projection}
+            revealRow={revealRow}
             restoreAddFilesFocusToken={restoreAddFilesFocusToken}
             restoreAddFolderFocusToken={restoreAddFolderFocusToken}
             rosterSettlementToken={workspace.rosterSettlementToken}
@@ -652,6 +716,8 @@ export function PreviewWorkspace() {
         <section id="workbench-project" className="workbench-project" hidden={surface !== "project" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("projectSurface")}>
           <ProjectPanel
             session={project}
+            liveDatasetHandles={liveDatasetHandles}
+            onShowInWorkbench={revealInWorkbench}
             detailsPresent={detailsOpen}
             onRevealDetails={() => {
               if (panels.busy) return;

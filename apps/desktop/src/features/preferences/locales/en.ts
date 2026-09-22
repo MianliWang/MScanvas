@@ -1165,6 +1165,8 @@ export const en = {
   projectRefusedStaleDocument: "That project file changed since it was opened, so MSCanvas did not replace it. Save As under another name to keep this copy.",
   projectRefusedNotPublished: "The project could not be written. The last saved copy is unchanged.",
   projectRefusedOversized: "This project is larger than MSCanvas saves.",
+  projectRefusedNotChecked: "Check this file before adding it to the Workbench.",
+  projectRefusedContentChanged: "That file has changed since the project recorded it, so it was not added.",
   projectRefusedMissing: "That file was not found where this project recorded it. Use Locate to point at it.",
   projectRefusedUnreadable: "That file could not be read.",
   projectRefusedUnsafe: "That reference is not an ordinary file.",
@@ -1191,6 +1193,7 @@ export const en = {
   projectBusyChecking: "Checking linked files…",
   projectBusyCapturing: "Reading file contents…",
   projectBusyLinking: "Checking the selected file…",
+  projectBusyAdmitting: "Adding to the Workbench…",
   // Per-row controls, named for the reference they act on.
   projectRelinkNamed: "Locate {{name}}",
   projectRemoveNamed: "Remove {{name}} from this project",
@@ -1199,6 +1202,20 @@ export const en = {
   // The artifact a capture produced, described here rather than echoed from the
   // document -- the document stores its label in English.
   projectArtifactFileFacts: "File facts",
+  // --- M8.3. The bridge from a recorded reference to a live Workbench row.
+  // Adding is an explicit act on one reference: opening a project still admits
+  // nothing, and neither control here reads an acquisition or starts a
+  // converter.
+  projectAddToWorkbench: "Add to Workbench",
+  projectAddToWorkbenchNamed: "Add {{name}} to the Workbench",
+  projectShowInWorkbench: "Show in Workbench",
+  projectShowInWorkbenchNamed: "Show {{name}} in the Workbench",
+  // Why the action is unavailable. Four states and four sentences: what the
+  // reader should do next is different in each.
+  projectAddNeedsCheck: "Check this file before adding it to the Workbench.",
+  projectAddChanged: "This file has changed since the project recorded it.",
+  projectAddMissing: "The recorded file cannot be found.",
+  projectAddUnavailable: "This file could not be read, so it cannot be added.",
   // --- M8.2 provenance. What the selected project object is, and what it is
   // related to. Recorded history and current file state are named apart,
   // because a reference whose bytes changed still has the run that used it.

@@ -64,6 +64,16 @@ pub struct InputDto {
     /// of an edge is still the edge, and computing it in one place is what
     /// stops two consumers disagreeing about who used what.
     pub consumed_by_run_ids: Vec<String>,
+    /// The workspace row this session admitted for this reference, or `null`.
+    ///
+    /// A session handle, not a durable identity, and never written to the
+    /// document. It is reported so the surface can offer to show a row that is
+    /// already there instead of offering to add it again -- and it is reported
+    /// without being re-checked, because whether that row still exists is the
+    /// roster's question and the interface resolves it against the roster it
+    /// already holds. A handle naming no live row therefore means "not
+    /// currently in the workspace", which is the true answer.
+    pub workbench_dataset_handle: Option<String>,
 }
 
 /// One recorded artifact.
@@ -207,6 +217,7 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
                     .iter()
                     .map(ToString::to_string)
                     .collect(),
+                workbench_dataset_handle: project.admitted_row(input.id).map(ToOwned::to_owned),
             }
         })
         .collect();

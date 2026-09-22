@@ -12,6 +12,10 @@ mod preview;
 /// the same reason `preferences` is: a project references files, it does not
 /// admit them, and the two collections stay distinct.
 mod project;
+/// The one explicit bridge between the project document and the live
+/// workspace. Separate from both, so the crossing is a named thing rather than
+/// a dependency either of them grew. See the module for what each side decides.
+mod reattachment;
 
 use preferences::UiPreferenceStore;
 use preferences::dto::{UiPreferenceReadDto, UiPreferenceSaveDto, UiPreferenceWriteDto};
@@ -79,6 +83,8 @@ async fn save_ui_preferences(
 /// The session's project store.
 type SharedProjects = Arc<project::ProjectStore>;
 
+use reattachment::ProjectAdmissionDto;
+
 /// How a project refusal reaches the interface.
 ///
 /// The stable identifier is the payload; the sentence is an English fallback
@@ -106,6 +112,8 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::NotPublished => "The project could not be saved. The previous file is unchanged.",
         Refusal::Oversized => "This project is larger than MSCanvas saves.",
         Refusal::Unavailable(_) => "That file could not be read.",
+        Refusal::NotChecked => "Check this file before adding it to the Workbench.",
+        Refusal::ContentChanged => "That file has changed since the project recorded it.",
         Refusal::Cancelled => "Cancelled.",
         Refusal::NothingSelected => "Nothing was selected.",
         Refusal::AlreadyRunning => "Another check is already running.",
@@ -427,6 +435,51 @@ async fn commit_project_relink(
     let id = parsed_input_id(&input_id)?;
     projects.commit_relink(id).map_err(project_error)?;
     Ok(projects.describe())
+}
+
+/// Adds the file one project reference names to the session workspace.
+///
+/// The webview names no path. It names the reference, by the identifier the
+/// project description already gave it, and the operation it accepted; Rust
+/// resolves that reference through the open project, proves the file still
+/// holds the recorded bytes, and hands *that* object to the workspace
+/// admission boundary every other import goes through.
+///
+/// Nothing here starts a preview or a backend process. Admission is filesystem
+/// work, and a reference that becomes a row becomes one the user can then read
+/// by asking, exactly as a row added through the picker does.
+#[tauri::command]
+async fn add_project_input_to_workspace(
+    operation_id: String,
+    input_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<ProjectAdmissionDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let job = parsed_job_id(&operation_id)?;
+    let id = parsed_input_id(&input_id)?;
+    let projects = Arc::clone(&projects);
+    let service = Arc::clone(&service);
+    // Off the async runtime because the proof hashes the whole acquisition,
+    // for the same reason a check is.
+    let (outcome, described) = off_the_async_runtime(move || {
+        let outcome = reattachment::add_project_input_to_workspace(&projects, &service, job, id);
+        (outcome, projects.describe())
+    })
+    .await?;
+    match outcome {
+        Ok(workspace) => Ok(ProjectAdmissionDto {
+            project: described,
+            workspace,
+        }),
+        Err(reattachment::AdmissionRefusal::Project(error)) => Err(project_error(error)),
+        // The workspace's own refusal, unchanged. Translating it into project
+        // vocabulary would invent a project meaning for something that is not
+        // a project fact.
+        Err(reattachment::AdmissionRefusal::Workspace(error)) => Err(error),
+    }
 }
 
 /// Abandons an outstanding relink proposal.
@@ -1837,6 +1890,7 @@ pub fn run() {
             propose_project_relink,
             commit_project_relink,
             abandon_project_relink,
+            add_project_input_to_workspace,
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,

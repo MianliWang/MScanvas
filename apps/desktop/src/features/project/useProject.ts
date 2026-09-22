@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { WorkspaceAddResult } from "../mzml-preview/contracts";
 import { NO_PROJECT, useProjectApi, type ProjectState } from "./projectApi";
 import { provenanceOf, type Provenance, type ProjectSelection } from "./lineage";
 
@@ -29,7 +30,8 @@ export type ProjectBusy =
   | "saving"
   | "checking"
   | "capturing"
-  | "linking";
+  | "linking"
+  | "admitting";
 
 /**
  * An action that was refused because the project has unsaved changes.
@@ -94,6 +96,14 @@ export interface ProjectSession {
   readonly checkLinks: () => Promise<void>;
   readonly cancelJob: () => Promise<void>;
   readonly capture: () => Promise<void>;
+  /**
+   * Adds the file one reference names to the session workspace.
+   *
+   * Answers nothing: what the workspace did with it reaches the shell through
+   * the callback this hook was given, because the roster is the shell's to
+   * apply and this hook holds only the project.
+   */
+  readonly addToWorkbench: (inputId: string) => Promise<void>;
   readonly proposeRelink: (inputId: string) => Promise<void>;
   readonly commitRelink: (inputId: string) => Promise<void>;
   readonly abandonRelink: () => Promise<void>;
@@ -102,20 +112,38 @@ export interface ProjectSession {
 /**
  * Reads a refusal's stable identifier out of whatever the boundary threw.
  *
- * Tauri rejects with the serialized error object, so the identifier is on it.
- * Anything else -- a transport failure, a thrown `Error` -- has none, and is
- * reported as one unnamed refusal rather than as a message the page invented.
+ * Tauri rejects with the serialized error object, and the field the boundary
+ * actually sends is `kind` -- the same owned-error shape every other command
+ * here refuses with. It was read as `code` until M8.3, which no answer from
+ * Rust has ever carried: every project refusal therefore arrived unnamed and
+ * was shown as the catch-all sentence, including the ones M8.1 wrote
+ * individual sentences for.
+ *
+ * Anything without it -- a transport failure, a thrown `Error` -- has no
+ * identifier, and is reported as one unnamed refusal rather than as a message
+ * the page invented.
  */
 function refusalId(error: unknown): string {
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const { code } = error as { code?: unknown };
-    if (typeof code === "string" && code.length > 0) return code;
+  if (typeof error === "object" && error !== null && "kind" in error) {
+    const { kind } = error as { kind?: unknown };
+    if (typeof kind === "string" && kind.length > 0) return kind;
   }
   return "projectOperationFailed";
 }
 
-export function useProject(): ProjectSession {
+/**
+ * @param onAdmitted Called with the workspace's own answer when a reference is
+ * admitted, so the shell can apply it to the roster it owns. The project half
+ * of the same answer is applied here.
+ */
+export function useProject(
+  onAdmitted?: (result: WorkspaceAddResult) => void,
+): ProjectSession {
   const api = useProjectApi();
+  // Held in a ref so a shell callback that changes identity between renders
+  // does not rebuild every operation below it.
+  const admitted = useRef(onAdmitted);
+  admitted.current = onAdmitted;
   const [state, setState] = useState<ProjectState>(NO_PROJECT);
   const [busy, setBusy] = useState<ProjectBusy>("idle");
   const [problem, setProblem] = useState<string | null>(null);
@@ -350,6 +378,18 @@ export function useProject(): ProjectSession {
           api.captureProjectFileFacts(operationId, selected),
         ),
       [api, runAccepted, selected],
+    ),
+    addToWorkbench: useCallback(
+      (inputId: string) =>
+        runAccepted("admitting", async (operationId) => {
+          const answer = await api.addProjectInputToWorkspace(operationId, inputId);
+          // The roster first, so the shell has the row before the project
+          // says it has one. The other order would put the surface through a
+          // render in which it knows a handle the roster has never heard of.
+          admitted.current?.(answer.workspace);
+          return answer.project;
+        }),
+      [api, runAccepted],
     ),
     proposeRelink: useCallback(
       (inputId: string) => run("linking", () => api.proposeProjectRelink(inputId)),

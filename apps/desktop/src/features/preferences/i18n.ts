@@ -15,6 +15,8 @@ export interface MessageParameters {
   readonly projectRelinkNamed: { readonly name: string };
   readonly projectRemoveNamed: { readonly name: string };
   readonly projectSelectNamed: { readonly name: string };
+  readonly projectAddToWorkbenchNamed: { readonly name: string };
+  readonly projectShowInWorkbenchNamed: { readonly name: string };
   readonly provenanceInspectInput: { readonly name: string };
   readonly provenanceInspectRun: { readonly name: string };
   readonly provenanceInspectArtifact: { readonly name: string };

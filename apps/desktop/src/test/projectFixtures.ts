@@ -12,6 +12,7 @@
 
 import { vi } from "vitest";
 
+import type { WorkspaceAddResult } from "../features/mzml-preview/contracts";
 import {
   NO_PROJECT,
   type CancelOutcome,
@@ -40,6 +41,15 @@ export interface FakeProjectApi extends ProjectApi {
   readonly holdOnce: (operation: keyof ProjectApi) => () => void;
   /** Every operation identifier a cancel named, in order. */
   readonly cancelled: string[];
+  /**
+   * Replaces the workspace half of the next reattachment answer.
+   *
+   * A fake, like the rest of this file: it proves what the interface does
+   * with an added row, an existing row and a refused file. Whether the real
+   * boundary produces those is proved against real files in
+   * `apps/desktop/src-tauri/src/reattachment/tests.rs`.
+   */
+  readonly setAdmission: (result: WorkspaceAddResult) => void;
   /** What the next cancels answer. `cancelled` unless a test says otherwise. */
   readonly setCancelOutcome: (outcome: CancelOutcome) => void;
   readonly calls: string[];
@@ -56,6 +66,7 @@ export function projectInput(overrides: Partial<ProjectInput> = {}): ProjectInpu
     relinkProposed: false,
     relinkCandidateMatches: false,
     consumedByRunIds: [],
+    workbenchDatasetHandle: null,
     ...overrides,
   };
 }
@@ -141,6 +152,8 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
   let accepted = 0;
   let cancelOutcome: CancelOutcome = "cancelled";
   const cancelled: string[] = [];
+  /** What the next reattachment answers with on the workspace half. */
+  let admission: WorkspaceAddResult = { roster: { datasets: [], capacity: 24 }, outcomes: [] };
 
   /** One answer, after recording the call and honouring any staged outcome. */
   function answer(operation: keyof ProjectApi): Promise<ProjectState | null> {
@@ -148,8 +161,9 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     const refusal = refusals.get(operation);
     if (refusal !== undefined) {
       refusals.delete(operation);
-      // The shape Tauri rejects with: the boundary's own stable identifier.
-      return Promise.reject({ code: refusal, message: refusal, retryable: false });
+      // The shape Tauri actually rejects with, field for field: the owned
+      // error the boundary serializes, whose stable identifier is `kind`.
+      return Promise.reject({ kind: refusal, summary: refusal, detail: null, retryable: false });
     }
     if (cancellations.has(operation)) {
       cancellations.delete(operation);
@@ -183,6 +197,9 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     setCancelOutcome: (outcome) => {
       cancelOutcome = outcome;
     },
+    setAdmission: (result) => {
+      admission = result;
+    },
     calls,
     getProjectState: vi.fn(() => answer("getProjectState") as Promise<ProjectState>),
     createProject: vi.fn(() => answer("createProject") as Promise<ProjectState>),
@@ -197,7 +214,7 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
       const refusal = refusals.get("beginProjectJob");
       if (refusal !== undefined) {
         refusals.delete("beginProjectJob");
-        return Promise.reject({ code: refusal, message: refusal, retryable: false });
+        return Promise.reject({ kind: refusal, summary: refusal, detail: null, retryable: false });
       }
       accepted += 1;
       return Promise.resolve({ operationId: `project-job-${accepted}` });
@@ -214,6 +231,10 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
       (_operationId: string, _inputIds: readonly string[]) =>
         answer("captureProjectFileFacts") as Promise<ProjectState>,
     ),
+    addProjectInputToWorkspace: vi.fn(async (_operationId: string, _inputId: string) => {
+      const project = (await answer("addProjectInputToWorkspace")) as ProjectState;
+      return { project, workspace: admission };
+    }),
     proposeProjectRelink: vi.fn(() => answer("proposeProjectRelink")),
     commitProjectRelink: vi.fn(() => answer("commitProjectRelink") as Promise<ProjectState>),
     abandonProjectRelink: vi.fn(() => answer("abandonProjectRelink") as Promise<ProjectState>),

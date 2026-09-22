@@ -16,6 +16,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createContext, useContext } from "react";
 
+import type { WorkspaceAddResult } from "../mzml-preview/contracts";
 import { documentAuthorityHeaders } from "../ipc/documentAuthority";
 
 /** Whether a reference travels with the project or points outside it. */
@@ -53,6 +54,15 @@ export interface ProjectInput {
   readonly relinkCandidateMatches: boolean;
   /** The runs that consumed this reference, oldest first. Derived in Rust. */
   readonly consumedByRunIds: readonly string[];
+  /**
+   * The workspace row this session admitted for this reference, or `null`.
+   *
+   * A session handle, never written to the project file. It says which row
+   * *was* admitted, not that the row still exists -- whether it does is the
+   * roster's question, and the surface answers it against the roster it
+   * already holds rather than asking Rust again.
+   */
+  readonly workbenchDatasetHandle: string | null;
 }
 
 export interface ProjectArtifact {
@@ -130,6 +140,18 @@ export interface AcceptedOperation {
 export type CancelOutcome = "cancelled" | "noActiveOperation" | "stale";
 
 /**
+ * What one reattachment answers with: both collections, as they now are.
+ *
+ * Both together, because the crossing changes both. Applying the roster
+ * without the project would leave the surface offering to add a row it has
+ * just added.
+ */
+export interface ProjectAdmission {
+  readonly project: ProjectState;
+  readonly workspace: WorkspaceAddResult;
+}
+
+/**
  * Operations that show a dialog answer `null` when the user cancelled.
  *
  * Cancelling is an ordinary outcome and not an error: nothing was chosen, so
@@ -155,6 +177,17 @@ export interface ProjectApi {
     operationId: string,
     inputIds: readonly string[],
   ): Promise<ProjectState>;
+  /**
+   * Adds the file one reference names to the session workspace.
+   *
+   * Names the reference and the accepted operation, and nothing else. Which
+   * file that is, whether it is still the recorded file and whether the
+   * Workbench opens that kind of file are all decided in Rust.
+   */
+  addProjectInputToWorkspace(
+    operationId: string,
+    inputId: string,
+  ): Promise<ProjectAdmission>;
   proposeProjectRelink(inputId: string): Promise<Chosen>;
   commitProjectRelink(inputId: string): Promise<ProjectState>;
   abandonProjectRelink(): Promise<ProjectState>;
@@ -189,6 +222,12 @@ export const tauriProjectApi: ProjectApi = {
       { operationId, inputIds: [...inputIds] },
       documentAuthorityHeaders(),
     ),
+  addProjectInputToWorkspace: (operationId, inputId) =>
+    invoke<ProjectAdmission>(
+      "add_project_input_to_workspace",
+      { operationId, inputId },
+      documentAuthorityHeaders(),
+    ),
   proposeProjectRelink: (inputId) =>
     invoke<Chosen>("propose_project_relink", { inputId }, documentAuthorityHeaders()),
   commitProjectRelink: (inputId) =>
@@ -218,6 +257,7 @@ export const unavailableProjectApi: ProjectApi = {
   checkProjectLinks: () => Promise.reject(new Error("noProjectStore")),
   cancelProjectJob: () => Promise.resolve({ outcome: "noActiveOperation" }),
   captureProjectFileFacts: () => Promise.reject(new Error("noProjectStore")),
+  addProjectInputToWorkspace: () => Promise.reject(new Error("noProjectStore")),
   proposeProjectRelink: () => Promise.reject(new Error("noProjectStore")),
   commitProjectRelink: () => Promise.reject(new Error("noProjectStore")),
   abandonProjectRelink: () => Promise.resolve(NO_PROJECT),

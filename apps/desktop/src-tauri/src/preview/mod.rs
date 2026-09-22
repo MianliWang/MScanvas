@@ -54,6 +54,11 @@ mod export;
 /// Figure output settings, and the rasterizer that turns one exported SVG into
 /// pixels for PNG and the clipboard.
 mod figure;
+/// The substituted provider that fails a test which starts a process. Shared
+/// by this module's own suite and the project bridge's, so the claim they both
+/// make rests on one double.
+#[cfg(test)]
+pub(crate) mod idle_provider;
 mod installation;
 mod operation;
 mod output_opening;

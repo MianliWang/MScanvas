@@ -34,8 +34,10 @@ pub mod lineage;
 pub mod observe;
 pub mod record;
 
+/// This module's own suite. Reachable from the crate's other test modules so
+/// that its temporary-directory fixture is written once rather than per suite.
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -94,6 +96,13 @@ pub enum ProjectError {
     Oversized,
     /// A file could not be observed. Carries the reason.
     Unavailable(UnavailableReason),
+    /// No current check has established that this reference still holds the
+    /// bytes the project recorded. Establishing that is the check action, and
+    /// pressing something else is not a request to run one.
+    NotChecked,
+    /// The referenced file no longer holds the bytes the project recorded.
+    /// Nothing was admitted and the recorded baseline is untouched.
+    ContentChanged,
     /// The user cancelled.
     Cancelled,
     /// The operation was asked to act on nothing.
@@ -123,6 +132,8 @@ impl ProjectError {
             Self::NotPublished => "notPublished",
             Self::Oversized => "oversized",
             Self::Unavailable(reason) => reason.stable_id(),
+            Self::NotChecked => "notChecked",
+            Self::ContentChanged => "contentChanged",
             Self::Cancelled => "cancelled",
             Self::NothingSelected => "nothingSelected",
             Self::AlreadyRunning => "alreadyRunning",
@@ -260,6 +271,21 @@ struct OpenProject {
     dirty: bool,
     verification: Vec<(InputId, InputVerification)>,
     proposal: Option<RelinkProposal>,
+    /// Which workspace row this session admitted for a reference, if any.
+    ///
+    /// Session-only, and deliberately not part of the document: a `DatasetId`
+    /// belongs to one run of the application, and writing one into a project
+    /// file would make a reopened project claim rows nothing admitted. It is
+    /// kept only so the surface can offer "show me that row" instead of
+    /// offering to add one that is already there.
+    ///
+    /// Dropped with the project it belongs to, because it lives here; dropped
+    /// for one reference when that reference is removed or relinked, because
+    /// the record then names something else. Nothing here notices a row
+    /// *leaving* the workspace -- the roster is the only authority on which
+    /// rows exist, and the interface resolves a remembered handle against it
+    /// rather than trusting this list to be current.
+    admitted: Vec<(InputId, String)>,
 }
 
 impl OpenProject {
@@ -275,7 +301,16 @@ impl OpenProject {
             dirty: false,
             verification,
             proposal: None,
+            admitted: Vec::new(),
         }
+    }
+
+    /// The workspace row this session admitted for a reference, if any.
+    fn admitted_row(&self, id: InputId) -> Option<&str> {
+        self.admitted
+            .iter()
+            .find(|(recorded, _)| *recorded == id)
+            .map(|(_, handle)| handle.as_str())
     }
 
     /// The directory relative locators resolve against.
@@ -724,6 +759,11 @@ impl ProjectStore {
                     .any(|observation| observation.input_id == id)
         });
         project.verification.retain(|(recorded, _)| *recorded != id);
+        // The reference is gone, so there is no longer anything for a
+        // remembered row to be the row *of*. The row itself is untouched:
+        // removing a project reference has never removed a workspace dataset
+        // and does not start now.
+        project.admitted.retain(|(recorded, _)| *recorded != id);
         if project
             .proposal
             .as_ref()
@@ -760,10 +800,14 @@ impl ProjectStore {
 
     /// [`Self::accept_job`], with the cancellation state supplied.
     ///
-    /// Not public. It exists so a test can accept an operation whose reads it
-    /// can hold at a chunk boundary; production has exactly one way to make a
-    /// cancellation state, which is a fresh one.
-    fn accept_job_with(&self, cancellation: Cancellation) -> Result<ProjectJobId, ProjectError> {
+    /// Crate-internal. It exists so a test can accept an operation whose reads
+    /// it can hold at a chunk boundary; production has exactly one way to make
+    /// a cancellation state, which is a fresh one, and the only gated one a
+    /// test can build is itself `cfg(test)`.
+    pub(crate) fn accept_job_with(
+        &self,
+        cancellation: Cancellation,
+    ) -> Result<ProjectJobId, ProjectError> {
         let mut session = self.locked();
         session.open()?;
         match &session.job {
@@ -1150,11 +1194,164 @@ impl ProjectStore {
         {
             slot.1 = outcome;
         }
+        // The record names a different object now, so a row this session
+        // admitted for the old one is no longer this reference's row. The row
+        // stays in the workspace, where the user put it.
+        project.admitted.retain(|(recorded, _)| *recorded != id);
         project.proposal = None;
         project.dirty = true;
         // The reference points somewhere else now, so a check still running is
         // computing an answer about a file this record no longer names.
         session.invalidate();
+        Ok(())
+    }
+
+    /// Proves that one reference may be handed to workspace admission, now.
+    ///
+    /// Runs the accepted operation `job`, like a check does, so it is
+    /// cancellable, bounded to one at a time, and tied to the project it was
+    /// accepted against.
+    ///
+    /// Two separate questions, in this order.
+    ///
+    /// The first is whether the reference is *eligible*: the user must already
+    /// have established, through the ordinary check action, that its bytes are
+    /// the recorded bytes. Pressing this is not a request to run a check, so a
+    /// reference that has never been checked is refused rather than checked
+    /// silently.
+    ///
+    /// The second is whether that is still true. A prior check is not standing
+    /// admission authority -- between it and this press the file can have been
+    /// edited in place, replaced, deleted or redirected -- so the content is
+    /// re-established here, through the same stable read and the same digest
+    /// the check itself uses. Path, length, modified time and file identity are
+    /// none of them the proof; an in-place edit changes none of the first three
+    /// and not the fourth either, and the digest is what sees it.
+    ///
+    /// Nothing in the document is written on any path through this. A
+    /// revalidation that finds something else does update what the *session*
+    /// says the last look established -- that is the same slot a check writes,
+    /// and leaving it claiming "matches" beside a refusal saying "changed"
+    /// would be the interface contradicting itself -- but no baseline is
+    /// rewritten, no locator is moved and the project is not marked unsaved.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::NotChecked`], [`ProjectError::ContentChanged`] or
+    /// [`ProjectError::Unavailable`] for a reference whose current state is not
+    /// established as matching; [`ProjectError::Cancelled`];
+    /// [`ProjectError::StaleDocument`] where the project moved under the read;
+    /// [`ProjectError::UnknownRecord`]; [`ProjectError::StaleOperation`].
+    pub fn prove_admissible(
+        &self,
+        job: ProjectJobId,
+        id: InputId,
+    ) -> Result<AdmissibleInput, ProjectError> {
+        let (mut guard, cancellation, generation) = self.start_job(job)?;
+        let (input, base) = {
+            let session = self.locked();
+            let project = session.open()?;
+            let input = project
+                .document
+                .input(id)
+                .ok_or(ProjectError::UnknownRecord)?
+                .clone();
+            refuse_unestablished(project.verification_of(id))?;
+            (input, project.base_directory().map(Path::to_path_buf))
+        };
+
+        // Outside the lock, for the reason every read in this store is: this
+        // hashes a whole acquisition, and holding the session across it would
+        // stop the interface describing the project for as long as that took.
+        let base = base.unwrap_or_default();
+        let observed = observe::verify_input(&input, &base, &cancellation);
+        let path = record::resolve(&input.locator, &base).map_err(ProjectError::Document)?;
+        // Read here, through an open handle, and read again at the moment the
+        // admission is recorded. The digest above proves *content*; this is the
+        // one thing a closed digest cannot answer afterwards -- whether the
+        // name still means the same object. Where a filesystem has no identity
+        // to give, both answers are `None` and this adds nothing; the digest
+        // still stands on its own.
+        let identity = local_document::object_identity(&path);
+
+        let mut session = self.locked();
+        if cancellation.requested() {
+            guard.release(&mut session);
+            return Err(ProjectError::Cancelled);
+        }
+        // The project was replaced, closed, saved elsewhere, or had a record
+        // removed or relinked while this read ran. What was just proved is
+        // about a reference in a project nobody is looking at.
+        if session.generation != generation {
+            guard.release(&mut session);
+            return Err(ProjectError::StaleDocument);
+        }
+        let Some(project) = session.project.as_mut() else {
+            guard.release(&mut session);
+            return Err(ProjectError::NoOpenProject);
+        };
+        if project.document.input(id).is_none() {
+            guard.release(&mut session);
+            return Err(ProjectError::UnknownRecord);
+        }
+        if let Some(slot) = project
+            .verification
+            .iter_mut()
+            .find(|(recorded, _)| *recorded == id)
+        {
+            slot.1 = observed;
+        }
+        guard.release(&mut session);
+        drop(session);
+
+        refuse_unestablished(observed)?;
+        Ok(AdmissibleInput {
+            input: id,
+            generation,
+            path,
+            identity,
+        })
+    }
+
+    /// Remembers which workspace row one reference was admitted as.
+    ///
+    /// The last gate, and the one that decides whether the project may claim
+    /// the row at all. The identity of the object the name resolves to is read
+    /// again and compared against what the proof observed, because the
+    /// admission boundary opened the file for itself after this store closed
+    /// its read: a name that came to mean something else in between would have
+    /// put a different object in the workspace, and that row is not this
+    /// reference's row whatever it is.
+    ///
+    /// The row is never removed on a refusal here. The workspace owns its own
+    /// rows and admitted whatever it admitted; what is refused is the project's
+    /// claim on it.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::ContentChanged`] where the object moved out from under
+    /// the admission, [`ProjectError::StaleDocument`] where the project did,
+    /// or [`ProjectError::UnknownRecord`].
+    pub fn record_admission(
+        &self,
+        proof: &AdmissibleInput,
+        handle: &str,
+    ) -> Result<(), ProjectError> {
+        if local_document::object_identity(&proof.path) != proof.identity {
+            return Err(ProjectError::ContentChanged);
+        }
+        let mut session = self.locked();
+        if session.generation != proof.generation {
+            return Err(ProjectError::StaleDocument);
+        }
+        let project = session.open_mut()?;
+        if project.document.input(proof.input).is_none() {
+            return Err(ProjectError::UnknownRecord);
+        }
+        project
+            .admitted
+            .retain(|(recorded, _)| *recorded != proof.input);
+        project.admitted.push((proof.input, handle.to_owned()));
         Ok(())
     }
 
@@ -1201,6 +1398,53 @@ impl Drop for JobGuard<'_> {
         // the lock.
         let mut session = self.store.locked();
         self.release(&mut session);
+    }
+}
+
+/// One reference, proved admissible at the moment it was asked for.
+///
+/// Not a capability and not a reservation: it is the evidence of one proof,
+/// consumed by the one admission it was produced for. It carries a resolved
+/// path because the workspace admission boundary takes a path -- that path
+/// never leaves Rust, and the webview neither supplied it nor receives it.
+pub struct AdmissibleInput {
+    input: InputId,
+    /// The project generation the proof was made against. A commit at any
+    /// other generation is a commit into a project this was not proved for.
+    generation: u64,
+    path: PathBuf,
+    /// What the name resolved to when the content was proved, or `None` on a
+    /// filesystem that cannot say.
+    identity: Option<(u64, [u8; 16])>,
+}
+
+impl AdmissibleInput {
+    /// The object to hand to the existing workspace admission boundary.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl fmt::Debug for AdmissibleInput {
+    /// Deliberately opaque: this holds a resolved absolute path, and a
+    /// `Debug` line is exactly the place one would escape into a log.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<admissible-input>")
+    }
+}
+
+/// Whether a reference's current state permits handing it to admission.
+///
+/// The one place the eligibility rule is written. Every state stays distinct
+/// in the refusal, because "check it first", "it changed" and "it is not
+/// there" need different actions from the user.
+fn refuse_unestablished(outcome: InputVerification) -> Result<(), ProjectError> {
+    match outcome {
+        InputVerification::MatchingRecordedContent => Ok(()),
+        InputVerification::NotChecked => Err(ProjectError::NotChecked),
+        InputVerification::DifferentContent => Err(ProjectError::ContentChanged),
+        InputVerification::Unavailable(reason) => Err(ProjectError::Unavailable(reason)),
     }
 }
 
