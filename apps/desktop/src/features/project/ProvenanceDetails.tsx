@@ -2,9 +2,14 @@
  * What the selected project object is, and what it is related to.
  *
  * The contextual metadata region the accepted direction puts beside the
- * evidence area, filled for the Project surface. It renders three kinds of
+ * evidence area, filled for the Project surface. It renders four kinds of
  * object and the real relationships between them, and every relationship is a
  * control: activating one selects that object and re-reads this same panel.
+ *
+ * A layer is identity, not a file: its name is its source's label, its current
+ * availability is whether that source's Workbench row is live, and what it is
+ * related to is what its source is related to. Nothing here gives it a fact of
+ * its own beyond the one it was created with.
  *
  * ## Two kinds of fact, kept apart
  *
@@ -30,7 +35,7 @@
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { recordedAt } from "./ProjectPanel";
 import type { ProjectInput, ProjectRun } from "./projectApi";
-import type { Provenance, ProjectSelection, Related } from "./lineage";
+import { attachedRow, type Provenance, type ProjectSelection, type Related } from "./lineage";
 
 /** The message key for one reference's current check outcome. */
 function currentStateKey(input: ProjectInput) {
@@ -73,9 +78,21 @@ function outcomeKey(run: ProjectRun) {
 export interface ProvenanceDetailsProps {
   readonly provenance: Provenance | null;
   readonly onSelect: (selection: ProjectSelection) => void;
+  /**
+   * Every row the workspace currently holds, so a layer's availability is
+   * resolved against the roster rather than trusted from a remembered handle.
+   */
+  readonly liveDatasetHandles?: ReadonlySet<string>;
+  /** Takes the reader to one row that is in the Workbench. Navigation only. */
+  readonly onShowInWorkbench?: (handle: string) => void;
 }
 
-export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsProps) {
+export function ProvenanceDetails({
+  provenance,
+  onSelect,
+  liveDatasetHandles,
+  onShowInWorkbench,
+}: ProvenanceDetailsProps) {
   const t = useUiMessages();
   const locale = document.documentElement.lang || "en";
 
@@ -159,6 +176,29 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
     t("provenanceInspectRunAt", { when: recordedAt(run.finishedAt, locale) });
   const producedBy = (run: ProjectRun) =>
     t("provenanceInspectArtifactOf", { when: recordedAt(run.finishedAt, locale) });
+  const inspectInput = (input: ProjectInput) =>
+    t("provenanceInspectInput", { name: input.label });
+
+  // A layer's row in the Workbench, resolved once, against the roster. Its
+  // source may be gone, in which case there is no row to resolve.
+  const layerSource = provenance.kind === "layer" ? provenance.source.record : null;
+  const layerHandle = layerSource === null ? null : attachedRow(layerSource, liveDatasetHandles);
+  const layerName = layerSource?.label ?? t("provenanceRelatedGone");
+
+  /** The runs that consumed one reference, or the sentence for none. */
+  function usedBy(consumedBy: readonly Related<ProjectRun>[]) {
+    return consumedBy.length === 0 ? (
+      <p className="provenance-empty">{t("provenanceUsedByNothing")}</p>
+    ) : (
+      <ul className="provenance-list">
+        {consumedBy.map((related) =>
+          link(related, "run", runName, runAt, (run) => (
+            <span className="provenance-outcome">{t(outcomeKey(run))}</span>
+          )),
+        )}
+      </ul>
+    );
+  }
 
   return (
     <section className="panel provenance" aria-label={t("provenanceRegion")}>
@@ -177,17 +217,57 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
           <p className="provenance-section-label">{t("provenanceCurrentFile")}</p>
           <p className="provenance-current-row">{currentState(provenance.input)}</p>
           <p className="provenance-section-label">{t("provenanceUsedBy")}</p>
-          {provenance.consumedBy.length === 0 ? (
-            <p className="provenance-empty">{t("provenanceUsedByNothing")}</p>
+          {usedBy(provenance.consumedBy)}
+          <p className="provenance-section-label">{t("provenanceLayer")}</p>
+          {provenance.layer === null ? (
+            <p className="provenance-empty" data-provenance-no-layer="">
+              {t("provenanceNoLayer")}
+            </p>
           ) : (
             <ul className="provenance-list">
-              {provenance.consumedBy.map((related) =>
-                link(related, "run", runName, runAt, (run) => (
-                  <span className="provenance-outcome">{t(outcomeKey(run))}</span>
-                )),
+              {link(
+                { id: provenance.layer.id, record: provenance.layer },
+                "layer",
+                () => provenance.input.label,
+                () => t("provenanceInspectLayer", { name: provenance.input.label }),
               )}
             </ul>
           )}
+        </div>
+      ) : provenance.kind === "layer" ? (
+        <div data-provenance="layer">
+          <p className="provenance-kind">{t("provenanceKindLayer")}</p>
+          <h3 className="provenance-name">{layerName}</h3>
+          {/* Current, and resolved against the roster: a remembered row that
+              is no longer there is a layer that is not in the Workbench. */}
+          <p className="provenance-section-label">{t("provenanceLayerAvailability")}</p>
+          <p className="provenance-current-row">
+            <span
+              className={`provenance-current ${layerHandle === null ? "is-detached" : "is-attached"}`}
+              data-provenance-availability={layerHandle === null ? "detached" : "attached"}
+            >
+              {t(layerHandle === null ? "projectLayerDetached" : "projectLayerAttached")}
+            </span>
+            {layerHandle === null ? null : (
+              <button
+                type="button"
+                className="link-button"
+                aria-label={t("projectShowInWorkbenchNamed", { name: layerName })}
+                data-provenance-layer-show-in-workbench=""
+                onClick={() => onShowInWorkbench?.(layerHandle)}
+              >
+                {t("projectShowInWorkbench")}
+              </button>
+            )}
+          </p>
+          <p className="provenance-section-label">{t("provenanceLayerSource")}</p>
+          <ul className="provenance-list">
+            {link(provenance.source, "input", inputName, inspectInput, (input) =>
+              currentState(input),
+            )}
+          </ul>
+          <p className="provenance-section-label">{t("provenanceUsedBy")}</p>
+          {usedBy(provenance.consumedBy)}
         </div>
       ) : provenance.kind === "run" ? (
         <div data-provenance="run">
@@ -201,13 +281,7 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
           <p className="provenance-section-label">{t("provenanceConsumed")}</p>
           <ul className="provenance-list">
             {provenance.inputs.map((related) =>
-              link(
-                related,
-                "input",
-                inputName,
-                (input) => t("provenanceInspectInput", { name: input.label }),
-                (input) => currentState(input),
-              ),
+              link(related, "input", inputName, inspectInput, (input) => currentState(input)),
             )}
           </ul>
           <p className="provenance-section-label">{t("provenanceProduced")}</p>
@@ -253,13 +327,7 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
           ) : (
             <ul className="provenance-list">
               {provenance.sources.map((related) =>
-                link(
-                  related,
-                  "input",
-                  inputName,
-                  (input) => t("provenanceInspectInput", { name: input.label }),
-                  (input) => currentState(input),
-                ),
+                link(related, "input", inputName, inspectInput, (input) => currentState(input)),
               )}
             </ul>
           )}

@@ -121,6 +121,10 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::NothingSelected => "Nothing was selected.",
         Refusal::AlreadyRunning => "Another check is already running.",
         Refusal::StaleOperation => "That operation is no longer the one running.",
+        Refusal::NotInWorkbench => "Add this reference to the Workbench before creating its layer.",
+        Refusal::LayerDependsOnInput => {
+            "Remove this reference's layer before removing the reference."
+        }
     };
     PreviewErrorDto::new(error.stable_id(), message, error.retryable())
 }
@@ -485,6 +489,46 @@ async fn add_project_input_to_workspace(
     }
 }
 
+/// Creates the layer of one reference, or answers the one it already has.
+///
+/// Reads no file and starts nothing. The one question asked outside the
+/// project is whether the row the project remembers for this reference is
+/// still in the roster, which is an in-memory lookup; a reference with no live
+/// row is refused rather than re-admitted, because pressing this is not a
+/// request to add anything to the Workbench.
+#[tauri::command]
+async fn create_project_layer(
+    input_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_input_id(&input_id)?;
+    projects
+        .create_layer(id, |handle| {
+            service.dataset_object_identities(handle).is_some()
+        })
+        .map_err(project_error)?;
+    Ok(projects.describe())
+}
+
+/// Removes one layer. The reference it was sourced from stays.
+#[tauri::command]
+async fn remove_project_layer(
+    layer_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_layer_id(&layer_id)?;
+    projects.remove_layer(id).map_err(project_error)?;
+    Ok(projects.describe())
+}
+
 /// Abandons an outstanding relink proposal.
 #[tauri::command]
 async fn abandon_project_relink(
@@ -529,6 +573,13 @@ fn parsed_job_id(value: &str) -> Result<project::ProjectJobId, PreviewErrorDto> 
 /// Refused rather than looked up loosely. The identifier came from outside, and
 /// the refusal deliberately does not echo it back.
 fn parsed_input_id(value: &str) -> Result<project::record::InputId, PreviewErrorDto> {
+    value
+        .parse()
+        .map_err(|()| project_error(project::ProjectError::UnknownRecord))
+}
+
+/// Reads one layer identifier the webview sent, under the same rule.
+fn parsed_layer_id(value: &str) -> Result<project::record::LayerId, PreviewErrorDto> {
     value
         .parse()
         .map_err(|()| project_error(project::ProjectError::UnknownRecord))
@@ -1894,6 +1945,8 @@ pub fn run() {
             commit_project_relink,
             abandon_project_relink,
             add_project_input_to_workspace,
+            create_project_layer,
+            remove_project_layer,
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,

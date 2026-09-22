@@ -15,14 +15,16 @@ import {
   openProject,
   projectArtifact,
   projectInput,
+  projectLayer,
   projectRun,
 } from "../../test/projectFixtures";
-import { provenanceOf } from "./lineage";
+import { attachedRow, provenanceOf } from "./lineage";
 import { NO_PROJECT } from "./projectApi";
 
 const INPUT = "11111111-2222-4111-8111-111111111111";
 const RUN = "ffffffff-2222-4111-8111-111111111111";
 const ARTIFACT = "eeeeeeee-2222-4111-8111-111111111111";
+const LAYER = "dddddddd-2222-4111-8111-111111111111";
 
 describe("the lineage projection", () => {
   it("answers nothing when nothing is selected", () => {
@@ -92,12 +94,64 @@ describe("the lineage projection", () => {
   });
 
   it("says a selected object that is gone is gone, and selects nothing else", () => {
-    for (const kind of ["input", "run", "artifact"] as const) {
+    for (const kind of ["input", "run", "artifact", "layer"] as const) {
       const provenance = provenanceOf(capturedProject(), {
         kind,
         id: "99999999-9999-4111-8111-999999999999",
       });
       expect(provenance?.kind).toBe("gone");
     }
+  });
+});
+
+describe("the layer projection", () => {
+  /** The captured lineage, with one layer sourced from its reference. */
+  function layered() {
+    return { ...capturedProject(), layers: [projectLayer({ id: LAYER, sourceInputId: INPUT })] };
+  }
+
+  it("reaches a layer's source and, through it, the runs that consumed the source", () => {
+    const provenance = provenanceOf(layered(), { kind: "layer", id: LAYER });
+    if (provenance?.kind !== "layer") throw new Error("wrong kind");
+    expect(provenance.layer.id).toBe(LAYER);
+    expect(provenance.source.record?.id).toBe(INPUT);
+    // A layer has no runs of its own. What it is related to is what its
+    // source is related to, and that is the source's list, not a second one.
+    expect(provenance.consumedBy.map((related) => related.record?.id)).toEqual([RUN]);
+  });
+
+  it("names the layer sourced from a reference, and none where none was created", () => {
+    const withLayer = provenanceOf(layered(), { kind: "input", id: INPUT });
+    if (withLayer?.kind !== "input") throw new Error("wrong kind");
+    expect(withLayer.layer?.id).toBe(LAYER);
+
+    const without = provenanceOf(capturedProject(), { kind: "input", id: INPUT });
+    if (without?.kind !== "input") throw new Error("wrong kind");
+    expect(without.layer).toBeNull();
+  });
+
+  it("keeps a layer whose source is gone, with the edge unresolved and nothing consumed", () => {
+    // Not a state a valid document can be in, but the projection has to
+    // answer for it rather than throw: the layer is still selected.
+    const state = openProject({
+      inputs: [],
+      layers: [projectLayer({ id: LAYER, sourceInputId: INPUT })],
+    });
+    const provenance = provenanceOf(state, { kind: "layer", id: LAYER });
+    if (provenance?.kind !== "layer") throw new Error("wrong kind");
+    expect(provenance.source.id).toBe(INPUT);
+    expect(provenance.source.record).toBeNull();
+    expect(provenance.consumedBy).toEqual([]);
+  });
+
+  it("resolves a remembered row only against the roster", () => {
+    const input = projectInput({ workbenchDatasetHandle: "row-1" });
+    expect(attachedRow(input, new Set(["row-1"]))).toBe("row-1");
+    // A handle the roster no longer holds is a row that has gone, which is
+    // the same position as never having admitted one.
+    expect(attachedRow(input, new Set(["row-2"]))).toBeNull();
+    expect(attachedRow(input, new Set())).toBeNull();
+    expect(attachedRow(input, undefined)).toBeNull();
+    expect(attachedRow(projectInput({ workbenchDatasetHandle: null }), new Set(["row-1"]))).toBeNull();
   });
 });

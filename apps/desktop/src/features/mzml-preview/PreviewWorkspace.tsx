@@ -793,7 +793,12 @@ export function PreviewWorkspace() {
               provenance here rather than adding a navigation target of its own,
               which is where the accepted direction puts contextual metadata. */}
           {surface === "project" ? (
-            <ProvenanceDetails provenance={project.provenance} onSelect={project.inspect} />
+            <ProvenanceDetails
+              provenance={project.provenance}
+              onSelect={project.inspect}
+              liveDatasetHandles={liveDatasetHandles}
+              onShowInWorkbench={revealInWorkbench}
+            />
           ) : preview.status === "loaded" ? (
             <PreviewSummary
               file={previewFile ?? preview.preview.file}

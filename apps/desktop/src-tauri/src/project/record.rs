@@ -2,7 +2,8 @@
 //!
 //! A project is a private local working document. It records which local files
 //! a user chose to reference, what those files contained when they were
-//! registered, and which operations were run over them. It is not a workspace
+//! registered, which operations were run over them, and which references the
+//! user made a layer from. It is not a workspace
 //! serialization: no handle, no lease, no admission, no process ownership, no
 //! `DatasetId` and no executable command is representable in these types at
 //! all. The allowlist is the type, not a filter applied to a wider one.
@@ -23,9 +24,11 @@ use uuid::Uuid;
 /// The only schema this build reads or writes.
 ///
 /// A document carrying anything else is refused as unsupported, not migrated.
-/// No earlier schema was ever published, so a migration path would be code for
-/// a format that never existed; a later one belongs to the build that wrote it.
-pub const SCHEMA_VERSION: u32 = 1;
+/// Schema 1 was the shape before layers existed and was never published
+/// outside development, so a document carrying it is refused exactly as any
+/// other version is: a migration path would be code for a format no user ever
+/// held. A later schema belongs to the build that wrote it.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The largest project document this build will read.
 ///
@@ -49,6 +52,11 @@ pub const MAX_ARTIFACTS: usize = 2048;
 
 /// The most runs one project may record.
 pub const MAX_RUNS: usize = 2048;
+
+/// The most layers one project may hold.
+///
+/// One current default layer per input, so the input bound is the layer bound.
+pub const MAX_LAYERS: usize = MAX_INPUTS;
 
 /// The longest user-visible label this document stores, in characters.
 pub const MAX_LABEL_CHARS: usize = 200;
@@ -91,6 +99,15 @@ pub struct InputId(Uuid);
 #[serde(transparent)]
 pub struct RunId(Uuid);
 
+/// A durable identifier for one layer.
+///
+/// Survives a save, a reopen and a relink of its source, and is never a
+/// `DatasetId`: a workspace row belongs to one run of the application, and a
+/// layer is what the project keeps once that row is gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct LayerId(Uuid);
+
 macro_rules! fresh_identifier {
     ($name:ident) => {
         impl $name {
@@ -128,6 +145,7 @@ macro_rules! fresh_identifier {
 fresh_identifier!(ProjectId);
 fresh_identifier!(InputId);
 fresh_identifier!(RunId);
+fresh_identifier!(LayerId);
 
 /// What one member is to the input it belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,6 +332,38 @@ pub struct RunRecord {
     pub finished_at: String,
 }
 
+/// Which project record a layer is sourced from. One variant, because one
+/// current consumer exists: a reference that the Workbench has admitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum LayerSource {
+    #[serde(rename_all = "camelCase")]
+    Input { input_id: InputId },
+}
+
+impl LayerSource {
+    /// The reference this source names.
+    #[must_use]
+    pub const fn input_id(self) -> InputId {
+        match self {
+            Self::Input { input_id } => input_id,
+        }
+    }
+}
+
+/// One layer: an identity and where it came from, and nothing else.
+///
+/// No label, because its name is its source's label; no style, visibility or
+/// order, because those are comparison semantics this schema does not hold;
+/// and no `DatasetId`, because a workspace row is a session fact and this is a
+/// document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LayerRecord {
+    pub id: LayerId,
+    pub source: LayerSource,
+}
+
 /// One whole project document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -327,6 +377,7 @@ pub struct ProjectDocument {
     pub inputs: Vec<InputRecord>,
     pub artifacts: Vec<ArtifactRecord>,
     pub runs: Vec<RunRecord>,
+    pub layers: Vec<LayerRecord>,
 }
 
 impl ProjectDocument {
@@ -341,6 +392,7 @@ impl ProjectDocument {
             inputs: Vec::new(),
             artifacts: Vec::new(),
             runs: Vec::new(),
+            layers: Vec::new(),
         }
     }
 
@@ -348,6 +400,23 @@ impl ProjectDocument {
     #[must_use]
     pub fn input(&self, id: InputId) -> Option<&InputRecord> {
         self.inputs.iter().find(|input| input.id == id)
+    }
+
+    /// The layer with this identifier, if the document has one.
+    #[must_use]
+    pub fn layer(&self, id: LayerId) -> Option<&LayerRecord> {
+        self.layers.iter().find(|layer| layer.id == id)
+    }
+
+    /// The layer sourced from this input, if the document has one.
+    ///
+    /// Never two: a document with two is refused by [`validate`], so the first
+    /// match is the only match.
+    #[must_use]
+    pub fn layer_of_input(&self, input: InputId) -> Option<&LayerRecord> {
+        self.layers
+            .iter()
+            .find(|layer| layer.source.input_id() == input)
     }
 }
 
@@ -367,10 +436,10 @@ pub enum DocumentProblem {
     /// Longer than [`MAX_DOCUMENT_BYTES`], or over one of the count bounds.
     /// Never fully parsed, never partly loaded.
     Oversized,
-    /// Two records share an identifier.
+    /// Two records share an identifier, or two layers name one source.
     DuplicateIdentifier,
-    /// A run names an input or an artifact the document does not contain, or an
-    /// artifact observes one.
+    /// A run names an input or an artifact the document does not contain, an
+    /// artifact observes one, or a layer is sourced from one.
     DanglingReference,
     /// Two runs claim to have produced one artifact, so "what produced this"
     /// has two answers. Refused rather than resolved: picking one would be
@@ -508,6 +577,7 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
     if document.inputs.len() > MAX_INPUTS
         || document.artifacts.len() > MAX_ARTIFACTS
         || document.runs.len() > MAX_RUNS
+        || document.layers.len() > MAX_LAYERS
     {
         return Err(DocumentProblem::Oversized);
     }
@@ -610,6 +680,28 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
         bounded_label(&run.application_version)?;
         bounded_label(&run.started_at)?;
         bounded_label(&run.finished_at)?;
+    }
+
+    let mut layer_ids = Vec::with_capacity(document.layers.len());
+    // Which inputs already have a layer, across the whole document.
+    let mut layered: Vec<InputId> = Vec::with_capacity(document.layers.len());
+    for layer in &document.layers {
+        if layer_ids.contains(&layer.id) {
+            return Err(DocumentProblem::DuplicateIdentifier);
+        }
+        layer_ids.push(layer.id);
+        let source = layer.source.input_id();
+        if !input_ids.contains(&source) {
+            return Err(DocumentProblem::DanglingReference);
+        }
+        // One current default layer per input. A document with two is refused,
+        // not normalised: as with a run that consumes one input twice, it is a
+        // relationship the document states twice, and choosing which layer is
+        // "the" layer of that input would be inventing an answer.
+        if layered.contains(&source) {
+            return Err(DocumentProblem::DuplicateIdentifier);
+        }
+        layered.push(source);
     }
     Ok(())
 }

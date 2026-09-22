@@ -91,6 +91,19 @@ export interface ProjectRun {
   readonly finishedAt: string;
 }
 
+/**
+ * One layer: a durable identity sourced from one reference, and nothing else.
+ *
+ * It carries no label of its own -- its visible name is its source's label --
+ * and no availability: whether the source is in the Workbench right now is
+ * resolved from the source's remembered handle against the roster the page
+ * already holds, exactly as the reference's own Show control resolves it.
+ */
+export interface ProjectLayer {
+  readonly id: string;
+  readonly sourceInputId: string;
+}
+
 export interface ProjectState {
   readonly open: boolean;
   /**
@@ -107,6 +120,7 @@ export interface ProjectState {
   readonly inputs: readonly ProjectInput[];
   readonly artifacts: readonly ProjectArtifact[];
   readonly runs: readonly ProjectRun[];
+  readonly layers: readonly ProjectLayer[];
 }
 
 /** The state of a session with no project open. */
@@ -119,6 +133,7 @@ export const NO_PROJECT: ProjectState = {
   inputs: [],
   artifacts: [],
   runs: [],
+  layers: [],
 };
 
 /**
@@ -191,6 +206,13 @@ export interface ProjectApi {
   proposeProjectRelink(inputId: string): Promise<Chosen>;
   commitProjectRelink(inputId: string): Promise<ProjectState>;
   abandonProjectRelink(): Promise<ProjectState>;
+  /**
+   * Creates the layer sourced from one reference, or answers the one it
+   * already has. Reads no file and starts nothing: Rust asks the roster it
+   * holds whether the reference's row is live, and that is the whole check.
+   */
+  createProjectLayer(inputId: string): Promise<ProjectState>;
+  removeProjectLayer(layerId: string): Promise<ProjectState>;
 }
 
 export const tauriProjectApi: ProjectApi = {
@@ -234,6 +256,10 @@ export const tauriProjectApi: ProjectApi = {
     invoke<ProjectState>("commit_project_relink", { inputId }, documentAuthorityHeaders()),
   abandonProjectRelink: () =>
     invoke<ProjectState>("abandon_project_relink", {}, documentAuthorityHeaders()),
+  createProjectLayer: (inputId) =>
+    invoke<ProjectState>("create_project_layer", { inputId }, documentAuthorityHeaders()),
+  removeProjectLayer: (layerId) =>
+    invoke<ProjectState>("remove_project_layer", { layerId }, documentAuthorityHeaders()),
 };
 
 /**
@@ -261,6 +287,8 @@ export const unavailableProjectApi: ProjectApi = {
   proposeProjectRelink: () => Promise.reject(new Error("noProjectStore")),
   commitProjectRelink: () => Promise.reject(new Error("noProjectStore")),
   abandonProjectRelink: () => Promise.resolve(NO_PROJECT),
+  createProjectLayer: () => Promise.reject(new Error("noProjectStore")),
+  removeProjectLayer: () => Promise.reject(new Error("noProjectStore")),
 };
 
 /**

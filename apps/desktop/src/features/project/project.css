@@ -201,6 +201,19 @@
   color: var(--color-danger);
 }
 
+/* A layer's availability, in the same two-tone pattern as the check outcomes:
+   the word beside it says the same thing, and the row carries
+   `data-layer-availability` for anything reading rather than looking. */
+.project-availability.is-attached,
+.provenance-current.is-attached {
+  color: var(--color-success);
+}
+
+.project-availability.is-detached,
+.provenance-current.is-detached {
+  color: var(--color-text-tertiary);
+}
+
 .project-row-actions {
   display: flex;
   flex-wrap: wrap;

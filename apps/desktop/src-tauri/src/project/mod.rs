@@ -51,8 +51,9 @@ use observe::{
     Cancellation, InputVerification, MemberObservation, ObjectIdentity, UnavailableReason,
 };
 use record::{
-    ArtifactRecord, DocumentProblem, InputId, InputRecord, MAX_ARTIFACTS, MAX_DOCUMENT_BYTES,
-    MAX_INPUTS, MAX_RUNS, ProjectDocument, RecordedOperation, RunId, RunRecord, TerminalOutcome,
+    ArtifactRecord, DocumentProblem, InputId, InputRecord, LayerId, LayerRecord, LayerSource,
+    MAX_ARTIFACTS, MAX_DOCUMENT_BYTES, MAX_INPUTS, MAX_LAYERS, MAX_RUNS, ProjectDocument,
+    RecordedOperation, RunId, RunRecord, TerminalOutcome,
 };
 
 /// The extension a project document carries.
@@ -120,6 +121,14 @@ pub enum ProjectError {
     /// was never accepted, it already ran, it was superseded, or the project it
     /// was accepted against has been replaced since.
     StaleOperation,
+    /// The reference has no current Workbench row, so no layer may be created
+    /// from it. A layer stands for something the user can see, and the row is
+    /// what makes that true; creating one for a reference that is not there
+    /// would be a layer of nothing.
+    NotInWorkbench,
+    /// A layer is sourced from this reference. The layer is removed first, by
+    /// the user, or the reference stays.
+    LayerDependsOnInput,
 }
 
 impl ProjectError {
@@ -146,6 +155,8 @@ impl ProjectError {
             Self::NothingSelected => "nothingSelected",
             Self::AlreadyRunning => "alreadyRunning",
             Self::StaleOperation => "staleOperation",
+            Self::NotInWorkbench => "notInWorkbench",
+            Self::LayerDependsOnInput => "layerDependsOnInput",
         }
     }
 
@@ -728,15 +739,25 @@ impl ProjectStore {
     /// that named it goes with it, because a run whose inputs are gone is a
     /// dangling record and this schema does not hold one.
     ///
+    /// A reference with a layer is refused rather than cascaded. History is
+    /// something this application wrote; a layer is an identity the user
+    /// created, and deleting one silently to satisfy a removal would remove
+    /// something the user did not ask to remove. They remove the layer first,
+    /// and then the reference goes.
+    ///
     /// # Errors
     ///
     /// [`ProjectError::UnknownRecord`] for an identifier this project has no
-    /// input for.
+    /// input for, or [`ProjectError::LayerDependsOnInput`] where a layer is
+    /// sourced from it. Nothing changes on either.
     pub fn remove_input(&self, id: InputId) -> Result<(), ProjectError> {
         let mut session = self.locked();
         let project = session.open_mut()?;
         if project.document.input(id).is_none() {
             return Err(ProjectError::UnknownRecord);
+        }
+        if project.document.layer_of_input(id).is_some() {
+            return Err(ProjectError::LayerDependsOnInput);
         }
         project.document.inputs.retain(|input| input.id != id);
         // Every run that named it, and every artifact that observed it.
@@ -1389,6 +1410,104 @@ impl ProjectStore {
         if let Some(project) = session.project.as_mut() {
             project.proposal = None;
         }
+    }
+
+    /// Creates the one layer a reference may have, or answers the one it has.
+    ///
+    /// A layer is an identity and a source, and creating one reads nothing: no
+    /// file, no digest, no provider. What it does ask is whether the reference
+    /// is *in the Workbench now*, because a layer stands for something the
+    /// user can see. This store remembers which row it admitted for a
+    /// reference but never notices that row leaving, so the answer comes from
+    /// `row_is_live`, which is the roster's own in-memory answer about the
+    /// remembered handle. It is asked with the session lock released: the
+    /// roster has its own lock, and this store takes no other lock under its
+    /// own.
+    ///
+    /// Idempotent for a reference that already has a layer, and without the
+    /// liveness question: an existing layer is not conditional on the row that
+    /// was there when it was made. That is the whole reason a layer exists
+    /// rather than the row being the thing.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::UnknownRecord`]; [`ProjectError::NotInWorkbench`] where
+    /// no row is remembered or the remembered one is gone;
+    /// [`ProjectError::Oversized`]; [`ProjectError::StaleDocument`] where the
+    /// project moved while the roster was being asked.
+    pub fn create_layer(
+        &self,
+        input: InputId,
+        row_is_live: impl FnOnce(&str) -> bool,
+    ) -> Result<LayerId, ProjectError> {
+        let (generation, handle) = {
+            let session = self.locked();
+            let project = session.open()?;
+            if project.document.input(input).is_none() {
+                return Err(ProjectError::UnknownRecord);
+            }
+            if let Some(existing) = project.document.layer_of_input(input) {
+                return Ok(existing.id);
+            }
+            let handle = project
+                .admitted_row(input)
+                .ok_or(ProjectError::NotInWorkbench)?
+                .to_owned();
+            if project.document.layers.len() >= MAX_LAYERS {
+                return Err(ProjectError::Oversized);
+            }
+            (session.generation, handle)
+        };
+
+        if !row_is_live(&handle) {
+            return Err(ProjectError::NotInWorkbench);
+        }
+
+        let mut session = self.locked();
+        // The project was replaced, closed, or had a record removed or relinked
+        // while the roster was being asked. The row that was found live was
+        // found for a reference in a project nobody is looking at.
+        if session.generation != generation {
+            return Err(ProjectError::StaleDocument);
+        }
+        let project = session.open_mut()?;
+        if project.document.input(input).is_none() {
+            return Err(ProjectError::UnknownRecord);
+        }
+        // A concurrent create that got here first is the same answer, once.
+        if let Some(existing) = project.document.layer_of_input(input) {
+            return Ok(existing.id);
+        }
+        let id = LayerId::new();
+        project.document.layers.push(LayerRecord {
+            id,
+            source: LayerSource::Input { input_id: input },
+        });
+        // Not invalidated: adding a layer makes no in-flight answer about the
+        // references wrong, because no check or capture names a layer.
+        project.dirty = true;
+        Ok(id)
+    }
+
+    /// Removes one layer, and nothing else.
+    ///
+    /// The source reference, its verification, its remembered row, every run
+    /// and artifact and any outstanding proposal are untouched: a layer names
+    /// its source and nothing names a layer, so nothing dangles when it goes.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::UnknownRecord`] for an identifier this project has no
+    /// layer for.
+    pub fn remove_layer(&self, id: LayerId) -> Result<(), ProjectError> {
+        let mut session = self.locked();
+        let project = session.open_mut()?;
+        if project.document.layer(id).is_none() {
+            return Err(ProjectError::UnknownRecord);
+        }
+        project.document.layers.retain(|layer| layer.id != id);
+        project.dirty = true;
+        Ok(())
     }
 }
 

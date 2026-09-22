@@ -10,6 +10,7 @@
 //! second physical volume, most obviously -- the limit is recorded beside the
 //! test rather than approximated by something that would read as proof.
 
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -17,8 +18,9 @@ use std::sync::{Arc, Barrier};
 
 use super::observe::{self, Cancellation, MemberObservation, UnavailableReason};
 use super::record::{
-    ContentBaseline, DocumentProblem, InputId, Locator, MemberRecord, MemberRole, ProjectDocument,
-    RecordedOperation, RunId, RunRecord, TerminalOutcome,
+    ContentBaseline, DocumentProblem, InputId, LayerId, LayerRecord, LayerSource, Locator,
+    MAX_LAYERS, MemberRecord, MemberRole, ProjectDocument, RecordedOperation, RunId, RunRecord,
+    TerminalOutcome,
 };
 use super::{CancelOutcome, ProjectError, ProjectJobId, ProjectStore, record};
 
@@ -2341,4 +2343,645 @@ fn removing_a_reference_removes_the_lineage_that_named_it_and_leaves_the_rest() 
     store
         .save_as(&scratch.join("project.mscanvas"))
         .expect("still saveable");
+}
+
+// ---------------------------------------------------------------------------
+// M8.4: layer identity and provenance
+// ---------------------------------------------------------------------------
+
+/// Remembers a workspace row for one reference the way the bridge does:
+/// accept, prove, and record the proof's own objects under a handle.
+///
+/// No workspace is involved, so no lease is held on the file afterwards --
+/// which is what lets a test delete the file and see whether anything looked.
+fn admit(store: &ProjectStore, id: InputId, handle: &str) {
+    let job = store.accept_job().expect("accept");
+    let proof = store.prove_admissible(job, id).expect("proved");
+    store
+        .record_admission(&proof, handle, proof.identities())
+        .expect("the row is remembered");
+}
+
+/// The roster's answer where the remembered row is still there.
+fn live(_handle: &str) -> bool {
+    true
+}
+
+/// The open document, exactly as the store holds it.
+fn document_of(store: &ProjectStore) -> ProjectDocument {
+    let session = store
+        .session
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    session
+        .project
+        .as_ref()
+        .expect("the open project")
+        .document
+        .clone()
+}
+
+/// The workspace row the description remembers for one reference, if any.
+fn remembered_row(store: &ProjectStore, id: InputId) -> Option<String> {
+    store
+        .describe()
+        .inputs
+        .iter()
+        .find(|input| input.id == id.to_string())
+        .and_then(|input| input.workbench_dataset_handle.clone())
+}
+
+/// The layers alone, as the document stores them.
+fn layers_value(document: &ProjectDocument) -> serde_json::Value {
+    serde_json::to_value(&document.layers).expect("serializable")
+}
+
+/// Everything the interface sees except the layers, for "nothing else
+/// changed" comparisons.
+fn described_without_layers(store: &ProjectStore) -> serde_json::Value {
+    let mut value = serde_json::to_value(store.describe()).expect("serializable");
+    value.as_object_mut().expect("an object").remove("layers");
+    value
+}
+
+/// Everything the document stores except the layers.
+fn document_without_layers(store: &ProjectStore) -> serde_json::Value {
+    let mut value = serde_json::to_value(document_of(store)).expect("serializable");
+    value.as_object_mut().expect("an object").remove("layers");
+    value
+}
+
+/// The fixture with a second reference and one layer per reference, for the
+/// refusals below to break in one place.
+fn document_with_two_layers() -> ProjectDocument {
+    let mut document = valid_document();
+    let mut second = document.inputs[0].clone();
+    second.id = InputId::new();
+    second.label = "other.txt".to_owned();
+    second.locator = Locator::ProjectRelative {
+        path: "other.txt".to_owned(),
+    };
+    document.inputs.push(second);
+    let sources: Vec<InputId> = document.inputs.iter().map(|input| input.id).collect();
+    for input_id in sources {
+        document.layers.push(LayerRecord {
+            id: LayerId::new(),
+            source: LayerSource::Input { input_id },
+        });
+    }
+    document
+}
+
+fn refused_value(value: &serde_json::Value) -> DocumentProblem {
+    let bytes = serde_json::to_vec(value).expect("serialize");
+    record::parse(&bytes).expect_err("a refusal")
+}
+
+#[test]
+fn an_attached_reference_becomes_one_layer_sourced_from_it() {
+    let scratch = Scratch::new("layer-create");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    // Published first, so that the dirty flag below is the layer's doing.
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("save as");
+    assert!(!store.describe().dirty);
+
+    let layer = store.create_layer(id, live).expect("the layer is created");
+
+    let document = document_of(&store);
+    assert_eq!(document.layers.len(), 1);
+    assert_eq!(document.layers[0].id, layer);
+    assert_eq!(
+        document.layers[0].source,
+        LayerSource::Input { input_id: id }
+    );
+    let described = store.describe();
+    assert!(described.dirty);
+    assert_eq!(described.layers.len(), 1);
+    assert_eq!(described.layers[0].id, layer.to_string());
+    assert_eq!(described.layers[0].source_input_id, id.to_string());
+}
+
+#[test]
+fn creating_the_layer_again_answers_the_same_layer_without_dirtying_a_saved_project() {
+    let scratch = Scratch::new("layer-idempotent");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    let first = store.create_layer(id, live).expect("created");
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("save as");
+    assert!(!store.describe().dirty);
+
+    let asked = Cell::new(0);
+    let second = store
+        .create_layer(id, |_| {
+            asked.set(asked.get() + 1);
+            true
+        })
+        .expect("answered");
+
+    assert_eq!(second, first);
+    assert_eq!(document_of(&store).layers.len(), 1);
+    assert!(
+        !store.describe().dirty,
+        "answering with an existing layer changes nothing"
+    );
+    assert_eq!(
+        asked.get(),
+        0,
+        "an existing layer is not conditional on the row, so the roster is not asked"
+    );
+}
+
+#[test]
+fn a_layer_survives_save_close_and_reopen_and_no_row_is_restored() {
+    let scratch = Scratch::new("layer-roundtrip");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    let layer = store.create_layer(id, live).expect("created");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    store.save().expect("save");
+    let before = store.describe();
+    assert_eq!(
+        before.inputs[0].workbench_dataset_handle.as_deref(),
+        Some("dataset-1")
+    );
+
+    store.close(false).expect("close");
+    store.open_document(&document, false).expect("reopen");
+
+    let reopened = document_of(&store);
+    assert_eq!(reopened.layers.len(), 1);
+    assert_eq!(reopened.layers[0].id, layer);
+    assert_eq!(
+        reopened.layers[0].source,
+        LayerSource::Input { input_id: id }
+    );
+    let after = store.describe();
+    assert_eq!(after.layers[0].id, before.layers[0].id);
+    assert_eq!(
+        after.layers[0].source_input_id,
+        before.layers[0].source_input_id
+    );
+    assert!(
+        after
+            .inputs
+            .iter()
+            .all(|input| input.workbench_dataset_handle.is_none()),
+        "a document restores no row: the handle was never in it"
+    );
+}
+
+#[test]
+fn save_as_to_another_directory_keeps_the_layer_and_its_source() {
+    let first_home = Scratch::new("layer-first-home");
+    let (store, id) = store_with_reference(&first_home, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    let layer = store.create_layer(id, live).expect("created");
+    store
+        .save_as(&first_home.join("project.mscanvas"))
+        .expect("first save");
+
+    let second_home = Scratch::new("layer-second-home");
+    let elsewhere = second_home.join("project.mscanvas");
+    store.save_as(&elsewhere).expect("second save");
+
+    let reopened = ProjectStore::new();
+    reopened
+        .open_document(&elsewhere, false)
+        .expect("open the second document");
+    let document = document_of(&reopened);
+    assert_eq!(document.layers.len(), 1);
+    assert_eq!(document.layers[0].id, layer);
+    assert_eq!(document.layers[0].source.input_id(), id);
+    assert_eq!(
+        reopened.describe().layers[0].id,
+        store.describe().layers[0].id
+    );
+}
+
+#[test]
+fn a_reopened_layer_is_there_before_any_row_and_a_new_admission_converges_on_it() {
+    let scratch = Scratch::new("layer-reopen-converge");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let other = store
+        .register_input(&scratch.write("other.txt", b"other"))
+        .expect("register");
+    admit(&store, id, "dataset-1");
+    let layer = store.create_layer(id, live).expect("created");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    store.close(false).expect("close");
+    store.open_document(&document, false).expect("reopen");
+    assert!(
+        store
+            .describe()
+            .inputs
+            .iter()
+            .all(|input| input.workbench_dataset_handle.is_none())
+    );
+
+    // Negative control: a reference with no layer and no row is refused, and
+    // with no remembered row there is nothing to ask the roster about.
+    let asked = Cell::new(0);
+    assert_eq!(
+        store.create_layer(other, |_| {
+            asked.set(asked.get() + 1);
+            true
+        }),
+        Err(ProjectError::NotInWorkbench)
+    );
+    assert_eq!(asked.get(), 0);
+    // The reference that has a layer answers with it, row or no row.
+    assert_eq!(
+        store.create_layer(id, |_| {
+            asked.set(asked.get() + 1);
+            true
+        }),
+        Ok(layer)
+    );
+    assert_eq!(asked.get(), 0);
+
+    // Positive control: a fresh admission through the ordinary path converges
+    // on the same layer rather than minting a second.
+    check(&store).expect("check");
+    admit(&store, id, "dataset-7");
+    assert_eq!(store.create_layer(id, live), Ok(layer));
+    assert_eq!(document_of(&store).layers.len(), 1);
+    // And the other reference, once admitted, gets one of its own.
+    admit(&store, other, "dataset-8");
+    let second = store.create_layer(other, live).expect("created");
+    assert_ne!(second, layer);
+    assert_eq!(document_of(&store).layers.len(), 2);
+}
+
+#[test]
+fn the_source_check_state_neither_gates_nor_rewrites_the_layer() {
+    let scratch = Scratch::new("layer-check-state");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    // Save As resets every verification while keeping the association.
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("save as");
+    assert_eq!(verification(&store, id), "notChecked");
+    assert_eq!(remembered_row(&store, id).as_deref(), Some("dataset-1"));
+
+    let layer = store
+        .create_layer(id, live)
+        .expect("association-based, not check-based");
+    assert_eq!(
+        verification(&store, id),
+        "notChecked",
+        "creating a layer ran no check"
+    );
+    let before = layers_value(&document_of(&store));
+
+    fs::remove_file(scratch.join("sample.txt")).expect("remove");
+    check(&store).expect("check");
+    assert_eq!(
+        unavailable_reason(&store, id),
+        Some("missingAtCheckedLocation")
+    );
+
+    let after = document_of(&store);
+    assert_eq!(layers_value(&after), before);
+    assert_eq!(after.layers[0].id, layer);
+}
+
+#[test]
+fn relinking_the_source_keeps_the_layer_and_detaches_its_row() {
+    let scratch = Scratch::new("layer-relink");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"stable bytes");
+    admit(&store, id, "dataset-1");
+    let layer = store.create_layer(id, live).expect("created");
+    let before = layers_value(&document_of(&store));
+
+    let copy = scratch.write("moved/sample.txt", b"stable bytes");
+    assert!(store.propose_relink(id, &copy).expect("propose"));
+    store.commit_relink(id).expect("commit");
+
+    let document = document_of(&store);
+    assert_eq!(layers_value(&document), before);
+    assert_eq!(document.layers[0].id, layer);
+    assert_eq!(document.layers[0].source.input_id(), id);
+    // The record names a different object now, so the row this session
+    // admitted for the old one is dropped -- and the layer's projection is
+    // detached until a new admission. The layer itself is the same layer.
+    assert_eq!(remembered_row(&store, id), None);
+    assert_eq!(store.create_layer(id, live), Ok(layer));
+}
+
+#[test]
+fn removing_a_layer_changes_nothing_but_the_layer() {
+    let scratch = Scratch::new("layer-remove");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let other = store
+        .register_input(&scratch.write("other.txt", b"other"))
+        .expect("register");
+    capture(&store, &[id, other]).expect("capture");
+    admit(&store, id, "dataset-1");
+    admit(&store, other, "dataset-2");
+    let layer = store.create_layer(id, live).expect("created");
+    // An outstanding proposal too, so the whole session state is on the table.
+    let candidate = scratch.write("elsewhere/other.txt", b"other");
+    store.propose_relink(other, &candidate).expect("propose");
+    let described_before = described_without_layers(&store);
+    let document_before = document_without_layers(&store);
+
+    store.remove_layer(layer).expect("removed");
+
+    assert!(document_of(&store).layers.is_empty());
+    assert_eq!(described_without_layers(&store), described_before);
+    assert_eq!(document_without_layers(&store), document_before);
+    assert_eq!(
+        store.remove_layer(layer),
+        Err(ProjectError::UnknownRecord),
+        "a layer that is gone is gone"
+    );
+    assert_eq!(
+        store.remove_layer(LayerId::new()),
+        Err(ProjectError::UnknownRecord)
+    );
+}
+
+#[test]
+fn a_reference_with_a_layer_is_refused_removal_until_the_layer_goes() {
+    let scratch = Scratch::new("layer-blocks-removal");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    let layer = store.create_layer(id, live).expect("created");
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("save as");
+    let document_before = serde_json::to_value(document_of(&store)).expect("serializable");
+    let described_before = serde_json::to_value(store.describe()).expect("serializable");
+
+    assert_eq!(
+        store.remove_input(id),
+        Err(ProjectError::LayerDependsOnInput)
+    );
+
+    assert_eq!(
+        serde_json::to_value(document_of(&store)).expect("serializable"),
+        document_before
+    );
+    assert_eq!(
+        serde_json::to_value(store.describe()).expect("serializable"),
+        described_before
+    );
+    assert!(!store.describe().dirty, "a refusal dirties nothing");
+
+    store.remove_layer(layer).expect("remove the layer");
+    store.remove_input(id).expect("now the reference goes");
+    let document = document_of(&store);
+    assert!(document.inputs.is_empty());
+    assert!(document.layers.is_empty());
+    record::validate(&document).expect("a valid document");
+}
+
+#[test]
+fn two_layers_sharing_one_identifier_are_refused_and_two_distinct_ones_parse() {
+    let document = document_with_two_layers();
+    let bytes = record::serialize(&document).expect("serialize");
+    let parsed = record::parse(&bytes).expect("distinct identifiers over distinct sources parse");
+    assert_eq!(parsed.layers, document.layers);
+
+    let mut duplicated = document;
+    duplicated.layers[1].id = duplicated.layers[0].id;
+    assert_eq!(refused(&duplicated), DocumentProblem::DuplicateIdentifier);
+}
+
+#[test]
+fn a_layer_naming_a_reference_the_document_lacks_is_refused() {
+    let mut document = document_with_two_layers();
+    document.layers[1].source = LayerSource::Input {
+        input_id: InputId::new(),
+    };
+    assert_eq!(refused(&document), DocumentProblem::DanglingReference);
+}
+
+#[test]
+fn a_layer_of_an_unknown_source_kind_or_with_an_extra_field_is_malformed() {
+    let document = document_with_two_layers();
+
+    let mut unknown_kind = serde_json::to_value(&document).expect("serializable");
+    unknown_kind["layers"][0]["source"]["kind"] = serde_json::Value::from("run");
+    assert_eq!(refused_value(&unknown_kind), DocumentProblem::Malformed);
+
+    let mut extra_field = serde_json::to_value(&document).expect("serializable");
+    extra_field["layers"][0]["label"] = serde_json::Value::from("a name a layer does not hold");
+    assert_eq!(refused_value(&extra_field), DocumentProblem::Malformed);
+}
+
+#[test]
+fn two_layers_of_one_reference_are_refused_rather_than_normalised() {
+    let mut document = document_with_two_layers();
+    document.layers[1].source = document.layers[0].source;
+    assert_eq!(refused(&document), DocumentProblem::DuplicateIdentifier);
+}
+
+#[test]
+fn more_layers_than_the_bound_are_refused_as_oversized() {
+    let mut document = valid_document();
+    let input_id = document.inputs[0].id;
+    document.layers = (0..=MAX_LAYERS)
+        .map(|_| LayerRecord {
+            id: LayerId::new(),
+            source: LayerSource::Input { input_id },
+        })
+        .collect();
+    assert_eq!(refused(&document), DocumentProblem::Oversized);
+
+    // At the bound it is the duplicate source that refuses, so the count was
+    // what refused above and not the shape.
+    document.layers.truncate(MAX_LAYERS);
+    assert_eq!(refused(&document), DocumentProblem::DuplicateIdentifier);
+}
+
+#[test]
+fn a_reference_that_was_never_admitted_is_refused_without_asking_the_roster() {
+    let scratch = Scratch::new("layer-never-admitted");
+    let (store, id) = store_with_reference(&scratch, "notes.txt", b"not an acquisition");
+    check(&store).expect("check");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+
+    let asked = Cell::new(0);
+    let refusal = store.create_layer(id, |_| {
+        asked.set(asked.get() + 1);
+        true
+    });
+
+    assert_eq!(refusal, Err(ProjectError::NotInWorkbench));
+    assert_eq!(
+        asked.get(),
+        0,
+        "with no remembered row there is nothing to ask about"
+    );
+    assert!(document_of(&store).layers.is_empty());
+}
+
+#[test]
+fn a_remembered_row_the_roster_no_longer_has_is_refused_after_one_question() {
+    let scratch = Scratch::new("layer-row-gone");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+
+    let asked = Cell::new(0);
+    let refusal = store.create_layer(id, |handle| {
+        assert_eq!(
+            handle, "dataset-1",
+            "the roster is asked about the remembered row"
+        );
+        asked.set(asked.get() + 1);
+        false
+    });
+
+    assert_eq!(refusal, Err(ProjectError::NotInWorkbench));
+    assert_eq!(asked.get(), 1);
+    assert!(document_of(&store).layers.is_empty());
+    // The handle stays remembered: it was the roster's answer that changed,
+    // and the interface resolves the handle against the roster either way.
+    assert_eq!(remembered_row(&store, id).as_deref(), Some("dataset-1"));
+}
+
+#[test]
+fn a_project_closed_while_the_roster_is_asked_gets_no_layer() {
+    let scratch = Scratch::new("layer-stale-close");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("save as");
+
+    // The roster is asked with the session lock released, which is the window
+    // this closes the project in.
+    let outcome = store.create_layer(id, |_| {
+        store.close(true).expect("close while the lock is released");
+        true
+    });
+
+    assert_eq!(outcome, Err(ProjectError::StaleDocument));
+    assert!(!store.describe().open);
+}
+
+#[test]
+fn a_different_reference_removed_while_the_roster_is_asked_gets_no_layer_written() {
+    let scratch = Scratch::new("layer-stale-other");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let other = store
+        .register_input(&scratch.write("other.txt", b"other"))
+        .expect("register");
+    admit(&store, id, "dataset-1");
+
+    let outcome = store.create_layer(id, |_| {
+        store
+            .remove_input(other)
+            .expect("remove the other reference");
+        true
+    });
+
+    assert_eq!(outcome, Err(ProjectError::StaleDocument));
+    let document = document_of(&store);
+    assert!(
+        document.layers.is_empty(),
+        "no layer was written into a project that moved"
+    );
+    assert_eq!(document.inputs.len(), 1);
+    // Control: asked again against the project as it now is, it is created.
+    assert!(store.create_layer(id, live).is_ok());
+}
+
+#[test]
+fn the_source_removed_while_the_roster_is_asked_leaves_no_dangling_layer() {
+    let scratch = Scratch::new("layer-stale-same");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+
+    let outcome = store.create_layer(id, |_| {
+        store.remove_input(id).expect("remove the very reference");
+        true
+    });
+
+    assert_eq!(outcome, Err(ProjectError::StaleDocument));
+    let document = document_of(&store);
+    assert!(document.inputs.is_empty());
+    assert!(document.layers.is_empty());
+    record::validate(&document).expect("nothing dangles");
+}
+
+#[test]
+fn creating_and_removing_a_layer_reads_no_file() {
+    let scratch = Scratch::new("layer-no-read");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    // The file is gone before the layer is asked for. Anything that opened,
+    // read or hashed it would now answer differently -- or not at all.
+    fs::remove_file(scratch.join("sample.txt")).expect("remove");
+
+    let layer = store
+        .create_layer(id, live)
+        .expect("a missing file is no obstacle to a layer");
+    let described = store.describe();
+    assert_eq!(described.layers[0].id, layer.to_string());
+    assert_eq!(
+        verification(&store, id),
+        "matchingRecordedContent",
+        "nothing looked, so nothing was re-established"
+    );
+    store.remove_layer(layer).expect("removed");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+    assert!(store.describe().layers.is_empty());
+}
+
+#[test]
+fn a_document_with_a_remembered_row_and_a_layer_serializes_no_session_fact() {
+    let scratch = Scratch::new("layer-serialized-shape");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    let layer = store.create_layer(id, live).expect("created");
+    // Saved beside its data so the locator is relative: what is asserted below
+    // is about the document's own vocabulary, not the machine's temp path.
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("save as");
+    assert_eq!(remembered_row(&store, id).as_deref(), Some("dataset-1"));
+
+    let bytes = record::serialize(&document_of(&store)).expect("serialize");
+    let text = String::from_utf8(bytes).expect("utf-8");
+    let lowered = text.to_ascii_lowercase();
+    for forbidden in ["dataset", "handle", "identity", "volume", "fileid"] {
+        assert!(
+            !lowered.contains(forbidden),
+            "the document must not carry {forbidden:?}"
+        );
+    }
+    let value: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(
+        value["layers"],
+        serde_json::json!([{
+            "id": layer.to_string(),
+            "source": { "kind": "input", "inputId": id.to_string() },
+        }])
+    );
+
+    let described = serde_json::to_value(store.describe()).expect("serializable");
+    assert_eq!(
+        described["layers"],
+        serde_json::json!([{ "id": layer.to_string(), "sourceInputId": id.to_string() }])
+    );
+}
+
+#[test]
+fn the_development_only_first_schema_is_refused_rather_than_migrated() {
+    assert_eq!(record::SCHEMA_VERSION, 2);
+    assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 2);
+
+    let mut document = valid_document();
+    document.schema_version = 1;
+    assert_eq!(refused(&document), DocumentProblem::UnsupportedVersion);
 }

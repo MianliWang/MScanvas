@@ -83,6 +83,7 @@ function checkedProject(workbenchDatasetHandle: string | null) {
         finishedAt: "2026-09-22T10:00:02Z",
       },
     ],
+    layers: [],
   };
 }
 

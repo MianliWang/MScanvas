@@ -58,6 +58,7 @@ function project(overrides: Record<string, unknown> = {}) {
     inputs: [reference()],
     artifacts: [],
     runs: [],
+    layers: [],
     ...overrides,
   };
 }
@@ -227,6 +228,7 @@ describe("M8.1 project records, rendered", () => {
       inputs: [],
       artifacts: [],
       runs: [],
+      layers: [],
     });
     await metrics(1366, 768, 1);
 

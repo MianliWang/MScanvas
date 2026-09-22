@@ -107,6 +107,15 @@ export interface ProjectSession {
   readonly proposeRelink: (inputId: string) => Promise<void>;
   readonly commitRelink: (inputId: string) => Promise<void>;
   readonly abandonRelink: () => Promise<void>;
+  /**
+   * Creates the layer sourced from one reference, then inspects it.
+   *
+   * Inspected on arrival so Details answers at once, rather than leaving the
+   * reader to find the row the press just added. Creating one that already
+   * exists answers the existing layer, and inspects that.
+   */
+  readonly createLayer: (inputId: string) => Promise<void>;
+  readonly removeLayer: (layerId: string) => Promise<void>;
 }
 
 /**
@@ -416,6 +425,25 @@ export function useProject(
     ),
     abandonRelink: useCallback(
       () => run("linking", () => api.abandonProjectRelink()),
+      [api, run],
+    ),
+    createLayer: useCallback(
+      (inputId: string) =>
+        run("saving", async () => {
+          const answer = await api.createProjectLayer(inputId);
+          // The answer names the layer by its source, whether it was just
+          // created or already there. Nothing further is fetched: the
+          // projection in hand is the one Details reads.
+          const layer = answer.layers.find((candidate) => candidate.sourceInputId === inputId);
+          if (layer !== undefined && mounted.current) {
+            setInspecting({ kind: "layer", id: layer.id });
+          }
+          return answer;
+        }),
+      [api, run],
+    ),
+    removeLayer: useCallback(
+      (layerId: string) => run("saving", () => api.removeProjectLayer(layerId)),
       [api, run],
     ),
   };

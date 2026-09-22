@@ -19,6 +19,7 @@ import {
   type ProjectApi,
   type ProjectArtifact,
   type ProjectInput,
+  type ProjectLayer,
   type ProjectRun,
   type ProjectState,
 } from "../features/project/projectApi";
@@ -97,6 +98,15 @@ export function projectArtifact(overrides: Partial<ProjectArtifact> = {}): Proje
   };
 }
 
+/** One layer, sourced from the default reference unless a test says otherwise. */
+export function projectLayer(overrides: Partial<ProjectLayer> = {}): ProjectLayer {
+  return {
+    id: "dddddddd-1111-4111-8111-111111111111",
+    sourceInputId: projectInput().id,
+    ...overrides,
+  };
+}
+
 /**
  * One reference, the run that consumed it and the artifact it produced, wired
  * to each other the way Rust wires them.
@@ -136,6 +146,7 @@ export function openProject(overrides: Partial<ProjectState> = {}): ProjectState
     inputs: [projectInput()],
     artifacts: [],
     runs: [],
+    layers: [],
     ...overrides,
   };
 }
@@ -238,6 +249,12 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     proposeProjectRelink: vi.fn(() => answer("proposeProjectRelink")),
     commitProjectRelink: vi.fn(() => answer("commitProjectRelink") as Promise<ProjectState>),
     abandonProjectRelink: vi.fn(() => answer("abandonProjectRelink") as Promise<ProjectState>),
+    createProjectLayer: vi.fn(
+      (_inputId: string) => answer("createProjectLayer") as Promise<ProjectState>,
+    ),
+    removeProjectLayer: vi.fn(
+      (_layerId: string) => answer("removeProjectLayer") as Promise<ProjectState>,
+    ),
   };
   return api;
 }

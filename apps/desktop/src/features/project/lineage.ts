@@ -14,10 +14,16 @@
  * could disagree with the first.
  */
 
-import type { ProjectArtifact, ProjectInput, ProjectRun, ProjectState } from "./projectApi";
+import type {
+  ProjectArtifact,
+  ProjectInput,
+  ProjectLayer,
+  ProjectRun,
+  ProjectState,
+} from "./projectApi";
 
-/** The three kinds of project object a user can inspect. */
-export type ProjectObjectKind = "input" | "run" | "artifact";
+/** The four kinds of project object a user can inspect. */
+export type ProjectObjectKind = "input" | "run" | "artifact" | "layer";
 
 /** One selected project object, addressed the way Rust addresses it. */
 export interface ProjectSelection {
@@ -45,6 +51,19 @@ export type Provenance =
       readonly kind: "input";
       readonly input: ProjectInput;
       readonly consumedBy: readonly Related<ProjectRun>[];
+      /** The layer sourced from this reference, or `null` where none is. */
+      readonly layer: ProjectLayer | null;
+    }
+  | {
+      readonly kind: "layer";
+      readonly layer: ProjectLayer;
+      readonly source: Related<ProjectInput>;
+      /**
+       * The runs that consumed the source. A layer has no runs of its own --
+       * it is identity, not work -- so what it is related to is what its
+       * source is related to. Empty where the source is gone.
+       */
+      readonly consumedBy: readonly Related<ProjectRun>[];
     }
   | {
       readonly kind: "run";
@@ -68,6 +87,24 @@ function relate<T extends { readonly id: string }>(
 }
 
 /**
+ * The live workspace row for one reference, or `null`.
+ *
+ * Remembered in Rust, resolved here. A handle naming no row the roster
+ * currently holds means the row has gone, which is the same position as never
+ * having admitted one. The one resolution for every surface that asks -- the
+ * reference row, the layer row and the Details region -- so they cannot
+ * disagree about whether a row is there.
+ */
+export function attachedRow(
+  input: ProjectInput,
+  liveDatasetHandles: ReadonlySet<string> | undefined,
+): string | null {
+  const handle = input.workbenchDatasetHandle;
+  if (handle === null || liveDatasetHandles === undefined) return null;
+  return liveDatasetHandles.has(handle) ? handle : null;
+}
+
+/**
  * What the Details region shows for the current selection.
  *
  * `null` when nothing is selected. A selection naming an object the project no
@@ -88,6 +125,19 @@ export function provenanceOf(
       kind: "input",
       input,
       consumedBy: input.consumedByRunIds.map((id) => relate(state.runs, id)),
+      layer: state.layers.find((layer) => layer.sourceInputId === input.id) ?? null,
+    };
+  }
+
+  if (selection.kind === "layer") {
+    const layer = state.layers.find((candidate) => candidate.id === selection.id);
+    if (layer === undefined) return { kind: "gone", selected: selection };
+    const source = relate(state.inputs, layer.sourceInputId);
+    return {
+      kind: "layer",
+      layer,
+      source,
+      consumedBy: (source.record?.consumedByRunIds ?? []).map((id) => relate(state.runs, id)),
     };
   }
 

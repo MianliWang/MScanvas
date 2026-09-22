@@ -106,6 +106,7 @@ function savedProject() {
         finishedAt: "2026-09-22T10:05:01Z",
       },
     ],
+    layers: [],
   };
 }
 

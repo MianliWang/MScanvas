@@ -34,7 +34,10 @@
 //!
 //! That reasoning is the thing to check if the schema ever gains an edge -- an
 //! artifact that names a run, or a run that consumes an artifact -- because
-//! either would make a cycle representable and this paragraph false.
+//! either would make a cycle representable and this paragraph false. The layer
+//! M8.4 added is checked here: a [`super::record::LayerRecord`] names one
+//! input, an input still names nothing, and nothing names a layer, so no edge
+//! leaves what it points at and no cycle passes through it.
 //!
 //! ## What is not here
 //!

@@ -26,6 +26,7 @@
 import { useEffect, useRef } from "react";
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { attachedRow } from "./lineage";
 import type { ProjectInput } from "./projectApi";
 import type { ProjectBusy, ProjectSession } from "./useProject";
 
@@ -94,6 +95,8 @@ const REFUSALS = {
   inconsistentRecord: "projectRefusedInconsistent",
   ambiguousProducer: "projectRefusedAmbiguousProducer",
   unsafeTarget: "projectRefusedUnsafe",
+  notInWorkbench: "projectRefusedNotInWorkbench",
+  layerDependsOnInput: "projectRefusedLayerDependsOnInput",
 } as const;
 
 function refusalKey(code: string) {
@@ -245,18 +248,11 @@ export function ProjectPanel({
    * One region and one voice. The visible notices below deliberately carry no
    * role of their own, so nothing is announced twice.
    */
-  /**
-   * The live workspace row for one reference, or `null`.
-   *
-   * Remembered in Rust, resolved here. A handle naming no row the roster
-   * currently holds means the row has gone, which is the same position as
-   * never having admitted one.
-   */
-  function inWorkbench(input: ProjectInput): string | null {
-    const handle = input.workbenchDatasetHandle;
-    if (handle === null || liveDatasetHandles === undefined) return null;
-    return liveDatasetHandles.has(handle) ? handle : null;
-  }
+  /** The live workspace row for one reference, or `null`. */
+  const inWorkbench = (input: ProjectInput) => attachedRow(input, liveDatasetHandles);
+  /** The layer sourced from one reference, or `null` where none has been created. */
+  const layerOf = (input: ProjectInput) =>
+    state.layers.find((layer) => layer.sourceInputId === input.id) ?? null;
 
   const proposalInput = state.inputs.find((input) => input.id === proposed);
   const announcement =
@@ -487,176 +483,316 @@ export function ProjectPanel({
               <p className="project-empty">{t("projectNoReferences")}</p>
             ) : (
               <ul className="project-list">
-                {state.inputs.map((input) => (
-                  <li
-                    key={input.id}
-                    className={`project-row ${verificationTone(input)}`}
-                    data-project-input={input.id}
-                    data-verification={input.verification}
-                    data-unavailable-reason={input.unavailableReason ?? undefined}
-                  >
-                    <div className="project-row-select">
-                      {/* Two independent choices on one row, as the roster
-                          already distinguishes them: the box chooses what the
-                          next capture covers, the name chooses what Details
-                          describes. The box carries its own name, so nothing
-                          is lost by no longer wrapping the label in it. */}
-                      <input
-                        type="checkbox"
-                        checked={selected.includes(input.id)}
-                        aria-label={t("projectSelectNamed", { name: input.label })}
-                        onChange={() => session.toggleSelected(input.id)}
-                      />
-                      <button
-                        type="button"
-                        className="project-row-label"
-                        aria-current={
-                          inspecting?.kind === "input" && inspecting.id === input.id
-                            ? "true"
-                            : undefined
-                        }
-                        aria-controls="workbench-inspector"
-                        aria-label={t("provenanceInspectInput", { name: input.label })}
-                        data-project-inspect={input.id}
-                        onClick={() => session.inspect({ kind: "input", id: input.id })}
-                      >
-                        {input.label}
-                      </button>
-                    </div>
-                    <p className="project-row-facts">
-                      <span className="project-verification" id={`project-state-${input.id}`}>
-                        {t(verificationKey(input))}
-                      </span>
-                      <span className="project-locator">
-                        {t(
-                          input.locatorKind === "insideProject"
-                            ? "projectLocatorInside"
-                            : "projectLocatorOutside",
-                        )}
-                      </span>
-                      {input.members.length > 1 ? (
-                        <span className="project-members">
-                          {t("projectMemberCount", { count: input.members.length })}
-                        </span>
-                      ) : null}
-                    </p>
-                    <div className="project-row-actions">
-                      {/* The bridge to the session workspace, and the only
-                          control here that touches it. A reference already
-                          represented by a live row offers to show that row
-                          instead of offering to add a second one -- and
-                          showing it sends nothing at all. */}
-                      {inWorkbench(input) !== null ? (
+                {state.inputs.map((input) => {
+                  const layer = layerOf(input);
+                  const attached = inWorkbench(input) !== null;
+                  const reasonId = `project-layer-reason-${input.id}`;
+                  return (
+                    <li
+                      key={input.id}
+                      className={`project-row ${verificationTone(input)}`}
+                      data-project-input={input.id}
+                      data-verification={input.verification}
+                      data-unavailable-reason={input.unavailableReason ?? undefined}
+                    >
+                      <div className="project-row-select">
+                        {/* Two independent choices on one row, as the roster
+                            already distinguishes them: the box chooses what the
+                            next capture covers, the name chooses what Details
+                            describes. The box carries its own name, so nothing
+                            is lost by no longer wrapping the label in it. */}
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(input.id)}
+                          aria-label={t("projectSelectNamed", { name: input.label })}
+                          onChange={() => session.toggleSelected(input.id)}
+                        />
                         <button
                           type="button"
-                          className="secondary-button"
-                          aria-label={t("projectShowInWorkbenchNamed", { name: input.label })}
-                          data-project-show-in-workbench={input.id}
-                          onClick={() => {
-                            const handle = inWorkbench(input);
-                            if (handle !== null) onShowInWorkbench?.(handle);
-                          }}
+                          className="project-row-label"
+                          aria-current={
+                            inspecting?.kind === "input" && inspecting.id === input.id
+                              ? "true"
+                              : undefined
+                          }
+                          aria-controls="workbench-inspector"
+                          aria-label={t("provenanceInspectInput", { name: input.label })}
+                          data-project-inspect={input.id}
+                          onClick={() => session.inspect({ kind: "input", id: input.id })}
                         >
-                          {t("projectShowInWorkbench")}
+                          {input.label}
                         </button>
-                      ) : (
-                        // `aria-disabled` rather than `disabled`, for the
-                        // reason every other inert control on this surface
-                        // gives: a disabled button leaves the tab order, and
-                        // the sentence saying why would then be readable only
-                        // with a pointer. The state that decides it is
-                        // already on the row in words, and the control points
-                        // at that text rather than restating it silently.
+                      </div>
+                      <p className="project-row-facts">
+                        <span className="project-verification" id={`project-state-${input.id}`}>
+                          {t(verificationKey(input))}
+                        </span>
+                        <span className="project-locator">
+                          {t(
+                            input.locatorKind === "insideProject"
+                              ? "projectLocatorInside"
+                              : "projectLocatorOutside",
+                          )}
+                        </span>
+                        {input.members.length > 1 ? (
+                          <span className="project-members">
+                            {t("projectMemberCount", { count: input.members.length })}
+                          </span>
+                        ) : null}
+                      </p>
+                      <div className="project-row-actions">
+                        {/* The bridge to the session workspace, and the only
+                            control here that touches it. A reference already
+                            represented by a live row offers to show that row
+                            instead of offering to add a second one -- and
+                            showing it sends nothing at all. */}
+                        {inWorkbench(input) !== null ? (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            aria-label={t("projectShowInWorkbenchNamed", { name: input.label })}
+                            data-project-show-in-workbench={input.id}
+                            onClick={() => {
+                              const handle = inWorkbench(input);
+                              if (handle !== null) onShowInWorkbench?.(handle);
+                            }}
+                          >
+                            {t("projectShowInWorkbench")}
+                          </button>
+                        ) : (
+                          // `aria-disabled` rather than `disabled`, for the
+                          // reason every other inert control on this surface
+                          // gives: a disabled button leaves the tab order, and
+                          // the sentence saying why would then be readable only
+                          // with a pointer. The state that decides it is
+                          // already on the row in words, and the control points
+                          // at that text rather than restating it silently.
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            aria-disabled={
+                              working || unavailableToAddKey(input, workspaceBusy) !== null || undefined
+                            }
+                            aria-describedby={
+                              unavailableToAddKey(input, workspaceBusy) === null
+                                ? undefined
+                                : `project-state-${input.id}`
+                            }
+                            title={
+                              unavailableToAddKey(input, workspaceBusy) === null
+                                ? undefined
+                                : t(unavailableToAddKey(input, workspaceBusy) as "projectAddNeedsCheck")
+                            }
+                            aria-label={t("projectAddToWorkbenchNamed", { name: input.label })}
+                            data-project-add-to-workbench={input.id}
+                            data-project-add-unavailable={
+                              unavailableToAddKey(input, workspaceBusy) ?? undefined
+                            }
+                            onClick={() => {
+                              if (!working && unavailableToAddKey(input, workspaceBusy) === null) {
+                                void session.addToWorkbench(input.id);
+                              }
+                            }}
+                          >
+                            {t("projectAddToWorkbench")}
+                          </button>
+                        )}
+                        {/* One element for both states, so the keyboard stays
+                            on it when the answer to a press turns "create" into
+                            "show". A layer can only be created from a reference
+                            whose row is live right now; with none, the control
+                            stays reachable and points at the reason. Showing
+                            the layer sends nothing. */}
                         <button
                           type="button"
                           className="secondary-button"
                           aria-disabled={
-                            working || unavailableToAddKey(input, workspaceBusy) !== null || undefined
+                            layer === null ? working || !attached || undefined : undefined
                           }
-                          aria-describedby={
-                            unavailableToAddKey(input, workspaceBusy) === null
-                              ? undefined
-                              : `project-state-${input.id}`
-                          }
+                          aria-describedby={layer === null && !attached ? reasonId : undefined}
                           title={
-                            unavailableToAddKey(input, workspaceBusy) === null
-                              ? undefined
-                              : t(unavailableToAddKey(input, workspaceBusy) as "projectAddNeedsCheck")
+                            layer === null && !attached
+                              ? t("projectLayerNeedsWorkbench")
+                              : undefined
                           }
-                          aria-label={t("projectAddToWorkbenchNamed", { name: input.label })}
-                          data-project-add-to-workbench={input.id}
-                          data-project-add-unavailable={
-                            unavailableToAddKey(input, workspaceBusy) ?? undefined
+                          aria-label={t(
+                            layer === null ? "projectCreateLayerNamed" : "projectShowLayerNamed",
+                            { name: input.label },
+                          )}
+                          data-project-create-layer={layer === null ? input.id : undefined}
+                          data-project-show-layer={layer === null ? undefined : layer.id}
+                          data-project-layer-unavailable={
+                            layer === null && !attached ? "notInWorkbench" : undefined
                           }
                           onClick={() => {
-                            if (!working && unavailableToAddKey(input, workspaceBusy) === null) {
-                              void session.addToWorkbench(input.id);
+                            if (layer !== null) {
+                              session.inspect({ kind: "layer", id: layer.id });
+                            } else if (!working && attached) {
+                              void session.createLayer(input.id);
                             }
                           }}
                         >
-                          {t("projectAddToWorkbench")}
+                          {t(layer === null ? "projectCreateLayer" : "projectShowLayer")}
                         </button>
-                      )}
-                      {input.relinkProposed ? (
-                        <>
-                          <span className="project-proposal" data-project-proposal={input.id}>
-                            {t(
-                              input.relinkCandidateMatches
-                                ? "projectRelinkMatches"
-                                : "projectRelinkDiffers",
-                            )}
+                        {layer === null && !attached ? (
+                          <span id={reasonId} className="visually-hidden">
+                            {t("projectLayerNeedsWorkbench")}
                           </span>
+                        ) : null}
+                        {input.relinkProposed ? (
+                          <>
+                            <span className="project-proposal" data-project-proposal={input.id}>
+                              {t(
+                                input.relinkCandidateMatches
+                                  ? "projectRelinkMatches"
+                                  : "projectRelinkDiffers",
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              ref={confirmRef}
+                              className="secondary-button"
+                              aria-disabled={working || undefined}
+                              data-project-relink-commit={input.id}
+                              onClick={() => {
+                                if (!working) void session.commitRelink(input.id);
+                              }}
+                            >
+                              {t("projectRelinkConfirm")}
+                            </button>
+                            <button
+                              type="button"
+                              className="link-button"
+                              aria-disabled={working || undefined}
+                              onClick={() => {
+                                if (!working) void session.abandonRelink();
+                              }}
+                            >
+                              {t("projectRelinkAbandon")}
+                            </button>
+                          </>
+                        ) : (
                           <button
                             type="button"
-                            ref={confirmRef}
                             className="secondary-button"
                             aria-disabled={working || undefined}
-                            data-project-relink-commit={input.id}
+                            aria-label={t("projectRelinkNamed", { name: input.label })}
+                            data-project-relink={input.id}
                             onClick={() => {
-                              if (!working) void session.commitRelink(input.id);
+                              if (!working) void session.proposeRelink(input.id);
                             }}
                           >
-                            {t("projectRelinkConfirm")}
+                            {t("projectRelink")}
                           </button>
-                          <button
-                            type="button"
-                            className="link-button"
-                            aria-disabled={working || undefined}
-                            onClick={() => {
-                              if (!working) void session.abandonRelink();
-                            }}
-                          >
-                            {t("projectRelinkAbandon")}
-                          </button>
-                        </>
-                      ) : (
+                        )}
                         <button
                           type="button"
-                          className="secondary-button"
+                          className="link-button"
                           aria-disabled={working || undefined}
-                          aria-label={t("projectRelinkNamed", { name: input.label })}
-                          data-project-relink={input.id}
+                          aria-label={t("projectRemoveNamed", { name: input.label })}
                           onClick={() => {
-                            if (!working) void session.proposeRelink(input.id);
+                            if (!working) void session.removeInput(input.id);
                           }}
                         >
-                          {t("projectRelink")}
+                          {t("projectRemoveReference")}
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        className="link-button"
-                        aria-disabled={working || undefined}
-                        aria-label={t("projectRemoveNamed", { name: input.label })}
-                        onClick={() => {
-                          if (!working) void session.removeInput(input.id);
-                        }}
-                      >
-                        {t("projectRemoveReference")}
-                      </button>
-                    </div>
-                  </li>
-                ))}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          {/* Layers: identities, not files. Each row is named by its source
+              and carries two facts about it -- whether the source's row is in
+              the Workbench right now, and what the last check established --
+              because a layer whose file has changed or gone is still the
+              same layer, and the row has to say both things. */}
+          <section className="project-section" aria-label={t("projectLayers")}>
+            <h3>{t("projectLayers")}</h3>
+            {state.layers.length === 0 ? (
+              <p className="project-empty">{t("projectNoLayers")}</p>
+            ) : (
+              <ul className="project-list">
+                {state.layers.map((layer) => {
+                  // A valid document cannot hold a layer without its source.
+                  // Should one arrive anyway, the row says so rather than
+                  // throwing the whole surface away.
+                  const source = state.inputs.find((input) => input.id === layer.sourceInputId);
+                  const handle = source === undefined ? null : inWorkbench(source);
+                  const availability = handle === null ? "detached" : "attached";
+                  const name = source?.label ?? t("provenanceRelatedGone");
+                  return (
+                    <li
+                      key={layer.id}
+                      className={`project-row project-layer ${
+                        source === undefined ? "" : verificationTone(source)
+                      }`}
+                      data-project-layer={layer.id}
+                      data-layer-availability={availability}
+                      data-layer-source={layer.sourceInputId}
+                    >
+                      <div className="project-row-select">
+                        <button
+                          type="button"
+                          className="project-row-label"
+                          aria-current={
+                            inspecting?.kind === "layer" && inspecting.id === layer.id
+                              ? "true"
+                              : undefined
+                          }
+                          aria-controls="workbench-inspector"
+                          aria-label={t("provenanceInspectLayer", { name })}
+                          data-project-inspect-layer={layer.id}
+                          onClick={() => session.inspect({ kind: "layer", id: layer.id })}
+                        >
+                          {name}
+                        </button>
+                      </div>
+                      <p className="project-row-facts">
+                        <span className={`project-availability is-${availability}`}>
+                          {t(
+                            availability === "attached"
+                              ? "projectLayerAttached"
+                              : "projectLayerDetached",
+                          )}
+                        </span>
+                        {source === undefined ? null : (
+                          <span className="project-verification">
+                            <span className="visually-hidden">{t("provenanceCurrentFile")}: </span>
+                            {t(verificationKey(source))}
+                          </span>
+                        )}
+                      </p>
+                      <div className="project-row-actions">
+                        {handle === null ? null : (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            aria-label={t("projectShowInWorkbenchNamed", { name })}
+                            data-project-layer-show-in-workbench={layer.id}
+                            onClick={() => onShowInWorkbench?.(handle)}
+                          >
+                            {t("projectShowInWorkbench")}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="link-button"
+                          aria-disabled={working || undefined}
+                          aria-label={t("projectRemoveLayerNamed", { name })}
+                          data-project-remove-layer={layer.id}
+                          onClick={() => {
+                            if (!working) void session.removeLayer(layer.id);
+                          }}
+                        >
+                          {t("projectRemoveLayer")}
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>

@@ -1228,7 +1228,7 @@ export const en = {
   // related to. Recorded history and current file state are named apart,
   // because a reference whose bytes changed still has the run that used it.
   provenanceRegion: "Provenance",
-  provenanceNothingSelected: "Select a reference, a run or a record to see what it is related to.",
+  provenanceNothingSelected: "Select a reference, a layer, a run or a record to see what it is related to.",
   provenanceSelected: "Selected",
   provenanceSelectionGone: "That record is no longer part of this project.",
   provenanceKindInput: "Reference",
@@ -1254,4 +1254,27 @@ export const en = {
   projectRefusedAmbiguousProducer: "That project file says two runs produced the same record, so MSCanvas cannot tell which one did. Nothing was changed.",
   provenanceInspectRunAt: "Show what the run of {{when}} is related to",
   provenanceInspectArtifactOf: "Show the record produced by the run of {{when}}",
+  // --- M8.4 layers. A durable identity sourced from one reference. Creating,
+  // showing, inspecting and removing one reads no file and starts nothing; a
+  // layer's visible name is its source's label, and its availability is the
+  // source's Workbench row resolved against the roster the page already holds.
+  projectLayers: "Layers",
+  projectNoLayers: "No layers yet. Create one from a reference that is in the Workbench.",
+  projectCreateLayer: "Create layer",
+  projectCreateLayerNamed: "Create a layer from {{name}}",
+  projectShowLayer: "Show layer",
+  projectShowLayerNamed: "Show the layer of {{name}}",
+  projectLayerNeedsWorkbench: "Add this reference to the Workbench before creating its layer.",
+  projectLayerAttached: "In the Workbench",
+  projectLayerDetached: "Not in the Workbench",
+  projectRemoveLayer: "Remove layer",
+  projectRemoveLayerNamed: "Remove the layer of {{name}}",
+  projectRefusedNotInWorkbench: "Add this reference to the Workbench before creating its layer.",
+  projectRefusedLayerDependsOnInput: "Remove this reference's layer before removing the reference.",
+  provenanceKindLayer: "Layer",
+  provenanceLayerAvailability: "Current availability",
+  provenanceLayerSource: "Source reference",
+  provenanceLayer: "Layer",
+  provenanceNoLayer: "No layer has been created from this reference.",
+  provenanceInspectLayer: "Show what the layer of {{name}} is related to",
 } as const;

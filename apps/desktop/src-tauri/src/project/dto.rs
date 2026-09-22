@@ -116,6 +116,20 @@ pub struct RunDto {
     pub finished_at: String,
 }
 
+/// One layer: its identity and the reference it is sourced from.
+///
+/// No availability field, on purpose. Whether the layer's source is in the
+/// Workbench is the source reference's `verification` and
+/// `workbench_dataset_handle` resolved against the roster the interface already
+/// holds, exactly as the reference row itself answers it; a second copy of
+/// that answer here would be one more thing to disagree.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayerDto {
+    pub id: String,
+    pub source_input_id: String,
+}
+
 /// One accepted operation, as the interface holds it.
 ///
 /// The handle is correlation: it says which operation a later cancel means and
@@ -155,6 +169,7 @@ pub struct ProjectStateDto {
     pub inputs: Vec<InputDto>,
     pub artifacts: Vec<ArtifactDto>,
     pub runs: Vec<RunDto>,
+    pub layers: Vec<LayerDto>,
 }
 
 const fn role_id(role: MemberRole) -> &'static str {
@@ -268,6 +283,15 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
         })
         .collect();
 
+    let layers = document
+        .layers
+        .iter()
+        .map(|layer| LayerDto {
+            id: layer.id.to_string(),
+            source_input_id: layer.source.input_id().to_string(),
+        })
+        .collect();
+
     ProjectStateDto {
         open: true,
         project_id: Some(document.project_id.to_string()),
@@ -277,5 +301,6 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
         inputs,
         artifacts,
         runs,
+        layers,
     }
 }

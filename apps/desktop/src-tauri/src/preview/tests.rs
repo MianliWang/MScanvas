@@ -4001,6 +4001,13 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // whether a reference may be handed over, and the workspace's own
             // admission is what it is handed to.
             "add_project_input_to_workspace",
+            // The M8.4 layer. Two commands and no third: a layer is created
+            // from a reference and removed by its own identifier, and there is
+            // nothing else to do to one. Neither reads a file or starts a
+            // process; the one question outside the project is whether the
+            // remembered row is still in the roster, answered from memory.
+            "create_project_layer",
+            "remove_project_layer",
             "inspect_backend",
             "choose_backend_installation",
             "use_automatic_backend_discovery",

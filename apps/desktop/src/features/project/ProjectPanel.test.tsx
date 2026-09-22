@@ -394,6 +394,7 @@ describe("the project surface", () => {
       inputs: [],
       artifacts: [],
       runs: [],
+      layers: [],
     });
     await press(screen.getByRole("button", { name: en.projectUnsavedDiscard }));
 
@@ -574,6 +575,7 @@ describe("the project surface", () => {
       inputs: [],
       artifacts: [],
       runs: [],
+      layers: [],
     });
     const releaseInitial = api.holdOnce("getProjectState");
     const preferences = createFakePreferencesApi({ stored: storedRecord() });
@@ -672,6 +674,7 @@ describe("the project surface", () => {
       inputs: [],
       artifacts: [],
       runs: [],
+      layers: [],
     });
 
     await waitFor(() => expect(screen.getByText(en.projectNone)).toBeTruthy());

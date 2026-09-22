@@ -19,7 +19,7 @@ use crate::preview::PreviewService;
 use crate::preview::dto::{WorkspaceAddOutcomeDto, WorkspaceAddResultDto};
 use crate::preview::idle_provider::NoProcess;
 use crate::project::observe::{Cancellation, UnavailableReason};
-use crate::project::record::InputId;
+use crate::project::record::{InputId, LayerId};
 use crate::project::tests::Scratch;
 use crate::project::{ProjectError, ProjectStore};
 
@@ -944,4 +944,107 @@ fn a_cancel_during_the_hash_admits_nothing() {
 
     assert!(service.roster().datasets.is_empty());
     assert_eq!(remembered_row(&projects, id), None);
+}
+
+// ---------------------------------------------------------------------------
+// M8.4: a layer outlives the row it was created from
+// ---------------------------------------------------------------------------
+
+/// Creates the layer of one reference, asking the real roster whether the
+/// remembered row is still there -- the closure the command passes.
+fn create_layer(
+    projects: &ProjectStore,
+    service: &PreviewService,
+    id: InputId,
+) -> Result<LayerId, ProjectError> {
+    projects.create_layer(id, |handle| {
+        service.dataset_object_identities(handle).is_some()
+    })
+}
+
+/// The layers as the interface receives them.
+fn layers_of(projects: &ProjectStore) -> serde_json::Value {
+    serde_json::to_value(projects.describe().layers).expect("serializable")
+}
+
+#[test]
+fn a_layer_remains_when_its_row_is_removed_and_when_the_workspace_is_cleared() {
+    let scratch = Scratch::new("layer-row-gone");
+    let (projects, id) = project_with(&scratch, "sample.mzML", b"<mzML/>");
+    let other = projects
+        .register_input(&scratch.write("other.mzML", b"<mzML>other</mzML>"))
+        .expect("register");
+    let service = workspace();
+    let result = add(&projects, &service, id).expect("admitted");
+    let handle = admitted_handle(&result).expect("a row").to_owned();
+    let layer = create_layer(&projects, &service, id).expect("the layer is created");
+    let before = layers_of(&projects);
+
+    service
+        .remove_datasets(std::slice::from_ref(&handle))
+        .expect("remove the row");
+
+    assert!(service.roster().datasets.is_empty());
+    assert_eq!(layers_of(&projects), before, "the layer is unchanged");
+    // Rust still remembers the row: nothing here notices a row leaving, and
+    // the interface resolves the handle against the roster it holds.
+    assert_eq!(
+        remembered_row(&projects, id).as_deref(),
+        Some(handle.as_str())
+    );
+    // Positive control: the existing layer is answered without the roster.
+    assert_eq!(create_layer(&projects, &service, id), Ok(layer));
+    // Negative control: a reference whose row is gone and which has no layer
+    // yet is refused by the roster's real answer.
+    let other_result = add(&projects, &service, other).expect("admitted");
+    let other_handle = admitted_handle(&other_result).expect("a row").to_owned();
+    service
+        .remove_datasets(std::slice::from_ref(&other_handle))
+        .expect("remove the other row");
+    assert_eq!(
+        create_layer(&projects, &service, other),
+        Err(ProjectError::NotInWorkbench)
+    );
+    assert_eq!(layers_of(&projects), before);
+
+    // Re-admitted, then the whole workspace emptied.
+    let again = add(&projects, &service, id).expect("admitted again");
+    let second_handle = admitted_handle(&again).expect("a row").to_owned();
+    assert_eq!(create_layer(&projects, &service, id), Ok(layer));
+    service.clear_workspace().expect("clear the workspace");
+
+    assert!(service.roster().datasets.is_empty());
+    assert_eq!(layers_of(&projects), before);
+    assert_eq!(
+        remembered_row(&projects, id).as_deref(),
+        Some(second_handle.as_str())
+    );
+}
+
+#[test]
+fn creating_describing_and_removing_a_layer_launches_no_process_and_moves_no_row() {
+    // The provider panics on any probe, reconfiguration or run, so reaching
+    // the end is the proof that none happened.
+    let scratch = Scratch::new("layer-no-process");
+    let (projects, id) = project_with(&scratch, "sample.mzML", b"<mzML/>");
+    let service = workspace();
+    let result = add(&projects, &service, id).expect("admitted");
+    let handle = admitted_handle(&result).expect("a row").to_owned();
+
+    let layer = create_layer(&projects, &service, id).expect("created");
+    let described = projects.describe();
+    assert_eq!(described.layers.len(), 1);
+    assert_eq!(described.layers[0].id, layer.to_string());
+    assert_eq!(described.layers[0].source_input_id, id.to_string());
+    projects.remove_layer(layer).expect("removed");
+    assert!(projects.describe().layers.is_empty());
+
+    let roster = service.roster();
+    assert_eq!(roster.datasets.len(), 1);
+    assert_eq!(roster.datasets[0].handle, handle);
+    assert_eq!(
+        remembered_row(&projects, id).as_deref(),
+        Some(handle.as_str()),
+        "neither creating nor removing a layer touches the row or the memory of it"
+    );
 }
