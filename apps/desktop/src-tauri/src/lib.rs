@@ -114,6 +114,9 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::Unavailable(_) => "That file could not be read.",
         Refusal::NotChecked => "Check this file before adding it to the Workbench.",
         Refusal::ContentChanged => "That file has changed since the project recorded it.",
+        Refusal::ObjectNotIdentified => {
+            "This drive cannot identify that file, so it cannot be added to the Workbench."
+        }
         Refusal::Cancelled => "Cancelled.",
         Refusal::NothingSelected => "Nothing was selected.",
         Refusal::AlreadyRunning => "Another check is already running.",

@@ -124,7 +124,7 @@ pub fn add_project_input_to_workspace(
 /// # Errors
 ///
 /// As [`add_project_input_to_workspace`].
-pub fn add_project_input_to_workspace_between(
+pub(crate) fn add_project_input_to_workspace_between(
     projects: &ProjectStore,
     service: &PreviewService,
     job: ProjectJobId,

@@ -1142,6 +1142,7 @@ export const zhCN = {
   projectRefusedConversionBusy: "转换正在运行，因此工作台未发生更改。请在其完成后重试。",
   projectRefusedNotChecked: "请先检查此文件，然后再将其添加到工作台。",
   projectRefusedContentChanged: "自项目记录以来，该文件已更改，因此未被添加。",
+  projectRefusedObjectNotIdentified: "此驱动器无法告知 MSCanvas 那是哪个文件，因此它无法被添加到工作台。将其复制到本地驱动器可以绕过这一点。",
   projectRefusedMissing: "在此项目记录的位置未找到该文件。请使用“定位”指向它。",
   projectRefusedUnreadable: "无法读取该文件。",
   projectRefusedUnsafe: "该引用不是普通文件。",

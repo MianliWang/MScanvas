@@ -12,7 +12,7 @@
 //! test creates is read or written.
 
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 
 use crate::preview::PreviewService;
@@ -580,6 +580,101 @@ fn a_bundle_whose_companion_is_replaced_after_the_proof_is_not_claimed() {
     assert_eq!(remembered_row(&projects, id), None);
 }
 
+/// The window the same-object proof exists for, made reachable.
+///
+/// A bundle is measured one member at a time, and each member's handle is
+/// released before the next one is opened. So while the *companion* is being
+/// hashed, the primary is no longer held -- and that is a moment a test can act
+/// in, unlike the instruction-width gap a single-member input leaves.
+///
+/// The primary is replaced there, by an object holding the very same bytes.
+/// Nothing downstream can see it on its own: the digests still match, the
+/// lengths are equal, the path is unchanged, and any identity question asked
+/// from that moment on -- by this module or by workspace admission -- answers
+/// about the replacement and agrees with every other such question.
+///
+/// What refuses it is that the primary's identity was taken through the handle
+/// the primary's bytes were hashed through, before the replacement existed. An
+/// implementation that established identity from the path after the reads were
+/// done would observe the replacement on both sides, find them equal, and claim
+/// a row for an object it never measured.
+#[test]
+fn a_member_replaced_once_its_own_read_is_done_is_not_claimed() {
+    let scratch = Scratch::new("reattach-member-swapped");
+    let container = wiff_container_bytes(&SCIEX_MARKERS);
+    let primary = scratch.write("acquisition.wiff", &container);
+    scratch.write(
+        "acquisition.wiff.scan",
+        &scan_companion_bytes("opaque spectral payload"),
+    );
+    let projects = ProjectStore::new();
+    projects
+        .create("Reattachment".to_owned(), false)
+        .expect("a new project");
+    let id = projects.register_input(&primary).expect("register");
+    assert_eq!(projects.describe().inputs[0].members.len(), 2);
+    let service = workspace();
+    let proved = crate::local_document::object_identity(&scratch.join("acquisition.wiff"));
+
+    // The gate fires once per chunk handed to a digest, member by member. Which
+    // call lands in which member is not something to count out -- the reader
+    // hands over a final empty chunk too -- so the swap simply tries on every
+    // call and lets the platform decide when it is allowed.
+    //
+    // That is not a workaround, it is the mechanism under test. While the
+    // primary is being hashed its own handle denies delete sharing, so the
+    // attempt fails; the first call on which it succeeds is therefore a call
+    // where the primary is no longer held, which is exactly the moment this
+    // test needs and the only one it could be.
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let done = Arc::new(AtomicBool::new(false));
+    let counted = Arc::clone(&attempts);
+    let settled = Arc::clone(&done);
+    let directory = scratch.directory().to_path_buf();
+    let swapped = container.clone();
+    let cancellation = Cancellation::with_gate(Arc::new(move || {
+        if settled.load(Ordering::SeqCst) {
+            return;
+        }
+        counted.fetch_add(1, Ordering::SeqCst);
+        let replacement = directory.join("replacement.wiff");
+        let acquisition = directory.join("acquisition.wiff");
+        if fs::write(&replacement, &swapped).is_err() {
+            return;
+        }
+        if fs::remove_file(&acquisition).is_err() {
+            let _ = fs::remove_file(&replacement);
+            return;
+        }
+        fs::rename(&replacement, &acquisition).expect("put the replacement in place");
+        settled.store(true, Ordering::SeqCst);
+    }));
+    let job = projects.accept_job_with(cancellation).expect("accept");
+
+    let refusal =
+        add_project_input_to_workspace(&projects, &service, job, id).expect_err("a refusal");
+
+    assert!(
+        done.load(Ordering::SeqCst),
+        "the replacement has to have happened, or this test asserts nothing"
+    );
+    assert!(
+        attempts.load(Ordering::SeqCst) > 1,
+        "and it has to have been refused first, while the primary was still held"
+    );
+    assert_ne!(
+        crate::local_document::object_identity(&scratch.join("acquisition.wiff")),
+        proved,
+        "this test is only meaningful while the primary really was replaced"
+    );
+    assert_eq!(project_refusal(refusal), ProjectError::ContentChanged);
+    assert_eq!(
+        remembered_row(&projects, id),
+        None,
+        "the project claims no row for an object it never measured"
+    );
+}
+
 /// The positive control beside the two refusals above.
 ///
 /// The same bundle, nothing replaced: it is admitted as one row and the
@@ -608,6 +703,56 @@ fn an_untouched_bundle_is_admitted_as_one_row_and_claimed() {
         admitted_handle(&result),
         "both members were proved and both were admitted, so the row is this reference's"
     );
+}
+
+/// What the same-object proof deliberately does not cover, pinned so it cannot
+/// change quietly.
+///
+/// An equal-length rewrite *of the same object*, after the content proof and
+/// before admission. The identity is untouched -- it is the same object -- so
+/// the binding is satisfied and the row is claimed, while the bytes in it are
+/// no longer the recorded bytes.
+///
+/// This is not a hole the binding could close: identity proves "same object"
+/// and a digest proves "same bytes", and neither substitutes for the other. To
+/// close it this operation would have to hold the user's file against every
+/// writer for the length of a workspace admission, which is a worse trade than
+/// the window it removes. What bounds it instead is downstream and already
+/// exists: the workspace rehashes an acquisition at the moment it reads one,
+/// and refuses a row whose bytes have moved on.
+///
+/// Recorded as a characterization rather than as an endorsement. If the
+/// answer here ever changes, it should change because somebody decided it
+/// should.
+#[test]
+fn an_equal_length_rewrite_of_the_same_object_after_the_proof_is_still_claimed() {
+    let scratch = Scratch::new("reattach-rewritten-same-object");
+    let (projects, id) = project_with(&scratch, "sample.mzML", b"<mzML>aaaa</mzML>");
+    let service = workspace();
+    let proved = crate::local_document::object_identity(&scratch.join("sample.mzML"));
+
+    let result = add_project_input_to_workspace_between(
+        &projects,
+        &service,
+        projects.accept_job().expect("accept"),
+        id,
+        || {
+            // In place, so the object is the same object throughout.
+            fs::write(scratch.join("sample.mzML"), b"<mzML>bbbb</mzML>").expect("rewrite");
+        },
+    )
+    .expect("the object is the one that was proved, so the binding is satisfied");
+
+    assert_eq!(
+        crate::local_document::object_identity(&scratch.join("sample.mzML")),
+        proved,
+        "an in-place rewrite is the same object, which is exactly why this gets through"
+    );
+    assert!(
+        remembered_row(&projects, id).is_some(),
+        "the binding answers about objects and this is the object it was given"
+    );
+    assert!(admitted_handle(&result).is_some());
 }
 
 /// Windows-specific. The M8.1 stable-read contract, asserted rather than

@@ -1169,6 +1169,7 @@ export const en = {
   projectRefusedConversionBusy: "A conversion is running, so the Workbench did not change. Try again once it has finished.",
   projectRefusedNotChecked: "Check this file before adding it to the Workbench.",
   projectRefusedContentChanged: "That file has changed since the project recorded it, so it was not added.",
+  projectRefusedObjectNotIdentified: "This drive cannot tell MSCanvas which file that is, so it cannot be added to the Workbench. Copying it to a local drive is the way round it.",
   projectRefusedMissing: "That file was not found where this project recorded it. Use Locate to point at it.",
   projectRefusedUnreadable: "That file could not be read.",
   projectRefusedUnsafe: "That reference is not an ordinary file.",

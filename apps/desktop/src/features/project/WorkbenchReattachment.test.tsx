@@ -478,14 +478,20 @@ describe("adding a project reference to the Workbench", () => {
     await press(addControl("11111111-2222-4111-8111-111111111111"));
     await waitFor(() => expect(admitted).toHaveLength(1));
 
+    // Waited for rather than read once. The callback fires before the project
+    // answer is applied, so the render this is about is still owed at that
+    // point -- and asserting into it directly describes this machine's timing
+    // rather than the interface.
+    await waitFor(() =>
+      expect(
+        inspector().querySelector("[data-provenance]")?.getAttribute("data-provenance"),
+      ).toBe("input"),
+    );
     expect(
       [...inspector().querySelectorAll("[data-provenance-link]")].map((node) =>
         node.getAttribute("data-provenance-link"),
       ),
     ).toEqual(relatedBefore);
-    expect(inspector().querySelector("[data-provenance]")?.getAttribute("data-provenance")).toBe(
-      "input",
-    );
   });
 });
 

@@ -81,7 +81,9 @@ use super::operation::{
     folded_output_name,
 };
 use super::projection::MAX_PROJECTION_POINTS;
-use super::sciex_fixture::{SCIEX_MARKERS, scan_companion_bytes, wiff_container_bytes};
+use super::sciex_fixture::{
+    COMPOUND_FILE_MAGIC, SCIEX_MARKERS, scan_companion_bytes, wiff_container_bytes,
+};
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
 /// its answer exact rather than a guess.
@@ -7102,16 +7104,10 @@ fn mzml_chromatogram_document(chromatograms: u32) -> String {
     format!(r#"<indexedmzML><mzML version="1.1.0">{run}</mzML></indexedmzML>"#)
 }
 
-/// The eight bytes every Microsoft compound file begins with.
-///
-/// Spelled out rather than imported, like the Thermo signature beside it: a
-/// test that read its expectation from the constant it checks would pass
-/// because that constant had been changed to match a mistake. It is also the
-/// point of this family -- these same eight bytes begin a SCIEX `.wiff`, so
-/// they cannot be the recognition.
-const COMPOUND_FILE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
-
-/// The entries a LabSolutions acquisition carries, likewise spelled out.
+/// The entries a LabSolutions acquisition carries, spelled out rather than
+/// imported, like the Thermo signature beside it: a test that read its
+/// expectation from the constant it checks would pass because that constant
+/// had been changed to match a mistake.
 const SHIMADZU_MARKERS: [&str; 3] = ["Method File Property", "GUMM_Information", "LSS Raw Data"];
 
 /// A compound file whose first directory sector holds exactly these entries.

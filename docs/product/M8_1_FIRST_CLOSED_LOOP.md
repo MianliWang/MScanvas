@@ -558,9 +558,11 @@ writers and deleters for the length of a workspace admission is not something
 this action should do. The existing admission then opens the path normally and
 produces a row under its own rules. The binding check is a comparison against
 that **row's own leased identities**, asked of the workspace rather than of the
-filesystem: the row is bound to the objects admission opened and holds them
-alive, so comparing against it compares two observations of objects rather than
-two observations of a name. Both sides read `FILE_ID_INFO`, so they are the
+filesystem: the row is bound to the objects admission opened, so comparing
+against it compares two observations of objects rather than two observations of
+a name. On Windows the lease also holds those objects alive, so the identities
+cannot come to mean something else while the row exists; off Windows there is no
+handle to hold and the narrowing ADR 0006 already records applies here too. Both sides read `FILE_ID_INFO`, so they are the
 same filesystem answer rather than two encodings of it.
 
 Members are compared as sets, because each side orders them by its own rules --
@@ -583,6 +585,31 @@ is reconciled exactly as M8.3 already reconciles it after a refused admission.
 project document holds one, and registration deliberately discards the identity
 it observes while recording the bytes.
 
+**A volume that cannot identify its objects** gives a measurement nothing to be
+bound to. That does not take the rest of the project away with it: registering
+a reference, checking one and capturing its file facts all still work, exactly
+as they did before this evidence existed, because none of them needs to bind
+anything. Only this operation refuses, as `objectNotIdentified`, in its own
+words -- borrowing "the file has changed" or "another program has it open"
+would be untrue, and the second would tell the reader to do something that can
+never work. In practice the Workbench's own admission refuses such a volume
+first, with `file_identity_unavailable`.
+
+**What this deliberately does not cover**, stated because the previous version
+of this section stated its own limits and a silence here would read as
+completeness. An equal-length rewrite *of the same object*, landing after the
+content proof and before admission, satisfies the binding -- it is the same
+object -- and the row is claimed while its bytes are no longer the recorded
+bytes. That is not a hole the binding could close: identity proves "same
+object", a digest proves "same bytes", and neither substitutes for the other,
+which is the same division finalized outputs already work under. Closing it
+would mean holding the user's file against every writer for the length of a
+workspace admission, which is a worse trade than the window it removes. What
+bounds it is downstream and already exists: the workspace rehashes an
+acquisition at the moment it reads one and refuses a row whose bytes have moved
+on. There is a test pinning this behaviour, so that if it ever changes it
+changes because somebody decided it should.
+
 **What the regression proves, precisely.** Two things, and they are different
 claims:
 
@@ -595,12 +622,31 @@ claims:
   handle is held. So the invariant is asserted rather than the timing.
 * *Behaviourally*, that the binding is enforced at the admission boundary, with
   a hook that runs after the proof and before the workspace opens anything.
-  A replacement there is refused even when its bytes are identical -- the case
-  no digest can ever catch -- and a **bundle whose companion alone is replaced**
-  is refused, which is a case the previous primary-only comparison admitted and
-  claimed. That last one fails against the pre-fix comparison and passes against
-  this one, which was confirmed by installing the primary-only comparison and
-  watching it claim the row.
+  A replacement there is refused even when its bytes are identical, which is the
+  case no digest can ever catch.
+
+Two of those behavioural cases are genuine pre-fix failures, and it is worth
+being exact about which, because the between-the-proof-and-admission hook alone
+does not distinguish the two orderings: the old path probe ran *before* that
+hook could fire, so it caught a replacement there too.
+
+* A **bundle whose companion alone is replaced** was admitted and claimed by the
+  previous primary-only comparison.
+* A **bundle whose primary is replaced while its companion is being hashed** is
+  the same-object window itself, made reachable. Members are measured one at a
+  time and each handle is released before the next is opened, so the primary is
+  genuinely unheld during the companion's read -- unlike the instruction-width
+  gap a single-member input leaves, which no test can act in because the read's
+  own sharing mode protects the other side of it. The swap in that test is not
+  scheduled by counting chunks; it is attempted on every chunk and succeeds on
+  the first one where the platform allows it, which is by construction a moment
+  the primary is no longer held. An implementation taking identity from the path
+  afterwards observes the replacement on both sides, finds them equal, and
+  claims a row for an object it never measured.
+
+Both were confirmed by installing the pre-fix mechanism -- the primary's
+identity, taken by path after the reads were done, compared primary-only -- and
+watching each test fail.
 
 ### The workspace stays authoritative
 

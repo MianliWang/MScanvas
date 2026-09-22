@@ -105,6 +105,11 @@ pub enum ProjectError {
     /// The referenced file no longer holds the bytes the project recorded.
     /// Nothing was admitted and the recorded baseline is untouched.
     ContentChanged,
+    /// The filesystem could not say which object one of these files is, so a
+    /// measurement of it cannot be bound to what a later step opens. Reading
+    /// the file, checking it and recording what it contains all still work;
+    /// only handing it to the Workbench under a proof does not.
+    ObjectNotIdentified,
     /// The user cancelled.
     Cancelled,
     /// The operation was asked to act on nothing.
@@ -136,6 +141,7 @@ impl ProjectError {
             Self::Unavailable(reason) => reason.stable_id(),
             Self::NotChecked => "notChecked",
             Self::ContentChanged => "contentChanged",
+            Self::ObjectNotIdentified => "objectNotIdentified",
             Self::Cancelled => "cancelled",
             Self::NothingSelected => "nothingSelected",
             Self::AlreadyRunning => "alreadyRunning",
@@ -1314,6 +1320,15 @@ impl ProjectStore {
         drop(session);
 
         refuse_unestablished(observed)?;
+        // The content is the recorded content and there is still nothing to
+        // bind it to. Refused here, before the workspace opens anything, so
+        // this does not admit a row it would then decline to name. In practice
+        // the workspace refuses such a volume on its own terms first; this is
+        // the project saying the same thing in its own vocabulary rather than
+        // borrowing "the file has changed", which would not be true.
+        if proved.identities().is_empty() {
+            return Err(ProjectError::ObjectNotIdentified);
+        }
         Ok(AdmissibleInput {
             input: id,
             generation,

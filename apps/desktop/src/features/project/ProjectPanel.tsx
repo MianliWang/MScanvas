@@ -72,6 +72,7 @@ const REFUSALS = {
   oversized: "projectRefusedOversized",
   notChecked: "projectRefusedNotChecked",
   contentChanged: "projectRefusedContentChanged",
+  objectNotIdentified: "projectRefusedObjectNotIdentified",
   missingAtCheckedLocation: "projectRefusedMissing",
   unreadable: "projectRefusedUnreadable",
   unsafeReference: "projectRefusedUnsafe",

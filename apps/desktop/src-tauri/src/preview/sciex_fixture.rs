@@ -13,7 +13,16 @@ pub(crate) const SCIEX_MARKERS: [&str; 4] = [
     "MassSpecMethod",
 ];
 
-const COMPOUND_FILE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+/// The eight bytes every Microsoft compound file begins with.
+///
+/// Shared by every fixture in this crate that builds one -- the SCIEX container
+/// here and the LabSolutions container the preview suite builds -- because two
+/// copies would be two things to keep in step. Spelled out rather than imported
+/// from the recognition it is fed to: a test that read its expectation from the
+/// constant it checks would pass because that constant had been changed to
+/// match a mistake. It is also the point of this family -- these same eight
+/// bytes begin a SCIEX `.wiff`, so they cannot be the recognition.
+pub(crate) const COMPOUND_FILE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 
 /// A compound file under the geometry a real `.wiff` declares.
 ///

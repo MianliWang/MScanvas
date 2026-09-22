@@ -338,13 +338,14 @@ fn a_measurement_names_the_object_it_read_and_not_the_name_it_read_through() {
         panic!("the object is there and readable: {observed:?}");
     };
     assert_eq!(
-        identity, measured,
+        identity,
+        Some(measured),
         "the measurement answers about the object, established through its own read"
     );
 
-    // The name now means something else. Built beside the original and moved
-    // over it, so the replacement cannot be handed the identity the original
-    // released.
+    // And a question put to the *name* afterwards answers about whatever the
+    // name means then. Built beside the original and moved over it, so the
+    // replacement cannot be handed the identity the original released.
     let replacement = scratch.write("replacement.bin", b"the measured bytes");
     drop(held);
     fs::remove_file(&path).expect("remove the measured object");
@@ -353,13 +354,62 @@ fn a_measurement_names_the_object_it_read_and_not_the_name_it_read_through() {
     let by_name =
         crate::local_document::object_identity(&path).expect("the replacement is identified too");
     assert_ne!(
-        by_name, identity,
-        "this is only meaningful while the name really does mean a different object"
+        Some(by_name),
+        identity,
+        "the two questions have different answers, which is the whole difficulty"
     );
-    // The identity the measurement carries is unchanged by any of that, which
-    // is the whole of the claim: it is evidence about an object, and a later
-    // question about a name cannot make it describe the replacement.
-    assert_eq!(identity, measured);
+}
+
+/// The binding comparison, asked the questions the end-to-end cases cannot.
+///
+/// Both sides happen to order a SCIEX acquisition primary-first, so order
+/// independence is never exercised by a real admission -- and "nothing proved
+/// matches nothing" is a guard whose whole job is to be unreachable.
+#[test]
+fn the_binding_compares_object_sets_rather_than_orders() {
+    let first = (1_u64, [1_u8; 16]);
+    let second = (1_u64, [2_u8; 16]);
+    let elsewhere = (2_u64, [1_u8; 16]);
+
+    assert!(super::same_objects(&[first, second], &[second, first]));
+    assert!(super::same_objects(&[first], &[first]));
+    // Same file id, different volume. Not the same object.
+    assert!(!super::same_objects(&[first], &[elsewhere]));
+    // A bundle and one of its members are not the same acquisition, in either
+    // direction.
+    assert!(!super::same_objects(&[first, second], &[first]));
+    assert!(!super::same_objects(&[first], &[first, second]));
+    // Nothing proved is not the same as anything, including as nothing.
+    assert!(!super::same_objects(&[], &[]));
+    assert!(!super::same_objects(&[], &[first]));
+}
+
+/// An object with no identity is still readable, checkable and recordable.
+///
+/// Binding a measurement to an object is evidence one operation needs. A
+/// volume that cannot supply it must not take registering a reference,
+/// checking one or capturing its file facts away with it -- and it must not
+/// borrow "another program has this file open", which would be untrue and
+/// would tell the user to do something that can never work.
+#[test]
+fn a_measurement_without_an_identity_is_still_a_measurement() {
+    let scratch = Scratch::new("unidentified");
+    let path = scratch.write("sample.bin", b"readable either way");
+
+    let observed = observe::observe_member(&path, &Cancellation::default());
+    let MemberObservation::Observed { byte_length, .. } = observed else {
+        panic!("the object is there and readable: {observed:?}");
+    };
+    assert_eq!(byte_length, 19);
+
+    // The volumes this test can create all identify their objects, so what is
+    // asserted here is the shape rather than the platform: the observation
+    // carries the identity as something that may be absent, and every consumer
+    // that does not need it reads the bytes regardless.
+    let (store, id) = store_with_reference(&scratch, "reference.bin", b"recorded bytes");
+    check(&store).expect("check");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+    capture(&store, &[id]).expect("capture");
 }
 
 /// Windows-specific. A file another process holds open for writing cannot be

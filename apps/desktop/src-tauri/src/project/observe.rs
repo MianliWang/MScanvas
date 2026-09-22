@@ -148,7 +148,15 @@ pub enum MemberObservation {
         /// about a name. Two identity reads taken after the handle closed can
         /// agree with each other while describing a file that replaced the one
         /// that was hashed; one taken from the open object cannot.
-        identity: ObjectIdentity,
+        ///
+        /// `None` on a filesystem that has no identity to give. That is not a
+        /// failure of the read and deliberately does not become one: recording
+        /// what a file contains, checking it against a record and capturing
+        /// file facts are all answerable without it, and they went on being
+        /// answerable on such a volume before this evidence existed. Only an
+        /// operation that has to bind a proof to an object needs it, and only
+        /// that operation refuses without it.
+        identity: Option<ObjectIdentity>,
     },
     Unavailable(UnavailableReason),
 }
@@ -338,13 +346,7 @@ pub fn observe_member(path: &Path, cancellation: &Cancellation) -> MemberObserva
     // it is held; asking the *name* once the handle is gone would answer about
     // whatever the name means then, and two such answers agreeing proves only
     // that they were taken after the same replacement.
-    let Some(identity) = local_document::object_identity_of(&file) else {
-        // A filesystem that cannot name its objects gives this measurement
-        // nothing to be about. That is the same position as a read that could
-        // not be established -- there is no comparison to be made -- and it is
-        // reported as that rather than as a content judgement.
-        return MemberObservation::Unavailable(UnavailableReason::UnstableRead);
-    };
+    let identity = local_document::object_identity_of(&file);
     MemberObservation::Observed {
         byte_length,
         digest,
@@ -385,7 +387,7 @@ fn member_path(primary: &Path, member: &super::record::MemberRecord) -> Option<P
 struct ObservedMemberObject {
     observed: ObservedMember,
     baseline: ContentBaseline,
-    identity: ObjectIdentity,
+    identity: Option<ObjectIdentity>,
 }
 
 /// Measures every member of one input, in record order with the primary first.
@@ -454,6 +456,9 @@ fn observe_input(
 ///
 /// The identities are empty for every outcome that is not
 /// `MatchingRecordedContent`: nothing is proven, so there is nothing to bind.
+/// They are also empty where the filesystem could not identify one of the
+/// objects -- a partial binding is not a weaker binding, it is none -- and the
+/// caller refuses rather than binding to what it happens to know.
 #[derive(Debug, Clone)]
 pub struct VerifiedProjectObject {
     pub verification: InputVerification,
@@ -517,7 +522,15 @@ pub fn verify_input_objects(
             if matching {
                 VerifiedProjectObject {
                     verification: InputVerification::MatchingRecordedContent,
-                    identities: observed.iter().map(|member| member.identity).collect(),
+                    // All of them or none. A set missing one member's object
+                    // is not a set this can be compared against, and comparing
+                    // the ones it has would answer a narrower question than
+                    // the one being asked.
+                    identities: observed
+                        .iter()
+                        .map(|member| member.identity)
+                        .collect::<Option<Vec<_>>>()
+                        .unwrap_or_default(),
                 }
             } else {
                 unproven(InputVerification::DifferentContent)
