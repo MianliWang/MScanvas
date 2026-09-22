@@ -131,7 +131,8 @@ function refusedAsUnsupported(): WorkspaceAddResult {
 interface HarnessProps {
   readonly live?: ReadonlySet<string>;
   readonly onShow?: (handle: string) => void;
-  readonly onAdmitted?: (result: WorkspaceAddResult) => void;
+  readonly onAdmitted?: (result: WorkspaceAddResult | null) => void;
+  readonly workspaceBusy?: boolean;
   readonly locale?: "en" | "zh-CN";
   readonly withDetails?: boolean;
 }
@@ -142,6 +143,7 @@ function Harness({
   onShow = () => undefined,
   onAdmitted,
   withDetails = false,
+  workspaceBusy = false,
 }: HarnessProps) {
   const session = useProject(onAdmitted);
   return (
@@ -151,6 +153,7 @@ function Harness({
         liveDatasetHandles={live}
         onShowInWorkbench={onShow}
         detailsPresent={withDetails}
+        workspaceBusy={workspaceBusy}
       />
       {withDetails ? (
         <aside id="workbench-inspector">
@@ -235,7 +238,7 @@ describe("adding a project reference to the Workbench", () => {
   });
 
   it("admits a matching reference under an accepted operation and hands the roster on", async () => {
-    const admitted: WorkspaceAddResult[] = [];
+    const admitted: (WorkspaceAddResult | null)[] = [];
     const api = mount(everyState(), { onAdmitted: (result) => admitted.push(result) });
     api.setAdmission(addedOne());
     await screen.findByText(en.projectReferences);
@@ -259,7 +262,7 @@ describe("adding a project reference to the Workbench", () => {
     await screen.findByText(en.projectReferences);
 
     const control = screen.getByRole("button", {
-      name: `Show ${selectedFile.fileName} in the Workbench`,
+      name: `Show in Workbench: ${selectedFile.fileName}`,
     });
     expect(control.textContent).toBe(en.projectShowInWorkbench);
     expect(document.querySelector(`[data-project-add-to-workbench="${MATCHING}"]`)).toBe(null);
@@ -285,7 +288,7 @@ describe("adding a project reference to the Workbench", () => {
   });
 
   it("reports a file the Workbench does not open without claiming a row for it", async () => {
-    const admitted: WorkspaceAddResult[] = [];
+    const admitted: (WorkspaceAddResult | null)[] = [];
     const api = mount(
       openProject({
         inputs: [
@@ -342,6 +345,59 @@ describe("adding a project reference to the Workbench", () => {
     );
   });
 
+  it("waits its turn while another workspace change is out, and says so", async () => {
+    // One workspace change at a time, which is the rule every other mutation
+    // follows. Without it this path could be issued beside a folder import and
+    // supersede the whole scan in Rust, with nothing on screen having said so.
+    const api = mount(everyState(), { workspaceBusy: true });
+    await screen.findByText(en.projectReferences);
+
+    expect(addControl(MATCHING).getAttribute("aria-disabled")).toBe("true");
+    expect(addControl(MATCHING).getAttribute("data-project-add-unavailable")).toBe(
+      "projectAddWorkspaceBusy",
+    );
+    expect(addControl(MATCHING).getAttribute("title")).toBe(en.projectAddWorkspaceBusy);
+
+    await press(addControl(MATCHING));
+    expect(api.addProjectInputToWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("gives the workspace's own refusal its own sentence", async () => {
+    // The refusal comes back through the workspace channel and keeps the
+    // workspace's identifier. It reaches this surface because the action
+    // enters the workspace's admission path, and a reader told only "that was
+    // refused" has nothing to act on -- the true answer is "wait for the
+    // conversion".
+    const api = mount(everyState());
+    api.refuseOnce("addProjectInputToWorkspace", "conversion_busy");
+    await screen.findByText(en.projectReferences);
+
+    await press(addControl(MATCHING));
+
+    await waitFor(() =>
+      expect(screen.getAllByText(en.projectRefusedConversionBusy).length).toBeGreaterThan(0),
+    );
+  });
+
+  it("asks the shell to re-read the roster when the operation fails", async () => {
+    // A refusal is not proof that the workspace is unchanged: the project can
+    // decline to claim a row the workspace already admitted. The reply that
+    // carried the new roster never arrives, so the shell is told to go and ask
+    // rather than to leave the page describing a session that has moved on.
+    const admitted: (WorkspaceAddResult | null)[] = [];
+    const api = mount(everyState(), { onAdmitted: (result) => admitted.push(result) });
+    api.refuseOnce("addProjectInputToWorkspace", "staleDocument");
+    await screen.findByText(en.projectReferences);
+
+    await press(addControl(MATCHING));
+
+    await waitFor(() => expect(admitted).toEqual([null]));
+    // And the refusal is still reported; reconciling is not swallowing it.
+    expect(
+      document.querySelector("[data-project-problem]")?.getAttribute("data-project-problem"),
+    ).toBe("staleDocument");
+  });
+
   it("is activated by the keyboard and takes visible focus", async () => {
     mount(everyState());
     await screen.findByText(en.projectReferences);
@@ -382,7 +438,7 @@ describe("adding a project reference to the Workbench", () => {
   });
 
   it("goes on describing provenance the same way once a reference is a row", async () => {
-    const admitted: WorkspaceAddResult[] = [];
+    const admitted: (WorkspaceAddResult | null)[] = [];
     const api = mount(capturedProject({ input: { verification: "matchingRecordedContent" } }), {
       withDetails: true,
       onAdmitted: (result) => admitted.push(result),
@@ -510,6 +566,67 @@ describe("the Workbench reattachment in the application shell", () => {
     expect(within(row).queryByText(en.showingRow)).toBe(null);
   });
 
+  it("opens the group a revealed row is inside rather than landing on nothing", async () => {
+    // A collapsed group drops its rows from the projection entirely, so the
+    // press the reveal makes is one the reducer cannot act on and the row is
+    // not rendered to be focused. The default destination for every new row is
+    // a group that can be collapsed, so this is reachable with two presses.
+    const { projects } = renderShell(
+      openProject({
+        inputs: [
+          projectInput({
+            id: MATCHING,
+            label: selectedFile.fileName,
+            verification: "matchingRecordedContent",
+          }),
+        ],
+      }),
+    );
+    projects.setAdmission(addedOne());
+    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await screen.findByText(en.projectReferences);
+    projects.set(admittedProject());
+    await press(addControl(MATCHING));
+    const row = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>(
+        `#workbench-roster [data-handle="${selectedFile.handle}"]`,
+      );
+      expect(found).toBeTruthy();
+      return found!;
+    });
+
+    // Collapse the group the row is in, then leave the roster entirely.
+    const disclosure = document.querySelector<HTMLElement>(
+      "#workbench-roster .group-disclosure",
+    );
+    expect(disclosure).toBeTruthy();
+    await press(disclosure!);
+    await waitFor(() =>
+      expect(
+        document.querySelector(`#workbench-roster [data-handle="${selectedFile.handle}"]`),
+      ).toBe(null),
+    );
+    await press(screen.getByRole("button", { name: en.projectSurface }));
+
+    await press(
+      await screen.findByRole("button", {
+        name: `Show in Workbench: ${selectedFile.fileName}`,
+      }),
+    );
+
+    // The group opened, the row is on screen again, and it is the one holding
+    // the keyboard -- which is what "show it in the Workbench" has to mean.
+    const revealed = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>(
+        `#workbench-roster [data-handle="${selectedFile.handle}"]`,
+      );
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    await waitFor(() => expect(document.activeElement).toBe(revealed));
+    expect(revealed).not.toBe(row);
+  });
+
   it("reveals the row a reference already has without asking for anything", async () => {
     const { projects, openPreview } = renderShell(
       openProject({
@@ -547,7 +664,7 @@ describe("the Workbench reattachment in the application shell", () => {
     await press(screen.getByRole("button", { name: en.projectSurface }));
 
     const show = await screen.findByRole("button", {
-      name: `Show ${selectedFile.fileName} in the Workbench`,
+      name: `Show in Workbench: ${selectedFile.fileName}`,
     });
     const before = [...projects.calls];
     await press(show);

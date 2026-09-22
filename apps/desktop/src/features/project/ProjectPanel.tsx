@@ -79,6 +79,12 @@ const REFUSALS = {
   unstableRead: "projectRefusedUnstable",
   nothingSelected: "projectRefusedNothingSelected",
   alreadyRunning: "projectRefusedAlreadyRunning",
+  staleOperation: "projectRefusedStaleOperation",
+  // The workspace's own refusal, reaching this surface because the
+  // reattachment enters the workspace's admission path. It keeps the
+  // workspace's identifier and gets a sentence here rather than being
+  // translated into a project fact it is not.
+  conversion_busy: "projectRefusedConversionBusy",
   malformed: "projectRefusedMalformed",
   unsupportedVersion: "projectRefusedUnsupportedVersion",
   duplicateIdentifier: "projectRefusedDuplicate",
@@ -117,7 +123,10 @@ function busyKey(busy: ProjectBusy) {
  * its own sentence, since "check it first", "it changed" and "it is not there"
  * need three different things from the reader.
  */
-function unavailableToAddKey(input: ProjectInput) {
+function unavailableToAddKey(input: ProjectInput, workspaceBusy: boolean) {
+  // Asked first, because it is true of every reference at once and is the one
+  // reason that is about the Workbench rather than about this file.
+  if (workspaceBusy) return "projectAddWorkspaceBusy" as const;
   if (input.verification === "matchingRecordedContent") return null;
   if (input.verification === "notChecked") return "projectAddNeedsCheck" as const;
   if (input.verification === "differentContent") return "projectAddChanged" as const;
@@ -178,6 +187,16 @@ export interface ProjectPanelProps {
    * operation on the session.
    */
   readonly onShowInWorkbench?: (handle: string) => void;
+  /**
+   * Whether another change to the workspace is already out.
+   *
+   * One workspace change at a time, which is the rule every other mutation
+   * here follows: two in flight together let the older reply's roster
+   * overwrite the newer one's. Rust serialises them regardless, so this waits
+   * for a moment rather than for anything -- and says so, rather than leaving
+   * a press that quietly does nothing.
+   */
+  readonly workspaceBusy?: boolean;
 }
 
 export function ProjectPanel({
@@ -186,6 +205,7 @@ export function ProjectPanel({
   onRevealDetails,
   liveDatasetHandles,
   onShowInWorkbench,
+  workspaceBusy = false,
 }: ProjectPanelProps) {
   const t = useUiMessages();
   const { state, busy, problem, cancelled, pending, selected, inspecting } = session;
@@ -542,22 +562,26 @@ export function ProjectPanel({
                         <button
                           type="button"
                           className="secondary-button"
-                          aria-disabled={working || unavailableToAddKey(input) !== null || undefined}
+                          aria-disabled={
+                            working || unavailableToAddKey(input, workspaceBusy) !== null || undefined
+                          }
                           aria-describedby={
-                            unavailableToAddKey(input) === null
+                            unavailableToAddKey(input, workspaceBusy) === null
                               ? undefined
                               : `project-state-${input.id}`
                           }
                           title={
-                            unavailableToAddKey(input) === null
+                            unavailableToAddKey(input, workspaceBusy) === null
                               ? undefined
-                              : t(unavailableToAddKey(input) as "projectAddNeedsCheck")
+                              : t(unavailableToAddKey(input, workspaceBusy) as "projectAddNeedsCheck")
                           }
                           aria-label={t("projectAddToWorkbenchNamed", { name: input.label })}
                           data-project-add-to-workbench={input.id}
-                          data-project-add-unavailable={unavailableToAddKey(input) ?? undefined}
+                          data-project-add-unavailable={
+                            unavailableToAddKey(input, workspaceBusy) ?? undefined
+                          }
                           onClick={() => {
-                            if (!working && unavailableToAddKey(input) === null) {
+                            if (!working && unavailableToAddKey(input, workspaceBusy) === null) {
                               void session.addToWorkbench(input.id);
                             }
                           }}

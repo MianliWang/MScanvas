@@ -1165,6 +1165,8 @@ export const en = {
   projectRefusedStaleDocument: "That project file changed since it was opened, so MSCanvas did not replace it. Save As under another name to keep this copy.",
   projectRefusedNotPublished: "The project could not be written. The last saved copy is unchanged.",
   projectRefusedOversized: "This project is larger than MSCanvas saves.",
+  projectRefusedStaleOperation: "That operation is no longer the one running, so nothing was changed.",
+  projectRefusedConversionBusy: "A conversion is running, so the Workbench did not change. Try again once it has finished.",
   projectRefusedNotChecked: "Check this file before adding it to the Workbench.",
   projectRefusedContentChanged: "That file has changed since the project recorded it, so it was not added.",
   projectRefusedMissing: "That file was not found where this project recorded it. Use Locate to point at it.",
@@ -1207,15 +1209,20 @@ export const en = {
   // nothing, and neither control here reads an acquisition or starts a
   // converter.
   projectAddToWorkbench: "Add to Workbench",
-  projectAddToWorkbenchNamed: "Add {{name}} to the Workbench",
+  // The visible label, then the reference. The accessible name has to contain
+  // the visible one, so that speaking the control and reading it name the same
+  // thing -- and the reference still has to be in it, because five references
+  // produce five of these.
+  projectAddToWorkbenchNamed: "Add to Workbench: {{name}}",
   projectShowInWorkbench: "Show in Workbench",
-  projectShowInWorkbenchNamed: "Show {{name}} in the Workbench",
+  projectShowInWorkbenchNamed: "Show in Workbench: {{name}}",
   // Why the action is unavailable. Four states and four sentences: what the
   // reader should do next is different in each.
   projectAddNeedsCheck: "Check this file before adding it to the Workbench.",
   projectAddChanged: "This file has changed since the project recorded it.",
   projectAddMissing: "The recorded file cannot be found.",
   projectAddUnavailable: "This file could not be read, so it cannot be added.",
+  projectAddWorkspaceBusy: "The Workbench is busy with another change. Try again in a moment.",
   // --- M8.2 provenance. What the selected project object is, and what it is
   // related to. Recorded history and current file state are named apart,
   // because a reference whose bytes changed still has the run that used it.

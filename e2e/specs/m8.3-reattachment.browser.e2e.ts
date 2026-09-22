@@ -305,7 +305,10 @@ describe("M8.3 project-to-Workbench reattachment, rendered", () => {
     // The reference is now offered the other half of the pair.
     expect(back.addControls).toEqual([]);
     expect(back.showControls[0]?.text).toBe("Show in Workbench");
-    expect(back.showControls[0]?.name).toBe(`Show ${MZML_ROW.fileName} in the Workbench`);
+    expect(back.showControls[0]?.name).toBe(`Show in Workbench: ${MZML_ROW.fileName}`);
+    // The visible label is contained in the accessible name, so speaking the
+    // control and reading it name the same thing.
+    expect(back.showControls[0]?.name).toContain(back.showControls[0]?.text ?? "");
 
     // The second activation, by keyboard: real focus, a real Enter, which is
     // the activation jsdom cannot synthesize.

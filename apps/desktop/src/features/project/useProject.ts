@@ -134,10 +134,13 @@ function refusalId(error: unknown): string {
 /**
  * @param onAdmitted Called with the workspace's own answer when a reference is
  * admitted, so the shell can apply it to the roster it owns. The project half
- * of the same answer is applied here.
+ * of the same answer is applied here. Called with `null` where the operation
+ * failed: the workspace may have admitted the row before the project declined
+ * to claim it, and the shell has to go and ask rather than assume nothing
+ * happened.
  */
 export function useProject(
-  onAdmitted?: (result: WorkspaceAddResult) => void,
+  onAdmitted?: (result: WorkspaceAddResult | null) => void,
 ): ProjectSession {
   const api = useProjectApi();
   // Held in a ref so a shell callback that changes identity between renders
@@ -382,7 +385,19 @@ export function useProject(
     addToWorkbench: useCallback(
       (inputId: string) =>
         runAccepted("admitting", async (operationId) => {
-          const answer = await api.addProjectInputToWorkspace(operationId, inputId);
+          let answer;
+          try {
+            answer = await api.addProjectInputToWorkspace(operationId, inputId);
+          } catch (refusal) {
+            // A refusal here is not proof that the workspace is unchanged.
+            // The project can decline to claim a row the workspace already
+            // admitted -- the record was removed or relinked while the file
+            // was being read, or the object at that name was replaced -- and
+            // the answer that carried the new roster never arrives. The shell
+            // is told to go and ask, and the refusal goes on being reported.
+            admitted.current?.(null);
+            throw refusal;
+          }
           // The roster first, so the shell has the row before the project
           // says it has one. The other order would put the surface through a
           // render in which it knows a handle the roster has never heard of.

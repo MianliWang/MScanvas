@@ -1266,12 +1266,22 @@ impl ProjectStore {
         let base = base.unwrap_or_default();
         let observed = observe::verify_input(&input, &base, &cancellation);
         let path = record::resolve(&input.locator, &base).map_err(ProjectError::Document)?;
-        // Read here, through an open handle, and read again at the moment the
+        // Read through an open handle here, and read again at the moment the
         // admission is recorded. The digest above proves *content*; this is the
         // one thing a closed digest cannot answer afterwards -- whether the
-        // name still means the same object. Where a filesystem has no identity
-        // to give, both answers are `None` and this adds nothing; the digest
-        // still stands on its own.
+        // name still means the same object while the workspace opens it for
+        // itself.
+        //
+        // What it does not do is close the gap between the digest's handle
+        // closing and this open, which is stated rather than implied: no probe
+        // taken after a handle is released can, and closing it would mean the
+        // pinned read handing back the identity of the object it hashed. What
+        // bounds that gap is the read itself -- the digest runs through a
+        // handle that denies write and delete sharing, so the object cannot be
+        // replaced *during* it.
+        //
+        // Where a filesystem has no identity to give, both answers are `None`
+        // and this adds nothing; the digest still stands on its own.
         let identity = local_document::object_identity(&path);
 
         let mut session = self.locked();

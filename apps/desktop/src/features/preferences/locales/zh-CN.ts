@@ -1138,6 +1138,8 @@ export const zhCN = {
   projectRefusedStaleDocument: "该项目文件自打开后已更改，MSCanvas 未替换它。可使用“另存为”以其他名称保留当前副本。",
   projectRefusedNotPublished: "项目未能写入。上次保存的副本保持不变。",
   projectRefusedOversized: "该项目超出 MSCanvas 可保存的大小。",
+  projectRefusedStaleOperation: "该操作已不是正在运行的操作，因此未做任何更改。",
+  projectRefusedConversionBusy: "转换正在运行，因此工作台未发生更改。请在其完成后重试。",
   projectRefusedNotChecked: "请先检查此文件，然后再将其添加到工作台。",
   projectRefusedContentChanged: "自项目记录以来，该文件已更改，因此未被添加。",
   projectRefusedMissing: "在此项目记录的位置未找到该文件。请使用“定位”指向它。",
@@ -1189,6 +1191,7 @@ export const zhCN = {
   projectAddChanged: "自项目记录以来，此文件已更改。",
   projectAddMissing: "找不到所记录的文件。",
   projectAddUnavailable: "无法读取此文件，因此无法添加。",
+  projectAddWorkspaceBusy: "工作台正在处理另一项更改。请稍后再试。",
   // --- M8.2 provenance. What the selected project object is, and what it is
   // related to. Recorded history and current file state are named apart,
   // because a reference whose bytes changed still has the run that used it.

@@ -27,6 +27,7 @@ import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
+import { reconcileOrganization } from "../workbench/organization";
 import type { WorkspaceAddResult } from "./contracts";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 
@@ -73,12 +74,36 @@ export function PreviewWorkspace() {
   const revealInWorkbench = useCallback(
     (handle: string) => {
       setSurface("workbench");
-      // A row the current search hides cannot be revealed, and a reveal that
-      // reveals nothing is worse than no reveal. Clearing is deliberate and
-      // only where it is needed: a row already on screen keeps the reader's
-      // query exactly as they left it.
+      // A row the list is not showing cannot be revealed, and a reveal that
+      // reveals nothing is worse than no reveal. There are two reasons a row
+      // is not on screen and the reducer treats neither as a press it can
+      // act on, so both are cleared before the row is pressed.
+      //
+      // The search first. Deliberate, and only where it is needed: a row the
+      // query already shows keeps the reader's query exactly as they left it.
+      // A row that has just arrived is never in the projection this render
+      // was drawn from, so an add with a query set always clears it -- which
+      // is the right answer, because the row is the thing they asked to see.
       if (!rosterProjection(workspace.roster).handles.has(handle)) {
         workspace.dispatchRoster({ type: "searchCleared" });
+      }
+      // Then the group. A collapsed group drops its rows from the projection
+      // entirely, and the default destination for every new row is a group
+      // that can be collapsed -- so without this, revealing into one is a
+      // navigation that lands on nothing. The handle is named to the
+      // reconciliation as well, because a row that has just arrived is not in
+      // the organization this render was drawn from and belongs to the
+      // ungrouped group until it is.
+      const holding = reconcileOrganization(workspace.roster.organization, [
+        ...workspace.roster.datasets.map((dataset) => dataset.handle),
+        handle,
+      ]).groups.find((group) => group.handles.includes(handle));
+      if (holding?.collapsed === true) {
+        // `disclose` toggles, so this is asked only of a group that is closed.
+        workspace.dispatchRoster({
+          type: "organization",
+          action: { type: "disclose", groupId: holding.id },
+        });
       }
       // The same thing pressing the row does: it becomes the focused row and
       // the highlighted one. It starts no read -- that is the component's
@@ -99,7 +124,17 @@ export function PreviewWorkspace() {
   // the whole project every time the user looks at something else.
   const project = useProject(
     useCallback(
-      (result: WorkspaceAddResult) => {
+      (result: WorkspaceAddResult | null) => {
+        // `null` is an operation that failed *after* Rust may have admitted
+        // the row: the project can decline to claim a row the workspace
+        // legitimately added, and the answer carrying that roster never
+        // arrives. Rust is authoritative about what the session holds, so the
+        // roster is re-read rather than left describing a workspace that has
+        // moved on without this page.
+        if (result === null) {
+          workspace.reloadRoster();
+          return;
+        }
         const landed = workspace.admitProjectInput(result);
         // Nothing was admitted -- an unsupported file, a full workspace. The
         // notice above the surfaces says which, where the reader already is,
@@ -718,6 +753,12 @@ export function PreviewWorkspace() {
             session={project}
             liveDatasetHandles={liveDatasetHandles}
             onShowInWorkbench={revealInWorkbench}
+            workspaceBusy={
+              workspace.pickerBusy ||
+              workspace.folderBusy ||
+              workspace.dropBusy ||
+              workspace.workspaceBusy
+            }
             detailsPresent={detailsOpen}
             onRevealDetails={() => {
               if (panels.busy) return;

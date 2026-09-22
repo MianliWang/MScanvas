@@ -360,6 +360,17 @@ export const DatasetRoster = memo(function DatasetRoster({
    */
   useEffect(() => {
     if (revealRow === null || revealRow.token === revealed.current) return;
+    // The tab stop is where a reveal puts it first, so this is how a request
+    // knows it is still the live one. A row the list will not show -- a
+    // collapsed group the caller could not open, a handle no longer in the
+    // roster -- never takes the stop, and a reader who has since moved to
+    // another row has taken it away. Either way the request is over, and
+    // retrying it would put the keyboard somewhere nobody asked for, a whole
+    // interaction later.
+    if (state.focused !== revealRow.handle) {
+      revealed.current = revealRow.token;
+      return;
+    }
     const row = listRef.current?.querySelector<HTMLElement>(
       `[data-handle="${revealRow.handle}"]`,
     );
@@ -368,7 +379,6 @@ export const DatasetRoster = memo(function DatasetRoster({
     if (document.activeElement !== row) return;
     revealed.current = revealRow.token;
     keyboardOn.current = revealRow.handle;
-    followed.current = state.focused;
   });
 
   /**

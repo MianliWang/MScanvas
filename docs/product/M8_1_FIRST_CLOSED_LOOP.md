@@ -519,12 +519,18 @@ hash runs refuses rather than committing into something else; the same
 accepted-operation record makes the read cancellable, and the cancel is M8.1's,
 not a second flag.
 
-Second, there is one window this cannot close from inside the project module:
-the digest's handle is closed before the workspace opens the file for itself.
-What bounds it is an identity read through an open handle taken at the proof
-and taken again before the association is recorded -- a name that came to mean
-a different object in between is refused as `contentChanged`, and the project
-declines to claim the row. The row itself is left where it is: the workspace
+Second, there are windows this cannot close from inside the project module,
+and they are worth stating exactly rather than waving at. The digest runs
+through a handle that denies write and delete sharing, so the object cannot be
+replaced *during* the read. What is not covered is the moment between that
+handle closing and the identity probe opening its own, and the moment between
+that probe and the workspace opening the file for itself. The second of those
+is what the probe covers: it is taken at the proof and taken again before the
+association is recorded, so a name that came to mean a different object in
+between is refused as `contentChanged` and the project declines to claim the
+row. The first is genuinely open, and closing it would mean the pinned read
+handing back the identity of the object it hashed -- a change to M8.1's
+observation module rather than to this bridge, and not one made here. The row itself is left where it is: the workspace
 owns its rows, admitted whatever its own rules admitted, and tearing one out of
 a collection this module does not own would be a worse answer than declining to
 name it. On a filesystem with no identity to give, both reads answer `None` and
