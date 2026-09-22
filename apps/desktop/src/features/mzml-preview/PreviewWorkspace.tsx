@@ -278,6 +278,13 @@ export function PreviewWorkspace() {
     !workspace.folderBusy &&
     !workspace.dropBusy &&
     !workspace.workspaceBusy &&
+    // The other half of the rule the Project surface follows. A reattachment
+    // in flight is a workspace change like any other -- it hashes a whole
+    // acquisition and then enters the same admission gate -- and Rust
+    // supersedes whatever reached that gate later. Without this the wait is
+    // one-directional: the project action waits for an import, and an import
+    // started during a project action discards itself.
+    project.busy !== "admitting" &&
     !workspace.conversion.busy;
   // One thing more for the folder action, and only for it. Native page-load
   // start has already superseded work owned by the previous document; the

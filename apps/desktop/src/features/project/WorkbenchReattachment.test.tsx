@@ -681,6 +681,45 @@ describe("the Workbench reattachment in the application shell", () => {
     expect(revealed).not.toBe(row);
   });
 
+  it("holds the acquisition actions while a reattachment is reading", async () => {
+    // The other half of the one-change-at-a-time rule. A reattachment hashes a
+    // whole acquisition and then enters the same admission gate every import
+    // enters, so an import started during one would be superseded in Rust and
+    // discard itself.
+    const { projects } = renderShell(
+      openProject({
+        inputs: [
+          projectInput({
+            id: MATCHING,
+            label: selectedFile.fileName,
+            verification: "matchingRecordedContent",
+          }),
+        ],
+      }),
+    );
+    projects.setAdmission(addedOne());
+    const release = projects.holdOnce("addProjectInputToWorkspace");
+    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await screen.findByText(en.projectReferences);
+
+    await press(addControl(MATCHING));
+
+    // While it is out, the Workbench's own acquisition actions wait.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: en.addFiles }).hasAttribute("disabled"),
+      ).toBe(true),
+    );
+    await act(async () => {
+      release();
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: en.addFiles }).hasAttribute("disabled"),
+      ).toBe(false),
+    );
+  });
+
   it("reveals the row a reference already has without asking for anything", async () => {
     const { projects, openPreview } = renderShell(
       openProject({
