@@ -459,6 +459,141 @@ each have their own sentence in both locales, rather than the generic refusal.
 A repair path, if one is ever wanted, is a decision of its own and not a thing
 to add quietly here.
 
+## What M8.3 added on top of this
+
+The first crossing between the persistent project model and the session
+workspace, recorded here because it is the place two authorities meet and
+because the temptation to make it something bigger is the thing worth writing
+down.
+
+### The four identities, and which one is durable
+
+- **`InputId`** -- the project-domain identity of a reference. Durable, written
+  to the document, stable across sessions.
+- **The locator and the current check** -- where the project believes that
+  input can be resolved, and what the last look established about it. The
+  locator is durable; the check result is not, and a reopened project starts
+  every reference unchecked.
+- **The filesystem object** -- re-established at the action boundary, never
+  assumed from either of the above.
+- **`DatasetId`** -- the workspace row. Session-only, created or returned by
+  the existing admission path, and it **never enters the project file.**
+
+The session remembers which row a reference was admitted as, in the open
+project and nowhere else. That association is presentation only: it exists so
+the surface can offer to show a row rather than to add one that is already
+there.
+
+### What the webview may ask for
+
+`add_project_input_to_workspace(operationId, inputId)` and nothing else. No
+path in either direction. Rust resolves the reference through the open project,
+proves it, and hands the object to the existing admission boundary; what comes
+back is the ordinary add result and the project description, in one reply,
+because the crossing changes both and applying one without the other would
+leave the surface offering to add a row it has just added.
+
+### Eligibility, and why it is not a check
+
+The action is offered only where the ordinary check action has already
+established that the referenced bytes are the recorded bytes. Pressing it is
+not a request to run a check: an unchecked reference is refused as
+`notChecked`, and `changed`, `missing`, `unreadable`, `unstableRead` and
+`incompleteRequiredMembers` each keep their own refusal, because what the
+reader should do next differs in every one of them. Relinking a reference
+remains M8.1's own confirmed operation; this action performs no mutation of the
+document at all.
+
+### Revalidation at dispatch, and the bound on it
+
+A prior check is not standing admission authority. Immediately before
+admission the content is re-established through the same stable read and the
+same SHA-256 the check itself uses -- so an in-place edit at the same path, the
+same length, the same modified time and the same file identity is still caught,
+and there is a test that performs exactly that rewrite and asserts the refusal.
+
+Two things are worth stating rather than implying. First, the revalidation
+releases the session lock for the read and rejoins under the M8.1 generation,
+so a project replaced, a reference relinked or a reference removed while the
+hash runs refuses rather than committing into something else; the same
+accepted-operation record makes the read cancellable, and the cancel is M8.1's,
+not a second flag.
+
+Second, there is one window this cannot close from inside the project module:
+the digest's handle is closed before the workspace opens the file for itself.
+What bounds it is an identity read through an open handle taken at the proof
+and taken again before the association is recorded -- a name that came to mean
+a different object in between is refused as `contentChanged`, and the project
+declines to claim the row. The row itself is left where it is: the workspace
+owns its rows, admitted whatever its own rules admitted, and tearing one out of
+a collection this module does not own would be a worse answer than declining to
+name it. On a filesystem with no identity to give, both reads answer `None` and
+this adds nothing; the digest still stands on its own.
+
+A failed revalidation writes the newer truth into the *session's* check result,
+which is the same slot the check action writes, and touches nothing in the
+document -- no baseline is rewritten, no locator moves, nothing is marked
+unsaved. Leaving the row saying "matches" beside a refusal saying "changed"
+would be the interface contradicting itself.
+
+### The workspace stays authoritative
+
+After the project-side proof, the existing `add_files` path runs unchanged.
+Logical acquisition discovery, source family, canonical duplicate prevention,
+SCIEX bundle requirements, directory and reparse restrictions, capacity, added
+order, session identity, conversion-membership defaults and source-file
+read-only behaviour are all still its rules, and none of them is widened. A
+checked reference naming an ordinary `.txt` -- exactly the kind of file
+`CaptureFileFactsV1` exists for -- receives the refusal it has always received.
+A reference whose object is already a row converges on that row through the
+workspace's own identity rule, including when an ordinary Add files admitted it
+first.
+
+### Lifetimes, in both directions
+
+Removing a workspace row does not touch the project or its history. Closing or
+replacing a project does not remove a workspace row. Removing a reference drops
+the remembered row and leaves the row. Confirming a relink drops it too,
+because the record then names a different object. Nothing watches for a row
+*leaving* the workspace, and nothing needs to: the roster is the only authority
+on which rows exist, and the interface resolves a remembered handle against the
+roster it already holds, so a removed row or a cleared workspace turns "show
+it" back into "add it" with no bookkeeping anywhere.
+
+One bound on the label, stated rather than closed: a row admitted by the
+ordinary picker carries no association, so its reference is still offered "Add
+to Workbench". Pressing it converges on the existing row through the duplicate
+rule and creates nothing. Closing that gap would mean scanning filesystem
+identities on every description of the project, which is a cost paid on every
+render for a label.
+
+A Save As deliberately does **not** drop the association. It resolves every
+locator against the old base and re-derives it against the new directory, so
+the reference names the same objects afterwards and the remembered row is still
+that reference's row.
+
+### Opening a project still admits nothing
+
+No workspace row is repopulated, no preview starts, no ProteoWizard runs, no
+conversion membership or queue authority is restored, no `DatasetId` is
+recreated and no viewed or focused state comes back. This is an explicit
+bridge, pressed once per reference. A "restore the workspace this project was
+used with" feature is a separate decision and is not made here.
+
+### One inherited defect this slice had to repair
+
+Project refusals were read off a `code` field on the rejected value. The
+boundary has never sent one: every owned error serializes as `kind`, like the
+rest of this application's refusals. So each individual sentence M8.1 wrote --
+`staleDocument`, `destinationAliasesInput`, every document problem -- was
+arriving unnamed and being shown as the catch-all "that action was refused".
+The fake in `projectFixtures.ts` rejected in the shape the reader expected
+rather than the shape the boundary sends, which is why no test saw it. Both now
+use the real shape. It is repaired here rather than deferred because M8.3's
+refusals are the point of M8.3's refusals: "check this file first" and "it has
+changed" are two different instructions, and neither reaches the reader through
+a catch-all.
+
 ## Out of scope, explicitly
 
 Provider-dependent conversion, preview, figures, exports and clipboard remain on
