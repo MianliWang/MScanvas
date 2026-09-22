@@ -522,19 +522,23 @@ not a second flag.
 Second, there are windows this cannot close from inside the project module,
 and they are worth stating exactly rather than waving at. The digest runs
 through a handle that denies write and delete sharing, so the object cannot be
-replaced *during* the read. What is not covered is the moment between that
-handle closing and the identity probe opening its own, and the moment between
-that probe and the workspace opening the file for itself. The second of those
-is what the probe covers: it is taken at the proof and taken again before the
-association is recorded, so a name that came to mean a different object in
-between is refused as `contentChanged` and the project declines to claim the
-row. The first is genuinely open, and closing it would mean the pinned read
-handing back the identity of the object it hashed -- a change to M8.1's
-observation module rather than to this bridge, and not one made here. The row itself is left where it is: the workspace
-owns its rows, admitted whatever its own rules admitted, and tearing one out of
-a collection this module does not own would be a worse answer than declining to
-name it. On a filesystem with no identity to give, both reads answer `None` and
-this adds nothing; the digest still stands on its own.
+replaced *during* the read. What that sharing mode leaves open is the moment
+between the digest's handle closing and the identity probe opening its own.
+
+The rest of the way is covered. The probe is taken there and taken again
+before the association is recorded, so a name that came to mean a different
+object while the workspace opened the file for itself is refused as
+`contentChanged` and the project declines to claim the row. The row is left
+where it is: the workspace owns its rows, admitted whatever its own rules
+admitted, and tearing one out of a collection this module does not own would be
+a worse answer than declining to name it.
+
+Closing the one remaining moment would mean the pinned read handing back the
+identity of the object it hashed -- a change to M8.1's observation module
+rather than to this bridge, and not one made here.
+
+On a filesystem with no identity to give, both reads answer `None` and this
+adds nothing; the digest still stands on its own.
 
 A failed revalidation writes the newer truth into the *session's* check result,
 which is the same slot the check action writes, and touches nothing in the

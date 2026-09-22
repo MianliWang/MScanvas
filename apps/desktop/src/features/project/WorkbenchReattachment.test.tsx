@@ -415,6 +415,25 @@ describe("adding a project reference to the Workbench", () => {
     expect(document.activeElement).toBe(control);
   });
 
+  it("keeps a reference's own reason rather than replacing it with the busy one", async () => {
+    // A busy Workbench is a reason to wait. A reference that is not there is a
+    // reason to go and find it, and telling that reader to try again in a
+    // moment would be advice that never comes true -- and would contradict the
+    // sentence the row itself shows, which this control points at.
+    mount(everyState(), { workspaceBusy: true });
+    await screen.findByText(en.projectReferences);
+
+    expect(addControl(MISSING).getAttribute("data-project-add-unavailable")).toBe(
+      "projectAddMissing",
+    );
+    expect(addControl(MISSING).getAttribute("title")).toBe(en.projectAddMissing);
+    // Only the otherwise-addable reference is the one waiting for the
+    // Workbench.
+    expect(addControl(MATCHING).getAttribute("data-project-add-unavailable")).toBe(
+      "projectAddWorkspaceBusy",
+    );
+  });
+
   it("keeps an inert control reachable so its reason can be read", async () => {
     mount(everyState());
     await screen.findByText(en.projectReferences);
@@ -511,6 +530,7 @@ function renderShell(state: ProjectState) {
   const projects = createFakeProjectApi(state);
   const preview = createFakePreviewApi({ availability: unavailableBackend });
   const openPreview = vi.spyOn(preview, "openPreview");
+  const getRoster = vi.spyOn(preview, "getRoster");
   render(
     <PreferencesApiProvider value={createFakePreferencesApi({ stored: storedRecord() })}>
       <ProjectApiProvider value={projects}>
@@ -522,7 +542,7 @@ function renderShell(state: ProjectState) {
       </ProjectApiProvider>
     </PreferencesApiProvider>,
   );
-  return { projects, preview, openPreview };
+  return { projects, preview, openPreview, getRoster };
 }
 
 describe("the Workbench reattachment in the application shell", () => {
@@ -564,6 +584,40 @@ describe("the Workbench reattachment in the application shell", () => {
     // can open; opening it is still a thing they ask for.
     expect(openPreview).not.toHaveBeenCalled();
     expect(within(row).queryByText(en.showingRow)).toBe(null);
+  });
+
+  it("re-reads the roster when an admission is refused after Rust may have admitted it", async () => {
+    // The shell's own half of the recovery. A refusal is not proof that the
+    // workspace is unchanged -- the project can decline to claim a row the
+    // workspace already admitted -- and the reply that would have carried the
+    // new roster never arrives, so the page has to go and ask.
+    const { projects, getRoster } = renderShell(
+      openProject({
+        inputs: [
+          projectInput({
+            id: MATCHING,
+            label: selectedFile.fileName,
+            verification: "matchingRecordedContent",
+          }),
+        ],
+      }),
+    );
+    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await screen.findByText(en.projectReferences);
+    await waitFor(() => expect(getRoster).toHaveBeenCalled());
+    const reads = getRoster.mock.calls.length;
+    projects.refuseOnce("addProjectInputToWorkspace", "staleDocument");
+
+    await press(addControl(MATCHING));
+
+    await waitFor(() => expect(getRoster.mock.calls.length).toBeGreaterThan(reads));
+    // And the refusal still reaches the reader rather than being swallowed by
+    // the recovery.
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-project-problem]")?.getAttribute("data-project-problem"),
+      ).toBe("staleDocument"),
+    );
   });
 
   it("opens the group a revealed row is inside rather than landing on nothing", async () => {

@@ -722,6 +722,18 @@ export interface PreviewWorkspace {
    */
   readonly admitProjectInput: (result: WorkspaceAddResult) => string | null;
   /**
+   * Recovers the authoritative list after a workspace mutation rejected.
+   *
+   * Exposed for the one mutation the shell issues from outside this hook: a
+   * project reattachment can be refused *after* Rust admitted the row, and
+   * the answer carrying that roster never arrives. Deliberately this rather
+   * than a plain re-read, which waits for an active import by returning and
+   * would therefore recover nothing in exactly the case a long import makes
+   * most likely. This records the debt instead and drains it when whichever
+   * operations are competing have settled.
+   */
+  readonly reconcileAfterFailedWorkspaceMutation: () => void;
+  /**
    * Shows the native folder picker and adds every mzML file found beneath the
    * folder chosen. Starts no backend work for any of them.
    */
@@ -4317,6 +4329,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     dispatchRoster,
     addFiles,
     admitProjectInput,
+    reconcileAfterFailedWorkspaceMutation,
     addFolder,
     removeSelected,
     clearList,

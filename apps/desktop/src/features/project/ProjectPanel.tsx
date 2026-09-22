@@ -124,15 +124,22 @@ function busyKey(busy: ProjectBusy) {
  * need three different things from the reader.
  */
 function unavailableToAddKey(input: ProjectInput, workspaceBusy: boolean) {
-  // Asked first, because it is true of every reference at once and is the one
-  // reason that is about the Workbench rather than about this file.
-  if (workspaceBusy) return "projectAddWorkspaceBusy" as const;
-  if (input.verification === "matchingRecordedContent") return null;
-  if (input.verification === "notChecked") return "projectAddNeedsCheck" as const;
-  if (input.verification === "differentContent") return "projectAddChanged" as const;
-  return input.unavailableReason === "missingAtCheckedLocation"
-    ? ("projectAddMissing" as const)
-    : ("projectAddUnavailable" as const);
+  if (input.verification !== "matchingRecordedContent") {
+    // The reference's own state first, and it wins. A busy Workbench is a
+    // reason to wait; a reference that is missing is a reason to go and find
+    // it, and telling that reader to try again in a moment would be advice
+    // that never comes true. It would also contradict the sentence the row
+    // already shows, which this control points at.
+    if (input.verification === "notChecked") return "projectAddNeedsCheck" as const;
+    if (input.verification === "differentContent") return "projectAddChanged" as const;
+    return input.unavailableReason === "missingAtCheckedLocation"
+      ? ("projectAddMissing" as const)
+      : ("projectAddUnavailable" as const);
+  }
+  // Otherwise addable, and the only thing in the way is the Workbench itself:
+  // one change to it at a time, which is the rule every other mutation here
+  // follows.
+  return workspaceBusy ? ("projectAddWorkspaceBusy" as const) : null;
 }
 
 /**

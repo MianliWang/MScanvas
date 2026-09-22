@@ -132,7 +132,7 @@ export function PreviewWorkspace() {
         // roster is re-read rather than left describing a workspace that has
         // moved on without this page.
         if (result === null) {
-          workspace.reloadRoster();
+          workspace.reconcileAfterFailedWorkspaceMutation();
           return;
         }
         const landed = workspace.admitProjectInput(result);
