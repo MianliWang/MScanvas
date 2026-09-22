@@ -89,6 +89,24 @@ pub struct RunDto {
     pub finished_at: String,
 }
 
+/// One accepted operation, as the interface holds it.
+///
+/// The handle is correlation: it says which operation a later cancel means and
+/// nothing else. No path, no authority, no file.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectJobDto {
+    pub operation_id: String,
+}
+
+/// What a cancel request found.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelOutcomeDto {
+    /// `cancelled`, `noActiveOperation` or `stale`. None of them is an error.
+    pub outcome: &'static str,
+}
+
 /// Everything the interface knows about the session's project.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]

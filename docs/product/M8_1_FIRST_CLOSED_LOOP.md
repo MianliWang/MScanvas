@@ -178,6 +178,56 @@ never schedules it. Recorded provenance in an editable document is not
 cryptographically authenticated merely because files carry digests. A failed or
 cancelled observation produces no artifact at all.
 
+### S6. Cancellation belongs to one accepted operation
+
+A cancel is a request about one operation. It is not a standing preference and
+not a credit against whatever runs next. The first candidate implemented it as
+one store-wide flag that a start did not clear, and recorded the consequence --
+"a cancel pressed when nothing is running stops the next thing instead" -- as an
+acceptable trade. That is rejected.
+
+An operation is **accepted** before any of its work starts. Acceptance mints the
+identifier the operation will run and be cancelled under, and a cancellation
+state that exists from that moment, so a cancel pressed in the instant after the
+button finds that exact operation even if the run request has not reached Rust
+yet. Invokes are independent fetches, so that ordering cannot be assumed; it is
+established under the session mutex, the same lock that owns the project and its
+generation.
+
+- A cancel that names no accepted operation answers `noActiveOperation`; one
+  that names an operation other than the accepted one answers `stale`. Neither
+  sets a flag, records a run or touches the project.
+- An accepted operation that has not started is not idle. Cancelling it lands,
+  and its worker finds the flag set before it opens a file.
+- Each operation is bound to the project-session generation it was accepted
+  against. A ticket for a project that has since been replaced, closed, or had
+  a record removed cannot run, and a check or capture whose project moved
+  underneath it discards its answer at commit rather than applying it to
+  whatever is open. Reopening the same document keeps its identifiers, which is
+  exactly why identifiers alone are not the test.
+- Whichever of a cancel and a commit takes the session lock first wins. A cancel
+  that wins leaves every reference unchecked and publishes no artifact and no
+  baseline; a completion that wins keeps its outcome, and a late cancel answers
+  `noActiveOperation` and rewrites nothing.
+- Cancellation is cooperative through the existing bounded read: the flag is
+  checked between members and at each 64 KiB chunk boundary before the read, so
+  the chunk in flight completes and the next is not started. The project lock is
+  held during none of it.
+- Accepting twice at one generation is one operation, so a doubled activation
+  starts one; a second operation is refused while one runs.
+- An accepted operation that was cancelled before it started is finished. The
+  next activation is a new operation with a new identifier, and the cancel
+  stays with the one it named. The isolated delta review found the idempotent
+  acceptance handing a cancelled ticket, flag and all, to the next activation,
+  whose check then did nothing without saying so; that is closed with its own
+  regression.
+- The interface offers Cancel only for the operation it accepted and is still
+  waiting on, and sends nothing otherwise. That is the affordance agreeing with
+  Rust, which enforces all of the above whether or not the interface does.
+
+A cancelled operation that was accepted and dispatched is recorded as cancelled
+with no artifact. An idle cancel records nothing, because there was nothing.
+
 ## Persistence
 
 One explicitly versioned, bounded local JSON document over the existing serde
@@ -192,6 +242,16 @@ pass. A destination that is not this application's own project document is
 refused rather than replaced, and a destination that is the same filesystem
 object as a referenced member — including through a hard link — is refused by
 identity.
+
+Save As, stated once. It may create a new document and rebases every locator
+deliberately. It refuses any already-existing target that is not this session's
+own bound document -- an unrelated file and a valid project document belonging
+to another project alike. Recognising a project is not overwrite authority, and
+the save dialog carries no overwrite prompt, so there is no confirmation behind
+which replacing somebody else's file could be the right answer. Choosing the
+session's own bound document as the target goes through the same identity,
+revision and generation checks Save applies; it is not a bypass of them. A new
+alternate filename is an ordinary Save As.
 
 Publication reuses the existing mechanism: a private same-directory temporary,
 filled and ordered, then given the published name by handle. Nothing is deleted
@@ -261,6 +321,15 @@ Two further groups came out of the review pass and belong in the list:
   to its neighbour (`sample.txt ` and `sample.txt.`) or a device (`NUL`,
   `COM1`). A component check alone admits all of them, so the rule is the
   stricter one and is applied to member names and locator components alike.
+- **Cancellation**: an idle cancel followed by a successful operation; a cancel
+  after acceptance and before any read, proved by a chunk counter that stays at
+  zero; a cancel during a read that wins before commit, held at a chunk
+  boundary by a two-party barrier rather than a sleep, with a counting control
+  that reads every chunk; a late cancel for a finished operation and a cancel
+  for a different operation while one runs; closing and reopening the same
+  document under a running check; and the history that results being a valid
+  document. The interface side proves Cancel is absent when idle and for a save,
+  names the accepted operation, and reports a stale outcome as nothing.
 
 Native Windows file-mechanism tests run on task-owned fixtures only, without the
 VM and without the provider. Filesystem-specific observations are described as
@@ -271,6 +340,81 @@ implied.
 
 No scientific-correctness test belongs to this slice. It records relationships
 and produces no scientific result.
+
+## Local validation record
+
+What was run on the corrected candidate, once, with its direct exit status; what
+is inherited; and what is retained as contaminated.
+
+**Run on this candidate.** `cargo fmt --all --check`, `cargo clippy --workspace
+--all-targets --all-features -- -D warnings`, `cargo test --workspace` (1033
+passed; the project store's 63 include the cancellation group above), `pnpm
+lint`, `pnpm build`, the full `vitest` run (2017 passed), `pnpm e2e:typecheck`,
+`python scripts/check_repo.py`, and two browser specs run one at a time on their
+own dev server: `m8.1-project-records` (8 passing, including the accept, run,
+cancel sequence with the identifier carried through all three requests) and
+`m7.2-workbench`, the one existing spec that exercises the shell this slice
+added a navigation target to (below). Logs are retained under
+`test-results/m8.1/logs/`.
+
+**Inherited browser debt, not repaired here.** Ten browser specs still select
+`li.dataset-row`, a structure M7.2 replaced with `div[role=row]`. The first
+assertion each reaches is that selector, so nothing after it has been observed
+at all -- which is a different fact from "the behaviour they assert is broken".
+`m4.1-spectrum-export` was run alone at the parent commit `aa3fc83` and fails
+identically (17 failing), the retained baseline for this class; the other nine
+are attributed by the same selector and were not run individually. `m7.2-
+workbench` fails 10 of 11 on this candidate, every failing document in English
+where Chinese was expected: the spec switches locale through Settings, the
+shared IPC table answers the preference save with the `en` snapshot, and since
+M7.5 the interface applies the published snapshot rather than the request. The
+spec, the shared table, and the shell, roster and preference sources it drives
+are byte-identical to the parent. Run alone at the parent commit `aa3fc83` -- a `git archive` export with its own private offline install, on its own port -- the same spec fails the same 10 of 11 with the same English-where-Chinese-was-expected documents, so the ten are inherited and not this slice's. (That private install reported one tarball missing from the package store for `@wdio/cli` and exited non-zero; the linked package was present and the spec ran to its real assertions, and that is stated rather than hidden.) The one test of the eleven
+that does not switch locale -- navigation and organization through the real
+shell -- passes on this candidate. No obsolete DOM was restored and no assertion
+was weakened.
+
+**Delta review.** One isolated read-only review of the cancellation delta,
+each finding then handed to a refuter whose brief was to disprove it. Eleven
+properties were reported clean -- total cancel-versus-commit ordering under the
+one session lock, never-reused identifiers, no store-wide flag, guard release
+on every path without a same-thread re-lock, generation binding across
+close/reopen, no lock held during reads, the cooperative reader and its chunk
+accounting, the barrier tests, the recorded outcomes, the interface binding and
+the command surface. One finding survived refutation and was real: the reuse
+of a cancelled unstarted ticket described in S6. It is fixed and covered.
+
+**Contaminated runs, retained as such.** Two full-suite browser runs on
+2026-09-19 overlapped on one dev-server port; the log is retained as
+`2026-09-19-full-suite-CONTAMINATED-concurrent-ports.log`, and its 21-of-22
+failures are not evidence about the product and are counted neither way. A
+later single-instance run was stopped before completion for diagnosis and is
+retained as partial.
+
+**One load-dependent frontend failure, unresolved.** On 2026-09-19 a full
+`vitest` run reported `App.test.tsx > the session workspace roster > removes the
+selected rows, keeps the preview whose row survived, and says the files are
+untouched` as failed. Only the summary line was captured, not the assertion. It
+passed alone immediately afterwards and in every full run since, the latest 2017
+of 2017. Its overlap with this slice: none of the text or roles it queries is
+produced by M8.1 code, and the composition change is one `hidden` section, one
+hook that resolves immediately in that test's composition, and one polite live
+region the test's own `VISIBLE` filter ignores. That is the basis for treating
+it as an inherited timing-dependent case. It is a basis, not a proof: the
+assertion that failed is unknown, and a green rerun establishes no cause.
+
+**A tooling incident, preserved.** During the first candidate a disposable
+checkout was given a link to this checkout's `node_modules`, and a forced
+worktree removal traversed that link and deleted the contents of 37 packages in
+the shared store. The frozen reinstall that repaired it left `pnpm-lock.yaml`
+byte-identical and every gate green afterwards. That is evidence the recovery
+worked; it is not evidence the cleanup was safe or authorised. Practice from
+here, applied to the parent-commit observation above: a disposable checkout is
+a `git archive` export with its own private install from the package store,
+linked to nothing outside itself; cleanup resolves only the link entries it
+created, without traversing their targets, and retains the directory rather
+than forcing past a refusal it cannot explain; and one browser campaign runs at
+a time, on its own port.
 
 ## Out of scope, explicitly
 

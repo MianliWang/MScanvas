@@ -46,6 +46,12 @@ export type PendingIntent =
 export interface ProjectSession {
   readonly state: ProjectState;
   readonly busy: ProjectBusy;
+  /**
+   * The check or capture this session accepted and is still waiting on, or
+   * `null`. The only thing a cancel can name; with `null` there is nothing to
+   * cancel and nothing is sent.
+   */
+  readonly activeOperation: string | null;
   /** The stable identifier of the last refusal, or `null`. */
   readonly problem: string | null;
   /** Set when the last operation was cancelled rather than refused. */
@@ -183,6 +189,41 @@ export function useProject(): ProjectSession {
     [api, settle],
   );
 
+  /** The operation this session accepted and has not yet seen finish. */
+  const [activeOperation, setActiveOperation] = useState<string | null>(null);
+  const active = useRef<string | null>(null);
+
+  /**
+   * Accepts an operation, then runs it under the identifier it was accepted
+   * with.
+   *
+   * Acceptance is a separate request on purpose. The identifier is what a
+   * cancel names, and it has to exist before the work does: invokes are
+   * independent fetches, so a cancel pressed the instant after the button could
+   * otherwise reach Rust before the run request and find nothing to cancel --
+   * and the read would run to completion. The identifier is held only for as
+   * long as this session is waiting on the answer. Once it is in, a late press
+   * has nothing to send, and a request that did go out late names an operation
+   * Rust no longer has, which changes nothing there either.
+   */
+  const runAccepted = useCallback(
+    (kind: ProjectBusy, work: (operationId: string) => Promise<ProjectState>) =>
+      run(kind, async () => {
+        const { operationId } = await api.beginProjectJob();
+        active.current = operationId;
+        setActiveOperation(operationId);
+        try {
+          return await work(operationId);
+        } finally {
+          if (active.current === operationId) {
+            active.current = null;
+            if (mounted.current) setActiveOperation(null);
+          }
+        }
+      }),
+    [api, run],
+  );
+
   const toggleSelected = useCallback((inputId: string) => {
     setSelected((current) =>
       current.includes(inputId)
@@ -222,6 +263,7 @@ export function useProject(): ProjectSession {
   return {
     state,
     busy,
+    activeOperation,
     problem,
     cancelled,
     pending,
@@ -249,13 +291,26 @@ export function useProject(): ProjectSession {
       (inputId: string) => run("saving", () => api.removeProjectInput(inputId)),
       [api, run],
     ),
-    checkLinks: useCallback(() => run("checking", () => api.checkProjectLinks()), [api, run]),
+    checkLinks: useCallback(
+      () => runAccepted("checking", (operationId) => api.checkProjectLinks(operationId)),
+      [api, runAccepted],
+    ),
     cancelJob: useCallback(async () => {
-      await api.cancelProjectJob().catch(() => undefined);
+      // Only the operation this session accepted and is still waiting on. With
+      // none there is nothing to name, so nothing is sent -- a cancel is a
+      // request about one operation, never a standing preference. The answer
+      // is deliberately not read: "stale" and "nothing to cancel" are the
+      // boundary saying it did nothing, which is what a late press deserves.
+      const operationId = active.current;
+      if (operationId === null) return;
+      await api.cancelProjectJob(operationId).catch(() => undefined);
     }, [api]),
     capture: useCallback(
-      () => run("capturing", () => api.captureProjectFileFacts(selected)),
-      [api, run, selected],
+      () =>
+        runAccepted("capturing", (operationId) =>
+          api.captureProjectFileFacts(operationId, selected),
+        ),
+      [api, runAccepted, selected],
     ),
     proposeRelink: useCallback(
       (inputId: string) => run("linking", () => api.proposeProjectRelink(inputId)),

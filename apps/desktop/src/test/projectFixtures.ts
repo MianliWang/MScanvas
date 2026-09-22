@@ -14,6 +14,7 @@ import { vi } from "vitest";
 
 import {
   NO_PROJECT,
+  type CancelOutcome,
   type ProjectApi,
   type ProjectInput,
   type ProjectState,
@@ -35,6 +36,10 @@ export interface FakeProjectApi extends ProjectApi {
    * exists on screen. This is how a check in flight can be looked at.
    */
   readonly holdOnce: (operation: keyof ProjectApi) => () => void;
+  /** Every operation identifier a cancel named, in order. */
+  readonly cancelled: string[];
+  /** What the next cancels answer. `cancelled` unless a test says otherwise. */
+  readonly setCancelOutcome: (outcome: CancelOutcome) => void;
   readonly calls: string[];
 }
 
@@ -73,6 +78,10 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
   /** How a held call is let go, once it has actually been made. */
   const release = new Map<string, () => void>();
   const calls: string[] = [];
+  /** Identifiers are minted in order, as the store mints them. */
+  let accepted = 0;
+  let cancelOutcome: CancelOutcome = "cancelled";
+  const cancelled: string[] = [];
 
   /** One answer, after recording the call and honouring any staged outcome. */
   function answer(operation: keyof ProjectApi): Promise<ProjectState | null> {
@@ -111,6 +120,10 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
         release.delete(operation);
       };
     },
+    cancelled,
+    setCancelOutcome: (outcome) => {
+      cancelOutcome = outcome;
+    },
     calls,
     getProjectState: vi.fn(() => answer("getProjectState") as Promise<ProjectState>),
     createProject: vi.fn(() => answer("createProject") as Promise<ProjectState>),
@@ -120,13 +133,27 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     saveProjectAs: vi.fn(() => answer("saveProjectAs")),
     addProjectInput: vi.fn(() => answer("addProjectInput")),
     removeProjectInput: vi.fn(() => answer("removeProjectInput") as Promise<ProjectState>),
-    checkProjectLinks: vi.fn(() => answer("checkProjectLinks") as Promise<ProjectState>),
-    cancelProjectJob: vi.fn(() => {
+    beginProjectJob: vi.fn(() => {
+      calls.push("beginProjectJob");
+      const refusal = refusals.get("beginProjectJob");
+      if (refusal !== undefined) {
+        refusals.delete("beginProjectJob");
+        return Promise.reject({ code: refusal, message: refusal, retryable: false });
+      }
+      accepted += 1;
+      return Promise.resolve({ operationId: `project-job-${accepted}` });
+    }),
+    checkProjectLinks: vi.fn(
+      (_operationId: string) => answer("checkProjectLinks") as Promise<ProjectState>,
+    ),
+    cancelProjectJob: vi.fn((operationId: string) => {
       calls.push("cancelProjectJob");
-      return Promise.resolve();
+      cancelled.push(operationId);
+      return Promise.resolve({ outcome: cancelOutcome });
     }),
     captureProjectFileFacts: vi.fn(
-      () => answer("captureProjectFileFacts") as Promise<ProjectState>,
+      (_operationId: string, _inputIds: readonly string[]) =>
+        answer("captureProjectFileFacts") as Promise<ProjectState>,
     ),
     proposeProjectRelink: vi.fn(() => answer("proposeProjectRelink")),
     commitProjectRelink: vi.fn(() => answer("commitProjectRelink") as Promise<ProjectState>),

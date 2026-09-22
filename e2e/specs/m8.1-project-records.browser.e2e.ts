@@ -21,8 +21,10 @@ import { join, resolve } from "node:path";
 
 import {
   consoleEntries,
+  holdInvoke,
   installIpcBoundary,
   ipcCalls,
+  releaseInvokeHold,
   setInvokeRejection,
   setInvokeResult,
 } from "../support/harness";
@@ -175,6 +177,11 @@ async function capture(label: string) {
 async function openSurface(state: Record<string, unknown>) {
   const table: Record<string, unknown> = ipcTable();
   table.get_project_state = state;
+  // Every check or capture is accepted first and runs under the identifier
+  // the acceptance answered. The store mints them in order; this table mints
+  // one.
+  table.begin_project_job = { operationId: "project-job-1" };
+  table.cancel_project_job = { outcome: "cancelled" };
   await installIpcBoundary(table);
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed();
@@ -439,6 +446,45 @@ describe("M8.1 project records, rendered", () => {
     const committed = await capture("m81-08-relinked");
     expect(committed.references[0].verification).toBe("matchingRecordedContent");
     expect((await ipcCalls()).some((call) => call.command === "commit_project_relink")).toBe(true);
+  });
+
+  it("offers Cancel only for an operation it accepted, and names it", async () => {
+    await openSurface(project({ inputs: [reference()] }));
+    await metrics(1366, 768, 1);
+
+    // Idle: a cancel would name nothing, so there is no control to send one.
+    expect(await browser.$("[data-project-cancel]").isExisting()).toBe(false);
+
+    await holdInvoke("check_project_links");
+    await browser.$("[data-project-check]").click();
+    await browser.$("[data-project-cancel]").waitForDisplayed();
+    await capture("m81-12-busy-check");
+    // The control names the accepted operation, not "whatever is running".
+    expect(await browser.$("[data-project-cancel]").getAttribute("data-project-cancel")).toBe(
+      "project-job-1",
+    );
+
+    await browser.$("[data-project-cancel]").click();
+    await browser.waitUntil(async () =>
+      (await ipcCalls()).some((call) => call.command === "cancel_project_job"),
+    );
+    const relevant = (await ipcCalls()).filter((call) =>
+      ["begin_project_job", "check_project_links", "cancel_project_job"].includes(call.command),
+    );
+    // Accepted before run, run under the same identifier, cancel naming it.
+    expect(relevant.map((call) => call.command)).toEqual([
+      "begin_project_job",
+      "check_project_links",
+      "cancel_project_job",
+    ]);
+    expect(relevant[1]?.args).toEqual({ operationId: "project-job-1" });
+    expect(relevant[2]?.args).toEqual({ operationId: "project-job-1" });
+
+    await releaseInvokeHold("check_project_links");
+    await browser.$("[data-project-cancel]").waitForExist({ reverse: true });
+    // A cancel is a decision, not a refusal, and once the answer is in there
+    // is no control left to send a late one.
+    expect(await browser.$("[data-project-problem]").isExisting()).toBe(false);
   });
 
   it("keeps the project on screen when a save is refused", async () => {

@@ -93,6 +93,24 @@ export const NO_PROJECT: ProjectState = {
 };
 
 /**
+ * One accepted check or capture.
+ *
+ * The identifier is correlation: it says which operation a later cancel means.
+ * It names no path and confers nothing. It exists *before* the operation's work
+ * does, which is the point -- a cancel pressed in the instant after the button
+ * has something to name even if the run request has not reached Rust yet.
+ */
+export interface AcceptedOperation {
+  readonly operationId: string;
+}
+
+/**
+ * What a cancel request found. None of these is an error: "nothing to cancel"
+ * is an answer.
+ */
+export type CancelOutcome = "cancelled" | "noActiveOperation" | "stale";
+
+/**
  * Operations that show a dialog answer `null` when the user cancelled.
  *
  * Cancelling is an ordinary outcome and not an error: nothing was chosen, so
@@ -109,9 +127,15 @@ export interface ProjectApi {
   saveProjectAs(): Promise<Chosen>;
   addProjectInput(): Promise<Chosen>;
   removeProjectInput(inputId: string): Promise<ProjectState>;
-  checkProjectLinks(): Promise<ProjectState>;
-  cancelProjectJob(): Promise<void>;
-  captureProjectFileFacts(inputIds: readonly string[]): Promise<ProjectState>;
+  /** Accepts one check or capture and answers the identifier it runs under. */
+  beginProjectJob(): Promise<AcceptedOperation>;
+  checkProjectLinks(operationId: string): Promise<ProjectState>;
+  /** Asks one named operation to stop. Never rejects for a late or idle press. */
+  cancelProjectJob(operationId: string): Promise<{ readonly outcome: CancelOutcome }>;
+  captureProjectFileFacts(
+    operationId: string,
+    inputIds: readonly string[],
+  ): Promise<ProjectState>;
   proposeProjectRelink(inputId: string): Promise<Chosen>;
   commitProjectRelink(inputId: string): Promise<ProjectState>;
   abandonProjectRelink(): Promise<ProjectState>;
@@ -130,13 +154,20 @@ export const tauriProjectApi: ProjectApi = {
   addProjectInput: () => invoke<Chosen>("add_project_input", {}, documentAuthorityHeaders()),
   removeProjectInput: (inputId) =>
     invoke<ProjectState>("remove_project_input", { inputId }, documentAuthorityHeaders()),
-  checkProjectLinks: () =>
-    invoke<ProjectState>("check_project_links", {}, documentAuthorityHeaders()),
-  cancelProjectJob: () => invoke<void>("cancel_project_job", {}, documentAuthorityHeaders()),
-  captureProjectFileFacts: (inputIds) =>
+  beginProjectJob: () =>
+    invoke<AcceptedOperation>("begin_project_job", {}, documentAuthorityHeaders()),
+  checkProjectLinks: (operationId) =>
+    invoke<ProjectState>("check_project_links", { operationId }, documentAuthorityHeaders()),
+  cancelProjectJob: (operationId) =>
+    invoke<{ readonly outcome: CancelOutcome }>(
+      "cancel_project_job",
+      { operationId },
+      documentAuthorityHeaders(),
+    ),
+  captureProjectFileFacts: (operationId, inputIds) =>
     invoke<ProjectState>(
       "capture_project_file_facts",
-      { inputIds: [...inputIds] },
+      { operationId, inputIds: [...inputIds] },
       documentAuthorityHeaders(),
     ),
   proposeProjectRelink: (inputId) =>
@@ -164,8 +195,9 @@ export const unavailableProjectApi: ProjectApi = {
   saveProjectAs: () => Promise.reject(new Error("noProjectStore")),
   addProjectInput: () => Promise.reject(new Error("noProjectStore")),
   removeProjectInput: () => Promise.reject(new Error("noProjectStore")),
+  beginProjectJob: () => Promise.reject(new Error("noProjectStore")),
   checkProjectLinks: () => Promise.reject(new Error("noProjectStore")),
-  cancelProjectJob: () => Promise.resolve(),
+  cancelProjectJob: () => Promise.resolve({ outcome: "noActiveOperation" }),
   captureProjectFileFacts: () => Promise.reject(new Error("noProjectStore")),
   proposeProjectRelink: () => Promise.reject(new Error("noProjectStore")),
   commitProjectRelink: () => Promise.reject(new Error("noProjectStore")),

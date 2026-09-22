@@ -4005,6 +4005,11 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "save_project_as",
             "add_project_input",
             "remove_project_input",
+            // Accepting an operation is separate from running it, for the same
+            // reason the folder import reserves before it picks: invokes are
+            // independent fetches, and a cancel must have something to name
+            // before the work it names has necessarily arrived.
+            "begin_project_job",
             "check_project_links",
             "cancel_project_job",
             "capture_project_file_facts",

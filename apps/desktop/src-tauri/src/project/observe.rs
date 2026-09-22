@@ -30,10 +30,11 @@
 //! share mode is what makes the read stable, and where the platform cannot give
 //! one the outcome says so.
 //!
-//! Cancellation is observed between members. One member's digest runs to
-//! completion once it has started -- the hash is streamed through a bounded
-//! buffer, so this costs memory nothing, but a very large single file is a wait
-//! a cancel will not interrupt. Stated rather than implied.
+//! Cancellation is observed between members and between the 64 KiB chunks the
+//! digest is streamed through. It is cooperative: the chunk that is being read
+//! when the request arrives finishes, and the next one is not started. That is
+//! the granularity the existing bounded read path has, and it is not described
+//! as anything finer.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -136,12 +137,84 @@ pub enum MemberObservation {
     Unavailable(UnavailableReason),
 }
 
-/// A cancellation flag shared with whatever asked for the work.
+/// The cancellation state of one accepted operation.
 ///
-/// A plain atomic rather than a type: the conversion lane's cancellation
-/// carries staging-recovery duties that have nothing to do with reading a file,
-/// and a second copy of those would be a second thing to reason about.
-pub type Cancelled = Arc<AtomicBool>;
+/// One per operation, minted when the operation is accepted and released with
+/// it. That is the whole design: a cancel request names an operation and sets
+/// *its* flag, so there is no flag that outlives the work it was for and no
+/// way for a request to land on whatever happens to run next.
+///
+/// A small type rather than the conversion lane's cancellation, which carries
+/// staging-recovery duties that have nothing to do with reading a file.
+#[derive(Clone, Default)]
+pub struct Cancellation {
+    requested: Arc<AtomicBool>,
+    /// Test-only: called once per chunk the cooperative reader hands to the
+    /// digest, so a test can hold an operation inside a read and cancel it
+    /// there. Absent from every non-test build.
+    #[cfg(test)]
+    gate: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl Cancellation {
+    /// Asks the operation this belongs to to stop at its next opportunity.
+    pub fn request(&self) {
+        self.requested.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a stop has been asked for.
+    #[must_use]
+    pub fn requested(&self) -> bool {
+        self.requested.load(Ordering::Relaxed)
+    }
+
+    /// Lets a test observe and hold each chunk the reader hands to the digest.
+    #[cfg(test)]
+    pub fn with_gate(gate: Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self {
+            requested: Arc::new(AtomicBool::new(false)),
+            gate: Some(gate),
+        }
+    }
+
+    /// One chunk is about to be read.
+    fn chunk(&self) {
+        #[cfg(test)]
+        if let Some(gate) = &self.gate {
+            gate();
+        }
+    }
+}
+
+impl std::fmt::Debug for Cancellation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Cancellation")
+            .field("requested", &self.requested())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A reader that stops handing out bytes once its operation is cancelled.
+///
+/// Wraps the open object the digest is streamed from, so the check happens at
+/// the same bounded 64 KiB boundary the hash already works in. A cancelled
+/// read answers an error the digest cannot mistake for content; the caller
+/// then asks the flag which of the two it was.
+struct Cooperative<'a> {
+    inner: &'a std::fs::File,
+    cancellation: &'a Cancellation,
+}
+
+impl io::Read for Cooperative<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.cancellation.chunk();
+        if self.cancellation.requested() {
+            return Err(io::Error::other("the operation was cancelled"));
+        }
+        io::Read::read(&mut self.inner, buffer)
+    }
+}
 
 /// Opens an object so that the bytes read from it cannot change while they are
 /// read.
@@ -197,8 +270,13 @@ fn is_sharing_refusal(_error: &io::Error) -> bool {
 ///
 /// Every outcome leaves the file exactly as it was found. Nothing here writes,
 /// creates, renames or removes anything.
+///
+/// A cancellation that arrives during the read ends it at the next chunk and
+/// is reported as [`UnavailableReason::UnstableRead`]: no digest was
+/// established. The caller distinguishes that from a genuinely unstable read
+/// by asking the flag, which is the one thing that knows.
 #[must_use]
-pub fn observe_member(path: &Path) -> MemberObservation {
+pub fn observe_member(path: &Path, cancellation: &Cancellation) -> MemberObservation {
     let file = match open_for_stable_read(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -224,10 +302,14 @@ pub fn observe_member(path: &Path) -> MemberObservation {
         return MemberObservation::Unavailable(UnavailableReason::UnsafeReference);
     }
     let byte_length = metadata.len();
-    let mut reader = &file;
-    if io::Seek::rewind(&mut reader).is_err() {
+    let mut handle = &file;
+    if io::Seek::rewind(&mut handle).is_err() {
         return MemberObservation::Unavailable(UnavailableReason::UnstableRead);
     }
+    let reader = Cooperative {
+        inner: &file,
+        cancellation,
+    };
     match Sha256Digest::calculate_reader(reader) {
         Ok(digest) => MemberObservation::Observed {
             byte_length,
@@ -276,7 +358,7 @@ fn member_path(primary: &Path, member: &super::record::MemberRecord) -> Option<P
 fn observe_input(
     input: &InputRecord,
     base_directory: &Path,
-    cancelled: &Cancelled,
+    cancellation: &Cancellation,
 ) -> Result<Vec<(ObservedMember, ContentBaseline)>, UnavailableReason> {
     let primary =
         resolve(&input.locator, base_directory).map_err(|_| UnavailableReason::UnsafeReference)?;
@@ -289,13 +371,13 @@ fn observe_input(
 
     let mut observed = Vec::with_capacity(ordered.len());
     for member in ordered {
-        if cancelled.load(Ordering::Relaxed) {
+        if cancellation.requested() {
             return Err(UnavailableReason::UnstableRead);
         }
         let Some(path) = member_path(&primary, member) else {
             return Err(UnavailableReason::UnsafeReference);
         };
-        match observe_member(&path) {
+        match observe_member(&path, cancellation) {
             MemberObservation::Observed {
                 byte_length,
                 digest,
@@ -329,14 +411,14 @@ fn observe_input(
 pub fn verify_input(
     input: &InputRecord,
     base_directory: &Path,
-    cancelled: &Cancelled,
+    cancellation: &Cancellation,
 ) -> InputVerification {
-    if cancelled.load(Ordering::Relaxed) {
+    if cancellation.requested() {
         return InputVerification::NotChecked;
     }
-    match observe_input(input, base_directory, cancelled) {
+    match observe_input(input, base_directory, cancellation) {
         Ok(observed) => {
-            if cancelled.load(Ordering::Relaxed) {
+            if cancellation.requested() {
                 return InputVerification::NotChecked;
             }
             // Case-insensitively, for the reason `ContentBaseline::matches`
@@ -352,7 +434,7 @@ pub fn verify_input(
                 InputVerification::DifferentContent
             }
         }
-        Err(_) if cancelled.load(Ordering::Relaxed) => InputVerification::NotChecked,
+        Err(_) if cancellation.requested() => InputVerification::NotChecked,
         Err(reason) => InputVerification::Unavailable(reason),
     }
 }
@@ -384,18 +466,18 @@ pub enum CaptureFailure {
 pub fn capture_file_facts(
     inputs: &[&InputRecord],
     base_directory: &Path,
-    cancelled: &Cancelled,
+    cancellation: &Cancellation,
 ) -> Result<FileFactsV1, CaptureFailure> {
     if inputs.is_empty() {
         return Err(CaptureFailure::NothingSelected);
     }
     let mut observations = Vec::with_capacity(inputs.len());
     for input in inputs {
-        if cancelled.load(Ordering::Relaxed) {
+        if cancellation.requested() {
             return Err(CaptureFailure::Cancelled);
         }
-        let observed = observe_input(input, base_directory, cancelled).map_err(|reason| {
-            if cancelled.load(Ordering::Relaxed) {
+        let observed = observe_input(input, base_directory, cancellation).map_err(|reason| {
+            if cancellation.requested() {
                 CaptureFailure::Cancelled
             } else {
                 CaptureFailure::InputUnavailable(reason)
@@ -406,7 +488,7 @@ pub fn capture_file_facts(
             members: observed.into_iter().map(|(seen, _)| seen).collect(),
         });
     }
-    if cancelled.load(Ordering::Relaxed) {
+    if cancellation.requested() {
         return Err(CaptureFailure::Cancelled);
     }
     Ok(FileFactsV1 { observations })
@@ -427,7 +509,11 @@ pub fn register_members(
     let mut members = Vec::with_capacity(1 + companions.len());
     // Observed once. Reading the primary a second time to classify a failure
     // would be measuring a different moment than the one that failed.
-    match observe_member(primary) {
+    //
+    // Registration is not a cancellable operation: it is one read the user
+    // just asked for through a dialog, so it carries a flag nobody can set.
+    let uncancellable = Cancellation::default();
+    match observe_member(primary, &uncancellable) {
         MemberObservation::Observed {
             byte_length,
             digest,
@@ -442,7 +528,7 @@ pub fn register_members(
         let Some(name) = companion.file_name().and_then(|name| name.to_str()) else {
             return Err(UnavailableReason::UnsafeReference);
         };
-        match observe_member(companion) {
+        match observe_member(companion, &uncancellable) {
             MemberObservation::Observed {
                 byte_length,
                 digest,

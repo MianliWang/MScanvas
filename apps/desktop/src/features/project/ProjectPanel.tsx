@@ -261,9 +261,22 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
       {busyKey(busy) === null ? null : (
         <p className="project-busy" data-project-busy={busy}>
           {t(busyKey(busy) as "projectBusySaving")}
-          <button type="button" className="link-button" onClick={() => void session.cancelJob()}>
-            {t("projectCancel")}
-          </button>
+          {/* Offered only for an operation this session accepted and is still
+              waiting on. A save or a dialog is busy too, but it is not a thing
+              a cancel can name -- and once the answer is in, the control is
+              gone rather than left to send a late request. Rust enforces the
+              same rule; this is the affordance agreeing with it rather than
+              the fix. */}
+          {session.activeOperation === null ? null : (
+            <button
+              type="button"
+              className="link-button"
+              data-project-cancel={session.activeOperation}
+              onClick={() => void session.cancelJob()}
+            >
+              {t("projectCancel")}
+            </button>
+          )}
         </p>
       )}
 

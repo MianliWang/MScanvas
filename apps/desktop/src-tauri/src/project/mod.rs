@@ -36,16 +36,15 @@ pub mod record;
 #[cfg(test)]
 mod tests;
 
+use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use mscanvas_core::ArtifactId;
 
 use crate::local_document::{self, WriteRefusal};
 
-use observe::{Cancelled, InputVerification, MemberObservation, UnavailableReason};
+use observe::{Cancellation, InputVerification, MemberObservation, UnavailableReason};
 use record::{
     ArtifactRecord, DocumentProblem, InputId, InputRecord, MAX_ARTIFACTS, MAX_DOCUMENT_BYTES,
     MAX_INPUTS, MAX_RUNS, ProjectDocument, RecordedOperation, RunId, RunRecord, TerminalOutcome,
@@ -100,6 +99,10 @@ pub enum ProjectError {
     NothingSelected,
     /// A capture or check is already running in this session.
     AlreadyRunning,
+    /// The operation identifier names no operation this session will run: it
+    /// was never accepted, it already ran, it was superseded, or the project it
+    /// was accepted against has been replaced since.
+    StaleOperation,
 }
 
 impl ProjectError {
@@ -122,6 +125,7 @@ impl ProjectError {
             Self::Cancelled => "cancelled",
             Self::NothingSelected => "nothingSelected",
             Self::AlreadyRunning => "alreadyRunning",
+            Self::StaleOperation => "staleOperation",
         }
     }
 
@@ -133,6 +137,93 @@ impl ProjectError {
             Self::NotPublished | Self::StaleDocument | Self::Unavailable(_) | Self::AlreadyRunning
         )
     }
+}
+
+/// The identifier of one accepted check or capture.
+///
+/// Correlation and nothing else: it names an operation so that a cancel request
+/// can say which one it means, and it confers no authority over a file, a
+/// path or a project. Minted from a counter this store never reuses, so a
+/// request carrying an identifier from an operation that has finished names
+/// nothing -- it cannot land on whatever is running now.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ProjectJobId(u64);
+
+impl ProjectJobId {
+    const PREFIX: &'static str = "project-job-";
+
+    /// The wire form. An opaque handle, like every other reservation the
+    /// interface holds.
+    #[must_use]
+    pub fn handle(self) -> String {
+        format!("{}{}", Self::PREFIX, self.0)
+    }
+
+    /// Reads a wire handle back. Anything that is not exactly one this build
+    /// minted is `None`, and `None` is a stale operation, never a guess.
+    #[must_use]
+    pub fn parse(handle: &str) -> Option<Self> {
+        handle
+            .strip_prefix(Self::PREFIX)
+            .and_then(|digits| digits.parse().ok())
+            .map(Self)
+    }
+}
+
+impl fmt::Debug for ProjectJobId {
+    /// Deliberately opaque, like the workspace's own reservation identifiers.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<project-job-id>")
+    }
+}
+
+/// What a cancel request found when it arrived.
+///
+/// Not an error in any case. A cancel names an operation; where that operation
+/// is the one accepted, its flag is set, and where it is not, nothing happens
+/// and the caller is told which kind of nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelOutcome {
+    /// The named operation is the accepted one, started or not, and has been
+    /// asked to stop.
+    Cancelled,
+    /// No operation is accepted at all. An idle click, which changes nothing.
+    NoActiveOperation,
+    /// An operation is accepted and it is not the one named. The named one has
+    /// finished or was superseded; the current one is untouched.
+    Stale,
+}
+
+impl CancelOutcome {
+    /// The stable wire identifier.
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::NoActiveOperation => "noActiveOperation",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+/// One accepted check or capture, from acceptance to release.
+///
+/// Acceptance is what gives an operation an identity and a cancellation state
+/// *before* its worker starts. That ordering is the point: a cancel that arrives
+/// between the user pressing the button and the worker opening its first file
+/// finds this record and stops that exact operation, rather than finding nothing
+/// and letting the read run to completion.
+struct AcceptedJob {
+    id: ProjectJobId,
+    /// The session generation it was accepted against. An operation runs only
+    /// against the project it was accepted for; if the project is replaced or
+    /// its records change first, the ticket is refused rather than run against
+    /// something else.
+    generation: u64,
+    cancellation: Cancellation,
+    /// Whether a worker has taken it. A started job is never superseded; an
+    /// unstarted one at a stale generation is.
+    started: bool,
 }
 
 /// Where this session last published the open project, and at which revision.
@@ -229,6 +320,13 @@ struct Session {
     /// Advanced whenever the record set or the base directory changes, so an
     /// answer computed against the old one is recognised as stale and dropped.
     generation: u64,
+    /// The one accepted check or capture, if any. Under the same lock as the
+    /// project, because whether an operation may start, whether a cancel has a
+    /// target, and whether a commit is still about the open project are one
+    /// question asked of one state.
+    job: Option<AcceptedJob>,
+    /// The last identifier minted. Never reused within this store.
+    last_job: u64,
 }
 
 impl Session {
@@ -275,10 +373,6 @@ impl Session {
 /// interleaving between the check and the write.
 pub struct ProjectStore {
     session: Mutex<Session>,
-    /// Set while a check or capture is running, so a second one is refused
-    /// rather than interleaved. One job at a time is the bound.
-    running: AtomicBool,
-    cancelled: Cancelled,
 }
 
 impl Default for ProjectStore {
@@ -294,9 +388,9 @@ impl ProjectStore {
             session: Mutex::new(Session {
                 project: None,
                 generation: 0,
+                job: None,
+                last_job: 0,
             }),
-            running: AtomicBool::new(false),
-            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -643,56 +737,136 @@ impl ProjectStore {
         Ok(())
     }
 
-    /// Requests that a running check or capture stop.
+    /// Accepts one check or capture, before any of its work starts.
     ///
-    /// A cancelled check leaves its references `NotChecked`, and a cancelled
-    /// capture produces no artifact. Neither leaves a partial answer.
+    /// Answers the identifier the operation will run and be cancelled under.
+    /// Idempotent for an accepted operation that has not started yet at the
+    /// current generation, so a doubled activation yields one operation rather
+    /// than two. Two accepted-but-unstarted operations are *not* handed back:
+    /// one whose project has since moved cannot run, and one that has already
+    /// been cancelled is finished as far as its user is concerned -- handing
+    /// its identifier to the next activation would carry that cancel onto work
+    /// nobody cancelled, which is the retargeting this whole design exists to
+    /// prevent. Both are replaced. One operation at a time is the bound on
+    /// concurrent reading, so an operation that has started refuses a second.
     ///
-    /// Deliberately unconditional, and deliberately not cleared when the next
-    /// job starts -- only when one ends. So a cancel pressed in the instant
-    /// between the press and the worker actually starting still stops that
-    /// work, and the cost is that a cancel pressed when nothing is running
-    /// stops the next thing instead. That direction is the right one: the
-    /// failure it avoids is a long read the user asked to stop and could not,
-    /// and the failure it accepts is a check the user can simply run again.
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+    /// # Errors
+    ///
+    /// [`ProjectError::NoOpenProject`], or [`ProjectError::AlreadyRunning`].
+    pub fn accept_job(&self) -> Result<ProjectJobId, ProjectError> {
+        self.accept_job_with(Cancellation::default())
     }
 
-    /// Takes the one job slot, or reports that it is taken.
+    /// [`Self::accept_job`], with the cancellation state supplied.
     ///
-    /// One job at a time is the bound on concurrent reading: a check and a
-    /// capture both open and hash every file they are given, and two of them
-    /// interleaved would double that with no user asking for it.
-    fn begin_job(&self) -> Result<JobSlot<'_>, ProjectError> {
-        if self
-            .running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+    /// Not public. It exists so a test can accept an operation whose reads it
+    /// can hold at a chunk boundary; production has exactly one way to make a
+    /// cancellation state, which is a fresh one.
+    fn accept_job_with(&self, cancellation: Cancellation) -> Result<ProjectJobId, ProjectError> {
+        let mut session = self.locked();
+        session.open()?;
+        match &session.job {
+            Some(job) if job.started => return Err(ProjectError::AlreadyRunning),
+            Some(job) if job.generation == session.generation && !job.cancellation.requested() => {
+                return Ok(job.id);
+            }
+            _ => {}
+        }
+        session.last_job = session.last_job.wrapping_add(1);
+        let id = ProjectJobId(session.last_job);
+        let generation = session.generation;
+        session.job = Some(AcceptedJob {
+            id,
+            generation,
+            cancellation,
+            started: false,
+        });
+        Ok(id)
+    }
+
+    /// Asks one named operation to stop.
+    ///
+    /// Sets that operation's own flag and nothing else. An identifier that
+    /// names no accepted operation -- because none is accepted, or because the
+    /// accepted one is a different operation -- changes nothing: no flag is
+    /// left set for whatever runs next, no run is recorded, and the project is
+    /// untouched. That is what makes a cancel a request about one operation
+    /// rather than a standing preference.
+    ///
+    /// An accepted operation that has not started is a valid target. Its
+    /// worker will find the flag set before it opens a file.
+    pub fn cancel_job(&self, id: ProjectJobId) -> CancelOutcome {
+        let session = self.locked();
+        match &session.job {
+            Some(job) if job.id == id => {
+                job.cancellation.request();
+                CancelOutcome::Cancelled
+            }
+            Some(_) => CancelOutcome::Stale,
+            None => CancelOutcome::NoActiveOperation,
+        }
+    }
+
+    /// Takes an accepted operation to run.
+    ///
+    /// The one place an operation goes from accepted to running. It must be the
+    /// accepted operation, not yet started, and accepted against the project
+    /// that is open now -- otherwise it is refused and, where its generation is
+    /// stale, released, so a ticket for a project that no longer exists cannot
+    /// hold the slot.
+    fn start_job(
+        &self,
+        id: ProjectJobId,
+    ) -> Result<(JobGuard<'_>, Cancellation, u64), ProjectError> {
+        let mut session = self.locked();
+        session.open()?;
+        let generation = session.generation;
+        let Some(job) = session.job.as_mut() else {
+            return Err(ProjectError::StaleOperation);
+        };
+        if job.id != id {
+            return Err(ProjectError::StaleOperation);
+        }
+        if job.started {
             return Err(ProjectError::AlreadyRunning);
         }
-        Ok(JobSlot { store: self })
+        if job.generation != generation {
+            session.job = None;
+            return Err(ProjectError::StaleOperation);
+        }
+        job.started = true;
+        let cancellation = job.cancellation.clone();
+        Ok((
+            JobGuard {
+                store: self,
+                id,
+                released: false,
+            },
+            cancellation,
+            generation,
+        ))
     }
 
     /// Checks every reference in the open project against its baseline.
     ///
-    /// The session lock is taken to copy what is needed, released for the whole
-    /// of the reading and hashing, and taken again to record the answers. A
-    /// project whose identity or generation changed while this ran has its
-    /// results discarded rather than applied to a different project.
+    /// Runs the accepted operation `id`. The session lock is taken to copy what
+    /// is needed, released for the whole of the reading and hashing, and taken
+    /// again to record the answers. A project whose generation changed while
+    /// this ran has its results discarded rather than applied to a different
+    /// project, and a cancellation that took the lock first leaves every
+    /// reference unchecked.
     ///
     /// # Errors
     ///
-    /// [`ProjectError::NoOpenProject`], or [`ProjectError::AlreadyRunning`]
-    /// where a job is already using the one slot.
-    pub fn check_linked_files(&self) -> Result<(), ProjectError> {
-        let _slot = self.begin_job()?;
-        let (generation, inputs, base) = {
+    /// [`ProjectError::NoOpenProject`], [`ProjectError::StaleOperation`] for an
+    /// identifier that is not the accepted operation, or
+    /// [`ProjectError::AlreadyRunning`] where it already is.
+    pub fn check_linked_files(&self, id: ProjectJobId) -> Result<(), ProjectError> {
+        let (mut guard, cancellation, generation) = self.start_job(id)?;
+        let (inputs, base) = {
             let session = self.locked();
             let project = session.open()?;
             (
-                session.generation,
                 project.document.inputs.clone(),
                 project.base_directory().map(Path::to_path_buf),
             )
@@ -705,31 +879,38 @@ impl ProjectStore {
             // every locator it holds is absolute -- so this base is only ever
             // used by a resolve that does not consult it.
             let base = base.as_deref().unwrap_or_else(|| Path::new(""));
-            outcomes.push((
-                input.id,
-                observe::verify_input(input, base, &self.cancelled),
-            ));
+            outcomes.push((input.id, observe::verify_input(input, base, &cancellation)));
         }
 
         let mut session = self.locked();
+        // Whichever of the commit and a cancel took this lock first wins. A
+        // cancel that got here first leaves nothing established: every
+        // reference this check covered goes back to unchecked, including the
+        // ones whose reads had finished, because a check the user stopped is
+        // not a check whose partial answers they asked to keep.
         if session.generation != generation {
-            // The project was replaced, or a record was removed or relinked,
-            // while this was reading. These answers are about files that
-            // belonged to a project nobody is looking at.
-            return Ok(());
-        }
-        let Some(project) = session.project.as_mut() else {
-            return Ok(());
-        };
-        for (id, outcome) in outcomes {
-            if let Some(slot) = project
-                .verification
-                .iter_mut()
-                .find(|(recorded, _)| *recorded == id)
-            {
-                slot.1 = outcome;
+            // A different project now. These answers are about files that
+            // belonged to one nobody is looking at.
+        } else if let Some(project) = session.project.as_mut() {
+            let cancelled = cancellation.requested();
+            for (id, outcome) in outcomes {
+                if let Some(slot) = project
+                    .verification
+                    .iter_mut()
+                    .find(|(recorded, _)| *recorded == id)
+                {
+                    slot.1 = if cancelled {
+                        InputVerification::NotChecked
+                    } else {
+                        outcome
+                    };
+                }
             }
         }
+        // Released under the same lock the answer was recorded under, so no
+        // cancel can arrive for an operation that has committed and no next
+        // operation can be accepted before this one is gone.
+        guard.release(&mut session);
         Ok(())
     }
 
@@ -743,9 +924,13 @@ impl ProjectStore {
     /// # Errors
     ///
     /// The reason the capture did not complete. The run is recorded either way.
-    pub fn capture_file_facts(&self, selected: &[InputId]) -> Result<RunId, ProjectError> {
-        let _slot = self.begin_job()?;
-        let (generation, inputs, base) = {
+    pub fn capture_file_facts(
+        &self,
+        id: ProjectJobId,
+        selected: &[InputId],
+    ) -> Result<RunId, ProjectError> {
+        let (mut guard, cancellation, generation) = self.start_job(id)?;
+        let (inputs, base) = {
             let session = self.locked();
             let project = session.open()?;
             if selected.is_empty() {
@@ -766,20 +951,23 @@ impl ProjectStore {
                         .clone(),
                 );
             }
-            (
-                session.generation,
-                chosen,
-                project.base_directory().map(Path::to_path_buf),
-            )
+            (chosen, project.base_directory().map(Path::to_path_buf))
         };
 
         let started_at = now_rfc3339();
         let base = base.unwrap_or_default();
         let borrowed: Vec<&InputRecord> = inputs.iter().collect();
-        let captured = observe::capture_file_facts(&borrowed, &base, &self.cancelled);
+        let mut captured = observe::capture_file_facts(&borrowed, &base, &cancellation);
         let finished_at = now_rfc3339();
 
         let mut session = self.locked();
+        // Whichever of the commit and a cancel took this lock first wins. A
+        // cancel that arrived after the reads finished but before this point is
+        // still a cancel that won: what it stops is the publication of an
+        // artifact, and that has not happened yet.
+        if cancellation.requested() {
+            captured = Err(observe::CaptureFailure::Cancelled);
+        }
         // A reference removed, relinked or replaced while this ran means the
         // run about to be written would name records the document no longer
         // has. `validate` refuses a document with a dangling reference, so
@@ -788,9 +976,13 @@ impl ProjectStore {
         // refusal says the work did not reach the project rather than claiming
         // the user cancelled it.
         if session.generation != generation {
+            guard.release(&mut session);
             return Err(ProjectError::StaleDocument);
         }
-        let project = session.open_mut()?;
+        let Some(project) = session.project.as_mut() else {
+            guard.release(&mut session);
+            return Err(ProjectError::NoOpenProject);
+        };
 
         let run_id = RunId::new();
         let (outcome, outputs, error) = match captured {
@@ -832,6 +1024,7 @@ impl ProjectStore {
             finished_at,
         });
         project.dirty = true;
+        guard.release(&mut session);
 
         match error {
             Some(error) => Err(error),
@@ -869,7 +1062,10 @@ impl ProjectStore {
             (session.generation, baseline)
         };
 
-        let matches_baseline = match observe::observe_member(candidate) {
+        // Examining one candidate is one read the user just asked for through
+        // a dialog, not an accepted operation, so it carries a flag nobody can
+        // set.
+        let matches_baseline = match observe::observe_member(candidate, &Cancellation::default()) {
             MemberObservation::Observed {
                 byte_length,
                 digest,
@@ -963,15 +1159,40 @@ impl ProjectStore {
     }
 }
 
-/// Releases the one job slot when a check or capture ends, however it ends.
-struct JobSlot<'store> {
+/// Releases one accepted operation when its work ends, however it ends.
+///
+/// Released explicitly at the commit site, under the lock the commit happens
+/// under, so that no cancel can find an operation that has already committed
+/// and no successor can be accepted before it is gone. The `Drop` is the safety
+/// net for every path that never reached a commit -- a refusal, a panic -- and
+/// releases only if the accepted operation is still this one.
+struct JobGuard<'store> {
     store: &'store ProjectStore,
+    id: ProjectJobId,
+    released: bool,
 }
 
-impl Drop for JobSlot<'_> {
+impl JobGuard<'_> {
+    /// Releases the operation under a lock the caller already holds.
+    fn release(&mut self, session: &mut Session) {
+        if session.job.as_ref().is_some_and(|job| job.id == self.id) {
+            session.job = None;
+        }
+        self.released = true;
+    }
+}
+
+impl Drop for JobGuard<'_> {
     fn drop(&mut self) {
-        self.store.cancelled.store(false, Ordering::Relaxed);
-        self.store.running.store(false, Ordering::Release);
+        if self.released {
+            return;
+        }
+        // Taken here rather than assumed: every path that holds the session
+        // lock releases explicitly above, and a `MutexGuard` declared after this
+        // guard drops before it, so this never runs while the same thread holds
+        // the lock.
+        let mut session = self.store.locked();
+        self.release(&mut session);
     }
 }
 

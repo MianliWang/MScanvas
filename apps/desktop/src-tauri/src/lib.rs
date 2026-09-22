@@ -109,6 +109,7 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::Cancelled => "Cancelled.",
         Refusal::NothingSelected => "Nothing was selected.",
         Refusal::AlreadyRunning => "Another check is already running.",
+        Refusal::StaleOperation => "That operation is no longer the one running.",
     };
     PreviewErrorDto::new(error.stable_id(), message, error.retryable())
 }
@@ -276,40 +277,78 @@ async fn remove_project_input(
     Ok(projects.describe())
 }
 
+/// Accepts one check or capture and answers the identifier it will run under.
+///
+/// Deliberately separate from running it, and deliberately quick: Tauri
+/// dispatches invokes as independent fetches, so a cancel pressed the instant
+/// after a check is started could otherwise reach Rust before the check itself
+/// and find nothing to cancel -- and the check would then run to completion.
+/// Accepting first gives the operation an identity and a cancellation state
+/// that a cancel can find before any file is opened. The identifier is
+/// correlation only; it names no path and confers no authority.
+#[tauri::command]
+async fn begin_project_job(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectJobDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = projects.accept_job().map_err(project_error)?;
+    Ok(project::dto::ProjectJobDto {
+        operation_id: id.handle(),
+    })
+}
+
 /// Checks every reference in the open project against its recorded baseline.
 ///
-/// The press is what authorises reading the displayed reference set. It
-/// authorises nothing else: no other directory is looked at, and nothing is
-/// admitted, opened in a viewer or converted as a result.
+/// Runs the operation `begin_project_job` accepted. The press is what
+/// authorises reading the displayed reference set. It authorises nothing else:
+/// no other directory is looked at, and nothing is admitted, opened in a viewer
+/// or converted as a result.
 #[tauri::command]
 async fn check_project_links(
+    operation_id: String,
     ipc_request: tauri::ipc::Request<'_>,
     webview: tauri::Webview<tauri::Wry>,
     service: State<'_, SharedService>,
     projects: State<'_, SharedProjects>,
 ) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
     verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_job_id(&operation_id)?;
     let projects = Arc::clone(&projects);
     // Hashing is why this is off the async runtime: a check reads every
     // referenced file whole, and a large acquisition must not hold a worker.
     off_the_async_runtime(move || {
-        projects.check_linked_files().map_err(project_error)?;
+        projects.check_linked_files(id).map_err(project_error)?;
         Ok(projects.describe())
     })
     .await?
 }
 
-/// Asks a running check or capture to stop.
+/// Asks one accepted operation to stop.
+///
+/// Names the operation, so a cancel that arrives late -- after its operation
+/// finished, or after a different one was accepted -- changes nothing and says
+/// so. It is never an error: "nothing to cancel" is an answer, not a failure.
 #[tauri::command]
 async fn cancel_project_job(
+    operation_id: String,
     ipc_request: tauri::ipc::Request<'_>,
     webview: tauri::Webview<tauri::Wry>,
     service: State<'_, SharedService>,
     projects: State<'_, SharedProjects>,
-) -> Result<(), PreviewErrorDto> {
+) -> Result<project::dto::CancelOutcomeDto, PreviewErrorDto> {
     verified_document_epoch(&ipc_request, &webview, &service).await?;
-    projects.cancel();
-    Ok(())
+    // An identifier this build never minted names nothing, which is the same
+    // answer as an identifier whose operation is gone.
+    let outcome = match project::ProjectJobId::parse(&operation_id) {
+        Some(id) => projects.cancel_job(id),
+        None => project::CancelOutcome::NoActiveOperation,
+    };
+    Ok(project::dto::CancelOutcomeDto {
+        outcome: outcome.stable_id(),
+    })
 }
 
 /// Runs `CaptureFileFactsV1` over the selected references.
@@ -319,6 +358,7 @@ async fn cancel_project_job(
 /// reference records its real outcome and produces no artifact.
 #[tauri::command]
 async fn capture_project_file_facts(
+    operation_id: String,
     input_ids: Vec<String>,
     ipc_request: tauri::ipc::Request<'_>,
     webview: tauri::Webview<tauri::Wry>,
@@ -326,13 +366,14 @@ async fn capture_project_file_facts(
     projects: State<'_, SharedProjects>,
 ) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
     verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let job = parsed_job_id(&operation_id)?;
     let mut selected = Vec::with_capacity(input_ids.len());
     for id in &input_ids {
         selected.push(parsed_input_id(id)?);
     }
     let projects = Arc::clone(&projects);
     let (outcome, described) = off_the_async_runtime(move || {
-        let outcome = projects.capture_file_facts(&selected);
+        let outcome = projects.capture_file_facts(job, &selected);
         (outcome, projects.describe())
     })
     .await?;
@@ -416,6 +457,15 @@ async fn chosen_file(
     })
     .map_err(|_| picker_unavailable())?;
     off_the_async_runtime(move || receiver.recv().map_err(|_| picker_unavailable())?).await?
+}
+
+/// Reads one operation identifier the webview sent.
+///
+/// An identifier this build never minted is a stale operation: it names
+/// nothing that can run, and the refusal deliberately does not echo it back.
+fn parsed_job_id(value: &str) -> Result<project::ProjectJobId, PreviewErrorDto> {
+    project::ProjectJobId::parse(value)
+        .ok_or_else(|| project_error(project::ProjectError::StaleOperation))
 }
 
 /// Reads one input identifier the webview sent.
@@ -1780,6 +1830,7 @@ pub fn run() {
             save_project_as,
             add_project_input,
             remove_project_input,
+            begin_project_job,
             check_project_links,
             cancel_project_job,
             capture_project_file_facts,

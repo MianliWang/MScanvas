@@ -437,13 +437,72 @@ describe("the project surface", () => {
       "true",
     );
 
+    // The accept came first and minted the identifier; the run carried it;
+    // the cancel names exactly that one.
+    expect(api.calls.indexOf("beginProjectJob")).toBeLessThan(
+      api.calls.indexOf("checkProjectLinks"),
+    );
+    expect(api.checkProjectLinks).toHaveBeenCalledWith("project-job-1");
     await press(screen.getByRole("button", { name: en.projectCancel }));
-    expect(api.cancelProjectJob).toHaveBeenCalled();
+    expect(api.cancelled).toEqual(["project-job-1"]);
 
     await act(async () => {
       release();
     });
     await waitFor(() => expect(screen.queryAllByText(en.projectBusyChecking)).toHaveLength(0));
+    // Once the answer is in, there is nothing to cancel and no control that
+    // would try.
+    expect(screen.queryByRole("button", { name: en.projectCancel })).toBeNull();
+  });
+
+  it("offers no Cancel while nothing is running", async () => {
+    const api = mount(openProject({ inputs: [projectInput()] }));
+    await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+    // Idle. A cancel now would name nothing, so there is nothing to press.
+    expect(screen.queryByRole("button", { name: en.projectCancel })).toBeNull();
+    expect(api.cancelProjectJob).not.toHaveBeenCalled();
+  });
+
+  it("does not offer Cancel for a save, which is not an operation a cancel can name", async () => {
+    const api = mount(openProject({ inputs: [projectInput()], published: true }));
+    await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+    const release = api.holdOnce("saveProject");
+    await press(screen.getByRole("button", { name: en.projectSave }));
+    await waitFor(() =>
+      expect(screen.getAllByText(en.projectBusySaving).length).toBeGreaterThan(0),
+    );
+    // Busy, and deliberately without a Cancel: a save has no accepted
+    // operation behind it, so a press could only have landed on something
+    // else.
+    expect(screen.queryByRole("button", { name: en.projectCancel })).toBeNull();
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(screen.queryAllByText(en.projectBusySaving)).toHaveLength(0));
+  });
+
+  it("does not report a late or stale cancel as a refusal", async () => {
+    const input = projectInput();
+    const api = mount(openProject({ inputs: [input] }));
+    await waitFor(() => expect(screen.getByText(input.label)).toBeTruthy());
+
+    // The boundary answers that the named operation is not the one running.
+    // That is the boundary saying it did nothing, and it is not an error.
+    api.setCancelOutcome("stale");
+    const release = api.holdOnce("checkProjectLinks");
+    await press(screen.getByRole("button", { name: en.projectCheckLinks }));
+    await waitFor(() => expect(screen.getByRole("button", { name: en.projectCancel })).toBeTruthy());
+    await press(screen.getByRole("button", { name: en.projectCancel }));
+    await act(async () => {
+      release();
+    });
+
+    await waitFor(() => expect(screen.queryAllByText(en.projectBusyChecking)).toHaveLength(0));
+    expect(document.querySelector("[data-project-problem]")).toBeNull();
+    expect(document.querySelector("[data-project-cancelled]")).toBeNull();
+    expect(screen.getByText(input.label)).toBeTruthy();
   });
 
   it("offers Save only once the project has somewhere to go", async () => {
@@ -479,7 +538,7 @@ describe("the project surface", () => {
     await press(screen.getByRole("button", { name: en.projectCapture }));
 
     await waitFor(() => expect(api.captureProjectFileFacts).toHaveBeenCalled());
-    expect(api.captureProjectFileFacts).toHaveBeenCalledWith([first.id]);
+    expect(api.captureProjectFileFacts).toHaveBeenCalledWith("project-job-1", [first.id]);
   });
 
   it("drops a selection whose reference the project no longer has", async () => {
@@ -499,7 +558,7 @@ describe("the project surface", () => {
     // A capture must not send an identifier the project no longer has: Rust
     // refuses it, and the whole capture would be lost to a stale tick.
     await waitFor(() => expect(api.captureProjectFileFacts).toHaveBeenCalled());
-    expect(api.captureProjectFileFacts).toHaveBeenCalledWith([second.id]);
+    expect(api.captureProjectFileFacts).toHaveBeenCalledWith("project-job-1", [second.id]);
   });
 
   it("does not let a slow first read undo what the user did meanwhile", async () => {

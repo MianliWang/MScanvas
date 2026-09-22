@@ -12,14 +12,15 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier};
 
-use super::observe::UnavailableReason;
+use super::observe::{Cancellation, UnavailableReason};
 use super::record::{
     ContentBaseline, DocumentProblem, InputId, Locator, MemberRecord, MemberRole, ProjectDocument,
     RecordedOperation, RunId, RunRecord, TerminalOutcome,
 };
-use super::{ProjectError, ProjectStore, record};
+use super::{CancelOutcome, ProjectError, ProjectJobId, ProjectStore, record};
 
 /// A directory this test owns, removed when the test ends.
 struct Scratch {
@@ -91,6 +92,51 @@ fn unavailable_reason(store: &ProjectStore, id: InputId) -> Option<&'static str>
         .and_then(|input| input.unavailable_reason)
 }
 
+/// Accepts and runs one check, the way the interface does.
+fn check(store: &ProjectStore) -> Result<(), ProjectError> {
+    let id = store.accept_job()?;
+    store.check_linked_files(id)
+}
+
+/// Accepts and runs one capture, the way the interface does.
+fn capture(store: &ProjectStore, selected: &[InputId]) -> Result<RunId, ProjectError> {
+    let id = store.accept_job()?;
+    store.capture_file_facts(id, selected)
+}
+
+/// A cancellation whose first chunk read waits for the test.
+///
+/// The worker passes `reached` once it is inside the read, then waits on
+/// `proceed`. Both are two-party barriers with the test as the other party, so
+/// the test can act while the operation is provably mid-read, without a sleep.
+/// Every chunk the reader hands to the digest is counted, cancelled or not.
+fn gated(reached: Arc<Barrier>, proceed: Arc<Barrier>) -> (Cancellation, Arc<AtomicUsize>) {
+    let chunks = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&chunks);
+    let cancellation = Cancellation::with_gate(Arc::new(move || {
+        if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+            reached.wait();
+            proceed.wait();
+        }
+    }));
+    (cancellation, chunks)
+}
+
+/// A cancellation that only counts the chunks it is asked for.
+fn counting() -> (Cancellation, Arc<AtomicUsize>) {
+    let chunks = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&chunks);
+    let cancellation = Cancellation::with_gate(Arc::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+    }));
+    (cancellation, chunks)
+}
+
+/// An identifier this store never minted.
+fn never_minted() -> ProjectJobId {
+    ProjectJobId::parse("project-job-999999").expect("a well-formed handle")
+}
+
 // ---------------------------------------------------------------------------
 // Identity through a roundtrip
 // ---------------------------------------------------------------------------
@@ -99,9 +145,7 @@ fn unavailable_reason(store: &ProjectStore, id: InputId) -> Option<&'static str>
 fn every_identifier_survives_a_save_and_reopen_unchanged() {
     let scratch = Scratch::new("identity");
     let (store, input_id) = store_with_reference(&scratch, "sample.txt", b"one acquisition");
-    store
-        .capture_file_facts(&[input_id])
-        .expect("the capture completes");
+    capture(&store, &[input_id]).expect("the capture completes");
 
     let before = store.describe();
     let project_document = scratch.join("project.mscanvas");
@@ -151,7 +195,7 @@ fn a_reopened_project_starts_with_every_reference_unchecked() {
 fn a_recorded_completed_run_is_history_and_not_a_schedule() {
     let scratch = Scratch::new("history");
     let (store, input_id) = store_with_reference(&scratch, "sample.txt", b"bytes");
-    store.capture_file_facts(&[input_id]).expect("capture");
+    capture(&store, &[input_id]).expect("capture");
     let project_document = scratch.join("project.mscanvas");
     store.save_as(&project_document).expect("save as");
 
@@ -207,7 +251,7 @@ fn altered_bytes_at_the_same_length_and_modified_time_are_detected() {
         "the modified time is unchanged"
     );
 
-    store.check_linked_files().expect("check");
+    check(&store).expect("check");
 
     // Length and modified time are hints and both say nothing changed. Only the
     // digest of a stable read decides, which is why this is `differentContent`.
@@ -248,7 +292,7 @@ fn a_deleted_reference_is_missing_and_not_unreadable() {
     let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
     fs::remove_file(scratch.join("sample.txt")).expect("remove");
 
-    store.check_linked_files().expect("check");
+    check(&store).expect("check");
 
     assert_eq!(verification(&store, id), "unavailable");
     assert_eq!(
@@ -265,7 +309,7 @@ fn a_directory_at_the_reference_location_is_unsafe_and_not_missing() {
     fs::remove_file(&path).expect("remove the file");
     fs::create_dir(&path).expect("put a directory at the same name");
 
-    store.check_linked_files().expect("check");
+    check(&store).expect("check");
 
     assert_eq!(unavailable_reason(&store, id), Some("unsafeReference"));
 }
@@ -294,11 +338,11 @@ fn a_file_held_writable_elsewhere_reports_an_unstable_read() {
         .open(scratch.join("sample.txt"))
         .expect("hold the file writable");
 
-    store.check_linked_files().expect("check");
+    check(&store).expect("check");
     assert_eq!(unavailable_reason(&store, id), Some("unstableRead"));
 
     drop(held);
-    store.check_linked_files().expect("check again");
+    check(&store).expect("check again");
     assert_eq!(verification(&store, id), "matchingRecordedContent");
 }
 
@@ -322,13 +366,13 @@ fn an_incomplete_required_member_set_is_its_own_outcome() {
         "the companion the family mandates is recorded as a member"
     );
 
-    store.check_linked_files().expect("check");
+    check(&store).expect("check");
     assert_eq!(verification(&store, id), "matchingRecordedContent");
 
     // The primary is still there; the companion is not. That is not a missing
     // input and not changed content.
     fs::remove_file(scratch.join("run.wiff.scan")).expect("remove the companion");
-    store.check_linked_files().expect("check again");
+    check(&store).expect("check again");
     assert_eq!(
         unavailable_reason(&store, id),
         Some("incompleteRequiredMembers")
@@ -384,7 +428,7 @@ fn a_project_and_its_data_copied_together_still_resolve() {
     moved
         .open_document(&elsewhere.join("project.mscanvas"), false)
         .expect("open the copy");
-    moved.check_linked_files().expect("check");
+    check(&moved).expect("check");
 
     assert_eq!(
         moved.describe().inputs[0].verification,
@@ -419,7 +463,7 @@ fn save_as_rebases_external_references_rather_than_reinterpreting_them() {
         .save_as(&second_home.join("project.mscanvas"))
         .expect("second save");
 
-    store.check_linked_files().expect("check");
+    check(&store).expect("check");
     assert_eq!(
         store.describe().inputs[0].verification,
         "matchingRecordedContent",
@@ -435,7 +479,7 @@ fn save_as_rebases_external_references_rather_than_reinterpreting_them() {
 fn relinking_a_matching_candidate_moves_the_locator_and_keeps_the_identifier() {
     let scratch = Scratch::new("relink-match");
     let (store, id) = store_with_reference(&scratch, "sample.txt", b"stable bytes");
-    store.capture_file_facts(&[id]).expect("capture");
+    capture(&store, &[id]).expect("capture");
     let artifact_before = store.describe().artifacts[0].id.clone();
 
     // The file moves. Same bytes, new location.
@@ -443,7 +487,7 @@ fn relinking_a_matching_candidate_moves_the_locator_and_keeps_the_identifier() {
     fs::create_dir_all(moved.parent().expect("parent")).expect("create");
     fs::rename(scratch.join("sample.txt"), &moved).expect("move it");
 
-    store.check_linked_files().expect("check");
+    check(&store).expect("check");
     assert_eq!(
         unavailable_reason(&store, id),
         Some("missingAtCheckedLocation")
@@ -460,7 +504,7 @@ fn relinking_a_matching_candidate_moves_the_locator_and_keeps_the_identifier() {
     assert!(store.describe().inputs[0].relink_proposed);
 
     store.commit_relink(id).expect("commit");
-    store.check_linked_files().expect("check again");
+    check(&store).expect("check again");
 
     assert_eq!(verification(&store, id), "matchingRecordedContent");
     // The logical record is the same record, and the history that named it
@@ -502,7 +546,7 @@ fn a_relink_examines_only_the_candidate_it_was_given() {
     scratch.write("decoy.txt", b"bytes");
     fs::remove_file(scratch.join("sample.txt")).expect("remove");
 
-    store.check_linked_files().expect("check");
+    check(&store).expect("check");
     assert_eq!(
         unavailable_reason(&store, id),
         Some("missingAtCheckedLocation")
@@ -885,7 +929,7 @@ fn a_save_leaves_no_temporary_beside_the_document() {
 fn a_capture_records_the_bytes_it_actually_observed() {
     let scratch = Scratch::new("capture");
     let (store, id) = store_with_reference(&scratch, "sample.txt", b"twelve bytes");
-    store.capture_file_facts(&[id]).expect("capture");
+    capture(&store, &[id]).expect("capture");
 
     let described = store.describe();
     assert_eq!(described.artifacts.len(), 1);
@@ -906,7 +950,7 @@ fn a_capture_over_a_missing_reference_records_a_failure_and_no_artifact() {
     let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
     fs::remove_file(scratch.join("sample.txt")).expect("remove");
 
-    let refusal = store.capture_file_facts(&[id]).expect_err("a refusal");
+    let refusal = capture(&store, &[id]).expect_err("a refusal");
     assert_eq!(
         refusal,
         ProjectError::Unavailable(UnavailableReason::MissingAtCheckedLocation)
@@ -926,11 +970,16 @@ fn a_capture_over_a_missing_reference_records_a_failure_and_no_artifact() {
 fn a_cancelled_capture_records_a_cancellation_and_no_artifact() {
     let scratch = Scratch::new("capture-cancelled");
     let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
-    store.cancel();
+    let operation = store.accept_job().expect("accept");
+    assert_eq!(store.cancel_job(operation), CancelOutcome::Cancelled);
 
-    let refusal = store.capture_file_facts(&[id]).expect_err("a refusal");
+    let refusal = store
+        .capture_file_facts(operation, &[id])
+        .expect_err("a refusal");
     assert_eq!(refusal, ProjectError::Cancelled);
 
+    // The operation was accepted and dispatched, so its cancellation is a
+    // fact of its history. What it did not do is produce anything.
     let described = store.describe();
     assert!(described.artifacts.is_empty());
     assert_eq!(described.runs[0].outcome, "cancelled");
@@ -941,7 +990,7 @@ fn a_capture_of_nothing_is_refused() {
     let scratch = Scratch::new("capture-nothing");
     let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
     assert_eq!(
-        store.capture_file_facts(&[]).expect_err("a refusal"),
+        capture(&store, &[]).expect_err("a refusal"),
         ProjectError::NothingSelected
     );
     assert!(store.describe().runs.is_empty(), "no run was invented");
@@ -951,7 +1000,7 @@ fn a_capture_of_nothing_is_refused() {
 fn removing_a_reference_removes_the_history_that_named_it_and_no_file() {
     let scratch = Scratch::new("remove");
     let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
-    store.capture_file_facts(&[id]).expect("capture");
+    capture(&store, &[id]).expect("capture");
     assert_eq!(store.describe().artifacts.len(), 1);
 
     store.remove_input(id).expect("remove");
@@ -976,13 +1025,362 @@ fn a_cancelled_check_leaves_references_unchecked() {
     let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
     // Registration established a match. A cancelled check must not turn that
     // into a weaker claim, and must not leave a partial one either.
-    store.check_linked_files().expect("a real check");
+    check(&store).expect("a real check");
     assert_eq!(verification(&store, id), "matchingRecordedContent");
 
-    store.cancel();
-    store.check_linked_files().expect("the cancelled check");
+    let operation = store.accept_job().expect("accept");
+    assert_eq!(store.cancel_job(operation), CancelOutcome::Cancelled);
+    store
+        .check_linked_files(operation)
+        .expect("the cancelled check");
 
     assert_eq!(verification(&store, id), "notChecked");
+
+    // And the cancellation ended with the operation it was for. The next
+    // check is a new operation and runs.
+    check(&store).expect("the next check");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+}
+
+// ---------------------------------------------------------------------------
+// Cancellation belongs to one accepted operation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_cancel_with_nothing_running_does_not_cancel_the_next_operation() {
+    let scratch = Scratch::new("idle-cancel");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+
+    // Nothing is running. A cancel now is a click on nothing: it names no
+    // operation, it is told so, and it must not be remembered as a credit
+    // against whatever the user starts next. This is the regression the old
+    // store-wide flag failed.
+    let dirty_before = store.describe().dirty;
+    assert_eq!(
+        store.cancel_job(never_minted()),
+        CancelOutcome::NoActiveOperation
+    );
+    assert!(
+        store.describe().runs.is_empty(),
+        "an idle cancel invents no run"
+    );
+    assert_eq!(
+        store.describe().dirty,
+        dirty_before,
+        "an idle cancel changes nothing"
+    );
+
+    check(&store).expect("the next check");
+    assert_eq!(
+        verification(&store, id),
+        "matchingRecordedContent",
+        "an idle cancel must not have cancelled the check that followed it"
+    );
+
+    // The same for a cancel that names an operation which has already
+    // finished: it is late, it finds nothing, and the one after it runs.
+    let finished = store.accept_job().expect("accept");
+    store.check_linked_files(finished).expect("run");
+    assert_eq!(store.cancel_job(finished), CancelOutcome::NoActiveOperation);
+    check(&store).expect("the next check again");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+}
+
+#[test]
+fn an_operation_cancelled_after_acceptance_never_opens_a_file() {
+    let scratch = Scratch::new("cancel-before-start");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    check(&store).expect("a real check");
+
+    // Accepted, not started. This is the window between the user pressing the
+    // button and the worker opening its first file, and it is not idle: the
+    // operation already has an identity, and a cancel that names it lands.
+    let (cancellation, chunks) = counting();
+    let operation = store.accept_job_with(cancellation).expect("accept");
+    assert_eq!(store.cancel_job(operation), CancelOutcome::Cancelled);
+
+    store
+        .check_linked_files(operation)
+        .expect("the check runs and does nothing");
+    assert_eq!(verification(&store, id), "notChecked");
+    assert_eq!(
+        chunks.load(Ordering::SeqCst),
+        0,
+        "no file was read: the cancel arrived before any expensive I/O"
+    );
+
+    // The same window, for a capture.
+    let (cancellation, chunks) = counting();
+    let operation = store.accept_job_with(cancellation).expect("accept");
+    assert_eq!(store.cancel_job(operation), CancelOutcome::Cancelled);
+    assert_eq!(
+        store.capture_file_facts(operation, &[id]),
+        Err(ProjectError::Cancelled)
+    );
+    assert_eq!(chunks.load(Ordering::SeqCst), 0);
+    let described = store.describe();
+    assert!(described.artifacts.is_empty());
+    assert_eq!(described.runs.len(), 1);
+    assert_eq!(described.runs[0].outcome, "cancelled");
+
+    // Control: the next operation is a new one and completes.
+    capture(&store, &[id]).expect("completes");
+    assert_eq!(store.describe().artifacts.len(), 1);
+}
+
+#[test]
+fn a_cancel_during_a_read_wins_before_commit() {
+    let scratch = Scratch::new("cancel-mid-read");
+    // Four 64 KiB chunks, so there is a "next chunk" for the cancel to stop.
+    let path = scratch.write("big.bin", &vec![0x5A; 200 * 1024]);
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    let id = store.register_input(&path).expect("register");
+    let store = Arc::new(store);
+
+    let reached = Arc::new(Barrier::new(2));
+    let proceed = Arc::new(Barrier::new(2));
+    let (cancellation, chunks) = gated(Arc::clone(&reached), Arc::clone(&proceed));
+    let operation = store.accept_job_with(cancellation).expect("accept");
+
+    let worker = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || store.capture_file_facts(operation, &[id]))
+    };
+    // The worker is inside its first chunk and cannot commit.
+    reached.wait();
+    assert_eq!(store.cancel_job(operation), CancelOutcome::Cancelled);
+    proceed.wait();
+
+    assert_eq!(
+        worker.join().expect("the worker"),
+        Err(ProjectError::Cancelled)
+    );
+    // The flag is checked at every chunk boundary before the read. The gate
+    // held the worker at the first boundary, so the cancel was seen there and
+    // no chunk was read at all: one boundary reached, none crossed. A full
+    // read of this file crosses five (four of data, one that finds the end).
+    assert_eq!(chunks.load(Ordering::SeqCst), 1);
+
+    let described = store.describe();
+    assert!(
+        described.artifacts.is_empty(),
+        "a cancel that won before commit published no artifact"
+    );
+    assert_eq!(described.runs[0].outcome, "cancelled");
+    assert_eq!(
+        described.inputs[0].members[0].recorded_byte_length,
+        200 * 1024,
+        "the recorded baseline is untouched"
+    );
+
+    // Control: a fresh operation reads the whole file and completes, and its
+    // reader crossed every boundary the cancelled one did not.
+    let (cancellation, chunks) = counting();
+    let operation = store.accept_job_with(cancellation).expect("accept");
+    store
+        .capture_file_facts(operation, &[id])
+        .expect("completes");
+    assert_eq!(chunks.load(Ordering::SeqCst), 5);
+    let described = store.describe();
+    assert_eq!(described.artifacts.len(), 1);
+    assert_eq!(described.runs[1].outcome, "completed");
+
+    // And the history that resulted is a valid document: the cancelled run
+    // names no artifact, the completed one names exactly its own.
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    let after = reopened.describe();
+    assert_eq!(after.runs[0].outcome, "cancelled");
+    assert!(after.runs[0].output_artifact_ids.is_empty());
+    assert_eq!(
+        after.runs[1].output_artifact_ids,
+        vec![after.artifacts[0].id.clone()]
+    );
+}
+
+#[test]
+fn a_cancel_names_only_its_own_operation_while_another_runs() {
+    let scratch = Scratch::new("cancel-names-one");
+    let path = scratch.write("big.bin", &vec![0x33; 200 * 1024]);
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    let id = store.register_input(&path).expect("register");
+    let store = Arc::new(store);
+
+    // An earlier operation, finished. Its identifier is now a late one.
+    let earlier = store.accept_job().expect("accept");
+    store.check_linked_files(earlier).expect("run");
+
+    let reached = Arc::new(Barrier::new(2));
+    let proceed = Arc::new(Barrier::new(2));
+    let (cancellation, _) = gated(Arc::clone(&reached), Arc::clone(&proceed));
+    let current = store.accept_job_with(cancellation).expect("accept");
+    assert_ne!(earlier, current);
+
+    let worker = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || store.check_linked_files(current))
+    };
+    reached.wait();
+
+    // While it runs: a late cancel for the earlier operation names nothing
+    // that is running; an identifier never minted names nothing at all; a
+    // second operation is refused; and running this one twice is refused.
+    assert_eq!(store.cancel_job(earlier), CancelOutcome::Stale);
+    assert_eq!(store.cancel_job(never_minted()), CancelOutcome::Stale);
+    assert_eq!(store.accept_job(), Err(ProjectError::AlreadyRunning));
+    assert_eq!(
+        store.check_linked_files(current),
+        Err(ProjectError::AlreadyRunning)
+    );
+
+    // Cancelling the running operation itself, twice, is one cancellation.
+    assert_eq!(store.cancel_job(current), CancelOutcome::Cancelled);
+    assert_eq!(store.cancel_job(current), CancelOutcome::Cancelled);
+    proceed.wait();
+    worker.join().expect("the worker").expect("the check");
+    assert_eq!(verification(&store, id), "notChecked");
+
+    // Once it is gone, its identifier is late too, and the next operation
+    // runs to completion.
+    assert_eq!(store.cancel_job(current), CancelOutcome::NoActiveOperation);
+    check(&store).expect("the next check");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+}
+
+#[test]
+fn closing_and_reopening_while_a_check_runs_discards_its_answer() {
+    let scratch = Scratch::new("cancel-reopen");
+    let path = scratch.write("big.bin", &vec![0x77; 200 * 1024]);
+    let store = ProjectStore::new();
+    store.create("Fixture".to_owned(), false).expect("new");
+    let id = store.register_input(&path).expect("register");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    let store = Arc::new(store);
+
+    let reached = Arc::new(Barrier::new(2));
+    let proceed = Arc::new(Barrier::new(2));
+    let (cancellation, _) = gated(Arc::clone(&reached), Arc::clone(&proceed));
+    let operation = store.accept_job_with(cancellation).expect("accept");
+    let worker = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || store.check_linked_files(operation))
+    };
+    reached.wait();
+
+    // The same document, closed and reopened underneath the running check.
+    // Reopening keeps every identifier, so the check's answers would still
+    // find rows to land in -- which is exactly why the generation, not the
+    // identifiers, decides whether they may.
+    store.close(false).expect("close");
+    store.open_document(&document, false).expect("reopen");
+    proceed.wait();
+    worker.join().expect("the worker").expect("the check");
+
+    assert_eq!(
+        verification(&store, id),
+        "notChecked",
+        "an answer computed for the closed incarnation was not applied to the reopened one"
+    );
+    // The delayed operation's identifier now names nothing.
+    assert_eq!(
+        store.cancel_job(operation),
+        CancelOutcome::NoActiveOperation
+    );
+    // Control: the reopened project runs its own check.
+    check(&store).expect("the next check");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+}
+
+#[test]
+fn a_cancelled_unstarted_operation_is_not_handed_to_the_next_activation() {
+    let scratch = Scratch::new("cancel-unstarted-reuse");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+
+    // Accepted and cancelled, and its run never arrives -- a reload or a lost
+    // request between the acceptance and the run. Found by the delta review:
+    // the idempotent acceptance handed this identifier, flag and all, to the
+    // next activation, whose check then did nothing without saying so.
+    let abandoned = store.accept_job().expect("accept");
+    assert_eq!(store.cancel_job(abandoned), CancelOutcome::Cancelled);
+
+    let next = store.accept_job().expect("accept again");
+    assert_ne!(
+        next, abandoned,
+        "a cancelled operation is finished; the next activation is a new one"
+    );
+    store.check_linked_files(next).expect("runs");
+    assert_eq!(
+        verification(&store, id),
+        "matchingRecordedContent",
+        "the cancel stayed with the operation it named"
+    );
+    // The abandoned identifier names nothing that can run, and running the
+    // next as a capture records no cancelled run the user never asked for.
+    assert_eq!(
+        store.check_linked_files(abandoned),
+        Err(ProjectError::StaleOperation)
+    );
+    capture(&store, &[id]).expect("completes");
+    let described = store.describe();
+    assert_eq!(described.runs.len(), 1);
+    assert_eq!(described.runs[0].outcome, "completed");
+}
+
+#[test]
+fn a_completion_that_wins_first_keeps_its_outcome() {
+    let scratch = Scratch::new("cancel-late");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let operation = store.accept_job().expect("accept");
+    store
+        .capture_file_facts(operation, &[id])
+        .expect("completes");
+
+    // The cancel is late. It rewrites nothing.
+    assert_eq!(
+        store.cancel_job(operation),
+        CancelOutcome::NoActiveOperation
+    );
+    let described = store.describe();
+    assert_eq!(described.runs[0].outcome, "completed");
+    assert_eq!(described.artifacts.len(), 1);
+}
+
+#[test]
+fn an_unstarted_operation_is_superseded_when_the_project_moves() {
+    let scratch = Scratch::new("cancel-supersede");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+
+    // Accepting twice at one generation is one operation, so a doubled press
+    // cannot start two.
+    let first = store.accept_job().expect("accept");
+    assert_eq!(store.accept_job().expect("accept again"), first);
+
+    // The project is replaced before it starts. It cannot run against the new
+    // one, so the new one's operation takes its place and it is refused.
+    store.create("Another".to_owned(), true).expect("replace");
+    let path = scratch.write("other.txt", b"other bytes");
+    let id = store.register_input(&path).expect("register");
+    let second = store.accept_job().expect("accept for the new project");
+    assert_ne!(first, second);
+    assert_eq!(
+        store.check_linked_files(first),
+        Err(ProjectError::StaleOperation)
+    );
+    store
+        .check_linked_files(second)
+        .expect("the new project runs its own");
+    assert_eq!(verification(&store, id), "matchingRecordedContent");
+
+    // Finished identifiers cannot run again either.
+    assert_eq!(
+        store.check_linked_files(second),
+        Err(ProjectError::StaleOperation)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1210,7 +1608,7 @@ fn a_lower_case_recorded_digest_still_matches_identical_bytes() {
 
     let reopened = ProjectStore::new();
     reopened.open_document(&document, false).expect("open");
-    reopened.check_linked_files().expect("check");
+    check(&reopened).expect("check");
 
     // The bytes are identical. Telling the user their data changed because two
     // spellings of one digest were compared as strings would be a false alarm
@@ -1285,7 +1683,7 @@ fn a_legitimately_long_file_name_is_still_registerable() {
     store
         .save_as(&scratch.join("project.mscanvas"))
         .expect("save as");
-    store.check_linked_files().expect("check");
+    check(&store).expect("check");
     assert_eq!(verification(&store, id), "matchingRecordedContent");
     // And saved beside its data, so the reference is portable rather than
     // silently falling back to an absolute one.
