@@ -706,11 +706,306 @@ refusals are the point of M8.3's refusals: "check this file first" and "it has
 changed" are two different instructions, and neither reaches the reader through
 a catch-all.
 
+## What M8.4 added on top of this
+
+The first persistent layer identity, recorded here because it is the first
+object M8 adds beside the input, artifact and run records, and because the
+temptation to make it carry more than it does is the thing worth writing down.
+
+### What a layer is, and is not
+
+A layer is a project-owned identity that says: *this future visible or
+comparable layer is sourced from this project record.* It is not a scientific
+comparison, not a figure, not a series and not a row. Its first admitted
+production source is the existing project reference (`InputId`), and only where
+that reference has been handed to the Workbench through the M8.3 bridge -- so
+the first closed layer is an acquisition layer, and a checked `.txt` that
+`CaptureFileFactsV1` exists for cannot become one.
+
+The identity is `LayerId`, a UUID beside `InputId`, `RunId` and `ArtifactId`,
+with the same posture: persistent, unique inside one project, minted once for a
+record that did not exist before, kept exactly as saved on reopen, and never a
+path, a `DatasetId`, a `FileIdentity`, a display name, a plot-series ordinal or
+a `StyleRole`. The raw identifier reaches the page as the address the page
+already uses for every record, and is never ordinary visible text: a layer's
+visible name is its source's label.
+
+### The record, exactly
+
+```json
+{
+  "id": "<uuid>",
+  "source": { "kind": "input", "inputId": "<uuid>" }
+}
+```
+
+That is the whole of `LayerRecord { id: LayerId, source: LayerSource }`, and
+`LayerSource` has one variant because one current consumer exists. There is no
+label, no metadata bag, no style, visibility, order, normalization or trace
+quantity, no `FigureSpec`, no provider or backend authority, and no `DatasetId`,
+absolute path, `FileIdentity`, check state or attachment state -- the first
+group are comparison semantics this schema does not hold, and the second are
+session or filesystem facts a document must not claim. An `Artifact` source
+variant is deliberately not added ahead of the M9 consumer that could construct
+and validate one; a future typed derived artifact is a different source, and
+adding it is a schema decision of its own.
+
+The document schema is **2**. Schema 1 was the shape before layers existed and
+was never published outside development, so a document carrying it is refused
+as `unsupportedVersion` by the policy that already refuses every other version:
+no migration is built for a format no user ever held, and the reader's own
+sentence for it ("written by a newer version") is the true one for a
+development-era file only in the sense that matters -- this build is the wrong
+reader for it, and replacing it would be the wrong answer. That is the exact
+disposition. Keeping the version at 1 and defaulting the field would have made
+an M8.4 document read as `malformed` by an M8.3 build, which is the untrue
+sentence, and would have silently changed what a versioned shape means.
+
+### The creation rule
+
+`Create layer` is offered only for a reference whose remembered Workbench row is
+live *right now*. The association M8.3 records is what proves the source is an
+acquisition the Workbench admitted under its own rules; the roster is the only
+authority on whether that row still exists. Rust asks that question itself when
+the command arrives, as an in-memory lookup of the remembered handle against the
+registry, with the session lock released and rejoined under the M8.1
+generation. A project closed, replaced, saved elsewhere, or with a record
+removed or relinked while the roster was being asked refuses `staleDocument`
+rather than writing a layer into whatever is open now. A reference with no
+remembered row is refused `notInWorkbench` without the roster being asked at
+all; a remembered row the roster no longer holds is refused the same way after
+one question. Nothing in the sequence opens, reads, hashes or converts a file,
+and no provider is probed: creating a layer with the source file already
+deleted succeeds and leaves the check state exactly as it was.
+
+**One current default layer per input.** Asking again for a reference that has
+a layer answers the existing `LayerId`, before the roster is asked and without
+marking the project unsaved. That is a product rule for this surface, not a
+claim that the artifact model can never hold two derived layers from one
+acquisition: a derived artifact would be a different source. General
+duplicate-layer semantics are not built.
+
+### Integrity
+
+`validate` -- and therefore every open, every Save and every Save As -- refuses
+a duplicate `LayerId`, a layer sourced from a reference the document does not
+contain, and more layers than references. Two layers sourced from one reference
+are refused as `duplicateIdentifier`, the single documented rule, by the M8.2
+precedent: a relationship the document states twice is a duplicate, and
+normalising it would mean choosing which layer is *the* layer of that input. A
+source of any other kind, or a layer carrying a field this record does not
+hold, is `malformed` by construction: the type has no variant for it. Nothing is
+inferred from a label, a path, creation order or lineage adjacency, and the
+layer adds no cycle to the graph `lineage.rs` reasons about: a layer names one
+input, an input names nothing, and nothing names a layer.
+
+Round-trip preserves the identifier exactly -- Save, close and open read back
+the same `LayerId` and the same source; Save As to another directory rebases
+the reference's locator and carries the layer untouched, because the layer
+names the reference by identifier and not by where it is.
+
+### Historical provenance and current availability are two things
+
+A persisted layer says which reference it belongs to, and that does not change
+because the reference is not checked, has changed, is missing, is relinked,
+has its row removed, or the project is reopened. What changes is the
+*projection*. The projection is deliberately computed in the interface from the
+truths it already holds -- the source's `verification` and its remembered
+handle, resolved against the roster -- through one function that the reference
+row, the layer row and the Details region all share, so no two surfaces can
+disagree about whether a row is there. Rust sends no availability field: a
+second copy of the answer would be one more thing to disagree.
+
+So a layer row and its Details answer two current facts, each labelled as
+current: whether the source is in the Workbench (attached / detached), and what
+the last check established about the source's file, in the same sentences the
+reference row uses. Selecting a layer sends nothing, checks nothing and
+reattaches nothing; a detached layer offers no Show in Workbench control and
+manufactures no `DatasetId`. The M8.3 association is an association for one
+session; it is not turned into a claim that the source's bytes continue to
+match.
+
+### Lifetimes, and the removal rule
+
+- Removing a layer removes the `LayerRecord` and nothing else: not the
+  reference, not a Workbench row, not a file, and no run or artifact.
+- Removing a reference that has a layer is refused as `layerDependsOnInput`,
+  before anything is mutated, and the reader is told to remove the layer
+  first. It is not cascaded: history is something this application wrote, and
+  the removal cascades it because a dangling run is not a record; a layer is
+  an identity the user created, and deleting it silently to satisfy a removal
+  would remove something they did not ask to remove. There is no dependency
+  transaction, and no dangling `LayerId` can be produced.
+- Relinking the same reference to a verified new location keeps the same
+  `LayerId` and source. The remembered row is dropped, as M8.3 already drops
+  it, so the layer projects detached until a new admission -- and that
+  admission converges on the same layer.
+- Removing a Workbench row or clearing the workspace leaves the layer, its
+  source and its history where they are; only the projection turns detached.
+  Closing or replacing a project does not remove a row. Reopening a project
+  restores no row and attaches no layer: the handle was never in the file, and
+  every reference starts unchecked as before.
+
+### What is not persisted, proved rather than promised
+
+A document written with a Workbench row remembered and a layer created is
+serialized and searched: no `dataset`, `handle`, `identity`, `volume` or
+`fileId` appears in it, the layer entry is byte for byte the shape above, and
+the projection the interface receives carries only `id` and `sourceInputId`.
+The structural argument stands beside the test: the session association lives
+in `OpenProject.admitted`, which no document type can express, and
+`LayerRecord` has no field that could hold a handle, a path or an identity.
+
+### The two commands
+
+`create_project_layer(inputId)` and `remove_project_layer(layerId)`, each
+answering the whole project description, and nothing else. Neither takes an
+operation ticket, because neither reads a file or can be cancelled; the
+command-surface parity test pins that these two names, and no third, were
+added. `remove_project_input` gains the `layerDependsOnInput` refusal.
+
+### The surface
+
+Nothing new at the top level. The Project surface gains a compact **Layers**
+section between the referenced files and the recorded work, and the M8.2
+Details region gains a layer branch. Each reference row carries one
+create-or-show control that is the *same element* in both states, so the
+keyboard stays on it when the answer to a press turns "Create layer" into
+"Show layer"; an ineligible control stays reachable, carries `aria-disabled`
+rather than `disabled`, and points at its reason. A layer row is named by its
+source, says whether it is in the Workbench and what the source's current state
+is, offers Show in Workbench only while the row is live, and has its own Remove.
+Details for a layer answers what it is, its source (a control, with the
+source's current state beside it), its current availability, and the runs
+that consumed the source; Details for a reference now names its layer, or says
+none has been made. Navigation between the two is local state over data the
+page already holds. Every owned string exists in `en` and `zh-CN`.
+
+### Kept outside scientific rendering
+
+`mscanvas-plot-spec` is untouched. No `LayerId` or source identifier enters
+`FigureSpec`, `PanelSpec`, `SeriesSpec`, `StyleRole`, the SVG, the PNG metadata
+or the CSV/TSV schemas, and `StyleRole::Measurement`, `SecondaryMeasurement`
+and `Baseline` remain quantities rather than sources. A later comparison
+consumer can introduce a typed adapter between a `LayerId` and the series it
+resolves, once normalization, multiple live sources and layer selection
+actually exist. None of that -- overlay, visibility, ordering as render order,
+per-layer style, normalization, relative intensity, cross-run selected scan,
+per-layer viewport or trace choice, figure composition, saved comparison
+figures, multi-layer export -- is built here.
+
+### Tests added for layers
+
+Rust, in `project/tests.rs` and `reattachment/tests.rs`, each with a positive
+and a negative control where the property has one: an attached reference
+becomes one layer; a repeated create answers the same layer and dirties
+nothing; Save, close and open keep the identifier and restore no row; Save As
+to another directory keeps it; the layer remains after its row is removed and
+after the workspace is cleared, with the remembered handle left for the roster
+to answer about; a reopened layer is there before any row, a reference with no
+row is refused, and a fresh admission converges on the same layer; the source's
+check state neither gates nor rewrites the layer, including a check that finds
+the file missing; a relink keeps the layer and detaches its row; removing a
+layer changes nothing but the layer; a reference with a layer is refused
+removal and the document is unchanged and still valid once the layer goes; a
+duplicate `LayerId`, a dangling source, an unknown source kind, an extra field,
+two layers of one reference and more layers than the bound are each refused
+with their own problem; a never-admitted reference is refused without the
+roster being asked, and a gone row after one question; a project closed, a
+different reference removed and the very source removed while the roster is
+being asked each get no layer and leave nothing dangling; creating and
+removing a layer read no file and launch no process; the serialized document
+carries no session fact; and schema 1 is refused rather than migrated.
+
+Frontend, in `ProjectLayers.test.tsx` and `lineage.test.ts`: the control is
+offered only for a live row and sends nothing when inert; a create keeps the
+keyboard on the control and turns it into Show; an existing layer is shown, not
+duplicated; the list, its two current facts, selection, Show in Workbench only
+while live, detachment when the row leaves, a reopen that forgot the row, a
+source whose state changed, removal and the two refusals in their own words, a
+source that is gone, keyboard reach of every control, Details from both ends
+with no request in either direction, a long source name that wraps, and the
+whole of it in Simplified Chinese.
+
+One browser scenario, `e2e/specs/m8.4-layers.browser.e2e.ts`, over the
+mock-IPC harness: the ineligible control and its reason; Add to Workbench and
+back; a keyboard create whose only request names the reference; the layer
+inspected on arrival; layer to source to layer with the call ledger unchanged;
+Show in Workbench from Details landing on the selected, focused row; Save,
+Close and Open through the real buttons with the layer back under the same
+identifier, detached, the reference offering Show rather than a second Create,
+the roster still holding the row, and exactly three requests sent; and Remove
+leaving the reference, run, record and row in place. It is React/mock-IPC
+layout and interaction evidence only -- the project, the add result, the layer
+answer and the roster are a controlled answer table -- and it proves nothing
+about the filesystem, persistence or a provider; those claims are the Rust
+tests' above.
+
+### Local validation record for M8.4
+
+Run on the M8.4 candidate, with direct exit status, on 2026-09-22. No VM,
+native or provider campaign was run, and none is claimed.
+
+| Gate | Exit | What it established |
+| --- | --- | --- |
+| `cargo fmt --all --check` | 0 | |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --workspace` | 0 | desktop library 1101 passed, 14 ignored; plot-spec 125; proteowizard 513 plus its integration targets; the project store's 102 include the 21 layer cases, and the bridge's 29 include the 2 roster-backed ones |
+| `pnpm lint` | 0 | |
+| `pnpm build` | 0 | |
+| `pnpm test`, first run | **1** | 5 failed of 2091, retained below |
+| `pnpm test`, second run, alone | 0 | 2091 passed of 2091 |
+| `pnpm e2e:typecheck` | 0 | |
+| `python -B scripts/check_repo.py` | 0 | |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.4-layers.browser.e2e.ts` | 0 | 1 passing, ten captured frames, empty console ledger; evidence under `test-results/m8.4/browser-CYCFqz` (an earlier pass of the same spec on the same tree is at `browser-3rqJQC`) |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.3-reattachment.browser.e2e.ts` | 0 | 2 passing with the `layers` seed; evidence under `test-results/m8.3/browser-dKNRqn` |
+
+**The first frontend run, preserved.** It was started while the Rust gates
+were compiling and testing on the same machine, which is an orchestration
+choice recorded rather than hidden. Five cases failed, in two classes, and
+neither is this slice's:
+
+- `M73Viewer.test.tsx` (two cases) and `M74FigureComposition.test.tsx` (one
+  case) timed out at 5000 ms. All three are whole-application compositions of
+  viewer and figure surfaces this slice does not touch -- its one change to
+  the shell is two props on the Details region -- and they are the
+  parallel-sensitive App-level class already on record.
+- `ProvenanceDetails.test.tsx > shows each current state as its own sentence`
+  and `> keeps an unresolvable relationship visible rather than shortening the
+  list` failed with Details reading "nothing selected" after the inspect
+  press. These are the M8.2 cases already recorded as timing-sensitive, and
+  this slice found their cause rather than their symptom: `useProject` clears
+  `inspecting` in a passive effect keyed on the open project's identity, and
+  that effect also fires when the project *first* arrives. A press landing
+  between the rows rendering and that effect flushing is applied first and
+  then cleared. The two tests press the instant the control exists, which is
+  exactly that window; a person cannot reach it. Neither the hook nor the
+  tests are changed here -- the hook's behaviour is M8.1's and repairing it is
+  a decision of its own, and the minimal repair is one that resets only when a
+  previously open project is replaced or closed. The M8.4 suite flushes that
+  effect before pressing, which is why it does not sit in the window.
+
+The second run, alone, passed everything. It does not erase the first; both
+are the record.
+
+**Inherited debt, carried and not widened.** The ten historical browser specs
+that still select `li.dataset-row`, and `m7.2-workbench`'s language snapshot
+mismatch, are as recorded above and were not run. Two observations were made
+while reading and are left as they were found: `m8.1-project-records` rejects
+a save with a `code` field where the reader has read `kind` since M8.3, so its
+two refusal cases may no longer pass -- the spec was not run and no claim is
+made either way; and every browser frame carries the harness's own notice that
+Explorer drag-and-drop is unavailable, because the shared table answers the
+drop subscription with nothing, which produces no console entry and is not
+this slice's. Nothing in an older DOM was restored and no assertion was
+weakened.
+
 ## Out of scope, explicitly
 
 Provider-dependent conversion, preview, figures, exports and clipboard remain on
-HOLD and are untouched. Figure layer identity and provenance, QC summaries and
-report surfaces are later M8 slices. M9 analysis capability is not started here.
+HOLD and are untouched. Layer identity and provenance in the Project model is
+M8.4's, above; layer identity *inside a figure*, QC summaries and report
+surfaces are later M8 slices. M9 analysis capability is not started here.
 Release-level GUI and install acceptance stays paused and unwaived: this slice
 ends as a locally committed, locally verified child candidate whose publication
 still depends on the unqualified M7.6 ancestor beneath it.
