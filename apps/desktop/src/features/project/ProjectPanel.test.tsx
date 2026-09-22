@@ -237,6 +237,8 @@ describe("the project surface", () => {
             label: "File facts: sample.mzML",
             observedInputCount: 1,
             observedMemberCount: 1,
+            producedByRunId: "ffffffff-1111-4111-8111-111111111111",
+            sourceInputIds: [input.id],
           },
         ],
         runs: [
@@ -615,6 +617,8 @@ describe("the project surface", () => {
             label: "File facts: sample.mzML",
             observedInputCount: 1,
             observedMemberCount: 1,
+            producedByRunId: "ffffffff-5555-4111-8111-111111111111",
+            sourceInputIds: [input.id],
           },
         ],
         runs: [

@@ -133,9 +133,21 @@ function recordedAt(value: string, locale: string): string {
   );
 }
 
-export function ProjectPanel({ session }: { readonly session: ProjectSession }) {
+export interface ProjectPanelProps {
+  readonly session: ProjectSession;
+  /** Whether the contextual Details region is currently on screen. */
+  readonly detailsPresent?: boolean;
+  /** Asks the shell to show it, through the same control the header uses. */
+  readonly onRevealDetails?: () => void;
+}
+
+export function ProjectPanel({
+  session,
+  detailsPresent = false,
+  onRevealDetails,
+}: ProjectPanelProps) {
   const t = useUiMessages();
-  const { state, busy, problem, cancelled, pending, selected } = session;
+  const { state, busy, problem, cancelled, pending, selected, inspecting } = session;
   const working = busy !== "idle";
   const locale = document.documentElement.lang || "en";
 
@@ -315,6 +327,20 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
         </p>
       ) : null}
 
+      {/* Below 1700px the contextual region is closed unless the user asked
+          for it, and a narrow window folds it away entirely. Inspecting an
+          object would then appear to do nothing, so this says where the answer
+          went and offers the one control that brings it back -- the same
+          toggle the header owns, not a second mechanism. */}
+      {inspecting !== null && !detailsPresent && onRevealDetails !== undefined ? (
+        <p className="project-inspect-hint" data-project-inspect-hint="">
+          <span>{t("provenanceInDetails")}</span>
+          <button type="button" className="link-button" onClick={onRevealDetails}>
+            {t("provenanceShowDetails")}
+          </button>
+        </p>
+      ) : null}
+
       {problem === null ? null : (
         <p className="project-problem" data-project-problem={problem}>
           <span>{t(refusalKey(problem))}</span>
@@ -387,15 +413,34 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
                     data-verification={input.verification}
                     data-unavailable-reason={input.unavailableReason ?? undefined}
                   >
-                    <label className="project-row-select">
+                    <div className="project-row-select">
+                      {/* Two independent choices on one row, as the roster
+                          already distinguishes them: the box chooses what the
+                          next capture covers, the name chooses what Details
+                          describes. The box carries its own name, so nothing
+                          is lost by no longer wrapping the label in it. */}
                       <input
                         type="checkbox"
                         checked={selected.includes(input.id)}
                         aria-label={t("projectSelectNamed", { name: input.label })}
                         onChange={() => session.toggleSelected(input.id)}
                       />
-                      <span className="project-row-label">{input.label}</span>
-                    </label>
+                      <button
+                        type="button"
+                        className="project-row-label"
+                        aria-current={
+                          inspecting?.kind === "input" && inspecting.id === input.id
+                            ? "true"
+                            : undefined
+                        }
+                        aria-controls="workbench-inspector"
+                        aria-label={t("provenanceInspectInput", { name: input.label })}
+                        data-project-inspect={input.id}
+                        onClick={() => session.inspect({ kind: "input", id: input.id })}
+                      >
+                        {input.label}
+                      </button>
+                    </div>
                     <p className="project-row-facts">
                       <span className="project-verification">{t(verificationKey(input))}</span>
                       <span className="project-locator">
@@ -497,7 +542,23 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
                       data-outcome={run.outcome}
                     >
                       <p className="project-run-head">
-                        <span className="project-run-operation">{t("projectOperationCapture")}</span>
+                        <button
+                          type="button"
+                          className="project-run-operation"
+                          aria-current={
+                            inspecting?.kind === "run" && inspecting.id === run.id
+                              ? "true"
+                              : undefined
+                          }
+                          aria-controls="workbench-inspector"
+                          aria-label={t("provenanceInspectRun", {
+                            name: t("projectOperationCapture"),
+                          })}
+                          data-project-inspect-run={run.id}
+                          onClick={() => session.inspect({ kind: "run", id: run.id })}
+                        >
+                          {t("projectOperationCapture")}
+                        </button>
                         <span className="project-run-outcome">
                           {t(
                             run.outcome === "completed"
@@ -525,7 +586,23 @@ export function ProjectPanel({ session }: { readonly session: ProjectSession }) 
                           // English into a Chinese session.
                           artifacts.map((artifact) => (
                             <span key={artifact.id} data-project-artifact={artifact.id}>
-                              {t("projectArtifactFileFacts")}
+                              <button
+                                type="button"
+                                className="link-button"
+                                aria-current={
+                                  inspecting?.kind === "artifact" && inspecting.id === artifact.id
+                                    ? "true"
+                                    : undefined
+                                }
+                                aria-controls="workbench-inspector"
+                                aria-label={t("provenanceInspectArtifact", {
+                                  name: t("projectArtifactFileFacts"),
+                                })}
+                                data-project-inspect-artifact={artifact.id}
+                                onClick={() => session.inspect({ kind: "artifact", id: artifact.id })}
+                              >
+                                {t("projectArtifactFileFacts")}
+                              </button>
                               {" — "}
                               {t("projectArtifactMembers", {
                                 count: artifact.observedMemberCount,

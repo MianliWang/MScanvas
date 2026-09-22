@@ -1199,4 +1199,30 @@ export const en = {
   // The artifact a capture produced, described here rather than echoed from the
   // document -- the document stores its label in English.
   projectArtifactFileFacts: "File facts",
+  // --- M8.2 provenance. What the selected project object is, and what it is
+  // related to. Recorded history and current file state are named apart,
+  // because a reference whose bytes changed still has the run that used it.
+  provenanceRegion: "Provenance",
+  provenanceNothingSelected: "Select a reference, a run or a record to see what it is related to.",
+  provenanceSelected: "Selected",
+  provenanceSelectionGone: "That record is no longer part of this project.",
+  provenanceKindInput: "Reference",
+  provenanceKindRun: "Run",
+  provenanceKindArtifact: "Record",
+  provenanceCurrentFile: "Current file",
+  provenanceUsedBy: "Used by",
+  provenanceUsedByNothing: "Nothing has used this reference yet.",
+  provenanceConsumed: "Used",
+  provenanceProduced: "Produced",
+  provenanceProducedBy: "Produced by",
+  provenanceNoProducer: "No run in this project claims this record.",
+  provenanceSources: "Recorded from",
+  provenanceNoSources: "This record observed no reference.",
+  provenanceRelatedGone: "A record that is no longer part of this project.",
+  provenanceArtifactStored: "Stored in this project, not as a separate file.",
+  provenanceInDetails: "What it is related to is shown in Details.",
+  provenanceShowDetails: "Show Details",
+  provenanceInspectInput: "Show what {{name}} is related to",
+  provenanceInspectRun: "Show what {{name}} is related to",
+  provenanceInspectArtifact: "Show what {{name}} is related to",
 } as const;

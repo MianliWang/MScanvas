@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
 import { ProjectPanel } from "../project/ProjectPanel";
+import { ProvenanceDetails } from "../project/ProvenanceDetails";
 import { useProject } from "../project/useProject";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
@@ -49,7 +50,18 @@ export function PreviewWorkspace() {
   const constrained = panels.fit.constrained;
   const rosterOpen = panels.present.roster;
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
-  const detailsAvailable = preview.status === "loaded";
+  /**
+   * Whether the contextual region has anything to describe *on this surface*.
+   *
+   * It was a loaded acquisition and nothing else, which left the Details
+   * control disabled on the Project surface -- where the region is exactly
+   * where provenance belongs. Availability is a property of the surface the
+   * user is on, so each surface answers for itself. Deliberately not a
+   * registry: there are two surfaces with contextual detail and this is what
+   * they are.
+   */
+  const detailsAvailable =
+    surface === "project" ? project.inspecting !== null : preview.status === "loaded";
   // The request is the preference; availability is not. A details panel asked
   // for while nothing is loaded stays asked for, and appears the moment a run
   // does -- it never becomes authority to load one.
@@ -635,7 +647,13 @@ export function PreviewWorkspace() {
             no provider, so it is reachable on a machine with no converter
             installed. */}
         <section id="workbench-project" className="workbench-project" hidden={surface !== "project" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("projectSurface")}>
-          <ProjectPanel session={project} />
+          <ProjectPanel
+            session={project}
+            detailsPresent={detailsOpen}
+            onRevealDetails={() => {
+              if (!panels.busy) panels.toggle("details");
+            }}
+          />
         </section>
         <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("conversionTask")}>
           <ConversionPanel
@@ -647,7 +665,12 @@ export function PreviewWorkspace() {
           />
         </section>
         <aside id="workbench-inspector" className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}>
-          {preview.status === "loaded" ? (
+          {/* One region, whichever surface is asking. The Project surface puts
+              provenance here rather than adding a navigation target of its own,
+              which is where the accepted direction puts contextual metadata. */}
+          {surface === "project" ? (
+            <ProvenanceDetails provenance={project.provenance} onSelect={project.inspect} />
+          ) : preview.status === "loaded" ? (
             <PreviewSummary
               file={previewFile ?? preview.preview.file}
               measurements={workspace.measurements}

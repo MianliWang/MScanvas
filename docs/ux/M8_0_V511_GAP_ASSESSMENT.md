@@ -86,6 +86,16 @@ gap:
 None of those was established. What is established is only that the default
 Workbench state, empty, at this one viewport, presents two regions.
 
+**Settled by M8.2, from the code rather than from a frame.** The region is
+implemented as `#workbench-inspector` and has been since M7.2. Its availability
+was `preview.status === "loaded"` and nothing else, so the `Details` control was
+disabled wherever no acquisition had been read -- including the Project surface,
+where contextual metadata is exactly what belongs. That is the fact the
+screenshot could not distinguish from "unimplemented", and it is why the
+distinction mattered: one is missing code and the other is a gate. M8.2 widened
+availability to be a property of the surface and put the provenance consumer in
+that region. The remaining items below are still unobserved.
+
 Roster width measured 278px against a ~1410px content width. Against the
 implemented 280px mapping that is a match, not a deviation; the ~240px figure is
 the v5.11 reference the mapping deliberately departed from, with its reason

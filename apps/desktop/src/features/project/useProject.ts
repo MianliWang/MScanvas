@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { NO_PROJECT, useProjectApi, type ProjectState } from "./projectApi";
+import { provenanceOf, type Provenance, type ProjectSelection } from "./lineage";
 
 /** What the surface is doing, so it can say so rather than only dim. */
 export type ProjectBusy =
@@ -60,6 +61,23 @@ export interface ProjectSession {
   readonly pending: PendingIntent | null;
   /** Which references the next capture will cover. */
   readonly selected: readonly string[];
+  /**
+   * The project object being inspected, or `null`.
+   *
+   * Deliberately separate from `selected`: ticking a reference chooses what the
+   * next capture covers, and inspecting one chooses what the Details region
+   * describes. They are different questions and a user answers them
+   * independently.
+   */
+  readonly inspecting: ProjectSelection | null;
+  /**
+   * What the Details region shows, resolved against the current project.
+   *
+   * Computed from state the page already has, so choosing a related object
+   * sends nothing, reads no file and touches no document.
+   */
+  readonly provenance: Provenance | null;
+  readonly inspect: (selection: ProjectSelection | null) => void;
   readonly toggleSelected: (inputId: string) => void;
   readonly dismissProblem: () => void;
   readonly createProject: (name: string) => Promise<void>;
@@ -104,6 +122,7 @@ export function useProject(): ProjectSession {
   const [cancelled, setCancelled] = useState(false);
   const [pending, setPending] = useState<PendingIntent | null>(null);
   const [selected, setSelected] = useState<readonly string[]>([]);
+  const [inspecting, setInspecting] = useState<ProjectSelection | null>(null);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -241,23 +260,39 @@ export function useProject(): ProjectSession {
     });
   }, [state.inputs]);
 
+  /**
+   * Forgets what was being inspected.
+   *
+   * For the three operations that replace the whole project. A removal
+   * deliberately does not clear it: a selection whose object was removed is
+   * reported as gone, which is the true thing to say, rather than silently
+   * moving the user to some other object.
+   */
+  const replaced = useCallback(() => setInspecting(null), []);
+
   const createProject = useCallback(
-    (name: string, discardUnsaved = false) =>
-      run("saving", () => api.createProject(name, discardUnsaved), {
+    (name: string, discardUnsaved = false) => {
+      replaced();
+      return run("saving", () => api.createProject(name, discardUnsaved), {
         kind: "create",
         name,
-      }),
-    [api, run],
+      });
+    },
+    [api, run, replaced],
   );
   const openProject = useCallback(
-    (discardUnsaved = false) =>
-      run("opening", () => api.openProject(discardUnsaved), { kind: "open" }),
-    [api, run],
+    (discardUnsaved = false) => {
+      replaced();
+      return run("opening", () => api.openProject(discardUnsaved), { kind: "open" });
+    },
+    [api, run, replaced],
   );
   const closeProject = useCallback(
-    (discardUnsaved = false) =>
-      run("saving", () => api.closeProject(discardUnsaved), { kind: "close" }),
-    [api, run],
+    (discardUnsaved = false) => {
+      replaced();
+      return run("saving", () => api.closeProject(discardUnsaved), { kind: "close" });
+    },
+    [api, run, replaced],
   );
 
   return {
@@ -268,6 +303,9 @@ export function useProject(): ProjectSession {
     cancelled,
     pending,
     selected,
+    inspecting,
+    provenance: provenanceOf(state, inspecting),
+    inspect: setInspecting,
     toggleSelected,
     dismissProblem: useCallback(() => {
       setProblem(null);

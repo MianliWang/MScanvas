@@ -51,6 +51,8 @@ export interface ProjectInput {
   readonly unavailableReason: UnavailableReasonId | null;
   readonly relinkProposed: boolean;
   readonly relinkCandidateMatches: boolean;
+  /** The runs that consumed this reference, oldest first. Derived in Rust. */
+  readonly consumedByRunIds: readonly string[];
 }
 
 export interface ProjectArtifact {
@@ -58,6 +60,14 @@ export interface ProjectArtifact {
   readonly label: string;
   readonly observedInputCount: number;
   readonly observedMemberCount: number;
+  /**
+   * The run that produced it, or `null` where no run in this project claims
+   * it. Never two: a document in which two runs claimed one artifact is
+   * refused when it is opened.
+   */
+  readonly producedByRunId: string | null;
+  /** The references this artifact actually recorded observations of. */
+  readonly sourceInputIds: readonly string[];
 }
 
 export interface ProjectRun {

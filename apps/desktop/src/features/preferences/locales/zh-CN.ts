@@ -1172,4 +1172,30 @@ export const zhCN = {
   // The artifact a capture produced, described here rather than echoed from the
   // document -- the document stores its label in English.
   projectArtifactFileFacts: "文件事实",
+  // --- M8.2 provenance. What the selected project object is, and what it is
+  // related to. Recorded history and current file state are named apart,
+  // because a reference whose bytes changed still has the run that used it.
+  provenanceRegion: "溯源",
+  provenanceNothingSelected: "选择一个引用、一次运行或一条记录，查看它的关联。",
+  provenanceSelected: "已选择",
+  provenanceSelectionGone: "该记录已不属于此项目。",
+  provenanceKindInput: "引用",
+  provenanceKindRun: "运行",
+  provenanceKindArtifact: "记录",
+  provenanceCurrentFile: "当前文件",
+  provenanceUsedBy: "被以下运行使用",
+  provenanceUsedByNothing: "尚未有运行使用该引用。",
+  provenanceConsumed: "使用了",
+  provenanceProduced: "产生了",
+  provenanceProducedBy: "由以下运行产生",
+  provenanceNoProducer: "此项目中没有运行声称产生该记录。",
+  provenanceSources: "记录自",
+  provenanceNoSources: "该记录未观察任何引用。",
+  provenanceRelatedGone: "一条已不属于此项目的记录。",
+  provenanceArtifactStored: "保存在此项目内，而非单独的文件。",
+  provenanceInDetails: "关联内容显示在“详情”中。",
+  provenanceShowDetails: "显示详情",
+  provenanceInspectInput: "查看 {{name}} 的关联",
+  provenanceInspectRun: "查看 {{name}} 的关联",
+  provenanceInspectArtifact: "查看 {{name}} 的关联",
 } as const;

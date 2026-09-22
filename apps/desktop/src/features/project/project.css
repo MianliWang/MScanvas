@@ -248,3 +248,145 @@
     align-items: stretch;
   }
 }
+
+/*
+ * The provenance region.
+ *
+ * The same tokens as the project surface beside it, at the contextual region's
+ * own density. Two kinds of fact are kept visually apart: a current file state
+ * carries the check tones the project rows already use, and everything under a
+ * history heading is quiet text. Neither is colour alone -- each row says in
+ * words what it is.
+ */
+.provenance {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  min-height: 100%;
+}
+
+.provenance-kind {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.provenance-name {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.provenance-section-label {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.provenance-current-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+}
+
+.provenance-empty,
+.provenance-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.provenance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.provenance-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+/* Every control on this surface, including the link-styled ones. A text link
+   is a smaller affordance, not a smaller target. */
+.provenance button {
+  min-height: 32px;
+  text-align: left;
+}
+
+.provenance-link.is-gone {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* Current state, in the tones the project rows already use for the same four
+   outcomes. The word beside it says the same thing. */
+.provenance-current,
+.provenance-outcome,
+.provenance-stored {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.provenance-current.is-matching {
+  color: var(--color-success);
+}
+
+.provenance-current.is-different {
+  color: var(--color-warning);
+}
+
+.provenance-current.is-unavailable {
+  color: var(--color-danger);
+}
+
+/* The name of the object being inspected, in the list it was chosen from. */
+.project-row-label[aria-current="true"],
+.project-run-operation[aria-current="true"] {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.project-row-label,
+.project-run-operation {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.project-row-label {
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.project-inspect-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}

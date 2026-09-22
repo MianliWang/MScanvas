@@ -416,6 +416,28 @@ created, without traversing their targets, and retains the directory rather
 than forcing past a refusal it cannot explain; and one browser campaign runs at
 a time, on its own port.
 
+## What M8.2 added on top of this
+
+The first visible consumer of these relationships, recorded here because it
+depends on the decisions above and changed two of the rules they set.
+
+The reverse edges -- which runs consumed a reference, which run produced a
+record -- are derived in `project/lineage.rs` and sent on the projection, so
+there is one computation of each and the interface does none. Two integrity
+rules were added to `validate` to make those derivations unambiguous: two runs
+claiming one artifact is refused as `ambiguousProducer`, because "what produced
+this" would otherwise have two answers; and a repeated identifier inside a
+run's inputs, a run's outputs or an artifact's observations is refused as a
+duplicate. A capture asked for one reference twice is refused at the entry, so
+the shape cannot enter a live document that `validate` would then refuse on
+every later Save.
+
+An artifact still has no backing file and no field that could hold one, so the
+consumer says where a record lives rather than leaving a gap beside references
+that do have a file. Current file state and recorded history are separate
+sections: a reference whose bytes changed still has the run that used it, and a
+reference that is gone did not erase what was recorded from it.
+
 ## Out of scope, explicitly
 
 Provider-dependent conversion, preview, figures, exports and clipboard remain on

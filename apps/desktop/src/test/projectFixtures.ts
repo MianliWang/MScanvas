@@ -16,7 +16,9 @@ import {
   NO_PROJECT,
   type CancelOutcome,
   type ProjectApi,
+  type ProjectArtifact,
   type ProjectInput,
+  type ProjectRun,
   type ProjectState,
 } from "../features/project/projectApi";
 
@@ -53,8 +55,64 @@ export function projectInput(overrides: Partial<ProjectInput> = {}): ProjectInpu
     unavailableReason: null,
     relinkProposed: false,
     relinkCandidateMatches: false,
+    consumedByRunIds: [],
     ...overrides,
   };
+}
+
+export function projectRun(overrides: Partial<ProjectRun> = {}): ProjectRun {
+  return {
+    id: "ffffffff-1111-4111-8111-111111111111",
+    operation: "captureFileFactsV1",
+    outcome: "completed",
+    inputIds: [],
+    outputArtifactIds: [],
+    applicationVersion: "0.1.0",
+    startedAt: "2026-09-22T10:00:00Z",
+    finishedAt: "2026-09-22T10:00:01Z",
+    ...overrides,
+  };
+}
+
+export function projectArtifact(overrides: Partial<ProjectArtifact> = {}): ProjectArtifact {
+  return {
+    id: "eeeeeeee-1111-4111-8111-111111111111",
+    label: "File facts: sample.mzML",
+    observedInputCount: 1,
+    observedMemberCount: 1,
+    producedByRunId: null,
+    sourceInputIds: [],
+    ...overrides,
+  };
+}
+
+/**
+ * One reference, the run that consumed it and the artifact it produced, wired
+ * to each other the way Rust wires them.
+ *
+ * Built in one helper so a test asks for a lineage rather than assembling five
+ * identifiers by hand and risking an edge that points nowhere.
+ */
+export function capturedProject(
+  overrides: { readonly input?: Partial<ProjectInput> } = {},
+): ProjectState {
+  const input = projectInput({
+    id: "11111111-2222-4111-8111-111111111111",
+    label: "QC_pool_01.mzML",
+    consumedByRunIds: ["ffffffff-2222-4111-8111-111111111111"],
+    ...overrides.input,
+  });
+  const artifact = projectArtifact({
+    id: "eeeeeeee-2222-4111-8111-111111111111",
+    producedByRunId: "ffffffff-2222-4111-8111-111111111111",
+    sourceInputIds: [input.id],
+  });
+  const run = projectRun({
+    id: "ffffffff-2222-4111-8111-111111111111",
+    inputIds: [input.id],
+    outputArtifactIds: [artifact.id],
+  });
+  return openProject({ inputs: [input], runs: [run], artifacts: [artifact] });
 }
 
 export function openProject(overrides: Partial<ProjectState> = {}): ProjectState {
