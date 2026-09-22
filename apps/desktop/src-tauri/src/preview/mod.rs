@@ -69,6 +69,11 @@ mod output_opening;
 /// the complete spectrum Rust retained -- never the complete arrays, never a
 /// path -- and no scientific export is ever taken from one. See ADR 0037.
 mod projection;
+/// The bytes a lawful SCIEX acquisition fixture is made of. Shared by this
+/// module's own suite and the project bridge's, so a compound-file header is
+/// written once.
+#[cfg(test)]
+pub(crate) mod sciex_fixture;
 pub mod selection;
 pub mod service;
 

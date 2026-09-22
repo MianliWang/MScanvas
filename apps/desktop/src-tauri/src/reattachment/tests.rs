@@ -23,7 +23,12 @@ use crate::project::record::InputId;
 use crate::project::tests::Scratch;
 use crate::project::{ProjectError, ProjectStore};
 
-use super::{AdmissionRefusal, add_project_input_to_workspace, admitted_handle};
+use crate::preview::sciex_fixture::{SCIEX_MARKERS, scan_companion_bytes, wiff_container_bytes};
+
+use super::{
+    AdmissionRefusal, add_project_input_to_workspace, add_project_input_to_workspace_between,
+    admitted_handle,
+};
 
 /// A session workspace that fails the test if anything starts a process.
 fn workspace() -> PreviewService {
@@ -428,8 +433,9 @@ fn a_proof_cannot_commit_into_a_project_that_has_moved_since() {
     projects.remove_input(other_id).expect("remove");
 
     assert_eq!(
-        projects.record_admission(&proof, "dataset-1"),
-        Err(ProjectError::StaleDocument)
+        projects.record_admission(&proof, "dataset-1", proof.identities()),
+        Err(ProjectError::StaleDocument),
+        "even with the very objects it proved, a proof cannot commit into a moved project"
     );
     assert_eq!(remembered_row(&projects, id), None);
 }
@@ -446,32 +452,207 @@ fn a_proof_cannot_commit_into_a_different_project() {
         .expect("a different project is open now");
 
     assert_eq!(
-        projects.record_admission(&proof, "dataset-1"),
+        projects.record_admission(&proof, "dataset-1", proof.identities()),
         Err(ProjectError::StaleDocument),
         "a proof about one project cannot land in another"
     );
 }
 
-/// Windows-specific: this is about the file identity the platform assigns, and
-/// a recycled inode elsewhere would make the same sequence prove nothing.
+/// A different object at the same name, holding the very same bytes.
+///
+/// The case the whole same-object proof exists for, and the one nothing else
+/// catches. The digest cannot see it: the bytes are identical, so a re-hash of
+/// the replacement matches the record exactly. Length, modified time and path
+/// say nothing either. Two identity observations taken *after* the read handle
+/// closed would both observe the replacement and agree with each other, which
+/// is precisely the agreement that proves nothing.
+///
+/// What refuses it is that the identity was taken through the handle the bytes
+/// were hashed through, so it names the object that was measured rather than
+/// the object the name means afterwards.
+#[test]
+fn an_object_replaced_after_the_proof_is_not_claimed_however_identical_its_bytes() {
+    let scratch = Scratch::new("reattach-swapped-identical");
+    let bytes = b"<mzML>identical either way</mzML>";
+    let (projects, id) = project_with(&scratch, "sample.mzML", bytes);
+    let service = workspace();
+    let proved = crate::local_document::object_identity(&scratch.join("sample.mzML"));
+
+    let refusal = add_project_input_to_workspace_between(
+        &projects,
+        &service,
+        projects.accept_job().expect("accept"),
+        id,
+        || {
+            // A different object, at the same name, with the same bytes. Built
+            // beside the original and moved over it, so the replacement cannot
+            // be handed the identity the original just released.
+            let replacement = scratch.write("replacement", bytes);
+            fs::remove_file(scratch.join("sample.mzML")).expect("remove the proved object");
+            fs::rename(&replacement, scratch.join("sample.mzML")).expect("put it in place");
+        },
+    )
+    .expect_err("a refusal");
+
+    assert_ne!(
+        crate::local_document::object_identity(&scratch.join("sample.mzML")),
+        proved,
+        "this test is only meaningful while the object really was replaced"
+    );
+    assert_eq!(project_refusal(refusal), ProjectError::ContentChanged);
+    assert_eq!(
+        remembered_row(&projects, id),
+        None,
+        "the project claims no row it did not prove"
+    );
+    // The workspace's row is the workspace's. It admitted a real file under
+    // its own rules, and manufacturing atomicity the workspace does not
+    // promise by tearing that row out is not this module's to do.
+    assert_eq!(service.roster().datasets.len(), 1);
+}
+
+/// The same window, with a replacement that differs only in its bytes.
+///
+/// Its length is identical, so nothing about the file's shape reveals it. This
+/// is the case a re-hash *would* catch -- and it must be refused as a
+/// replacement rather than silently re-measured and carried on with.
+#[test]
+fn an_object_replaced_after_the_proof_is_refused_rather_than_re_measured() {
+    let scratch = Scratch::new("reattach-swapped-same-length");
+    let (projects, id) = project_with(&scratch, "sample.mzML", b"<mzML>aaaa</mzML>");
+    let service = workspace();
+
+    let refusal = add_project_input_to_workspace_between(
+        &projects,
+        &service,
+        projects.accept_job().expect("accept"),
+        id,
+        || {
+            let replacement = scratch.write("replacement", b"<mzML>bbbb</mzML>");
+            fs::remove_file(scratch.join("sample.mzML")).expect("remove");
+            fs::rename(&replacement, scratch.join("sample.mzML")).expect("put it in place");
+        },
+    )
+    .expect_err("a refusal");
+
+    assert_eq!(project_refusal(refusal), ProjectError::ContentChanged);
+    assert_eq!(remembered_row(&projects, id), None);
+}
+
+/// A bundle is proved from every member, not from its primary.
+///
+/// The primary is untouched here: only the companion is replaced, and only
+/// after both were hashed. A proof that covered the primary alone would find
+/// its one identity unchanged and claim the row.
+#[test]
+fn a_bundle_whose_companion_is_replaced_after_the_proof_is_not_claimed() {
+    let scratch = Scratch::new("reattach-bundle-companion");
+    let primary = scratch.write("acquisition.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
+    let companion = scan_companion_bytes("opaque spectral payload");
+    scratch.write("acquisition.wiff.scan", &companion);
+    let projects = ProjectStore::new();
+    projects
+        .create("Reattachment".to_owned(), false)
+        .expect("a new project");
+    let id = projects.register_input(&primary).expect("register");
+    // The record really does name both members; without that this test would
+    // be about a single-file input wearing a bundle's name.
+    assert_eq!(projects.describe().inputs[0].members.len(), 2);
+    let service = workspace();
+
+    let refusal = add_project_input_to_workspace_between(
+        &projects,
+        &service,
+        projects.accept_job().expect("accept"),
+        id,
+        || {
+            // The same companion bytes, a different companion object. The
+            // primary is not touched at all.
+            let replacement = scratch.write("replacement.scan", &companion);
+            fs::remove_file(scratch.join("acquisition.wiff.scan")).expect("remove the companion");
+            fs::rename(&replacement, scratch.join("acquisition.wiff.scan"))
+                .expect("put it in place");
+        },
+    )
+    .expect_err("a refusal");
+
+    assert_eq!(project_refusal(refusal), ProjectError::ContentChanged);
+    assert_eq!(remembered_row(&projects, id), None);
+}
+
+/// The positive control beside the two refusals above.
+///
+/// The same bundle, nothing replaced: it is admitted as one row and the
+/// project claims it. Without this, "a bundle is refused" would be equally
+/// consistent with a bundle never being admitted at all.
+#[test]
+fn an_untouched_bundle_is_admitted_as_one_row_and_claimed() {
+    let scratch = Scratch::new("reattach-bundle-intact");
+    let primary = scratch.write("acquisition.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
+    scratch.write(
+        "acquisition.wiff.scan",
+        &scan_companion_bytes("opaque spectral payload"),
+    );
+    let projects = ProjectStore::new();
+    projects
+        .create("Reattachment".to_owned(), false)
+        .expect("a new project");
+    let id = projects.register_input(&primary).expect("register");
+    let service = workspace();
+
+    let result = add(&projects, &service, id).expect("the bundle is admitted");
+
+    assert_eq!(result.roster.datasets.len(), 1);
+    assert_eq!(
+        remembered_row(&projects, id).as_deref(),
+        admitted_handle(&result),
+        "both members were proved and both were admitted, so the row is this reference's"
+    );
+}
+
+/// Windows-specific. The M8.1 stable-read contract, asserted rather than
+/// inferred: while a member is being hashed, nobody else can open it for
+/// writing, so the bytes the digest covers cannot be rewritten underneath it.
 #[cfg(windows)]
 #[test]
-fn an_object_replaced_between_the_proof_and_the_row_is_not_claimed() {
-    let scratch = Scratch::new("reattach-swapped");
-    let (projects, id) = project_with(&scratch, "sample.mzML", b"<mzML/>");
-    let job = projects.accept_job().expect("accept");
-    let proof = projects.prove_admissible(job, id).expect("proved");
+fn an_in_place_rewrite_is_blocked_while_the_read_handle_is_held() {
+    let scratch = Scratch::new("reattach-rewrite-blocked");
+    let bytes = vec![b'e'; 512 * 1024];
+    let (projects, id) = project_with(&scratch, "sample.mzML", &bytes);
+    let service = workspace();
 
-    // The name now means a different object, with the same bytes. The digest
-    // cannot see this -- its handle is closed -- and the identity read can.
-    fs::remove_file(scratch.join("sample.mzML")).expect("remove");
-    scratch.write("sample.mzML", b"<mzML/>");
+    let reached = Arc::new(Barrier::new(2));
+    let proceed = Arc::new(Barrier::new(2));
+    let inside = Arc::clone(&reached);
+    let resume = Arc::clone(&proceed);
+    let once = Arc::new(AtomicBool::new(true));
+    let cancellation = Cancellation::with_gate(Arc::new(move || {
+        if once.swap(false, Ordering::SeqCst) {
+            inside.wait();
+            resume.wait();
+        }
+    }));
+    let job = projects.accept_job_with(cancellation).expect("accept");
 
-    assert_eq!(
-        projects.record_admission(&proof, "dataset-1"),
-        Err(ProjectError::ContentChanged)
-    );
-    assert_eq!(remembered_row(&projects, id), None);
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| add_project_input_to_workspace(&projects, &service, job, id));
+        // Provably inside the read of that member, with no sleep anywhere.
+        reached.wait();
+        let refused = fs::OpenOptions::new()
+            .write(true)
+            .open(scratch.join("sample.mzML"))
+            .expect_err("a writer must not get in while the digest is running");
+        // ERROR_SHARING_VIOLATION. The measurement is what holds it off.
+        assert_eq!(refused.raw_os_error(), Some(32));
+        proceed.wait();
+        worker
+            .join()
+            .expect("the worker finished")
+            .expect("the unrewritten object is admitted");
+    });
+
+    assert_eq!(service.roster().datasets.len(), 1);
+    assert!(remembered_row(&projects, id).is_some());
 }
 
 #[test]

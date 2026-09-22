@@ -81,6 +81,7 @@ use super::operation::{
     folded_output_name,
 };
 use super::projection::MAX_PROJECTION_POINTS;
+use super::sciex_fixture::{SCIEX_MARKERS, scan_companion_bytes, wiff_container_bytes};
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
 /// its answer exact rather than a guess.
@@ -18771,56 +18772,10 @@ fn a_provider_label_that_names_a_path_is_scrubbed_before_it_is_written() {
 // A workspace dataset that is a bundle, converting to a set. ADR 0023.
 // ---------------------------------------------------------------------------
 
-/// The entries a SCIEX acquisition carries, spelled out for the same reason the
-/// LabSolutions ones are: a test that read its expectation from the constant it
-/// checks would pass because that constant had been changed to match a mistake.
-const SCIEX_MARKERS: [&str; 4] = [
-    "SampleSubtree",
-    "MethodSubtree",
-    "SampleTable",
-    "MassSpecMethod",
-];
-
-/// A compound file under the geometry a real `.wiff` declares.
-///
-/// Version 4 with 4096-byte sectors, because five entries do not fit in the
-/// 512-byte directory sector the LabSolutions fixture uses -- and because that
-/// is what all three lawful fixtures declare.
-fn wiff_container_bytes(entries: &[&str]) -> Vec<u8> {
-    const SECTOR: usize = 4096;
-    let mut bytes = vec![0_u8; SECTOR * 2];
-    bytes[..8].copy_from_slice(&COMPOUND_FILE_MAGIC);
-    bytes[26..28].copy_from_slice(&4_u16.to_le_bytes());
-    bytes[28..30].copy_from_slice(&[0xFE, 0xFF]);
-    bytes[30..32].copy_from_slice(&12_u16.to_le_bytes());
-    bytes[48..52].copy_from_slice(&0_u32.to_le_bytes());
-
-    let named = std::iter::once("Root Entry").chain(entries.iter().copied());
-    for (index, name) in named.enumerate() {
-        let at = SECTOR + index * 128;
-        let units: Vec<u16> = name.encode_utf16().collect();
-        for (unit, slot) in units.iter().zip(bytes[at..].chunks_exact_mut(2)) {
-            slot.copy_from_slice(&unit.to_le_bytes());
-        }
-        let declared = u16::try_from(units.len() * 2 + 2).expect("a short entry name");
-        bytes[at + 64..at + 66].copy_from_slice(&declared.to_le_bytes());
-        bytes[at + 66] = if index == 0 { 5 } else { 2 };
-    }
-    bytes
-}
-
-/// The 32 bytes every measured `.wiff.scan` begins with, then opaque payload.
-///
-/// Spelled out rather than imported, like every other signature here.
-fn scan_companion_bytes(payload: &str) -> Vec<u8> {
-    let mut bytes = vec![
-        0x82, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x11, 0x11, 0x11, 0x82, 0x05, 0x00, 0x00, 0x01, 0x00,
-        0x00, 0x00,
-    ];
-    bytes.extend_from_slice(payload.as_bytes());
-    bytes
-}
+// The entries a SCIEX acquisition carries, the compound-file geometry they sit
+// in and the 32 bytes every measured `.wiff.scan` begins with all live in
+// `preview::sciex_fixture` now, because the project bridge's suite builds the
+// same acquisition and a compound-file header is not a value to spell twice.
 
 impl TestFile {
     /// A whole SCIEX acquisition: the container and the companion beside it.

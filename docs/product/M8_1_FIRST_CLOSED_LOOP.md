@@ -519,32 +519,88 @@ hash runs refuses rather than committing into something else; the same
 accepted-operation record makes the read cancellable, and the cancel is M8.1's,
 not a second flag.
 
-Second, there are windows this cannot close from inside the project module,
-and they are worth stating exactly rather than waving at. The digest runs
-through a handle that denies write and delete sharing, so the object cannot be
-replaced *during* the read. What that sharing mode leaves open is the moment
-between the digest's handle closing and the identity probe opening its own.
-
-The rest of the way is covered. The probe is taken there and taken again
-before the association is recorded, so a name that came to mean a different
-object while the workspace opened the file for itself is refused as
-`contentChanged` and the project declines to claim the row. The row is left
-where it is: the workspace owns its rows, admitted whatever its own rules
-admitted, and tearing one out of a collection this module does not own would be
-a worse answer than declining to name it.
-
-Closing the one remaining moment would mean the pinned read handing back the
-identity of the object it hashed -- a change to M8.1's observation module
-rather than to this bridge, and not one made here.
-
-On a filesystem with no identity to give, both reads answer `None` and this
-adds nothing; the digest still stands on its own.
+Second, the proof binds to an object rather than to a name, and that is what
+M8.3.C1 closes. It is set out under its own heading below.
 
 A failed revalidation writes the newer truth into the *session's* check result,
 which is the same slot the check action writes, and touches nothing in the
 document -- no baseline is rewritten, no locator moves, nothing is marked
 unsaved. Leaving the row saying "matches" beside a refusal saying "changed"
 would be the interface contradicting itself.
+
+### The same-object proof (M8.3.C1)
+
+A digest says what a *name* contained during one read. That is not the same as
+saying what an *object* contained, and the difference is the whole of this
+section.
+
+The original M8.3 took the content evidence through one handle, released it,
+and established filesystem identity through a separate open afterwards. That
+leaves a real path-replacement window: object A is hashed and matches the
+record; A's handle closes; the name is made to mean object B; both later
+identity observations observe B and therefore agree with each other; and the
+workspace may admit B. Two observations agreeing proves only that they were
+taken after the same replacement. It is not theoretical, and neither path
+equality, byte length nor modified time detects it -- B may be a byte-for-byte
+copy.
+
+**What it does now.** One pass over the input answers both halves of one claim.
+For each member the record names, the bytes are hashed through a handle opened
+with write and delete sharing withheld, and the object's identity is read
+**through that same live handle, before it is released**. So the evidence is
+`VerifiedProjectObject`: the digest and length compared against the record, and
+the identity of the object those bytes actually came out of. The primary and
+every required companion are covered; a bundle is not proven from its primary.
+
+**What the identity is bound to afterwards.** The restrictive handle is
+released once the content proof is complete -- holding a user's file against
+writers and deleters for the length of a workspace admission is not something
+this action should do. The existing admission then opens the path normally and
+produces a row under its own rules. The binding check is a comparison against
+that **row's own leased identities**, asked of the workspace rather than of the
+filesystem: the row is bound to the objects admission opened and holds them
+alive, so comparing against it compares two observations of objects rather than
+two observations of a name. Both sides read `FILE_ID_INFO`, so they are the
+same filesystem answer rather than two encodings of it.
+
+Members are compared as sets, because each side orders them by its own rules --
+the project by record role, the workspace by its family's membership -- and
+"the same acquisition" is a claim about which objects, not about which order.
+
+**A filesystem that cannot identify its objects** gives a measurement nothing to
+be about, so the observation reports `unstableRead`: there is no comparison to
+be made, which is what that state already means, rather than a content
+judgement dressed up as one.
+
+**On a mismatch**, the Project association is refused as `contentChanged` and
+the replacement is *not* silently re-hashed and carried on with. The workspace
+row stays exactly where it is: it is a workspace-owned result of the workspace's
+own admission, and deleting it to manufacture atomicity the workspace contract
+does not promise would be a worse answer than declining to name it. The roster
+is reconciled exactly as M8.3 already reconciles it after a refused admission.
+
+**None of this is persisted.** The identity is evidence for one operation. No
+project document holds one, and registration deliberately discards the identity
+it observes while recording the bytes.
+
+**What the regression proves, precisely.** Two things, and they are different
+claims:
+
+* *Structurally*, that a measurement names the object it read: the identity a
+  member's observation carries equals one the test reads from its own handle on
+  that object, and it goes on naming that object after the name has been made to
+  mean a different one. The window the old ordering left is between two adjacent
+  statements, and on Windows it cannot be widened from a test, because the
+  read's own sharing mode is what stops the object being replaced while the
+  handle is held. So the invariant is asserted rather than the timing.
+* *Behaviourally*, that the binding is enforced at the admission boundary, with
+  a hook that runs after the proof and before the workspace opens anything.
+  A replacement there is refused even when its bytes are identical -- the case
+  no digest can ever catch -- and a **bundle whose companion alone is replaced**
+  is refused, which is a case the previous primary-only comparison admitted and
+  claimed. That last one fails against the pre-fix comparison and passes against
+  this one, which was confirmed by installing the primary-only comparison and
+  watching it claim the row.
 
 ### The workspace stays authoritative
 

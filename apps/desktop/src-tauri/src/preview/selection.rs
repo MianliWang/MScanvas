@@ -33,6 +33,17 @@ pub(super) struct FileIdentity {
 }
 
 impl FileIdentity {
+    /// The same pair every other object identity in this crate is compared as.
+    ///
+    /// Exposed as the plain pair rather than as this type, so that a caller
+    /// outside this module can compare an admitted object with one it measured
+    /// itself without this type -- or the admission rules it belongs to --
+    /// leaving here. Both sides read `FILE_ID_INFO`, so the values are the same
+    /// filesystem answer rather than two encodings of it.
+    pub(crate) const fn as_pair(self) -> (u64, [u8; 16]) {
+        (self.volume_serial, self.file_id)
+    }
+
     /// Builds an identity from what a filesystem answered.
     ///
     /// Folder discovery needs one for a directory it is holding open and one
@@ -1600,6 +1611,24 @@ pub(super) struct RegisteredDataset {
 }
 
 impl RegisteredDataset {
+    /// Every filesystem object this row is bound to, primary first.
+    ///
+    /// The row's own answer about what it admitted, taken from the identities
+    /// its leases keep alive rather than from a name that can come to mean
+    /// something else. It is what lets another module ask "is the object you
+    /// admitted the object I measured" without asking the filesystem a second
+    /// question whose answer would be about a later moment.
+    pub(crate) fn object_identities(&self) -> Vec<(u64, [u8; 16])> {
+        std::iter::once(self.file.identity.as_pair())
+            .chain(
+                self.file
+                    .companions
+                    .iter()
+                    .map(|companion| companion.identity().as_pair()),
+            )
+            .collect()
+    }
+
     pub(super) const fn id(&self) -> DatasetId {
         self.id
     }

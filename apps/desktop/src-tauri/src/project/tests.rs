@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 
-use super::observe::{Cancellation, UnavailableReason};
+use super::observe::{self, Cancellation, MemberObservation, UnavailableReason};
 use super::record::{
     ContentBaseline, DocumentProblem, InputId, Locator, MemberRecord, MemberRole, ProjectDocument,
     RecordedOperation, RunId, RunRecord, TerminalOutcome,
@@ -312,6 +312,54 @@ fn a_directory_at_the_reference_location_is_unsafe_and_not_missing() {
     check(&store).expect("check");
 
     assert_eq!(unavailable_reason(&store, id), Some("unsafeReference"));
+}
+
+/// The invariant the same-object proof rests on: what a measurement answers
+/// about is the object it read, not the name it read through.
+///
+/// Asserted structurally rather than by timing. The window a name-based probe
+/// leaves open is between the read handle closing and that probe opening its
+/// own, which is two adjacent statements with nothing a test can act in -- and
+/// on Windows it cannot be widened, because the read's share mode is what stops
+/// the object being replaced while the handle is held. What can be shown is the
+/// property that removes the window: the identity comes back equal to the one
+/// the test itself reads from a handle on the very object, and it goes on
+/// naming that object after the name has been made to mean a different one.
+#[test]
+fn a_measurement_names_the_object_it_read_and_not_the_name_it_read_through() {
+    let scratch = Scratch::new("measured-object");
+    let path = scratch.write("sample.bin", b"the measured bytes");
+    let held = fs::File::open(&path).expect("hold the measured object open");
+    let measured = crate::local_document::object_identity_of(&held)
+        .expect("the test volume identifies its objects");
+
+    let observed = observe::observe_member(&path, &Cancellation::default());
+    let MemberObservation::Observed { identity, .. } = observed else {
+        panic!("the object is there and readable: {observed:?}");
+    };
+    assert_eq!(
+        identity, measured,
+        "the measurement answers about the object, established through its own read"
+    );
+
+    // The name now means something else. Built beside the original and moved
+    // over it, so the replacement cannot be handed the identity the original
+    // released.
+    let replacement = scratch.write("replacement.bin", b"the measured bytes");
+    drop(held);
+    fs::remove_file(&path).expect("remove the measured object");
+    fs::rename(&replacement, &path).expect("put the replacement in place");
+
+    let by_name =
+        crate::local_document::object_identity(&path).expect("the replacement is identified too");
+    assert_ne!(
+        by_name, identity,
+        "this is only meaningful while the name really does mean a different object"
+    );
+    // The identity the measurement carries is unchanged by any of that, which
+    // is the whole of the claim: it is evidence about an object, and a later
+    // question about a name cannot make it describe the replacement.
+    assert_eq!(identity, measured);
 }
 
 /// Windows-specific. A file another process holds open for writing cannot be

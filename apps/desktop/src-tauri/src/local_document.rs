@@ -230,6 +230,18 @@ pub fn read_bounded(target: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>, Re
 #[cfg(windows)]
 #[must_use]
 pub fn object_identity(path: &Path) -> Option<(u64, [u8; 16])> {
+    object_identity_of(&open_for_read(path).ok()?)
+}
+
+/// The same question, asked of an object that is already open.
+///
+/// The one form that can bind a measurement to an object: a caller holding the
+/// handle it read bytes through gets the identity of *that* object, not of
+/// whatever the name means by the time a second open happens. Everything the
+/// name-taking form above does is this, after an open.
+#[cfg(windows)]
+#[must_use]
+pub fn object_identity_of(file: &std::fs::File) -> Option<(u64, [u8; 16])> {
     use std::ffi::c_void;
     use std::os::windows::io::AsRawHandle as _;
 
@@ -256,7 +268,6 @@ pub fn object_identity(path: &Path) -> Option<(u64, [u8; 16])> {
         ) -> i32;
     }
 
-    let file = open_for_read(path).ok()?;
     let mut information = FileIdInformation::default();
     // SAFETY: the file outlives the call, so its handle stays valid, and the
     // out parameter is a fully initialized value of the exact FILE_ID_INFO
@@ -286,11 +297,26 @@ pub fn object_identity(path: &Path) -> Option<(u64, [u8; 16])> {
 #[cfg(not(windows))]
 #[must_use]
 pub fn object_identity(path: &Path) -> Option<(u64, [u8; 16])> {
+    object_identity_of(&std::fs::File::open(path).ok()?)
+}
+
+/// The same question, asked of an object that is already open.
+///
+/// Narrower than the Windows form for the reason above, and identical to it in
+/// the one way that matters here: what it answers about is the object the
+/// caller is holding rather than the object a name currently resolves to.
+#[cfg(not(windows))]
+#[must_use]
+pub fn object_identity_of(file: &std::fs::File) -> Option<(u64, [u8; 16])> {
     use std::os::unix::fs::MetadataExt as _;
 
-    let metadata = std::fs::metadata(path).ok()?;
+    let metadata = file.metadata().ok()?;
     let mut file_id = [0_u8; 16];
-    file_id[..8].copy_from_slice(&metadata.ino().to_le_bytes());
+    // Native byte order, which is the encoding the workspace's own inspection
+    // uses for the same number. Two spellings of one inode would compare as two
+    // different objects on a big-endian machine, and these identities are
+    // compared *across* those two modules.
+    file_id[..8].copy_from_slice(&metadata.ino().to_ne_bytes());
     Some((metadata.dev(), file_id))
 }
 

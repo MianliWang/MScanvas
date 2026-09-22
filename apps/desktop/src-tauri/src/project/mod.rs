@@ -47,7 +47,9 @@ use mscanvas_core::ArtifactId;
 
 use crate::local_document::{self, WriteRefusal};
 
-use observe::{Cancellation, InputVerification, MemberObservation, UnavailableReason};
+use observe::{
+    Cancellation, InputVerification, MemberObservation, ObjectIdentity, UnavailableReason,
+};
 use record::{
     ArtifactRecord, DocumentProblem, InputId, InputRecord, MAX_ARTIFACTS, MAX_DOCUMENT_BYTES,
     MAX_INPUTS, MAX_RUNS, ProjectDocument, RecordedOperation, RunId, RunRecord, TerminalOutcome,
@@ -1121,6 +1123,11 @@ impl ProjectStore {
             MemberObservation::Observed {
                 byte_length,
                 digest,
+                // A proposal asks one question about one candidate's bytes.
+                // Which object they came out of binds nothing here: the user
+                // confirms or abandons it, and a confirmation moves a locator
+                // rather than admitting anything.
+                identity: _,
             } => baseline.matches(byte_length, digest),
             MemberObservation::Unavailable(reason) => {
                 return Err(ProjectError::Unavailable(reason));
@@ -1263,26 +1270,18 @@ impl ProjectStore {
         // Outside the lock, for the reason every read in this store is: this
         // hashes a whole acquisition, and holding the session across it would
         // stop the interface describing the project for as long as that took.
+        //
+        // One pass, answering both halves of one claim: whether the bytes are
+        // the recorded bytes, and which objects those bytes came out of. Each
+        // identity is read through the same handle its member was hashed
+        // through, before that handle is released -- so the evidence is about
+        // an object rather than about a name, and a replacement arriving the
+        // moment the handle closes cannot present itself as the thing that was
+        // measured.
         let base = base.unwrap_or_default();
-        let observed = observe::verify_input(&input, &base, &cancellation);
+        let proved = observe::verify_input_objects(&input, &base, &cancellation);
+        let observed = proved.verification;
         let path = record::resolve(&input.locator, &base).map_err(ProjectError::Document)?;
-        // Read through an open handle here, and read again at the moment the
-        // admission is recorded. The digest above proves *content*; this is the
-        // one thing a closed digest cannot answer afterwards -- whether the
-        // name still means the same object while the workspace opens it for
-        // itself.
-        //
-        // What it does not do is close the gap between the digest's handle
-        // closing and this open, which is stated rather than implied: no probe
-        // taken after a handle is released can, and closing it would mean the
-        // pinned read handing back the identity of the object it hashed. What
-        // bounds that gap is the read itself -- the digest runs through a
-        // handle that denies write and delete sharing, so the object cannot be
-        // replaced *during* it.
-        //
-        // Where a filesystem has no identity to give, both answers are `None`
-        // and this adds nothing; the digest still stands on its own.
-        let identity = local_document::object_identity(&path);
 
         let mut session = self.locked();
         if cancellation.requested() {
@@ -1319,35 +1318,39 @@ impl ProjectStore {
             input: id,
             generation,
             path,
-            identity,
+            identities: proved.identities().to_vec(),
         })
     }
 
     /// Remembers which workspace row one reference was admitted as.
     ///
     /// The last gate, and the one that decides whether the project may claim
-    /// the row at all. The identity of the object the name resolves to is read
-    /// again and compared against what the proof observed, because the
-    /// admission boundary opened the file for itself after this store closed
-    /// its read: a name that came to mean something else in between would have
-    /// put a different object in the workspace, and that row is not this
-    /// reference's row whatever it is.
+    /// the row at all. `admitted` is the *workspace's own* answer about the
+    /// objects the row it created is bound to, taken from that row's leased
+    /// identities -- not a claim a caller composed, and not a fresh question
+    /// put to a path here. It is compared against the objects this operation
+    /// actually hashed. Both sides are observations of objects rather than of
+    /// names, which is what makes the comparison mean anything once the
+    /// proof's own handles are gone.
     ///
-    /// The row is never removed on a refusal here. The workspace owns its own
-    /// rows and admitted whatever it admitted; what is refused is the project's
-    /// claim on it.
+    /// A mismatch is refused, never reconciled. The workspace admitted
+    /// whatever its own rules admitted and its row stays exactly where it is;
+    /// what this declines is the project's claim that the row is its input.
+    /// Re-hashing the replacement and carrying on would answer a question
+    /// nobody asked.
     ///
     /// # Errors
     ///
-    /// [`ProjectError::ContentChanged`] where the object moved out from under
-    /// the admission, [`ProjectError::StaleDocument`] where the project did,
-    /// or [`ProjectError::UnknownRecord`].
+    /// [`ProjectError::ContentChanged`] where the admitted objects are not the
+    /// objects that were proved, [`ProjectError::StaleDocument`] where the
+    /// project moved, or [`ProjectError::UnknownRecord`].
     pub fn record_admission(
         &self,
         proof: &AdmissibleInput,
         handle: &str,
+        admitted: &[ObjectIdentity],
     ) -> Result<(), ProjectError> {
-        if local_document::object_identity(&proof.path) != proof.identity {
+        if !same_objects(&proof.identities, admitted) {
             return Err(ProjectError::ContentChanged);
         }
         let mut session = self.locked();
@@ -1423,9 +1426,13 @@ pub struct AdmissibleInput {
     /// other generation is a commit into a project this was not proved for.
     generation: u64,
     path: PathBuf,
-    /// What the name resolved to when the content was proved, or `None` on a
-    /// filesystem that cannot say.
-    identity: Option<(u64, [u8; 16])>,
+    /// The objects the content proof was taken from, primary first, each read
+    /// through the very handle its bytes were hashed through.
+    ///
+    /// Every member the record names, not only the primary: a bundle whose
+    /// companion was replaced after the proof is not the acquisition that was
+    /// proved, and a proof covering the primary alone would say it was.
+    identities: Vec<ObjectIdentity>,
 }
 
 impl AdmissibleInput {
@@ -1433,6 +1440,17 @@ impl AdmissibleInput {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The objects this proof is bound to.
+    ///
+    /// Test-only, and only so a test about something *else* -- a project that
+    /// moved, a record that went -- can hand back the objects that really were
+    /// proved instead of tripping the binding check on its way to the thing it
+    /// is about.
+    #[cfg(test)]
+    pub(crate) fn identities(&self) -> &[ObjectIdentity] {
+        &self.identities
     }
 }
 
@@ -1442,6 +1460,26 @@ impl fmt::Debug for AdmissibleInput {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("<admissible-input>")
     }
+}
+
+/// Whether two sets of filesystem objects are the same set.
+///
+/// Compared as sets rather than pairwise, because each side orders its members
+/// by its own rules -- the project by record role, the workspace by its
+/// family's own membership -- and "the same acquisition" is a claim about which
+/// objects, not about which order. A differing count is a differing set, which
+/// is the case where one side proved a bundle and the other admitted something
+/// else. An empty set never matches: nothing proved is not the same as
+/// anything.
+fn same_objects(proved: &[ObjectIdentity], admitted: &[ObjectIdentity]) -> bool {
+    if proved.is_empty() || proved.len() != admitted.len() {
+        return false;
+    }
+    let mut proved: Vec<ObjectIdentity> = proved.to_vec();
+    let mut admitted: Vec<ObjectIdentity> = admitted.to_vec();
+    proved.sort_unstable();
+    admitted.sort_unstable();
+    proved == admitted
 }
 
 /// Whether a reference's current state permits handing it to admission.

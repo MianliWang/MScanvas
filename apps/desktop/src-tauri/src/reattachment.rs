@@ -110,17 +110,50 @@ pub fn add_project_input_to_workspace(
     job: ProjectJobId,
     input: InputId,
 ) -> Result<WorkspaceAddResultDto, AdmissionRefusal> {
+    add_project_input_to_workspace_between(projects, service, job, input, || ())
+}
+
+/// The same sequence, with the one moment a test needs to act in.
+///
+/// `between` runs after the project has proved the object and before the
+/// workspace opens anything -- the exact window in which a path can be made to
+/// mean a different file. Production passes a closure that does nothing and
+/// goes through this same body, so there is one implementation rather than a
+/// tested one and a shipped one.
+///
+/// # Errors
+///
+/// As [`add_project_input_to_workspace`].
+pub fn add_project_input_to_workspace_between(
+    projects: &ProjectStore,
+    service: &PreviewService,
+    job: ProjectJobId,
+    input: InputId,
+    between: impl FnOnce(),
+) -> Result<WorkspaceAddResultDto, AdmissionRefusal> {
     let proof = projects.prove_admissible(job, input)?;
+    between();
     let result = service.add_files(std::slice::from_ref(&proof.path().to_path_buf()))?;
     // Only where a row actually names this object. A rejected candidate has no
     // row to remember, and remembering one for it would make the surface offer
     // to show something that does not exist.
     if let Some(handle) = admitted_handle(&result) {
-        // A refusal here leaves the row where it is. The workspace admitted
-        // what it admitted; what is refused is this project's claim on it, and
-        // ripping a row out of a collection this module does not own would be
-        // a worse answer than declining to name it.
-        projects.record_admission(&proof, handle)?;
+        // The row's own answer about what it admitted, not a second question
+        // put to the path. The workspace opened the file for itself after this
+        // module's read handles closed, so the only thing that can say whether
+        // it opened *the proved object* is the row it created.
+        //
+        // A row that has gone between the add and this read leaves nothing to
+        // claim and nothing false claimed. That is not a refusal: the add
+        // happened and is reported, and the surface simply offers to add again,
+        // which converges on the existing row if there is one.
+        if let Some(admitted) = service.dataset_object_identities(handle) {
+            // A refusal here leaves the row where it is. The workspace admitted
+            // what it admitted; what is refused is this project's claim on it,
+            // and ripping a row out of a collection this module does not own
+            // would be a worse answer than declining to name it.
+            projects.record_admission(&proof, handle, &admitted)?;
+        }
     }
     Ok(result)
 }

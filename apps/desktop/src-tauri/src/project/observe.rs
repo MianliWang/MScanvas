@@ -127,12 +127,28 @@ impl InputVerification {
     }
 }
 
+/// What the filesystem calls one object, wide enough to tell it apart from
+/// every other object on its volume.
+///
+/// Operation-scoped evidence and nothing else. It is never written to a project
+/// document: which object a name meant during one measurement is a fact about
+/// that measurement, not a property of the reference.
+pub type ObjectIdentity = (u64, [u8; 16]);
+
 /// What one member's bytes were, or why they could not be established.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberObservation {
     Observed {
         byte_length: u64,
         digest: Sha256Digest,
+        /// The object those bytes came out of, read through the same handle
+        /// they were read through and before it was released.
+        ///
+        /// This is what makes the digest evidence about an *object* rather than
+        /// about a name. Two identity reads taken after the handle closed can
+        /// agree with each other while describing a file that replaced the one
+        /// that was hashed; one taken from the open object cannot.
+        identity: ObjectIdentity,
     },
     Unavailable(UnavailableReason),
 }
@@ -310,14 +326,29 @@ pub fn observe_member(path: &Path, cancellation: &Cancellation) -> MemberObserva
         inner: &file,
         cancellation,
     };
-    match Sha256Digest::calculate_reader(reader) {
-        Ok(digest) => MemberObservation::Observed {
-            byte_length,
-            digest,
-        },
+    let digest = match Sha256Digest::calculate_reader(reader) {
+        Ok(digest) => digest,
         // The handle was open and the read did not finish. That is not a fact
         // about the content, so it must not be reported as one.
-        Err(_) => MemberObservation::Unavailable(UnavailableReason::UnstableRead),
+        Err(_) => return MemberObservation::Unavailable(UnavailableReason::UnstableRead),
+    };
+    // Taken from the object the bytes came out of, while `file` is still open,
+    // and deliberately not from the path afterwards. The whole point of the
+    // share mode above is that this object cannot be replaced or deleted while
+    // it is held; asking the *name* once the handle is gone would answer about
+    // whatever the name means then, and two such answers agreeing proves only
+    // that they were taken after the same replacement.
+    let Some(identity) = local_document::object_identity_of(&file) else {
+        // A filesystem that cannot name its objects gives this measurement
+        // nothing to be about. That is the same position as a read that could
+        // not be established -- there is no comparison to be made -- and it is
+        // reported as that rather than as a content judgement.
+        return MemberObservation::Unavailable(UnavailableReason::UnstableRead);
+    };
+    MemberObservation::Observed {
+        byte_length,
+        digest,
+        identity,
     }
 }
 
@@ -349,6 +380,14 @@ fn member_path(primary: &Path, member: &super::record::MemberRecord) -> Option<P
         .map(|directory| directory.join(&member.relative_name))
 }
 
+/// One member, as one measurement found it: what it held, what the record says
+/// it held, and which object both of those are about.
+struct ObservedMemberObject {
+    observed: ObservedMember,
+    baseline: ContentBaseline,
+    identity: ObjectIdentity,
+}
+
 /// Measures every member of one input, in record order with the primary first.
 ///
 /// Answers the members it managed to measure, or the first reason it could not.
@@ -359,7 +398,7 @@ fn observe_input(
     input: &InputRecord,
     base_directory: &Path,
     cancellation: &Cancellation,
-) -> Result<Vec<(ObservedMember, ContentBaseline)>, UnavailableReason> {
+) -> Result<Vec<ObservedMemberObject>, UnavailableReason> {
     let primary =
         resolve(&input.locator, base_directory).map_err(|_| UnavailableReason::UnsafeReference)?;
 
@@ -381,15 +420,17 @@ fn observe_input(
             MemberObservation::Observed {
                 byte_length,
                 digest,
-            } => observed.push((
-                ObservedMember {
+                identity,
+            } => observed.push(ObservedMemberObject {
+                observed: ObservedMember {
                     role: member.role,
                     relative_name: member.relative_name.clone(),
                     byte_length,
                     sha256: digest.to_string(),
                 },
-                member.baseline.clone(),
-            )),
+                baseline: member.baseline.clone(),
+                identity,
+            }),
             // A missing companion is a different fact from a missing input: the
             // acquisition the record describes is incomplete rather than gone.
             MemberObservation::Unavailable(UnavailableReason::MissingAtCheckedLocation)
@@ -403,6 +444,30 @@ fn observe_input(
     Ok(observed)
 }
 
+/// One input, as one measurement found it.
+///
+/// Two answers from one pass, because they are two halves of one claim. The
+/// verification says whether the *bytes* are the recorded bytes; the identities
+/// say which *objects* those bytes came out of, in record order with the
+/// primary first. An operation that has to bind a proof to an object needs
+/// both, and taking them from two passes would let them describe two moments.
+///
+/// The identities are empty for every outcome that is not
+/// `MatchingRecordedContent`: nothing is proven, so there is nothing to bind.
+#[derive(Debug, Clone)]
+pub struct VerifiedProjectObject {
+    pub verification: InputVerification,
+    identities: Vec<ObjectIdentity>,
+}
+
+impl VerifiedProjectObject {
+    /// The objects the measurement was taken from, primary first.
+    #[must_use]
+    pub fn identities(&self) -> &[ObjectIdentity] {
+        &self.identities
+    }
+}
+
 /// Establishes what is currently true about one input's files.
 ///
 /// A cancellation that arrives before the input is finished leaves it
@@ -413,29 +478,53 @@ pub fn verify_input(
     base_directory: &Path,
     cancellation: &Cancellation,
 ) -> InputVerification {
+    verify_input_objects(input, base_directory, cancellation).verification
+}
+
+/// The same measurement, with the objects it was taken from.
+///
+/// The form the reattachment boundary uses. A check only has to say what it
+/// found; an operation that is about to hand a file to workspace admission has
+/// to be able to say afterwards that the object admitted is the object hashed.
+#[must_use]
+pub fn verify_input_objects(
+    input: &InputRecord,
+    base_directory: &Path,
+    cancellation: &Cancellation,
+) -> VerifiedProjectObject {
+    let unproven = |verification| VerifiedProjectObject {
+        verification,
+        identities: Vec::new(),
+    };
     if cancellation.requested() {
-        return InputVerification::NotChecked;
+        return unproven(InputVerification::NotChecked);
     }
     match observe_input(input, base_directory, cancellation) {
         Ok(observed) => {
             if cancellation.requested() {
-                return InputVerification::NotChecked;
+                return unproven(InputVerification::NotChecked);
             }
             // Case-insensitively, for the reason `ContentBaseline::matches`
             // gives: a digest has no case to carry meaning in, and comparing
             // spellings would report identical bytes as changed.
-            let matching = observed.iter().all(|(seen, baseline)| {
-                baseline.byte_length == seen.byte_length
-                    && baseline.sha256.eq_ignore_ascii_case(&seen.sha256)
+            let matching = observed.iter().all(|member| {
+                member.baseline.byte_length == member.observed.byte_length
+                    && member
+                        .baseline
+                        .sha256
+                        .eq_ignore_ascii_case(&member.observed.sha256)
             });
             if matching {
-                InputVerification::MatchingRecordedContent
+                VerifiedProjectObject {
+                    verification: InputVerification::MatchingRecordedContent,
+                    identities: observed.iter().map(|member| member.identity).collect(),
+                }
             } else {
-                InputVerification::DifferentContent
+                unproven(InputVerification::DifferentContent)
             }
         }
-        Err(_) if cancellation.requested() => InputVerification::NotChecked,
-        Err(reason) => InputVerification::Unavailable(reason),
+        Err(_) if cancellation.requested() => unproven(InputVerification::NotChecked),
+        Err(reason) => unproven(InputVerification::Unavailable(reason)),
     }
 }
 
@@ -485,7 +574,7 @@ pub fn capture_file_facts(
         })?;
         observations.push(ObservedInput {
             input_id: input.id,
-            members: observed.into_iter().map(|(seen, _)| seen).collect(),
+            members: observed.into_iter().map(|member| member.observed).collect(),
         });
     }
     if cancellation.requested() {
@@ -517,6 +606,9 @@ pub fn register_members(
         MemberObservation::Observed {
             byte_length,
             digest,
+            // Registration records what a file *contained*. Which object it was
+            // is evidence for one operation and is deliberately not stored.
+            identity: _,
         } => members.push(super::record::MemberRecord {
             role: MemberRole::Primary,
             relative_name: String::new(),
@@ -532,6 +624,7 @@ pub fn register_members(
             MemberObservation::Observed {
                 byte_length,
                 digest,
+                identity: _,
             } => members.push(super::record::MemberRecord {
                 role: MemberRole::RequiredCompanion,
                 relative_name: name.to_owned(),

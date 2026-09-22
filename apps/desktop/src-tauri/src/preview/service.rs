@@ -1360,6 +1360,24 @@ impl PreviewService {
         roster
     }
 
+    /// Every filesystem object one admitted row is bound to, primary first.
+    ///
+    /// Read from the row rather than from the filesystem, which is the whole
+    /// point: the identities come from the objects this session's admission
+    /// opened and leased, so a caller comparing them against something it
+    /// measured itself is comparing two observations of objects rather than two
+    /// observations of a name. `None` where the handle names no live row.
+    ///
+    /// Crate-internal and deliberately the plain pair. Nothing about admission,
+    /// leases or source families leaves this module with it.
+    pub(crate) fn dataset_object_identities(&self, handle: &str) -> Option<Vec<(u64, [u8; 16])>> {
+        let id = DatasetId::parse(handle)?;
+        let workspace = self.workspace();
+        let identities = workspace.registry.get(id)?.object_identities();
+        drop(workspace);
+        Some(identities)
+    }
+
     /// Adds every chosen path, in picker order, and answers with what each one
     // did and the roster that resulted.
     //
