@@ -12,7 +12,7 @@
  * reported rather than quietly replaced, and that navigating sends nothing.
  */
 
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { SessionPreferencesProvider } from "../preferences/SessionPreferencesProvider";
@@ -44,6 +44,25 @@ async function press(control: HTMLElement) {
   await act(async () => {
     fireEvent.click(control);
   });
+}
+
+/**
+ * Waits for a control to exist, then presses it.
+ *
+ * The project list renders from an answer that arrives asynchronously, so a
+ * query issued in the same tick as the mount can reach for a row that is not
+ * there yet. Waiting is the difference between a test that describes the
+ * interface and one that describes this machine's timing.
+ */
+async function pressWhenReady(selector: string) {
+  await waitFor(() => expect(document.querySelector(selector)).toBeTruthy());
+  await press(document.querySelector<HTMLElement>(selector)!);
+}
+
+/** The current-state element in the contextual region, once it is there. */
+async function currentStateElement(): Promise<Element> {
+  await waitFor(() => expect(details().querySelector("[data-provenance-current]")).toBeTruthy());
+  return details().querySelector("[data-provenance-current]")!;
 }
 
 /** The shell's wiring: one session, the list and the contextual region. */
@@ -144,14 +163,18 @@ describe("the provenance consumer", () => {
       ["unavailable", "unreadable", en.projectStateUnreadable],
       ["unavailable", "unstableRead", en.projectStateUnstable],
     ] as const) {
-      const { unmount } = { unmount: () => document.body.replaceChildren() };
+      // Six mounts in one case, each unmounted for real. Clearing the body
+      // instead would leave six live React roots behind, and which one a query
+      // reached would depend on what else the suite had run.
+      cleanup();
       mount(capturedProject({ input: { verification, unavailableReason: reason } }));
-      await waitFor(() => expect(screen.getAllByText("QC_pool_01.mzML").length).toBeGreaterThan(0));
-      await press(
-        screen.getAllByRole("button", { name: "Show what QC_pool_01.mzML is related to" })[0]!,
-      );
-      expect(within(details()).getAllByText(expected).length).toBeGreaterThan(0);
-      unmount();
+      await pressWhenReady(`[data-project-inspect="${INPUT}"]`);
+      // Read off the element rather than by text, because the state carries a
+      // visually-hidden "Current file:" qualifier with it and a text query
+      // would be matching the two together.
+      const state = await currentStateElement();
+      expect(state.textContent).toContain(expected);
+      expect(state.textContent).toContain(en.provenanceCurrentFile);
     }
   });
 
@@ -188,10 +211,9 @@ describe("the provenance consumer", () => {
 
   it("says an artifact is stored in the project rather than showing a file state", async () => {
     mount(capturedProject());
-    await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
-    await press(screen.getByRole("button", { name: /File facts is related to/ }));
+    await pressWhenReady(`[data-project-inspect-artifact="${ARTIFACT}"]`);
 
-    expect(describing()).toBe("artifact");
+    await waitFor(() => expect(describing()).toBe("artifact"));
     // An artifact has no backing file, so it says where it lives rather than
     // leaving a gap a reader fills in beside the references that do have one.
     const own = details().querySelector(".provenance-current-row");
@@ -255,14 +277,9 @@ describe("the provenance consumer", () => {
         artifacts: [],
       }),
     );
-    await waitFor(() => expect(screen.getByText("present.mzML")).toBeTruthy());
-    await press(
-      screen.getByRole("button", {
-        name: `Show what ${en.projectOperationCapture} is related to`,
-      }),
-    );
+    await pressWhenReady(`[data-project-inspect-run="${RUN}"]`);
 
-    expect(describing()).toBe("run");
+    await waitFor(() => expect(describing()).toBe("run"));
     const rows = details().querySelectorAll(".provenance-list li");
     expect(rows).toHaveLength(2);
     expect(details().querySelector("[data-provenance-gone]")).toBeTruthy();
@@ -281,23 +298,74 @@ describe("the provenance consumer", () => {
     });
     expect(inspect.getAttribute("aria-controls")).toBe("workbench-inspector");
 
-    // Keyboard activation is the same activation: a button reached by Tab and
-    // pressed with Enter goes through the same handler a pointer does.
+    // Keyboard equivalence rests on these being native buttons in the tab
+    // order, which the platform activates with Enter and Space. jsdom does not
+    // synthesize activation from a key event, so this asserts the properties
+    // that make it true and the browser spec presses the key for real.
+    expect(inspect.tagName).toBe("BUTTON");
+    expect(inspect.getAttribute("type")).toBe("button");
+    expect(inspect.hasAttribute("disabled")).toBe(false);
+    expect(inspect.getAttribute("tabindex")).toBeNull();
     inspect.focus();
     expect(document.activeElement).toBe(inspect);
-    await act(async () => {
-      fireEvent.keyDown(inspect, { key: "Enter" });
-      fireEvent.click(inspect);
-    });
+
+    await press(inspect);
     expect(describing()).toBe("input");
     // And the row says it is the one being described.
     expect(inspect.getAttribute("aria-current")).toBe("true");
 
     const link = details().querySelector<HTMLElement>(`[data-provenance-link="${RUN}"]`)!;
     expect(link.tagName).toBe("BUTTON");
+    expect(link.getAttribute("type")).toBe("button");
+    expect(link.getAttribute("tabindex")).toBeNull();
     expect(link.getAttribute("aria-label")).toContain("is related to");
-    link.focus();
-    expect(document.activeElement).toBe(link);
+  });
+
+  it("gives every run control a name that says which run", async () => {
+    // Every capture is called the same thing, so naming the controls after the
+    // operation would give a reader one name for every run in the project.
+    const first = projectRun({
+      id: RUN,
+      inputIds: [INPUT],
+      outputArtifactIds: [],
+      outcome: "failed",
+      finishedAt: "2026-09-22T10:00:01Z",
+    });
+    const second = projectRun({
+      id: "ffffffff-9999-4111-8111-111111111111",
+      inputIds: [INPUT],
+      outputArtifactIds: [],
+      outcome: "failed",
+      finishedAt: "2026-09-22T14:30:01Z",
+    });
+    mount(
+      openProject({
+        inputs: [projectInput({ id: INPUT, label: "shared.mzML", consumedByRunIds: [first.id, second.id] })],
+        runs: [first, second],
+        artifacts: [],
+      }),
+    );
+    await pressWhenReady(`[data-project-inspect="${INPUT}"]`);
+    await waitFor(() => expect(describing()).toBe("input"));
+
+    const names = [...details().querySelectorAll("[data-provenance-link]")].map((node) =>
+      node.getAttribute("aria-label"),
+    );
+    expect(names).toHaveLength(2);
+    expect(new Set(names).size).toBe(2);
+  });
+
+  it("says a current file state is current, even inside a recorded list", async () => {
+    mount(capturedProject({ input: { verification: "differentContent" } }));
+    await pressWhenReady(`[data-project-inspect-run="${RUN}"]`);
+
+    // Under "Used", beside what the run consumed. The tone and the section
+    // heading carry it visually; the text carries it for a reader who has
+    // neither.
+    await waitFor(() => expect(describing()).toBe("run"));
+    const state = await currentStateElement();
+    expect(state.textContent).toContain(en.provenanceCurrentFile);
+    expect(state.textContent).toContain(en.projectStateDifferent);
   });
 
   it("points at Details when the region is not on screen", async () => {

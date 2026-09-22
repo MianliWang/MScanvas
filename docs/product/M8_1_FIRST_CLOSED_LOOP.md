@@ -435,8 +435,29 @@ every later Save.
 An artifact still has no backing file and no field that could hold one, so the
 consumer says where a record lives rather than leaving a gap beside references
 that do have a file. Current file state and recorded history are separate
-sections: a reference whose bytes changed still has the run that used it, and a
-reference that is gone did not erase what was recorded from it.
+sections, and where a current state appears beside a recorded relationship --
+which is where a reader needs it -- it carries the word "current" with it for a
+reader who has neither the heading nor the tone.
+
+### One disposition worth stating rather than burying
+
+The duplicate rules run on parse as well as on publish, so they can in
+principle refuse a document an earlier build wrote. Under M8.1 the capture
+command did not de-duplicate its `input_ids`, so a caller that sent one
+reference twice would have produced a run naming it twice and an artifact
+observing it twice -- a document M8.1 published and M8.2 refuses, with no
+migration and no repair operation.
+
+That is the policy and not an oversight: a duplicate lineage relationship fails
+closed rather than being quietly repaired, because repairing it would mean
+choosing which of two statements the document makes is the real one. Three
+things bound it. The shape is unreachable from this application's own
+interface, whose selection is a toggled set. It cannot be written any more,
+because the duplicate is refused at the capture entry. And a reader who meets
+it is told which problem it is -- `duplicateIdentifier` and `ambiguousProducer`
+each have their own sentence in both locales, rather than the generic refusal.
+A repair path, if one is ever wanted, is a decision of its own and not a thing
+to add quietly here.
 
 ## Out of scope, explicitly
 

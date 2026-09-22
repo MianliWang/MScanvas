@@ -18,6 +18,8 @@ export interface MessageParameters {
   readonly provenanceInspectInput: { readonly name: string };
   readonly provenanceInspectRun: { readonly name: string };
   readonly provenanceInspectArtifact: { readonly name: string };
+  readonly provenanceInspectRunAt: { readonly when: string };
+  readonly provenanceInspectArtifactOf: { readonly when: string };
   readonly m74ErrorFigureSize: { readonly minWidth: number; readonly minHeight: number; readonly max: number };
   readonly m74ErrorDpi: { readonly min: number; readonly max: number };
   readonly m74ErrorRasterBudget: { readonly max: number };

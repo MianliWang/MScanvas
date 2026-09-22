@@ -83,6 +83,7 @@ const REFUSALS = {
   danglingReference: "projectRefusedDangling",
   invalidLocator: "projectRefusedInvalidLocator",
   inconsistentRecord: "projectRefusedInconsistent",
+  ambiguousProducer: "projectRefusedAmbiguousProducer",
   unsafeTarget: "projectRefusedUnsafe",
 } as const;
 
@@ -125,7 +126,7 @@ function verificationTone(input: ProjectInput): string {
  * the wrong thing to show. An instant this cannot parse is shown as it was
  * stored rather than replaced with a guess.
  */
-function recordedAt(value: string, locale: string): string {
+export function recordedAt(value: string, locale: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(
@@ -551,8 +552,8 @@ export function ProjectPanel({
                               : undefined
                           }
                           aria-controls="workbench-inspector"
-                          aria-label={t("provenanceInspectRun", {
-                            name: t("projectOperationCapture"),
+                          aria-label={t("provenanceInspectRunAt", {
+                            when: recordedAt(run.finishedAt, locale),
                           })}
                           data-project-inspect-run={run.id}
                           onClick={() => session.inspect({ kind: "run", id: run.id })}
@@ -595,8 +596,8 @@ export function ProjectPanel({
                                     : undefined
                                 }
                                 aria-controls="workbench-inspector"
-                                aria-label={t("provenanceInspectArtifact", {
-                                  name: t("projectArtifactFileFacts"),
+                                aria-label={t("provenanceInspectArtifactOf", {
+                                  when: recordedAt(run.finishedAt, locale),
                                 })}
                                 data-project-inspect-artifact={artifact.id}
                                 onClick={() => session.inspect({ kind: "artifact", id: artifact.id })}

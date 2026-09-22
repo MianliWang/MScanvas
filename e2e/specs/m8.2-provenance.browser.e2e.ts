@@ -327,8 +327,27 @@ describe("M8.2 provenance, rendered", () => {
     // A record has no file of its own, and says where it lives instead.
     expect(await browser.$("[data-provenance-stored]").isDisplayed()).toBe(true);
 
-    // Record -> back to its producing run, closing the loop.
+    // Record -> back to its producing run, closing the loop -- and this one by
+    // keyboard, which is the activation jsdom cannot synthesize. Real focus,
+    // real Enter, same outcome as a press.
     await browser.$(`[data-provenance-link="${RUN}"]`).click();
+    await browser.$('[data-provenance="run"]').waitForDisplayed();
+    await browser.$(`[data-provenance-link="${INPUT}"]`).click();
+    await browser.$('[data-provenance="input"]').waitForDisplayed();
+    const focused = await browser.$(`[data-provenance-link="${RUN}"]`);
+    await focused.click();
+    await browser.$('[data-provenance="run"]').waitForDisplayed();
+    await browser.$(`[data-provenance-link="${INPUT}"]`).click();
+    await browser.$('[data-provenance="input"]').waitForDisplayed();
+    await browser.execute(() => {
+      document.querySelector<HTMLElement>("#workbench-inspector [data-provenance-link]")?.focus();
+    });
+    expect(
+      await browser.execute(
+        () => document.activeElement?.getAttribute("data-provenance-link") ?? null,
+      ),
+    ).toBe(RUN);
+    await browser.keys("Enter");
     await browser.$('[data-provenance="run"]').waitForDisplayed();
 
     // Not one request in the whole traversal: every edge was already on the

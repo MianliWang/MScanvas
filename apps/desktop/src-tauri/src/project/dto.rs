@@ -130,6 +130,12 @@ pub struct CancelOutcomeDto {
 pub struct ProjectStateDto {
     /// `false` when no project is open. Every other field is then empty.
     pub open: bool,
+    /// The open project's durable identifier, or `null`.
+    ///
+    /// A random UUID. It correlates nothing about the machine or the files,
+    /// and it is sent so the interface can tell one project being replaced by
+    /// another from the open one changing -- which decide different things.
+    pub project_id: Option<String>,
     pub name: String,
     /// Whether there are changes no save has published.
     pub dirty: bool,
@@ -253,6 +259,7 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
 
     ProjectStateDto {
         open: true,
+        project_id: Some(document.project_id.to_string()),
         name: document.name.clone(),
         dirty: project.dirty,
         published: project.binding.is_some(),

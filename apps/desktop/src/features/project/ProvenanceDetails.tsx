@@ -28,6 +28,7 @@
  */
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { recordedAt } from "./ProjectPanel";
 import type { ProjectInput, ProjectRun } from "./projectApi";
 import type { Provenance, ProjectSelection, Related } from "./lineage";
 
@@ -76,6 +77,7 @@ export interface ProvenanceDetailsProps {
 
 export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsProps) {
   const t = useUiMessages();
+  const locale = document.documentElement.lang || "en";
 
   if (provenance === null) {
     return (
@@ -95,7 +97,7 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
     related: Related<T>,
     kind: ProjectSelection["kind"],
     label: (record: T) => string,
-    accessible: (name: string) => string,
+    accessible: (record: T) => string,
     trailing?: (record: T) => React.ReactNode,
   ) {
     if (related.record === null) {
@@ -105,14 +107,14 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
         </li>
       );
     }
-    const name = label(related.record);
     const record = related.record;
+    const name = label(record);
     return (
       <li key={related.id} className="provenance-link">
         <button
           type="button"
           className="link-button"
-          aria-label={accessible(name)}
+          aria-label={accessible(record)}
           data-provenance-link={related.id}
           onClick={() => onSelect({ kind, id: related.id })}
         >
@@ -123,10 +125,22 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
     );
   }
 
-  /** A reference's current file state, in the one place that shows it. */
+  /**
+   * A reference's current file state.
+   *
+   * It appears beside recorded relationships as well as under its own heading,
+   * because what a run used and what that file is now are both things a reader
+   * needs in one place. So it carries the qualifier with it: a reader who
+   * reaches this text without the heading above it -- or without the tone --
+   * still hears that it is the *current* state and not what the run recorded.
+   */
   function currentState(input: ProjectInput) {
     return (
-      <span className={`provenance-current ${currentTone(input)}`} data-provenance-current={input.verification}>
+      <span
+        className={`provenance-current ${currentTone(input)}`}
+        data-provenance-current={input.verification}
+      >
+        <span className="visually-hidden">{t("provenanceCurrentFile")}: </span>
         {t(currentStateKey(input))}
       </span>
     );
@@ -138,6 +152,13 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
   const runName = () => t("projectOperationCapture");
   const inputName = (input: ProjectInput) => input.label;
   const artifactName = () => t("projectArtifactFileFacts");
+  // Every capture is called the same thing, so a run and the record it
+  // produced are named by when the run ended. Without that, a project with
+  // three runs offers three controls with one name between them.
+  const runAt = (run: ProjectRun) =>
+    t("provenanceInspectRunAt", { when: recordedAt(run.finishedAt, locale) });
+  const producedBy = (run: ProjectRun) =>
+    t("provenanceInspectArtifactOf", { when: recordedAt(run.finishedAt, locale) });
 
   return (
     <section className="panel provenance" aria-label={t("provenanceRegion")}>
@@ -161,7 +182,7 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
           ) : (
             <ul className="provenance-list">
               {provenance.consumedBy.map((related) =>
-                link(related, "run", runName, (name) => t("provenanceInspectRun", { name }), (run) => (
+                link(related, "run", runName, runAt, (run) => (
                   <span className="provenance-outcome">{t(outcomeKey(run))}</span>
                 )),
               )}
@@ -184,7 +205,7 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
                 related,
                 "input",
                 inputName,
-                (name) => t("provenanceInspectInput", { name }),
+                (input) => t("provenanceInspectInput", { name: input.label }),
                 (input) => currentState(input),
               ),
             )}
@@ -197,9 +218,7 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
           ) : (
             <ul className="provenance-list">
               {provenance.produced.map((related) =>
-                link(related, "artifact", artifactName, (name) =>
-                  t("provenanceInspectArtifact", { name }),
-                ),
+                link(related, "artifact", artifactName, () => producedBy(provenance.run)),
               )}
             </ul>
           )}
@@ -225,9 +244,7 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
             </p>
           ) : (
             <ul className="provenance-list">
-              {link(provenance.producedBy, "run", runName, (name) =>
-                t("provenanceInspectRun", { name }),
-              )}
+              {link(provenance.producedBy, "run", runName, runAt)}
             </ul>
           )}
           <p className="provenance-section-label">{t("provenanceSources")}</p>
@@ -240,7 +257,7 @@ export function ProvenanceDetails({ provenance, onSelect }: ProvenanceDetailsPro
                   related,
                   "input",
                   inputName,
-                  (name) => t("provenanceInspectInput", { name }),
+                  (input) => t("provenanceInspectInput", { name: input.label }),
                   (input) => currentState(input),
                 ),
               )}

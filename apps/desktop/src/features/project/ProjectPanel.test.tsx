@@ -387,6 +387,7 @@ describe("the project surface", () => {
 
     api.set({
       open: false,
+      projectId: null,
       name: "",
       dirty: false,
       published: false,
@@ -566,6 +567,7 @@ describe("the project surface", () => {
   it("does not let a slow first read undo what the user did meanwhile", async () => {
     const api = createFakeProjectApi({
       open: false,
+      projectId: null,
       name: "",
       dirty: false,
       published: false,
@@ -663,6 +665,7 @@ describe("the project surface", () => {
   it("is usable with nothing open and offers the two ways in", async () => {
     mount({
       open: false,
+      projectId: null,
       name: "",
       dirty: false,
       published: false,

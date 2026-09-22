@@ -261,38 +261,39 @@ export function useProject(): ProjectSession {
   }, [state.inputs]);
 
   /**
-   * Forgets what was being inspected.
+   * Forgets what was being inspected when the project itself is replaced.
    *
-   * For the three operations that replace the whole project. A removal
-   * deliberately does not clear it: a selection whose object was removed is
-   * reported as gone, which is the true thing to say, rather than silently
-   * moving the user to some other object.
+   * Keyed on the project that is actually open, not on the operation that was
+   * attempted: an Open whose dialog the user cancelled changes nothing, and
+   * clearing on the attempt would have collapsed the contextual region for an
+   * operation that did not happen.
+   *
+   * A *removal* deliberately does not clear it. The identity is unchanged, so
+   * the selection survives and is reported as gone -- which is the true thing
+   * to say, rather than silently moving the reader to some other object.
    */
-  const replaced = useCallback(() => setInspecting(null), []);
+  const identity = state.open ? state.projectId : null;
+  useEffect(() => {
+    setInspecting(null);
+  }, [identity]);
 
   const createProject = useCallback(
-    (name: string, discardUnsaved = false) => {
-      replaced();
-      return run("saving", () => api.createProject(name, discardUnsaved), {
+    (name: string, discardUnsaved = false) =>
+      run("saving", () => api.createProject(name, discardUnsaved), {
         kind: "create",
         name,
-      });
-    },
-    [api, run, replaced],
+      }),
+    [api, run],
   );
   const openProject = useCallback(
-    (discardUnsaved = false) => {
-      replaced();
-      return run("opening", () => api.openProject(discardUnsaved), { kind: "open" });
-    },
-    [api, run, replaced],
+    (discardUnsaved = false) =>
+      run("opening", () => api.openProject(discardUnsaved), { kind: "open" }),
+    [api, run],
   );
   const closeProject = useCallback(
-    (discardUnsaved = false) => {
-      replaced();
-      return run("saving", () => api.closeProject(discardUnsaved), { kind: "close" });
-    },
-    [api, run, replaced],
+    (discardUnsaved = false) =>
+      run("saving", () => api.closeProject(discardUnsaved), { kind: "close" }),
+    [api, run],
   );
 
   return {

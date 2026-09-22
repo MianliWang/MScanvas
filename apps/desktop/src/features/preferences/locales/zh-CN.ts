@@ -1198,4 +1198,8 @@ export const zhCN = {
   provenanceInspectInput: "查看 {{name}} 的关联",
   provenanceInspectRun: "查看 {{name}} 的关联",
   provenanceInspectArtifact: "查看 {{name}} 的关联",
+  // --- M8.2 review pass.
+  projectRefusedAmbiguousProducer: "该项目文件称有两次运行产生了同一条记录，MSCanvas 无法判断是哪一次。未更改任何内容。",
+  provenanceInspectRunAt: "查看 {{when}} 那次运行的关联",
+  provenanceInspectArtifactOf: "查看 {{when}} 那次运行产生的记录",
 } as const;

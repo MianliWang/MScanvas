@@ -83,6 +83,14 @@ export interface ProjectRun {
 
 export interface ProjectState {
   readonly open: boolean;
+  /**
+   * The open project's durable identifier, or `null` when none is open.
+   *
+   * A random UUID that correlates nothing about the machine or the files. It
+   * is here so the page can tell "a different project is open now" from "this
+   * project changed", which are different events with different consequences.
+   */
+  readonly projectId: string | null;
   readonly name: string;
   readonly dirty: boolean;
   readonly published: boolean;
@@ -94,6 +102,7 @@ export interface ProjectState {
 /** The state of a session with no project open. */
 export const NO_PROJECT: ProjectState = {
   open: false,
+  projectId: null,
   name: "",
   dirty: false,
   published: false,

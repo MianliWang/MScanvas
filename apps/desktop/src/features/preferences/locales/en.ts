@@ -1225,4 +1225,8 @@ export const en = {
   provenanceInspectInput: "Show what {{name}} is related to",
   provenanceInspectRun: "Show what {{name}} is related to",
   provenanceInspectArtifact: "Show what {{name}} is related to",
+  // --- M8.2 review pass.
+  projectRefusedAmbiguousProducer: "That project file says two runs produced the same record, so MSCanvas cannot tell which one did. Nothing was changed.",
+  provenanceInspectRunAt: "Show what the run of {{when}} is related to",
+  provenanceInspectArtifactOf: "Show the record produced by the run of {{when}}",
 } as const;

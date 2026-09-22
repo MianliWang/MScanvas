@@ -38,6 +38,9 @@ export function PreviewWorkspace() {
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
+  /** The contextual region, so focus can follow a request to reveal it. */
+  const inspectorRef = useRef<HTMLElement | null>(null);
+  const pendingInspectorFocus = useRef(false);
   // Held at the shell so the project outlives navigating away from its surface.
   // Rust is authoritative either way; this only keeps the page from re-reading
   // the whole project every time the user looks at something else.
@@ -651,7 +654,14 @@ export function PreviewWorkspace() {
             session={project}
             detailsPresent={detailsOpen}
             onRevealDetails={() => {
-              if (!panels.busy) panels.toggle("details");
+              if (panels.busy) return;
+              // The control that reveals the region is inside the project
+              // surface, and in one column that surface is hidden the moment
+              // the region appears -- so the button that was just pressed
+              // unmounts and the keyboard would be left on the body. Focus
+              // follows to the region it asked for.
+              pendingInspectorFocus.current = true;
+              panels.toggle("details");
             }}
           />
         </section>
@@ -664,7 +674,7 @@ export function PreviewWorkspace() {
             onScopeChange={workspace.setConversionScope}
           />
         </section>
-        <aside id="workbench-inspector" className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}>
+        <aside id="workbench-inspector" ref={inspectorRef} tabIndex={-1} className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}>
           {/* One region, whichever surface is asking. The Project surface puts
               provenance here rather than adding a navigation target of its own,
               which is where the accepted direction puts contextual metadata. */}

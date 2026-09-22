@@ -118,6 +118,7 @@ export function capturedProject(
 export function openProject(overrides: Partial<ProjectState> = {}): ProjectState {
   return {
     open: true,
+    projectId: "aaaaaaaa-0000-4111-8111-000000000001",
     name: "Test project",
     dirty: false,
     published: false,
