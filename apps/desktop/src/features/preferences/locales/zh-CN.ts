@@ -1229,12 +1229,12 @@ export const zhCN = {
   projectCreateLayer: "创建图层",
   projectCreateLayerNamed: "从 {{name}} 创建图层",
   projectShowLayer: "显示图层",
-  projectShowLayerNamed: "显示 {{name}} 的图层",
+  projectShowLayerNamed: "显示图层：{{name}}",
   projectLayerNeedsWorkbench: "请先将此引用添加到工作台，再创建其图层。",
   projectLayerAttached: "在工作台中",
   projectLayerDetached: "不在工作台中",
   projectRemoveLayer: "移除图层",
-  projectRemoveLayerNamed: "移除 {{name}} 的图层",
+  projectRemoveLayerNamed: "移除图层：{{name}}",
   projectRefusedNotInWorkbench: "请先将此引用添加到工作台，再创建其图层。",
   projectRefusedLayerDependsOnInput: "请先移除此引用的图层，再移除该引用。",
   provenanceKindLayer: "图层",
@@ -1243,4 +1243,7 @@ export const zhCN = {
   provenanceLayer: "图层",
   provenanceNoLayer: "尚未从此引用创建图层。",
   provenanceInspectLayer: "查看 {{name}} 的图层的关联",
+  // --- M8.4 review pass.
+  provenanceLayerSourceUsedBy: "来源引用被以下运行使用",
+  provenanceLayerSourceUsedByNothing: "尚无运行使用该来源引用。",
 } as const;

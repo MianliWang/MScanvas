@@ -1453,6 +1453,12 @@ impl ProjectStore {
                 .admitted_row(input)
                 .ok_or(ProjectError::NotInWorkbench)?
                 .to_owned();
+            // Unreachable while the bounds are what they are: one layer per
+            // input and no more inputs than the layer bound means every input
+            // already has its layer by the time this could be true, and the
+            // idempotent answer above has returned first. Kept so that a
+            // later change to either bound cannot let this mint a document
+            // `validate` would refuse on every later Save.
             if project.document.layers.len() >= MAX_LAYERS {
                 return Err(ProjectError::Oversized);
             }

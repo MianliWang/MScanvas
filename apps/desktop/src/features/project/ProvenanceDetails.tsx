@@ -185,10 +185,18 @@ export function ProvenanceDetails({
   const layerHandle = layerSource === null ? null : attachedRow(layerSource, liveDatasetHandles);
   const layerName = layerSource?.label ?? t("provenanceRelatedGone");
 
-  /** The runs that consumed one reference, or the sentence for none. */
-  function usedBy(consumedBy: readonly Related<ProjectRun>[]) {
+  /**
+   * The runs that consumed one reference, or the sentence for none.
+   *
+   * The sentence is the caller's, because whose history this is differs: a
+   * reference's own, or -- under a layer -- its source's.
+   */
+  function usedBy(
+    consumedBy: readonly Related<ProjectRun>[],
+    nothing: "provenanceUsedByNothing" | "provenanceLayerSourceUsedByNothing",
+  ) {
     return consumedBy.length === 0 ? (
-      <p className="provenance-empty">{t("provenanceUsedByNothing")}</p>
+      <p className="provenance-empty">{t(nothing)}</p>
     ) : (
       <ul className="provenance-list">
         {consumedBy.map((related) =>
@@ -217,7 +225,7 @@ export function ProvenanceDetails({
           <p className="provenance-section-label">{t("provenanceCurrentFile")}</p>
           <p className="provenance-current-row">{currentState(provenance.input)}</p>
           <p className="provenance-section-label">{t("provenanceUsedBy")}</p>
-          {usedBy(provenance.consumedBy)}
+          {usedBy(provenance.consumedBy, "provenanceUsedByNothing")}
           <p className="provenance-section-label">{t("provenanceLayer")}</p>
           {provenance.layer === null ? (
             <p className="provenance-empty" data-provenance-no-layer="">
@@ -266,8 +274,11 @@ export function ProvenanceDetails({
               currentState(input),
             )}
           </ul>
-          <p className="provenance-section-label">{t("provenanceUsedBy")}</p>
-          {usedBy(provenance.consumedBy)}
+          {/* The source's history, named as the source's: the layer did not
+              exist when those runs ran, and a heading that read as its own
+              would say it had been used. */}
+          <p className="provenance-section-label">{t("provenanceLayerSourceUsedBy")}</p>
+          {usedBy(provenance.consumedBy, "provenanceLayerSourceUsedByNothing")}
         </div>
       ) : provenance.kind === "run" ? (
         <div data-provenance="run">

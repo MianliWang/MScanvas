@@ -242,6 +242,36 @@ export function ProjectPanel({
   }, [proposed]);
 
   /**
+   * Keeps the keyboard on the surface across a layer removal.
+   *
+   * Removing a layer unmounts the row whose Remove control was pressed, which
+   * drops focus to `<body>` for the same reason Locate does. Focus goes to the
+   * control the removal just changed -- the source reference's own layer
+   * control, which now offers to create one again -- or to the Layers heading
+   * where that reference is not on screen.
+   *
+   * Armed only by the press itself and spent on the first settled answer, so
+   * nothing else that re-reads the project -- an Open, a Close, a refusal --
+   * can move the keyboard. A refused removal leaves the row, and the control
+   * the user pressed, exactly where they were.
+   */
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const layersHeading = useRef<HTMLHeadingElement | null>(null);
+  const removing = useRef<{ readonly layerId: string; readonly sourceInputId: string } | null>(
+    null,
+  );
+  useEffect(() => {
+    const pending = removing.current;
+    if (pending === null || busy !== "idle") return;
+    removing.current = null;
+    if (state.layers.some((layer) => layer.id === pending.layerId)) return;
+    const control = [
+      ...(surfaceRef.current?.querySelectorAll<HTMLElement>("[data-project-create-layer]") ?? []),
+    ].find((candidate) => candidate.getAttribute("data-project-create-layer") === pending.sourceInputId);
+    (control ?? layersHeading.current)?.focus();
+  }, [busy, state.layers]);
+
+  /**
    * The one live region, carrying whatever the surface most recently has to
    * say: what is running, what a proposal found, or why something was refused.
    *
@@ -273,7 +303,12 @@ export function ProjectPanel({
               : "";
 
   return (
-    <div className="project-surface" data-project-surface="" aria-busy={working || undefined}>
+    <div
+      ref={surfaceRef}
+      className="project-surface"
+      data-project-surface=""
+      aria-busy={working || undefined}
+    >
       <header className="project-header">
         <div>
           <h2>{state.open ? state.name : t("projectNone")}</h2>
@@ -710,7 +745,9 @@ export function ProjectPanel({
               because a layer whose file has changed or gone is still the
               same layer, and the row has to say both things. */}
           <section className="project-section" aria-label={t("projectLayers")}>
-            <h3>{t("projectLayers")}</h3>
+            <h3 ref={layersHeading} tabIndex={-1}>
+              {t("projectLayers")}
+            </h3>
             {state.layers.length === 0 ? (
               <p className="project-empty">{t("projectNoLayers")}</p>
             ) : (
@@ -784,7 +821,12 @@ export function ProjectPanel({
                           aria-label={t("projectRemoveLayerNamed", { name })}
                           data-project-remove-layer={layer.id}
                           onClick={() => {
-                            if (!working) void session.removeLayer(layer.id);
+                            if (working) return;
+                            removing.current = {
+                              layerId: layer.id,
+                              sourceInputId: layer.sourceInputId,
+                            };
+                            void session.removeLayer(layer.id);
                           }}
                         >
                           {t("projectRemoveLayer")}

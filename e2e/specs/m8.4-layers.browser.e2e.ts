@@ -30,6 +30,7 @@ import { join, resolve } from "node:path";
 import {
   ALLOWED_CONSOLE_SUBSTRINGS,
   consoleEntries,
+  focusedTreatment,
   installIpcBoundary,
   ipcCalls,
   setInvokeResult,
@@ -79,6 +80,7 @@ function checkedProject(options: {
   readonly workbenchDatasetHandle: string | null;
   readonly layers?: readonly (typeof LAYER_RECORD)[];
   readonly dirty?: boolean;
+  readonly label?: string;
 }) {
   return {
     open: true,
@@ -89,7 +91,7 @@ function checkedProject(options: {
     inputs: [
       {
         id: INPUT,
-        label: MZML_ROW.fileName,
+        label: options.label ?? MZML_ROW.fileName,
         locatorKind: "insideProject",
         members: [{ role: "primary", name: "", recordedByteLength: 2048 }],
         verification: "matchingRecordedContent",
@@ -172,12 +174,14 @@ async function capture(label: string) {
     const attribute = (node: Element | null, name: string) => node?.getAttribute(name) ?? null;
     const active = document.activeElement;
     const project = document.querySelector<HTMLElement>("#workbench-project");
+    const roster = document.querySelector<HTMLElement>("#workbench-roster");
     const inspector = document.querySelector<HTMLElement>("#workbench-inspector");
     return {
       css: { width: innerWidth, height: innerHeight },
       locale: document.documentElement.lang,
       surface: root.getAttribute("data-surface"),
       projectShown: project !== null && !project.hidden,
+      rosterShown: roster !== null && !roster.hidden,
       // The one control each reference carries for its layer, in whichever of
       // its two states it is in.
       layerControls: [...document.querySelectorAll("[data-project-input]")].map((row) => {
@@ -247,6 +251,12 @@ async function capture(label: string) {
               ),
               noLayer: inspector.querySelector("[data-provenance-no-layer]") !== null,
               selectionGone: inspector.querySelector("[data-provenance-selection-gone]") !== null,
+              // The region's own box, and whether anything in it scrolls
+              // sideways -- which a long name that did not wrap would do.
+              region: {
+                ...rect(inspector),
+                overflow: inspector.scrollWidth - inspector.clientWidth,
+              },
             },
       rows: [...document.querySelectorAll("#workbench-roster [data-handle]")].map((node) => ({
         handle: node.getAttribute("data-handle"),
@@ -300,13 +310,16 @@ async function capture(label: string) {
   expect(measured.external).toEqual([]);
   expect(measured.pathsOnScreen).toBe(0);
   expect(measured.layerIdOnScreen).toBe(false);
-  for (const row of measured.rows) {
-    expect(row.x).toBeGreaterThanOrEqual(0);
-    expect(row.x + row.width).toBeLessThanOrEqual(measured.css.width + 1);
-    expect(row.height).toBeGreaterThanOrEqual(31.5);
+  // Measured only where each region is on screen: a hidden element's box is
+  // zero, which is not evidence about a target's size. One column folds the
+  // roster away while the project surface is shown, and the other way round.
+  if (measured.rosterShown) {
+    for (const row of measured.rows) {
+      expect(row.x).toBeGreaterThanOrEqual(0);
+      expect(row.x + row.width).toBeLessThanOrEqual(measured.css.width + 1);
+      expect(row.height).toBeGreaterThanOrEqual(31.5);
+    }
   }
-  // Measured only where the surface is on screen: a hidden element's box is
-  // zero, which is not evidence about a target's size.
   if (measured.projectShown) {
     for (const control of [...measured.layerControls, ...measured.layerRows]) {
       expect(control.x).toBeGreaterThanOrEqual(0);
@@ -393,7 +406,7 @@ describe("M8.4 layer identity and provenance, rendered", () => {
       creates: INPUT,
       shows: null,
       text: "Create layer",
-      name: `Create a layer from ${MZML_ROW.fileName}`,
+      name: `Create layer: ${MZML_ROW.fileName}`,
       disabled: "true",
       hardDisabled: false,
       unavailable: "notInWorkbench",
@@ -445,6 +458,11 @@ describe("M8.4 layer identity and provenance, rendered", () => {
     await browser.keys("Enter");
     await browser.$(`[data-project-layer="${LAYER}"]`).waitForDisplayed();
     await browser.$("[data-project-busy]").waitForExist({ reverse: true });
+    // Focus that a keyboard user can see, read from computed style on the
+    // element that has it, not inferred from a rule existing somewhere.
+    const ring = await focusedTreatment();
+    evidence.push({ label: "m84-03-focus-treatment", ...ring });
+    expect(ring.visible).toBe(true);
 
     const created = await capture("m84-03-layer-created");
     expect(created.layerRows).toHaveLength(1);
@@ -471,7 +489,7 @@ describe("M8.4 layer identity and provenance, rendered", () => {
       creates: null,
       shows: LAYER,
       text: "Show layer",
-      name: `Show the layer of ${MZML_ROW.fileName}`,
+      name: `Show layer: ${MZML_ROW.fileName}`,
       disabled: null,
     });
     expect(created.activeElement).toEqual({ handle: null, creates: null, shows: LAYER });
@@ -628,11 +646,76 @@ describe("M8.4 layer identity and provenance, rendered", () => {
     expect(removed.artifacts).toEqual([ARTIFACT]);
     expect(removed.rows.map((row) => row.handle)).toEqual([MZML_ROW.handle]);
     expect(removed.details?.selectionGone).toBe(true);
+    // The pressed control went with its row; the keyboard is on the control
+    // the removal changed rather than on the body.
+    expect(removed.activeElement).toEqual({ handle: null, creates: INPUT, shows: null });
     expect((await ipcCalls()).slice(beforeRemove.length)).toEqual([
       { command: "remove_project_layer", args: { layerId: LAYER } },
     ]);
 
     // Not one warning, error or unhandled rejection across the whole flow.
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("keeps a long source name inside the surface and the Details region when constrained", async () => {
+    // A name as long as an instrument will write, and a layer already made
+    // from it. What is measured is what a screenshot cannot say: nothing
+    // scrolls sideways, every layer control is inside the viewport and at the
+    // compact minimum, and the Details region does not widen to fit the name.
+    const long = `${"Plasma_QC_batch_07_".repeat(7)}replicate_03.mzML`;
+    const table: Record<string, unknown> = ipcTable();
+    table.get_workspace_roster = { datasets: [MZML_ROW], capacity: FAKE_WORKSPACE_CAPACITY };
+    table.get_project_state = checkedProject({
+      workbenchDatasetHandle: MZML_ROW.handle,
+      layers: [LAYER_RECORD],
+      label: long,
+    });
+    // The store answers a layout commit with the snapshot it published, and
+    // the interface applies that; without it the Details reveal below would be
+    // undone by its own reply.
+    table.save_ui_preferences = {
+      outcome: "saved",
+      revision: 1,
+      preferences: {
+        schemaVersion: 1,
+        appearance: { locale: "en", density: "comfortable" },
+        layout: { roster: "automatic", details: "shown" },
+      },
+    };
+    await installIpcBoundary(table);
+
+    for (const [width, height, label] of [
+      [1366, 768, "m84-11-long-name-1366"],
+      [960, 640, "m84-12-long-name-960"],
+    ] as const) {
+      await metrics(width, height);
+      await browser.url("/");
+      await browser.$(".workbench-header").waitForDisplayed();
+      await browser.$("button=Project").click();
+      await browser.$(`[data-project-layer="${LAYER}"]`).waitForDisplayed();
+
+      const listed = await capture(`${label}-list`);
+      expect(listed.projectShown).toBe(true);
+      expect(listed.layerRows[0]?.label).toBe(long);
+      // The row wraps the name rather than stretching past the viewport.
+      expect(listed.layerRows[0]?.width ?? Infinity).toBeLessThanOrEqual(width);
+
+      await browser.$(`[data-project-inspect-layer="${LAYER}"]`).click();
+      // Below the roomy breakpoint the region waits to be asked for, and the
+      // surface says where the answer went.
+      await browser.$("[data-project-inspect-hint] button").click();
+      await browser.$('[data-provenance="layer"]').waitForDisplayed();
+
+      const inspected = await capture(`${label}-details`);
+      expect(inspected.details?.describing).toBe("layer");
+      expect(inspected.details?.name).toBe(long);
+      const region = inspected.details?.region;
+      expect(region).toBeDefined();
+      expect(region?.x ?? -1).toBeGreaterThanOrEqual(0);
+      expect((region?.x ?? 0) + (region?.width ?? Infinity)).toBeLessThanOrEqual(width + 1);
+      expect(region?.overflow ?? Infinity).toBeLessThanOrEqual(1);
+    }
+
     expect(await unexpectedConsole()).toEqual([]);
   });
 });

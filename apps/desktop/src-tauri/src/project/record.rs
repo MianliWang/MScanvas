@@ -334,8 +334,13 @@ pub struct RunRecord {
 
 /// Which project record a layer is sourced from. One variant, because one
 /// current consumer exists: a reference that the Workbench has admitted.
+///
+/// Unknown fields are refused here as well as on the record around it. This
+/// object is exactly where a later build, or a hand edit, would put a handle,
+/// a path or a style, and a reader that dropped one silently and wrote the
+/// document back without it would be neither refusing nor preserving it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
 pub enum LayerSource {
     #[serde(rename_all = "camelCase")]
     Input { input_id: InputId },

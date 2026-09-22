@@ -192,7 +192,10 @@ describe("creating a layer from a reference", () => {
 
     const offered = layerControl(INPUT);
     expect(offered.textContent).toBe(en.projectCreateLayer);
-    expect(offered.getAttribute("aria-label")).toBe(`Create a layer from ${LABEL}`);
+    expect(offered.getAttribute("aria-label")).toBe(`Create layer: ${LABEL}`);
+    // The name contains what the control says, so speaking it and reading it
+    // name the same thing.
+    expect(offered.getAttribute("aria-label")).toContain(offered.textContent ?? "");
     expect(offered.getAttribute("aria-disabled")).toBeNull();
     expect(offered.getAttribute("data-project-layer-unavailable")).toBeNull();
 
@@ -215,10 +218,7 @@ describe("creating a layer from a reference", () => {
     await ready();
 
     await press(layerControl(UNCHECKED));
-    await act(async () => {
-      fireEvent.keyDown(layerControl(CHECKED), { key: "Enter" });
-      fireEvent.keyUp(layerControl(CHECKED), { key: "Enter" });
-    });
+    await press(layerControl(CHECKED));
 
     expect(api.createProjectLayer).not.toHaveBeenCalled();
     expect(api.beginProjectJob).not.toHaveBeenCalled();
@@ -242,7 +242,8 @@ describe("creating a layer from a reference", () => {
     // answer changed what the control does, not which element it is.
     await waitFor(() => expect(control.getAttribute("data-project-show-layer")).toBe(LAYER));
     expect(control.textContent).toBe(en.projectShowLayer);
-    expect(control.getAttribute("aria-label")).toBe(`Show the layer of ${LABEL}`);
+    expect(control.getAttribute("aria-label")).toBe(`Show layer: ${LABEL}`);
+    expect(control.getAttribute("aria-label")).toContain(control.textContent ?? "");
     expect(control.hasAttribute("data-project-create-layer")).toBe(false);
     expect(document.activeElement).toBe(control);
     expect(document.querySelector(`[data-project-create-layer="${INPUT}"]`)).toBeNull();
@@ -433,9 +434,18 @@ describe("the layer list", () => {
     await ready();
 
     api.set(attached());
-    await press(within(layerRow(LAYER)).getByRole("button", { name: `Remove the layer of ${LABEL}` }));
+    const remove = within(layerRow(LAYER)).getByRole("button", { name: `Remove layer: ${LABEL}` });
+    expect(remove.getAttribute("aria-label")).toContain(remove.textContent ?? "");
+    remove.focus();
+    await press(remove);
     await waitFor(() => expect(api.removeProjectLayer).toHaveBeenCalledWith(LAYER));
     await waitFor(() => expect(document.querySelector("[data-project-layer]")).toBeNull());
+    // The pressed control is gone with its row. The keyboard lands on the
+    // control the removal changed -- the source's own, offering Create again --
+    // rather than on the body.
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("data-project-create-layer")).toBe(INPUT),
+    );
 
     // A reference with a layer is refused, not cascaded, and the sentence
     // says what to do rather than that something was refused.
@@ -464,7 +474,7 @@ describe("the layer list", () => {
     expect(describing()).toBe("layer");
     expect(within(details()).getByRole("heading", { name: en.provenanceRelatedGone })).toBeTruthy();
     expect(details().querySelector(`[data-provenance-gone="${INPUT}"]`)).toBeTruthy();
-    expect(within(details()).getByText(en.provenanceUsedByNothing)).toBeTruthy();
+    expect(within(details()).getByText(en.provenanceLayerSourceUsedByNothing)).toBeTruthy();
   });
 
   it("reaches every layer control from the keyboard", async () => {
@@ -477,7 +487,7 @@ describe("the layer list", () => {
       within(row).getByRole("button", { name: `Show what the layer of ${LABEL} is related to` }),
     );
     expectKeyboardReachable(within(row).getByRole("button", { name: `Show in Workbench: ${LABEL}` }));
-    expectKeyboardReachable(within(row).getByRole("button", { name: `Remove the layer of ${LABEL}` }));
+    expectKeyboardReachable(within(row).getByRole("button", { name: `Remove layer: ${LABEL}` }));
   });
 });
 
@@ -513,8 +523,10 @@ describe("a layer in Details", () => {
     const source = details().querySelector(`[data-provenance-link="${INPUT}"]`);
     expect(source?.getAttribute("aria-label")).toBe(`Show what ${LABEL} is related to`);
     expect(source?.parentElement?.querySelector("[data-provenance-current]")).toBeTruthy();
-    // And the source's runs, as the layer's history: it has none of its own.
-    expect(region.getByText(en.provenanceUsedBy)).toBeTruthy();
+    // And the source's runs, named as the source's: the layer has no history
+    // of its own, and a heading that read as its own would say it was used.
+    expect(region.getByText(en.provenanceLayerSourceUsedBy)).toBeTruthy();
+    expect(region.queryByText(en.provenanceUsedBy)).toBeNull();
     expect(details().querySelector(`[data-provenance-link="${RUN}"]`)).toBeTruthy();
     expect(api.calls).toEqual(before);
   });
@@ -563,7 +575,8 @@ describe("a layer in Details", () => {
 
     // jsdom lays nothing out, so this holds the stylesheet to its word: the
     // heading and the row carry the classes whose rules break anywhere. The
-    // browser scenario measures the region for real.
+    // browser scenario renders a name this long at 1366x768 and 960x640 and
+    // measures that nothing overflows.
     const heading = within(details()).getByRole("heading", { name: long });
     expect(heading.className).toBe("provenance-name");
     expect(layerRow(LAYER).className).toContain("project-row");
@@ -588,20 +601,29 @@ describe("a layer in Details", () => {
     await ready(zh.projectReferences);
 
     expect(screen.getByRole("region", { name: zh.projectLayers })).toBeTruthy();
-    expect(screen.getByRole("button", { name: `显示 ${LABEL} 的图层` }).textContent).toBe(
+    expect(screen.getByRole("button", { name: `显示图层：${LABEL}` }).textContent).toBe(
       zh.projectShowLayer,
     );
     const row = layerRow(LAYER);
     expect(within(row).getByText(zh.projectLayerAttached)).toBeTruthy();
     expect(within(row).getByText(zh.projectStateMatching)).toBeTruthy();
-    expect(within(row).getByRole("button", { name: `移除 ${LABEL} 的图层` })).toBeTruthy();
+    expect(within(row).getByRole("button", { name: `移除图层：${LABEL}` })).toBeTruthy();
 
     await press(within(row).getByRole("button", { name: `查看 ${LABEL} 的图层的关联` }));
     const region = within(details());
     expect(region.getByText(zh.provenanceKindLayer)).toBeTruthy();
     expect(region.getByText(zh.provenanceLayerAvailability)).toBeTruthy();
     expect(region.getByText(zh.provenanceLayerSource)).toBeTruthy();
+    expect(region.getByText(zh.provenanceLayerSourceUsedBy)).toBeTruthy();
     expect(region.getByText(zh.projectLayerAttached)).toBeTruthy();
+    // Every per-row name contains the visible label in this locale too.
+    for (const [visible, named] of [
+      [zh.projectCreateLayer, zh.projectCreateLayerNamed],
+      [zh.projectShowLayer, zh.projectShowLayerNamed],
+      [zh.projectRemoveLayer, zh.projectRemoveLayerNamed],
+    ] as const) {
+      expect(named).toContain(visible);
+    }
 
     // Translated, not copied, and no English fell through.
     expect(document.body.textContent).not.toContain(en.projectLayerAttached);

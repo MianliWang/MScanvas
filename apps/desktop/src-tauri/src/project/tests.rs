@@ -2776,6 +2776,21 @@ fn a_layer_of_an_unknown_source_kind_or_with_an_extra_field_is_malformed() {
     let mut extra_field = serde_json::to_value(&document).expect("serializable");
     extra_field["layers"][0]["label"] = serde_json::Value::from("a name a layer does not hold");
     assert_eq!(refused_value(&extra_field), DocumentProblem::Malformed);
+
+    // One level down, inside the source itself, which is where a session fact
+    // would be smuggled in. Refused, not dropped on read and lost on save.
+    let mut extra_in_source = serde_json::to_value(&document).expect("serializable");
+    extra_in_source["layers"][0]["source"]["datasetId"] = serde_json::Value::from("file-3");
+    assert_eq!(refused_value(&extra_in_source), DocumentProblem::Malformed);
+
+    // Control: the same document, untouched, is accepted through the same
+    // path, so the three refusals above are about what was added.
+    let untouched = serde_json::to_value(&document).expect("serializable");
+    let bytes = serde_json::to_vec(&untouched).expect("serialize");
+    assert_eq!(
+        record::parse(&bytes).expect("accepted").layers,
+        document.layers
+    );
 }
 
 #[test]
@@ -2984,4 +2999,145 @@ fn the_development_only_first_schema_is_refused_rather_than_migrated() {
     let mut document = valid_document();
     document.schema_version = 1;
     assert_eq!(refused(&document), DocumentProblem::UnsupportedVersion);
+}
+
+// ---------------------------------------------------------------------------
+// M8.4 review: the cases the first pass left unexercised
+// ---------------------------------------------------------------------------
+
+#[test]
+fn removing_a_layer_from_a_saved_project_marks_it_unsaved() {
+    let scratch = Scratch::new("layer-remove-dirty");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    let layer = store.create_layer(id, live).expect("created");
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("save as");
+    assert!(!store.describe().dirty, "published, so nothing is unsaved");
+
+    store.remove_layer(layer).expect("removed");
+
+    // Without this a saved project could lose a layer and close without being
+    // asked, and the layer would be back on the next open.
+    assert!(store.describe().dirty);
+}
+
+#[test]
+fn a_create_that_lands_while_another_asks_the_roster_converges_on_one_layer() {
+    let scratch = Scratch::new("layer-concurrent-create");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+
+    // The second create runs in the window the first one released the lock
+    // for. Creating a layer does not advance the generation, so the only thing
+    // that stops a second record for the same reference is the re-check after
+    // the lock is taken again.
+    let inner = Cell::new(None);
+    let outer = store
+        .create_layer(id, |_| {
+            inner.set(Some(store.create_layer(id, live).expect("inner create")));
+            true
+        })
+        .expect("outer create");
+
+    assert_eq!(Some(outer), inner.get());
+    assert_eq!(document_of(&store).layers.len(), 1);
+    record::validate(&document_of(&store)).expect("one layer per reference");
+}
+
+#[test]
+fn a_save_as_while_the_roster_is_asked_gets_no_layer() {
+    let scratch = Scratch::new("layer-stale-save-as");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    let elsewhere = Scratch::new("layer-stale-save-as-elsewhere");
+    let destination = elsewhere.join("project.mscanvas");
+
+    let outcome = store.create_layer(id, |_| {
+        store
+            .save_as(&destination)
+            .expect("save as while the lock is released");
+        true
+    });
+
+    assert_eq!(outcome, Err(ProjectError::StaleDocument));
+    assert!(document_of(&store).layers.is_empty());
+    let reopened = ProjectStore::new();
+    reopened.open_document(&destination, false).expect("open");
+    assert!(
+        document_of(&reopened).layers.is_empty(),
+        "nothing was published that the save did not already hold"
+    );
+}
+
+#[test]
+fn a_relink_committed_while_the_roster_is_asked_gets_no_layer() {
+    let scratch = Scratch::new("layer-stale-relink");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"stable bytes");
+    admit(&store, id, "dataset-1");
+    let copy = scratch.write("moved/sample.txt", b"stable bytes");
+    assert!(store.propose_relink(id, &copy).expect("propose"));
+
+    let outcome = store.create_layer(id, |_| {
+        store
+            .commit_relink(id)
+            .expect("commit while the lock is released");
+        true
+    });
+
+    assert_eq!(outcome, Err(ProjectError::StaleDocument));
+    assert!(document_of(&store).layers.is_empty());
+    // The record names a different object now and its row was dropped, so a
+    // fresh ask is refused on the project's own terms, not on the stale one.
+    assert_eq!(
+        store.create_layer(id, live),
+        Err(ProjectError::NotInWorkbench)
+    );
+}
+
+#[test]
+fn the_same_document_reopened_while_the_roster_is_asked_gets_no_layer() {
+    let scratch = Scratch::new("layer-stale-reopen");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+
+    // Reopening the same file keeps every identifier, so the reference is
+    // still found by id afterwards. The generation is what says it is not the
+    // same session's project any more.
+    let outcome = store.create_layer(id, |_| {
+        store
+            .open_document(&document, true)
+            .expect("reopen while the lock is released");
+        true
+    });
+
+    assert_eq!(outcome, Err(ProjectError::StaleDocument));
+    assert!(document_of(&store).layers.is_empty());
+    assert_eq!(
+        remembered_row(&store, id),
+        None,
+        "a reopen remembers no row"
+    );
+}
+
+#[test]
+fn a_project_replaced_while_the_roster_is_asked_gets_no_layer() {
+    let scratch = Scratch::new("layer-stale-replace");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    admit(&store, id, "dataset-1");
+
+    let outcome = store.create_layer(id, |_| {
+        store
+            .create("Another project".to_owned(), true)
+            .expect("replace while the lock is released");
+        true
+    });
+
+    assert_eq!(outcome, Err(ProjectError::StaleDocument));
+    let document = document_of(&store);
+    assert!(document.inputs.is_empty());
+    assert!(document.layers.is_empty());
 }

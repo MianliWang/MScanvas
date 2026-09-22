@@ -1261,14 +1261,14 @@ export const en = {
   projectLayers: "Layers",
   projectNoLayers: "No layers yet. Create one from a reference that is in the Workbench.",
   projectCreateLayer: "Create layer",
-  projectCreateLayerNamed: "Create a layer from {{name}}",
+  projectCreateLayerNamed: "Create layer: {{name}}",
   projectShowLayer: "Show layer",
-  projectShowLayerNamed: "Show the layer of {{name}}",
+  projectShowLayerNamed: "Show layer: {{name}}",
   projectLayerNeedsWorkbench: "Add this reference to the Workbench before creating its layer.",
   projectLayerAttached: "In the Workbench",
   projectLayerDetached: "Not in the Workbench",
   projectRemoveLayer: "Remove layer",
-  projectRemoveLayerNamed: "Remove the layer of {{name}}",
+  projectRemoveLayerNamed: "Remove layer: {{name}}",
   projectRefusedNotInWorkbench: "Add this reference to the Workbench before creating its layer.",
   projectRefusedLayerDependsOnInput: "Remove this reference's layer before removing the reference.",
   provenanceKindLayer: "Layer",
@@ -1277,4 +1277,9 @@ export const en = {
   provenanceLayer: "Layer",
   provenanceNoLayer: "No layer has been created from this reference.",
   provenanceInspectLayer: "Show what the layer of {{name}} is related to",
+  // --- M8.4 review pass. A per-row name contains the visible label, as the M8.3
+  // names do; and a layer's Details names the history it lists as its source's,
+  // because a layer has none of its own.
+  provenanceLayerSourceUsedBy: "Source reference used by",
+  provenanceLayerSourceUsedByNothing: "Nothing has used the source reference yet.",
 } as const;

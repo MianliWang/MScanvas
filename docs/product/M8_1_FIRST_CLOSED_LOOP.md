@@ -753,11 +753,12 @@ adding it is a schema decision of its own.
 The document schema is **2**. Schema 1 was the shape before layers existed and
 was never published outside development, so a document carrying it is refused
 as `unsupportedVersion` by the policy that already refuses every other version:
-no migration is built for a format no user ever held, and the reader's own
-sentence for it ("written by a newer version") is the true one for a
-development-era file only in the sense that matters -- this build is the wrong
-reader for it, and replacing it would be the wrong answer. That is the exact
-disposition. Keeping the version at 1 and defaulting the field would have made
+no migration is built for a format no user ever held. The reader's sentence for
+it ("written by a newer version") is inaccurate for a schema-1 file, which an
+older build wrote, and it is accepted because no such file exists outside
+development: the refusal itself -- this build is the wrong reader, and
+replacing the file would be the wrong answer -- is the right one. That is the
+exact disposition. Keeping the version at 1 and defaulting the field would have made
 an M8.4 document read as `malformed` by an M8.3 build, which is the untrue
 sentence, and would have silently changed what a versioned shape means.
 
@@ -789,12 +790,17 @@ duplicate-layer semantics are not built.
 
 `validate` -- and therefore every open, every Save and every Save As -- refuses
 a duplicate `LayerId`, a layer sourced from a reference the document does not
-contain, and more layers than references. Two layers sourced from one reference
+contain, and more layers than the layer bound (`MAX_LAYERS`, equal to the input
+bound) as `oversized`. Two layers sourced from one reference
 are refused as `duplicateIdentifier`, the single documented rule, by the M8.2
 precedent: a relationship the document states twice is a duplicate, and
 normalising it would mean choosing which layer is *the* layer of that input. A
-source of any other kind, or a layer carrying a field this record does not
-hold, is `malformed` by construction: the type has no variant for it. Nothing is
+source of any other kind is `malformed` by construction, because the type has no
+variant for it; and a field the record does not hold is refused as `malformed`
+at both levels -- on the layer and inside its source, which is exactly where a
+handle, a path or a style would be put. The first candidate refused it only on
+the layer and silently dropped it inside the source; the review closed that.
+M8.1's `Locator` keeps its own convention and is not changed here. Nothing is
 inferred from a label, a path, creation order or lineage adjacency, and the
 layer adds no cycle to the graph `lineage.rs` reasons about: a layer names one
 input, an input names nothing, and nothing names a layer.
@@ -816,10 +822,11 @@ row, the layer row and the Details region all share, so no two surfaces can
 disagree about whether a row is there. Rust sends no availability field: a
 second copy of the answer would be one more thing to disagree.
 
-So a layer row and its Details answer two current facts, each labelled as
-current: whether the source is in the Workbench (attached / detached), and what
-the last check established about the source's file, in the same sentences the
-reference row uses. Selecting a layer sends nothing, checks nothing and
+So a layer row and its Details answer two current facts: whether the source is
+in the Workbench (attached / detached), stated in the present tense and headed
+"Current availability" in Details, and what the last check established about
+the source's file, carried with a "Current file" qualifier in the same sentences
+the reference row uses. Selecting a layer sends nothing, checks nothing and
 reattaches nothing; a detached layer offers no Show in Workbench control and
 manufactures no `DatasetId`. The M8.3 association is an association for one
 session; it is not turned into a claim that the source's bytes continue to
@@ -850,7 +857,9 @@ match.
 
 A document written with a Workbench row remembered and a layer created is
 serialized and searched: no `dataset`, `handle`, `identity`, `volume` or
-`fileId` appears in it, the layer entry is byte for byte the shape above, and
+`fileId` appears in it, the layer entry is structurally exactly the shape above
+(compared as a JSON value, so key order and whitespace are not what is pinned),
+and
 the projection the interface receives carries only `id` and `sourceInputId`.
 The structural argument stands beside the test: the session association lives
 in `OpenProject.admitted`, which no document type can express, and
@@ -875,11 +884,25 @@ keyboard stays on it when the answer to a press turns "Create layer" into
 rather than `disabled`, and points at its reason. A layer row is named by its
 source, says whether it is in the Workbench and what the source's current state
 is, offers Show in Workbench only while the row is live, and has its own Remove.
-Details for a layer answers what it is, its source (a control, with the
-source's current state beside it), its current availability, and the runs
-that consumed the source; Details for a reference now names its layer, or says
+Removing a layer moves the keyboard to the control the removal changed -- the
+source reference's own layer control -- rather than leaving it on the body.
+Every per-row accessible name contains the visible label it names, as the M8.3
+names do ("Create layer: ...", "Show layer: ...", "Remove layer: ..."). Details
+for a layer answers what it is, its source (a control, with the source's
+current state beside it), its current availability, and the runs that consumed
+the source under a heading that says they are the *source's* -- the layer did
+not exist when they ran; Details for a reference now names its layer, or says
 none has been made. Navigation between the two is local state over data the
 page already holds. Every owned string exists in `en` and `zh-CN`.
+
+Three things are left as they are, stated rather than implied. Creating and
+removing a layer announce the surface's existing "Saving..." busy word, which is
+its word for any edit to an unsaved document rather than a claim that a file is
+written. A layer whose source is gone renders a sentence as its name; no valid
+document can produce one, and the branch exists so a bad projection cannot
+take the surface down. And two references with the same file name give two
+layers with the same visible name, which is M8.1's label rule carried into a
+second list; every layer is still addressed by its identifier.
 
 ### Kept outside scientific rendering
 
@@ -908,14 +931,17 @@ check state neither gates nor rewrites the layer, including a check that finds
 the file missing; a relink keeps the layer and detaches its row; removing a
 layer changes nothing but the layer; a reference with a layer is refused
 removal and the document is unchanged and still valid once the layer goes; a
-duplicate `LayerId`, a dangling source, an unknown source kind, an extra field,
-two layers of one reference and more layers than the bound are each refused
-with their own problem; a never-admitted reference is refused without the
-roster being asked, and a gone row after one question; a project closed, a
-different reference removed and the very source removed while the roster is
-being asked each get no layer and leave nothing dangling; creating and
-removing a layer read no file and launch no process; the serialized document
-carries no session fact; and schema 1 is refused rather than migrated.
+duplicate `LayerId`, a dangling source, an unknown source kind, an extra field
+on the layer or inside its source, two layers of one reference and more layers
+than the bound are each refused with their own problem; a never-admitted
+reference is refused without the roster being asked, and a gone row after one
+question; a project closed, replaced, saved elsewhere or reopened from the same
+file, a relink committed, a different reference removed and the very source
+removed while the roster is being asked each get no layer and leave nothing
+dangling; a second create landing in that window converges on one layer;
+removing a layer from a saved project marks it unsaved; creating and removing a
+layer read no file and launch no process; the serialized document carries no
+session fact; and schema 1 is refused rather than migrated.
 
 Frontend, in `ProjectLayers.test.tsx` and `lineage.test.ts`: the control is
 offered only for a live row and sends nothing when inert; a create keeps the
@@ -923,19 +949,28 @@ keyboard on the control and turns it into Show; an existing layer is shown, not
 duplicated; the list, its two current facts, selection, Show in Workbench only
 while live, detachment when the row leaves, a reopen that forgot the row, a
 source whose state changed, removal and the two refusals in their own words, a
-source that is gone, keyboard reach of every control, Details from both ends
-with no request in either direction, a long source name that wraps, and the
-whole of it in Simplified Chinese.
+source that is gone, keyboard reach of every control and where the keyboard
+goes after a removal, per-row names that contain their visible labels, Details
+from both ends with no request in either direction and the source's history
+named as the source's, the stylesheet rules that wrap a long source name, and
+the whole of it in Simplified Chinese. The suite flushes the hook's first-load
+effect before pressing (below); that is a test-timing accommodation for an
+M8.2 effect, not a repair of it.
 
 One browser scenario, `e2e/specs/m8.4-layers.browser.e2e.ts`, over the
 mock-IPC harness: the ineligible control and its reason; Add to Workbench and
-back; a keyboard create whose only request names the reference; the layer
+back; a keyboard create whose only request names the reference, with the
+focus ring read from computed style on the element that has it; the layer
 inspected on arrival; layer to source to layer with the call ledger unchanged;
 Show in Workbench from Details landing on the selected, focused row; Save,
 Close and Open through the real buttons with the layer back under the same
 identifier, detached, the reference offering Show rather than a second Create,
-the roster still holding the row, and exactly three requests sent; and Remove
-leaving the reference, run, record and row in place. It is React/mock-IPC
+the roster still holding the row, and exactly three requests sent; Remove
+leaving the reference, run, record and row in place and the keyboard on the
+source's layer control; and a second case with a source name as long as an
+instrument writes, at 1366x768 and 960x640, measuring that the list, the layer
+row and the Details region neither overflow nor widen past the viewport. It is
+React/mock-IPC
 layout and interaction evidence only -- the project, the add result, the layer
 answer and the roster are a controlled answer table -- and it proves nothing
 about the filesystem, persistence or a provider; those claims are the Rust
@@ -943,14 +978,17 @@ tests' above.
 
 ### Local validation record for M8.4
 
-Run on the M8.4 candidate, with direct exit status, on 2026-09-22. No VM,
-native or provider campaign was run, and none is claimed.
+Run with direct exit status on 2026-09-22. No VM, native or provider campaign
+was run, and none is claimed.
+
+**On the first candidate** (the implementation commit `70af668` and the
+documentation commit `ee8c63a`), before the review:
 
 | Gate | Exit | What it established |
 | --- | --- | --- |
 | `cargo fmt --all --check` | 0 | |
 | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
-| `cargo test --workspace` | 0 | desktop library 1101 passed, 14 ignored; plot-spec 125; proteowizard 513 plus its integration targets; the project store's 102 include the 21 layer cases, and the bridge's 29 include the 2 roster-backed ones |
+| `cargo test --workspace` | 0 | desktop library 1101 passed, 14 ignored; plot-spec 125; proteowizard 513 plus its integration targets; the project store's 102 include 22 layer cases, and the bridge's 29 include 2 roster-backed ones |
 | `pnpm lint` | 0 | |
 | `pnpm build` | 0 | |
 | `pnpm test`, first run | **1** | 5 failed of 2091, retained below |
@@ -959,6 +997,11 @@ native or provider campaign was run, and none is claimed.
 | `python -B scripts/check_repo.py` | 0 | |
 | `pnpm e2e:browser --spec ./e2e/specs/m8.4-layers.browser.e2e.ts` | 0 | 1 passing, ten captured frames, empty console ledger; evidence under `test-results/m8.4/browser-CYCFqz` (an earlier pass of the same spec on the same tree is at `browser-3rqJQC`) |
 | `pnpm e2e:browser --spec ./e2e/specs/m8.3-reattachment.browser.e2e.ts` | 0 | 2 passing with the `layers` seed; evidence under `test-results/m8.3/browser-dKNRqn` |
+
+The implementation commit's message says twenty-three Rust tests; the diff adds
+twenty-four -- twenty-two in the project store's suite and two in the bridge's
+-- and the count above is the diff's. The message cannot be amended, so the
+correction is recorded here.
 
 **The first frontend run, preserved.** It was started while the Rust gates
 were compiling and testing on the same machine, which is an orchestration
@@ -969,36 +1012,97 @@ neither is this slice's:
   case) timed out at 5000 ms. All three are whole-application compositions of
   viewer and figure surfaces this slice does not touch -- its one change to
   the shell is two props on the Details region -- and they are the
-  parallel-sensitive App-level class already on record.
+  parallel-sensitive App-level class already carried as inherited debt.
 - `ProvenanceDetails.test.tsx > shows each current state as its own sentence`
   and `> keeps an unresolvable relationship visible rather than shortening the
   list` failed with Details reading "nothing selected" after the inspect
-  press. These are the M8.2 cases already recorded as timing-sensitive, and
-  this slice found their cause rather than their symptom: `useProject` clears
-  `inspecting` in a passive effect keyed on the open project's identity, and
-  that effect also fires when the project *first* arrives. A press landing
-  between the rows rendering and that effect flushing is applied first and
-  then cleared. The two tests press the instant the control exists, which is
-  exactly that window; a person cannot reach it. Neither the hook nor the
-  tests are changed here -- the hook's behaviour is M8.1's and repairing it is
-  a decision of its own, and the minimal repair is one that resets only when a
-  previously open project is replaced or closed. The M8.4 suite flushes that
-  effect before pressing, which is why it does not sit in the window.
+  press. This slice's handoff carried an isolated M8.2 provenance-test timing
+  sensitivity as inherited debt; this is the first record of *these* two cases
+  in the repository, and the first diagnosis of its cause. `useProject` clears
+  `inspecting` in a passive effect keyed on the open project's identity --
+  introduced by M8.2's review closure, `399a3ef`, not by M8.1 -- and that
+  effect also fires when the project *first* arrives. A press landing between
+  the rows rendering and that effect flushing is applied first and then
+  cleared. The two tests press the instant the control exists, which is
+  exactly that window; a person cannot reach it. Neither the effect nor the
+  M8.2 tests are changed here: repairing the effect is a decision of its own,
+  and the minimal repair is one that resets only when a previously open project
+  is replaced or closed. The M8.4 suite flushes that effect before pressing,
+  which is why it does not sit in the window.
 
 The second run, alone, passed everything. It does not erase the first; both
 are the record.
 
-**Inherited debt, carried and not widened.** The ten historical browser specs
-that still select `li.dataset-row`, and `m7.2-workbench`'s language snapshot
-mismatch, are as recorded above and were not run. Two observations were made
-while reading and are left as they were found: `m8.1-project-records` rejects
-a save with a `code` field where the reader has read `kind` since M8.3, so its
-two refusal cases may no longer pass -- the spec was not run and no claim is
-made either way; and every browser frame carries the harness's own notice that
-Explorer drag-and-drop is unavailable, because the shared table answers the
-drop subscription with nothing, which produces no console entry and is not
-this slice's. Nothing in an older DOM was restored and no assertion was
-weakened.
+**Inherited debt, carried and not widened.** The historical browser specs the
+M8.1 record counts as ten, that still select `li.dataset-row` -- at this head,
+nine spec files, seven browser and two Tauri -- and `m7.2-workbench`'s
+language snapshot mismatch are as recorded above and were not run. Two
+observations were made while reading and are left as they were found:
+`m8.1-project-records` rejects a save with a `code` field where the reader has
+read `kind` since M8.3, so its two refusal cases may no longer pass -- the spec
+was not run and no claim is made either way; and every browser frame carries
+the harness's own notice that Explorer drag-and-drop is unavailable, because
+the shared table answers the drop subscription with nothing, which produces no
+console entry and is not this slice's. Nothing in an older DOM was restored and
+no assertion was weakened.
+
+### The review, and what it changed
+
+One isolated read-only review of the whole delta, eleven dimensions --
+identity, schema, session facts, lifetimes, availability, generation, I/O, UI,
+scope, documentation and evidence strength -- each finding then given to three
+independent refuters with different lenses. Thirty-six findings; thirty-one
+survived a majority, five did not. Deduplicated, what survived and what was
+done:
+
+- **A field inside a layer's source was dropped rather than refused.** Six
+  dimensions found it independently. `LayerSource` now denies unknown fields,
+  and the refusal test injects a `datasetId` inside the source beside the
+  existing unknown-kind and extra-field cases, with the untouched document as
+  its control. Removing the attribute makes that test fail, which was checked.
+- **Per-row names did not contain their visible labels** -- "Create a layer
+  from X" for a control that reads "Create layer", in English for all three
+  and in Chinese for two. They now follow the M8.3 pattern, and a test holds
+  every Chinese name to containing its visible label.
+- **Remove layer dropped the keyboard to the body.** Focus now goes to the
+  source reference's layer control, armed only by the press and spent on the
+  first settled answer, so an Open, a Close or a refusal cannot move it. The
+  jsdom and browser assertions both check it; removing the focus call makes the
+  jsdom one fail, which was checked.
+- **A layer's Details headed its source's runs "Used by"**, which read as the
+  layer's own history. It now has its own heading and empty state naming the
+  source.
+- **Tests the first pass lacked**: removing a layer from a saved project marks
+  it unsaved; a second create landing in the roster window converges on one
+  layer, which is the only guard across the released lock because a create
+  does not advance the generation; and the stale arms the record named but
+  did not exercise -- Save As, a committed relink, reopening the same file and
+  replacing the project, each inside the roster window.
+- **Evidence the task required and nothing measured**: visible focus, now read
+  from computed style after the keyboard create; and constrained layout, now a
+  browser case at 1366x768 and 960x640 with a long source name. Writing that
+  case found that the scenario's roster-row geometry was asserted on hidden
+  rows at one column; it is now asserted only where the roster is on screen,
+  as the layer controls already were.
+- **Two vacuous lines** -- a jsdom key press on a button, which jsdom does not
+  turn into a click -- were replaced with a real press.
+- **The record itself**: the first-load effect's origin, the test count, the
+  "already recorded" claim, the "byte for byte" claim, the three phrasings of
+  one count rule, the schema-1 sentence called true, the "labelled as current"
+  claim and the inherited spec count are each corrected above.
+- **Kept, with a comment**: `create_layer`'s count check, which the
+  one-layer-per-input rule makes unreachable and which is kept so a later
+  change to either bound cannot mint a document `validate` refuses.
+- **Left, and stated** under the surface section: the "Saving..." busy word,
+  the gone-source rendering, and two layers of two same-named files sharing a
+  visible name.
+
+The five that did not survive: two layers of same-named files being
+indistinguishable (real, but M8.1's label rule rather than this slice's, and
+now stated), the session-fact test lacking a real-format handle, a no-I/O test
+not exercising the real closure against a missing file, a double possessive in
+one Chinese string, and a test comment said to claim the browser measured the
+focus ring. The last is moot now that it does.
 
 ## Out of scope, explicitly
 
