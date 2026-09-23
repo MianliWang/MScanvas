@@ -1693,6 +1693,113 @@ commit's gates ran. No high-severity finding. What it found, and what was done:
 - **The producer-from-the-run-summary-attempt fix had no test**; a provider that
   reports different builds for the two attempts now pins it.
 
+### Local validation record for M8.5
+
+Run with direct exit status on 2026-09-22, every gate once per candidate and in
+sequence -- no Rust build overlapping the frontend suite, and one browser spec
+at a time on its own dev server. Logs are under `test-results/m8.5/logs/`, one
+directory per candidate with a `summary.txt` of exit codes. No VM, native or
+provider campaign was run, and none is claimed.
+
+**The review candidate, `84dc952`** (`gates-prereview`): every gate exited 0 --
+`cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --workspace` (1773 passed, 0 failed,
+23 ignored across the workspace; the desktop library 1130 passed, 14 ignored),
+`pnpm lint`, `pnpm build`, `pnpm test` (2103 of 2103), `pnpm e2e:typecheck`,
+`python -B scripts/check_repo.py`, and the browser specs `m8.5-qc-summary`
+(2 passing), `m8.4-layers` (2), `m8.3-reattachment` (2) and `m8.2-provenance`
+(4). The last three were run because this slice changed the Details region and
+the projection their seeds carry.
+
+**The first repair, `2e589ea`** (`gates-final-2e589ea`): eleven gates exited 0
+(Rust 1777 passed, 0 failed, 23 ignored; the four browser specs 3, 2, 2 and 4
+passing). **`pnpm test` exited 1**: one of 2104 failed --
+`M73Viewer.test.tsx > M7.3 through the delivered application > exports only
+committed axis ranges while drawing or pending, then the newly confirmed range
+from retained tokens`, `Test timed out in 5000ms`, at 5023 ms. It is preserved as
+it happened and was not rerun until green. Its ownership was investigated as
+this slice's first:
+
+- the same test passed in the full run on `84dc952`, and the only frontend
+  change between the two candidates is on the Project surface -- a focus
+  effect, a `tabIndex`, accessible names and strings;
+- in that test the Project surface is hidden and holds no layer, so none of the
+  changed code does more than render nothing;
+- run alone once on `2e589ea`, the file passed and that case took 1960 ms, about
+  a fifth of what the parallel run needed
+  (`diagnosis-m73viewer-alone-2e589ea.log`);
+- the whole parallel suite ran 13% slower than on `84dc952` (76 s against 67 s;
+  setup 134 s against 100 s), which is load on the machine rather than this
+  test's work;
+- the M8.4 record already carries this App-level parallel-timeout class for this
+  file.
+
+On that basis it is classified as the inherited load-dependent App-level
+timeout, not M8.5's. That is a basis, not a proof: a timing failure does not
+name its cause, and no parent-commit run of this file was made.
+
+**The final code candidate, `1d290bd`** (`gates-final-1d290bd`): every gate
+exited 0 --
+
+| Gate | Exit | What it established |
+| --- | --- | --- |
+| `cargo fmt --all --check` | 0 | |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --workspace` | 0 | 1780 passed, 0 failed, 23 ignored; the desktop library 1137 passed, 14 ignored |
+| `pnpm lint` | 0 | |
+| `pnpm build` | 0 | |
+| `pnpm test` | 0 | 2106 passed of 2106, the suite at its ordinary duration (66 s) |
+| `pnpm e2e:typecheck` | 0 | |
+| `python -B scripts/check_repo.py` | 0 | |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.5-qc-summary.browser.e2e.ts` | 0 | 3 passing; `test-results/m8.5/browser-OGC8FY` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.4-layers.browser.e2e.ts` | 0 | 2 passing; `test-results/m8.4/browser-RA84yc` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.3-reattachment.browser.e2e.ts` | 0 | 2 passing; `test-results/m8.3/browser-Rt0UHJ` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.2-provenance.browser.e2e.ts` | 0 | 4 passing; `test-results/m8.2/browser-N7Ul5a` |
+
+The commit that adds this record changes this document only, and
+`check_repo.py` was run again on it.
+
+**What the browser scenario is evidence of.** `m8.5-qc-summary` runs the real
+production composition in real Chrome over the real Vite dev server with only
+the IPC boundary replaced. Its three cases: a layer whose source is in the
+Workbench but not viewed refuses with its visible reason and sends nothing;
+viewing the source by the Workbench's own action enables it; a keyboard Enter
+sends exactly the layer and the preview's token and nothing else; the report
+shows every recorded value and the keyboard lands on its heading with a visible
+ring; Details walks report, run, layer and reference with no request; Save,
+Close and Open leave the report whole, the layer detached, the reference
+offering to add rather than show, and three requests only -- no preview read,
+no admission, no check. At 1366x768 a capture leaves the report and the focused
+heading on screen; and a source name as long as an instrument writes stays
+inside the report, the surface and Details at 1366x768 and 960x640. Every frame
+asserts that neither the page, the shell, the layout, the project surface nor
+Details scrolls sideways, that the header never moves, that no path, layer
+identifier or preview token is on screen, and that nothing off-origin was
+fetched; each viewport's console ledger is empty. The preview and its run
+summary are a **controlled fixture answer**, the producing build's release,
+revision and digest are **controlled fixture provenance**, and the recorded
+snapshot and the saved and reopened projects are a **controlled answer table**.
+It is React, CSS, layout and interaction evidence, and nothing about a real
+provider, the filesystem or persistence; those claims are the Rust tests'.
+
+Retained from writing it: the first run's 960x640 frame
+(`test-results/m8.5/browser-z03JCg`) shows a report whose heading had scrolled
+out of view, and the next attempt's (`browser-ngHPyc`) shows the whole shell
+scrolled up by `scrollIntoView`; both are the finding the report's scroll rule
+above describes, and the control run against the committed behaviour is
+`logs/browser-control-committed-scroll.log`.
+
+**Inherited debt, carried and not widened.** The historical specs that still
+select `li.dataset-row`, and `m7.2-workbench`'s language snapshot mismatch, are
+as recorded above and were not run. `m8.1-project-records` -- whose refusal
+cases may still reject with `code` where the reader has read `kind` since M8.3 --
+was not run either: this slice only added the new projection fields to its
+seeds, as it did to the M8.2-M8.4 seeds, and no claim is made about it either
+way. The App-level parallel timeout appeared once, as above. The M8.2 first-load
+effect was not reached: the M8.5 jsdom suite flushes it before pressing, as the
+M8.4 suite does. Nothing in an older DOM was restored and no assertion was
+weakened.
+
 ## Out of scope, explicitly
 
 Provider-dependent conversion, preview, figures, exports and clipboard remain on
