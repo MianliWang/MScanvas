@@ -1697,7 +1697,8 @@ commit's gates ran. No high-severity finding. What it found, and what was done:
 
 Run with direct exit status on 2026-09-22, every gate once per candidate and in
 sequence -- no Rust build overlapping the frontend suite, and one browser spec
-at a time on its own dev server. Logs are under `test-results/m8.5/logs/`, one
+at a time on its own dev server. The first two candidates' gates overlapped a
+read-only review agent, as the diagnosis below states. Logs are under `test-results/m8.5/logs/`, one
 directory per candidate with a `summary.txt` of exit codes. No VM, native or
 provider campaign was run, and none is claimed.
 
@@ -1729,8 +1730,14 @@ this slice's first:
   a fifth of what the parallel run needed
   (`diagnosis-m73viewer-alone-2e589ea.log`);
 - the whole parallel suite ran 13% slower than on `84dc952` (76 s against 67 s;
-  setup 134 s against 100 s), which is load on the machine rather than this
-  test's work;
+  setup 134 s against 100 s). The one concurrent activity known is named here
+  rather than called "load": the gates for both `84dc952` and `2e589ea` ran
+  while an isolated review agent was active on the same machine, reading files
+  and running read-only `git` and search commands -- the first review during
+  the first run, the affected-delta review during the second. It ran no build,
+  test or browser, and how much of the slowdown it accounts for was not
+  measured. The final candidate's gates ran with no agent active, and the suite
+  took 66 s;
 - the M8.4 record already carries this App-level parallel-timeout class for this
   file.
 
