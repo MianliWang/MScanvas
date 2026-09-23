@@ -22,6 +22,7 @@ RELEASED; M10 NOT STARTED
 | Project-surface consumer | `b1724c4` |
 | Record and evidence | `dda7c09` (the isolated review's input) |
 | Review fixes | `4764c74` |
+| Follow-up fixes (final code) | `7fcc465` |
 
 ## Entry probes
 
@@ -108,7 +109,7 @@ stored payload, not a Python controller. They are the `#[ignore]` tests in
 | Supported source through the whole path: plan, run, publish, save, reopen, Save As, original untouched, no residue | Completed; `DETECTED` and `NOT_DETECTED` as designed; available after reopen and in the copy |
 | All-absent batch | Completed through the measured recovery; every row `NOT_DETECTED` with `recoveredFromEmptySelection` |
 | One window beyond the last MS1 spectrum, beside a detectable target | Completed; the detectable target `DETECTED`, the other `FAILED` `WINDOW_WITHOUT_MS1_PEAKS` with zero points; nothing counted as not detected |
-| Every window beyond the run | Completed with every row `FAILED` `WINDOW_WITHOUT_MS1_PEAKS` and none absent. Before the review fix, the adapter's rule and the payload check both admitted `NOT_DETECTED` for such rows |
+| Every window beyond the run | Completed through the empty-selection recovery (`noCandidateRecovery` true) with every row `FAILED` `WINDOW_WITHOUT_MS1_PEAKS` and none absent; the empty window's evidence reads back as two traces with no points. Before the review fix, the adapter's rule and the payload check both admitted `NOT_DETECTED` for such rows |
 | Namespace-prefixed mzML | Failed `sourceReadIncomplete`; the source is byte-identical afterwards |
 | Truncated and non-mzML sources | Failed with source codes; nothing published |
 | Shared feature with an edge-flagged partner | Both rows `FAILED`, never `SHARED` |
@@ -221,10 +222,22 @@ by measurement after it.
 | This record's validation section was empty | Confirmed, medium | Filled below |
 | Unreferenced-result count not shown | Refuted | Listed among the differences from the handoff |
 
+Two follow-ups from the last check of the fixes, in `7fcc465`: the run-end
+announcement is made once, not again after a later Save or check; and the
+recovery note is shown only where the recovery recorded absences, because a
+batch whose every window held no spectrum completes through that path with
+none. Both have unit tests.
+
 ## Validation record
 
-Run on the review-fix tree (`4764c74` plus this document), one command at a
-time, in this order. Logs are in `test-results/m9.1/final/` (not committed).
+Run one command at a time, in this order, on `4764c74` (the review fixes, with
+this document), logs in `test-results/m9.1/final/`. Everything except the
+whole browser suite was then re-run on the final code, `7fcc465`, with the same
+exits: fmt, clippy, `cargo test --workspace` (1,818 passed), the real-runtime
+suite (17 passed), lint, typecheck, `pnpm test` (105 files, 2,135 tests), build,
+`e2e:typecheck`, the M9.1 browser spec alone (5 passing), `check_repo` and the
+lockfile diff; logs in `test-results/m9.1/rerun/`. Neither directory is
+committed.
 
 | Command | Exit | Result |
 | --- | ---: | --- |
@@ -244,7 +257,8 @@ time, in this order. Logs are in `test-results/m9.1/final/` (not committed).
 
 **The failed browser specs.** Their errors are dominated by `browser.tauri.execute()
 is not supported in browser mode` (38,408 log lines) and by roster selectors such
-as `li.dataset-row[data-handle=...]` that the current shell no longer renders.
+as `li.dataset-row[data-handle=...]`, where the current roster renders its rows
+as `div.dataset-row`.
 No failure names a Project-surface, targeted or Details element. The M8.1 record
 retains `m4.1-spectrum-export` failing alone with the same `browser.tauri.execute()`
 signature at the pre-M8 commit `aa3fc83`
