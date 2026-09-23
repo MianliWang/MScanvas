@@ -165,9 +165,11 @@ def main(argv: list[str]) -> int:
             '<h1>M9.0 targeted MS1 &mdash; developer inspection</h1>'
             '<p class="note">Generated from published experiment results. Not a product surface.</p>'
             '<div class="banner">Every row, bound and curve below is actual adapter output: the chromatogram points the engine '
-            'extracted and the boundaries it picked. Sources are synthetic fixtures unless stated. Raw area is a sum of '
-            'chromatogram points stored as binary32; engine intensity is a model area or an imputed value and depends on the '
-            'other targets in the run. Feature m/z is the theoretical ion, not an observed m/z.</div>']
+            'extracted and the boundaries it picked. Sources are synthetic fixtures unless stated. OpenMS rounds spectrum '
+            'intensities to binary32 on load and sums them in binary64; the rounds shown here read those sums back as '
+            'binary32. Raw area is the engine\'s binary32 feature intensity. Engine intensity is a model area or an imputed '
+            'value and depends on the other targets in the run. Feature m/z is the theoretical ion, not an observed '
+            'm/z.</div>']
     body += [run_section(root, sub, case, title) for sub, case, title in RUNS]
     body.append(attempts_table(root))
     body.append("</main></body></html>\n")

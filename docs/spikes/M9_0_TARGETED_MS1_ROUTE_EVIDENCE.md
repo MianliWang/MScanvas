@@ -187,6 +187,13 @@ loading: request at 1.198 s, termination called at 1.199 s, exit observed at
 1.219 s; timeout at 1.0 s: exit observed 21 ms later. Published payloads: 13 KB
 for one target, 49 KB for six, 115 KB for the eight regression targets.
 
+No cancelled, timed-out, refused or failed attempt had left a `result.json`, so
+the publication rule was also tested directly
+([test_controller_publish.py](../../experiments/m9_0/test_controller_publish.py),
+6/6): result and evidence files present with exit 4, exit 0 without an outcome,
+truncated evidence, a result naming another run, and a non-completed outcome are
+all refused; only a whole, consistent result is published.
+
 ## Storage prototype
 
 The [storage prototype](../../experiments/m9_0/storage_proto.py) published a real
@@ -225,7 +232,8 @@ one (`review-checks-after.json`); round two rerun on the corrected adapter kept
 ## Inspection artifact
 
 `report.py` writes `.tmp/m90-evidence/report/index.html` (SHA-256
-`b61051e5695565a088af050bbf249e734caced3442de230df9630eaa78b3c9af`) from the
+`24ac3828d63b5ab63ea5952f764cfa5129b9c42f755b1f67beb950f263af8c9f`, regenerated
+after the review corrected its precision banner) from the
 published results: identity, parameters and runtime per run, the row table, and
 per target the engine's extracted M and M+1 points with picked and candidate
 bounds. It was rendered headless in Edge at 1366 and 960 px. It is a local

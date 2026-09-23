@@ -21,7 +21,8 @@ Reproduce on Windows x64 with scratch at `.tmp/m90-evidence/` (ignored):
    `protocol_r2.py evaluate .tmp/m90-evidence/round2 .tmp/m90-evidence`;
    `diagnostics.py .tmp/m90-evidence`, `diagnostics.py relocate .tmp/m90-evidence`,
    `review_checks.py .tmp/m90-evidence before` (reviewed adapter) or `after`,
-   `storage_proto.py .tmp/m90-evidence` and `report.py .tmp/m90-evidence`.
+   `storage_proto.py .tmp/m90-evidence`, `report.py .tmp/m90-evidence` and
+   `test_controller_publish.py` (no engine, no scratch).
 
 The upstream regression case needs the three `FeatureFinderMetaboIdent_1` files
 from the pinned OpenMS commit in `.tmp/m90-evidence/data/openms-regression/`.

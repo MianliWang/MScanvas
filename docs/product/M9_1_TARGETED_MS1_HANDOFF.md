@@ -59,8 +59,11 @@ bundled CPython 3.13 embeddable runtime, **conditional on**:
    which can encode the names used: a CJK source path fails the reader and a CJK
    runtime path is fatal; a UTF-8 code page was not measured. With the source
    pinned by the M8 mechanism, a same-volume hard link from an ASCII work
-   directory was read to completion; anything else is refused with a recovery
-   message, never silently copied.
+   directory was read to completion. That route writes a directory entry on the
+   user's data volume, outside the project, and needs NTFS, the source's own
+   volume and a writable ASCII directory there; where that directory may live is
+   a new write authority for M9.1 to decide with the owner. Anything else is
+   refused with a recovery message, never silently copied.
 3. **Precision and reproducibility stated, not hidden.** Spectrum intensities are
    rounded to binary32 on load, chromatogram points are binary64 sums of them, and
    raw areas are binary32; formula-derived m/z and isotope probabilities are not
@@ -189,8 +192,10 @@ refused or failed run has no rows.
   `evidence.index.json` and a digest `manifest.json`, plus `.staging/` and an
   `.owner.json` naming the project. The 4 MiB document limit does not change; the
   document holds a small record with the manifest digest and file digests.
-- **Order.** Stage in the store's `.staging/` (under an ASCII work root while
-  OpenMS writes) → validate → publish the payload directory by one rename →
+- **Order.** The engine writes only into an ASCII work root outside the project →
+  the supervisor validates the attempt and copies its payload files into the
+  store's `.staging/`, on the store's own volume → publish the payload directory
+  by one rename →
   reference it from the in-memory project → Save publishes the document through
   M8's temporary-and-rename. A crash or discard between the rename and Save leaves
   an unreferenced payload that open reports and never deletes. A document never
