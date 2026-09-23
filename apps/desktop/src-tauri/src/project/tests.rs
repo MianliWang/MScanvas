@@ -3660,7 +3660,22 @@ fn snapshot_values_that_contradict_the_run_summary_contract_are_refused() {
 #[test]
 fn a_field_the_snapshot_does_not_hold_is_refused_at_every_level() {
     type Edit = fn(&mut serde_json::Value);
-    let edits: [(&str, Edit); 11] = [
+    let edits: [(&str, Edit); 15] = [
+        ("inside a reported count", |value| {
+            value["artifacts"][0]["payload"]["chromatogramCount"] =
+                serde_json::json!({ "kind": "reported", "count": 3, "unit": "each" });
+        }),
+        ("inside a level bucket", |value| {
+            value["artifacts"][0]["payload"]["msLevelCounts"][0]["note"] =
+                serde_json::json!("guessed");
+        }),
+        ("inside absent retention times", |value| {
+            value["artifacts"][0]["payload"]["retentionTime"] =
+                serde_json::json!({ "kind": "notReported", "minimum": "0.1" });
+        }),
+        ("inside a reference run input", |value| {
+            value["runs"][0]["inputs"][0]["path"] = serde_json::json!("C:/data/sample.txt");
+        }),
         ("beside the payload kind", |value| {
             value["artifacts"][0]["payload"]["datasetId"] = serde_json::json!("dataset-1");
         }),
@@ -3755,4 +3770,90 @@ fn a_schema_two_document_is_refused_as_unsupported_and_not_migrated() {
         record::parse(&serde_json::to_vec(&text).expect("bytes")),
         Err(DocumentProblem::UnsupportedVersion)
     );
+}
+
+#[test]
+fn a_capture_that_would_make_the_document_unsaveable_is_refused_whole() {
+    // A snapshot cannot be removed once recorded, so one that took the
+    // document past what a Save publishes would leave it unsaveable forever.
+    // The document is filled, directly, to just short of that size -- with a
+    // record whose observations are only padding, because the capture measures
+    // bytes rather than validating what it did not write.
+    let scratch = Scratch::new("qc-store-size");
+    let (store, _, layer) = qc_ready(&scratch);
+    let size = |store: &ProjectStore| {
+        record::serialize(&document_of(store))
+            .expect("serializable")
+            .len() as u64
+    };
+    let observation = |input_id| super::record::ObservedInput {
+        input_id,
+        members: vec![super::record::ObservedMember {
+            role: MemberRole::Primary,
+            relative_name: "p".repeat(200),
+            byte_length: 1,
+            sha256: "A".repeat(64),
+        }],
+    };
+    let pad = |store: &ProjectStore, count: usize| {
+        let mut session = store
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let document = &mut session.project.as_mut().expect("open").document;
+        let input_id = document.inputs[0].id;
+        document.artifacts.push(super::record::ArtifactRecord {
+            id: mscanvas_core::ArtifactId::new(),
+            label: "padding".to_owned(),
+            payload: super::record::ArtifactPayload::FileFactsV1(super::record::FileFactsV1 {
+                observations: (0..count).map(|_| observation(input_id)).collect(),
+            }),
+        });
+    };
+    // One first, so every measured record is added to an array that already
+    // has one: the first element of an empty array costs differently.
+    pad(&store, 1);
+    let unpadded = size(&store);
+    pad(&store, 1);
+    let one = size(&store);
+    pad(&store, 2);
+    let two = size(&store);
+    // What one more observation costs, and what a padding record costs besides.
+    let each = (two - one) - (one - unpadded);
+    let overhead = (one - unpadded) - each;
+    // Close enough to the bound that no snapshot fits, and not over it.
+    let wanted = (record::MAX_DOCUMENT_BYTES - two - overhead - 256) / each;
+    pad(&store, usize::try_from(wanted).expect("a count"));
+    let filled = size(&store);
+    assert!(filled <= record::MAX_DOCUMENT_BYTES);
+    assert!(record::MAX_DOCUMENT_BYTES - filled < 1024, "{filled}");
+    let before = document_of(&store);
+
+    assert_eq!(
+        store.capture_qc_snapshot(layer, |_| Ok(qc_snapshot())),
+        Err(ProjectError::Oversized)
+    );
+    assert_eq!(
+        document_of(&store),
+        before,
+        "neither the run nor the snapshot stayed"
+    );
+
+    // Control: with room for it, the same capture commits.
+    {
+        let mut session = store
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        session
+            .project
+            .as_mut()
+            .expect("open")
+            .document
+            .artifacts
+            .pop();
+    }
+    store
+        .capture_qc_snapshot(layer, |_| Ok(qc_snapshot()))
+        .expect("captured once there is room");
 }

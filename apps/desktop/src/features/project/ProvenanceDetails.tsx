@@ -35,7 +35,7 @@
  */
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { operationKey, recordedAt } from "./ProjectPanel";
+import { inspectRecordName, inspectRunName, operationKey, recordedAt } from "./ProjectPanel";
 import type { ProjectArtifact, ProjectInput, ProjectRun, QcSnapshot } from "./projectApi";
 import { attachedRow, type Provenance, type ProjectSelection, type Related } from "./lineage";
 
@@ -180,9 +180,9 @@ export function ProvenanceDetails({
   // it produced are named by when the run ended. Without that, a project with
   // three runs offers three controls with one name between them.
   const runAt = (run: ProjectRun) =>
-    t("provenanceInspectRunAt", { when: recordedAt(run.finishedAt, locale) });
-  const producedBy = (run: ProjectRun) =>
-    t("provenanceInspectArtifactOf", { when: recordedAt(run.finishedAt, locale) });
+    t(inspectRunName(run), { when: recordedAt(run.finishedAt, locale) });
+  const producedBy = (run: ProjectRun, artifact: ProjectArtifact) =>
+    t(inspectRecordName(artifact), { when: recordedAt(run.finishedAt, locale) });
   const inspectInput = (input: ProjectInput) =>
     t("provenanceInspectInput", { name: input.label });
 
@@ -325,7 +325,9 @@ export function ProvenanceDetails({
           ) : (
             <ul className="provenance-list">
               {provenance.produced.map((related) =>
-                link(related, "artifact", artifactName, () => producedBy(provenance.run)),
+                link(related, "artifact", artifactName, (artifact) =>
+                  producedBy(provenance.run, artifact),
+                ),
               )}
             </ul>
           )}

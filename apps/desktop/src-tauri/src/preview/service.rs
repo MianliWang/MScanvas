@@ -7047,6 +7047,12 @@ impl PreviewService {
         let mut handled = 0_usize;
         for attempt in attempts {
             handled += 1;
+            // Which build ran *this* operation, kept for the one result a QC
+            // snapshot may copy. The batch shares one resolution in production,
+            // so every attempt names the same build -- but the snapshot's
+            // producer is taken from the attempt that produced its facts, which
+            // is true whatever a provider does.
+            let ran_on = attempt.installation.clone();
             // The identity of this batch was already noted above, so an
             // operation that failed no longer takes it with it.
             match attempt.outcome? {
@@ -7060,7 +7066,7 @@ impl PreviewService {
                         // copies. The projection drops the three middle
                         // retention times and caps the buckets, so a snapshot
                         // built from it would record less than was established.
-                        run_summary = Some((run_summary_dto(&result)?, result));
+                        run_summary = Some((run_summary_dto(&result)?, result, ran_on));
                     }
                     PreviewValue::SpectrumTable(result) => {
                         table_rows = result
@@ -7115,13 +7121,14 @@ impl PreviewService {
         // leave the dataset owning facts the user was never shown -- with rows
         // a later spectrum would silently reconcile against.
         let metadata = metadata.ok_or_else(|| missing("metadata"))?;
-        let (run_summary, run_summary_facts) = run_summary.ok_or_else(|| missing("run summary"))?;
+        // The build the run-summary operation reported, kept with the summary it
+        // produced. Not `authority_projection()` and not a fresh
+        // `availability()`: either of those answers which build is configured
+        // *now*, which is a different question from which one produced these
+        // facts.
+        let (run_summary, run_summary_facts, producer_installation) =
+            run_summary.ok_or_else(|| missing("run summary"))?;
         let spectrum_table = spectrum_table.ok_or_else(|| missing("spectrum table"))?;
-        // The build this batch reported, kept with the summary it produced. Not
-        // `authority_projection()` and not a fresh `availability()`: either of
-        // those answers which build is configured *now*, which is a different
-        // question from which one produced these facts.
-        let producer_installation = installation.clone();
 
         // One commit, under one lock, of facts that are only true together: the
         // generation this was read at, the backend that read it, and the rows a

@@ -142,6 +142,9 @@ pub enum ProjectError {
     /// facts cannot be recorded with a producer -- and a guessed producer is
     /// not recorded instead.
     ProducerUnidentified,
+    /// The run summary reports more MS-level buckets than a snapshot holds. It
+    /// is refused rather than recorded in part.
+    SummaryTooLarge,
 }
 
 impl ProjectError {
@@ -173,6 +176,7 @@ impl ProjectError {
             Self::LayerUsedByRun => "layerUsedByRun",
             Self::PreviewNotCurrent => "previewNotCurrent",
             Self::ProducerUnidentified => "producerUnidentified",
+            Self::SummaryTooLarge => "summaryTooLarge",
         }
     }
 
@@ -1015,7 +1019,12 @@ impl ProjectStore {
     ///
     /// # Errors
     ///
-    /// The reason the capture did not complete. The run is recorded either way.
+    /// The reason the capture did not complete. The run is recorded either way,
+    /// with one exception: where the history is at its bound -- before the
+    /// read, or by the time it commits, because a QC capture can add a run
+    /// while this one reads -- there is no room for even a failed or cancelled
+    /// run, so nothing is recorded and the answer is
+    /// [`ProjectError::Oversized`].
     pub fn capture_file_facts(
         &self,
         id: ProjectJobId,
@@ -1656,6 +1665,18 @@ impl ProjectStore {
             started_at: recorded_at.clone(),
             finished_at: recorded_at,
         });
+        // A snapshot cannot be removed -- its layer and reference are pinned by
+        // it -- so one that took the document past the size this build saves
+        // would leave a project no Save could ever publish again. Measured on
+        // the bytes a Save would write, and taken back out, both together,
+        // where it would.
+        let fits = record::serialize(&project.document)
+            .is_some_and(|bytes| bytes.len() as u64 <= MAX_DOCUMENT_BYTES);
+        if !fits {
+            project.document.runs.pop();
+            project.document.artifacts.pop();
+            return Err(ProjectError::Oversized);
+        }
         // Not invalidated: a new run and artifact make no in-flight answer
         // about the references wrong, exactly as a file-facts capture does not.
         project.dirty = true;

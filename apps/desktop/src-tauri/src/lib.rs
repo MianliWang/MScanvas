@@ -135,6 +135,9 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::ProducerUnidentified => {
             "MSCanvas cannot identify the ProteoWizard build that produced this preview."
         }
+        Refusal::SummaryTooLarge => {
+            "This run summary reports more MS levels than a QC summary snapshot records."
+        }
     };
     PreviewErrorDto::new(error.stable_id(), message, error.retryable())
 }

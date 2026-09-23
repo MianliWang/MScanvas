@@ -6218,4 +6218,85 @@ mod tests {
         let figure = figure_spec(&source, defaults(), resolved).expect("specifiable");
         assert_eq!(figure.panels()[0].series()[0].x().len(), count);
     }
+
+    // ------------------------------------------------ the retained run summary
+
+    /// One run summary, through the production interpreter.
+    fn run_summary() -> RunSummaryResult {
+        let text = concat!(
+            "Filename\tTimestamp\tVendor\tModel\tSerial#\tMS1s\tZooms\tCharges\t",
+            "MS1 PtsMean\tMS1 PtsMin\tMS1 PtsQ1\tMS1 PtsQ2\tMS1 PtsQ3\tMS1 PtsMax\t",
+            "MinRT\tRT@25%BPI\tRT@50%BPI\tRT@75%BPI\tMaxRT\n",
+            "x\tt\tv\tm\ts\t3\t0\t0\t1\t1\t1\t1\t1\t1\t0.1\t0.2\t0.3\t0.4\t0.5\n",
+        );
+        let process = mscanvas_proteowizard::ProcessOutput {
+            stdout: text.as_bytes().to_vec(),
+            stderr: Vec::new(),
+            stdout_total_bytes: text.len() as u64,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(0),
+            elapsed: std::time::Duration::from_millis(1),
+            termination: mscanvas_proteowizard::Termination::Exited,
+            max_active_processes: None,
+            final_active_processes: None,
+            peak_job_memory_bytes: None,
+            total_owned_processes: Some(1),
+            tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
+        };
+        match mscanvas_proteowizard::interpret_preview(
+            &mscanvas_proteowizard::PreviewOperation::RunSummary,
+            &process,
+            &mscanvas_proteowizard::PreviewOutputManifest::empty(),
+        ) {
+            Ok(mscanvas_proteowizard::PreviewOutcome::Value(value)) => match *value {
+                mscanvas_proteowizard::PreviewValue::RunSummary(summary) => summary,
+                _ => panic!("not a run summary"),
+            },
+            _ => panic!("the fixture interprets"),
+        }
+    }
+
+    /// Both ordering rules, driven directly, because a completion that loses
+    /// the race is not something the crossing tests can stage: the backend
+    /// lane serializes opens there, so the newer open always also succeeds and
+    /// overwrites the slot, which would hide either rule being lost.
+    #[test]
+    fn a_run_summary_is_retained_only_by_the_latest_open_and_goes_when_a_newer_one_begins() {
+        let mut slots = ScientificExportSlots::default();
+
+        let first = slots.begin_preview_open();
+        let token = slots
+            .reconcile_preview_run_summary(first, owner(1), run_summary(), None)
+            .expect("the latest open retains its summary")
+            .as_wire();
+        assert!(slots.run_summary_for(&token).is_some());
+
+        // A newer open beginning takes it away at once -- before that open has
+        // succeeded or failed, because either way the earlier preview is no
+        // longer the one on screen.
+        let second = slots.begin_preview_open();
+        assert!(slots.run_summary_for(&token).is_none());
+
+        // The older open completing late retains nothing, and names nothing.
+        assert!(
+            slots
+                .reconcile_preview_run_summary(first, owner(1), run_summary(), None)
+                .is_none()
+        );
+        assert!(slots.run_summary_for(&token).is_none());
+
+        // Control: the newer open retains its own, under a token of its own.
+        let newer = slots
+            .reconcile_preview_run_summary(second, owner(2), run_summary(), None)
+            .expect("the latest open retains its summary")
+            .as_wire();
+        assert_ne!(newer, token);
+        assert_eq!(
+            slots.run_summary_for(&newer).map(|kept| kept.owner()),
+            Some(owner(2))
+        );
+        assert!(slots.run_summary_for("not-a-token").is_none());
+    }
 }

@@ -1296,4 +1296,8 @@ export const zhCN = {
   provenanceProducerDigest: "可执行文件 SHA-256",
   provenanceProducerNotReported: "未报告",
   provenanceProducerNote: "生成该预览的版本，以 MSCanvas 当时的识别为准。之后更换安装不会改变它。",
+  // --- M8.5 review pass.
+  projectRefusedSummaryTooLarge: "此运行摘要报告的 MS 级别数超过 QC 摘要快照可记录的数量，因此未记录任何内容。",
+  provenanceInspectQcRunAt: "查看 {{when}} 那次“记录 QC 摘要”运行的关联",
+  provenanceInspectQcSnapshotOf: "查看 {{when}} 那次运行记录的 QC 摘要快照",
 } as const;

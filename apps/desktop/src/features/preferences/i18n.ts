@@ -30,6 +30,8 @@ export interface MessageParameters {
   readonly projectRunLayer: { readonly name: string };
   readonly qcReportRecorded: { readonly when: string };
   readonly qcReportMsLevel: { readonly level: string };
+  readonly provenanceInspectQcRunAt: { readonly when: string };
+  readonly provenanceInspectQcSnapshotOf: { readonly when: string };
   readonly m74ErrorFigureSize: { readonly minWidth: number; readonly minHeight: number; readonly max: number };
   readonly m74ErrorDpi: { readonly min: number; readonly max: number };
   readonly m74ErrorRasterBudget: { readonly max: number };

@@ -304,6 +304,25 @@ async function capture(label: string) {
         ),
         activeElement:
           active === null ? null : attribute(active, "data-project-capture-qc"),
+        // Where the keyboard is, and whether that element is inside the part of
+        // the window a reader can see.
+        focus:
+          active === null || active === document.body
+            ? null
+            : {
+                id: active.id === "" ? null : active.id,
+                visible: (() => {
+                  const box = active.getBoundingClientRect();
+                  const bounds =
+                    project !== null && !project.hidden && project.contains(active)
+                      ? project.getBoundingClientRect()
+                      : { top: 0, bottom: innerHeight };
+                  return (
+                    box.top >= bounds.top - 1 &&
+                    box.bottom <= Math.min(bounds.bottom, innerHeight) + 1
+                  );
+                })(),
+              },
         layerIdOnScreen: document.body.innerText.includes(layerId),
         tokenOnScreen: document.body.innerText.includes(token),
         horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
@@ -483,12 +502,9 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
     ]);
 
     const recorded = await capture("m85-03-report");
-    expect(recorded.activeElement).toBe(LAYER);
-    // The report arrived without scrolling the focused control away.
+    // The keyboard went to what the press made, and it is on screen.
+    expect(recorded.focus).toEqual({ id: "qc-report-title", visible: true });
     expect(recorded.report?.headingVisible).toBe(true);
-    expect((recorded.control?.y ?? Infinity) + (recorded.control?.height ?? 0)).toBeLessThanOrEqual(
-      recorded.css.height,
-    );
     expect(recorded.runs).toEqual(["Capture QC summary"]);
     expectTheRecordedValues(recorded.report);
     expect(recorded.report?.source).toContain(MZML_ROW.fileName);
@@ -561,6 +577,49 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
     expect(await unexpectedConsole()).toEqual([]);
   });
 
+  it("captures at 1366x768 with the new report and the keyboard both in view", async () => {
+    // The window the design has to work at. The report arrives above the
+    // lists and pushes the pressed control down by its whole height, so the
+    // question is where the keyboard ends up and whether a reader can see it.
+    await metrics(1366, 768);
+    const table: Record<string, unknown> = ipcTable();
+    table.get_workspace_roster = { datasets: [MZML_ROW], capacity: FAKE_WORKSPACE_CAPACITY };
+    table.get_project_state = project({ handle: MZML_ROW.handle, captured: false });
+    table.capture_project_qc_summary = {
+      project: project({ handle: MZML_ROW.handle, captured: true, dirty: true }),
+      artifactId: QC_ARTIFACT,
+    };
+    await installIpcBoundary(table);
+    await browser.url("/");
+    await browser.$(".workbench-header").waitForDisplayed();
+    const row = `.grouped-roster [data-handle="${MZML_ROW.handle}"]`;
+    if (!(await browser.$(row).isDisplayed())) {
+      await browser.$('[aria-controls="workbench-roster"]').click();
+    }
+    await browser.$(row).click();
+    await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+    await browser.$("button=Project").click();
+    await browser.$(`[data-project-capture-qc="${LAYER}"]:not([aria-disabled])`).waitForExist();
+
+    await browser.execute((layer: string) => {
+      document.querySelector<HTMLElement>(`[data-project-capture-qc="${layer}"]`)?.focus();
+    }, LAYER);
+    const before = await capture("m85-07-capture-offered-1366");
+    expect(before.focus?.visible).toBe(true);
+    await browser.keys("Enter");
+    await browser.$("[data-qc-report]").waitForDisplayed();
+    await browser.$("[data-project-busy]").waitForExist({ reverse: true });
+    const ring = await focusedTreatment();
+    evidence.push({ label: "m85-08-focus-treatment-1366", ...ring });
+    expect(ring.visible).toBe(true);
+
+    const after = await capture("m85-08-captured-1366");
+    expect(after.focus).toEqual({ id: "qc-report-title", visible: true });
+    expect(after.report?.headingVisible).toBe(true);
+    expectTheRecordedValues(after.report);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
   it("keeps a long source name inside the report, the surface and Details when constrained", async () => {
     const long = `${"Plasma_QC_batch_08_".repeat(7)}replicate_04.mzML`;
     const table: Record<string, unknown> = ipcTable();
@@ -580,8 +639,8 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
     await installIpcBoundary(table);
 
     for (const [width, height, label] of [
-      [1366, 768, "m85-07-long-name-1366"],
-      [960, 640, "m85-08-long-name-960"],
+      [1366, 768, "m85-09-long-name-1366"],
+      [960, 640, "m85-10-long-name-960"],
     ] as const) {
       await metrics(width, height);
       await browser.url("/");

@@ -27,7 +27,7 @@ import { useEffect, useRef } from "react";
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { attachedRow, qcUnavailable, type ViewedPreview } from "./lineage";
-import type { ProjectInput, ProjectRun } from "./projectApi";
+import type { ProjectArtifact, ProjectInput, ProjectRun } from "./projectApi";
 import { QcReport } from "./QcReport";
 import type { ProjectBusy, ProjectSession } from "./useProject";
 
@@ -101,6 +101,7 @@ const REFUSALS = {
   layerUsedByRun: "projectRefusedLayerUsedByRun",
   previewNotCurrent: "projectRefusedPreviewNotCurrent",
   producerUnidentified: "projectRefusedProducerUnidentified",
+  summaryTooLarge: "projectRefusedSummaryTooLarge",
   // A capture's own names for two shared refusals; see `useProject`.
   qcProjectChanged: "projectRefusedQcProjectChanged",
   qcNotInWorkbench: "projectRefusedQcNotInWorkbench",
@@ -134,6 +135,26 @@ export function operationKey(run: ProjectRun) {
   return run.operation === "captureAcquisitionQcSnapshotV1"
     ? ("projectOperationCaptureQc" as const)
     : ("projectOperationCapture" as const);
+}
+
+/**
+ * The accessible names of a run and of the record it produced, as controls
+ * that inspect them.
+ *
+ * A QC capture's names contain the words the control shows, so saying what is
+ * on screen reaches it. The file-facts names predate that rule and are left as
+ * they were.
+ */
+export function inspectRunName(run: ProjectRun) {
+  return run.operation === "captureAcquisitionQcSnapshotV1"
+    ? ("provenanceInspectQcRunAt" as const)
+    : ("provenanceInspectRunAt" as const);
+}
+
+export function inspectRecordName(artifact: ProjectArtifact) {
+  return artifact.kind === "acquisitionQcSnapshotV1"
+    ? ("provenanceInspectQcSnapshotOf" as const)
+    : ("provenanceInspectArtifactOf" as const);
 }
 
 function busyKey(busy: ProjectBusy) {
@@ -330,6 +351,36 @@ export function ProjectPanel({
           recordedAt: provenance.producedBy?.record?.finishedAt ?? null,
         }
       : null;
+
+  /**
+   * Takes the keyboard to the report a capture produced.
+   *
+   * The report arrives above the lists, so the control that was pressed is
+   * pushed down by its whole height -- at 1366x768, out of view -- and leaving
+   * the keyboard there would leave it somewhere nobody can see. It goes to the
+   * report's heading instead, which is the thing the press made and which the
+   * report has already brought into view.
+   *
+   * Armed only by the press and spent on the first settled answer, and it acts
+   * only on a report that this answer made current and only if the keyboard is
+   * still on the control that was pressed: a refusal, an answer that arrived
+   * after the reader moved on, and a reader who moved focus all leave it where
+   * it is.
+   */
+  const capturing = useRef<{ readonly layerId: string; readonly shown: string | null } | null>(
+    null,
+  );
+  const shownReport = report?.artifact.id ?? null;
+  useEffect(() => {
+    const armed = capturing.current;
+    if (armed === null || busy !== "idle") return;
+    capturing.current = null;
+    if (shownReport === null || shownReport === armed.shown) return;
+    if (document.activeElement?.getAttribute("data-project-capture-qc") !== armed.layerId) return;
+    surfaceRef.current
+      ?.querySelector<HTMLElement>("#qc-report-title")
+      ?.focus({ preventScroll: true });
+  }, [busy, shownReport]);
 
   const proposalInput = state.inputs.find((input) => input.id === proposed);
   const announcement =
@@ -895,6 +946,7 @@ export function ProjectPanel({
                           onClick={() => {
                             const token = viewedPreview?.token ?? null;
                             if (working || qcReason !== null || token === null) return;
+                            capturing.current = { layerId: layer.id, shown: shownReport };
                             void session.captureQc(layer.id, token);
                           }}
                         >
@@ -971,7 +1023,7 @@ export function ProjectPanel({
                               : undefined
                           }
                           aria-controls="workbench-inspector"
-                          aria-label={t("provenanceInspectRunAt", {
+                          aria-label={t(inspectRunName(run), {
                             when: recordedAt(run.finishedAt, locale),
                           })}
                           data-project-inspect-run={run.id}
@@ -1032,7 +1084,7 @@ export function ProjectPanel({
                                     : undefined
                                 }
                                 aria-controls="workbench-inspector"
-                                aria-label={t("provenanceInspectArtifactOf", {
+                                aria-label={t(inspectRecordName(artifact), {
                                   when: recordedAt(run.finishedAt, locale),
                                 })}
                                 data-project-inspect-artifact={artifact.id}

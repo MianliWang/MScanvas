@@ -1266,8 +1266,12 @@ copied out and the lock released before the workspace is asked anything.
 ### Producer provenance, and why the current backend is not it
 
 The producer is read from the `InstallationIdentity` **the preview's own batch
-reported** (`OperationAttempt::installation`, taken from the same attempt as the
-facts) and kept with the retained summary. It is never `authority_projection()`
+reported** -- `OperationAttempt::installation` of the run-summary operation's
+own attempt, the one that produced the facts -- and kept with the retained
+summary. (The first candidate took it from the batch's first attempt, the
+metadata one; the production provider binds one resolution for the whole batch,
+so the two agree there, but a provider that resolved per operation would not
+guarantee it, so the review closure takes it from the attempt itself.) It is never `authority_projection()`
 and never a fresh `availability()`: both answer which build is configured
 *now*. A preview runs `msaccess` (`bind_capabilities` binds `BoundTool::Msaccess`),
 so what is persisted is:
@@ -1286,9 +1290,12 @@ so what is persisted is:
 No installation path is persisted. A resolution whose `msaccess` help did not
 probe carries no digest; its preview reports `qcProducerIdentified: false`, and a
 capture of it is refused rather than attributed to a guess. A build label the
-document cannot store (empty, too long, a control character) is refused the
-same way rather than silently dropped. A session-local binding receipt is not
-used as provenance: it names a session binding, not an executable.
+document cannot store (empty, too long, a control character) makes the producer
+unidentified the same way rather than being silently dropped -- and that
+judgement is made once, in `InstallationIdentity::producer_facts` with the
+document's own label rule, so the page's "can this be captured" and the capture
+itself cannot disagree about it. A session-local binding receipt is not used as
+provenance: it names a session binding, not an executable.
 
 ### The schema, exactly
 
@@ -1371,7 +1378,9 @@ Four decisions in that shape, stated rather than implied:
   the parser itself states: at least one bucket, each numbered level once, at
   most one `Other`, a total equal to the checked sum, and the minimum not above
   the maximum. More than 64 buckets (the bound the preview boundary already
-  transfers) is refused at capture rather than truncated.
+  transfers) is refused at capture rather than truncated, as `summaryTooLarge`
+  with its own sentence -- the first candidate said "this project is larger
+  than MSCanvas saves", which is not what is wrong.
 - **The payload does not store its producing `RunId`.** The task's conceptual
   list included one; its own rule against duplicating lineage a run already owns
   decides the other way, and `lineage.rs` already derives every reverse edge
@@ -1409,7 +1418,18 @@ refuses `staleDocument` with nothing committed. (The interface says a capture's
 `staleDocument` and `notInWorkbench` in its own words; their shared sentences are
 a save's and a layer's.) Because a capture now adds runs without advancing the
 generation, the file-facts commit rechecks its own bounds too, instead of only
-checking them before it released the lock.
+checking them before it released the lock. That has one consequence worth
+stating: a file-facts capture that finds the history full at commit records
+nothing at all -- not even its cancelled or failed run -- and answers
+`oversized`; its doc comment says so.
+
+A snapshot cannot be removed (below), so one that took the document past the
+size a Save publishes (`MAX_DOCUMENT_BYTES`, 4 MiB) would leave a project no
+Save could ever write again. The commit therefore measures the bytes a Save
+would write and, where they would not fit, takes the run and the snapshot back
+out together and answers `oversized`. The review estimated the reach at roughly
+460 captures with 64 buckets each, or about 1,800 ordinary ones -- below the
+2,048-run bound, which is why the count bound alone was not enough.
 
 Each explicit press is its own observation: two captures with identical values
 are two runs and two artifacts, and nothing earlier is overwritten.
@@ -1456,9 +1476,19 @@ to the Workbench, view it there, or the build cannot be identified. The first is
 read out with the control only, because the row already says "Not in the
 Workbench"; the other two are shown under the row. A press sends the layer and
 the viewed preview's token; it never starts a preview and never attaches a
-source. The keyboard stays on the control, and the new report is inspected on
-arrival only if the reader has not chosen something else while the request was
-out.
+source. The new report is inspected on arrival only if the reader has not chosen
+something else while the request was out, and then the keyboard moves to the
+report's heading: the report arrives above the lists and pushes the pressed
+control down by its whole height -- out of view at 1366x768 -- so leaving the
+keyboard there would leave it where nobody can see it. It moves only when the
+keyboard is still on the control that was pressed; a refusal, a late answer
+and a reader who moved focus keep their place. (The first candidate kept the
+keyboard on the control; the review found it pushed out of view, and the
+browser frame at 1366x768 shows the control below the fold after a capture.)
+Each QC history control's accessible name contains the words it shows ("Show
+what the Capture QC summary run of ... is related to", "Show the QC summary
+snapshot recorded by the run of ..."); the file-facts names predate that rule
+and are left as they were.
 
 When a QC snapshot is the inspected object, the Project surface's **main region**
 shows a compact report above the lists: the source's name and when it was
@@ -1503,41 +1533,111 @@ interpreter, and counts every run and every look at the backend:
   are each refused, with the right layer as the control;
 - two presses are two runs and two snapshots; and the report survives the row,
   the workspace and the source going, while its layer and reference refuse
-  removal.
+  removal;
+- a summary of 65 well-formed buckets is refused as `summaryTooLarge`, with 64
+  recorded whole as the control.
 
 Rust, at the store and document level in `project/tests.rs`: the commit and what
 it asks; no remembered row refused before the workspace is asked; a workspace
 refusal records nothing; a project that moved in five different ways while the
 workspace was asked commits nothing and stays valid, with an unmoved control;
-the history bound refused before the workspace is asked; the layer-removal
-refusal with a layer nothing consumed as its control; the fixture document read
-back exactly, including a reported zero count and absent retention times; digest
-case normalization; every run that crosses its operation; ten snapshot values
-that contradict the contract; eleven fields or omissions refused inside every
-nested variant, with the untouched document and an explicit `null` as controls;
-and the literal schema-2 document refused as unsupported.
+the history bound refused before the workspace is asked; a capture that would
+take the document past the size a Save publishes refused with nothing committed,
+with the same capture committing once there is room; the layer-removal refusal
+with a layer nothing consumed as its control; the fixture document read back
+exactly, including a reported zero count and absent retention times; digest case
+normalization; every run that crosses its operation; ten snapshot values that
+contradict the contract; fifteen fields or omissions refused, covering every
+variant of every tagged object the snapshot and the run inputs use, with the
+untouched document and an explicit `null` as controls; and the literal schema-2
+document refused as unsupported.
+
+Rust, at the preview boundary: the slot's two ordering rules driven directly in
+`preview/export.rs` -- a newer open beginning takes the retained summary away at
+once, and an older open completing after it retains nothing -- because the
+crossing tests cannot stage a completion that loses the race (the backend lane
+serializes opens, so the newer open always also succeeds and overwrites the
+slot, which would hide either rule being lost); and, in `preview/installation.rs`,
+a producer identified only with a digest and labels a document can state.
 
 Frontend, in `ProjectQcSummary.test.tsx`: the control offered only for the
 viewed source and named by it, with its keyboard reach; each of the three
 reasons, visible or read out as described above, sending nothing; a press
 sending exactly the layer and the token; the report's values, order, `Other`,
 "Not reported" and unreported units; a reported zero and absent retention times;
-a late answer not taking the selection (removing the guard fails it, which was
-checked on a copy restored byte-identical); report → run → layer → reference in
-Details with no request; the report whole after the row leaves and after a
-reopen; the stylesheet rules that wrap a long name; each capture refusal and the
-layer-removal refusal in its own words; and the whole of it in Simplified
-Chinese.
+the keyboard moving to the new report's heading; a late answer taking neither
+the selection nor the keyboard, and a reader who moved only the keyboard
+keeping it while the report still opens; report → run → layer → reference in
+Details with no request; the history controls' names containing what they show;
+the report whole after the row leaves and after a reopen; the stylesheet rules
+that wrap a long name; each capture refusal and the layer-removal refusal in its
+own words, with the keyboard left on the control; and the whole of it in
+Simplified Chinese.
 
 One browser scenario, `e2e/specs/m8.5-qc-summary.browser.e2e.ts`, over the
 mock-IPC harness, described with its evidence under the validation record
 below.
 
-A mutation check was made on the committed Rust candidate, from a clean tree:
-reading the producer from the provider's current `availability()` instead of the
-retained snapshot failed both the attribution test and the no-backend test, and
-the file was then restored with `git checkout` -- which, the tree having been
-clean, discarded nothing else.
+### Mutation checks
+
+Each was made one at a time and put back, and each is recorded with how it was
+put back, because the M8.4 record got that wrong.
+
+- On the committed Rust candidate `c239d53`, from a clean tree: reading the
+  producer from the provider's current `availability()` instead of the retained
+  snapshot failed both the attribution test and the no-backend test. The file
+  was restored with `git checkout`; the tree having been clean, that discarded
+  nothing else.
+- On the frontend before its commit: removing the late-answer selection guard
+  failed its test. The file was copied aside first, restored from the copy and
+  compared byte-for-byte with it.
+- During the review closure, each on a copy restored and compared byte-for-byte
+  (`test-results/m8.5/logs/mutations-review-repair.log`): removing the
+  document-size check, removing the clearing of the retained summary when a
+  newer open begins, removing the latest-open ticket comparison, letting an
+  unstorable build label through `producer_facts`, removing the move of the
+  keyboard to the report, and removing the guard that it moves only from the
+  pressed control -- each failed its test.
+- In the browser, the committed report scroll (`nearest`) failed the
+  constrained case's "heading visible" assertion; `QcReport.tsx` was copied
+  aside, the committed version written over it for the run, and the copy
+  restored and compared byte-for-byte.
+
+### The M8.5 review, and what it changed
+
+One isolated read-only review of the whole delta, twelve dimensions, reading
+code only while the gates ran. No high-severity finding. What it found, and what
+was done:
+
+- **medium -- the keyboard pushed out of view by a capture.** The report arrives
+  above the lists; at 1366x768 the pressed control ended below the fold, and the
+  one test that asserted the control in view ran at 1920x1080. The keyboard now
+  moves to the report's heading (above), and a browser case captures at
+  1366x768 and asserts the focused element is on screen with a visible ring.
+- **The page's "producer identified" and the capture disagreed** for a build
+  label the document cannot store: the page offered the capture and the capture
+  refused it. One predicate now decides both.
+- **More than 64 buckets was refused as "this project is too large".** It has
+  its own refusal and sentence now.
+- **The document size was not checked at capture**, and a QC report cannot be
+  removed, so enough captures could make a project permanently unsaveable. The
+  commit now measures the bytes and refuses with nothing committed.
+- **The file-facts bound recheck changed a documented contract** (a run recorded
+  either way); the doc comment states the exception.
+- **The retained summary's two ordering rules had no behavioural test** --
+  removing either passed every test. Both are now driven directly.
+- **The record said the producer was taken from the same attempt as the facts;
+  it was the batch's first.** The code now takes it from the run-summary
+  attempt, which makes the sentence true rather than rewording it.
+- **The record referred to a validation record that did not exist yet**; it is
+  below.
+- **The record claimed unknown fields were refused in every nested variant**
+  while four variants were untested (sharing one enum's attribute, so not a
+  schema hole); the four cases were added.
+- **QC history controls failed label-in-name**; their names now contain what
+  they show, in both locales.
+- **Noted, not changed:** counts are shown as JavaScript numbers, so "grouping
+  changes no digit" holds up to 2^53 spectra.
 
 ## Out of scope, explicitly
 

@@ -95,7 +95,7 @@ fn snapshot_of(
 ) -> Result<AcquisitionQcSnapshotV1, ProjectError> {
     let buckets = summary.counts_by_ms_level();
     if buckets.len() > MAX_MS_LEVEL_BUCKETS {
-        return Err(ProjectError::Oversized);
+        return Err(ProjectError::SummaryTooLarge);
     }
     let ms_level_counts = buckets
         .iter()
@@ -125,7 +125,9 @@ fn snapshot_of(
     };
     // A build label this document cannot state -- empty, too long, or holding
     // a control character -- leaves the producer unidentifiable rather than
-    // quietly unreported: the build did report it.
+    // quietly unreported: the build did report it. `producer_facts` already
+    // answers `None` for one, which is what the page is told before a press;
+    // this is the same rule, kept at the point of writing.
     for label in [
         &producer.release,
         &producer.build_date,

@@ -781,3 +781,57 @@ fn a_snapshot_run_consumes_exactly_its_layer_in_the_document() {
         ArtifactPayload::AcquisitionQcSnapshotV1(_)
     ));
 }
+
+#[test]
+fn a_summary_with_more_buckets_than_a_snapshot_holds_is_refused_in_its_own_words() {
+    // Well-formed by the formatter's rules -- each level with its six point
+    // statistics -- and more levels than a snapshot records. Refused whole,
+    // with a reason that is about the summary, not about the project's size.
+    let summary_with = |levels: u32| {
+        let mut headers: Vec<String> = ["Filename", "Timestamp", "Vendor", "Model", "Serial#"]
+            .map(str::to_owned)
+            .to_vec();
+        let mut values: Vec<String> = ["x", "t", "v", "m", "s"].map(str::to_owned).to_vec();
+        for level in 1..=levels {
+            headers.push(format!("MS{level}s"));
+            values.push("1".to_owned());
+        }
+        headers.extend(["Zooms", "Charges"].map(str::to_owned));
+        values.extend(["0", "0"].map(str::to_owned));
+        for level in 1..=levels {
+            for statistic in ["Mean", "Min", "Q1", "Q2", "Q3", "Max"] {
+                headers.push(format!("MS{level} Pts{statistic}"));
+                values.push("1".to_owned());
+            }
+        }
+        headers
+            .extend(["MinRT", "RT@25%BPI", "RT@50%BPI", "RT@75%BPI", "MaxRT"].map(str::to_owned));
+        values.extend(["0.1", "0.2", "0.3", "0.4", "0.5"].map(str::to_owned));
+        let text = format!("{}\n{}\n", headers.join("\t"), values.join("\t"));
+        match interpret_preview(
+            &PreviewOperation::RunSummary,
+            &completed_process(&text),
+            &PreviewOutputManifest::empty(),
+        ) {
+            Ok(mscanvas_proteowizard::PreviewOutcome::Value(value)) => match *value {
+                mscanvas_proteowizard::PreviewValue::RunSummary(summary) => summary,
+                _ => panic!("not a run summary"),
+            },
+            _ => panic!("the fixture interprets"),
+        }
+    };
+    let producer = || {
+        build("3.0.26204", 0xA1)
+            .producer_facts()
+            .expect("an identified build")
+    };
+
+    assert_eq!(
+        super::snapshot_of(&summary_with(65), producer()),
+        Err(ProjectError::SummaryTooLarge)
+    );
+    // Control: exactly as many as a snapshot holds is recorded, every bucket.
+    let recorded = super::snapshot_of(&summary_with(64), producer()).expect("recorded");
+    assert_eq!(recorded.ms_level_counts.len(), 64);
+    assert_eq!(recorded.total_spectrum_count, 64);
+}

@@ -247,8 +247,12 @@ describe("when a layer may capture its QC summary", () => {
     expect(api.calls.filter((call) => call !== "getProjectState")).toEqual([
       "captureProjectQcSummary",
     ]);
-    // The keyboard stays on the control it pressed.
-    expect(document.activeElement).toBe(captureControl());
+    // The keyboard goes to what the press made: the report arrives above the
+    // lists and would push the pressed control out of view.
+    const heading = query("#qc-report-title");
+    expect(document.activeElement).toBe(heading);
+    expect(heading.tabIndex).toBe(-1);
+    expect(heading.textContent).toBe(en.qcReportTitle);
   });
 
   it("gives one reason, in its own words, for each way it cannot run -- and sends nothing", async () => {
@@ -305,6 +309,11 @@ describe("the recorded report", () => {
     expect(
       query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`).textContent,
     ).toBe(en.projectArtifactQcSummary);
+    // Each history control's name contains what it shows.
+    const runControl = query(`[data-project-inspect-run="${QC_RUN}"]`);
+    expect(runControl.getAttribute("aria-label")).toContain(runControl.textContent ?? "-");
+    const recordControl = query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`);
+    expect(recordControl.getAttribute("aria-label")).toContain(recordControl.textContent ?? "-");
 
     const surface = report();
     expect(surface.getAttribute("data-qc-report")).toBe(QC_ARTIFACT);
@@ -368,9 +377,13 @@ describe("the recorded report", () => {
     api.set(captured());
     const release = api.holdOnce("captureProjectQcSummary");
 
+    captureControl().focus();
     await press(captureControl());
-    // The reader looks at the reference before the answer arrives.
-    await press(screen.getByRole("button", { name: `Show what ${LABEL} is related to` }));
+    // The reader moves on -- the keyboard and the selection both -- before the
+    // answer arrives.
+    const reference = screen.getByRole("button", { name: `Show what ${LABEL} is related to` });
+    reference.focus();
+    await press(reference);
     await act(async () => {
       release();
     });
@@ -379,9 +392,29 @@ describe("the recorded report", () => {
       "input",
     );
     expect(document.querySelector("[data-qc-report]")).toBeNull();
+    expect(document.activeElement).toBe(reference);
     // The report was recorded all the same, and is one press away.
     await press(query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`));
     expect(report()).toBeTruthy();
+  });
+
+  it("opens the report but leaves the keyboard where a reader moved it while the capture was out", async () => {
+    const { api } = mount(layered());
+    await ready();
+    api.set(captured());
+    const release = api.holdOnce("captureProjectQcSummary");
+
+    captureControl().focus();
+    await press(captureControl());
+    // Only the keyboard moves; nothing else is selected.
+    const elsewhere = screen.getByRole("button", { name: `Remove layer: ${LABEL}` });
+    elsewhere.focus();
+    await act(async () => {
+      release();
+    });
+
+    expect(report().getAttribute("data-qc-report")).toBe(QC_ARTIFACT);
+    expect(document.activeElement).toBe(elsewhere);
   });
 
   it("walks from the report to its run, its layer and its reference without sending anything", async () => {
@@ -405,7 +438,7 @@ describe("the recorded report", () => {
     expect(details().textContent).not.toMatch(/[A-Za-z]:\\|\/Users\/|msaccess\.exe/);
 
     // Report -> run.
-    await press(region.getByRole("button", { name: /Show what the run of/ }));
+    await press(region.getByRole("button", { name: /Show what the Capture QC summary run of/ }));
     expect(details().querySelector("[data-provenance]")?.getAttribute("data-provenance")).toBe(
       "run",
     );
@@ -495,6 +528,7 @@ describe("what a refused capture or removal says", () => {
     const cases: readonly [string, string][] = [
       ["previewNotCurrent", en.projectRefusedPreviewNotCurrent],
       ["producerUnidentified", en.projectRefusedProducerUnidentified],
+      ["summaryTooLarge", en.projectRefusedSummaryTooLarge],
       // The shared identifiers, said as a capture means them.
       ["staleDocument", en.projectRefusedQcProjectChanged],
       ["notInWorkbench", en.projectRefusedQcNotInWorkbench],
@@ -504,11 +538,14 @@ describe("what a refused capture or removal says", () => {
       await ready();
       api.refuseOnce("captureProjectQcSummary", code);
 
+      captureControl().focus();
       await press(captureControl());
 
       expect(query("[data-project-problem]").textContent, code).toContain(sentence);
       expect(document.querySelector("[data-qc-report]"), code).toBeNull();
       expect(document.querySelector("[data-project-run]"), code).toBeNull();
+      // Nothing was made, so the keyboard stays where it was.
+      expect(document.activeElement, code).toBe(captureControl());
       cleanup();
     }
   });
@@ -536,6 +573,12 @@ describe("in Simplified Chinese", () => {
     expect(control.textContent).toBe(zh.projectCaptureQc);
     expect(control.getAttribute("aria-label")).toBe(`记录 QC 摘要：${LABEL}`);
     expect(control.getAttribute("aria-label")).toContain(zh.projectCaptureQc);
+    // The history controls' names contain what they show in this locale too.
+    const runControl = query(`[data-project-inspect-run="${QC_RUN}"]`);
+    expect(runControl.textContent).toBe(zh.projectOperationCaptureQc);
+    expect(runControl.getAttribute("aria-label")).toContain(zh.projectOperationCaptureQc);
+    const recordControl = query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`);
+    expect(recordControl.getAttribute("aria-label")).toContain(zh.projectArtifactQcSummary);
 
     await press(query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`));
     const surface = within(report());

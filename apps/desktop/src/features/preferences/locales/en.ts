@@ -1334,4 +1334,9 @@ export const en = {
   provenanceProducerDigest: "Executable SHA-256",
   provenanceProducerNotReported: "Not reported",
   provenanceProducerNote: "The build that produced the preview, as MSCanvas identified it then. A later installation does not change it.",
+  // --- M8.5 review pass. A capture's own refusal for a summary too large to
+  // record, and names for QC history controls that contain what they show.
+  projectRefusedSummaryTooLarge: "This run summary reports more MS levels than a QC summary snapshot records, so nothing was recorded.",
+  provenanceInspectQcRunAt: "Show what the Capture QC summary run of {{when}} is related to",
+  provenanceInspectQcSnapshotOf: "Show the QC summary snapshot recorded by the run of {{when}}",
 } as const;
