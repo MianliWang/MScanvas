@@ -1178,7 +1178,7 @@ export const en = {
   projectRefusedNothingSelected: "Select at least one reference first.",
   projectRefusedAlreadyRunning: "Finish or cancel the current check before starting another.",
   projectRefusedMalformed: "That file is not a project MSCanvas can read. Nothing was changed.",
-  projectRefusedUnsupportedVersion: "That project was written by a newer version of MSCanvas. Nothing was changed.",
+  projectRefusedUnsupportedVersion: "This project uses a schema version this build of MSCanvas does not support. Nothing was changed.",
   projectRefusedDuplicate: "That project file contains duplicate records. Nothing was changed.",
   projectRefusedDangling: "That project file refers to records it does not contain. Nothing was changed.",
   projectRefusedInvalidLocator: "That project file refers to a file location MSCanvas will not open. Nothing was changed.",

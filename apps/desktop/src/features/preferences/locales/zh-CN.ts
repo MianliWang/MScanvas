@@ -1151,7 +1151,7 @@ export const zhCN = {
   projectRefusedNothingSelected: "请先至少选择一个引用。",
   projectRefusedAlreadyRunning: "请先完成或取消当前检查，再开始新的检查。",
   projectRefusedMalformed: "该文件不是 MSCanvas 能读取的项目。未更改任何内容。",
-  projectRefusedUnsupportedVersion: "该项目由更高版本的 MSCanvas 写入。未更改任何内容。",
+  projectRefusedUnsupportedVersion: "此项目使用的架构版本不受此版本的 MSCanvas 支持。未更改任何内容。",
   projectRefusedDuplicate: "该项目文件中存在重复记录。未更改任何内容。",
   projectRefusedDangling: "该项目文件引用了其中不存在的记录。未更改任何内容。",
   projectRefusedInvalidLocator: "该项目文件引用了 MSCanvas 不会打开的文件位置。未更改任何内容。",

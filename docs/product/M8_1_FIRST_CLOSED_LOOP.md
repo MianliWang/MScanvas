@@ -754,11 +754,13 @@ The document schema is **2**. Schema 1 was the shape before layers existed and
 was never published outside development, so a document carrying it is refused
 as `unsupportedVersion` by the policy that already refuses every other version:
 no migration is built for a format no user ever held. The reader's sentence for
-it ("written by a newer version") is inaccurate for a schema-1 file, which an
-older build wrote, and it is accepted because no such file exists outside
-development: the refusal itself -- this build is the wrong reader, and
-replacing the file would be the wrong answer -- is the right one. That is the
-exact disposition. Keeping the version at 1 and defaulting the field would have made
+it said the project was "written by a newer version", which is untrue of a
+schema-1 file, which an older build wrote. M8.4 accepted that sentence; M8.5
+replaced it with a neutral one -- the project uses a schema version this build
+does not support -- in both locales, which claims neither direction and offers
+no migration. The refusal itself -- this build is the wrong reader, and
+replacing the file would be the wrong answer -- was and is the right one.
+Keeping the version at 1 and defaulting the field would have made
 an M8.4 document read as `malformed` by an M8.3 build, which is the untrue
 sentence, and would have silently changed what a versioned shape means.
 
@@ -1133,11 +1135,17 @@ column, and the scenario was asserting geometry on rows that were not on
 screen. That is the finding the review list above describes; the next run,
 `browser-GKxN7n`, passed both cases.
 
-Two mutation checks were made during the repair, each on a file copied first
-and put back afterwards, with the suite re-run on the restored file: removing
+Two mutation checks were made during the repair: removing
 `deny_unknown_fields` from `LayerSource` failed the source-field refusal test,
 and removing the focus call after a layer removal failed the jsdom removal
-case.
+case. An earlier version of this record said each was made on a file copied
+first and put back afterwards. For the first, that is not what happened, and
+it is corrected here (in M8.5) rather than left standing: `record.rs` was put
+back with `git checkout`, which restored the committed file and so also threw
+away the uncommitted `deny_unknown_fields` repair that was itself under test.
+The repair was then applied again and the suite re-run on it, which is the
+validation the review closure rests on. No claim is made here about how the
+focus-call mutation was restored beyond what the suite run after it shows.
 
 ### The affected-delta review
 
