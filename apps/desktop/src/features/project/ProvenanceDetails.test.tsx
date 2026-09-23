@@ -246,7 +246,11 @@ describe("the provenance consumer", () => {
   });
 
   it("reports a selected object the project no longer has", async () => {
-    const api = mount(capturedProject());
+    // A reference nothing recorded depends on: one that recorded work used is
+    // refused removal, so it cannot leave the project this way.
+    const api = mount(
+      openProject({ inputs: [projectInput({ id: INPUT, label: "QC_pool_01.mzML" })] }),
+    );
     await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
     await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
     expect(describing()).toBe("input");
@@ -406,7 +410,7 @@ describe("the provenance consumer", () => {
   });
 });
 
-describe("the project's first arrival", () => {
+describe("a project arriving, and being replaced", () => {
   /**
    * Inspects a reference in the first commit that shows the project.
    *
@@ -451,5 +455,28 @@ describe("the project's first arrival", () => {
     // The arrival of the first project is not the replacement of an earlier
     // one, so nothing the reader chose in its first frame is forgotten.
     expect(describing()).toBe("input");
+  });
+
+  it("forgets what was inspected and ticked when another copy of the project is opened", async () => {
+    const api = mount(capturedProject());
+    await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
+    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    const tick = () =>
+      screen.getByRole<HTMLInputElement>("checkbox", {
+        name: "Include QC_pool_01.mzML in the next capture",
+      });
+    await press(tick());
+    expect(describing()).toBe("input");
+    expect(tick().checked).toBe(true);
+
+    // Another copy of the same project -- Save As keeps every identifier --
+    // holding other history. What the reader chose in the first is not
+    // carried into it, although every identifier it named still resolves.
+    api.set(openProject({ inputs: [projectInput({ id: INPUT, label: "QC_pool_01.mzML" })] }));
+    await press(screen.getByRole("button", { name: en.projectOpen }));
+
+    await waitFor(() => expect(describing()).toBeNull());
+    expect(within(details()).getByText(en.provenanceNothingSelected)).toBeTruthy();
+    expect(tick().checked).toBe(false);
   });
 });

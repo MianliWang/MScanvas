@@ -93,9 +93,10 @@ pub fn layer_consuming_runs(document: &ProjectDocument, layer: LayerId) -> Vec<R
 
 /// The run that produced one artifact, if a run in this document claims it.
 ///
-/// `None` is a state, not a failure: an artifact whose producing run was
-/// removed is still a record of what was observed, and saying "no run in this
-/// project claims this" is the true thing to say about it.
+/// `None` is a state, not a failure: a file-facts record no run claims -- one
+/// another build wrote, or a hand edit left -- is still a record of what was
+/// observed, and saying "no run in this project claims this" is the true thing
+/// to say about it.
 ///
 /// There is never more than one. A document in which two runs name the same
 /// artifact is refused at [`super::record::validate`], so this returns the
@@ -115,8 +116,8 @@ pub fn producing_run(document: &ProjectDocument, artifact: ArtifactId) -> Option
 /// Read from the artifact rather than from its producing run. The two agree for
 /// anything this build writes -- a capture observes exactly what it was asked
 /// to -- but they are different questions: the run says what it was *asked* to
-/// observe, and the artifact says what it actually *did* observe. An artifact
-/// whose run was removed still answers this one.
+/// observe, and the artifact says what it actually *did* observe. A record no
+/// run claims still answers this one.
 ///
 /// Empty for a QC snapshot, which observed no reference: it copied a preview,
 /// and what that preview was of is the layer its run consumed.

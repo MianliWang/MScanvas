@@ -431,7 +431,7 @@ route that owns closing these.
 | RUN-004 | Retry failed | P0 | Retries only selected/failed items without rebuilding the workspace. |
 | RUN-005 | Actionable error | P0 | User sees a plain-language cause/action before raw stderr. Raw stderr is never shown; a terminal queue's diagnosable attempts can instead be saved to one local redacted JSON file the user chooses. |
 | RUN-006 | Transactional output | P0 | Final filename appears only after successful process exit and basic checks. |
-| RUN-007 | Persistent run history | P2 | Runs and artifacts survive restart with interrupted states represented honestly. **Implemented for project operations only (PRJ-003, PRJ-006):** their runs, including failed and cancelled ones, persist in a saved project. Conversion queue runs are still session-only. |
+| RUN-007 | Persistent run history | P2 | Runs and artifacts survive restart with interrupted states represented honestly. **Implemented for project operations only (PRJ-003, PRJ-006):** their runs persist in a saved project -- a file-facts capture's whether it completed, failed or was cancelled; a QC capture records only a completed run and nothing when refused. A capture the application did not live to commit records nothing, rather than an interrupted state. Conversion queue runs are still session-only. |
 | RUN-009 | Export failure diagnostics | P0 | Explicit, per terminal queue: saves one local redacted JSON file describing the latest attempt of every diagnostic-worthy item — an ordinary failure, an unconfirmed stop, or a terminal item that left staging behind. Structured facts plus bounded, redacted backend excerpts; an excerpt that still looks like it names a path is withheld. No upload, no telemetry, no history, no overwrite. Backend text may still contain acquisition metadata and the interface says so. |
 | RUN-008 | Adopt converted outputs | P0 | Explicit, per terminal queue: adds every finalized mzML output at once, in queue order. Admits one only when the final name still resolves to the exact finalized object and that object still holds the validated byte length and digest. Partial success; duplicates and refusals isolated; no auto-import, no auto-preview, no persistence. |
 
@@ -465,17 +465,18 @@ except PRJ-006, which copies a preview that already ran.
 
 **History is append-only.** A run pins what it consumed, a layer pins its
 reference, and a record pins what it observed. Removing a reference or layer
-that recorded history needs is refused (`inputUsedByRun`, `layerUsedByRun`,
-`layerDependsOnInput`), each in its own words, and nothing is cascaded. There is
-no operation that prunes history yet; that is a later product capability, not
-an M8 gate. Removing a project record never touches a file on disk, and
+that recorded history needs is refused (`inputUsedByRun`, `layerUsedByRun`),
+and a reference whose only dependent is its layer is refused until the user
+removes that layer (`layerDependsOnInput`), each in its own words; nothing is
+cascaded. There is no operation that prunes history yet; that is a later
+product capability, not an M8 gate. Removing a project record never touches a file on disk, and
 Workbench removal is independent of the project.
 
 ## Analysis and automation
 
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
-| ANA-001 | Artifact/run lineage | P1/P2 | Every derived result identifies inputs, module, parameters and producing run. **Implemented for M8 project records (M8.2):** each file-facts and QC record names its producing run, the run its inputs or layer, and Details walks both directions, derived rather than stored twice. No analysis result exists yet to apply it to. |
+| ANA-001 | Artifact/run lineage | P1/P2 | Every derived result identifies inputs, module, parameters and producing run. **Implemented for M8 project records (M8.2):** each run names its operation, what it consumed (references or a layer) and the records it produced; a record's producing run is derived from that one statement, never stored twice, and Details walks both directions. Neither M8 operation has parameters, so none are recorded. No analysis result exists yet to apply it to. |
 | ANA-002 | QC recipe | P2 | First reviewed recipe runs in an isolated worker with typed parameters/results. **Not implemented.** The M8.5 snapshot (PRJ-006) is a descriptive copy, not this recipe. |
 | ANA-003 | Analysis module contract | P2 | Packages are wrapped behind schemas; package-specific APIs do not leak into normal UI. |
 | AUT-001 | Headless CLI | Later | Reuses the same domain plans and returns structured output/exit codes. |

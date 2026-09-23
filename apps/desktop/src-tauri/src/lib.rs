@@ -288,10 +288,11 @@ async fn add_project_input(
     .await?
 }
 
-/// Removes one reference, and the history that named it.
+/// Removes one reference that no recorded history or layer depends on.
 ///
-/// Never touches the file it referenced. Removing a row is the only thing that
-/// removes a row.
+/// Never touches the file it referenced, and never removes history: a
+/// reference something recorded depends on is refused. Removing a row is the
+/// only thing that removes a row.
 #[tauri::command]
 async fn remove_project_input(
     input_id: String,

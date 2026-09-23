@@ -524,7 +524,6 @@ describe("the recorded report", () => {
     };
     api.set(reopened);
     await press(screen.getByRole("button", { name: en.projectOpen }));
-    await act(async () => {});
     await press(query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`));
 
     expect(report().textContent).toBe(values);

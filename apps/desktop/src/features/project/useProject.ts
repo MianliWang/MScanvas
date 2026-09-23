@@ -185,11 +185,7 @@ export function useProject(
   const [cancelled, setCancelled] = useState(false);
   const [pending, setPending] = useState<PendingIntent | null>(null);
   const [selected, setSelected] = useState<readonly string[]>([]);
-  /** What is inspected, and the open project it was chosen in. */
-  const [inspection, setInspection] = useState<{
-    readonly project: string | null;
-    readonly selection: ProjectSelection | null;
-  }>({ project: null, selection: null });
+  const [inspecting, setInspecting] = useState<ProjectSelection | null>(null);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -207,12 +203,13 @@ export function useProject(
    * Applies an answer only if nothing newer has already been applied.
    *
    * The whole ordering guarantee, in one place. `sequence` is the number the
-   * request was issued under.
+   * request was issued under. Answers whether it was applied.
    */
   const settle = useCallback((sequence: number, answer: ProjectState) => {
-    if (!mounted.current || sequence < applied.current) return;
+    if (!mounted.current || sequence < applied.current) return false;
     applied.current = sequence;
     setState(answer);
+    return true;
   }, []);
 
   useEffect(() => {
@@ -240,7 +237,19 @@ export function useProject(
       try {
         const answer = await operation();
         // `null` is a cancelled dialog: nothing was chosen, so nothing changed.
-        if (answer !== null) settle(sequence, answer);
+        if (answer !== null && settle(sequence, answer) && intent !== undefined) {
+          // A New, Open or Close that landed replaced the project, so what was
+          // inspected and what the next capture covers belonged to the one
+          // before -- even when the new one is another copy of it with the same
+          // identifiers, which Save As keeps. Only on an answer that was
+          // applied: a cancelled dialog or a refusal replaced nothing. Set in
+          // the same update as the project, so no frame shows the new project
+          // with the old inspection. Nothing else clears it: the first project
+          // to arrive replaces nothing, and a removal leaves the inspection to
+          // be reported as gone rather than silently moving the reader.
+          setInspecting(null);
+          setSelected([]);
+        }
         if (mounted.current) setPending(null);
       } catch (error) {
         const code = refusalId(error);
@@ -326,35 +335,6 @@ export function useProject(
       return live.length === current.length ? current : live;
     });
   }, [state.inputs]);
-
-  /**
-   * Forgets what was being inspected when the project itself is replaced.
-   *
-   * Keyed on the project that is actually open, not on the operation that was
-   * attempted: an Open whose dialog the user cancelled changes nothing, and
-   * clearing on the attempt would have collapsed the contextual region for an
-   * operation that did not happen.
-   *
-   * A *removal* deliberately does not clear it. The identity is unchanged, so
-   * the selection survives and is reported as gone -- which is the true thing
-   * to say, rather than silently moving the reader to some other object.
-   *
-   * Adjusted while rendering, not in an effect. An effect runs after the
-   * commit that already shows the new project, so a press landing in that
-   * commit was applied and then forgotten -- on a project's first arrival
-   * too, which replaces nothing. Here the render that first sees a new
-   * identity resets it, before any of that project is on screen.
-   */
-  const identity = state.open ? state.projectId : null;
-  if (inspection.project !== identity) {
-    setInspection({ project: identity, selection: null });
-  }
-  const inspecting = inspection.project === identity ? inspection.selection : null;
-  const setInspecting = useCallback(
-    (selection: ProjectSelection | null) =>
-      setInspection((current) => ({ project: current.project, selection })),
-    [],
-  );
 
   /** What is inspected now, for an answer that arrives after a press. */
   const inspectingNow = useRef(inspecting);

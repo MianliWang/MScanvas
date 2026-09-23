@@ -1832,8 +1832,11 @@ found, settles the two test debts M8 carried, and hands over to M9.
 
 ### The history, read from Git
 
-Twenty-nine ordinary commits and no merge, from the M7.6 candidate `aa3fc83`
-to `3e6b656`:
+Twenty-nine ordinary commits and no merge after `aa3fc83` up to `3e6b656`.
+`aa3fc83` is where the local M7.6 branch points, and it is itself M8.0's
+planning commit (`docs(m8): assess the UI against v5.11 and plan the first
+project-record loop`); M7.6's last commit is its parent, `fe3d202`. The
+twenty-nine are M8.1 to M8.5:
 
 | Slice | Commits | Last commit |
 | --- | --- | --- |
@@ -1964,6 +1967,18 @@ The first-version rule, stated as a rule rather than left as a consequence:
 History pruning is a later product capability, not an M8 gate. The code that
 cascaded is deleted rather than kept dormant.
 
+One consequence, stated rather than closed. Both captures measure the bytes a
+Save would write, and nothing else that grows the document does. A relink to a
+much longer path, or a Save As away from the data that turns relative
+locators absolute, can take a document captures had filled to within a few
+bytes of the 4 MiB bound past it; Save then refuses as `oversized` and writes
+nothing. Before the closure, removing a reference -- and silently its history
+-- was one way out. Now the ways out are the edit's own inverse: relink to a
+shorter path, or save beside the data again. Neither edit can make history
+unremovable that was removable before, so this is a recoverable refusal and not
+a project no Save can write, which is the case the capture measurement exists
+for.
+
 ### The two test debts M8 carried
 
 **M8.1 browser scenario.** Run first on the unchanged `3e6b656`
@@ -1986,10 +2001,19 @@ press in that commit was applied, then cleared. A new test presses from a
 layout effect in the first commit that shows the project, which is exactly that
 window and no timing-dependent approximation of it; on the unchanged hook it
 failed (`null` where `input` was expected,
-`logs/m82-first-arrival-before-fix.log`). The reset now happens in the render
-that first sees a new identity, keyed to the project the inspection was made in,
-so there is no committed frame in which a press can be lost; replacing, closing
-and reopening still forget the inspection, and a removal still reports it gone.
+`logs/m82-first-arrival-before-fix.log`). The effect is gone. What it was for
+-- forgetting the inspection when the project is replaced -- now happens where
+the replacement happens: when a New, Open or Close answer is applied, in the
+same update as the new project, so no frame shows the new project with the old
+inspection, and nothing clears it on a first arrival, which replaces nothing.
+A cancelled dialog and a refusal replace nothing and clear nothing; a removal
+still leaves the inspection to be reported as gone. The first repair, in
+`ee229cf`, keyed a render-time reset on the project identifier instead; the
+closure review found that a Save As copy carries the same identifier, so
+opening one kept the old inspection and the capture ticks -- which the effect
+had never handled either. Keying on the operation handles it, and a test opens
+another copy of the same project and asserts both are forgotten; on the
+`ee229cf` hook it fails (`logs/mutation-same-project-copy-on-ee229cf-hook.log`).
 The M8.4 and M8.5 suites no longer flush anything before pressing.
 
 ### The mixed project
@@ -2007,6 +2031,40 @@ every reference is unchecked and remembers no row, and the saved bytes hold
 no handle; the report keeps its producer; a second Save differs from the first
 only in `revision`; and the two references and the layer each refuse removal.
 It is M8 composition evidence, and it launches nothing real.
+
+### The closure review
+
+One isolated read-only review of the M8 stack and the closure's first two
+commits (`ee229cf`, `ebbd2d6`), over identity, historical and current facts,
+lineage, layer lifetime, producer strength, numeric fidelity, the deletion
+policy, the hook change, schema and catalog claims, the test dispositions and
+the history record. Nothing else ran on the machine while it did. It found no
+defect blocking M8 correctness, three non-blocking ones and five in the
+record. Each was checked against the code before being acted on.
+
+- **Opening another copy of the same project kept the inspection and the
+  capture ticks** (non-blocking; M8.2's, and the first repair repeated it).
+  Repaired as described under the M8.2 debt above, with its own test.
+- **A relink that lengthens a pinned reference's locator can make Save refuse
+  as `oversized` where removal used to be a way out** (non-blocking). Left, and
+  stated under "History is append-only": it is recoverable by the edit's own
+  inverse, and measuring every locator edit is a change of its own.
+- **One provenance test still staged a removal of a reference its run had
+  used** -- a transition the store now refuses. Its fixture is now a reference
+  nothing used.
+- **In the record and comments:** `aa3fc83` was called the M7.6 candidate (it
+  is M8.0's planning commit, on M7.6's `fe3d202`); the Tauri command, and two
+  doc comments in `lineage.rs`, still described removed history; the claim
+  that the suites no longer flush missed one empty `act` after an Open, now
+  removed; RUN-007 applied "failed and cancelled" runs to QC captures, which
+  record completed runs only, and ANA-001 said a record names its producer when
+  the run names its records; the catalog listed `layerDependsOnInput` as a
+  history refusal. Each is corrected, and the closure's own gates, which the
+  record did not yet carry, are below.
+
+Its repairs are one small commit on top of the first two. No second review
+followed: none of the findings was blocking, and an affected-delta review is
+owed after repairing a blocking defect, not after these.
 
 ### Status
 
