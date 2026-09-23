@@ -848,8 +848,16 @@ def validate_the_chromatogram_authority_has_one_installation_path(
     owners = functions_naming(content, "latest_preview_open")
 
     # `default` builds the slot and assigns the field its initial ticket, which
-    # is the one thing that is neither a question nor an answer to one.
-    expected = {"default", "begin_preview_open", "reconcile_preview_chromatogram"}
+    # is the one thing that is neither a question nor an answer to one. The run
+    # summary a QC capture may copy (M8.5) is retained by the same rule as the
+    # chromatogram, in its own function that compares *and* installs under the
+    # one `&mut self` -- the shape this check exists to keep.
+    expected = {
+        "default",
+        "begin_preview_open",
+        "reconcile_preview_chromatogram",
+        "reconcile_preview_run_summary",
+    }
     if owners != expected:
         errors.append(
             "preview/export.rs: the functions naming `latest_preview_open` are "

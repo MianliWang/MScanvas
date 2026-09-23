@@ -216,7 +216,13 @@ impl PreviewProvider for SummaryProvider {
                 completed_process(""),
                 PreviewOutputManifest::single_complete_file(SPECTRUM_TABLE.as_bytes().to_vec()),
             ),
-            _ => return Err(PreviewErrorDto::new("unexpected", "not an open", false)),
+            _ => {
+                return Err(PreviewErrorDto::new(
+                    "unexpected_preview_result",
+                    "The preview returned a result MSCanvas did not request.",
+                    false,
+                ));
+            }
         };
         let outcome =
             interpret_preview(operation, &process, &manifest).map_err(interpretation_error)?;

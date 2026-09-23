@@ -2,7 +2,8 @@
 
 Scope: **this loop only.** Not M8 in full, not M9 or M10, and explicitly not a
 general framework built ahead of its first consumer. QC summaries, report
-surfaces and figure layer identity are later M8 slices and are out of scope here.
+surfaces and figure layer identity were later M8 slices and were out of scope
+here; the sections from M8.2 on record what each later slice added.
 
 ## The loop
 
@@ -1214,12 +1215,337 @@ All browser evidence is React/mock-IPC layout and interaction evidence over a
 controlled answer table. None of it is filesystem, persistence or provider
 evidence, and none of it is native.
 
+## What M8.5 added on top of this
+
+The first persistent QC summary and the first report surface, recorded here
+because it is the first run whose input is a layer rather than a reference,
+the first artifact whose facts came from a provider rather than from a
+stable read, and because "QC" is a word that invites a grade this slice does
+not give.
+
+### What it is, and is not
+
+A **QC summary snapshot** is a typed copy of facts the existing preview
+boundary had already established, taken by an explicit press and kept as
+history. It is not the M9 QC recipe: no worker, no module, no parameter, no
+threshold, no pass or fail, no normalization and no derived quantity. It
+describes a run summary; it does not evaluate sample, chromatography,
+identification or instrument quality, and the report says so in both locales.
+
+The capture copies. It launches no ProteoWizard, reads, stats or hashes no
+source, resolves no installation and recalculates nothing. Where no suitable
+retained preview exists it is refused, and it never starts one.
+
+### Where the facts come from
+
+Before this slice the full `RunSummaryResult` was discarded after the preview
+reply was built: the page's `RunSummaryDto` keeps the minimum and maximum
+retention times only and caps the MS-level buckets. A snapshot built from that
+projection would have recorded less than was established, so Rust now
+**retains the whole typed result**, beside the chromatogram, in the export
+slots -- because that is where "which preview open is the current one" is
+already decided. It is retained only inside the same
+`ticket == latest_preview_open` critical section the chromatogram uses, and is
+dropped the moment `begin_preview_open` starts a newer open of *any* row, so a
+preview the reader has navigated away from is not one a capture can reach. It
+is named by an opaque session token minted from the slots' own counter; the
+`PreviewOpenTicket` itself still never crosses to the webview. `PreviewDto`
+carries `qcSnapshotToken` and `qcProducerIdentified`, and nothing else new.
+
+`capture_project_qc_summary(layerId, previewToken)` sends no value. Rust
+resolves the layer to its source, the source to the Workbench row this session
+remembers for it, and then requires: the token names the summary still
+retained; that summary is **of that row** (compared by `DatasetId`, which is
+never reused, so a removed and re-added row does not match); the row is still
+in the workspace; and the producing build can be identified. A superseded
+preview, a preview of another source and a stale token answer
+`previewNotCurrent`; a row gone answers `notInWorkbench`; an unidentifiable
+build answers `producerUnidentified`. The slot is a leaf lock: the snapshot is
+copied out and the lock released before the workspace is asked anything.
+
+### Producer provenance, and why the current backend is not it
+
+The producer is read from the `InstallationIdentity` **the preview's own batch
+reported** (`OperationAttempt::installation`, taken from the same attempt as the
+facts) and kept with the retained summary. It is never `authority_projection()`
+and never a fresh `availability()`: both answer which build is configured
+*now*. A preview runs `msaccess` (`bind_capabilities` binds `BoundTool::Msaccess`),
+so what is persisted is:
+
+- `tool: "msaccess"`;
+- `executableSha256`: the SHA-256 of that `msaccess` executable as discovery
+  hashed it around its help probe, in the resolution the preview's batch ran
+  under. It is *not* a hash taken at the moment of launch, and nothing here
+  claims it is;
+- `release`, `buildDate`, `sourceRevision`: the installation's reported build
+  identity from that resolution (the release is the one discovery required both
+  tools to agree on; the revision is `msconvert`'s probe's), each passed through
+  the same path-redacting, bounded label treatment the diagnostics export
+  applies, and each explicit `null` where the build did not report it.
+
+No installation path is persisted. A resolution whose `msaccess` help did not
+probe carries no digest; its preview reports `qcProducerIdentified: false`, and a
+capture of it is refused rather than attributed to a guess. A build label the
+document cannot store (empty, too long, a control character) is refused the
+same way rather than silently dropped. A session-local binding receipt is not
+used as provenance: it names a session binding, not an executable.
+
+### The schema, exactly
+
+The document schema is **3**. Run inputs became a tagged vocabulary and an
+artifact holds one tagged payload; every object below refuses unknown fields,
+including inside each variant, which is where M8.4's review found the last
+silent drop.
+
+```json
+{
+  "id": "<run uuid>",
+  "operation": "captureAcquisitionQcSnapshotV1",
+  "inputs": [{ "kind": "layer", "layerId": "<layer uuid>" }],
+  "outputArtifactIds": ["<artifact uuid>"],
+  "outcome": "completed",
+  "applicationVersion": "0.1.0",
+  "startedAt": "<rfc3339>",
+  "finishedAt": "<rfc3339>"
+}
+```
+
+```json
+{
+  "id": "<artifact uuid>",
+  "label": "QC summary: <source label>",
+  "payload": {
+    "kind": "acquisitionQcSnapshotV1",
+    "totalSpectrumCount": 12,
+    "msLevelCounts": [
+      { "kind": "level", "msLevel": 2, "spectrumCount": 4 },
+      { "kind": "other", "spectrumCount": 1 },
+      { "kind": "level", "msLevel": 1, "spectrumCount": 7 }
+    ],
+    "chromatogramCount": { "kind": "notReported" },
+    "retentionTime": {
+      "kind": "reported",
+      "minimum": { "value": "0.1", "unit": "notEmitted" },
+      "at25PercentBasePeakIntensity": { "value": "12.345678901234567", "unit": "notEmitted" },
+      "at50PercentBasePeakIntensity": { "value": "0.30000000000000004", "unit": "notEmitted" },
+      "at75PercentBasePeakIntensity": { "value": "7.7", "unit": "notEmitted" },
+      "maximum": { "value": "123.456", "unit": "notEmitted" }
+    },
+    "producer": {
+      "tool": "msaccess",
+      "executableSha256": "<64 upper-case hex>",
+      "release": "3.0.26204",
+      "buildDate": null,
+      "sourceRevision": "a09eea9"
+    }
+  }
+}
+```
+
+The same payload shape can say `{ "kind": "reported", "count": N }` for a
+chromatogram count and `{ "kind": "notReported" }` for the retention times; the
+current formatter emits neither (the parser always answers no chromatogram
+count and always five retention times), so those two branches are exercised at
+the record level rather than through the provider. A file-facts artifact is
+`{ "kind": "fileFactsV1", "observations": [...] }` under `payload`, and a
+file-facts run's `inputs` are `{ "kind": "input", "inputId": ... }` -- it means
+exactly what it meant before and round-trips.
+
+Four decisions in that shape, stated rather than implied:
+
+- **Retention times are decimal text, not JSON numbers.** Counts are integers
+  and survive a JSON number exactly. A float read back through this build's
+  JSON parser, whose exact float mode (`serde_json`'s `float_roundtrip`) is not
+  enabled, can land one unit in the last place away from what was written, and
+  enabling it would be a dependency change this slice is not authorised to
+  make. So each value is stored as the shortest text that reads back to the
+  same `f64`, and `validate` refuses any other spelling -- the reader's
+  exactness does not depend on the parser. The report displays that text as it
+  is; nothing formats it again.
+- **Absent is explicit.** An absent chromatogram count and an absent
+  retention-time summary are tagged states, and the three optional build labels
+  must be present as `null`: a field merely missing from a hand edit is refused
+  rather than read as "not reported", and `None` is never zero.
+- **The buckets are the formatter's.** Order is preserved, `Other` stays
+  `Other`, and nothing is sorted or merged. `validate` holds only the invariants
+  the parser itself states: at least one bucket, each numbered level once, at
+  most one `Other`, a total equal to the checked sum, and the minimum not above
+  the maximum. More than 64 buckets (the bound the preview boundary already
+  transfers) is refused at capture rather than truncated.
+- **The payload does not store its producing `RunId`.** The task's conceptual
+  list included one; its own rule against duplicating lineage a run already owns
+  decides the other way, and `lineage.rs` already derives every reverse edge
+  rather than storing it. Storing it would also have made an artifact name a
+  run -- the edge `lineage.rs` names as the one that would make a cycle
+  representable. The producing run is resolved through `outputArtifactIds`, and
+  `validate` makes the resolution total instead: a snapshot must be claimed by
+  exactly one run, that run must be a `captureAcquisitionQcSnapshotV1` run
+  consuming exactly one layer and no reference, and it must be `completed` with
+  that one output. A snapshot no run claims is refused as `inconsistentRecord`,
+  because its run is its whole lineage. Nor is the `LayerId` stored twice: the
+  run names it.
+
+The operation takes no parameter, and is represented as a closed unit variant
+of the operation enumeration -- there is no parameter field on a run at all,
+not an empty bag. `RecordedOperation::stable_id` now owns the wire spelling
+both variants use.
+
+**Schema disposition.** Schemas 1 and 2 were development-only, so a document
+carrying either is refused as `unsupportedVersion`, not migrated, by the policy
+that already refused schema 1. There is a test that feeds the literal M8.4
+shape (a run naming `inputIds`) and gets that refusal. The refusal's sentence is
+the neutral one corrected at the start of this slice.
+
+### Atomic commit, and what does not advance the generation
+
+`ProjectStore::capture_qc_snapshot` follows the `create_layer` seam: lock,
+resolve the layer, its source and the remembered row, check the history bounds,
+release, ask the workspace, validate the snapshot against the document rules,
+lock again, and push the run and its artifact **together**. The generation
+catches a project replaced, closed, saved elsewhere, or with a record removed or
+relinked. Two changes do not advance it -- a layer removed and the source
+re-admitted as a different row -- so both are rechecked by value, and each
+refuses `staleDocument` with nothing committed. (The interface says a capture's
+`staleDocument` and `notInWorkbench` in its own words; their shared sentences are
+a save's and a layer's.) Because a capture now adds runs without advancing the
+generation, the file-facts commit rechecks its own bounds too, instead of only
+checking them before it released the lock.
+
+Each explicit press is its own observation: two captures with identical values
+are two runs and two artifacts, and nothing earlier is overwritten.
+
+### Lineage and lifetimes
+
+Report → run → layer → reference is resolved by identifier at every step, in
+Rust (`lineage::layer_consuming_runs` is new, and the layer projection now
+carries `consumedByRunIds`) and in the page. The layer's own history is shown
+apart from its source's. The run names a layer, and nothing names a run, so
+`lineage.rs`'s no-cycle argument still holds and says why.
+
+The report is history. Removing the Workbench row, clearing the workspace,
+deleting the source, a check that then finds it missing, a relink and a reopen
+each leave it exactly as it was, and a later backend change does not rewrite
+its producer. A layer a recorded run consumed is refused removal as
+`layerUsedByRun`, and since a reference with a layer is already refused
+removal, a reference with a QC report cannot be removed either. Nothing is
+cascaded: there is no reviewed transaction for removing dependent history, and
+this slice does not invent one. That is a stated limitation -- there is no
+operation to remove a QC report yet, so its layer and reference stay pinned
+until one is designed.
+
+### Privacy
+
+No preview metadata line is copied: those sections are opaque backend text
+that can carry local paths and sample names, and recording them is a privacy
+decision a later reviewed feature may make. Nor is any run-summary column the
+snapshot does not admit (file name, timestamp, vendor, model, serial), any
+native spectrum identifier, any path, dataset handle, file identity, backend
+output or environment fact. The crossing test writes distinctive values into
+the fixture's metadata, run-summary columns and spectrum identifiers and
+searches the saved document for them, for the dataset handle, for `dataset`,
+`volume`, `fileId`, `identity`, the fake installation folder and the test's own
+absolute directory.
+
+### The capture control and the report surface
+
+Nothing new at the top level. Each layer row gains **Capture QC summary**. It is
+offered only when the source is in the Workbench, the preview on screen is that
+row's, and its build is identified; otherwise it stays reachable with
+`aria-disabled` and one reason, in the order a reader must act -- add the source
+to the Workbench, view it there, or the build cannot be identified. The first is
+read out with the control only, because the row already says "Not in the
+Workbench"; the other two are shown under the row. A press sends the layer and
+the viewed preview's token; it never starts a preview and never attaches a
+source. The keyboard stays on the control, and the new report is inspected on
+arrival only if the reader has not chosen something else while the request was
+out.
+
+When a QC snapshot is the inspected object, the Project surface's **main region**
+shows a compact report above the lists: the source's name and when it was
+recorded, one sentence on what it is and is not, and three small tables --
+spectra and chromatograms, spectra by MS level in the order reported, and the
+five retention times with "Unit not reported" beside each. No grade, no
+threshold and no status colour. Counts are digit-grouped, which changes no
+digit; retention times are the stored text. A report opened from below brings
+its heading into view by scrolling the project surface alone, and only when the
+heading is out of view. Details keeps what is not the report's: the record's
+kind, where it is stored, the producing run, the source layer, the source
+reference with its current state, and the producing build -- tool, release,
+build date, revision, digest -- with unreported labels said to be unreported
+and a note that a later installation does not change it. Every owned string is
+in `en` and `zh-CN`; `MS{{level}}` and the tool's product name are the two values
+deliberately identical in both, and are named as such in the coverage test.
+
+### Tests added for the QC snapshot
+
+Rust, through the **real crossing** in `qc_snapshot/tests.rs` -- a real project
+store, a real workspace service, a real reattachment of a file the test wrote,
+a real layer and a real preview open through a provider that answers the three
+open operations with controlled formatter text, run through the production
+interpreter, and counts every run and every look at the backend:
+
+- the retained summary becomes one run consuming the layer and one snapshot the
+  run produced, with the total, the out-of-order buckets and `Other`, an absent
+  chromatogram count, and each retention time bit-for-bit with `notEmitted`;
+- Save, Close and Open bring every value back, remember no row, and the saved
+  bytes hold none of the planted metadata, run-summary columns, native
+  identifiers, the handle, the installation folder or the test's own directory,
+  while the payload equals the closed shape above compared as a JSON value;
+- a capture with the source already deleted succeeds with the provider's run
+  and availability counters unchanged and the reference's state untouched;
+- a backend the session has observed and bound after the preview (asserted
+  through the authority's own receipt) does not become the producer, with a
+  preview the second build produces as the control;
+- an unprobed build is reported unidentified before any press and refused, with
+  the same row captured once an identified build produced its preview;
+- a superseded preview of the same source, a preview left for another source, a
+  foreign preview under the wrong layer, a never-issued token and a removed row
+  are each refused, with the right layer as the control;
+- two presses are two runs and two snapshots; and the report survives the row,
+  the workspace and the source going, while its layer and reference refuse
+  removal.
+
+Rust, at the store and document level in `project/tests.rs`: the commit and what
+it asks; no remembered row refused before the workspace is asked; a workspace
+refusal records nothing; a project that moved in five different ways while the
+workspace was asked commits nothing and stays valid, with an unmoved control;
+the history bound refused before the workspace is asked; the layer-removal
+refusal with a layer nothing consumed as its control; the fixture document read
+back exactly, including a reported zero count and absent retention times; digest
+case normalization; every run that crosses its operation; ten snapshot values
+that contradict the contract; eleven fields or omissions refused inside every
+nested variant, with the untouched document and an explicit `null` as controls;
+and the literal schema-2 document refused as unsupported.
+
+Frontend, in `ProjectQcSummary.test.tsx`: the control offered only for the
+viewed source and named by it, with its keyboard reach; each of the three
+reasons, visible or read out as described above, sending nothing; a press
+sending exactly the layer and the token; the report's values, order, `Other`,
+"Not reported" and unreported units; a reported zero and absent retention times;
+a late answer not taking the selection (removing the guard fails it, which was
+checked on a copy restored byte-identical); report → run → layer → reference in
+Details with no request; the report whole after the row leaves and after a
+reopen; the stylesheet rules that wrap a long name; each capture refusal and the
+layer-removal refusal in its own words; and the whole of it in Simplified
+Chinese.
+
+One browser scenario, `e2e/specs/m8.5-qc-summary.browser.e2e.ts`, over the
+mock-IPC harness, described with its evidence under the validation record
+below.
+
+A mutation check was made on the committed Rust candidate, from a clean tree:
+reading the producer from the provider's current `availability()` instead of the
+retained snapshot failed both the attribution test and the no-backend test, and
+the file was then restored with `git checkout` -- which, the tree having been
+clean, discarded nothing else.
+
 ## Out of scope, explicitly
 
 Provider-dependent conversion, preview, figures, exports and clipboard remain on
 HOLD and are untouched. Layer identity and provenance in the Project model is
-M8.4's, above; layer identity *inside a figure*, QC summaries and report
-surfaces are later M8 slices. M9 analysis capability is not started here.
+M8.4's, and the QC summary snapshot and its report surface are M8.5's, above;
+layer identity *inside a figure* is a later M8 slice. The isolated-worker QC
+recipe and every other analysis capability are M9's and are not started here.
 Release-level GUI and install acceptance stays paused and unwaived: this slice
 ends as a locally committed, locally verified child candidate whose publication
 still depends on the unqualified M7.6 ancestor beneath it.

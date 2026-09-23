@@ -39,6 +39,16 @@ reachable. The existing Settings dialog localizes these controls and preserves
 valid source-domain proposals and raw input drafts without remounting owners.
 See [M7.3 acceptance and limitations](../ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md).
 
+## M8.5 Project report surface
+
+On the Project surface the main region is the evidence area. When a QC summary
+snapshot is the inspected object it shows that snapshot as a compact report
+above the lists -- exact values in small tables, no grade and no status colour
+-- and the contextual Details region keeps what is not the report's: its run,
+layer, source reference and the build that produced the preview. No global
+route is added. See the
+[M8 record](M8_1_FIRST_CLOSED_LOOP.md#what-m85-added-on-top-of-this).
+
 ## Historical M0 structural candidate
 
 The first structural prototype uses a resizable workbench:
