@@ -20,6 +20,8 @@ RELEASED; M10 NOT STARTED
 | Runtime provisioning and entry probes | `a34e2b1` |
 | Supervised recipe, schema 4, payload store, commands | `ec7c155` |
 | Project-surface consumer | `b1724c4` |
+| Record and evidence | `dda7c09` (the isolated review's input) |
+| Review fixes | `4764c74` |
 
 ## Entry probes
 
@@ -105,6 +107,8 @@ stored payload, not a Python controller. They are the `#[ignore]` tests in
 | --- | --- |
 | Supported source through the whole path: plan, run, publish, save, reopen, Save As, original untouched, no residue | Completed; `DETECTED` and `NOT_DETECTED` as designed; available after reopen and in the copy |
 | All-absent batch | Completed through the measured recovery; every row `NOT_DETECTED` with `recoveredFromEmptySelection` |
+| One window beyond the last MS1 spectrum, beside a detectable target | Completed; the detectable target `DETECTED`, the other `FAILED` `WINDOW_WITHOUT_MS1_PEAKS` with zero points; nothing counted as not detected |
+| Every window beyond the run | Completed with every row `FAILED` `WINDOW_WITHOUT_MS1_PEAKS` and none absent. Before the review fix, the adapter's rule and the payload check both admitted `NOT_DETECTED` for such rows |
 | Namespace-prefixed mzML | Failed `sourceReadIncomplete`; the source is byte-identical afterwards |
 | Truncated and non-mzML sources | Failed with source codes; nothing published |
 | Shared feature with an edge-flagged partner | Both rows `FAILED`, never `SHARED` |
@@ -125,6 +129,25 @@ candidate with model status `1 (invalid area)`. The engine's answer was kept;
 the fixtures now keep matrix points 20 ppm away from every fixture target. This
 is a domain observation about sparse single-point candidates, not a fixed
 defect.
+
+## The edge guard's one-below case
+
+The review asked whether the extractor also drops an in-window first peak when
+only **one** peak lies below the trace m/z; the M9.0 rule (two or more) came from
+a single fixture with two. `experiments/m9_1/edge_probe.py` built MS1 spectra in
+memory inside the pinned runtime and compared every extracted M-trace point
+with the exact sum of its spectrum's in-window intensities (record
+`.tmp/m91-jobs/probes/edge/edge.json`, SHA-256
+`A5487DBB200261E58FEFE3FDF577AEF905C9AA7EF364BCADC5EA9C33694BD406`):
+
+| Spectrum | Points with signal | Extracted equals the in-window sum |
+| --- | ---: | ---: |
+| M peak first, above the trace m/z (none below) | 53 | 53 |
+| M peak first, below the trace m/z (one below: itself) | 53 | 53 |
+| Two in-window peaks below the trace m/z, the first of them first | 53 | 4 (the first peak omitted wherever it carried intensity; apex 1,000,000 of 1,250,000) |
+| One peak below, far outside the window | 53 | 53 |
+
+The one-below case is not affected, so the guard stays at two or more.
 
 ## Measured without the runtime
 
@@ -158,7 +181,11 @@ overflow of the page, the surface, Details or the row table, no absolute path or
 layer identifier on screen, no off-origin request, and a clean console. This is
 layout and interaction evidence over a controlled answer table; no worker ran.
 
-Two rendered findings were fixed before the frames above: outcome tables
+The isolated review's interface findings were fixed afterwards and are covered
+by the unit suite: the unsaved-changes question and the setup inputs are held
+while anything is out, a row that never reached extraction reads no evidence,
+the history counts a result in the report's outcome words, and a run's ending
+is announced. Two rendered findings were fixed before the frames above: outcome tables
 stretched across the section, and a cancelled targeted run was announced with
 the file-facts sentence "Nothing was recorded", although the run is recorded; it
 now has its own sentence. One observation is recorded rather than hidden: the
@@ -166,7 +193,71 @@ dev server runs under React StrictMode, which mounts the report's effect twice,
 so the browser run may read the first row page twice; the unit suite, without
 StrictMode, proves one read.
 
+## Isolated review
+
+One read-only review ran over an isolated copy of `dda7c09` exported to
+`.tmp/m91-jobs/review-dda7c09/`: four dimensions (scientific correctness and
+fail-closed rules; storage and transactions; supervision and trust boundary;
+interface and documentation), each followed by an adversarial verifier. 17
+findings; 15 confirmed or plausible, 1 refuted by the verifier, and 1 refuted
+by measurement after it.
+
+| Finding | Verdict | Disposition |
+| --- | --- | --- |
+| `NOT_DETECTED` accepted over a window with no MS1 spectrum | Confirmed, high | Fixed in `4764c74`: new reason `WINDOW_WITHOUT_MS1_PEAKS` in the adapter, and every non-failed outcome requires extracted points in the payload check; unit and two real-runtime tests |
+| Edge guard misses a first-peak omission with one peak below | Plausible, low | Measured (above): no omission; guard unchanged |
+| Time budget and a user cancel share one flag (two findings) | Confirmed, low | Fixed in `4764c74`: the process has its own stop; the user's flag decides a cancel |
+| A worker whose end was not observed releases the pin, link and exclusive hold | Confirmed, medium | Fixed in `4764c74`: pin, link and work area kept; the session refuses further runs (`analysisQuarantined`); unit test |
+| Process failures after launch all recorded as `workerNotAccountedFor` | Confirmed, low | Fixed in `4764c74`: classified through the shared accounting |
+| Save As copies results before checking the document | Confirmed, medium | Fixed in `4764c74`: the rebased document is validated and size-checked first. No test constructs a refusal at that point: the one found (a locator too long once absolute) is refused earlier, when the reference is registered |
+| A hard-linked Save As destination is treated as the bound document | Confirmed, low | Fixed in `4764c74`: same object, directory and name required; real hard-link test |
+| A failed owner write leaves a store every later run refuses | Confirmed, low | Fixed in `4764c74`: the store is placed by rename; test for no residue |
+| Unsaved-changes answers usable during a run | Confirmed, medium | Fixed in `4764c74`; unit test |
+| Evidence requested for a row with no extraction | Plausible, low | Fixed in `4764c74`; unit test |
+| History count reads failures as absences | Confirmed, medium | Fixed in `4764c74`: counts in the report's outcome words; unit test |
+| A late review answer re-enables Run for other text | Confirmed, low | Fixed in `4764c74`: inputs held while anything is out; unit test |
+| A run's ending not announced | Confirmed, low | Fixed in `4764c74`; unit test |
+| "Recorded however it ends" false when oversized | Confirmed, low | Documented in the record, the catalog and the interface's API notes |
+| This record's validation section was empty | Confirmed, medium | Filled below |
+| Unreferenced-result count not shown | Refuted | Listed among the differences from the handoff |
+
 ## Validation record
 
-See the commands and exit codes below. Logs are in `test-results/m9.1/` (not
-committed).
+Run on the review-fix tree (`4764c74` plus this document), one command at a
+time, in this order. Logs are in `test-results/m9.1/final/` (not committed).
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `cargo fmt --all --check` | 0 | |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --workspace` | 0 | 1,818 passed, 0 failed, 40 ignored (the real-runtime tests among them) |
+| `cargo test -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1` | 0 | 17 passed: every case under "Measured through the supervisor" |
+| `cargo check -p mscanvas-desktop --release` | 0 | The release branch, which has no runtime and answers `recipeUnavailable`, compiles |
+| `pnpm lint` | 0 | |
+| `pnpm typecheck` | 0 | |
+| `pnpm test` | 0 | 105 files, 2,133 tests |
+| `pnpm build` | 0 | |
+| `pnpm e2e:typecheck` | 0 | |
+| `pnpm e2e:browser` (the whole browser suite) | **1** | 27 spec files: **7 passed, 20 failed**. Passed: every Project-surface spec (M8.1–M8.5) and M9.1 (5 of 5), and `m7.4-preview-observer`. Failed: the M4, M5, M6, M7.1–M7.5 and viewer-r1 specs |
+| `python scripts/check_repo.py` | 0 | |
+| `git diff --exit-code 1652aff -- Cargo.lock pnpm-lock.yaml` | 0 | No dependency changed |
+
+**The failed browser specs.** Their errors are dominated by `browser.tauri.execute()
+is not supported in browser mode` (38,408 log lines) and by roster selectors such
+as `li.dataset-row[data-handle=...]` that the current shell no longer renders.
+No failure names a Project-surface, targeted or Details element. The M8.1 record
+retains `m4.1-spectrum-export` failing alone with the same `browser.tauri.execute()`
+signature at the pre-M8 commit `aa3fc83`
+(`test-results/m8.1/logs/2026-09-19-m4.1-alone-at-parent-aa3fc83.log`). No
+whole-suite baseline of `1652aff` was run for comparison. The failures are
+therefore **inherited by that evidence and by what they touch, not proven
+inherited spec by spec**. They are left as they are: no spec was edited, skipped
+or rerun to green.
+
+**Earlier runs, kept as observed.** The M9.1 browser spec also passed alone
+(5 of 5) after its last UI change. One full `pnpm test` run made while a second
+Vitest process ran alongside it failed
+`ProjectLayers.test.tsx > removes a layer through its own control…` on its
+one-second focus wait; the same file passed three times alone, and the full run
+above, made alone, passed. That failure is attributed to the contention, which
+is a basis and not a proof.

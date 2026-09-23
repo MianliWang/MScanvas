@@ -63,7 +63,7 @@ an admitted XIC. The interface says so on the setup and on every report.
 | Binding | Value |
 | --- | --- |
 | Recipe | `targetedMs1`, version 1 |
-| Adapter | `apps/desktop/src-tauri/src/targeted_ms1/adapter_v1.py`, embedded in the build; SHA-256 `287D9C1D7616131BCF8537B50283B112E55E1A19BC71102E5C014685222AC9B8` |
+| Adapter | `apps/desktop/src-tauri/src/targeted_ms1/adapter_v1.py`, embedded in the build; SHA-256 `ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC` |
 | Fixed engine profile | `FIXED_ENGINE_PROFILE` in `project/recipe.rs` (18 keys, defaults included); SHA-256 `ACA2C008B7FA312C42B59DE88F872EFC45BBB65545281B57163C0B181A958AF4` |
 | Runtime | CPython 3.13.15 embeddable (amd64) + `pyopenms==3.5.0`, as provisioned into `.tmp/m91-runtime/`; manifest SHA-256 `6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295` (4,628 files, 348,698,831 bytes) |
 | Engine | `FeatureFinderAlgorithmMetaboIdent`; OpenMS reports revision `c1370fb` |
@@ -97,7 +97,8 @@ history and is never executed by this build.
 | --- | --- |
 | Fixed interpreter and embedded adapter; argv `python.exe -I -B -X utf8 adapter_v1.py request.json out` with no user text; minimal environment plus a per-attempt `TEMP`, `TMP`, `OPENMS_HOME_PATH` and `OMP_NUM_THREADS=1` | Enforced by the supervisor |
 | Suspended spawn into a Job Object: kill-on-close, one active process, 4 GiB job memory, below-normal priority | Enforced by Windows; a second process is refused (measured) |
-| 600 s wall-clock budget; termination of the owned tree and an observed exit before the run ends | Enforced; a timeout is a failure (`workerTimeout`), never a cancel |
+| 600 s wall-clock budget; termination of the owned tree and an observed exit before the run ends | Enforced. The supervised process has its own stop: a user's cancel is forwarded into it, and the budget stops it without touching the user's flag, so a timeout is a failure (`workerTimeout`), never a cancel, and a cancel already pending when the budget runs out stays a cancel |
+| A worker whose end was **not** observed | The run fails `workerNotAccountedFor`. The source stays held and its link and work area stay in place until MSCanvas exits, and every later run in the session is refused (`analysisQuarantined`), as the ProteoWizard lanes quarantine the same fact. Other project operations continue |
 | Result published only after exit 0, a completed outcome, a validated result and a validated payload | Enforced |
 | A persisted failure carries a closed code and a stage, never a message, path or log | Enforced |
 | Filesystem read confinement, network confinement | **Not enforced.** The adapter makes no network call; nothing prevents one |
@@ -132,8 +133,11 @@ history and is never executed by this build.
 Rows use the M9.0 vocabulary: `DETECTED`, `DETECTED_AMBIGUOUS`, `SHARED`,
 `SUPPRESSED_BY_OVERLAP`, `NOT_DETECTED`, `FAILED`. `NOT_DETECTED` requires the
 engine's positive report: the target reached the library, its windows were
-extracted, and it has no candidate and no feature. Every other unexplained state
-is `FAILED` with a reason, and a failed run has no rows at all:
+extracted **from at least one MS1 spectrum with peaks**, and it has no candidate
+and no feature. Every outcome other than `FAILED` needs that extraction; the
+supervisor re-checks it on every row before anything is stored. Every other
+unexplained state is `FAILED` with a reason, and a failed run has no rows at
+all:
 
 | Case | Handling |
 | --- | --- |
@@ -144,6 +148,7 @@ is `FAILED` with a reason, and a failed run has no rows at all:
 | A shared or suppressing partner that is edge-flagged | `FAILED` `RELATED_TARGET_AT_SPECTRUM_EDGE` (exercised by a fixture) |
 | A candidate the engine discards with no valid fit | `FAILED` `ENGINE_DISCARDED_NO_VALID_FIT` (exercised by a fixture); with a valid partner in the same batch the engine instead imputes, which the row says (`imputedFromRunRegression`) |
 | Candidates removed without a feature | `FAILED` `CANDIDATES_WITHOUT_FEATURE` |
+| A window no MS1 spectrum with peaks falls into — beyond the run, in a gap, or an RT typed in the wrong unit | `FAILED` `WINDOW_WITHOUT_MS1_PEAKS`; the other rows of the batch stand. A batch whose every window is beyond the run completes with every row failed and none absent (measured) |
 | Profile, mixed or negative polarity, no MS1, ion mobility or FAIMS, unsorted or non-finite values | A failed run with its code and the `source` stage |
 
 `masserror_ppm` is not in the payload, not a gate and not a confidence.
@@ -172,12 +177,21 @@ counts and never deletes. Availability (`available`, `payloadMissing`,
 evidence reads are bounded (at most 500 rows a page; one target's lines, each
 verified against the index).
 
-**Save As** checks the document size first, assembles a pending store beside the
-destination with every available result copied and re-verified, renames it into
-place without replacing, and only then publishes the document without replacing
-an existing file. An existing destination store is refused and kept. A result
-that does not copy whole publishes nothing; a result already missing or corrupt
-is carried forward as missing and is not copied.
+**Save As** checks the document it would publish — rebased references, validity
+and size — before any result is copied, and again at publication. It assembles
+a pending store beside the destination with every available result copied and
+re-verified, renames it into place without replacing, and only then publishes
+the document: replacing the destination only when it already holds this project
+at the bound revision, and otherwise without replacing. An existing destination
+store is refused and kept. A result that does not copy whole publishes nothing;
+a result already missing or corrupt is carried forward as missing and is not
+copied. Save As onto the bound document itself copies nothing; a hard link to it
+under another name or in another directory is not the same document, because
+its store is found by its own name, and gets a copied store.
+
+A new store is assembled under a fresh pending name beside the document and
+renamed into place, so a failed owner write leaves nothing at the store's name.
+A process that dies before the rename can leave that pending directory behind.
 
 ### Schema 4 disposition
 
@@ -193,7 +207,9 @@ identity is persisted.
 
 While a targeted run is in progress, New, Open, Close, Save As, reference and
 layer removal and relink are refused (`analysisRunning`); Save is not. The
-interface holds every control while it waits, except Cancel.
+interface holds every control while it waits, except Cancel — including the
+answers to an unsaved-changes question asked before the run, and the setup's
+own inputs while a review is out.
 
 ### Where M9.1 differs from the handoff below
 
@@ -209,6 +225,7 @@ interface holds every control while it waits, except Cancel.
   work directory are removed when the attempt ends; a process that dies first
   leaves them, and nothing collects them.
 - **Relinking a detached store** is not implemented (it was an option).
+- **The unreferenced-result count** is sent to the interface and not shown.
 - **All-absent runs are rows**, through the measured recovery (the handoff's
   option), and the no-valid-fit and related-edge paths are exercised.
 
@@ -222,6 +239,10 @@ interface holds every control while it waits, except Cancel.
 - A peak whose apex sits near a window edge can be `NOT_DETECTED`; the report
   says what `NOT_DETECTED` means and does not claim absence.
 - Filesystem and network confinement are not enforced.
+- A run whose result would make the document larger than a save can publish is
+  refused `oversized` after the worker ran, and nothing is recorded.
+- The time budget and a cancel can still race by one monitor tick in either
+  direction; the recorded reason follows whichever the supervisor saw first.
 - The runtime exists only in a development checkout; there is no installer
   path, no update path and no licence review of the wheel's bundled libraries.
 
