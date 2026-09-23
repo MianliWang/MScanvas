@@ -91,7 +91,9 @@ Contextual rather than permanently dense:
 - scan selected → scan/precursor metadata;
 - plot layer selected → layer/style/source;
 - conversion scope selected → semantic settings and output summary;
-- analysis result selected → lineage and module parameters.
+- analysis result selected → lineage and module parameters. Implemented for the
+  targeted MS1 result (M9.1): the report opens in the Project surface's main
+  region, and Details shows the plan, the source as read and the attempt facts.
 
 ### Runs panel
 

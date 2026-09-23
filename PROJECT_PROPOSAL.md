@@ -679,7 +679,7 @@ Durable project/artifact/run lineage and first useful QC reports, including the 
 
 ### M9 — First analysis recipes
 
-Isolated worker and one or two reviewed, typed recipes backed by mature packages; multi-layer comparison semantics on top of M8's layer identity; a reusable XIC export, which M5 deliberately does not build.
+Isolated worker and one or two reviewed, typed recipes backed by mature packages; multi-layer comparison semantics on top of M8's layer identity; a reusable XIC export, which M5 deliberately does not build. M9.1 implemented the first recipe locally and unpublished as an experimental, bounded targeted MS1 lookup: a supervised pyOpenMS worker in a development-only runtime, a project-adjacent result store and schema 4. Runtime packaging, M9.2 and later recipes are not started. See the [M9.1 record](docs/product/M9_1_TARGETED_MS1_HANDOFF.md#m91-record).
 
 ### M10 — Automation
 

@@ -1,16 +1,235 @@
-# M9.0 route decision and M9.1 targeted MS1 handoff
+# M9.0 route decision, M9.1 handoff and M9.1 record
 
-Status: **M9.0 LOCAL ROUTE VALIDATION COMPLETE — CONDITIONAL RECOMMENDATION / NO
-ROUTE ADMITTED.** Date: 2026-09-23. Evidence: [M9.0 route evidence](../spikes/M9_0_TARGETED_MS1_ROUTE_EVIDENCE.md).
+Status: **M9.1 LOCAL VERTICAL IMPLEMENTATION COMPLETE — BOUNDED EXPERIMENTAL
+TARGETED MS1 RECIPE.** Date: 2026-09-23. M9.1 evidence:
+[M9.1 vertical evidence](../spikes/M9_1_TARGETED_MS1_VERTICAL_EVIDENCE.md). M9.0
+evidence: [M9.0 route evidence](../spikes/M9_0_TARGETED_MS1_ROUTE_EVIDENCE.md).
 Draft shapes: [draft contract](../../experiments/m9_0/draft_contract.json).
 Builds on the [M8 handoff](M8_1_FIRST_CLOSED_LOOP.md#m9-handoff).
 
-SOURCE UNPUBLISHED · M8 LOCAL IMPLEMENTATION COMPLETE · M9 IN PROGRESS — M9.1
+SOURCE UNPUBLISHED · M8 LOCAL IMPLEMENTATION COMPLETE · M9 IN PROGRESS — M9.2
 NOT STARTED · M7.6 RELEASE QUALIFICATION DEFERRED / INCOMPLETE · PROTEOWIZARD
-HOLD UNCHANGED · PUBLIC BETA NOT RELEASED; M10 NOT STARTED
+HOLD UNCHANGED · ROUTE B NOT AUTHORIZED / NOT EXECUTED · PUBLIC BETA NOT
+RELEASED; M10 NOT STARTED
 
-Nothing here is implemented in the product. The recipe below is proposed, not
-admitted.
+The first section records what M9.1 built. Everything after it is the M9.0
+decision and the handoff M9.1 was built against, kept as written; where the
+build differs from the handoff, the first section says so.
+
+## M9.1 record
+
+### Decisions this slice was built under
+
+Approved by the owner for M9.1: targeted MS1 as the first recipe (M8 handoff
+decision 1); route A — CPython 3.13.15 with `pyopenms==3.5.0` as a fixed private
+runtime, with no user-managed Python — for development use (decision 2, for
+this slice only and not its packaging); the project-adjacent result store
+(decision 3); and project schema 3 → 4. Not authorized and not done: route B
+(TOPP) or the held OpenMS installer, any ProteoWizard change, runtime bundling
+or installer qualification, a new runtime download, and M9.2.
+
+### What a user can do
+
+In a **saved** project, on a layer whose source is one mzML file:
+
+1. **Targeted MS1…** on the layer row opens a setup above the lists. Nothing is
+   sent until the user asks for a review.
+2. The user types targets, one per line — label, formula, retention time (s),
+   RT half-width (s), optionally a neutral mass — and two parameters: the m/z
+   half-width in ppm (default `5`) and the expected peak width in seconds
+   (default `6`).
+3. **Review plan** sends the typed text. Rust parses every value, mints the
+   target identifiers, and answers either the plan with its digest, the engine
+   identity with its experimental label and the whole fixed engine profile, or
+   every problem by the line it was typed on. A plan that cannot run here says
+   why (for example `notYetPublished`).
+4. **Run** executes that plan as an accepted operation. The phase Rust reports
+   is shown while it runs; **Cancel** names that operation.
+5. A completed run opens its result: outcome counts, a bounded row table, and
+   for the chosen target the engine's extracted M and M+1 points with the
+   retention-time window, the feature's bounds and apex, and other candidates.
+   Details shows the plan, the source as read and the attempt facts; a failed
+   or cancelled run shows its code, stage and stop facts.
+6. Save, reopen and Save As keep the plan, the run and the result; the result's
+   rows and evidence live beside the document and are reported available,
+   missing or corrupt on every open.
+
+This is an **experimental, bounded targeted lookup**. It is not identification,
+not a validated quantitative method, not untargeted feature detection, and not
+an admitted XIC. The interface says so on the setup and on every report.
+
+### Identities
+
+| Binding | Value |
+| --- | --- |
+| Recipe | `targetedMs1`, version 1 |
+| Adapter | `apps/desktop/src-tauri/src/targeted_ms1/adapter_v1.py`, embedded in the build; SHA-256 `287D9C1D7616131BCF8537B50283B112E55E1A19BC71102E5C014685222AC9B8` |
+| Fixed engine profile | `FIXED_ENGINE_PROFILE` in `project/recipe.rs` (18 keys, defaults included); SHA-256 `ACA2C008B7FA312C42B59DE88F872EFC45BBB65545281B57163C0B181A958AF4` |
+| Runtime | CPython 3.13.15 embeddable (amd64) + `pyopenms==3.5.0`, as provisioned into `.tmp/m91-runtime/`; manifest SHA-256 `6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295` (4,628 files, 348,698,831 bytes) |
+| Engine | `FeatureFinderAlgorithmMetaboIdent`; OpenMS reports revision `c1370fb` |
+
+A plan binds all four digests. A plan saved against another binding stays in
+history and is never executed by this build.
+
+### Runtime custody
+
+- **Development-only.** The runtime is not bundled, not installed and not
+  claimed redistributable. `scripts/provision_targeted_ms1_runtime.py` copies
+  the M9.0 evidence runtime into `.tmp/m91-runtime/`, verifies every file
+  against the embeddable zip, the locked wheels or pip's `RECORD`, and writes
+  the manifest. Only a debug build locates it (through the repository path); a
+  release build has no runtime and every review answers `recipeUnavailable`.
+- **Verified before every launch.** Every manifest entry's length and SHA-256,
+  and nothing extra, missing or linked; otherwise the run fails
+  `runtimeUnverified` before a process exists. The files are verified, not
+  locked: a change between verification and load is not excluded.
+- **Checked after load, at the worker's report.** The worker hashes the key
+  modules it loaded (the interpreter DLL and the engine's DLLs) from their files
+  and reports any module loaded from outside the runtime and the Windows
+  directory. The supervisor requires each reported module to be a manifest entry
+  with that digest, and none from elsewhere (`runtimeModuleMismatch`
+  otherwise). This is the worker's own report, checked against the verified
+  manifest, not a measurement by the supervisor.
+
+### Worker
+
+| Limit | M9.1 status |
+| --- | --- |
+| Fixed interpreter and embedded adapter; argv `python.exe -I -B -X utf8 adapter_v1.py request.json out` with no user text; minimal environment plus a per-attempt `TEMP`, `TMP`, `OPENMS_HOME_PATH` and `OMP_NUM_THREADS=1` | Enforced by the supervisor |
+| Suspended spawn into a Job Object: kill-on-close, one active process, 4 GiB job memory, below-normal priority | Enforced by Windows; a second process is refused (measured) |
+| 600 s wall-clock budget; termination of the owned tree and an observed exit before the run ends | Enforced; a timeout is a failure (`workerTimeout`), never a cancel |
+| Result published only after exit 0, a completed outcome, a validated result and a validated payload | Enforced |
+| A persisted failure carries a closed code and a stage, never a message, path or log | Enforced |
+| Filesystem read confinement, network confinement | **Not enforced.** The adapter makes no network call; nothing prevents one |
+| Arbitrary Python, shell, plugins, pickle, package installation, user-selected interpreters | Not admitted |
+
+### Execution view
+
+- The supervisor opens the source with read sharing only (write and delete
+  sharing withheld) and holds that handle for the whole attempt, hashes the
+  content through it and compares it with the plan (`sourceChanged` fails the
+  run; nothing is read).
+- It creates a **same-volume hard link** at
+  `.tmp/m91-jobs/attempts/<uuid>/source.mzML` and requires the link's volume
+  serial and 128-bit file identity to equal the held handle's. The worker is
+  given only that ASCII path; the source is never copied, rewritten, renamed or
+  re-permissioned, and its namespace prefixes are never stripped.
+- A source on another volume than the work root is refused **before a run
+  exists** (`sourceOnAnotherVolume`), only where both volumes are known and
+  differ. No silent copy.
+- The adapter re-hashes what it read (`sourceChangedDuringRead`).
+- The link is removed and the handle released when the attempt ends. Measured
+  limit: while the handle is held, the *link's* own name can still be deleted,
+  so another local program could replace the link before the worker opens it.
+  The adapter's re-hash of what it read against the plan's digest is what
+  catches a substitute. This is a guard against accidents and concurrent
+  edits, not a boundary against a hostile local user.
+- Paths, process identifiers and the file identity are session-only; the
+  document persists the content version only.
+
+### Outcomes and fail-closed rules
+
+Rows use the M9.0 vocabulary: `DETECTED`, `DETECTED_AMBIGUOUS`, `SHARED`,
+`SUPPRESSED_BY_OVERLAP`, `NOT_DETECTED`, `FAILED`. `NOT_DETECTED` requires the
+engine's positive report: the target reached the library, its windows were
+extracted, and it has no candidate and no feature. Every other unexplained state
+is `FAILED` with a reason, and a failed run has no rows at all:
+
+| Case | Handling |
+| --- | --- |
+| Every target without a candidate | The engine raises. The adapter accepts only the exact measured `RuntimeError` text, a candidate file with zero features, a library whose names are the target identifiers, two transitions per target and one chromatogram per transition; it then records `NOT_DETECTED` rows with `recoveredFromEmptySelection`. Anything else is `engineNoCandidates` or `engineError`. No blanket catch |
+| Namespace-prefixed mzML | Counted independently of the reader; a short read fails `sourceReadIncomplete`. Never rewritten |
+| Equal MS1 retention times | Refused (`sourceRtNotStrictlyIncreasing`) |
+| Extraction at a spectrum edge | `FAILED` `EXTRACTION_AT_SPECTRUM_EDGE` |
+| A shared or suppressing partner that is edge-flagged | `FAILED` `RELATED_TARGET_AT_SPECTRUM_EDGE` (exercised by a fixture) |
+| A candidate the engine discards with no valid fit | `FAILED` `ENGINE_DISCARDED_NO_VALID_FIT` (exercised by a fixture); with a valid partner in the same batch the engine instead imputes, which the row says (`imputedFromRunRegression`) |
+| Candidates removed without a feature | `FAILED` `CANDIDATES_WITHOUT_FEATURE` |
+| Profile, mixed or negative polarity, no MS1, ion mobility or FAIMS, unsorted or non-finite values | A failed run with its code and the `source` stage |
+
+`masserror_ppm` is not in the payload, not a gate and not a confidence.
+
+### Numeric contract
+
+Categorical fields — outcomes, reasons, relations, candidate counts, point
+counts, spectrum indices — must be identical between runs of one plan.
+Numbers are compared with declared tolerances: raw area relative 1e-6, evidence
+intensities relative 1e-9, theoretical m/z relative 1e-12. Engine intensity
+carries its source and **no reproducibility claim**. The repeat test measured
+raw area and evidence identical and theoretical m/z within 2.9e-16.
+
+### Storage and transactions
+
+`<name>.mscanvas.payloads/` beside the document holds `.owner.json`,
+`.staging/<ArtifactId>/` and one immutable `<ArtifactId>/` per result with
+`rows.jsonl`, `evidence.jsonl`, `evidence.index.json` (per-line offset, length
+and SHA-256) and `manifest.json`. Order: the worker writes only into its ASCII
+attempt directory → the supervisor validates the result, stages the payload in
+the store, validates it again and publishes it by a no-replace rename → the
+in-memory project references it → **Save** publishes the document. A crash or a
+discard between publication and Save leaves an unreferenced result that open
+counts and never deletes. Availability (`available`, `payloadMissing`,
+`payloadCorrupt`) is observed on open and after Save As, never stored. Row and
+evidence reads are bounded (at most 500 rows a page; one target's lines, each
+verified against the index).
+
+**Save As** checks the document size first, assembles a pending store beside the
+destination with every available result copied and re-verified, renames it into
+place without replacing, and only then publishes the document without replacing
+an existing file. An existing destination store is refused and kept. A result
+that does not copy whole publishes nothing; a result already missing or corrupt
+is carried forward as missing and is not copied.
+
+### Schema 4 disposition
+
+Schema 4 adds top-level `plans` (each executed plan, named by its digest), a
+`targetedMs1` block on every run (explicit `null` for other operations), the
+operation `targetedMs1V1` and the record kind `targetedMs1ResultV1` with its
+outcome summary, the recovery flag and the payload reference. Schemas 1, 2 and
+3 are refused as unsupported, as every earlier bump was; nothing migrates.
+Schema 3 was never published. No `DatasetId`, `FileIdentity`, path or process
+identity is persisted.
+
+### Exclusive run
+
+While a targeted run is in progress, New, Open, Close, Save As, reference and
+layer removal and relink are refused (`analysisRunning`); Save is not. The
+interface holds every control while it waits, except Cancel.
+
+### Where M9.1 differs from the handoff below
+
+- **The evidence plot is a screen-only SVG** drawn from the stored evidence. It
+  does not go through `mscanvas-plot-spec`, because nothing exports it; an
+  export would need that specification first.
+- **The row table is compact**: target, outcome with reason, apex RT and raw
+  area. Bounds, model status, candidates and relations are in the chosen row's
+  facts.
+- **No Save As summary** names the results carried forward as missing; each one
+  says so where it is shown.
+- **Staging left by a crash is not retried on open.** An attempt's staging and
+  work directory are removed when the attempt ends; a process that dies first
+  leaves them, and nothing collects them.
+- **Relinking a detached store** is not implemented (it was an option).
+- **All-absent runs are rows**, through the measured recovery (the handoff's
+  option), and the no-valid-fit and related-edge paths are exercised.
+
+### Known limits
+
+- One mzML file per layer; positive-mode, centroided MS1; `[M+H]+` with M and
+  M+1 traces; at most 200 targets.
+- The source must be on the work root's volume; a CJK source path is read
+  through the link, and a CJK project path stores, reopens and copies its
+  results (both measured).
+- A peak whose apex sits near a window edge can be `NOT_DETECTED`; the report
+  says what `NOT_DETECTED` means and does not claim absence.
+- Filesystem and network confinement are not enforced.
+- The runtime exists only in a development checkout; there is no installer
+  path, no update path and no licence review of the wheel's bundled libraries.
+
+## M9.0 decision and M9.1 handoff, as written before M9.1
+
+The sections below are the M9.0 record as it stood when M9.1 began. Its
+status then was M9.0 LOCAL ROUTE VALIDATION COMPLETE — CONDITIONAL
+RECOMMENDATION / NO ROUTE ADMITTED, with M9.1 not started.
 
 ## Decision record
 

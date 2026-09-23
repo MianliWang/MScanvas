@@ -827,14 +827,21 @@ closure and the M9 handoff.
 
 ## M9 — First analysis recipes
 
-**IN PROGRESS — M9.1 NOT STARTED.** M9.0 measured one proposed first recipe,
-targeted MS1 signal and candidate detection on pyOpenMS 3.5.0, locally and
-unpublished, and ended with a **conditional recommendation that admits no
-route**: the [route evidence](docs/spikes/M9_0_TARGETED_MS1_ROUTE_EVIDENCE.md)
-and the [decision and M9.1 handoff](docs/product/M9_1_TARGETED_MS1_HANDOFF.md).
-Nothing is implemented in the product. The owner decisions the
-[M8 handoff](docs/product/M8_1_FIRST_CLOSED_LOOP.md#m9-handoff) names, the worker
-runtime and its packaging among them, remain open.
+**IN PROGRESS — M9.1 LOCAL VERTICAL IMPLEMENTATION COMPLETE; M9.2 NOT
+STARTED.** M9.0 measured one proposed first recipe, targeted MS1 signal and
+candidate detection on pyOpenMS 3.5.0, and ended with a conditional
+recommendation ([route evidence](docs/spikes/M9_0_TARGETED_MS1_ROUTE_EVIDENCE.md)).
+M9.1 built it as one bounded, **experimental** vertical slice, locally and
+unpublished: a reviewed, digest-named plan over one mzML layer; a supervised
+worker in a fixed, verified CPython 3.13.15 + pyOpenMS 3.5.0 runtime reading
+the held source through a same-volume hard link; typed, fail-closed outcomes; a
+validated result stored beside the project and referenced by schema 4; and a
+Project-surface setup, report and evidence plot
+([M9.1 record](docs/product/M9_1_TARGETED_MS1_HANDOFF.md#m91-record),
+[M9.1 evidence](docs/spikes/M9_1_TARGETED_MS1_VERTICAL_EVIDENCE.md)). The
+runtime exists only in a development checkout: bundling, installation, updates
+and licence review remain the owner's packaging decision, and Route B (TOPP) is
+neither authorized nor executed.
 
 - Isolated worker contract and one or two reviewed recipes backed by mature
   packages.

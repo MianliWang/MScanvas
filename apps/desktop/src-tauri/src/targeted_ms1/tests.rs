@@ -2320,6 +2320,70 @@ fn a_source_under_a_non_ascii_path_is_read_through_its_ascii_link() {
 
 #[test]
 #[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_project_under_a_non_ascii_path_stores_reopens_and_copies_its_result() {
+    // The worker never sees the project's path: it writes into the ASCII job
+    // root, and only Rust touches the store beside the document.
+    let area = WorkArea::new("non-ascii-project");
+    let source = area.write("data/plain.mzML", &mzml(&plain(), ""));
+    let document = area.join("项目 目录/研究 study.mscanvas");
+    fs::create_dir_all(document.parent().expect("parent")).expect("dir");
+    let (store, _, layer) = project_over(&document, &source);
+    let supervisor = real();
+    let plan = plan(
+        &store,
+        layer,
+        vec![target("caffeine", CAFFEINE, "60", "20")],
+        &supervisor,
+    );
+    let end = run(&store, &plan, &supervisor).expect("recorded");
+    assert_eq!(
+        end.outcome,
+        TerminalOutcome::Completed,
+        "{:?}",
+        failure_of(&store)
+    );
+    let artifact = end.artifact.expect("result");
+    store.save().expect("save");
+    let store_dir = payload::store_of(&document).expect("store");
+    assert!(!store_dir.to_str().expect("utf-8").is_ascii());
+    assert!(payload::is_plain_directory(
+        &store_dir.join(artifact.to_string())
+    ));
+
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("reopen");
+    assert_eq!(
+        reopened.describe().artifacts[0]
+            .targeted_ms1
+            .as_ref()
+            .expect("result")
+            .availability,
+        "available"
+    );
+    assert_eq!(
+        rows_of(&reopened, artifact)[0].outcome,
+        RowOutcome::Detected
+    );
+
+    let copy = area.join("副本 copy/研究 copy.mscanvas");
+    fs::create_dir_all(copy.parent().expect("parent")).expect("dir");
+    reopened.save_as(&copy).expect("save as");
+    assert_eq!(
+        reopened.describe().artifacts[0]
+            .targeted_ms1
+            .as_ref()
+            .expect("result")
+            .availability,
+        "available"
+    );
+    assert_eq!(
+        rows_of(&reopened, artifact)[0].outcome,
+        RowOutcome::Detected
+    );
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
 fn a_source_on_another_volume_is_refused_before_a_run_exists() {
     let area = WorkArea::new("cross-volume");
     let elsewhere = Scratch::new("m91-cross-volume");
