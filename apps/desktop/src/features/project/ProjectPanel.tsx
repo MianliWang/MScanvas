@@ -253,7 +253,9 @@ export function ProjectPanel({
    * Armed only by the press itself and spent on the first settled answer, so
    * nothing else that re-reads the project -- an Open, a Close, a refusal --
    * can move the keyboard. A refused removal leaves the row, and the control
-   * the user pressed, exactly where they were.
+   * the user pressed, exactly where they were. And it recovers only focus the
+   * removal actually dropped: a reader who moved on while the request was out
+   * keeps the place they moved to.
    */
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const layersHeading = useRef<HTMLHeadingElement | null>(null);
@@ -261,13 +263,15 @@ export function ProjectPanel({
     null,
   );
   useEffect(() => {
-    const pending = removing.current;
-    if (pending === null || busy !== "idle") return;
+    const armed = removing.current;
+    if (armed === null || busy !== "idle") return;
     removing.current = null;
-    if (state.layers.some((layer) => layer.id === pending.layerId)) return;
+    if (state.layers.some((layer) => layer.id === armed.layerId)) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && active.isConnected) return;
     const control = [
       ...(surfaceRef.current?.querySelectorAll<HTMLElement>("[data-project-create-layer]") ?? []),
-    ].find((candidate) => candidate.getAttribute("data-project-create-layer") === pending.sourceInputId);
+    ].find((candidate) => candidate.getAttribute("data-project-create-layer") === armed.sourceInputId);
     (control ?? layersHeading.current)?.focus();
   }, [busy, state.layers]);
 

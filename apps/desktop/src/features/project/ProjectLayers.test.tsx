@@ -429,6 +429,27 @@ describe("the layer list", () => {
     }
   });
 
+  it("leaves the keyboard where the reader moved it while a removal was out", async () => {
+    const { api } = mount(layered());
+    await ready();
+
+    api.set(attached());
+    const release = api.holdOnce("removeProjectLayer");
+    const remove = within(layerRow(LAYER)).getByRole("button", { name: `Remove layer: ${LABEL}` });
+    remove.focus();
+    await press(remove);
+    // The reader moves on before the answer arrives.
+    const elsewhere = screen.getByRole("button", { name: en.projectCheckLinks });
+    elsewhere.focus();
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(document.querySelector("[data-project-layer]")).toBeNull());
+
+    // Nothing was dropped, so nothing is recovered: focus stays where they put it.
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
   it("removes a layer through its own control, and names the refusal a reference with one gets", async () => {
     const { api } = mount(layered());
     await ready();
@@ -576,7 +597,8 @@ describe("a layer in Details", () => {
     // jsdom lays nothing out, so this holds the stylesheet to its word: the
     // heading and the row carry the classes whose rules break anywhere. The
     // browser scenario renders a name this long at 1366x768 and 960x640 and
-    // measures that nothing overflows.
+    // measures that neither the project surface, where the list would scroll,
+    // nor the Details region scrolls sideways.
     const heading = within(details()).getByRole("heading", { name: long });
     expect(heading.className).toBe("provenance-name");
     expect(layerRow(LAYER).className).toContain("project-row");

@@ -1456,9 +1456,11 @@ impl ProjectStore {
             // Unreachable while the bounds are what they are: one layer per
             // input and no more inputs than the layer bound means every input
             // already has its layer by the time this could be true, and the
-            // idempotent answer above has returned first. Kept so that a
-            // later change to either bound cannot let this mint a document
-            // `validate` would refuse on every later Save.
+            // idempotent answer above has returned first. Kept, on both sides
+            // of the roster question as `register_input` keeps its own bound,
+            // so that a later change to either bound cannot let two creates
+            // for two references mint a document `validate` would refuse on
+            // every later Save.
             if project.document.layers.len() >= MAX_LAYERS {
                 return Err(ProjectError::Oversized);
             }
@@ -1483,6 +1485,11 @@ impl ProjectStore {
         // A concurrent create that got here first is the same answer, once.
         if let Some(existing) = project.document.layer_of_input(input) {
             return Ok(existing.id);
+        }
+        // Re-checked, because a create for a different reference does not
+        // advance the generation and may have landed while the lock was out.
+        if project.document.layers.len() >= MAX_LAYERS {
+            return Err(ProjectError::Oversized);
         }
         let id = LayerId::new();
         project.document.layers.push(LayerRecord {

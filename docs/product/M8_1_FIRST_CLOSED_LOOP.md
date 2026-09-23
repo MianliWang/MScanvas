@@ -968,9 +968,12 @@ identifier, detached, the reference offering Show rather than a second Create,
 the roster still holding the row, and exactly three requests sent; Remove
 leaving the reference, run, record and row in place and the keyboard on the
 source's layer control; and a second case with a source name as long as an
-instrument writes, at 1366x768 and 960x640, measuring that the list, the layer
-row and the Details region neither overflow nor widen past the viewport. It is
-React/mock-IPC
+instrument writes, at 1366x768 and 960x640, measuring that neither the page,
+nor the project surface the list scrolls in, nor the Details region scrolls
+sideways, that every layer control stays inside the viewport at the compact
+minimum, and that the Details region does not widen past it. A row's own box
+follows its column whatever it holds, so the row's width is not what is taken
+as evidence of wrapping; the surface's scroll width is. It is React/mock-IPC
 layout and interaction evidence only -- the project, the add result, the layer
 answer and the roster are a controlled answer table -- and it proves nothing
 about the filesystem, persistence or a provider; those claims are the Rust
@@ -1093,16 +1096,115 @@ done:
 - **Kept, with a comment**: `create_layer`'s count check, which the
   one-layer-per-input rule makes unreachable and which is kept so a later
   change to either bound cannot mint a document `validate` refuses.
-- **Left, and stated** under the surface section: the "Saving..." busy word,
-  the gone-source rendering, and two layers of two same-named files sharing a
-  visible name.
+- **Left, and stated** under the surface section: the "Saving..." busy word
+  and the gone-source rendering.
 
 The five that did not survive: two layers of same-named files being
-indistinguishable (real, but M8.1's label rule rather than this slice's, and
-now stated), the session-fact test lacking a real-format handle, a no-I/O test
-not exercising the real closure against a missing file, a double possessive in
-one Chinese string, and a test comment said to claim the browser measured the
-focus ring. The last is moot now that it does.
+indistinguishable (real, but M8.1's label rule rather than this slice's; it is
+stated under the surface section anyway), the session-fact test lacking a
+real-format handle, a no-I/O test not exercising the real closure against a
+missing file, a double possessive in one Chinese string, and a test comment
+said to claim the browser measured the focus ring. The last is moot now that
+it does.
+
+### After the review, on the repair commit `7dca5f5`
+
+Every gate, run once and in sequence -- no Rust build overlapping the frontend
+suite this time -- with direct exit status:
+
+| Gate | Exit | What it established |
+| --- | --- | --- |
+| `cargo fmt --all --check` | 0 | |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --workspace` | 0 | desktop library 1107 passed, 14 ignored; the project store's 108 include 28 layer cases (22, and 6 from the review), and the bridge's 29 include 2 |
+| `pnpm lint` | 0 | |
+| `pnpm build` | 0 | |
+| `pnpm test` | 0 | 2091 passed of 2091 |
+| `pnpm e2e:typecheck` | 0 | |
+| `python -B scripts/check_repo.py` | 0 | |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.4-layers.browser.e2e.ts` | 0 | 2 passing; evidence under `test-results/m8.4/browser-qJreBj` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.3-reattachment.browser.e2e.ts` | 0 | 2 passing; `test-results/m8.3/browser-1TMDpP` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.2-provenance.browser.e2e.ts` | 0 | 4 passing, run because this commit changed the Details region M8.2 renders; `test-results/m8.2/browser-7IyZ6H` |
+
+Retained from writing the repair: the first run of the new long-name case,
+`test-results/m8.4/browser-0Wej2h`, failed on its 960x640 frame with the
+roster's rows measured at zero height -- the roster is folded away at one
+column, and the scenario was asserting geometry on rows that were not on
+screen. That is the finding the review list above describes; the next run,
+`browser-GKxN7n`, passed both cases.
+
+Two mutation checks were made during the repair, each on a file copied first
+and put back afterwards, with the suite re-run on the restored file: removing
+`deny_unknown_fields` from `LayerSource` failed the source-field refusal test,
+and removing the focus call after a layer removal failed the jsdom removal
+case.
+
+### The affected-delta review
+
+One review of the repair commit alone, two reviewers -- one on the code, one on
+the evidence and the record -- and one refuter per finding. Eleven findings;
+eight survived and three did not. What survived, and what was done:
+
+- **The long-name case did not measure what the record said it measured.** A
+  layer row's box follows its column whatever it holds -- the same row was
+  993px wide at 1366 on the list and 736px beside Details -- and the project
+  surface is its own scroll container, so a name that did not wrap would have
+  scrolled inside the surface and reached neither the row's box nor the
+  page. The record called that measured; it was not. The case now reads the
+  surface's own scroll width in every frame where the surface is shown, the
+  width check that could not fail is gone, and the record and the test
+  comment say what is measured. Giving the label `white-space: nowrap` now
+  fails the case, with the surface scrolling 13px sideways (evidence under
+  `test-results/m8.4/browser-9q6jQl`); the stylesheet was restored from a copy
+  afterwards.
+- **The case read only the last viewport's console.** Each viewport is its own
+  document and its ledger went with it at the next navigation; it is now read
+  inside each viewport's pass, before navigating.
+- **Focus after a removal was taken back from where the reader had moved it.**
+  The removal is one request long and its control stays focusable, so a
+  reader could move on before the answer. Focus is now recovered only where
+  the removal actually dropped it, with a case that moves focus while the
+  request is held; removing the guard fails that case.
+- **The count check did not cover the roster window.** The kept guard ran
+  only before the lock was released, and a create for a different reference
+  does not advance the generation. It now runs on both sides of the roster
+  question, as `register_input` keeps its own bound. It remains unreachable
+  while the two bounds are equal, which is why it has no test of its own.
+- **A local name shadowed the session's `pending`** in the new focus effect;
+  it is renamed.
+- **The record had no gate result for the repaired commit**, the table above.
+- **A non-survivor was also listed as a survivor** -- the same-named layers --
+  and is now in one list.
+
+The three that did not survive: two phrasings among the Chinese layer names
+(each contains its visible label, which is the rule, and the M8.3 Chinese names
+do not share one shape either), the survivor accounting as reported (it was
+real in a different form, above), and the repair commit's message wording. The
+message cannot be amended; where it says the names follow the M8.3 pattern, the
+rule it means is that each contains its visible label.
+
+### On the final candidate
+
+The tree of the commit that records this, after the affected-delta repairs,
+every gate once and in sequence with direct exit status:
+
+| Gate | Exit | What it established |
+| --- | --- | --- |
+| `cargo fmt --all --check` | 0 | |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --workspace` | 0 | desktop library 1107 passed, 14 ignored; plot-spec 125; proteowizard 513 plus its integration targets; the project store's 108 include 28 layer cases, and the bridge's 29 include 2 |
+| `pnpm lint` | 0 | |
+| `pnpm build` | 0 | |
+| `pnpm test` | 0 | 2092 passed of 2092 |
+| `pnpm e2e:typecheck` | 0 | |
+| `python -B scripts/check_repo.py` | 0 | run after this record was written |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.4-layers.browser.e2e.ts` | 0 | 2 passing, fourteen captured frames; the focus ring read as a 2px solid outline; the project surface and the page scroll sideways by 0 in every frame; each viewport's console ledger empty; evidence under `test-results/m8.4/browser-qOoVdn` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.3-reattachment.browser.e2e.ts` | 0 | 2 passing; `test-results/m8.3/browser-bEXfsg` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.2-provenance.browser.e2e.ts` | 0 | 4 passing; `test-results/m8.2/browser-EqZKA4` |
+
+All browser evidence is React/mock-IPC layout and interaction evidence over a
+controlled answer table. None of it is filesystem, persistence or provider
+evidence, and none of it is native.
 
 ## Out of scope, explicitly
 

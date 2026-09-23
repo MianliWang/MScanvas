@@ -182,6 +182,10 @@ async function capture(label: string) {
       surface: root.getAttribute("data-surface"),
       projectShown: project !== null && !project.hidden,
       rosterShown: roster !== null && !roster.hidden,
+      // The project surface is its own scroll container, so a list or a row
+      // that does not wrap scrolls here and never reaches the document.
+      projectOverflow:
+        project === null || project.hidden ? 0 : project.scrollWidth - project.clientWidth,
       // The one control each reference carries for its layer, in whichever of
       // its two states it is in.
       layerControls: [...document.querySelectorAll("[data-project-input]")].map((row) => {
@@ -321,6 +325,7 @@ async function capture(label: string) {
     }
   }
   if (measured.projectShown) {
+    expect(measured.projectOverflow).toBeLessThanOrEqual(1);
     for (const control of [...measured.layerControls, ...measured.layerRows]) {
       expect(control.x).toBeGreaterThanOrEqual(0);
       expect(control.x + control.width).toBeLessThanOrEqual(measured.css.width + 1);
@@ -659,9 +664,11 @@ describe("M8.4 layer identity and provenance, rendered", () => {
 
   it("keeps a long source name inside the surface and the Details region when constrained", async () => {
     // A name as long as an instrument will write, and a layer already made
-    // from it. What is measured is what a screenshot cannot say: nothing
-    // scrolls sideways, every layer control is inside the viewport and at the
-    // compact minimum, and the Details region does not widen to fit the name.
+    // from it. What is measured is what a screenshot cannot say: neither the
+    // page, nor the project surface the list scrolls in, nor the Details
+    // region scrolls sideways; every layer control is inside the viewport and
+    // at the compact minimum; and the Details region does not widen to fit
+    // the name.
     const long = `${"Plasma_QC_batch_07_".repeat(7)}replicate_03.mzML`;
     const table: Record<string, unknown> = ipcTable();
     table.get_workspace_roster = { datasets: [MZML_ROW], capacity: FAKE_WORKSPACE_CAPACITY };
@@ -697,8 +704,10 @@ describe("M8.4 layer identity and provenance, rendered", () => {
       const listed = await capture(`${label}-list`);
       expect(listed.projectShown).toBe(true);
       expect(listed.layerRows[0]?.label).toBe(long);
-      // The row wraps the name rather than stretching past the viewport.
-      expect(listed.layerRows[0]?.width ?? Infinity).toBeLessThanOrEqual(width);
+      // The name wraps inside its row: the surface it would push sideways
+      // does not scroll. (A row's own box follows its column whatever it
+      // holds, so its width is not evidence of wrapping.)
+      expect(listed.projectOverflow).toBeLessThanOrEqual(1);
 
       await browser.$(`[data-project-inspect-layer="${LAYER}"]`).click();
       // Below the roomy breakpoint the region waits to be asked for, and the
@@ -714,8 +723,10 @@ describe("M8.4 layer identity and provenance, rendered", () => {
       expect(region?.x ?? -1).toBeGreaterThanOrEqual(0);
       expect((region?.x ?? 0) + (region?.width ?? Infinity)).toBeLessThanOrEqual(width + 1);
       expect(region?.overflow ?? Infinity).toBeLessThanOrEqual(1);
+      // Each viewport is its own document, and its console ledger goes with
+      // it at the next navigation, so it is read here rather than once after.
+      evidence.push({ viewport: label, console: await consoleEntries() });
+      expect(await unexpectedConsole()).toEqual([]);
     }
-
-    expect(await unexpectedConsole()).toEqual([]);
   });
 });
