@@ -1968,16 +1968,15 @@ History pruning is a later product capability, not an M8 gate. The code that
 cascaded is deleted rather than kept dormant.
 
 One consequence, stated rather than closed. Both captures measure the bytes a
-Save would write, and nothing else that grows the document does. A relink to a
-much longer path, or a Save As away from the data that turns relative
-locators absolute, can take a document captures had filled to within a few
-bytes of the 4 MiB bound past it; Save then refuses as `oversized` and writes
-nothing. Before the closure, removing a reference -- and silently its history
--- was one way out. Now the ways out are the edit's own inverse: relink to a
-shorter path, or save beside the data again. Neither edit can make history
-unremovable that was removable before, so this is a recoverable refusal and not
-a project no Save can write, which is the case the capture measurement exists
-for.
+Save would write, and a relink does not. A relink to a much longer path can
+take a document captures had filled to within a few bytes of the 4 MiB bound
+past it; Save then refuses as `oversized` and writes nothing. Before the
+closure, removing a reference -- and silently its history -- was one way out.
+Now the way out is the relink's own inverse: relink to a shorter path. That is
+a recoverable refusal, not a project no Save can write, which is the case the
+capture measurement exists for. (A Save As that would lengthen locators past
+the bound is different: `publish` refuses it before anything changes, so the
+open document and where it is saved stay exactly as they were.)
 
 ### The two test debts M8 carried
 
