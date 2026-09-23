@@ -128,11 +128,17 @@ def save_as(src: Path, dst: Path, copy=shutil.copytree) -> list[str]:
                     sha256(target / n) != m["sha256"] for n, m in ref["files"].items()):
                 raise OSError(f"payload {ref['artifact_id']} did not copy whole")
         write_json_atomically(pending / ".owner.json", {"project_id": doc["project_id"]})
+        os.rename(pending, dst_store)  # rename, not replace: a store that appeared meanwhile is refused
     except Exception:
         shutil.rmtree(pending, ignore_errors=True)
         raise
-    os.replace(pending, dst_store)
-    write_json_atomically(dst, doc)  # identifiers unchanged; source locators are rebased by M8's own rule
+    tmp = dst.with_name(f".{dst.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8", newline="\n")
+    try:
+        os.rename(tmp, dst)  # refuse-existing publish; identifiers unchanged, locators rebased by M8's rule
+    except OSError:
+        tmp.unlink()
+        raise
     return unavailable
 
 

@@ -392,6 +392,7 @@ def run(req: dict, staging: Staging) -> dict:
     target_of_ref = {v: k for k, v in assay_of.items()}
 
     rows, evidence = [], []
+    peaks_of: dict[int, tuple] = {}  # each visited spectrum's arrays, fetched once
     for t in req["targets"]:
         tid = t["target_id"]
         ref = assay_of.get(tid)
@@ -416,10 +417,10 @@ def run(req: dict, staging: Staging) -> dict:
         for trace, (nid, mz, _) in enumerate(traces):
             lo, hi = bounds[trace]
             for s in visited:  # measured extractor defects at a spectrum's first and last peak
-                peaks = s.get_peaks()[0]
-                below = int((peaks < mz).sum())
-                last_twice = below == len(peaks) and lo < peaks[-1] < hi
-                first_lost = below >= 2 and lo < peaks[0] < hi
+                mzs, ints = peaks_of.setdefault(exp_index[s.getNativeID()], s.get_peaks())
+                below = int(mzs.searchsorted(mz, "left"))  # the extractor's own lower_bound
+                last_twice = below == len(mzs) and lo < mzs[-1] < hi and ints[-1] != 0
+                first_lost = below >= 2 and lo < mzs[0] < hi and ints[0] != 0
                 edge += bool(last_twice or first_lost)
             nid = nid.decode() if isinstance(nid, bytes) else nid
             rts, values = chroms.get(nid, ([], []))
@@ -467,6 +468,13 @@ def run(req: dict, staging: Staging) -> dict:
             row["relations"]["failure"] = "ENGINE_DISCARDED_NO_VALID_FIT"
         else:
             row["relations"]["failure"] = "target neither in features nor unassigned"
+    # A shared or suppressing feature built from a defective chromatogram cannot stand for a partner either.
+    flagged = {r["target_id"] for r in rows if str(r["relations"].get("failure", "")).startswith("EXTRACTION_AT")}
+    for r in rows:
+        related = set(r["relations"].get("shared_with", [])) | {r["relations"].get("suppressed_by")}
+        if r["target_id"] not in flagged and r["outcome"] in ("SHARED", "SUPPRESSED_BY_OVERLAP") and related & flagged:
+            r["outcome"], r["feature"] = "FAILED", None
+            r["relations"]["failure"] = "RELATED_TARGET_AT_SPECTRUM_EDGE"
     engine_features = [{"label": meta(f, "label"), "rt_s": f.getRT(), "mz": f.getMZ(),
                         "intensity": finite_or_none(f.getIntensity()), "refs": [meta(f, "PeptideRef")] +
                         (meta(f, "alt_PeptideRef") or [])} for f in features]
