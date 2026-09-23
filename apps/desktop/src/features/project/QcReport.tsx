@@ -39,10 +39,24 @@ export function QcReport({ artifactId, snapshot, sourceName, recordedWhen }: QcR
   const section = useRef<HTMLElement | null>(null);
 
   // A report chosen from the history below, or from Details, appears at the top
-  // of a surface that may be scrolled well past it. Brought into view, without
-  // taking the keyboard from the control that chose it.
+  // of a surface that may be scrolled well past it. Its heading is brought into
+  // view where it is not already, without taking the keyboard from the control
+  // that chose it -- and not at all where it is, so a report that arrives
+  // beside a visible control does not scroll that control away.
+  //
+  // Only the project surface's own scroll position moves. `scrollIntoView`
+  // scrolls every ancestor that can scroll, and took the whole shell with it,
+  // header and all; and its "nearest" alignment, for a report taller than the
+  // window, shows the bottom and hides the heading.
   useEffect(() => {
-    section.current?.scrollIntoView?.({ block: "nearest" });
+    const element = section.current;
+    const container = element?.closest<HTMLElement>(".workbench-project") ?? null;
+    if (element === null || container === null) return;
+    const top = element.getBoundingClientRect().top;
+    const bounds = container.getBoundingClientRect();
+    if (top < bounds.top || top > bounds.bottom - 48) {
+      container.scrollTop += top - bounds.top;
+    }
   }, [artifactId]);
 
   const retention = snapshot.retentionTime;
