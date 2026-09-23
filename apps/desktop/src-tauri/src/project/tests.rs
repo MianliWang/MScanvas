@@ -19,8 +19,8 @@ use std::sync::{Arc, Barrier};
 use super::observe::{self, Cancellation, MemberObservation, UnavailableReason};
 use super::record::{
     ContentBaseline, DocumentProblem, InputId, LayerId, LayerRecord, LayerSource, Locator,
-    MAX_LAYERS, MemberRecord, MemberRole, ProjectDocument, RecordedOperation, RunId, RunRecord,
-    TerminalOutcome,
+    MAX_LAYERS, MemberRecord, MemberRole, ProjectDocument, RecordedOperation, RunId, RunInput,
+    RunRecord, TerminalOutcome,
 };
 use super::{CancelOutcome, ProjectError, ProjectJobId, ProjectStore, record};
 
@@ -681,7 +681,7 @@ fn valid_document() -> ProjectDocument {
     document.runs.push(RunRecord {
         id: RunId::new(),
         operation: RecordedOperation::CaptureFileFactsV1,
-        input_ids: vec![input_id],
+        inputs: vec![RunInput::Input { input_id }],
         output_artifact_ids: Vec::new(),
         outcome: TerminalOutcome::Failed,
         application_version: "0.1.0".to_owned(),
@@ -713,7 +713,9 @@ fn a_duplicate_identifier_is_refused() {
 #[test]
 fn a_dangling_run_reference_is_refused() {
     let mut document = valid_document();
-    document.runs[0].input_ids = vec![InputId::new()];
+    document.runs[0].inputs = vec![RunInput::Input {
+        input_id: InputId::new(),
+    }];
     assert_eq!(refused(&document), DocumentProblem::DanglingReference);
 }
 
@@ -1561,7 +1563,7 @@ fn removing_a_reference_also_removes_an_artifact_no_run_produced() {
             .push(super::record::ArtifactRecord {
                 id: mscanvas_core::ArtifactId::new(),
                 label: "File facts: sample.txt".to_owned(),
-                file_facts: super::record::FileFactsV1 {
+                payload: super::record::ArtifactPayload::FileFactsV1(super::record::FileFactsV1 {
                     observations: vec![super::record::ObservedInput {
                         input_id: id,
                         members: vec![super::record::ObservedMember {
@@ -1571,7 +1573,7 @@ fn removing_a_reference_also_removes_an_artifact_no_run_produced() {
                             sha256: "A".repeat(64),
                         }],
                     }],
-                },
+                }),
             });
     }
 
@@ -2049,7 +2051,7 @@ fn an_artifact_no_run_claims_says_so_rather_than_naming_one() {
             .push(super::record::ArtifactRecord {
                 id: mscanvas_core::ArtifactId::new(),
                 label: "File facts: dropped.txt".to_owned(),
-                file_facts: super::record::FileFactsV1 {
+                payload: super::record::ArtifactPayload::FileFactsV1(super::record::FileFactsV1 {
                     observations: vec![super::record::ObservedInput {
                         input_id: dropped,
                         members: vec![super::record::ObservedMember {
@@ -2059,7 +2061,7 @@ fn an_artifact_no_run_claims_says_so_rather_than_naming_one() {
                             sha256: "A".repeat(64),
                         }],
                     }],
-                },
+                }),
             });
     }
 
@@ -2140,16 +2142,16 @@ fn two_runs_claiming_one_artifact_are_refused_rather_than_resolved() {
     document.artifacts.push(super::record::ArtifactRecord {
         id: artifact_id,
         label: "File facts".to_owned(),
-        file_facts: super::record::FileFactsV1 {
+        payload: super::record::ArtifactPayload::FileFactsV1(super::record::FileFactsV1 {
             observations: Vec::new(),
-        },
+        }),
     });
     let input_id = document.inputs[0].id;
     for _ in 0..2 {
         document.runs.push(RunRecord {
             id: RunId::new(),
             operation: RecordedOperation::CaptureFileFactsV1,
-            input_ids: vec![input_id],
+            inputs: vec![RunInput::Input { input_id }],
             output_artifact_ids: vec![artifact_id],
             outcome: TerminalOutcome::Completed,
             application_version: "0.1.0".to_owned(),
@@ -2171,9 +2173,9 @@ fn one_run_claiming_one_artifact_twice_is_refused() {
     document.artifacts.push(super::record::ArtifactRecord {
         id: artifact_id,
         label: "File facts".to_owned(),
-        file_facts: super::record::FileFactsV1 {
+        payload: super::record::ArtifactPayload::FileFactsV1(super::record::FileFactsV1 {
             observations: Vec::new(),
-        },
+        }),
     });
     document.runs[0].outcome = TerminalOutcome::Completed;
     document.runs[0].output_artifact_ids = vec![artifact_id, artifact_id];
@@ -2185,7 +2187,7 @@ fn one_run_claiming_one_artifact_twice_is_refused() {
 fn a_run_consuming_one_input_twice_is_refused() {
     let mut document = valid_document();
     let input_id = document.inputs[0].id;
-    document.runs[0].input_ids = vec![input_id, input_id];
+    document.runs[0].inputs = vec![RunInput::Input { input_id }, RunInput::Input { input_id }];
 
     assert_eq!(refused(&document), DocumentProblem::DuplicateIdentifier);
 }
@@ -2203,7 +2205,7 @@ fn an_artifact_observing_one_input_twice_is_refused() {
     document.artifacts.push(super::record::ArtifactRecord {
         id: mscanvas_core::ArtifactId::new(),
         label: "File facts".to_owned(),
-        file_facts: super::record::FileFactsV1 {
+        payload: super::record::ArtifactPayload::FileFactsV1(super::record::FileFactsV1 {
             observations: vec![
                 super::record::ObservedInput {
                     input_id,
@@ -2214,7 +2216,7 @@ fn an_artifact_observing_one_input_twice_is_refused() {
                     members: vec![member],
                 },
             ],
-        },
+        }),
     });
 
     assert_eq!(refused(&document), DocumentProblem::DuplicateIdentifier);
@@ -2251,16 +2253,18 @@ fn an_unknown_schema_version_still_governs_a_document_with_lineage() {
     document.artifacts.push(super::record::ArtifactRecord {
         id: artifact_id,
         label: "File facts".to_owned(),
-        file_facts: super::record::FileFactsV1 {
+        payload: super::record::ArtifactPayload::FileFactsV1(super::record::FileFactsV1 {
             observations: Vec::new(),
-        },
+        }),
     });
     // Ambiguous as well, so that whichever rule answers first is visible.
     for _ in 0..2 {
         document.runs.push(RunRecord {
             id: RunId::new(),
             operation: RecordedOperation::CaptureFileFactsV1,
-            input_ids: vec![document.inputs[0].id],
+            inputs: vec![RunInput::Input {
+                input_id: document.inputs[0].id,
+            }],
             output_artifact_ids: vec![artifact_id],
             outcome: TerminalOutcome::Completed,
             application_version: "0.1.0".to_owned(),
@@ -2984,21 +2988,33 @@ fn a_document_with_a_remembered_row_and_a_layer_serializes_no_session_fact() {
         }])
     );
 
+    // The projection names the layer, its source and the runs that consumed it
+    // (none here) -- identifiers from the document, and no session fact.
     let described = serde_json::to_value(store.describe()).expect("serializable");
     assert_eq!(
         described["layers"],
-        serde_json::json!([{ "id": layer.to_string(), "sourceInputId": id.to_string() }])
+        serde_json::json!([{
+            "id": layer.to_string(),
+            "sourceInputId": id.to_string(),
+            "consumedByRunIds": [],
+        }])
     );
 }
 
 #[test]
-fn the_development_only_first_schema_is_refused_rather_than_migrated() {
-    assert_eq!(record::SCHEMA_VERSION, 2);
-    assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 2);
+fn the_development_only_earlier_schemas_are_refused_rather_than_migrated() {
+    assert_eq!(record::SCHEMA_VERSION, 3);
+    assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 3);
 
-    let mut document = valid_document();
-    document.schema_version = 1;
-    assert_eq!(refused(&document), DocumentProblem::UnsupportedVersion);
+    for earlier in [1, 2] {
+        let mut document = valid_document();
+        document.schema_version = earlier;
+        assert_eq!(
+            refused(&document),
+            DocumentProblem::UnsupportedVersion,
+            "schema {earlier}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3140,4 +3156,603 @@ fn a_project_replaced_while_the_roster_is_asked_gets_no_layer() {
     let document = document_of(&store);
     assert!(document.inputs.is_empty());
     assert!(document.layers.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// M8.5: the QC summary snapshot, in the store and in the document
+// ---------------------------------------------------------------------------
+
+/// One snapshot, as a retained preview would hand it over.
+fn qc_snapshot() -> record::AcquisitionQcSnapshotV1 {
+    let at = |value: &str| record::RecordedRetentionTime {
+        value: value.to_owned(),
+        unit: record::RecordedUnit::NotEmitted,
+    };
+    record::AcquisitionQcSnapshotV1 {
+        total_spectrum_count: 12,
+        ms_level_counts: vec![
+            record::MsLevelCountRecord::Level {
+                ms_level: 2,
+                spectrum_count: 4,
+            },
+            record::MsLevelCountRecord::Other { spectrum_count: 1 },
+            record::MsLevelCountRecord::Level {
+                ms_level: 1,
+                spectrum_count: 7,
+            },
+        ],
+        chromatogram_count: record::ReportedCount::NotReported {},
+        retention_time: record::RetentionTimeSummary::Reported {
+            minimum: at("0.1"),
+            at_25_percent_base_peak_intensity: at("0.15"),
+            at_50_percent_base_peak_intensity: at("0.2"),
+            at_75_percent_base_peak_intensity: at("0.25"),
+            maximum: at("0.3"),
+        },
+        producer: record::PreviewProducer {
+            tool: record::ProducerTool::Msaccess,
+            executable_sha256: "A1".repeat(32),
+            release: Some("3.0.26204".to_owned()),
+            build_date: None,
+            source_revision: Some("a09eea9".to_owned()),
+        },
+    }
+}
+
+/// A store whose one reference is in the Workbench and has a layer.
+fn qc_ready(scratch: &Scratch) -> (ProjectStore, InputId, LayerId) {
+    let (store, id) = store_with_reference(scratch, "sample.mzML", b"bytes");
+    admit(&store, id, "dataset-1");
+    let layer = store.create_layer(id, live).expect("a layer");
+    (store, id, layer)
+}
+
+/// How many QC runs and QC snapshots the open document holds.
+fn qc_history(store: &ProjectStore) -> (usize, usize) {
+    let document = document_of(store);
+    (
+        document
+            .runs
+            .iter()
+            .filter(|run| run.operation == RecordedOperation::CaptureAcquisitionQcSnapshotV1)
+            .count(),
+        document
+            .artifacts
+            .iter()
+            .filter(|artifact| {
+                matches!(
+                    artifact.payload,
+                    record::ArtifactPayload::AcquisitionQcSnapshotV1(_)
+                )
+            })
+            .count(),
+    )
+}
+
+#[test]
+fn a_capture_asks_about_the_remembered_row_and_commits_one_run_and_its_snapshot() {
+    let scratch = Scratch::new("qc-store-commit");
+    let (store, _, layer) = qc_ready(&scratch);
+    let asked = std::cell::RefCell::new(Vec::new());
+
+    let artifact = store
+        .capture_qc_snapshot(layer, |handle| {
+            asked.borrow_mut().push(handle.to_owned());
+            Ok(qc_snapshot())
+        })
+        .expect("captured");
+
+    assert_eq!(asked.into_inner(), vec!["dataset-1".to_owned()]);
+    let document = document_of(&store);
+    let run = document.runs.last().expect("the run");
+    assert_eq!(
+        run.operation,
+        RecordedOperation::CaptureAcquisitionQcSnapshotV1
+    );
+    assert_eq!(run.inputs, vec![RunInput::Layer { layer_id: layer }]);
+    assert_eq!(run.output_artifact_ids, vec![artifact]);
+    assert_eq!(run.outcome, TerminalOutcome::Completed);
+    assert_eq!(
+        document.artifacts.last().map(|recorded| &recorded.payload),
+        Some(&record::ArtifactPayload::AcquisitionQcSnapshotV1(Box::new(
+            qc_snapshot()
+        )))
+    );
+    assert!(store.describe().dirty);
+    record::validate(&document).expect("the document is still one this build saves");
+}
+
+#[test]
+fn a_layer_with_no_remembered_row_is_refused_without_asking_the_workspace() {
+    let scratch = Scratch::new("qc-store-no-row");
+    let (store, id, layer) = qc_ready(&scratch);
+    // Relinking drops the remembered row, and keeps the layer.
+    let candidate = scratch.write("moved.mzML", b"bytes");
+    store.propose_relink(id, &candidate).expect("proposed");
+    store.commit_relink(id).expect("relinked");
+    let asked = Cell::new(false);
+
+    let outcome = store.capture_qc_snapshot(layer, |_| {
+        asked.set(true);
+        Ok(qc_snapshot())
+    });
+
+    assert_eq!(outcome, Err(ProjectError::NotInWorkbench));
+    assert!(!asked.get());
+    assert_eq!(qc_history(&store), (0, 0));
+}
+
+#[test]
+fn a_refusal_from_the_workspace_records_nothing() {
+    let scratch = Scratch::new("qc-store-refused");
+    let (store, _, layer) = qc_ready(&scratch);
+    for refusal in [
+        ProjectError::PreviewNotCurrent,
+        ProjectError::ProducerUnidentified,
+        ProjectError::NotInWorkbench,
+    ] {
+        assert_eq!(
+            store.capture_qc_snapshot(layer, |_| Err(refusal)),
+            Err(refusal)
+        );
+    }
+    assert_eq!(qc_history(&store), (0, 0));
+    assert_eq!(
+        store.capture_qc_snapshot(LayerId::new(), |_| Ok(qc_snapshot())),
+        Err(ProjectError::UnknownRecord)
+    );
+}
+
+#[test]
+fn a_project_that_moved_while_the_preview_was_asked_gets_no_run_and_no_snapshot() {
+    type Move = fn(&ProjectStore, &Scratch, InputId, LayerId);
+    let moves: [(&str, Move); 5] = [
+        ("the layer was removed", |store, _, _, layer| {
+            store.remove_layer(layer).expect("removed");
+        }),
+        (
+            "the source was admitted as another row",
+            |store, _, id, _| {
+                admit(store, id, "dataset-2");
+            },
+        ),
+        ("the project was replaced", |store, _, _, _| {
+            store.create("Another".to_owned(), true).expect("replaced");
+        }),
+        ("the project was closed", |store, _, _, _| {
+            store.close(true).expect("closed");
+        }),
+        ("the source was relinked", |store, scratch, id, _| {
+            let candidate = scratch.write("relinked.mzML", b"bytes");
+            store.propose_relink(id, &candidate).expect("proposed");
+            store.commit_relink(id).expect("relinked");
+        }),
+    ];
+    for (what, change) in moves {
+        let scratch = Scratch::new("qc-store-moved");
+        let (store, id, layer) = qc_ready(&scratch);
+
+        let outcome = store.capture_qc_snapshot(layer, |_| {
+            change(&store, &scratch, id, layer);
+            Ok(qc_snapshot())
+        });
+
+        assert_eq!(outcome, Err(ProjectError::StaleDocument), "{what}");
+        if store.describe().open {
+            assert_eq!(qc_history(&store), (0, 0), "{what}");
+            record::validate(&document_of(&store)).expect("nothing dangles");
+        }
+    }
+
+    // Control: nothing moved, so the same capture commits.
+    let scratch = Scratch::new("qc-store-unmoved");
+    let (store, _, layer) = qc_ready(&scratch);
+    store
+        .capture_qc_snapshot(layer, |_| Ok(qc_snapshot()))
+        .expect("captured");
+    assert_eq!(qc_history(&store), (1, 1));
+}
+
+#[test]
+fn a_capture_at_the_history_bound_is_refused_before_the_workspace_is_asked() {
+    let scratch = Scratch::new("qc-store-bound");
+    let (store, _, layer) = qc_ready(&scratch);
+    {
+        let mut session = store
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let document = &mut session.project.as_mut().expect("open").document;
+        let filler = RunRecord {
+            id: RunId::new(),
+            operation: RecordedOperation::CaptureFileFactsV1,
+            inputs: vec![RunInput::Input {
+                input_id: document.inputs[0].id,
+            }],
+            output_artifact_ids: Vec::new(),
+            outcome: TerminalOutcome::Failed,
+            application_version: "0.1.0".to_owned(),
+            started_at: "2026-09-22T00:00:00Z".to_owned(),
+            finished_at: "2026-09-22T00:00:01Z".to_owned(),
+        };
+        document.runs.resize(record::MAX_RUNS, filler);
+    }
+    let asked = Cell::new(false);
+
+    let outcome = store.capture_qc_snapshot(layer, |_| {
+        asked.set(true);
+        Ok(qc_snapshot())
+    });
+
+    assert_eq!(outcome, Err(ProjectError::Oversized));
+    assert!(!asked.get());
+}
+
+#[test]
+fn a_layer_a_run_consumed_is_not_removed_and_a_layer_nothing_consumed_is() {
+    let scratch = Scratch::new("qc-store-remove");
+    let (store, id, layer) = qc_ready(&scratch);
+    store
+        .capture_qc_snapshot(layer, |_| Ok(qc_snapshot()))
+        .expect("captured");
+    let before = document_of(&store);
+
+    assert_eq!(store.remove_layer(layer), Err(ProjectError::LayerUsedByRun));
+    assert_eq!(document_of(&store), before, "nothing was removed");
+    assert_eq!(
+        store.remove_input(id),
+        Err(ProjectError::LayerDependsOnInput)
+    );
+    assert_eq!(document_of(&store), before);
+
+    // Control: a layer with no history of its own still goes.
+    let other = store
+        .register_input(&scratch.write("other.mzML", b"other"))
+        .expect("register");
+    admit(&store, other, "dataset-3");
+    let unused = store.create_layer(other, live).expect("a layer");
+    store.remove_layer(unused).expect("removed");
+}
+
+/// A valid document holding one layer, one QC run and the snapshot it produced.
+fn qc_document() -> (ProjectDocument, LayerId, mscanvas_core::ArtifactId) {
+    let mut document = valid_document();
+    let layer = LayerId::new();
+    document.layers.push(LayerRecord {
+        id: layer,
+        source: LayerSource::Input {
+            input_id: document.inputs[0].id,
+        },
+    });
+    let artifact = mscanvas_core::ArtifactId::new();
+    document.artifacts.push(record::ArtifactRecord {
+        id: artifact,
+        label: "QC summary: sample.txt".to_owned(),
+        payload: record::ArtifactPayload::AcquisitionQcSnapshotV1(Box::new(qc_snapshot())),
+    });
+    document.runs.push(RunRecord {
+        id: RunId::new(),
+        operation: RecordedOperation::CaptureAcquisitionQcSnapshotV1,
+        inputs: vec![RunInput::Layer { layer_id: layer }],
+        output_artifact_ids: vec![artifact],
+        outcome: TerminalOutcome::Completed,
+        application_version: "0.1.0".to_owned(),
+        started_at: "2026-09-22T00:00:00Z".to_owned(),
+        finished_at: "2026-09-22T00:00:00Z".to_owned(),
+    });
+    (document, layer, artifact)
+}
+
+/// The snapshot inside a document, to break in one place.
+fn snapshot_in(document: &mut ProjectDocument) -> &mut record::AcquisitionQcSnapshotV1 {
+    match &mut document.artifacts.last_mut().expect("the snapshot").payload {
+        record::ArtifactPayload::AcquisitionQcSnapshotV1(snapshot) => snapshot,
+        record::ArtifactPayload::FileFactsV1(_) => panic!("not the snapshot"),
+    }
+}
+
+/// Parses the QC fixture after one edit to its JSON, the way a hand edit would.
+fn parsed_after(
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> Result<ProjectDocument, DocumentProblem> {
+    let (document, _, _) = qc_document();
+    let mut value = serde_json::to_value(&document).expect("json");
+    edit(&mut value);
+    record::parse(&serde_json::to_vec(&value).expect("bytes"))
+}
+
+#[test]
+fn the_qc_fixture_document_is_accepted_and_reads_back_exactly() {
+    let (document, _, _) = qc_document();
+    let bytes = record::serialize(&document).expect("serialize");
+    assert_eq!(record::parse(&bytes).expect("parses"), document);
+
+    // Absence and presence each read back as themselves: a reported count is
+    // not an absent one, and absent retention times are not reported ones.
+    let (mut variant, _, _) = qc_document();
+    let snapshot = snapshot_in(&mut variant);
+    snapshot.chromatogram_count = record::ReportedCount::Reported { count: 0 };
+    snapshot.retention_time = record::RetentionTimeSummary::NotReported {};
+    let bytes = record::serialize(&variant).expect("serialize");
+    let read = record::parse(&bytes).expect("parses");
+    assert_eq!(read, variant);
+    assert_ne!(read, document);
+    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(
+        value["artifacts"][0]["payload"]["chromatogramCount"],
+        serde_json::json!({ "kind": "reported", "count": 0 })
+    );
+    assert_eq!(
+        value["artifacts"][0]["payload"]["retentionTime"],
+        serde_json::json!({ "kind": "notReported" })
+    );
+}
+
+#[test]
+fn a_lower_case_producer_digest_is_read_in_the_one_spelling_this_build_writes() {
+    let read = parsed_after(|value| {
+        value["artifacts"][0]["payload"]["producer"]["executableSha256"] =
+            serde_json::json!("a1".repeat(32));
+    })
+    .expect("parses");
+    match &read.artifacts[0].payload {
+        record::ArtifactPayload::AcquisitionQcSnapshotV1(snapshot) => {
+            assert_eq!(snapshot.producer.executable_sha256, "A1".repeat(32));
+        }
+        record::ArtifactPayload::FileFactsV1(_) => panic!("not the snapshot"),
+    }
+}
+
+#[test]
+fn a_run_that_crosses_its_operation_is_refused() {
+    // Control.
+    let (document, _, _) = qc_document();
+    record::validate(&document).expect("the fixture is valid");
+
+    // A QC run consuming a reference rather than a layer.
+    let (mut document, _, _) = qc_document();
+    let input_id = document.inputs[0].id;
+    document.runs[1].inputs = vec![RunInput::Input { input_id }];
+    assert_eq!(refused(&document), DocumentProblem::InconsistentRecord);
+
+    // A QC run consuming the layer and a reference.
+    let (mut document, layer, _) = qc_document();
+    let input_id = document.inputs[0].id;
+    document.runs[1].inputs = vec![
+        RunInput::Layer { layer_id: layer },
+        RunInput::Input { input_id },
+    ];
+    assert_eq!(refused(&document), DocumentProblem::InconsistentRecord);
+
+    // A file-facts run claiming the snapshot.
+    let (mut document, _, _) = qc_document();
+    document.runs[1].operation = RecordedOperation::CaptureFileFactsV1;
+    assert_eq!(refused(&document), DocumentProblem::InconsistentRecord);
+
+    // A file-facts run consuming a layer.
+    let (mut document, layer, _) = qc_document();
+    document.runs[0].inputs = vec![RunInput::Layer { layer_id: layer }];
+    assert_eq!(refused(&document), DocumentProblem::InconsistentRecord);
+
+    // A snapshot no run claims has lost its lineage.
+    let (mut document, _, _) = qc_document();
+    document.runs.pop();
+    assert_eq!(refused(&document), DocumentProblem::InconsistentRecord);
+
+    // A layer the document does not have, and one layer named twice.
+    let (mut document, _, _) = qc_document();
+    document.runs[1].inputs = vec![RunInput::Layer {
+        layer_id: LayerId::new(),
+    }];
+    assert_eq!(refused(&document), DocumentProblem::DanglingReference);
+    let (mut document, layer, _) = qc_document();
+    document.runs[1].inputs = vec![
+        RunInput::Layer { layer_id: layer },
+        RunInput::Layer { layer_id: layer },
+    ];
+    assert_eq!(refused(&document), DocumentProblem::DuplicateIdentifier);
+}
+
+#[test]
+fn snapshot_values_that_contradict_the_run_summary_contract_are_refused() {
+    type Break = fn(&mut record::AcquisitionQcSnapshotV1);
+    let cases: [(&str, Break, DocumentProblem); 10] = [
+        (
+            "a total that is not the sum",
+            |snapshot| snapshot.total_spectrum_count = 13,
+            DocumentProblem::InconsistentRecord,
+        ),
+        (
+            "no buckets",
+            |snapshot| {
+                snapshot.ms_level_counts.clear();
+                snapshot.total_spectrum_count = 0;
+            },
+            DocumentProblem::InconsistentRecord,
+        ),
+        (
+            "one level twice",
+            |snapshot| {
+                snapshot
+                    .ms_level_counts
+                    .push(record::MsLevelCountRecord::Level {
+                        ms_level: 1,
+                        spectrum_count: 0,
+                    });
+            },
+            DocumentProblem::InconsistentRecord,
+        ),
+        (
+            "two other buckets",
+            |snapshot| {
+                snapshot
+                    .ms_level_counts
+                    .push(record::MsLevelCountRecord::Other { spectrum_count: 0 });
+            },
+            DocumentProblem::InconsistentRecord,
+        ),
+        (
+            "more buckets than a snapshot holds",
+            |snapshot| {
+                snapshot.ms_level_counts = (1..=65)
+                    .map(|ms_level| record::MsLevelCountRecord::Level {
+                        ms_level,
+                        spectrum_count: 0,
+                    })
+                    .collect();
+                snapshot.total_spectrum_count = 0;
+            },
+            DocumentProblem::Oversized,
+        ),
+        (
+            "a minimum above the maximum",
+            |snapshot| {
+                if let record::RetentionTimeSummary::Reported { minimum, .. } =
+                    &mut snapshot.retention_time
+                {
+                    minimum.value = "9".to_owned();
+                }
+            },
+            DocumentProblem::InconsistentRecord,
+        ),
+        (
+            "a value in a spelling this build does not write",
+            |snapshot| {
+                if let record::RetentionTimeSummary::Reported { maximum, .. } =
+                    &mut snapshot.retention_time
+                {
+                    maximum.value = "0.30".to_owned();
+                }
+            },
+            DocumentProblem::Malformed,
+        ),
+        (
+            "a value that is not a finite number",
+            |snapshot| {
+                if let record::RetentionTimeSummary::Reported {
+                    at_50_percent_base_peak_intensity,
+                    ..
+                } = &mut snapshot.retention_time
+                {
+                    at_50_percent_base_peak_intensity.value = "NaN".to_owned();
+                }
+            },
+            DocumentProblem::Malformed,
+        ),
+        (
+            "a digest that is not one",
+            |snapshot| snapshot.producer.executable_sha256 = "not-a-digest".to_owned(),
+            DocumentProblem::Malformed,
+        ),
+        (
+            "a build label with a control character",
+            |snapshot| snapshot.producer.release = Some("3.0\n26204".to_owned()),
+            DocumentProblem::Malformed,
+        ),
+    ];
+    for (what, broken, problem) in cases {
+        let (mut document, _, _) = qc_document();
+        broken(snapshot_in(&mut document));
+        assert_eq!(refused(&document), problem, "{what}");
+    }
+}
+
+#[test]
+fn a_field_the_snapshot_does_not_hold_is_refused_at_every_level() {
+    type Edit = fn(&mut serde_json::Value);
+    let edits: [(&str, Edit); 11] = [
+        ("beside the payload kind", |value| {
+            value["artifacts"][0]["payload"]["datasetId"] = serde_json::json!("dataset-1");
+        }),
+        ("inside a bucket", |value| {
+            value["artifacts"][0]["payload"]["msLevelCounts"][1]["msLevel"] = serde_json::json!(3);
+        }),
+        ("inside an absent count", |value| {
+            value["artifacts"][0]["payload"]["chromatogramCount"]["count"] = serde_json::json!(0);
+        }),
+        ("inside the retention times", |value| {
+            value["artifacts"][0]["payload"]["retentionTime"]["unit"] = serde_json::json!("min");
+        }),
+        ("inside one retention time", |value| {
+            value["artifacts"][0]["payload"]["retentionTime"]["minimum"]["seconds"] =
+                serde_json::json!(6);
+        }),
+        ("inside the producer", |value| {
+            value["artifacts"][0]["payload"]["producer"]["path"] =
+                serde_json::json!("C:/pwiz/msaccess.exe");
+        }),
+        ("inside a run input", |value| {
+            value["runs"][1]["inputs"][0]["datasetId"] = serde_json::json!("dataset-1");
+        }),
+        ("an unknown payload kind", |value| {
+            value["artifacts"][0]["payload"]["kind"] = serde_json::json!("qcGradeV1");
+        }),
+        ("an unknown count kind", |value| {
+            value["artifacts"][0]["payload"]["chromatogramCount"] =
+                serde_json::json!({ "kind": "zero" });
+        }),
+        ("an omitted count", |value| {
+            value["artifacts"][0]["payload"]
+                .as_object_mut()
+                .expect("object")
+                .remove("chromatogramCount");
+        }),
+        ("an omitted build label", |value| {
+            value["artifacts"][0]["payload"]["producer"]
+                .as_object_mut()
+                .expect("object")
+                .remove("buildDate");
+        }),
+    ];
+    for (what, edit) in edits {
+        assert_eq!(
+            parsed_after(edit).expect_err("a refusal"),
+            DocumentProblem::Malformed,
+            "{what}"
+        );
+    }
+    // Control: the untouched document, and an explicit `null` label, parse.
+    parsed_after(|_| {}).expect("the untouched document parses");
+    parsed_after(|value| {
+        value["artifacts"][0]["payload"]["producer"]["release"] = serde_json::Value::Null;
+    })
+    .expect("an unreported label is an explicit null");
+}
+
+#[test]
+fn a_schema_two_document_is_refused_as_unsupported_and_not_migrated() {
+    // The shape M8.4 wrote, literally: a run naming `inputIds`.
+    let input = InputId::new();
+    let text = serde_json::json!({
+        "schemaVersion": 2,
+        "projectId": ProjectDocument::new("x".to_owned()).project_id,
+        "revision": 1,
+        "name": "Written by M8.4",
+        "inputs": [{
+            "id": input,
+            "label": "sample.txt",
+            "locator": { "kind": "projectRelative", "path": "sample.txt" },
+            "members": [{
+                "role": "primary",
+                "relativeName": "",
+                "baseline": { "byteLength": 5, "sha256": "A".repeat(64) },
+            }],
+        }],
+        "artifacts": [],
+        "runs": [{
+            "id": RunId::new(),
+            "operation": "captureFileFactsV1",
+            "inputIds": [input],
+            "outputArtifactIds": [],
+            "outcome": "failed",
+            "applicationVersion": "0.1.0",
+            "startedAt": "2026-09-22T00:00:00Z",
+            "finishedAt": "2026-09-22T00:00:01Z",
+        }],
+        "layers": [],
+    });
+    assert_eq!(
+        record::parse(&serde_json::to_vec(&text).expect("bytes")),
+        Err(DocumentProblem::UnsupportedVersion)
+    );
 }

@@ -193,6 +193,44 @@ impl InstallationIdentity {
             executable_sha256: self.msconvert.content.map(|digest| digest.to_string()),
         }
     }
+
+    /// What a QC snapshot may record about the build that produced a preview.
+    ///
+    /// The preview runs `msaccess`, so the digest is `msaccess`'s -- the one
+    /// discovery took of that executable around its help probe, in this
+    /// resolution. The release, build date and source revision are the
+    /// installation's reported build identity. None of it is a path.
+    ///
+    /// `None` where no `msaccess` digest was bound, which is every resolution
+    /// whose `msaccess` help did not probe: without it this identity cannot say
+    /// which executable ran, and the caller refuses rather than records less.
+    pub(crate) fn producer_facts(&self) -> Option<PreviewProducerFacts> {
+        Some(PreviewProducerFacts {
+            msaccess_sha256: self.msaccess.content?,
+            release: self.release.as_deref().map(safe_label),
+            build_date: self.build_date.as_deref().map(safe_label),
+            source_revision: self.source_revision.as_deref().map(safe_label),
+        })
+    }
+}
+
+/// The path-free facts about the build that produced one preview.
+///
+/// Read out of the [`InstallationIdentity`] the preview's own batch reported,
+/// so it describes the build that ran and not whichever one is configured by
+/// the time someone asks.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct PreviewProducerFacts {
+    pub(crate) msaccess_sha256: Sha256Digest,
+    pub(crate) release: Option<String>,
+    pub(crate) build_date: Option<String>,
+    pub(crate) source_revision: Option<String>,
+}
+
+impl fmt::Debug for PreviewProducerFacts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<preview-producer-facts>")
+    }
 }
 
 #[cfg(test)]
@@ -222,6 +260,24 @@ impl InstallationIdentity {
             release: Some(release.to_owned()),
             build_date: None,
             source_revision: None,
+        }
+    }
+
+    /// One whose `msaccess` help probed, so it can say which executable ran:
+    /// the position every production resolution that previews is in.
+    pub(crate) fn for_test_probed(
+        home: &Path,
+        release: &str,
+        build_date: Option<&str>,
+        source_revision: Option<&str>,
+        msaccess_sha256: Sha256Digest,
+    ) -> Self {
+        Self {
+            msconvert: ToolIdentity::of(&home.join("msconvert.exe"), None),
+            msaccess: ToolIdentity::of(&home.join("msaccess.exe"), Some(msaccess_sha256)),
+            release: Some(release.to_owned()),
+            build_date: build_date.map(str::to_owned),
+            source_revision: source_revision.map(str::to_owned),
         }
     }
 }

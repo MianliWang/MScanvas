@@ -80,8 +80,13 @@ pub mod service;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use authority::PreviewAvailability;
 pub use backend::ProteoWizardProvider;
 pub(crate) use drop_ingestion::normalize_window_drop_event;
+#[cfg(test)]
+pub(crate) use installation::InstallationIdentity;
+pub(crate) use installation::PreviewProducerFacts;
 pub use service::PreviewService;
 
 /// Installs the rendered tests' synthetic spectrum. See `e2e_seed`.

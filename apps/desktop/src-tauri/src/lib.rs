@@ -12,6 +12,9 @@ mod preview;
 /// the same reason `preferences` is: a project references files, it does not
 /// admit them, and the two collections stay distinct.
 mod project;
+/// The QC summary snapshot: what one retained preview established, copied into
+/// the project as history. The same kind of named crossing as the one above.
+mod qc_snapshot;
 /// The one explicit bridge between the project document and the live
 /// workspace. Separate from both, so the crossing is a named thing rather than
 /// a dependency either of them grew. See the module for what each side decides.
@@ -124,6 +127,13 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::NotInWorkbench => "Add this reference to the Workbench before creating its layer.",
         Refusal::LayerDependsOnInput => {
             "Remove this reference's layer before removing the reference."
+        }
+        Refusal::LayerUsedByRun => "A recorded run used this layer, so it was not removed.",
+        Refusal::PreviewNotCurrent => {
+            "The preview on screen is no longer this layer's source. View the source again."
+        }
+        Refusal::ProducerUnidentified => {
+            "MSCanvas cannot identify the ProteoWizard build that produced this preview."
         }
     };
     PreviewErrorDto::new(error.stable_id(), message, error.retryable())
@@ -527,6 +537,33 @@ async fn remove_project_layer(
     let id = parsed_layer_id(&layer_id)?;
     projects.remove_layer(id).map_err(project_error)?;
     Ok(projects.describe())
+}
+
+/// Records a QC summary snapshot of one layer's source, from the preview the
+/// page is showing.
+///
+/// Names the layer and the preview's opaque run-summary token, and sends no
+/// value: Rust copies the summary it retained for that preview, with the build
+/// that preview's own batch reported. Reads no file and starts no process --
+/// where no suitable preview is retained the capture is refused, and nothing
+/// here starts one.
+#[tauri::command]
+async fn capture_project_qc_summary(
+    layer_id: String,
+    preview_token: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<qc_snapshot::QcCaptureDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_layer_id(&layer_id)?;
+    let artifact = qc_snapshot::capture_qc_summary(&projects, &service, id, &preview_token)
+        .map_err(project_error)?;
+    Ok(qc_snapshot::QcCaptureDto {
+        project: projects.describe(),
+        artifact_id: artifact.to_string(),
+    })
 }
 
 /// Abandons an outstanding relink proposal.
@@ -1947,6 +1984,7 @@ pub fn run() {
             add_project_input_to_workspace,
             create_project_layer,
             remove_project_layer,
+            capture_project_qc_summary,
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,

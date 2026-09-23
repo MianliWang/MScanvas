@@ -2,8 +2,9 @@
 //!
 //! A project is a private local working document. It records which local files
 //! a user chose to reference, what those files contained when they were
-//! registered, which operations were run over them, and which references the
-//! user made a layer from. It is not a workspace
+//! registered, which operations were run over them, which references the user
+//! made a layer from, and the run-summary facts a QC capture copied from a
+//! preview that had already established them. It is not a workspace
 //! serialization: no handle, no lease, no admission, no process ownership, no
 //! `DatasetId` and no executable command is representable in these types at
 //! all. The allowlist is the type, not a filter applied to a wider one.
@@ -24,11 +25,13 @@ use uuid::Uuid;
 /// The only schema this build reads or writes.
 ///
 /// A document carrying anything else is refused as unsupported, not migrated.
-/// Schema 1 was the shape before layers existed and was never published
-/// outside development, so a document carrying it is refused exactly as any
-/// other version is: a migration path would be code for a format no user ever
-/// held. A later schema belongs to the build that wrote it.
-pub const SCHEMA_VERSION: u32 = 2;
+/// Schema 1 was the shape before layers existed, and schema 2 the shape before
+/// a run could consume a layer and an artifact could hold a QC snapshot.
+/// Neither was published outside development, so a document carrying either is
+/// refused exactly as any other version is: a migration path would be code for
+/// a format no user ever held. A later schema belongs to the build that wrote
+/// it.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The largest project document this build will read.
 ///
@@ -57,6 +60,14 @@ pub const MAX_RUNS: usize = 2048;
 ///
 /// One current default layer per input, so the input bound is the layer bound.
 pub const MAX_LAYERS: usize = MAX_INPUTS;
+
+/// The most MS-level buckets one QC snapshot may hold.
+///
+/// The bound the preview boundary already transfers to the page, and far above
+/// the handful a real acquisition reports. A summary with more is refused at
+/// capture rather than stored in part: a truncated distribution is not a
+/// smaller distribution, it is a different one.
+pub const MAX_MS_LEVEL_BUCKETS: usize = 64;
 
 /// The longest user-visible label this document stores, in characters.
 pub const MAX_LABEL_CHARS: usize = 200;
@@ -265,15 +276,190 @@ pub struct ObservedInput {
 }
 
 /// The file-facts artifact: what `CaptureFileFactsV1` produced.
-///
-/// A typed payload rather than an opaque blob, and the only artifact payload
-/// this schema has. A second one is a schema change, which is what the version
-/// is for -- it is not a reason to invent an extensible payload envelope before
-/// there is a second thing to put in it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FileFactsV1 {
     pub observations: Vec<ObservedInput>,
+}
+
+/// Whether a unit was reported for one recorded value.
+///
+/// One variant, because the run-summary formatter this build reads emits none:
+/// the value is a number and its unit is not stated. A unit is never inferred
+/// from a value's magnitude, so there is no variant that could hold a guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecordedUnit {
+    NotEmitted,
+}
+
+/// One retention time exactly as the run summary reported it.
+///
+/// The value is stored as the shortest decimal text that reads back to the same
+/// `f64`, rather than as a JSON number. Counts are integers and survive a JSON
+/// number exactly; a float read back by this build's JSON parser, whose exact
+/// float mode is not enabled, can land one unit in the last place away from
+/// what was written. A snapshot that changed on reopen would not be a snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecordedRetentionTime {
+    pub value: String,
+    pub unit: RecordedUnit,
+}
+
+impl RecordedRetentionTime {
+    /// Records one finite value in its one canonical spelling.
+    #[must_use]
+    pub fn of(value: f64, unit: RecordedUnit) -> Option<Self> {
+        value.is_finite().then(|| Self {
+            value: value.to_string(),
+            unit,
+        })
+    }
+
+    /// The value, where the stored text is a finite number in the canonical
+    /// spelling this build writes. Anything else is not a value it recorded.
+    #[must_use]
+    pub fn number(&self) -> Option<f64> {
+        let parsed: f64 = self.value.parse().ok()?;
+        (parsed.is_finite() && parsed.to_string() == self.value).then_some(parsed)
+    }
+}
+
+/// The five retention times the run summary reported, or that it reported none.
+///
+/// The three middle positions are named for what the formatter printed --
+/// the retention time at 25, 50 and 75 percent of the base-peak intensity --
+/// and not as quartiles of anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum RetentionTimeSummary {
+    #[serde(rename_all = "camelCase")]
+    Reported {
+        minimum: RecordedRetentionTime,
+        at_25_percent_base_peak_intensity: RecordedRetentionTime,
+        at_50_percent_base_peak_intensity: RecordedRetentionTime,
+        at_75_percent_base_peak_intensity: RecordedRetentionTime,
+        maximum: RecordedRetentionTime,
+    },
+    /// An empty struct variant rather than a unit one, so that a field beside
+    /// the tag is refused rather than silently dropped.
+    NotReported {},
+}
+
+/// A count the run summary may or may not have reported.
+///
+/// Explicit rather than an optional number, because an absent count and a
+/// count of zero are different facts, and a field that is merely missing from
+/// a hand-edited document must not read as either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum ReportedCount {
+    Reported { count: u64 },
+    NotReported {},
+}
+
+/// One MS-level bucket, in the order the run summary reported it.
+///
+/// `Other` is the formatter's own bucket for spectra it did not attribute to a
+/// numbered level. It is not turned into a guessed level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum MsLevelCountRecord {
+    #[serde(rename_all = "camelCase")]
+    Level { ms_level: u32, spectrum_count: u64 },
+    #[serde(rename_all = "camelCase")]
+    Other { spectrum_count: u64 },
+}
+
+impl MsLevelCountRecord {
+    #[must_use]
+    pub const fn spectrum_count(self) -> u64 {
+        match self {
+            Self::Level { spectrum_count, .. } | Self::Other { spectrum_count } => spectrum_count,
+        }
+    }
+}
+
+/// Which executable produced the preview a snapshot was taken from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProducerTool {
+    /// ProteoWizard's `msaccess`, the one tool a preview runs.
+    Msaccess,
+}
+
+/// What the application had established about the executable that produced
+/// the preview, at the time it produced it.
+///
+/// Stable, path-free facts about software, never where it is installed. The
+/// digest is the one discovery took of the executable around its help probe,
+/// in the resolution the preview's batch ran under; the release, build date
+/// and source revision are that installation's reported build identity. Each
+/// of the last three is explicit `null` where the build did not report it:
+/// the field must be present, so an omitted one is refused rather than read as
+/// unreported.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreviewProducer {
+    pub tool: ProducerTool,
+    /// Upper-case hexadecimal, like every other digest this document holds.
+    pub executable_sha256: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub release: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub build_date: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub source_revision: Option<String>,
+}
+
+/// The QC summary snapshot: what `CaptureAcquisitionQcSnapshotV1` recorded.
+///
+/// Facts one retained run summary had already established, copied and nothing
+/// more: no threshold, no grade and no derived quantity. It names no record
+/// either. Which run produced it, which layer that run consumed and which
+/// reference that layer is sourced from are all relationships the run and the
+/// layer already state, resolved by identifier rather than repeated here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AcquisitionQcSnapshotV1 {
+    pub total_spectrum_count: u64,
+    pub ms_level_counts: Vec<MsLevelCountRecord>,
+    pub chromatogram_count: ReportedCount,
+    pub retention_time: RetentionTimeSummary,
+    pub producer: PreviewProducer,
+}
+
+/// What one artifact holds. Exactly one typed payload, named by its kind and
+/// version, and nothing a reader could treat as a free-form bag.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum ArtifactPayload {
+    #[serde(rename = "fileFactsV1")]
+    FileFactsV1(FileFactsV1),
+    #[serde(rename = "acquisitionQcSnapshotV1")]
+    /// Boxed so a file-facts record does not carry a snapshot-sized hole.
+    AcquisitionQcSnapshotV1(Box<AcquisitionQcSnapshotV1>),
+}
+
+impl ArtifactPayload {
+    /// The file facts, where this is a file-facts artifact.
+    #[must_use]
+    pub const fn file_facts(&self) -> Option<&FileFactsV1> {
+        match self {
+            Self::FileFactsV1(facts) => Some(facts),
+            Self::AcquisitionQcSnapshotV1(_) => None,
+        }
+    }
+
+    /// The operation that produces this kind of payload, and no other.
+    #[must_use]
+    pub const fn produced_by(&self) -> RecordedOperation {
+        match self {
+            Self::FileFactsV1(_) => RecordedOperation::CaptureFileFactsV1,
+            Self::AcquisitionQcSnapshotV1(_) => RecordedOperation::CaptureAcquisitionQcSnapshotV1,
+        }
+    }
 }
 
 /// One recorded artifact.
@@ -282,18 +468,50 @@ pub struct FileFactsV1 {
 pub struct ArtifactRecord {
     pub id: ArtifactId,
     pub label: String,
-    pub file_facts: FileFactsV1,
+    pub payload: ArtifactPayload,
 }
 
 /// The operations this schema can have recorded.
 ///
-/// One variant, and it is the enumeration rather than a free string precisely
-/// because the document is untrusted: an operation name this build does not
-/// implement is a refusal to open, not a row to render.
+/// An enumeration rather than a free string precisely because the document is
+/// untrusted: an operation name this build does not implement is a refusal to
+/// open, not a row to render. Neither takes a parameter, so neither variant
+/// carries one -- a closed operation with nothing to configure, not an empty
+/// property bag waiting to be filled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecordedOperation {
     #[serde(rename = "captureFileFactsV1")]
     CaptureFileFactsV1,
+    /// Records the run summary a retained preview already established. Reads
+    /// no file and starts no process.
+    #[serde(rename = "captureAcquisitionQcSnapshotV1")]
+    CaptureAcquisitionQcSnapshotV1,
+}
+
+impl RecordedOperation {
+    /// The stable wire identifier, exactly as the document stores it.
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::CaptureFileFactsV1 => "captureFileFactsV1",
+            Self::CaptureAcquisitionQcSnapshotV1 => "captureAcquisitionQcSnapshotV1",
+        }
+    }
+}
+
+/// One thing a run consumed.
+///
+/// Two kinds, because two now have consumers: a file-facts capture observes
+/// references, and a QC capture consumes a layer. Not a general object
+/// reference -- an artifact or a run cannot be named here, because nothing
+/// consumes one yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum RunInput {
+    #[serde(rename_all = "camelCase")]
+    Input { input_id: InputId },
+    #[serde(rename_all = "camelCase")]
+    Layer { layer_id: LayerId },
 }
 
 /// How a run ended. Terminal states only.
@@ -311,7 +529,7 @@ pub enum TerminalOutcome {
 
 /// One recorded run.
 ///
-/// There is no parameter field. `CaptureFileFactsV1` consumes no variable
+/// There is no parameter field. Neither operation consumes variable
 /// parameters, and a field for parameters that do not exist is where an opaque
 /// blob gets in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,9 +537,9 @@ pub enum TerminalOutcome {
 pub struct RunRecord {
     pub id: RunId,
     pub operation: RecordedOperation,
-    /// The inputs this run was asked to observe. Present even when the run
-    /// failed, which is the case an artifact cannot record.
-    pub input_ids: Vec<InputId>,
+    /// What this run was asked to consume. Present even when the run failed,
+    /// which is the case an artifact cannot record.
+    pub inputs: Vec<RunInput>,
     /// What it produced. Empty unless the outcome is `Completed`.
     pub output_artifact_ids: Vec<ArtifactId>,
     pub outcome: TerminalOutcome,
@@ -330,6 +548,20 @@ pub struct RunRecord {
     /// RFC 3339, from the system clock at the time. Bounds, not a measurement.
     pub started_at: String,
     pub finished_at: String,
+}
+
+impl RunRecord {
+    /// Whether this run consumed one reference directly.
+    #[must_use]
+    pub fn consumes_input(&self, id: InputId) -> bool {
+        self.inputs.contains(&RunInput::Input { input_id: id })
+    }
+
+    /// Whether this run consumed one layer.
+    #[must_use]
+    pub fn consumes_layer(&self, id: LayerId) -> bool {
+        self.inputs.contains(&RunInput::Layer { layer_id: id })
+    }
 }
 
 /// Which project record a layer is sourced from. One variant, because one
@@ -443,8 +675,8 @@ pub enum DocumentProblem {
     Oversized,
     /// Two records share an identifier, or two layers name one source.
     DuplicateIdentifier,
-    /// A run names an input or an artifact the document does not contain, an
-    /// artifact observes one, or a layer is sourced from one.
+    /// A run names an input, a layer or an artifact the document does not
+    /// contain, an artifact observes one, or a layer is sourced from one.
     DanglingReference,
     /// Two runs claim to have produced one artifact, so "what produced this"
     /// has two answers. Refused rather than resolved: picking one would be
@@ -456,7 +688,9 @@ pub enum DocumentProblem {
     /// or a UNC or device reference.
     InvalidLocator,
     /// A record is internally inconsistent: no primary member, two primaries,
-    /// a failed run carrying outputs, a completed run carrying none.
+    /// a failed run carrying outputs, a completed run carrying none, a run
+    /// consuming or producing a kind its operation does not, a QC snapshot no
+    /// QC run claims, or snapshot values that contradict each other.
     InconsistentRecord,
     /// The file is there and this process could not read it.
     Unreadable,
@@ -546,9 +780,17 @@ fn normalize_digests(document: &mut ProjectDocument) {
         }
     }
     for artifact in &mut document.artifacts {
-        for observation in &mut artifact.file_facts.observations {
-            for member in &mut observation.members {
-                member.sha256 = member.sha256.to_ascii_uppercase();
+        match &mut artifact.payload {
+            ArtifactPayload::FileFactsV1(facts) => {
+                for observation in &mut facts.observations {
+                    for member in &mut observation.members {
+                        member.sha256 = member.sha256.to_ascii_uppercase();
+                    }
+                }
+            }
+            ArtifactPayload::AcquisitionQcSnapshotV1(snapshot) => {
+                snapshot.producer.executable_sha256 =
+                    snapshot.producer.executable_sha256.to_ascii_uppercase();
             }
         }
     }
@@ -597,6 +839,29 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
         validate_input(input)?;
     }
 
+    // Layers before runs, because a run may now consume one.
+    let mut layer_ids = Vec::with_capacity(document.layers.len());
+    // Which inputs already have a layer, across the whole document.
+    let mut layered: Vec<InputId> = Vec::with_capacity(document.layers.len());
+    for layer in &document.layers {
+        if layer_ids.contains(&layer.id) {
+            return Err(DocumentProblem::DuplicateIdentifier);
+        }
+        layer_ids.push(layer.id);
+        let source = layer.source.input_id();
+        if !input_ids.contains(&source) {
+            return Err(DocumentProblem::DanglingReference);
+        }
+        // One current default layer per input. A document with two is refused,
+        // not normalised: as with a run that consumes one input twice, it is a
+        // relationship the document states twice, and choosing which layer is
+        // "the" layer of that input would be inventing an answer.
+        if layered.contains(&source) {
+            return Err(DocumentProblem::DuplicateIdentifier);
+        }
+        layered.push(source);
+    }
+
     let mut artifact_ids = Vec::with_capacity(document.artifacts.len());
     for artifact in &document.artifacts {
         if artifact_ids.contains(&artifact.id) {
@@ -604,28 +869,9 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
         }
         artifact_ids.push(artifact.id);
         bounded_label(&artifact.label)?;
-        if artifact.file_facts.observations.len() > MAX_INPUTS {
-            return Err(DocumentProblem::Oversized);
-        }
-        // One observation per input. Two observations of one input would give
-        // the artifact two accounts of the same file with no rule for which is
-        // the artifact's answer.
-        let mut observed_ids = Vec::with_capacity(artifact.file_facts.observations.len());
-        for observation in &artifact.file_facts.observations {
-            if !input_ids.contains(&observation.input_id) {
-                return Err(DocumentProblem::DanglingReference);
-            }
-            if observed_ids.contains(&observation.input_id) {
-                return Err(DocumentProblem::DuplicateIdentifier);
-            }
-            observed_ids.push(observation.input_id);
-            if observation.members.is_empty() || observation.members.len() > MAX_MEMBERS {
-                return Err(DocumentProblem::InconsistentRecord);
-            }
-            for member in &observation.members {
-                bounded_member_name(&member.relative_name)?;
-                valid_digest(&member.sha256)?;
-            }
+        match &artifact.payload {
+            ArtifactPayload::FileFactsV1(facts) => validate_file_facts(facts, &input_ids)?,
+            ArtifactPayload::AcquisitionQcSnapshotV1(snapshot) => validate_qc_snapshot(snapshot)?,
         }
     }
 
@@ -637,25 +883,29 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
             return Err(DocumentProblem::DuplicateIdentifier);
         }
         run_ids.push(run.id);
-        if run.input_ids.is_empty() || run.input_ids.len() > MAX_INPUTS {
+        if run.inputs.is_empty() || run.inputs.len() > MAX_INPUTS {
             return Err(DocumentProblem::InconsistentRecord);
         }
         if run.output_artifact_ids.len() > MAX_ARTIFACTS {
             return Err(DocumentProblem::Oversized);
         }
-        // A run consumes each input once and produces each artifact once. A
+        // A run consumes each record once and produces each artifact once. A
         // repeated identifier in either list is a relationship the document
         // states twice, and lineage counted from it would be wrong in a way
         // nothing on screen could reveal.
-        let mut consumed = Vec::with_capacity(run.input_ids.len());
-        for id in &run.input_ids {
-            if !input_ids.contains(id) {
+        let mut consumed = Vec::with_capacity(run.inputs.len());
+        for consumed_input in &run.inputs {
+            let exists = match consumed_input {
+                RunInput::Input { input_id } => input_ids.contains(input_id),
+                RunInput::Layer { layer_id } => layer_ids.contains(layer_id),
+            };
+            if !exists {
                 return Err(DocumentProblem::DanglingReference);
             }
-            if consumed.contains(id) {
+            if consumed.contains(consumed_input) {
                 return Err(DocumentProblem::DuplicateIdentifier);
             }
-            consumed.push(*id);
+            consumed.push(*consumed_input);
         }
         for id in &run.output_artifact_ids {
             if !artifact_ids.contains(id) {
@@ -682,31 +932,164 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
             }
             _ => {}
         }
+        validate_run_shape(run, &document.artifacts)?;
         bounded_label(&run.application_version)?;
         bounded_label(&run.started_at)?;
         bounded_label(&run.finished_at)?;
     }
 
-    let mut layer_ids = Vec::with_capacity(document.layers.len());
-    // Which inputs already have a layer, across the whole document.
-    let mut layered: Vec<InputId> = Vec::with_capacity(document.layers.len());
-    for layer in &document.layers {
-        if layer_ids.contains(&layer.id) {
-            return Err(DocumentProblem::DuplicateIdentifier);
+    // A QC snapshot names no record of its own, so the run that produced it is
+    // the whole of its lineage: which layer, and through it which reference.
+    // One nobody claims has lost that, and is refused rather than shown as a
+    // report of nothing in particular. A file-facts record keeps the rule it
+    // always had -- its observations say what it is about -- so it may stand
+    // unclaimed.
+    for artifact in &document.artifacts {
+        if matches!(
+            artifact.payload,
+            ArtifactPayload::AcquisitionQcSnapshotV1(_)
+        ) && !claimed.contains(&artifact.id)
+        {
+            return Err(DocumentProblem::InconsistentRecord);
         }
-        layer_ids.push(layer.id);
-        let source = layer.source.input_id();
-        if !input_ids.contains(&source) {
+    }
+    Ok(())
+}
+
+/// What one operation may consume and produce.
+///
+/// A file-facts capture observes references and produces file facts. A QC
+/// capture consumes exactly one layer and, because it records nothing when it
+/// is refused, is only ever a completed run producing exactly one snapshot. A
+/// run that crosses those lines states lineage its operation cannot have.
+fn validate_run_shape(
+    run: &RunRecord,
+    artifacts: &[ArtifactRecord],
+) -> Result<(), DocumentProblem> {
+    let produces_only_its_own_kind = run.output_artifact_ids.iter().all(|id| {
+        artifacts
+            .iter()
+            .find(|artifact| artifact.id == *id)
+            .is_some_and(|artifact| artifact.payload.produced_by() == run.operation)
+    });
+    let shaped = match run.operation {
+        RecordedOperation::CaptureFileFactsV1 => run
+            .inputs
+            .iter()
+            .all(|consumed| matches!(consumed, RunInput::Input { .. })),
+        RecordedOperation::CaptureAcquisitionQcSnapshotV1 => {
+            matches!(run.inputs.as_slice(), [RunInput::Layer { .. }])
+                && run.outcome == TerminalOutcome::Completed
+                && run.output_artifact_ids.len() == 1
+        }
+    };
+    if shaped && produces_only_its_own_kind {
+        Ok(())
+    } else {
+        Err(DocumentProblem::InconsistentRecord)
+    }
+}
+
+fn validate_file_facts(facts: &FileFactsV1, input_ids: &[InputId]) -> Result<(), DocumentProblem> {
+    if facts.observations.len() > MAX_INPUTS {
+        return Err(DocumentProblem::Oversized);
+    }
+    // One observation per input. Two observations of one input would give the
+    // artifact two accounts of the same file with no rule for which is the
+    // artifact's answer.
+    let mut observed_ids = Vec::with_capacity(facts.observations.len());
+    for observation in &facts.observations {
+        if !input_ids.contains(&observation.input_id) {
             return Err(DocumentProblem::DanglingReference);
         }
-        // One current default layer per input. A document with two is refused,
-        // not normalised: as with a run that consumes one input twice, it is a
-        // relationship the document states twice, and choosing which layer is
-        // "the" layer of that input would be inventing an answer.
-        if layered.contains(&source) {
+        if observed_ids.contains(&observation.input_id) {
             return Err(DocumentProblem::DuplicateIdentifier);
         }
-        layered.push(source);
+        observed_ids.push(observation.input_id);
+        if observation.members.is_empty() || observation.members.len() > MAX_MEMBERS {
+            return Err(DocumentProblem::InconsistentRecord);
+        }
+        for member in &observation.members {
+            bounded_member_name(&member.relative_name)?;
+            valid_digest(&member.sha256)?;
+        }
+    }
+    Ok(())
+}
+
+/// Every rule one QC snapshot must satisfy, in a document or about to enter one.
+///
+/// The invariants the run-summary contract itself states, and no others: at
+/// least one bucket and a total that is exactly their sum, each numbered level
+/// once and one `Other` at most, finite retention times in the spelling this
+/// build writes with the minimum not above the maximum, and a producer this
+/// document can state. The buckets are checked in place, never sorted or
+/// merged.
+///
+/// Public because a capture applies it before committing, so that nothing this
+/// build records can be a document it would then refuse to save.
+///
+/// # Errors
+///
+/// A [`DocumentProblem`] naming the first rule broken.
+pub fn validate_qc_snapshot(snapshot: &AcquisitionQcSnapshotV1) -> Result<(), DocumentProblem> {
+    let buckets = &snapshot.ms_level_counts;
+    if buckets.len() > MAX_MS_LEVEL_BUCKETS {
+        return Err(DocumentProblem::Oversized);
+    }
+    if buckets.is_empty() {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    let mut seen = Vec::with_capacity(buckets.len());
+    let mut total = 0_u64;
+    for bucket in buckets {
+        let key = match bucket {
+            MsLevelCountRecord::Level { ms_level, .. } => Some(*ms_level),
+            MsLevelCountRecord::Other { .. } => None,
+        };
+        if seen.contains(&key) {
+            return Err(DocumentProblem::InconsistentRecord);
+        }
+        seen.push(key);
+        total = total
+            .checked_add(bucket.spectrum_count())
+            .ok_or(DocumentProblem::InconsistentRecord)?;
+    }
+    if total != snapshot.total_spectrum_count {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    if let RetentionTimeSummary::Reported {
+        minimum,
+        at_25_percent_base_peak_intensity,
+        at_50_percent_base_peak_intensity,
+        at_75_percent_base_peak_intensity,
+        maximum,
+    } = &snapshot.retention_time
+    {
+        for value in [
+            at_25_percent_base_peak_intensity,
+            at_50_percent_base_peak_intensity,
+            at_75_percent_base_peak_intensity,
+        ] {
+            value.number().ok_or(DocumentProblem::Malformed)?;
+        }
+        let low = minimum.number().ok_or(DocumentProblem::Malformed)?;
+        let high = maximum.number().ok_or(DocumentProblem::Malformed)?;
+        if low > high {
+            return Err(DocumentProblem::InconsistentRecord);
+        }
+    }
+    let producer = &snapshot.producer;
+    valid_digest(&producer.executable_sha256)?;
+    for label in [
+        &producer.release,
+        &producer.build_date,
+        &producer.source_revision,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        bounded_label(label)?;
     }
     Ok(())
 }
@@ -747,6 +1130,12 @@ fn validate_input(input: &InputRecord) -> Result<(), DocumentProblem> {
         valid_digest(&member.baseline.sha256)?;
     }
     Ok(())
+}
+
+/// Whether this document can store one label as it is.
+#[must_use]
+pub fn storable_label(value: &str) -> bool {
+    bounded_label(value).is_ok()
 }
 
 fn bounded_label(value: &str) -> Result<(), DocumentProblem> {

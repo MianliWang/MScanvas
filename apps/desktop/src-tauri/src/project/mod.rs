@@ -51,9 +51,10 @@ use observe::{
     Cancellation, InputVerification, MemberObservation, ObjectIdentity, UnavailableReason,
 };
 use record::{
-    ArtifactRecord, DocumentProblem, InputId, InputRecord, LayerId, LayerRecord, LayerSource,
-    MAX_ARTIFACTS, MAX_DOCUMENT_BYTES, MAX_INPUTS, MAX_LAYERS, MAX_RUNS, ProjectDocument,
-    RecordedOperation, RunId, RunRecord, TerminalOutcome,
+    AcquisitionQcSnapshotV1, ArtifactPayload, ArtifactRecord, DocumentProblem, InputId,
+    InputRecord, LayerId, LayerRecord, LayerSource, MAX_ARTIFACTS, MAX_DOCUMENT_BYTES, MAX_INPUTS,
+    MAX_LAYERS, MAX_RUNS, ProjectDocument, RecordedOperation, RunId, RunInput, RunRecord,
+    TerminalOutcome,
 };
 
 /// The extension a project document carries.
@@ -129,6 +130,18 @@ pub enum ProjectError {
     /// A layer is sourced from this reference. The layer is removed first, by
     /// the user, or the reference stays.
     LayerDependsOnInput,
+    /// A recorded run consumed this layer, so removing it would leave that
+    /// run's lineage pointing at nothing. History is not cascaded away to make
+    /// room for a removal.
+    LayerUsedByRun,
+    /// The preview a QC capture named is not the one the session retains for
+    /// this layer's source: another preview has been opened since, a newer
+    /// read of the same source replaced it, or it was never this source's.
+    PreviewNotCurrent,
+    /// The retained preview cannot say which executable produced it, so its
+    /// facts cannot be recorded with a producer -- and a guessed producer is
+    /// not recorded instead.
+    ProducerUnidentified,
 }
 
 impl ProjectError {
@@ -157,6 +170,9 @@ impl ProjectError {
             Self::StaleOperation => "staleOperation",
             Self::NotInWorkbench => "notInWorkbench",
             Self::LayerDependsOnInput => "layerDependsOnInput",
+            Self::LayerUsedByRun => "layerUsedByRun",
+            Self::PreviewNotCurrent => "previewNotCurrent",
+            Self::ProducerUnidentified => "producerUnidentified",
         }
     }
 
@@ -768,24 +784,26 @@ impl ProjectStore {
         // and leaving that one behind would make the document permanently
         // unsaveable, because the same dangling reference this removal exists
         // to avoid is what `validate` refuses on every later Save.
+        //
+        // A run that consumed the reference's layer is never among them: the
+        // layer would have refused this removal above, and its own removal is
+        // refused while such a run exists.
         let orphaned: Vec<ArtifactId> = project
             .document
             .runs
             .iter()
-            .filter(|run| run.input_ids.contains(&id))
+            .filter(|run| run.consumes_input(id))
             .flat_map(|run| run.output_artifact_ids.iter().copied())
             .collect();
-        project
-            .document
-            .runs
-            .retain(|run| !run.input_ids.contains(&id));
+        project.document.runs.retain(|run| !run.consumes_input(id));
         project.document.artifacts.retain(|artifact| {
             !orphaned.contains(&artifact.id)
-                && !artifact
-                    .file_facts
-                    .observations
-                    .iter()
-                    .any(|observation| observation.input_id == id)
+                && !artifact.payload.file_facts().is_some_and(|facts| {
+                    facts
+                        .observations
+                        .iter()
+                        .any(|observation| observation.input_id == id)
+                })
         });
         project.verification.retain(|(recorded, _)| *recorded != id);
         // The reference is gone, so there is no longer anything for a
@@ -1064,6 +1082,16 @@ impl ProjectStore {
             guard.release(&mut session);
             return Err(ProjectError::NoOpenProject);
         };
+        // Re-checked, because a QC capture adds a run and an artifact without
+        // advancing the generation and may have landed while this read ran.
+        // Pushing past either bound would write a document every later Save
+        // refuses.
+        if project.document.runs.len() >= MAX_RUNS
+            || project.document.artifacts.len() >= MAX_ARTIFACTS
+        {
+            guard.release(&mut session);
+            return Err(ProjectError::Oversized);
+        }
 
         let run_id = RunId::new();
         let (outcome, outputs, error) = match captured {
@@ -1071,7 +1099,7 @@ impl ProjectStore {
                 let artifact = ArtifactRecord {
                     id: ArtifactId::new(),
                     label: capture_label(&inputs),
-                    file_facts: facts,
+                    payload: ArtifactPayload::FileFactsV1(facts),
                 };
                 let artifact_id = artifact.id;
                 project.document.artifacts.push(artifact);
@@ -1097,7 +1125,10 @@ impl ProjectStore {
         project.document.runs.push(RunRecord {
             id: run_id,
             operation: RecordedOperation::CaptureFileFactsV1,
-            input_ids: selected.to_vec(),
+            inputs: selected
+                .iter()
+                .map(|id| RunInput::Input { input_id: *id })
+                .collect(),
             output_artifact_ids: outputs,
             outcome,
             application_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -1505,23 +1536,139 @@ impl ProjectStore {
     /// Removes one layer, and nothing else.
     ///
     /// The source reference, its verification, its remembered row, every run
-    /// and artifact and any outstanding proposal are untouched: a layer names
-    /// its source and nothing names a layer, so nothing dangles when it goes.
+    /// and artifact and any outstanding proposal are untouched. A layer a
+    /// recorded run consumed is refused instead: that run's lineage is the
+    /// layer, and removing it would leave a run that names nothing -- which is
+    /// not cascaded away, because history is not deleted to make a removal
+    /// possible.
     ///
     /// # Errors
     ///
     /// [`ProjectError::UnknownRecord`] for an identifier this project has no
-    /// layer for.
+    /// layer for; [`ProjectError::LayerUsedByRun`] for one a run consumed.
+    /// Nothing changes on either.
     pub fn remove_layer(&self, id: LayerId) -> Result<(), ProjectError> {
         let mut session = self.locked();
         let project = session.open_mut()?;
         if project.document.layer(id).is_none() {
             return Err(ProjectError::UnknownRecord);
         }
+        if project
+            .document
+            .runs
+            .iter()
+            .any(|run| run.consumes_layer(id))
+        {
+            return Err(ProjectError::LayerUsedByRun);
+        }
         project.document.layers.retain(|layer| layer.id != id);
         project.dirty = true;
         Ok(())
     }
+
+    /// Records one QC summary snapshot of one layer's source: a new run that
+    /// consumed the layer, and the snapshot artifact it produced.
+    ///
+    /// The facts come from `retained`, which is asked about the workspace row
+    /// this session remembers for the layer's source and answers the run
+    /// summary the preview of that row already established -- or the reason it
+    /// cannot. Nothing here reads a file, hashes one or starts a process, and
+    /// neither may `retained`: the capture copies what is retained, it does not
+    /// establish anything new.
+    ///
+    /// Historical, every time. Each successful call records a new run and a new
+    /// snapshot, even with values identical to an earlier one: two presses are
+    /// two observations, and nothing earlier is overwritten.
+    ///
+    /// The session lock is released while `retained` is asked, and taken again
+    /// to commit; the run and its snapshot are then pushed together under it,
+    /// or neither is. A project replaced, closed, saved elsewhere or with a
+    /// record removed or relinked meanwhile advances the generation. A layer
+    /// removed, or its source admitted as a different row, does not, so both
+    /// are checked again by value.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::UnknownRecord`]; [`ProjectError::NotInWorkbench`] where
+    /// the source has no remembered row; [`ProjectError::Oversized`]; whatever
+    /// `retained` refuses with; [`ProjectError::StaleDocument`] where the
+    /// project moved while it was asked.
+    pub fn capture_qc_snapshot(
+        &self,
+        layer: LayerId,
+        retained: impl FnOnce(&str) -> Result<AcquisitionQcSnapshotV1, ProjectError>,
+    ) -> Result<ArtifactId, ProjectError> {
+        let (generation, source, handle) = {
+            let session = self.locked();
+            let project = session.open()?;
+            let source = project
+                .document
+                .layer(layer)
+                .ok_or(ProjectError::UnknownRecord)?
+                .source
+                .input_id();
+            let handle = project
+                .admitted_row(source)
+                .ok_or(ProjectError::NotInWorkbench)?
+                .to_owned();
+            refuse_full_history(&project.document)?;
+            (session.generation, source, handle)
+        };
+
+        let snapshot = retained(&handle)?;
+        record::validate_qc_snapshot(&snapshot).map_err(ProjectError::Document)?;
+        let recorded_at = now_rfc3339();
+
+        let mut session = self.locked();
+        if session.generation != generation {
+            return Err(ProjectError::StaleDocument);
+        }
+        let project = session.open_mut()?;
+        let same_layer = project
+            .document
+            .layer(layer)
+            .is_some_and(|current| current.source.input_id() == source);
+        if !same_layer || project.admitted_row(source) != Some(handle.as_str()) {
+            return Err(ProjectError::StaleDocument);
+        }
+        refuse_full_history(&project.document)?;
+        let label = project
+            .document
+            .input(source)
+            .map_or_else(String::new, |input| input.label.clone());
+
+        let artifact = ArtifactRecord {
+            id: ArtifactId::new(),
+            label: bounded_name(format!("QC summary: {label}")),
+            payload: ArtifactPayload::AcquisitionQcSnapshotV1(Box::new(snapshot)),
+        };
+        let artifact_id = artifact.id;
+        project.document.artifacts.push(artifact);
+        project.document.runs.push(RunRecord {
+            id: RunId::new(),
+            operation: RecordedOperation::CaptureAcquisitionQcSnapshotV1,
+            inputs: vec![RunInput::Layer { layer_id: layer }],
+            output_artifact_ids: vec![artifact_id],
+            outcome: TerminalOutcome::Completed,
+            application_version: env!("CARGO_PKG_VERSION").to_owned(),
+            // One instant, because the capture is one: it copies what was
+            // already retained and waits on nothing.
+            started_at: recorded_at.clone(),
+            finished_at: recorded_at,
+        });
+        // Not invalidated: a new run and artifact make no in-flight answer
+        // about the references wrong, exactly as a file-facts capture does not.
+        project.dirty = true;
+        Ok(artifact_id)
+    }
+}
+
+/// Refuses a capture that would take the history past its bounds.
+fn refuse_full_history(document: &ProjectDocument) -> Result<(), ProjectError> {
+    if document.runs.len() >= MAX_RUNS || document.artifacts.len() >= MAX_ARTIFACTS {
+        return Err(ProjectError::Oversized);
+    }
+    Ok(())
 }
 
 /// Releases one accepted operation when its work ends, however it ends.

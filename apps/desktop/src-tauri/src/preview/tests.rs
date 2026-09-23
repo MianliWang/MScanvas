@@ -4008,6 +4008,11 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // remembered row is still in the roster, answered from memory.
             "create_project_layer",
             "remove_project_layer",
+            // The M8.5 QC summary snapshot. One command: it names a layer and
+            // the preview's opaque run-summary token, sends no value, reads no
+            // file and starts no process -- it copies what the preview
+            // already retained, with the build that preview reported.
+            "capture_project_qc_summary",
             "inspect_backend",
             "choose_backend_installation",
             "use_automatic_backend_discovery",

@@ -14,7 +14,10 @@
 
 use serde::Serialize;
 
-use super::record::{Locator, MemberRole, ProjectDocument, TerminalOutcome};
+use super::record::{
+    AcquisitionQcSnapshotV1, ArtifactPayload, Locator, MemberRole, ProjectDocument, RunInput,
+    TerminalOutcome,
+};
 use super::{OpenProject, lineage};
 
 /// Whether a reference travels with the project or points outside it.
@@ -82,10 +85,19 @@ pub struct InputDto {
 pub struct ArtifactDto {
     pub id: String,
     pub label: String,
-    /// How many references this artifact recorded facts for.
+    /// `fileFactsV1` or `acquisitionQcSnapshotV1`, exactly as the document
+    /// stores the payload's kind.
+    pub kind: &'static str,
+    /// How many references this artifact recorded facts for. Zero for a QC
+    /// snapshot, which observed no reference.
     pub observed_input_count: usize,
     /// How many files in total.
     pub observed_member_count: usize,
+    /// The snapshot, where this is one, in exactly the shape the document
+    /// stores it. It carries no path, no dataset handle and no file identity
+    /// -- the schema has no field for any of them -- so what is recorded and
+    /// what the page is shown are one thing rather than two.
+    pub qc_snapshot: Option<AcquisitionQcSnapshotV1>,
     /// The run that produced it, or `null` where no run in this project claims
     /// it -- which is a state to show, not a fault. Never two: a document in
     /// which two runs claimed one artifact is refused at the boundary.
@@ -95,9 +107,9 @@ pub struct ArtifactDto {
 }
 
 // An artifact carries no locator and no current file state, and there is
-// deliberately no field here for one. `FileFactsV1` is a payload inside the
-// document; a "current file" line beside an artifact would be describing a
-// file that does not exist.
+// deliberately no field here for one. Both payloads live inside the document;
+// a "current file" line beside an artifact would be describing a file that
+// does not exist.
 
 /// One recorded run.
 #[derive(Debug, Clone, Serialize)]
@@ -109,7 +121,10 @@ pub struct RunDto {
     /// `completed`, `failed` or `cancelled`. Always terminal: a recorded run is
     /// history, and opening a project never schedules one.
     pub outcome: &'static str,
+    /// The references it consumed directly.
     pub input_ids: Vec<String>,
+    /// The layers it consumed.
+    pub layer_ids: Vec<String>,
     pub output_artifact_ids: Vec<String>,
     pub application_version: String,
     pub started_at: String,
@@ -128,6 +143,9 @@ pub struct RunDto {
 pub struct LayerDto {
     pub id: String,
     pub source_input_id: String,
+    /// The runs that consumed this layer, oldest first -- its own history, as
+    /// distinct from its source's.
+    pub consumed_by_run_ids: Vec<String>,
 }
 
 /// One accepted operation, as the interface holds it.
@@ -243,13 +261,25 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
         .map(|artifact| ArtifactDto {
             id: artifact.id.to_string(),
             label: artifact.label.clone(),
-            observed_input_count: artifact.file_facts.observations.len(),
-            observed_member_count: artifact
-                .file_facts
-                .observations
-                .iter()
-                .map(|observation| observation.members.len())
-                .sum(),
+            kind: match &artifact.payload {
+                ArtifactPayload::FileFactsV1(_) => "fileFactsV1",
+                ArtifactPayload::AcquisitionQcSnapshotV1(_) => "acquisitionQcSnapshotV1",
+            },
+            observed_input_count: artifact
+                .payload
+                .file_facts()
+                .map_or(0, |facts| facts.observations.len()),
+            observed_member_count: artifact.payload.file_facts().map_or(0, |facts| {
+                facts
+                    .observations
+                    .iter()
+                    .map(|observation| observation.members.len())
+                    .sum()
+            }),
+            qc_snapshot: match &artifact.payload {
+                ArtifactPayload::AcquisitionQcSnapshotV1(snapshot) => Some((**snapshot).clone()),
+                ArtifactPayload::FileFactsV1(_) => None,
+            },
             produced_by_run_id: lineage::producing_run(document, artifact.id)
                 .map(|run| run.to_string()),
             source_input_ids: lineage::source_inputs(document, artifact.id)
@@ -264,11 +294,24 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
         .iter()
         .map(|run| RunDto {
             id: run.id.to_string(),
-            operation: match run.operation {
-                super::record::RecordedOperation::CaptureFileFactsV1 => "captureFileFactsV1",
-            },
+            operation: run.operation.stable_id(),
             outcome: outcome_id(run.outcome),
-            input_ids: run.input_ids.iter().map(ToString::to_string).collect(),
+            input_ids: run
+                .inputs
+                .iter()
+                .filter_map(|consumed| match consumed {
+                    RunInput::Input { input_id } => Some(input_id.to_string()),
+                    RunInput::Layer { .. } => None,
+                })
+                .collect(),
+            layer_ids: run
+                .inputs
+                .iter()
+                .filter_map(|consumed| match consumed {
+                    RunInput::Layer { layer_id } => Some(layer_id.to_string()),
+                    RunInput::Input { .. } => None,
+                })
+                .collect(),
             // The same spelling `ArtifactDto::id` carries, so the interface can
             // match a run to the artifact it produced. A `Debug` form here
             // would render `ArtifactId(...)` and never match.
@@ -289,6 +332,10 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
         .map(|layer| LayerDto {
             id: layer.id.to_string(),
             source_input_id: layer.source.input_id().to_string(),
+            consumed_by_run_ids: lineage::layer_consuming_runs(document, layer.id)
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
         })
         .collect();
 

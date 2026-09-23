@@ -61,7 +61,8 @@ use mscanvas_plot_spec::spec::{
     SpectrumRepresentation, StyleRole, UnitState, measurement_domains,
 };
 use mscanvas_proteowizard::{
-    SelectedSpectrumResult, SpectrumRepresentationState, UnitState as SourceUnitState,
+    RunSummaryResult, SelectedSpectrumResult, SpectrumRepresentationState,
+    UnitState as SourceUnitState,
 };
 
 use super::chromatogram::{
@@ -70,6 +71,7 @@ use super::chromatogram::{
 };
 use super::dialog::SaveDialogFacts;
 use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
+use super::installation::InstallationIdentity;
 use super::projection::{self, ProjectionRefusal, ViewportDomain};
 use super::selection::DatasetId;
 
@@ -839,7 +841,61 @@ pub(super) struct ScientificExportSlots {
     /// another is the same race with an extra step.
     next_preview_open: u64,
     latest_preview_open: PreviewOpenTicket,
+    /// The run summary the latest committed open established, which a QC
+    /// summary snapshot may copy.
+    ///
+    /// Ordered exactly as the chromatogram is, and for the same reason: there
+    /// is one preview on screen, a completion may speak only if it is still
+    /// the latest open, and the moment a newer open begins the older summary
+    /// stops being one the user is looking at. Not an export, and nothing here
+    /// lets it become one; it lives beside the chromatogram because this is
+    /// where "which open is current" is decided, and deciding it twice would
+    /// be two answers.
+    run_summary: Option<RunSummarySnapshot>,
     lane: ExportState,
+}
+
+/// One session-scoped name for one retained run summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RunSummaryToken(u64);
+
+impl RunSummaryToken {
+    pub(super) fn as_wire(self) -> String {
+        self.0.to_string()
+    }
+
+    fn from_wire(value: &str) -> Option<Self> {
+        value.parse::<u64>().ok().map(Self)
+    }
+}
+
+/// The whole run summary one committed open established, and the build that
+/// produced it.
+///
+/// The installation is the one the open's own batch reported, taken from the
+/// same attempt as the facts. It is kept as that attempt left it: a backend
+/// changed afterwards changes what the *next* preview is attributed to, never
+/// what this one was.
+#[derive(Debug, Clone)]
+pub(super) struct RunSummarySnapshot {
+    token: RunSummaryToken,
+    owner: DatasetId,
+    summary: Arc<RunSummaryResult>,
+    installation: Option<InstallationIdentity>,
+}
+
+impl RunSummarySnapshot {
+    pub(super) const fn owner(&self) -> DatasetId {
+        self.owner
+    }
+
+    pub(super) fn summary(&self) -> Arc<RunSummaryResult> {
+        Arc::clone(&self.summary)
+    }
+
+    pub(super) const fn installation(&self) -> Option<&InstallationIdentity> {
+        self.installation.as_ref()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -928,6 +984,7 @@ impl Default for ScientificExportSlots {
             // and no open can ever be mistaken for the session's initial state.
             next_preview_open: 1,
             latest_preview_open: PreviewOpenTicket(0),
+            run_summary: None,
             lane: ExportState::Idle,
         }
     }
@@ -991,7 +1048,46 @@ impl ScientificExportSlots {
             .expect("a session opens fewer than u64::MAX previews");
         self.latest_preview_open = ticket;
         self.chromatogram = None;
+        self.run_summary = None;
         ticket
+    }
+
+    /// Retains the run summary one *completed* open established, if that open
+    /// is still the latest, and answers the name a QC capture may use for it.
+    ///
+    /// The same ownership test as [`Self::reconcile_preview_chromatogram`],
+    /// asked and acted on without letting go. A stale completion retains
+    /// nothing and revokes nothing: the summary it would displace belongs to
+    /// the preview the user is looking at.
+    pub(super) fn reconcile_preview_run_summary(
+        &mut self,
+        ticket: PreviewOpenTicket,
+        owner: DatasetId,
+        summary: RunSummaryResult,
+        installation: Option<InstallationIdentity>,
+    ) -> Option<RunSummaryToken> {
+        if ticket != self.latest_preview_open {
+            return None;
+        }
+        let token = RunSummaryToken(self.issue_token());
+        self.run_summary = Some(RunSummarySnapshot {
+            token,
+            owner,
+            summary: Arc::new(summary),
+            installation,
+        });
+        Some(token)
+    }
+
+    /// The retained run summary this wire token names, if it is still the
+    /// retained one. A token for an older open, a malformed one and one from
+    /// another kind of snapshot all answer `None`.
+    pub(super) fn run_summary_for(&self, token: &str) -> Option<RunSummarySnapshot> {
+        let token = RunSummaryToken::from_wire(token)?;
+        self.run_summary
+            .as_ref()
+            .filter(|snapshot| snapshot.token == token)
+            .cloned()
     }
 
     /// Installs, or revokes, the chromatogram one *completed* preview open owns.

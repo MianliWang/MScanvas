@@ -65,11 +65,63 @@ export interface ProjectInput {
   readonly workbenchDatasetHandle: string | null;
 }
 
+/** A retention time exactly as the run summary reported it. */
+export interface QcRetentionTime {
+  /**
+   * The shortest decimal text that reads back to the reported number, as the
+   * document stores it. Shown as it is: formatting it again could round it.
+   */
+  readonly value: string;
+  /** The formatter emitted no unit; none is inferred from the magnitude. */
+  readonly unit: "notEmitted";
+}
+
+/** One MS-level bucket, in the order the run summary reported it. */
+export type QcMsLevelCount =
+  | { readonly kind: "level"; readonly msLevel: number; readonly spectrumCount: number }
+  | { readonly kind: "other"; readonly spectrumCount: number };
+
+/**
+ * A QC summary snapshot, exactly as the project document stores it: facts one
+ * preview's run summary had already established, copied and not judged.
+ */
+export interface QcSnapshot {
+  readonly totalSpectrumCount: number;
+  readonly msLevelCounts: readonly QcMsLevelCount[];
+  /** Not reported is not zero. */
+  readonly chromatogramCount:
+    | { readonly kind: "reported"; readonly count: number }
+    | { readonly kind: "notReported" };
+  readonly retentionTime:
+    | {
+        readonly kind: "reported";
+        readonly minimum: QcRetentionTime;
+        readonly at25PercentBasePeakIntensity: QcRetentionTime;
+        readonly at50PercentBasePeakIntensity: QcRetentionTime;
+        readonly at75PercentBasePeakIntensity: QcRetentionTime;
+        readonly maximum: QcRetentionTime;
+      }
+    | { readonly kind: "notReported" };
+  /** The build that produced the preview. Never a path. */
+  readonly producer: {
+    readonly tool: "msaccess";
+    readonly executableSha256: string;
+    readonly release: string | null;
+    readonly buildDate: string | null;
+    readonly sourceRevision: string | null;
+  };
+}
+
+export type ArtifactKind = "fileFactsV1" | "acquisitionQcSnapshotV1";
+
 export interface ProjectArtifact {
   readonly id: string;
   readonly label: string;
+  readonly kind: ArtifactKind;
   readonly observedInputCount: number;
   readonly observedMemberCount: number;
+  /** The snapshot, where this is one. */
+  readonly qcSnapshot: QcSnapshot | null;
   /**
    * The run that produced it, or `null` where no run in this project claims
    * it. Never two: a document in which two runs claimed one artifact is
@@ -80,11 +132,17 @@ export interface ProjectArtifact {
   readonly sourceInputIds: readonly string[];
 }
 
+/** The operations a project can have recorded, exactly as Rust names them. */
+export type RecordedOperation = "captureFileFactsV1" | "captureAcquisitionQcSnapshotV1";
+
 export interface ProjectRun {
   readonly id: string;
-  readonly operation: string;
+  readonly operation: RecordedOperation;
   readonly outcome: "completed" | "failed" | "cancelled";
+  /** The references it consumed directly. */
   readonly inputIds: readonly string[];
+  /** The layers it consumed. */
+  readonly layerIds: readonly string[];
   readonly outputArtifactIds: readonly string[];
   readonly applicationVersion: string;
   readonly startedAt: string;
@@ -102,6 +160,8 @@ export interface ProjectRun {
 export interface ProjectLayer {
   readonly id: string;
   readonly sourceInputId: string;
+  /** The runs that consumed this layer, oldest first. Derived in Rust. */
+  readonly consumedByRunIds: readonly string[];
 }
 
 export interface ProjectState {
@@ -174,6 +234,12 @@ export interface ProjectAdmission {
  */
 export type Chosen = ProjectState | null;
 
+/** What one QC capture answers with: the project, and the record it made. */
+export interface QcCapture {
+  readonly project: ProjectState;
+  readonly artifactId: string;
+}
+
 export interface ProjectApi {
   getProjectState(): Promise<ProjectState>;
   createProject(name: string, discardUnsaved: boolean): Promise<ProjectState>;
@@ -213,6 +279,12 @@ export interface ProjectApi {
    */
   createProjectLayer(inputId: string): Promise<ProjectState>;
   removeProjectLayer(layerId: string): Promise<ProjectState>;
+  /**
+   * Records a QC summary snapshot of one layer's source, from the preview the
+   * page is showing. Names the layer and that preview's opaque token, sends no
+   * value, and starts nothing: Rust copies what the preview already retained.
+   */
+  captureProjectQcSummary(layerId: string, previewToken: string): Promise<QcCapture>;
 }
 
 export const tauriProjectApi: ProjectApi = {
@@ -260,6 +332,12 @@ export const tauriProjectApi: ProjectApi = {
     invoke<ProjectState>("create_project_layer", { inputId }, documentAuthorityHeaders()),
   removeProjectLayer: (layerId) =>
     invoke<ProjectState>("remove_project_layer", { layerId }, documentAuthorityHeaders()),
+  captureProjectQcSummary: (layerId, previewToken) =>
+    invoke<QcCapture>(
+      "capture_project_qc_summary",
+      { layerId, previewToken },
+      documentAuthorityHeaders(),
+    ),
 };
 
 /**
@@ -289,6 +367,7 @@ export const unavailableProjectApi: ProjectApi = {
   abandonProjectRelink: () => Promise.resolve(NO_PROJECT),
   createProjectLayer: () => Promise.reject(new Error("noProjectStore")),
   removeProjectLayer: () => Promise.reject(new Error("noProjectStore")),
+  captureProjectQcSummary: () => Promise.reject(new Error("noProjectStore")),
 };
 
 /**

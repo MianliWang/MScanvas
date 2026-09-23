@@ -569,6 +569,21 @@ export interface Preview {
    * reason for this side to believe it holds the science.
    */
   readonly chromatogramExportToken: string | null;
+  /**
+   * The opaque name of this preview's run summary, which a QC summary snapshot
+   * may copy. The page sends it back with a layer and sends no value: Rust
+   * copies the whole summary it retained, not the bounded one above.
+   *
+   * `null` where this answer was not the latest open's. It stops naming
+   * anything the moment another preview open begins.
+   */
+  readonly qcSnapshotToken: string | null;
+  /**
+   * Whether the build that produced this preview can be identified well enough
+   * for a snapshot to record it. Where it cannot, a capture is refused rather
+   * than attributed to a guess, and the page says why before anyone presses.
+   */
+  readonly qcProducerIdentified: boolean;
 }
 
 export interface Precursor {

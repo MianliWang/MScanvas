@@ -147,14 +147,15 @@ use super::dto::{
 };
 use super::export::{
     BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
-    ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, ScientificExportSlots,
-    SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest, data_document,
-    exported_point_count, figure_raster, png_document, png_of, raster_of, svg_document,
+    ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, RunSummaryToken,
+    ScientificExportSlots, SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest,
+    data_document, exported_point_count, figure_raster, png_document, png_of, raster_of,
+    svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
 };
-use super::installation::InstallationIdentity;
+use super::installation::{InstallationIdentity, PreviewProducerFacts};
 use super::operation::{
     AdmittedDestination, AttemptFacts, CancellationFacts, ConversionQueue, ConversionSlot,
     ItemOutcome, PendingDisposition, QueueItem, QueueItemAttempt, SettledItemAdoption,
@@ -453,6 +454,18 @@ fn describe_outcomes(
             },
         })
         .collect()
+}
+
+/// Why a retained run summary cannot be handed to a QC capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RetainedSummaryRefusal {
+    /// The token names no summary this session still retains, or the one it
+    /// names is of a different row.
+    NotCurrent,
+    /// The row is no longer in the workspace.
+    RowGone,
+    /// The build that produced the summary cannot be identified.
+    ProducerUnidentified,
 }
 
 /// What one dataset's session state is.
@@ -1376,6 +1389,44 @@ impl PreviewService {
         let identities = workspace.registry.get(id)?.object_identities();
         drop(workspace);
         Some(identities)
+    }
+
+    /// The run summary the preview on screen established for one row, and
+    /// what is known about the build that produced it.
+    ///
+    /// Memory only. The summary is the one the latest committed open retained,
+    /// named by the token that open answered with; the build is the one that
+    /// open's own batch reported. Nothing here reads the source, stats it,
+    /// hashes it, resolves an installation or starts a process -- and nothing
+    /// asks which backend is configured now, because that is not the question.
+    ///
+    /// Refused when the token is not the retained summary's (a newer open has
+    /// begun, of this row or another), when the summary is not of `handle`'s
+    /// row, when that row has left the workspace, and when the build that
+    /// produced it cannot be identified.
+    pub(crate) fn retained_run_summary(
+        &self,
+        handle: &str,
+        token: &str,
+    ) -> Result<(Arc<RunSummaryResult>, PreviewProducerFacts), RetainedSummaryRefusal> {
+        let row = DatasetId::parse(handle).ok_or(RetainedSummaryRefusal::RowGone)?;
+        // The slot is a leaf: copied out of and let go of before the workspace
+        // is asked anything.
+        let snapshot = self
+            .spectrum_export_slot()
+            .run_summary_for(token)
+            .ok_or(RetainedSummaryRefusal::NotCurrent)?;
+        if snapshot.owner() != row {
+            return Err(RetainedSummaryRefusal::NotCurrent);
+        }
+        if !self.workspace().registry.contains(row) {
+            return Err(RetainedSummaryRefusal::RowGone);
+        }
+        let producer = snapshot
+            .installation()
+            .and_then(InstallationIdentity::producer_facts)
+            .ok_or(RetainedSummaryRefusal::ProducerUnidentified)?;
+        Ok((snapshot.summary(), producer))
     }
 
     /// Adds every chosen path, in picker order, and answers with what each one
@@ -7004,7 +7055,12 @@ impl PreviewService {
                         metadata = Some(metadata_dto(&result, &redactor));
                     }
                     PreviewValue::RunSummary(result) => {
-                        run_summary = Some(run_summary_dto(&result)?);
+                        // Both: the bounded projection the page is shown, and
+                        // the whole typed result, which is what a QC snapshot
+                        // copies. The projection drops the three middle
+                        // retention times and caps the buckets, so a snapshot
+                        // built from it would record less than was established.
+                        run_summary = Some((run_summary_dto(&result)?, result));
                     }
                     PreviewValue::SpectrumTable(result) => {
                         table_rows = result
@@ -7059,8 +7115,13 @@ impl PreviewService {
         // leave the dataset owning facts the user was never shown -- with rows
         // a later spectrum would silently reconcile against.
         let metadata = metadata.ok_or_else(|| missing("metadata"))?;
-        let run_summary = run_summary.ok_or_else(|| missing("run summary"))?;
+        let (run_summary, run_summary_facts) = run_summary.ok_or_else(|| missing("run summary"))?;
         let spectrum_table = spectrum_table.ok_or_else(|| missing("spectrum table"))?;
+        // The build this batch reported, kept with the summary it produced. Not
+        // `authority_projection()` and not a fresh `availability()`: either of
+        // those answers which build is configured *now*, which is a different
+        // question from which one produced these facts.
+        let producer_installation = installation.clone();
 
         // One commit, under one lock, of facts that are only true together: the
         // generation this was read at, the backend that read it, and the rows a
@@ -7112,6 +7173,21 @@ impl PreviewService {
             &table_rows,
             spectrum_table.truncated,
         );
+        // By the same ordering rule and in the same slot: only the latest open
+        // may retain a summary a QC snapshot can copy.
+        let qc_producer_identified = producer_installation
+            .as_ref()
+            .and_then(InstallationIdentity::producer_facts)
+            .is_some();
+        let qc_snapshot_token = self
+            .spectrum_export_slot()
+            .reconcile_preview_run_summary(
+                preview_open,
+                id,
+                run_summary_facts,
+                producer_installation,
+            )
+            .map(RunSummaryToken::as_wire);
 
         Ok(PreviewDto {
             authority: projection.to_dto(),
@@ -7120,6 +7196,8 @@ impl PreviewService {
             metadata,
             run_summary,
             spectrum_table,
+            qc_snapshot_token,
+            qc_producer_identified,
         })
     }
 

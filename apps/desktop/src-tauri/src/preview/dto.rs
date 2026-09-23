@@ -2729,6 +2729,20 @@ pub struct PreviewDto {
     /// Opaque, session-scoped, and meaningless to anything that did not receive
     /// it here. It is not a path, not a dataset handle and not an index.
     pub chromatogram_export_token: Option<String>,
+    /// The opaque name of this preview's run summary, as a QC summary snapshot
+    /// may copy it. The page sends it back, with a layer, and sends no value:
+    /// Rust copies the whole summary it retained, not the bounded projection
+    /// above.
+    ///
+    /// `None` where this reply is not the latest open's, which the page is
+    /// discarding anyway. Stops naming anything the moment another preview
+    /// open begins.
+    pub qc_snapshot_token: Option<String>,
+    /// Whether the build that produced this preview can be identified well
+    /// enough for a snapshot to record it. Where it cannot, a capture is
+    /// refused rather than attributed to a guess, and the page says why
+    /// before anyone presses.
+    pub qc_producer_identified: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]

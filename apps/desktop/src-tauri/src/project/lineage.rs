@@ -8,10 +8,10 @@
 //!
 //! ## Two edges are stored and two are derived
 //!
-//! A [`RunRecord`] names the inputs it consumed and the artifacts it produced,
-//! so run-to-input and run-to-artifact are read straight off the record. The
-//! reverse directions -- which runs consumed an input, which run produced an
-//! artifact -- are not stored, because storing a back-reference would be a
+//! A [`RunRecord`] names the inputs or the layer it consumed and the artifacts
+//! it produced, so run-to-input, run-to-layer and run-to-artifact are read
+//! straight off the record. The reverse directions -- which runs consumed an
+//! input or a layer, which run produced an artifact -- are not stored, because storing a back-reference would be a
 //! second copy of the same fact that could disagree with the first. They are
 //! derived here, once, so that every consumer gets the same answer.
 //!
@@ -27,17 +27,20 @@
 //!
 //! Not an omission. The schema cannot express a cycle: an [`InputRecord`] names
 //! no other record, an [`ArtifactRecord`] names only inputs through its
-//! observations, and a [`RunRecord`] names only inputs and artifacts. Every edge
-//! therefore runs input <- run -> artifact, and no edge leaves an artifact or
-//! an input towards a run. A detector would be code for a shape that has no
-//! representation.
+//! observations, and a [`RunRecord`] names only inputs, layers and artifacts.
+//! Every edge therefore runs input <- run -> artifact or input <- layer <- run
+//! -> artifact, and no edge leaves an artifact, a layer or an input towards a
+//! run. A detector would be code for a shape that has no representation.
 //!
 //! That reasoning is the thing to check if the schema ever gains an edge -- an
 //! artifact that names a run, or a run that consumes an artifact -- because
 //! either would make a cycle representable and this paragraph false. The layer
 //! M8.4 added is checked here: a [`super::record::LayerRecord`] names one
-//! input, an input still names nothing, and nothing names a layer, so no edge
-//! leaves what it points at and no cycle passes through it.
+//! input and an input still names nothing. M8.5 made a run name a layer, which
+//! is an edge *into* a layer from a run rather than out of one, and the QC
+//! snapshot that run produces names no record at all -- its producing run is
+//! derived below, like every other reverse edge, rather than stored. So there
+//! is still no cycle.
 //!
 //! ## What is not here
 //!
@@ -53,7 +56,7 @@
 
 use mscanvas_core::ArtifactId;
 
-use super::record::{InputId, ProjectDocument, RunId};
+use super::record::{InputId, LayerId, ProjectDocument, RunId};
 
 /// The runs that consumed one input, in document order.
 ///
@@ -65,7 +68,22 @@ pub fn consuming_runs(document: &ProjectDocument, input: InputId) -> Vec<RunId> 
     document
         .runs
         .iter()
-        .filter(|run| run.input_ids.contains(&input))
+        .filter(|run| run.consumes_input(input))
+        .map(|run| run.id)
+        .collect()
+}
+
+/// The runs that consumed one layer, in document order.
+///
+/// The layer's own history, distinct from its source's: a run that consumed
+/// the reference is the reference's, and one that consumed the layer is the
+/// layer's.
+#[must_use]
+pub fn layer_consuming_runs(document: &ProjectDocument, layer: LayerId) -> Vec<RunId> {
+    document
+        .runs
+        .iter()
+        .filter(|run| run.consumes_layer(layer))
         .map(|run| run.id)
         .collect()
 }
@@ -96,15 +114,18 @@ pub fn producing_run(document: &ProjectDocument, artifact: ArtifactId) -> Option
 /// to -- but they are different questions: the run says what it was *asked* to
 /// observe, and the artifact says what it actually *did* observe. An artifact
 /// whose run was removed still answers this one.
+///
+/// Empty for a QC snapshot, which observed no reference: it copied a preview,
+/// and what that preview was of is the layer its run consumed.
 #[must_use]
 pub fn source_inputs(document: &ProjectDocument, artifact: ArtifactId) -> Vec<InputId> {
     document
         .artifacts
         .iter()
         .find(|recorded| recorded.id == artifact)
-        .map(|recorded| {
-            recorded
-                .file_facts
+        .and_then(|recorded| recorded.payload.file_facts())
+        .map(|facts| {
+            facts
                 .observations
                 .iter()
                 .map(|observation| observation.input_id)
