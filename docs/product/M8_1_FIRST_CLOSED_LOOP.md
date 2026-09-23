@@ -2066,6 +2066,63 @@ Its repairs are one small commit on top of the first two. No second review
 followed: none of the findings was blocking, and an affected-delta review is
 owed after repairing a blocking defect, not after these.
 
+### Local validation record for the closure
+
+Production Rust and TypeScript changed, so no M8.5 gate result is carried
+over. Logs are under `test-results/m8-closure/logs/`. No VM, native, installer
+or provider campaign was run, and none is claimed.
+
+**While repairing, before any closure commit.** The M8.1 scenario on the
+unchanged `3e6b656`: exit 1, 6 passing and 2 failing, as described above
+(`m81-before-repair-3e6b656.log`). The first-arrival test on the unchanged
+hook: exit 1 (`m82-first-arrival-before-fix.log`). The M8.1 scenario on the
+working tree after its fixture repair: exit 0, 8 passing
+(`m81-after-fixture-repair.log`). Removing the history refusal from
+`remove_input` on a copy failed three tests, and the file was restored from the
+copy and compared byte for byte (`mutation-input-history-refusal.log`). Before
+committing `ee229cf`, the project, QC and bridge Rust tests, the project and
+preference suites, lint, both typechecks and clippy on the desktop crate were
+run on the working tree that became it; those are development checks, and no
+full gate run was made on `ee229cf` or `ebbd2d6` as Git objects. After the
+review, the `ee229cf` hook put back over the repaired one made the new
+same-project-copy test fail, and the repaired file was restored and compared
+byte for byte (`mutation-same-project-copy-on-ee229cf-hook.log`).
+
+**The final code candidate, `597d08d`** (tree
+`480e1f4389b6ca6a2a8a79b7be5eefb3411a7e23`, `gates-597d08d/`): every gate once,
+in sequence, one at a time, with nothing else running and the worktree clean
+before and after:
+
+| Gate | Exit | What it established |
+| --- | --- | --- |
+| `cargo fmt --all --check` | 0 | |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --workspace` | 0 | 1782 passed, 0 failed, 23 ignored; the desktop library 1139 passed, 14 ignored |
+| `pnpm lint` | 0 | |
+| `pnpm build` | 0 | |
+| `pnpm test` | 0 | 2109 passed of 2109, 104 files |
+| `pnpm e2e:typecheck` | 0 | |
+| `python -B scripts/check_repo.py` | 0 | |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.1-project-records.browser.e2e.ts` | 0 | 8 passing; `test-results/m8.1/browser-arixoi` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.2-provenance.browser.e2e.ts` | 0 | 4 passing; `test-results/m8.2/browser-rH8VGj` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.3-reattachment.browser.e2e.ts` | 0 | 2 passing; `test-results/m8.3/browser-SrGJOx` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.4-layers.browser.e2e.ts` | 0 | 2 passing; `test-results/m8.4/browser-dUihtE` |
+| `pnpm e2e:browser --spec ./e2e/specs/m8.5-qc-summary.browser.e2e.ts` | 0 | 3 passing; `test-results/m8.5/browser-tKMPuA` |
+
+The five browser scenarios ran with their seeds unchanged apart from the M8.1
+fixture repair; no behavioural assertion was weakened. They are React/mock-IPC
+layout and interaction evidence over controlled answer tables, and say nothing
+about the filesystem, persistence, a provider or native behaviour; those
+claims are the Rust tests'. The commit that adds this record changes this
+document only, and `check_repo.py` was run again on it.
+
+**Inherited debt, not M8's and not widened.** The historical browser specs
+that still select `li.dataset-row`, and `m7.2-workbench`'s locale snapshot
+mismatch, are as the M8.1 record states and were not run. The App-level
+parallel-timeout class did not appear in this run. The roadmap's M7 section
+still says M7.6 is not started, which the local M7.6 branch has overtaken; it
+is M7.6's record to settle, and the M8 section says what M8 descends from.
+
 ### Status
 
 - `M8 LOCAL IMPLEMENTATION COMPLETE — SOURCE UNPUBLISHED`
