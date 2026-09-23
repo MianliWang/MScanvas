@@ -58,7 +58,9 @@ bundled CPython 3.13 embeddable runtime, **conditional on**:
    the path handed to the reader — on every host. Measured on code page 936,
    which can encode the names used: a CJK source path fails the reader and a CJK
    runtime path is fatal; a UTF-8 code page was not measured. With the source
-   pinned by the M8 mechanism, a same-volume hard link from an ASCII work
+   held with M8's share mode (read sharing only, as `open_for_stable_read` in
+   `project/observe.rs` opens for one measurement) for the whole attempt — the
+   whole-attempt hold is new in M9.1 — a same-volume hard link from an ASCII work
    directory was read to completion. That route writes a directory entry on the
    user's data volume, outside the project, and needs NTFS, the source's own
    volume and a writable ASCII directory there; where that directory may live is
@@ -67,9 +69,10 @@ bundled CPython 3.13 embeddable runtime, **conditional on**:
 3. **Precision and reproducibility stated, not hidden.** Spectrum intensities are
    rounded to binary32 on load, chromatogram points are binary64 sums of them, and
    raw areas are binary32; formula-derived m/z and isotope probabilities are not
-   bit-reproducible across runs; engine intensity depends on the other targets,
-   and if no fit in a run is valid, so does whether a feature survives. Result
-   equality is therefore never byte equality.
+   bit-reproducible across runs; engine intensity depends on the other targets
+   and is not reproducible run to run even for the same targets (3.7e-6 relative
+   measured on a valid fit), and if no fit in a run is valid, so does whether a
+   feature survives. Result equality is therefore never byte equality.
 4. **Owner approval of the runtime and its packaging** — decision 2 of the M8
    handoff — including the unresolved redistribution terms of the wheel's bundled
    Qt, MSVC runtime and contrib libraries.
@@ -127,16 +130,17 @@ every failure keeps the run in history and publishes nothing.
   a `failed` run carrying a refusal code and its stage; M8's run states are not
   extended.
 - **Where a run may start.** Only in a saved project: its payload store needs the
-  document's location. Save As, Close and New are unavailable while a run is
-  active.
+  document's location. Save As, Open, Close and New are unavailable while a run
+  is active.
 - **Execution attempt**: at most one per run in M9.1. Its facts carry their
   strength: adapter digest and runtime bundle manifest measured by the supervisor
   before launch; engine versions and revision self-reported by the binary; loaded
   module digests hashed from their files after load, not from memory. Paths,
   process ids and operation identifiers are session-only, as in M8.
 - **Stable input.** The supervisor obtains the source through the M8.3 runtime
-  admission, holds it with `open_pinned_source` (write and delete sharing
-  withheld) for the whole attempt, hashes it through that handle and refuses a
+  admission, holds it with M8's stable-read share mode (write and delete sharing
+  withheld, as `open_for_stable_read` does for one measurement) for the whole
+  attempt, which is new in M9.1, hashes it through that handle and refuses a
   mismatch with the plan (`SOURCE_CHANGED`). The worker reads by path while the
   pin holds; the adapter re-hashes after the read. This protects the attempt; it
   does not promise that M8's earlier observation stays current.
@@ -177,12 +181,13 @@ count and, for the feature that won an overlap, an `overlapWinner` flag, so
 `SHARED` never hides a two-candidate selection. `NOT_DETECTED` requires zero
 candidates; otherwise the row is `FAILED` (`CANDIDATES_WITHOUT_FEATURE`). Other
 typed `FAILED` reasons: `EXTRACTION_AT_SPECTRUM_EDGE`,
+`RELATED_TARGET_AT_SPECTRUM_EDGE` (a partner of such a target; not exercised),
 `ENGINE_DISCARDED_NO_VALID_FIT` (from source, not yet exercised) and a target
 missing from the engine library. The engine receives the application's target
 UUID as its compound name, so its assay references contain no user text and are
 not persisted. Scores are not surfaced. Zero, absent and unprocessed stay
 distinct: every detected feature measured in M9.0 had a positive raw area; a
-refused or failed run has no rows.
+run refused before it starts, or a failed run, has no rows.
 
 ### Storage
 
@@ -228,14 +233,16 @@ refused or failed run has no rows.
   copying cannot make it whole and history keeps its record. **An existing
   destination store is refused and never deleted**, even when its owner file names
   the same project: every Save As copy shares that identifier, so it cannot tell
-  an interrupted Save As from another copy's store. Payloads are copied, not
-  hard-linked; the new project never points into the old store.
+  an interrupted Save As from another copy's store. The document is published
+  through M8's refuse-existing publish, never over a file that appeared meanwhile.
+  Payloads are copied, not hard-linked; the new project never points into the old
+  store.
 
 ### Schema disposition
 
 M9.1 introduces **schema 4**: operation `targetedMs1V1` with its typed parameters
-and targets (inline, at most 200 per run, with the capture-size measurement M8
-requires; at about 160–200 bytes per target, runs accumulate in append-only
+and targets (inline, at most 200 per run — the experiment adapter admitted up
+to 1000 — with the capture-size measurement M8 requires; at about 160–200 bytes per target, runs accumulate in append-only
 history), a
 consumed content version on the layer input, the record kind
 `targetedMs1ResultV1` with its payload reference, and the attempt facts above.

@@ -70,6 +70,7 @@
     "an m/z half-width below 0.5 ppm (the engine would read it as Da)"
    ],
    "failedRunWithRefusalCode": [
+    "TARGET_INVALID (the engine's formula parser, after import)",
     "SOURCE_NOT_CENTROID",
     "SOURCE_MIXED_POLARITY",
     "SOURCE_POLARITY_UNSUPPORTED",
@@ -98,10 +99,12 @@
   ],
   "failedRowReasons": [
    "EXTRACTION_AT_SPECTRUM_EDGE",
+   "RELATED_TARGET_AT_SPECTRUM_EDGE",
    "CANDIDATES_WITHOUT_FEATURE",
    "ENGINE_DISCARDED_NO_VALID_FIT (read from source, not exercised)",
    "TARGET_ABSENT_FROM_ENGINE_LIBRARY"
-  ]
+  ],
+  "targetCap": "at most 200 per run in M9.1; the experiment adapter admitted 1..1000"
  },
  "approved_plan": {
   "planDigest": "sha256 of this object in canonical form",
@@ -318,7 +321,7 @@
   "pointFormat": [
    "spectrumIndex (file order)",
    "rtS",
-   "summed intensity (binary32)"
+   "summed intensity (binary64 sum of binary32-rounded intensities)"
   ]
  }
 }

@@ -418,6 +418,12 @@
    "tree": "e8bc4a22546b996d6de43af7ba9a724bce09f9ba",
    "worker_sha256": "42b5dbd96b36abd026c05af29bc6e3f961a5e82c7eea97c8a9d66b8ae502ad99",
    "note": "review-closure checks and the round-two rerun; round one's code was committed after its runs and is bound by the worker digest"
+  },
+  "final": {
+   "commit": "17d6c9495da8dcfa72d3eb6e479b35a9dc5bb350",
+   "tree": "3440df9686276be396f3290d47d37a28dff2b682",
+   "worker_sha256": "55624cfcba22a56ed3ae7c797d2f5aabde1cc88375e95cdedd80ee60398e6cc1",
+   "note": "last executed code: final reruns of both matrices and the final focused checks"
   }
  }
 }

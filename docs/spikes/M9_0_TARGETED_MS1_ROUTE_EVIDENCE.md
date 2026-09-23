@@ -25,9 +25,10 @@ detection, and not general XIC admission.
 | Start (M8 closure, documentation-only successor of code candidate `597d08dca374875bd95c48e06d73b1eb3c152d8a`) | `97392e97e615fd606c62470be995df2b17b6bbc1`, tree `b385798ac9bef1e976de205e8b85aaee5bb0d96a` |
 | Branch | `feat/m9.0-targeted-ms1-route-validation` |
 | Round-one protocol, frozen before any engine run | `d4165b9dbb1c504339c8d009210b9829ac0c0840`, amended twice before scoring (`d9a3d0e51350f466cc238a666a6607d81becfaab`, `8704abc9b87ff34ac65da94b67c91d40ddafaef5`); scored file SHA-256 `ac8a0be2b32d32fb13ec7bf8c069088f6c824339ff799ea19ab65d51359afc85` |
-| Round-one code | Committed after the scored runs, at `5030b674c22a09cd27cddd0a8d80a2f7b97843a0` (tree `fd8fcef28a52fb38b88a591910a927b8eb19c0b9`); the binding is the worker SHA-256 `ce68cfa82ea381d563babbc887ae7a45282a1ce0b88070641394724b64389c7e` that every scored attempt records. The controller and diagnostics were not digest-recorded; they were not edited between their runs and that commit |
+| Round-one code | Committed after the scored runs, at `5030b674c22a09cd27cddd0a8d80a2f7b97843a0` (tree `fd8fcef28a52fb38b88a591910a927b8eb19c0b9`); the binding is the worker SHA-256 `ce68cfa82ea381d563babbc887ae7a45282a1ce0b88070641394724b64389c7e` that every scored attempt records. The controller and diagnostics were not digest-recorded; that they were not edited between their runs and that commit is the author's statement, not recorded evidence |
 | Round-two protocol and code | Frozen and committed before its runs at `847936cc04fc1416c7f1c8a13537799e1cfea78e` (tree `03c409bc333d418e36f654c5c83c4e1c4d806741`); protocol SHA-256 `82dbb6dd2acae04606009ffd124a977723eb7ed2d109cd47815f40c47b1a1c3d`, worker `859611e40115c8c2fcf05c414036e1521b352e1e0f527d49c613c87af0ff6aa8` recorded in every attempt |
-| Post-review code | `ebc39b06b7dfb8875aec3ce00f2b363d9f774b22`, tree `e8bc4a22546b996d6de43af7ba9a724bce09f9ba`; worker `42b5dbd96b36abd026c05af29bc6e3f961a5e82c7eea97c8a9d66b8ae502ad99`, recorded by the review-closure checks and the round-two rerun |
+| Post-review code | `ebc39b06b7dfb8875aec3ce00f2b363d9f774b22`, tree `e8bc4a22546b996d6de43af7ba9a724bce09f9ba`; worker `42b5dbd96b36abd026c05af29bc6e3f961a5e82c7eea97c8a9d66b8ae502ad99`, recorded by the review-closure checks and the first round-two rerun |
+| **Final code, last executed** | `17d6c9495da8dcfa72d3eb6e479b35a9dc5bb350`, tree `3440df9686276be396f3290d47d37a28dff2b682`; worker `55624cfcba22a56ed3ae7c797d2f5aabde1cc88375e95cdedd80ee60398e6cc1`, recorded by every attempt of the final reruns of both matrices and the final focused checks. Later commits change documentation only |
 
 Every package, file digest, source blob and fixture digest is in the one
 [provenance manifest](../../experiments/m9_0/manifest.json). Scratch outputs live
@@ -103,7 +104,7 @@ adds `post-hoc` for tolerances learned from round one.
 
 | Failure class | Count | What it shows |
 | --- | --- | --- |
-| Chromatogram values and raw areas outside the declared 1e-9 relative tolerance | 52 | **Precision, not arithmetic.** All 2,878 recorded points equal, bit for bit, the binary32 rounding of the sum of binary32-rounded intensities: OpenMS rounds spectrum intensities to binary32 on load, sums in binary64, and the round-one adapter then read the chromatogram through pyOpenMS `get_peaks()`, which returns binary32 (an unpersisted probe showed 31 of 81 points differ from the per-peak binary64 value; the bit-for-bit match is in `review-checks-before.json`). Every raw area equals the binary32 rounding of the exact sum, as a binary32 feature intensity must. Point counts, spectrum identities and times all match. The exact-boundary probes (7777 at the open ends) were never counted, which confirms the open interval. The corrected adapter reads per peak in binary64 |
+| Chromatogram values and raw areas outside the declared 1e-9 relative tolerance | 52 | **Precision, not arithmetic.** All 2,878 recorded points equal, bit for bit, the binary32 rounding of the sum of binary32-rounded intensities: OpenMS rounds spectrum intensities to binary32 on load, sums in binary64, and the round-one adapter then read the chromatogram through pyOpenMS `get_peaks()`, which returns binary32 (the bit-for-bit match is in `review-checks-before.json`; read per peak on the corrected adapter, 326 of the 856 `r2_strict` points are not binary32-representable). Every raw area equals the binary32 rounding of the exact sum, as a binary32 feature intensity must. Point counts, spectrum identities and times all match. The exact-boundary probes (7777 at the open ends) were never counted, which confirms the open interval. The corrected adapter reads per peak in binary64 |
 | Positive control `NOT_DETECTED` in the main fixture (3 cases) | 3 | **Two MS1 spectra sharing one retention time inside a peak silence a strong, clean peak.** Removing only that pair restores detection; keeping only it reproduces the miss; the empty spectrum, MS2 interleaving and uneven spacing are innocent |
 | Truncated peak `NOT_DETECTED` (3 cases) | 3 | An apex 1 s inside the window's end yields no candidate; widening the window to 165–185 s detects it. The fit-rejection branch was therefore not reached by this fixture |
 | Formula-derived ion m/z off by 1.5e-6 Da | 3 | The engine's table carries N and O to six decimals (14.003074, 15.994915); about 6 ppb |
@@ -159,7 +160,11 @@ Written after round one and changing no scored result
   same in both. Between two runs that differed only in candidate capture, which
   reorders the features, both an imputed intensity (`boundary`) and a valid-fit
   model intensity (`iso_a`, 2685208.5 against 2685208.0) moved in the last
-  binary32 bits; repeating the captured run reproduced it exactly.
+  binary32 bits. Repeating the captured `main` run reproduced it exactly, but
+  that does not generalize: `r2_strict` rerun on identical input, engine and
+  pre-engine code gave `tyr_near3`, a valid fit, 2075599.375 against 2075591.625
+  (3.7e-6 relative), with one isotope probability one binary32 unit apart. Engine
+  intensity is not reproducible run to run.
 - **Score contamination.** The engine's `masserror_ppm` reported +7.38 ppm for a
   signal jittered within ±1.5 ppm: it looked at the out-of-window interferent.
 - **Paths.** The host's ANSI code page is 936, which *can* encode the CJK names
@@ -205,7 +210,9 @@ unsaved orphan behind; a payload already missing in the source carried forward a
 unavailable rather than refused or invented; an available payload whose copy did
 not verify, which published neither document nor store and left nothing; a store
 already at the destination (for example from an interrupted Save As) refused and
-kept, never deleted; and a store owned by another project refused. Plain renames
+kept, never deleted; and a store owned by another project refused. Store and
+document are published by rename, which refuses a destination that appeared
+meanwhile. Plain renames
 on one NTFS volume; no durability claim. The first version deleted a leftover
 store of the same project; the review showed that every Save As copy shares the
 project identifier, so that could destroy another copy's payloads, and it was
@@ -217,13 +224,30 @@ One independent read-only review found no blocker, eight major and eight minor
 findings. The focused checks are in [review_checks.py](../../experiments/m9_0/review_checks.py),
 run against the reviewed adapter (`review-checks-before.json`) and the corrected
 one (`review-checks-after.json`); round two rerun on the corrected adapter kept
-93 PASS / 1 FAIL with identical outcomes, raw areas, bounds and windows.
+93 PASS / 1 FAIL with identical outcomes, raw areas and bounds, and windows
+identical up to last-bit formula-derived m/z.
+
+A targeted re-review of those corrections found no blocker or major finding and
+nine minor ones, now closed: a target that shares or is suppressed by a feature
+built from a defective chromatogram is typed `FAILED` (`RELATED_TARGET_AT_SPECTRUM_EDGE`;
+not exercised by a fixture); the edge guard fetches each spectrum once, uses the
+extractor's own lower bound and ignores zero-intensity edge peaks (it now flags
+exactly the 45 double counts and 49 omissions the fixtures carry); the Save As
+prototype publishes by rename rather than replace; and the record and contract
+wording listed below was corrected. **Final reruns on the final adapter**, into
+separate roots: round one 112 PASS / 18 FAIL, where the 16 precision rows are the
+frozen 1e-9 tolerance against binary32 intensities and the 5 status rows are the
+guards' intended refusals (four sources with equal MS1 times, the prefixed read)
+— while `ctl_timeout` now reaches its timeout at 3.04 s and passes;
+**`reg_upstream_1`, the only third-party acquisition, still agrees 8/8** with no
+target flagged at a spectrum edge and nothing refused as ion mobility; round two
+93 PASS / 1 FAIL as before.
 
 | Finding | Disposition |
 | --- | --- |
 | ASCII scope wrong; hard-link route unrecorded | Corrected: any non-ASCII path, UTF-8 code page unmeasured; pinned hard link measured and recorded |
 | No valid fit discards every feature | Confirmed from source; not exercised (the attempt produced no candidate); typed `ENGINE_DISCARDED_NO_VALID_FIT`; documented |
-| Extractor edge defects | **Confirmed**: last peak counted twice in 45/45 points, first peak omitted in 49/49; the adapter now types affected targets `FAILED`, and caught the same defect in a sparse fixture built for another check |
+| Extractor edge defects | **Confirmed**: of 49 spectrum traces flagged at the last peak, 45 were counted twice and 4 had a zero-intensity edge peak; the first peak was omitted in 49/49; the adapter now types affected targets `FAILED`, and caught the same defect in a sparse fixture built for another check |
 | "Guards closed round one's failures" overstated | Corrected: three guards close three classes; the edge-of-window false negative remains a domain limit; `inWindow` means any non-zero point |
 | Storage gaps (unsaved project, leftover deletion, detached store, concurrent operations, size order) | Prototype corrected for deletion and unavailable payloads; the rest are M9.1 requirements in the handoff |
 | Post-launch refusals vs M8's three run states; stored record-to-run edge; owner decisions presented as settled | Contract corrected in the handoff and draft |
@@ -248,4 +272,4 @@ specification.
 | B | Not executed: deployment blocked by the HOLD |
 | Owner decisions | Listed in the [handoff](../product/M9_1_TARGETED_MS1_HANDOFF.md#deliberately-deferred) |
 | Production code, manifests, locks, schema 3 | Unchanged |
-| Raw evidence | `.tmp/m90-evidence/` (`runs/checks.json` `48f47149…`, `round2/checks.json` `64c8c4d5…`, `diagnostics.json` `6392a274…`, `relocation.json` `7876f37c…`, `review-checks-before.json` `18d33566…`, `review-checks-after.json` `4acfaa2e…`, `post-review-r2/checks.json` `a68d2581…`, `storage.json` `8f93d299…`, pre-review `storage-before-review.json`); first failed attempt kept under `first-failures/` |
+| Raw evidence | `.tmp/m90-evidence/` (`runs/checks.json` `48f47149…`, `round2/checks.json` `64c8c4d5…`, `diagnostics.json` `6392a274…`, `relocation.json` `7876f37c…`, `review-checks-before.json` `18d33566…`, `review-checks-after.json` `4acfaa2e…`, `post-review-r2/checks.json` `a68d2581…`, `review-checks-final.json` `97c3f59f…`, `final-r1/runs/checks.json` `2eb6e92e…`, `final-r2/checks.json` `a9da1271…`, `storage.json` `2357a148…`, pre-review `storage-before-review.json`); first failed attempt kept under `first-failures/` |
