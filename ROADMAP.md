@@ -802,14 +802,34 @@ cache are deferred here, the second only on a measurement showing a need.
 
 ## M8 — Artifact, run and QC foundation
 
-- Project/artifact/run persistence and lineage.
-- First reusable QC summaries and report surfaces.
+**M8 LOCAL IMPLEMENTATION COMPLETE — SOURCE UNPUBLISHED.** M8.1–M8.5 are
+complete as local commits. They descend from the local M7.6 candidate, whose
+installed-candidate release qualification is deferred and incomplete, so
+publishing M8 is a separate integration step; nothing here is merged or
+released. What each item became is PRJ-001 to PRJ-006 in the
+[feature catalog](docs/product/FEATURE_CATALOG.md), and the
+[M8 record](docs/product/M8_1_FIRST_CLOSED_LOOP.md) holds the design, the
+closure and the M9 handoff.
+
+- Project/artifact/run persistence and lineage. **Done locally** (M8.1, M8.2):
+  one versioned project document, file-facts capture, and lineage derived from
+  the one record that states each edge.
+- First reusable QC summaries and report surfaces. **Done locally** (M8.5) as a
+  descriptive QC summary snapshot and report, not the ANA-002 recipe.
 - **Layer identity and provenance**, which multi-layer comparison needs and
   which no current contract provides: `FigureSpec` carries semantic style roles
   for quantities, not identities for sources, and `SeriesSpec` deliberately
-  carries no part of a path, handle or display name.
+  carries no part of a path, handle or display name. **Done locally** (M8.4) in
+  the project model; nothing enters `FigureSpec`.
+- Recorded history is append-only; pruning it is a later capability. Workspace
+  restoration (WSP-010) is not part of M8: a project is reopened and each
+  reference put in the Workbench explicitly (M8.3).
 
 ## M9 — First analysis recipes
+
+**NEXT / NOT STARTED.** Its first recipe is not chosen; the decisions it needs
+from the owner, and the M8 contracts it builds on, are in the
+[M8 handoff](docs/product/M8_1_FIRST_CLOSED_LOOP.md#m9-handoff).
 
 - Isolated worker contract and one or two reviewed recipes backed by mature
   packages.

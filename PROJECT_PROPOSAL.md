@@ -675,7 +675,7 @@ M7.5 remains next and not started. This slice builds or releases no public beta.
 
 ### M8 — Artifact, run and QC foundation
 
-Durable project/artifact/run lineage and first useful QC reports, including the layer identity and provenance multi-layer comparison needs.
+Durable project/artifact/run lineage and first useful QC reports, including the layer identity and provenance multi-layer comparison needs. Implemented locally as M8.1–M8.5 and not yet published; the "QC report" is a descriptive QC summary snapshot, not a QC recipe, and recorded history is append-only. See the [M8 record](docs/product/M8_1_FIRST_CLOSED_LOOP.md).
 
 ### M9 — First analysis recipes
 

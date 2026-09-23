@@ -24,7 +24,7 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 | WSP-007 | Clear workspace | P0 | Idle Clear releases rows; M7.4 exposes Remove non-running / Cancel and clear / Return for active work, with Rust revalidation and confirmed stop. Sources and finalized files are never deleted. Build 04 native active Clear acceptance passes. |
 | WSP-008 | Convert selected/all | P0 | Scope is visible before execution and unrelated rows remain intact. |
 | WSP-009 | Search/sort/filter | P1 | Search/collapse preserves hidden highlights and reports their count. Viewed/reading/queue rows retain existing pin facts. Browsing arrangement never replaces the complete roster's explicit execution sort. |
-| WSP-010 | Restore workspace | P1 | Restores logical state safely and marks missing files rather than deleting rows silently. |
+| WSP-010 | Restore workspace | P1 | Restores logical state safely and marks missing files rather than deleting rows silently. **Not implemented.** A reopened project restores no row and every reference starts unchecked; putting one in the Workbench is an explicit per-reference action (PRJ-004). |
 | WSP-011 | Session organization | P1 | One-level groups and Ungrouped support create/rename/disclose/reorder/move/dissolve. ID-based pointer/keyboard drag and menus share atomic checks; bounded undo preserves imports and refuses unsafe inverses. No persistence or source deletion. |
 | WSP-012 | Workbench navigation | P0 | One Home target and real workbench/conversion surfaces preserve mounted authority, viewed evidence, drafts and live work across navigation, Settings and responsive folding. |
 
@@ -71,7 +71,7 @@ table remains the target, including the unsupported portions called out below:
 | VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. Where a scan cannot be committed right now, both surfaces say so once and neither stops being readable. |
 | VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access, including while selection is unavailable: `Enter` and `Space` are the activations that stop, and arrow, page, `Home` and `End` navigation does not. |
 | VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. **Unimplemented, and the evidence gate is answered `XIC_SOURCE_REFUSED`: no query the measured ProteoWizard build offers can serve as a general XIC source.** M5.5 and M5.6 are `NOT_APPLICABLE`. Re-entry requires an exact executable identity and capability grammar covered by fresh evidence, a resolved numeric-fidelity answer, and re-measurement of everything the record establishes — aggregation and the singular-parabola abort are invisible in help text. **M6 measured the identity, which is what the trigger is about: M6.10 re-observed `msaccess` on 2026-09-10 and it is byte-identical to the one M5.4 refused, so the trigger did not fire and the M6 route closes `REFUSED_WITH_EVIDENCE`, retaining M5.4's refusal.** The gate above stays live for a different installed identity; **owner: whichever slice measures one**. **That gate governs re-entry through this ProteoWizard build, and nothing else.** Whether a *different* provider or runtime could serve an XIC is a separate question, owned by the Post-M6 XIC Provider / Runtime Interlude and routed by [ADR 0046](../architecture/adr/0046-post-m6-xic-provider-runtime-route-lock.md). That route admits nothing, and this row's answer is unchanged by it. |
-| VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. **Deferred: M8 for layer identity, M9 for comparison semantics.** |
+| VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. **Not implemented. Its foundation, persistent layer identity and provenance, is implemented locally by M8.4 (PRJ-005); comparison, normalization, overlay, style and figure identity remain M9.** |
 
 Implementation notes for the three viewer features Viewer Closure closed follow.
 The acceptance table remains the target, including the parts called out below.
@@ -431,7 +431,7 @@ route that owns closing these.
 | RUN-004 | Retry failed | P0 | Retries only selected/failed items without rebuilding the workspace. |
 | RUN-005 | Actionable error | P0 | User sees a plain-language cause/action before raw stderr. Raw stderr is never shown; a terminal queue's diagnosable attempts can instead be saved to one local redacted JSON file the user chooses. |
 | RUN-006 | Transactional output | P0 | Final filename appears only after successful process exit and basic checks. |
-| RUN-007 | Persistent run history | P2 | Runs and artifacts survive restart with interrupted states represented honestly. |
+| RUN-007 | Persistent run history | P2 | Runs and artifacts survive restart with interrupted states represented honestly. **Implemented for project operations only (PRJ-003, PRJ-006):** their runs, including failed and cancelled ones, persist in a saved project. Conversion queue runs are still session-only. |
 | RUN-009 | Export failure diagnostics | P0 | Explicit, per terminal queue: saves one local redacted JSON file describing the latest attempt of every diagnostic-worthy item — an ordinary failure, an unconfirmed stop, or a terminal item that left staging behind. Structured facts plus bounded, redacted backend excerpts; an excerpt that still looks like it names a path is withheld. No upload, no telemetry, no history, no overwrite. Backend text may still contain acquisition metadata and the interface says so. |
 | RUN-008 | Adopt converted outputs | P0 | Explicit, per terminal queue: adds every finalized mzML output at once, in queue order. Admits one only when the final name still resolves to the exact finalized object and that object still holds the validated byte length and digest. Partial success; duplicates and refusals isolated; no auto-import, no auto-preview, no persistence. |
 
@@ -448,12 +448,35 @@ route that owns closing these.
 | FIG-007 | Saved FigureSpec | P1 | Reopening a spec regenerates the same semantic figure from referenced artifacts. |
 | FIG-008 | Figure composer | P2 | Multi-panel layout is constrained, aligned and provenance-aware rather than a generic slide editor. |
 
+## Projects and recorded history
+
+Implemented locally by M8 and not yet published; the design and evidence are in
+the [M8 record](M8_1_FIRST_CLOSED_LOOP.md). None of these needs ProteoWizard
+except PRJ-006, which copies a preview that already ran.
+
+| ID | Feature | Priority | Acceptance summary |
+|---|---|---:|---|
+| PRJ-001 | Project document | P2 | **Implemented (M8.1; schema 3 since M8.5).** New, Open, Save, Save As and Close over one private local `.mscanvas` document, with an unsaved-changes question. Explicit Save is the only write; a destination that is not this session's own document is refused, never replaced. Project, reference, run, artifact and layer identifiers are durable UUIDs; no path, `FileIdentity` or `DatasetId` is one. An unsupported schema, a malformed, duplicate, dangling or oversized document is refused whole and the open project is untouched. Opening reads, checks and admits nothing. |
+| PRJ-002 | Referenced files and linked-file check | P2 | **Implemented (M8.1).** A reference records a locator and each member's length and SHA-256 when registered. `Check linked files` reports matching, changed, missing, unreadable, unsafe, unstable or incomplete; that answer is session-only and every reopened reference starts unchecked. `Locate…` relinks only on confirmation and never rewrites the recorded baseline. |
+| PRJ-003 | Capture file facts | P2 | **Implemented (M8.1).** One cancellable operation records a run and, when it completes, a file-facts record of each selected member's length and SHA-256. A failed or cancelled capture records its run and no record. Not conversion, analysis or QC. |
+| PRJ-004 | Add a project reference to the Workbench | P2 | **Implemented (M8.3, same-object proof M8.3.C1).** Offered only after a check matched. The bytes are re-verified, and the object they were read from and the object the Workbench admitted were the same filesystem object for that operation; that is not a claim the bytes stay unchanged for the rest of the session. The row association is session-only and never written. Not workspace restoration (WSP-010). |
+| PRJ-005 | Layer identity and provenance | P2 | **Implemented (M8.4).** A durable `LayerId` sourced from one reference that is in the Workbench, one per reference; persisted, never a path, row, series or style. Its Workbench attachment and its source's file state are shown as current facts. No comparison, overlay, style or figure identity (VIEW-008, M9). |
+| PRJ-006 | QC summary snapshot and report | P2 | **Implemented (M8.5).** Copies the run summary the preview on screen already established -- spectrum and chromatogram counts, MS-level buckets in reported order, five retention times with their unit state -- into a run that consumed the layer and one snapshot record, with the producing `msaccess` identity from that preview. Starts no process and reads no file; refused rather than guessed where no identified preview is retained. A descriptive report with no grade, threshold or pass/fail. Not the ANA-002 recipe. |
+
+**History is append-only.** A run pins what it consumed, a layer pins its
+reference, and a record pins what it observed. Removing a reference or layer
+that recorded history needs is refused (`inputUsedByRun`, `layerUsedByRun`,
+`layerDependsOnInput`), each in its own words, and nothing is cascaded. There is
+no operation that prunes history yet; that is a later product capability, not
+an M8 gate. Removing a project record never touches a file on disk, and
+Workbench removal is independent of the project.
+
 ## Analysis and automation
 
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
-| ANA-001 | Artifact/run lineage | P1/P2 | Every derived result identifies inputs, module, parameters and producing run. |
-| ANA-002 | QC recipe | P2 | First reviewed recipe runs in an isolated worker with typed parameters/results. |
+| ANA-001 | Artifact/run lineage | P1/P2 | Every derived result identifies inputs, module, parameters and producing run. **Implemented for M8 project records (M8.2):** each file-facts and QC record names its producing run, the run its inputs or layer, and Details walks both directions, derived rather than stored twice. No analysis result exists yet to apply it to. |
+| ANA-002 | QC recipe | P2 | First reviewed recipe runs in an isolated worker with typed parameters/results. **Not implemented.** The M8.5 snapshot (PRJ-006) is a descriptive copy, not this recipe. |
 | ANA-003 | Analysis module contract | P2 | Packages are wrapped behind schemas; package-specific APIs do not leak into normal UI. |
 | AUT-001 | Headless CLI | Later | Reuses the same domain plans and returns structured output/exit codes. |
 | AUT-002 | Repo/user skill | Later | Guides inspect → plan → approve → run → validate without bypassing contracts. |

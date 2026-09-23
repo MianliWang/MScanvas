@@ -2,8 +2,9 @@
 
 Scope: **this loop only.** Not M8 in full, not M9 or M10, and explicitly not a
 general framework built ahead of its first consumer. QC summaries, report
-surfaces and figure layer identity were later M8 slices and were out of scope
-here; the sections from M8.2 on record what each later slice added.
+surfaces and layer identity were later M8 slices and were out of scope here;
+the sections from M8.2 on record what each later slice added, and the M8
+closure and M9 handoff close the document.
 
 ## The loop
 
@@ -841,11 +842,15 @@ match.
   reference, not a Workbench row, not a file, and no run or artifact.
 - Removing a reference that has a layer is refused as `layerDependsOnInput`,
   before anything is mutated, and the reader is told to remove the layer
-  first. It is not cascaded: history is something this application wrote, and
-  the removal cascades it because a dangling run is not a record; a layer is
-  an identity the user created, and deleting it silently to satisfy a removal
-  would remove something they did not ask to remove. There is no dependency
-  transaction, and no dangling `LayerId` can be produced.
+  first. It is not cascaded: a layer is an identity the user created, and
+  deleting it silently to satisfy a removal would remove something they did
+  not ask to remove. There is no dependency transaction, and no dangling
+  `LayerId` can be produced. (As M8.4 shipped, a removal *did* cascade the
+  file-facts runs and records over the reference, on the reasoning that
+  history is something this application wrote. The M8 closure withdrew that:
+  history is append-only, and a reference any recorded history depends on is
+  refused as `inputUsedByRun` instead. See "History is append-only" under the
+  closure below.)
 - Relinking the same reference to a verified new location keeps the same
   `LayerId` and source. The remembered row is dropped, as M8.3 already drops
   it, so the layer projects detached until a new admission -- and that
@@ -1277,15 +1282,24 @@ and never a fresh `availability()`: both answer which build is configured
 so what is persisted is:
 
 - `tool: "msaccess"`;
-- `executableSha256`: the SHA-256 of that `msaccess` executable as discovery
-  hashed it around its help probe, in the resolution the preview's batch ran
-  under. It is *not* a hash taken at the moment of launch, and nothing here
-  claims it is;
-- `release`, `buildDate`, `sourceRevision`: the installation's reported build
-  identity from that resolution (the release is the one discovery required both
-  tools to agree on; the revision is `msconvert`'s probe's), each passed through
-  the same path-redacting, bounded label treatment the diagnostics export
-  applies, and each explicit `null` where the build did not report it.
+- `executableSha256`: **the `msaccess` executable identity that was bound to
+  the preview operation and successfully re-verified before its process was
+  launched.** Discovery hashed the executable around its help probe; the
+  run-summary command was built with that digest as its required executable
+  identity; and the process boundary (`require_executable_identity`) hashed
+  the file again immediately before spawn and refuses a mismatch, so a summary
+  that exists came from a launch that passed that check. It is not an atomic
+  measurement of the Windows process image after creation, and nothing here
+  claims it is. (The M8.5 text here said only "not a hash taken at the moment
+  of launch", which was true and undersold the re-verification; the M8 closure
+  states the strength exactly.);
+- `release`, `buildDate`, `sourceRevision`: labels the installation reported
+  about itself in that resolution (the release is the one discovery required
+  both tools to agree on; the revision is `msconvert`'s probe's), each passed
+  through the same path-redacting, bounded label treatment the diagnostics
+  export applies, and each explicit `null` where the build did not report it.
+  They describe the build; they are not executable identity and do not
+  substitute for the digest.
 
 No installation path is persisted. A resolution whose `msaccess` help did not
 probe carries no digest; its preview reports `qcProducerIdentified: false`, and a
@@ -1440,7 +1454,8 @@ closed while it read, or where the history is at its count bound or would no
 longer fit a Save -- each of which records nothing, not even a cancelled or
 failed run. Other edits that grow the document -- registering a reference,
 creating a layer, relinking to a longer path -- are not measured: the first two
-can be removed again, and a relink changes one bounded locator.
+can be removed again while no recorded history depends on them, and a relink
+changes one bounded locator.
 
 Each explicit press is its own observation: two captures with identical values
 are two runs and two artifacts, and nothing earlier is overwritten.
@@ -1457,8 +1472,9 @@ The report is history. Removing the Workbench row, clearing the workspace,
 deleting the source, a check that then finds it missing, a relink and a reopen
 each leave it exactly as it was, and a later backend change does not rewrite
 its producer. A layer a recorded run consumed is refused removal as
-`layerUsedByRun`, and since a reference with a layer is already refused
-removal, a reference with a QC report cannot be removed either. Nothing is
+`layerUsedByRun`, and its reference cannot be removed either (as M8.5 shipped,
+by the `layerDependsOnInput` refusal; since the closure, as `inputUsedByRun`,
+because the history is the reason rather than the layer). Nothing is
 cascaded: there is no reviewed transaction for removing dependent history, and
 this slice does not invent one. That is a stated limitation -- there is no
 operation to remove a QC report yet, so its layer and reference stay pinned
@@ -1807,13 +1823,288 @@ effect was not reached: the M8.5 jsdom suite flushes it before pressing, as the
 M8.4 suite does. Nothing in an older DOM was restored and no assertion was
 weakened.
 
+## M8 closure
+
+One bounded pass over M8.1–M8.5 as a whole, on the child branch
+`feat/m8-closure` from `3e6b656`. It adds no capability. It reconciles the
+history, audits the stack against seven closure criteria, repairs what those
+found, settles the two test debts M8 carried, and hands over to M9.
+
+### The history, read from Git
+
+Twenty-nine ordinary commits and no merge, from the M7.6 candidate `aa3fc83`
+to `3e6b656`:
+
+| Slice | Commits | Last commit |
+| --- | --- | --- |
+| M8.1 | 6: `153339f` `498ba2c` `57f4214` `18201ba` `ed97ee8` `f751b9e` | `f751b9e` |
+| M8.2 | 3: `f5b9aaa` `e08cd42` `399a3ef` | `399a3ef` |
+| M8.3 and M8.3.C1 | 7: `65a8b82` `a26bb22` `789c970` `9f32697` `a8b7d52`, then `846dbe4` `47e20b7` | `47e20b7` |
+| M8.4 | 4: `70af668` `ee8c63a` `7dca5f5` `d60d301` | `d60d301` |
+| M8.5 | 9: `e482997` `c239d53` `17a80c7` `0f0b3ff` `84dc952` `2e589ea` `1d290bd` `b5cac7d` `3e6b656` | `3e6b656` |
+
+The M8.5 report said ten commits and listed nine abbreviated identifiers. Git
+has nine; the count was wrong and the list was right. M8.5's final **code**
+candidate is `1d290bd` (tree `341a177d69ddc40d277aeb9d706d4a4793a32f98`), and
+the full gate table above ran on that tree. Its two successors, `b5cac7d` and
+`3e6b656` (tree `4dfd4b0d15d43527907577f9180c36b1d191d640`), change this
+document and nothing else; `check_repo.py` passed after each according to two
+retained logs, which do not name the tree they ran on, and no other gate ran on
+either Git object. The preserved first failures above -- M8.4's first frontend
+run, M8.5's App-level timeout on `2e589ea` -- stay as they were recorded.
+
+### What the audit found
+
+**A. Persistent identity.** `ProjectId`, `InputId`, `RunId`, `ArtifactId` and
+`LayerId` are UUIDs minted once and kept exactly on reopen and Save As.
+`DatasetId`, `FileIdentity`, a check result, the remembered Workbench row, a
+preview token and an operation identifier have no field in any document type,
+so none can be restored; a reopened project has every reference unchecked and
+no row. Reopening runs no provider and admits nothing. A document of any other
+schema is refused whole as `unsupportedVersion` in the neutral sentence, with no
+migration for the unpublished schemas 1 and 2, and every object refuses unknown
+fields. Found sound; the mixed-project test below now shows it on one document
+that holds every kind of record.
+
+**B. One lineage authority.** Each edge is stated by exactly one record: a run
+names what it consumed (references or one layer) and what it produced, a layer
+names its reference, and a file-facts record names what it observed; the
+reverse edges are derived once in `lineage.rs` and sent on the projection.
+`validate` refuses a duplicate identifier, a dangling reference of any kind, an
+artifact two runs claim, a QC snapshot no run claims, and a QC run that is not
+a completed run consuming exactly one layer and producing exactly its one
+snapshot. So the QC payload not storing its `RunId` is accepted: the producer
+is guaranteed unique and present, and every consumer -- Rust's projection and
+the page's Details -- resolves it through `outputArtifactIds`. Nothing infers
+lineage from a label, path or order. Found sound.
+
+**C. Historical and current facts.** Historical: the file-facts record, the
+QC snapshot and its producer, a layer's source, and every run. Current and
+session-only: a reference's check state, whether a layer's source is in the
+Workbench, the `DatasetId`, the configured backend and the preview on screen.
+No current state rewrites a record -- a failed revalidation writes the
+session's check slot and never a baseline -- and the surfaces label current
+state as current. The M8.3.C1 claim has exactly this strength: **the
+Project-verified object and the Workbench-admitted object were the same
+filesystem object for that reattachment operation.** It does not say the bytes
+stay unchanged for the rest of the session, and the section above already
+states the equal-length-rewrite window it leaves. Found sound.
+
+**D. QC producer provenance.** Traced end to end. `bind_help_of(Msaccess)`
+takes the capabilities and the `InstallationIdentity` from one discovery, so
+the digest the run-summary command is bound to (`with_executable_identity`)
+and the digest the producer records are the same value; the process boundary's
+`require_executable_identity` hashes the file again immediately before spawn
+and refuses a mismatch; and the producer is read from the run-summary
+attempt, never from the current backend. The M8.5 wording undersold this and
+said nothing about the release labels' standing. Corrected above and on
+`PreviewProducer`: the digest is **the `msaccess` executable identity that was
+bound to the preview operation and successfully re-verified before process
+launch**, not an atomic measurement of the process image; `release`,
+`buildDate` and `sourceRevision` are installation-reported labels, not
+executable identity. The pre-spawn check is unchanged, and no process-image
+inspection was added.
+
+**E. Numeric and unknown-state fidelity.** A retention time is stored as
+Rust's shortest round-trip decimal for the `f64`, and `number()` accepts only
+that exact text: a closed canonical encoding, not prose. A new record-level test
+reads nine edge values (among them `0.1 + 0.2`, the smallest subnormal,
+`f64::MAX` and `-0.0`) back to the same bits through the document's JSON, and
+refuses five other spellings of the one binary64 `0.3` (`0.30`, `3e-1`, `+0.3`,
+`.3` and its exact 54-digit expansion). The existing tests already pin bucket
+order, `Other`, a chromatogram count `notReported` apart from a reported zero,
+absent retention times apart from reported ones, `notEmitted` never becoming a
+unit, and a saved document holding no metadata, run-summary column, native
+identifier, path, handle or backend text. No serde or dependency feature was
+changed.
+
+**F. History retention -- one real defect.** `remove_input` silently
+cascaded: removing a reference with no layer also deleted every file-facts run
+that consumed it and every record that observed it, from one press of
+**Remove**, with no text saying so -- while a QC run's history pinned its layer
+and reference. Two rules for one kind of object, and the silent one deleted
+history. Repaired; the rule is set out under "History is append-only" below.
+
+**G. Catalog and status.** No M8 feature had a catalog identity. The feature
+catalog now has **Projects and recorded history**, PRJ-001 to PRJ-006, one per
+user-visible M8 feature, and states what M8 does for ANA-001 (implemented for
+project records) and RUN-007 (project operations only), that ANA-002 and WSP-010
+are not implemented, and that VIEW-008's foundation is M8.4's while comparison
+is M9's. The roadmap, the proposal and the M8.0 gap assessment say the same;
+the last still called QC reports unbuilt and in-figure layer identity later M8
+scope.
+
+### History is append-only
+
+The first-version rule, stated as a rule rather than left as a consequence:
+
+> **M8 project history is append-only once referenced by a retained run or
+> record. An object needed to preserve lineage cannot be removed
+> independently. MSCanvas does not yet provide history pruning or cascade
+> deletion.**
+
+- A run pins what it consumed, whatever its outcome -- so a cancelled or
+  failed capture now pins its reference too. A record pins what it observed.
+  A layer pins its reference, and a run that consumed the layer pins both.
+- Removing a pinned reference is refused as `inputUsedByRun` -- whether the
+  history names it directly or through its layer, so a reader is never sent to
+  remove a layer that cannot go; removing a pinned layer as `layerUsedByRun`;
+  a reference whose only dependent is a layer the user can remove, as
+  `layerDependsOnInput`. Each has its own sentence in both locales, and the
+  document is unchanged and not dirtied by any of them.
+- Nothing is cascaded, and no file is ever deleted: a project record never
+  owned one. Removing a Workbench row or clearing the Workbench stays
+  independent of the project in both directions.
+- The capture note in **Recorded work** now ends "Recorded work is kept:
+  MSCanvas cannot yet remove it, or the references and layers it used", so a
+  capture does not read as reversible. No confirmation step was added: the
+  refusal is safe, and the note is where a reader decides to capture.
+- Discarding an unsaved project remains possible, as it always was.
+
+History pruning is a later product capability, not an M8 gate. The code that
+cascaded is deleted rather than kept dormant.
+
+### The two test debts M8 carried
+
+**M8.1 browser scenario.** Run first on the unchanged `3e6b656`
+(`test-results/m8-closure/logs/m81-before-repair-3e6b656.log`): 6 passing, 2
+failing. Both were the scenario, not the product. Its refusal fixtures rejected
+with `{ code, message }`, and the boundary rejects with `PreviewErrorDto`,
+`{ kind, summary, detail, retryable }`, which the page has read since M8.3 --
+so the save refusal arrived unnamed. And its capture-note assertion quoted a
+sentence M8.5 had rewritten. The fixtures now use the boundary's shape, the
+note assertion checks the current sentences (including the new history one),
+and the failed-capture case now also asserts the refusal arrives named, which
+is the check whose absence let the old shape pass unnoticed there. No
+production code was changed for it. After: 8 passing.
+
+**M8.2 first-arrival reset.** A product defect in effect ordering, not a test
+that failed to wait. `useProject` cleared the inspected object in a passive
+effect keyed on the open project's identity, and that effect also fired when
+the first project *arrived* -- after the commit that already showed its rows. A
+press in that commit was applied, then cleared. A new test presses from a
+layout effect in the first commit that shows the project, which is exactly that
+window and no timing-dependent approximation of it; on the unchanged hook it
+failed (`null` where `input` was expected,
+`logs/m82-first-arrival-before-fix.log`). The reset now happens in the render
+that first sees a new identity, keyed to the project the inspection was made in,
+so there is no committed frame in which a press can be lost; replacing, closing
+and reopening still forget the inspection, and a removal still reports it gone.
+The M8.4 and M8.5 suites no longer flush anything before pressing.
+
+### The mixed project
+
+`a_mixed_project_reopens_with_its_whole_lineage_and_saves_again_unchanged`, in
+`qc_snapshot/tests.rs`, builds one document through production operations
+only: two references registered, file facts captured over both, one handed to
+the Workbench through the real bridge and made a layer, and a QC snapshot
+captured from the preview the Workbench retained through the controlled
+provider. Save As, Close, Open. It then asserts that no provider operation or
+backend look happened on reopen; every identifier and every run, record and
+layer came back as a value; each edge -- reference to run to record, layer to
+reference, report to run to layer -- resolves from the record that states it;
+every reference is unchecked and remembers no row, and the saved bytes hold
+no handle; the report keeps its producer; a second Save differs from the first
+only in `revision`; and the two references and the layer each refuse removal.
+It is M8 composition evidence, and it launches nothing real.
+
+### Status
+
+- `M8 LOCAL IMPLEMENTATION COMPLETE — SOURCE UNPUBLISHED`
+- `M8.1–M8.5 COMPLETE LOCALLY`
+- `M7.6 RELEASE QUALIFICATION DEFERRED / INCOMPLETE`
+- `PROVIDER HOLD UNCHANGED`
+- `PUBLIC BETA NOT RELEASED`
+- `M9 — FIRST ANALYSIS RECIPES — NEXT / NOT STARTED`
+
+Nothing here is pushed, merged or published. Every M8 commit descends from the
+local M7.6 candidate, whose installed-candidate qualification is deferred and
+incomplete, so publishing M8 is a separate integration decision; this closure
+does not rebase, cherry-pick, squash or merge its way around that ancestry.
+
+## M9 handoff
+
+What M9 can build on, and the edges it must not cross. Nothing in the
+repository chooses M9's first recipe, so none is chosen here.
+
+**The project document.** Schema 3, one bounded JSON document (4 MiB), parsed
+whole and refused whole. Every object refuses unknown fields and every closed
+vocabulary is an enumeration, so a new operation, run-input kind or payload
+kind is a new schema version, not an optional field; whether schema 3 then
+needs a migration depends on whether it was ever published. A run has no
+parameter field today: an operation with parameters adds a typed shape of its
+own, never a bag.
+
+**Identities.** Persistent: `ProjectId`, `InputId`, `RunId`, `ArtifactId`,
+`LayerId`. Session-only, never in a document: `DatasetId` and the remembered
+Workbench row, `FileIdentity` and leases, check results, preview and QC tokens,
+operation identifiers, backend authority receipts and every installation path.
+
+**Runs and records.** A run is terminal (`completed`, `failed`, `cancelled`)
+and names its operation, what it consumed (`input` or `layer`), what it
+produced, the application version and two timestamps. A record is one typed
+payload inside the document -- `fileFactsV1` or `acquisitionQcSnapshotV1` --
+with no backing file. Every record has at most one producing run, and a QC
+snapshot exactly one.
+
+**Lineage.** One record states each edge; reverse edges are derived in
+`lineage.rs`, never stored. The graph has no representable cycle because no
+edge leaves a record, a layer or a reference towards a run. A run that consumes
+a record, or a record that names a run, is the edge that would change that, and
+`lineage.rs` says so where it matters.
+
+**Layers.** `{ id, source: { kind: "input", inputId } }`, one per reference,
+created only while its source is live in the Workbench, and nothing else: no
+label, style, visibility, order, normalization or figure identity. An artifact
+source was deliberately not added ahead of a consumer.
+
+**The QC snapshot.** Counts as integers; MS-level buckets in the reported
+order, `Other` kept; a chromatogram count and the retention-time summary as
+explicit reported / `notReported` states; retention times as canonical decimal
+text with the unit state `notEmitted`; the producer as above. Copied only from
+the preview on screen, never by starting one. Descriptive: no threshold, grade
+or pass/fail.
+
+**History.** Append-only, as above. A recipe's runs will pin what they consume
+the same way, and every capture measures the bytes a Save would write before
+keeping what it recorded, because what it records cannot later be removed.
+
+**What a recipe can consume.** Today: a layer, and through it its reference.
+A recipe that reads data must obtain the source through a fresh runtime
+admission -- the M8.3 bridge into the Workbench's own rules -- at the moment it
+runs; a document never supplies a path, a row or a token that authorizes a
+read. A QC snapshot or file-facts record can be a recipe input only once a
+run-input kind for records exists, which is the schema and lineage decision
+named above.
+
+**Boundaries.** React spawns nothing and names no path; Rust owns processes,
+workers, the queue and the document; commands are typed argv; no plugin ABI;
+analysis runs out of process (`ANALYSIS_WORKERS.md`); no backend fallback,
+implicit centroiding or overwrite; producer provenance comes from the attempt
+that produced the result, never the currently configured backend; commits
+re-check the session generation and refuse stale work; nothing from a document
+reaches a log or error; the provider HOLD stands.
+
+**Decisions only the owner can make:**
+
+1. The first recipe, as a user job: for example the ANA-002 QC recipe, or
+   VIEW-008 comparison semantics. Nothing fixes it.
+2. The worker runtime and its packaging -- a bundled Python environment, a
+   user-managed one, or OpenMS TOPP tools -- which the analysis packaging gate
+   and the dependency policy both require the owner to approve.
+3. Where results too large for a field in a bounded, append-only document
+   live, for any recipe that produces tables or feature maps.
+4. If comparison comes first: the normalization the product admits, since two
+   runs' intensities are not comparable without one and none is admitted.
+
 ## Out of scope, explicitly
 
 Provider-dependent conversion, preview, figures, exports and clipboard remain on
 HOLD and are untouched. Layer identity and provenance in the Project model is
 M8.4's, and the QC summary snapshot and its report surface are M8.5's, above;
-layer identity *inside a figure* is a later M8 slice. The isolated-worker QC
-recipe and every other analysis capability are M9's and are not started here.
-Release-level GUI and install acceptance stays paused and unwaived: this slice
-ends as a locally committed, locally verified child candidate whose publication
-still depends on the unqualified M7.6 ancestor beneath it.
+layer identity *inside a figure*, overlay and comparison are M9's. The
+isolated-worker QC recipe and every other analysis capability are M9's and are
+not started. History pruning and workspace restoration are later capabilities.
+Release-level GUI and install acceptance stays paused and unwaived: M8 ends as
+locally committed, locally verified work whose publication still depends on
+the unqualified M7.6 ancestor beneath it.

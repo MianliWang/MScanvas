@@ -173,8 +173,8 @@ build.
 
 | Baseline region | Status |
 | --- | --- |
-| Persistent layer identity and provenance in figures | Identity and provenance built by M8.4 in the Project model, as a `LayerRecord` sourced from a Workbench-admitted reference, with a Layers section and Details branch; nothing enters `FigureSpec`, and in-figure layer identity, overlay and comparison remain later scope |
-| Reusable QC summaries and report surfaces | Not built; later M8 scope |
+| Persistent layer identity and provenance in figures | Identity and provenance built by M8.4 in the Project model, as a `LayerRecord` sourced from a Workbench-admitted reference, with a Layers section and Details branch; nothing enters `FigureSpec`, and in-figure layer identity, overlay and comparison remain M9 scope |
+| Reusable QC summaries and report surfaces | Built by M8.5 as a descriptive QC summary snapshot copied from a retained preview, with a report in the Project surface; not the M9 QC recipe |
 
 ## C. To be observed -- no actual comparison available
 
