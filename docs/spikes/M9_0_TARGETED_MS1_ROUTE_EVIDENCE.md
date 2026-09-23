@@ -235,7 +235,7 @@ extractor's own lower bound and ignores zero-intensity edge peaks (it now flags
 exactly the 45 double counts and 49 omissions the fixtures carry); the Save As
 prototype publishes by rename rather than replace; and the record and contract
 wording listed below was corrected. **Final reruns on the final adapter**, into
-separate roots: round one 112 PASS / 18 FAIL, where the 16 precision rows are the
+separate roots: round one 112 PASS / 18 FAIL, where the 13 precision rows are the
 frozen 1e-9 tolerance against binary32 intensities and the 5 status rows are the
 guards' intended refusals (four sources with equal MS1 times, the prefixed read)
 — while `ctl_timeout` now reaches its timeout at 3.04 s and passes;

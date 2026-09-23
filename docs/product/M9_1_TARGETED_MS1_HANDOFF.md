@@ -46,7 +46,9 @@ bundled CPython 3.13 embeddable runtime, **conditional on**:
    refused (the engine otherwise reports a clean peak as absent); an independent
    namespace-aware spectrum count checked against the reader (it otherwise reads
    a legal prefixed file as empty); `ENGINE_NO_CANDIDATES` as a typed failure
-   (the engine raises when no target has a candidate). Two more came from the
+   (the engine raises when no target has a candidate). The count is a second full
+   parse of the source on every run: on the 156 MB fixture the run no longer reached
+   the engine within 3 s. Two more came from the
    review: a target whose window meets the extractor's measured first- or
    last-peak defect is typed `FAILED`, and FAIMS or ion mobility is refused.
    **Not closed:** a peak whose apex sits near the window's edge can be reported
