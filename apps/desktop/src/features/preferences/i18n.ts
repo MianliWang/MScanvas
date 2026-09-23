@@ -33,7 +33,7 @@ export interface MessageParameters {
   readonly provenanceInspectQcRunAt: { readonly when: string };
   readonly provenanceInspectQcSnapshotOf: { readonly when: string };
   readonly projectTargetedNamed: { readonly name: string };
-  readonly projectArtifactTargetedCounts: { readonly count: number; readonly total: number };
+  readonly projectArtifactTargetedOutcome: { readonly count: number; readonly outcome: string };
   readonly provenanceInspectTargetedRunAt: { readonly when: string };
   readonly provenanceInspectTargetedResultOf: { readonly when: string };
   readonly targetedLineOverfull: { readonly line: string };

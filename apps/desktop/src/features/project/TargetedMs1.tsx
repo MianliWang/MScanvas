@@ -70,6 +70,7 @@ const ROW_FAILURE_KEYS = {
   ENGINE_DISCARDED_NO_VALID_FIT: "targetedRowFailureNoValidFit",
   TARGET_ABSENT_FROM_ENGINE_LIBRARY: "targetedRowFailureAbsentFromLibrary",
   TARGET_UNACCOUNTED: "targetedRowFailureUnaccounted",
+  WINDOW_WITHOUT_MS1_PEAKS: "targetedRowFailureWindowWithoutMs1",
 } as const satisfies Record<RowFailure, string>;
 
 export const FAILURE_KEYS = {
@@ -254,7 +255,9 @@ export function TargetedMs1Setup({
     heading.current?.focus({ preventScroll: true });
   }, []);
 
-  // Any edit makes the plan on screen a plan for other text, so it goes.
+  // Any edit makes the plan on screen a plan for other text, so it goes. The
+  // inputs are held while anything is out, so a review cannot answer for text
+  // that changed while it was being asked.
   const edited = (set: (value: string) => void) => (value: string) => {
     set(value);
     setReview(null);
@@ -329,7 +332,7 @@ export function TargetedMs1Setup({
             type="text"
             inputMode="decimal"
             value={ppm}
-            disabled={analysing}
+            disabled={working}
             data-targeted-ppm=""
             onChange={(event) => edited(setPpm)(event.target.value)}
           />
@@ -340,7 +343,7 @@ export function TargetedMs1Setup({
             type="text"
             inputMode="decimal"
             value={width}
-            disabled={analysing}
+            disabled={working}
             data-targeted-width=""
             onChange={(event) => edited(setWidth)(event.target.value)}
           />
@@ -351,7 +354,7 @@ export function TargetedMs1Setup({
         <textarea
           rows={6}
           value={text}
-          disabled={analysing}
+          disabled={working}
           spellCheck={false}
           aria-describedby={`${ids}-format`}
           placeholder={t("targetedTargetsPlaceholder")}
@@ -586,8 +589,15 @@ export function TargetedMs1Report({
   }, [api, artifact.id, availability]);
 
   const evidenceKey = chosen === null ? null : `${artifact.id}/${chosen}`;
+  // A row that never reached extraction has no evidence to ask for; its
+  // absence of points is said from the row itself.
+  const chosenRow =
+    rows !== null && rows.id === artifact.id && rows.page.status === "ready"
+      ? rows.page.value.rows.find((row) => row.targetId === chosen)
+      : undefined;
+  const chosenExtracted = chosenRow !== undefined && chosenRow.ion !== null;
   useEffect(() => {
-    if (chosen === null || evidenceKey === null) return;
+    if (chosen === null || evidenceKey === null || !chosenExtracted) return;
     let live = true;
     api
       .readTargetedMs1Evidence(artifact.id, chosen)
@@ -600,7 +610,7 @@ export function TargetedMs1Report({
     return () => {
       live = false;
     };
-  }, [api, artifact.id, chosen, evidenceKey]);
+  }, [api, artifact.id, chosen, chosenExtracted, evidenceKey]);
 
   const page: Loaded<{ readonly total: number; readonly rows: readonly PayloadRow[] }> =
     rows !== null && rows.id === artifact.id ? rows.page : { status: "loading" };
@@ -746,7 +756,11 @@ export function TargetedMs1Report({
                   <span className="qc-report-when"> · {formulaOf(selectedRow.targetId)}</span>
                 )}
               </h4>
-              {shown.status === "loading" ? (
+              {selectedRow.ion === null ? (
+                <p className="project-note" data-targeted-no-points="">
+                  {t("targetedNoPoints")}
+                </p>
+              ) : shown.status === "loading" ? (
                 <p className="project-note">{t("targetedEvidenceLoading")}</p>
               ) : shown.status === "refused" ? (
                 <p className="project-problem" data-targeted-evidence-refused={shown.code}>

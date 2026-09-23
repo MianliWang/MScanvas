@@ -136,21 +136,34 @@ struct OwnerRecord {
 pub fn ensure_store(store: &Path, project: ProjectId) -> Result<(), StoreRefusal> {
     match fs::symlink_metadata(store) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            match fs::create_dir(store) {
-                Ok(()) => {
-                    let owner = OwnerRecord {
-                        schema: OWNER_SCHEMA.to_owned(),
-                        project_id: project,
-                    };
-                    let bytes = serde_json::to_vec(&owner).map_err(|_| StoreRefusal::Unwritable)?;
-                    write_new(&store.join(OWNER_FILE), &bytes).map_err(|_| StoreRefusal::Unwritable)
+            // Assembled under a fresh name beside it and renamed into place
+            // without replacing, so the store is there whole or not at all: a
+            // failed write, or a process that dies here, leaves nothing at the
+            // store's name to refuse every later run.
+            let (Some(parent), Some(name)) = (store.parent(), store.file_name()) else {
+                return Err(StoreRefusal::Unwritable);
+            };
+            let pending = parent.join(format!(
+                ".{}.{}.pending",
+                name.to_string_lossy(),
+                uuid::Uuid::new_v4()
+            ));
+            fs::create_dir(&pending).map_err(|_| StoreRefusal::Unwritable)?;
+            match write_owner(&pending, project)
+                .and_then(|()| rename_without_replacing(&pending, store))
+            {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    // This operation's own directory, created fresh above.
+                    let _ = fs::remove_dir_all(&pending);
+                    // Created by someone else meanwhile: judged like any other
+                    // existing store.
+                    if error.kind() == io::ErrorKind::AlreadyExists {
+                        owned_by(store, project)
+                    } else {
+                        Err(StoreRefusal::Unwritable)
+                    }
                 }
-                // Created by someone else between the look and the create:
-                // judged like any other existing store.
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                    owned_by(store, project)
-                }
-                Err(_) => Err(StoreRefusal::Unwritable),
             }
         }
         Err(_) => Err(StoreRefusal::NotAStore),
@@ -584,6 +597,9 @@ pub enum RowFailure {
     TargetAbsentFromEngineLibrary,
     /// The target appears nowhere in the engine's answer.
     TargetUnaccounted,
+    /// No MS1 spectrum with peaks lies in the target's retention-time window,
+    /// so nothing was measured there and no absence can be reported.
+    WindowWithoutMs1Peaks,
 }
 
 /// Where a feature's engine intensity came from.
@@ -705,8 +721,8 @@ impl PayloadRow {
     /// excludes.
     ///
     /// The rule that matters most is the one for `NOT_DETECTED`: no candidate,
-    /// no feature and no relation, over a window that was really extracted.
-    /// Anything short of that is not an absence.
+    /// no feature and no relation, over a window that was really extracted
+    /// from at least one spectrum. Anything short of that is not an absence.
     #[must_use]
     pub fn is_consistent(&self) -> bool {
         let finite = |values: &[f64]| values.iter().all(|value| value.is_finite());
@@ -733,6 +749,9 @@ impl PayloadRow {
                 && finite(&signal.max)
                 && signal.any_nonzero_point == signal.max.iter().any(|value| *value > 0.0)
         });
+        // Extracted over at least one spectrum. Every outcome other than
+        // `FAILED` is a statement about what was measured, so it needs this.
+        let measured = extracted && self.signal.as_ref().is_some_and(|signal| signal.points > 0);
         let feature_sound = self.feature.as_ref().is_none_or(|feature| {
             finite(&[
                 feature.apex_rt_s,
@@ -758,25 +777,25 @@ impl PayloadRow {
         let no_relation = relations.shared_with.is_empty() && relations.suppressed_by.is_none();
         let shaped = match self.outcome {
             RowOutcome::Detected => {
-                extracted && self.feature.is_some() && self.candidates.len() == 1 && no_relation
+                measured && self.feature.is_some() && self.candidates.len() == 1 && no_relation
             }
             RowOutcome::DetectedAmbiguous => {
-                extracted && self.feature.is_some() && self.candidates.len() >= 2 && no_relation
+                measured && self.feature.is_some() && self.candidates.len() >= 2 && no_relation
             }
             RowOutcome::Shared => {
-                extracted
+                measured
                     && self.feature.is_some()
                     && !relations.shared_with.is_empty()
                     && relations.suppressed_by.is_none()
             }
             RowOutcome::SuppressedByOverlap => {
-                extracted
+                measured
                     && self.feature.is_none()
                     && relations.suppressed_by.is_some()
                     && relations.shared_with.is_empty()
             }
             RowOutcome::NotDetected => {
-                extracted
+                measured
                     && self.feature.is_none()
                     && self.candidates.is_empty()
                     && no_relation
@@ -789,6 +808,7 @@ impl PayloadRow {
             (RowOutcome::Failed, Some(reason)) => {
                 (reason == RowFailure::ExtractionAtSpectrumEdge) == (self.edge_trace_count > 0)
                     && (reason == RowFailure::TargetAbsentFromEngineLibrary || extracted)
+                    && (reason == RowFailure::WindowWithoutMs1Peaks) == (extracted && !measured)
             }
             (RowOutcome::Failed, None) => false,
             (_, Some(_)) => false,
@@ -796,7 +816,10 @@ impl PayloadRow {
         };
         let recovery_fits = !self.recovered_from_empty_selection
             || (self.outcome == RowOutcome::NotDetected
-                || self.failure_reason == Some(RowFailure::ExtractionAtSpectrumEdge));
+                || matches!(
+                    self.failure_reason,
+                    Some(RowFailure::ExtractionAtSpectrumEdge | RowFailure::WindowWithoutMs1Peaks)
+                ));
         shaped && reason_fits && recovery_fits && feature_sound && candidates_sound
     }
 }

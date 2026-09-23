@@ -430,6 +430,14 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
       refusals.delete(operation);
       return Promise.reject({ kind: refusal, summary: refusal, detail: null, retryable: false });
     }
+    const gate = held.get(operation);
+    if (gate !== undefined) {
+      held.delete(operation);
+      return new Promise((resolve) => {
+        release.set(operation, () => resolve(value()));
+        gate();
+      });
+    }
     return Promise.resolve(value());
   }
 

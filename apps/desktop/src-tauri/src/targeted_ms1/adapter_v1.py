@@ -527,6 +527,12 @@ def run(req: dict, out: Out) -> dict:
         row["signal"] = {"points": len(visited), "sum": sums, "max": maxima,
                          "anyNonzeroPoint": any(m > 0 for m in maxima)}
         row["candidates"] = candidates_of.get(ref, [])
+        if not visited:
+            # No MS1 spectrum with peaks lies in the window, so nothing was
+            # measured there: an absence would be a claim about nothing.
+            row["failureReason"] = "WINDOW_WITHOUT_MS1_PEAKS"
+            row["recoveredFromEmptySelection"] = recovered
+            continue
         if edge:
             row["failureReason"] = "EXTRACTION_AT_SPECTRUM_EDGE"
             row["edgeTraceCount"] = edge

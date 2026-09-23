@@ -151,9 +151,10 @@ export interface ProjectSession {
   readonly reviewTargetedMs1: (request: PlanRequest) => Promise<PlanResolution | null>;
   /**
    * Runs one reviewed plan as an accepted operation, so Cancel can name it.
-   * A run that started is recorded however it ends; its result, or the run
-   * itself where there is none, is inspected on arrival unless the reader
-   * chose something else meanwhile.
+   * A run that started is recorded however it ends, unless recording it would
+   * make the document too large to save (`oversized`, nothing recorded); its
+   * result, or the run itself where there is none, is inspected on arrival
+   * unless the reader chose something else meanwhile.
    */
   readonly runTargetedMs1: (planSha256: string) => Promise<void>;
   /** Where the targeted run in progress is, as Rust reports it, or `null`. */

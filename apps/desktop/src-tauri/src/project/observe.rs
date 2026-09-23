@@ -195,11 +195,6 @@ impl Cancellation {
         self.requested.is_cancelled()
     }
 
-    /// The token a supervised process is cancelled through.
-    pub(crate) fn token(&self) -> &CancellationToken {
-        &self.requested
-    }
-
     /// Lets a test observe and hold each chunk the reader hands to the digest.
     #[cfg(test)]
     pub fn with_gate(gate: Arc<dyn Fn() + Send + Sync>) -> Self {

@@ -27,9 +27,21 @@ import { useEffect, useRef, useState } from "react";
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { attachedRow, qcUnavailable, type ViewedPreview } from "./lineage";
-import type { ProjectArtifact, ProjectInput, ProjectRun } from "./projectApi";
+import type {
+  OutcomeSummary,
+  ProjectArtifact,
+  ProjectInput,
+  ProjectRun,
+  RowOutcome,
+} from "./projectApi";
 import { QcReport } from "./QcReport";
-import { phaseKey, TargetedMs1Report, TargetedMs1Setup } from "./TargetedMs1";
+import {
+  FAILURE_KEYS,
+  OUTCOME_KEYS,
+  phaseKey,
+  TargetedMs1Report,
+  TargetedMs1Setup,
+} from "./TargetedMs1";
 import type { ProjectBusy, ProjectSession } from "./useProject";
 
 /** The message key for one verification outcome. */
@@ -109,6 +121,7 @@ const REFUSALS = {
   qcNotInWorkbench: "projectRefusedQcNotInWorkbench",
   // The targeted MS1 recipe and the results stored beside a project.
   analysisRunning: "projectRefusedAnalysisRunning",
+  analysisQuarantined: "projectRefusedAnalysisQuarantined",
   recipeUnavailable: "projectRefusedRecipeUnavailable",
   recipeSourceUnsupported: "projectRefusedRecipeSourceUnsupported",
   sourceOnAnotherVolume: "projectRefusedSourceOnAnotherVolume",
@@ -185,6 +198,19 @@ export function inspectRecordName(artifact: ProjectArtifact) {
     : artifact.kind === "targetedMs1ResultV1"
       ? ("provenanceInspectTargetedResultOf" as const)
       : ("provenanceInspectArtifactOf" as const);
+}
+
+/** A result's non-zero outcome counts, in the report's order. */
+function outcomeCounts(summary: OutcomeSummary): [RowOutcome, number][] {
+  const counts: [RowOutcome, number][] = [
+    ["DETECTED", summary.detected],
+    ["DETECTED_AMBIGUOUS", summary.detectedAmbiguous],
+    ["SHARED", summary.shared],
+    ["SUPPRESSED_BY_OVERLAP", summary.suppressedByOverlap],
+    ["NOT_DETECTED", summary.notDetected],
+    ["FAILED", summary.failed],
+  ];
+  return counts.filter(([, count]) => count > 0);
 }
 
 function busyKey(busy: ProjectBusy) {
@@ -450,6 +476,12 @@ export function ProjectPanel({
   const phase = phaseKey(session.analysisPhase);
 
   const proposalInput = state.inputs.find((input) => input.id === proposed);
+  // How the last targeted run ended, while that run is in this project.
+  const lastTargeted =
+    session.lastTargetedRun === null
+      ? undefined
+      : state.runs.find((run) => run.id === session.lastTargetedRun?.runId);
+  const lastTargetedFailure = lastTargeted?.targetedMs1?.failure ?? null;
   const announcement =
     busyKey(busy) !== null
       ? t(busyKey(busy) as "projectBusySaving")
@@ -465,7 +497,13 @@ export function ProjectPanel({
                     ? "projectRelinkMatches"
                     : "projectRelinkDiffers",
                 )
-              : "";
+              : lastTargeted?.outcome === "completed"
+                ? t("targetedLastCompleted")
+                : lastTargeted?.outcome === "failed"
+                  ? lastTargetedFailure === null
+                    ? t("targetedLastFailed")
+                    : `${t("targetedLastFailed")} ${t(FAILURE_KEYS[lastTargetedFailure.code])}`
+                  : "";
 
   return (
     <div
@@ -579,24 +617,37 @@ export function ProjectPanel({
       {pending === null ? null : (
         <p className="project-unsaved" data-project-pending={pending.kind}>
           <span>{t("projectUnsavedQuestion")}</span>
+          {/* Answered only while nothing else is out: a save or a discard
+              started under a running operation would settle over it. */}
           <button
             type="button"
             className="secondary-button"
-            onClick={() =>
-              void (state.published ? session.saveProject() : session.saveProjectAs())
-            }
+            aria-disabled={working || undefined}
+            onClick={() => {
+              if (!working) void (state.published ? session.saveProject() : session.saveProjectAs());
+            }}
           >
             {t("projectUnsavedSaveFirst")}
           </button>
           <button
             type="button"
             className="secondary-button"
+            aria-disabled={working || undefined}
             data-project-discard=""
-            onClick={() => void session.discardAndContinue()}
+            onClick={() => {
+              if (!working) void session.discardAndContinue();
+            }}
           >
             {t("projectUnsavedDiscard")}
           </button>
-          <button type="button" className="link-button" onClick={session.keepEditing}>
+          <button
+            type="button"
+            className="link-button"
+            aria-disabled={working || undefined}
+            onClick={() => {
+              if (!working) session.keepEditing();
+            }}
+          >
             {t("projectUnsavedKeepEditing")}
           </button>
         </p>
@@ -1223,10 +1274,18 @@ export function ProjectPanel({
                               ) : artifact.targetedMs1 ? (
                                 <>
                                   {" — "}
-                                  {t("projectArtifactTargetedCounts", {
-                                    count: artifact.targetedMs1.result.summary.detected,
-                                    total: artifact.targetedMs1.result.summary.targets,
-                                  })}
+                                  {/* In the report's own outcome words, and
+                                      only those that occurred: a count that
+                                      left the rest unnamed would read a
+                                      failure as an absence. */}
+                                  {outcomeCounts(artifact.targetedMs1.result.summary)
+                                    .map(([outcome, count]) =>
+                                      t("projectArtifactTargetedOutcome", {
+                                        count,
+                                        outcome: t(OUTCOME_KEYS[outcome]),
+                                      }),
+                                    )
+                                    .join(" · ")}
                                 </>
                               ) : null}
                             </span>

@@ -43,6 +43,7 @@
 #[cfg(test)]
 mod tests;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
@@ -51,8 +52,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
-    CommandSpec, ProcessError, ProcessOutput, Sha256Digest, Termination, WorkerLimits,
-    execute_cancellable,
+    CancellationToken, CommandSpec, ProcessError, ProcessOutput, Sha256Digest, Termination,
+    WorkerLimits, execute_cancellable,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -369,6 +370,14 @@ impl Supervisor {
             },
         );
 
+        // The process's own stop. A user's cancel is forwarded into it, and the
+        // time budget stops it without ever reading as the user's cancel: the
+        // store decides a cancel from the user's flag alone, and a budget that
+        // runs out while a cancel is already pending stays that cancel.
+        let process = CancellationToken::new();
+        if cancellation.requested() {
+            process.cancel();
+        }
         let timed_out = AtomicBool::new(false);
         let finished = AtomicBool::new(false);
         let events = out.join("events.jsonl");
@@ -377,8 +386,13 @@ impl Supervisor {
                 let started = Instant::now();
                 let mut shown = None;
                 while !finished.load(Ordering::Acquire) {
-                    if started.elapsed() >= self.budget && !timed_out.swap(true, Ordering::AcqRel) {
-                        cancellation.token().cancel();
+                    // A pending cancel is forwarded and keeps the budget from
+                    // being recorded as what stopped the run.
+                    let stop = cancellation.requested()
+                        || (started.elapsed() >= self.budget
+                            && !timed_out.swap(true, Ordering::AcqRel));
+                    if stop {
+                        process.cancel();
                     }
                     if let Some(phase) = latest_phase(&events).filter(|phase| Some(*phase) != shown)
                     {
@@ -388,11 +402,30 @@ impl Supervisor {
                     std::thread::sleep(MONITOR_INTERVAL);
                 }
             });
-            let output = execute_cancellable(&spec, cancellation.token());
+            let output = execute_cancellable(&spec, &process);
             finished.store(true, Ordering::Release);
             output
         });
-        // The worker has exited, or never started: the source may go now.
+        // A worker whose end was not observed may still be reading. The source
+        // stays held and the link and the work area stay where they are until
+        // this process exits, and the store refuses another run meanwhile.
+        let unaccounted = match &output {
+            Err(error) => error.leaves_an_owned_process_unaccounted(),
+            Ok(output) => {
+                output.termination != Termination::NotStarted && !output.owned_tree_confirmed_gone()
+            }
+        };
+        if unaccounted {
+            std::mem::forget(held);
+            directory.keep();
+            return failed(
+                consumed,
+                Some(facts),
+                FailureCode::WorkerNotAccountedFor,
+                FailureStage::Runtime,
+            );
+        }
+        // Every process of the attempt is gone: the source may go now.
         drop(held);
         let _ = fs::remove_file(&link);
         let timed_out = timed_out.load(Ordering::Acquire);
@@ -549,18 +582,30 @@ impl Supervisor {
 /// request, the adapter and whatever the worker wrote.
 struct AttemptDirectory {
     path: PathBuf,
+    /// Left in place: a worker whose end was not observed may still use it.
+    kept: Cell<bool>,
 }
 
 impl AttemptDirectory {
     fn create(root: &Path) -> Option<Self> {
         let path = root.join(uuid::Uuid::new_v4().to_string());
         fs::create_dir(&path).ok()?;
-        Some(Self { path })
+        Some(Self {
+            path,
+            kept: Cell::new(false),
+        })
+    }
+
+    fn keep(&self) {
+        self.kept.set(true);
     }
 }
 
 impl Drop for AttemptDirectory {
     fn drop(&mut self) {
+        if self.kept.get() {
+            return;
+        }
         // The link first and by name: removing it removes a name, never the
         // source's bytes.
         let _ = fs::remove_file(self.path.join("source.mzML"));
@@ -801,27 +846,20 @@ fn ended(output: &ProcessOutput, timed_out: bool) -> Ended {
     }
 }
 
-/// A failure the supervisor itself observed around the process.
+/// A failure the supervisor itself observed around the process, classified
+/// the way every other backend lane classifies it.
 fn process_failure(error: &ProcessError) -> (FailureCode, FailureStage) {
     match error {
+        _ if error.leaves_an_owned_process_unaccounted() => {
+            (FailureCode::WorkerNotAccountedFor, FailureStage::Runtime)
+        }
         ProcessError::ExecutableIdentityInspectionFailed { .. }
         | ProcessError::ExecutableIdentityChanged => {
             (FailureCode::RuntimeUnverified, FailureStage::Runtime)
         }
-        // Refused before a process existed.
-        ProcessError::InvalidEnvironment { .. }
-        | ProcessError::Launch { .. }
-        | ProcessError::OutputDestinationExists
-        | ProcessError::OutputDestinationInspectionFailed { .. }
-        | ProcessError::OutputDirectoryNotEmpty
-        | ProcessError::OutputDirectoryInspectionFailed { .. }
-        | ProcessError::OutputDirectoryInsideDirectoryInput
-        | ProcessError::SourceIdentityInspectionFailed { .. }
-        | ProcessError::SourceIdentityChanged => {
-            (FailureCode::WorkerLaunchFailed, FailureStage::Runtime)
-        }
-        // After a process existed: nothing establishes it is gone.
-        _ => (FailureCode::WorkerNotAccountedFor, FailureStage::Runtime),
+        // Refused before a process existed, or ended with every process of
+        // the attempt observed gone: it could not be started or supervised.
+        _ => (FailureCode::WorkerLaunchFailed, FailureStage::Runtime),
     }
 }
 

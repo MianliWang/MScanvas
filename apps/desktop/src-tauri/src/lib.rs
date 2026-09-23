@@ -145,6 +145,9 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::AnalysisRunning => {
             "A targeted MS1 run is in progress. Wait for it to end, or cancel it."
         }
+        Refusal::AnalysisQuarantined => {
+            "An earlier targeted MS1 worker could not be confirmed to have ended. Restart MSCanvas before running another."
+        }
         Refusal::RecipeUnavailable => {
             "This build cannot run the targeted MS1 recipe: its runtime is not available."
         }

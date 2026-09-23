@@ -125,6 +125,8 @@ function query<T extends HTMLElement>(selector: string): T {
 }
 
 const details = () => query("#workbench-inspector");
+const liveRegion = () =>
+  document.querySelector("[data-live-region='project']")?.textContent ?? "";
 
 /** Opens the setup from the layer row. */
 async function openSetup(label: string = en.projectReferences) {
@@ -352,6 +354,7 @@ describe("a run", () => {
     // The report title is also the record's name in the history and Details.
     await screen.findByText(en.targetedRowsCaption);
     expect(query('[data-targeted-last="completed"]').textContent).toBe(en.targetedLastCompleted);
+    expect(liveRegion()).toBe(en.targetedLastCompleted);
     expect(query(`[data-targeted-report="${ARTIFACT}"]`)).toBeTruthy();
     expect(api.readTargetedMs1Rows).toHaveBeenCalledWith(ARTIFACT, 0);
   });
@@ -378,6 +381,8 @@ describe("a run", () => {
     );
     expect(document.body.textContent).not.toContain(en.targetedOutcomeNotDetected);
     expect(document.querySelector("[data-targeted-report]")).toBeNull();
+    // Said to a reader who cannot see the paragraph, too.
+    expect(liveRegion()).toBe(`${en.targetedLastFailed} ${en.targetedFailureSourceRtRepeated}`);
   });
 
   it("reports a refusal before a run existed as a refusal, with nothing recorded", async () => {
@@ -420,9 +425,10 @@ describe("a stored result", () => {
     expect(absent.getAttribute("data-outcome")).toBe("NOT_DETECTED");
     expect(within(report).getByText(en.targetedMeaning)).toBeTruthy();
     expect(query("[data-targeted-no-selection]").textContent).toBe(en.targetedChooseRow);
-    // The history names the result by its counts, not by the stored label.
+    // The history names the result by its outcome counts, in the report's own
+    // words, not by the stored label.
     expect(query(`[data-project-artifact="${ARTIFACT}"]`).textContent).toContain(
-      "1 of 2 targets detected",
+      `1 ${en.targetedOutcomeDetected} · 1 ${en.targetedOutcomeNotDetected}`,
     );
   });
 
@@ -534,7 +540,117 @@ describe("a stored result", () => {
   });
 });
 
+describe("while something is out", () => {
+  it("holds the typed text during a review, so a late answer cannot name other text", async () => {
+    const api = mount(layered());
+    await openSetup();
+    await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 120, 30");
+    const release = api.holdOnce("resolveTargetedMs1Plan");
+    await press(query("[data-targeted-review]"));
+    for (const selector of ["[data-targeted-ppm]", "[data-targeted-width]", "[data-targeted-text]"]) {
+      expect(query<HTMLInputElement>(selector).disabled, selector).toBe(true);
+    }
+    await act(async () => release());
+    expect(query<HTMLInputElement>("[data-targeted-ppm]").disabled).toBe(false);
+  });
+
+  it("leaves the unsaved-changes question unanswerable until a run ends", async () => {
+    const api = mount(layered({ dirty: true }));
+    await openSetup();
+    await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 120, 30");
+    await press(query("[data-targeted-review]"));
+    // Asked after the review, so the question is still standing at Run.
+    api.refuseOnce("openProject", "unsavedChanges");
+    await press(screen.getByRole("button", { name: en.projectOpen }));
+    await screen.findByText(en.projectUnsavedSaveFirst);
+
+    const release = api.holdOnce("runTargetedMs1");
+    await press(query("[data-targeted-run]"));
+    const saveFirst = screen.getByRole("button", { name: en.projectUnsavedSaveFirst });
+    const discard = query("[data-project-discard]");
+    expect(saveFirst.getAttribute("aria-disabled")).toBe("true");
+    expect(discard.getAttribute("aria-disabled")).toBe("true");
+    await press(saveFirst);
+    await press(discard);
+    expect(api.saveProject).not.toHaveBeenCalled();
+    expect(api.openProject).toHaveBeenCalledTimes(1);
+    // The run is still the thing on screen, with its Cancel.
+    expect(query('[data-project-cancel="project-job-1"]')).toBeTruthy();
+    api.set(targetedProject());
+    await act(async () => release());
+    // A finished operation retires the question, as every other one does: the
+    // Open it was about is asked again, not answered on the run's behalf.
+    expect(document.querySelector("[data-project-pending]")).toBeNull();
+    expect(api.openProject).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("rows the fixtures do not cover by default", () => {
+  it("reads no evidence for a row that never reached extraction, and says it has no points", async () => {
+    const api = mount(targetedProject());
+    api.setTargeted({
+      rows: [
+        detectedRow(),
+        absentRow({
+          outcome: "FAILED",
+          failureReason: "TARGET_ABSENT_FROM_ENGINE_LIBRARY",
+          ion: null,
+          windows: null,
+          signal: null,
+        }),
+      ],
+    });
+    await screen.findByText(en.projectReferences);
+    await press(query(`[data-project-inspect-artifact="${ARTIFACT}"]`));
+    await screen.findByText(en.targetedRowsCaption);
+    await press(query(`[data-targeted-choose="${ABSENT}"]`));
+    expect(api.readTargetedMs1Evidence).not.toHaveBeenCalled();
+    expect(query("[data-targeted-selected] [data-targeted-no-points]").textContent).toBe(
+      en.targetedNoPoints,
+    );
+    expect(document.querySelector("[data-targeted-evidence-refused]")).toBeNull();
+  });
+
+  it("names a window no spectrum fell into as a failure, and counts it as one", async () => {
+    const state = targetedProject();
+    const artifact = state.artifacts[0];
+    const summary = { ...artifact.targetedMs1!.result.summary, notDetected: 0, failed: 1 };
+    const api = mount({
+      ...state,
+      artifacts: [
+        {
+          ...artifact,
+          targetedMs1: {
+            ...artifact.targetedMs1!,
+            result: { ...artifact.targetedMs1!.result, summary },
+          },
+        },
+      ],
+    });
+    api.setTargeted({
+      rows: [
+        detectedRow(),
+        absentRow({
+          outcome: "FAILED",
+          failureReason: "WINDOW_WITHOUT_MS1_PEAKS",
+          signal: { points: 0, sum: [0, 0], max: [0, 0], anyNonzeroPoint: false },
+        }),
+      ],
+    });
+    await screen.findByText(en.projectReferences);
+    expect(query(`[data-project-artifact="${ARTIFACT}"]`).textContent).toContain(
+      `1 ${en.targetedOutcomeDetected} · 1 ${en.targetedOutcomeFailed}`,
+    );
+    expect(query(`[data-project-artifact="${ARTIFACT}"]`).textContent).not.toContain(
+      en.targetedOutcomeNotDetected,
+    );
+    await press(query(`[data-project-inspect-artifact="${ARTIFACT}"]`));
+    await screen.findByText(en.targetedRowsCaption);
+    const row = query(`[data-targeted-row="${ABSENT}"]`);
+    expect(row.textContent).toContain(en.targetedRowFailureWindowWithoutMs1);
+    expect(row.textContent).not.toContain(en.targetedOutcomeNotDetected);
+  });
+
   it("gives a failed row its reason and never the absence's word", async () => {
     const api = mount(targetedProject());
     api.setTargeted({

@@ -265,7 +265,8 @@ export type RowFailure =
   | "CANDIDATES_WITHOUT_FEATURE"
   | "ENGINE_DISCARDED_NO_VALID_FIT"
   | "TARGET_ABSENT_FROM_ENGINE_LIBRARY"
-  | "TARGET_UNACCOUNTED";
+  | "TARGET_UNACCOUNTED"
+  | "WINDOW_WITHOUT_MS1_PEAKS";
 
 /** One target's row, as the stored result holds it. */
 export interface PayloadRow {
@@ -583,7 +584,9 @@ export interface ProjectApi {
   resolveTargetedMs1Plan(request: PlanRequest): Promise<PlanResolution>;
   /**
    * Runs one reviewed plan as an accepted operation, named by its digest. A
-   * run that started is recorded however it ends, and answers with it.
+   * run that started is recorded however it ends, and answers with it --
+   * unless recording it would make the document larger than a save can
+   * publish, when it is refused (`oversized`) and nothing is recorded.
    */
   runTargetedMs1(operationId: string, planSha256: string): Promise<TargetedMs1RunEnd>;
   /** Where the targeted run in progress is, or `null`. */

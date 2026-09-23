@@ -157,6 +157,10 @@ pub enum ProjectError {
     /// A targeted MS1 run is in progress, and this would change the project it
     /// is running for: its document, its location or a record it names.
     AnalysisRunning,
+    /// An earlier targeted MS1 worker's end was not observed, so it may still
+    /// hold its source and its work area. No other run starts until MSCanvas
+    /// restarts.
+    AnalysisQuarantined,
     /// This build cannot run the recipe now: its pinned runtime is not there
     /// or is not the runtime it pins, or this is not a development build.
     RecipeUnavailable,
@@ -211,6 +215,7 @@ impl ProjectError {
             Self::ProducerUnidentified => "producerUnidentified",
             Self::SummaryTooLarge => "summaryTooLarge",
             Self::AnalysisRunning => "analysisRunning",
+            Self::AnalysisQuarantined => "analysisQuarantined",
             Self::RecipeUnavailable => "recipeUnavailable",
             Self::RecipeSourceUnsupported => "recipeSourceUnsupported",
             Self::SourceOnAnotherVolume => "sourceOnAnotherVolume",
@@ -482,6 +487,9 @@ struct Session {
     job: Option<AcceptedJob>,
     /// The last identifier minted. Never reused within this store.
     last_job: u64,
+    /// Set when a targeted worker's end was not observed. Never cleared: only
+    /// a new process can say that worker is gone.
+    analysis_quarantined: bool,
 }
 
 impl Session {
@@ -559,6 +567,7 @@ impl ProjectStore {
                 generation: 0,
                 job: None,
                 last_job: 0,
+                analysis_quarantined: false,
             }),
         }
     }
@@ -720,6 +729,10 @@ impl ProjectStore {
                 let path = record::resolve(&input.locator, base).map_err(ProjectError::Document)?;
                 resolved.push(path);
             }
+            // The document this would publish, checked before any stored
+            // result is copied: a Save As that cannot publish copies nothing.
+            // Checked again at publication, since the project may change.
+            rebased_for(&project.document, &resolved, directory)?;
             (
                 session.generation,
                 resolved,
@@ -788,20 +801,13 @@ impl ProjectStore {
             return Err(ProjectError::StaleDocument);
         }
 
-        let mut candidate = project.document.clone();
-        for (input, path) in candidate.inputs.iter_mut().zip(&resolved) {
-            input.locator = record::locator_for(path, directory);
-        }
-        candidate.revision = candidate.revision.saturating_add(1);
-        if let Err(problem) = record::validate(&candidate) {
-            abandon(&pending);
-            return Err(ProjectError::Document(problem));
-        }
-        if record::serialize(&candidate).is_none_or(|bytes| bytes.len() as u64 > MAX_DOCUMENT_BYTES)
-        {
-            abandon(&pending);
-            return Err(ProjectError::Oversized);
-        }
+        let candidate = match rebased_for(&project.document, &resolved, directory) {
+            Ok(candidate) => candidate,
+            Err(refusal) => {
+                abandon(&pending);
+                return Err(refusal);
+            }
+        };
         if let Some(pending) = &pending
             && let Err(error) = payload::rename_without_replacing(&pending.path, &pending.store)
         {
@@ -2002,6 +2008,11 @@ impl ProjectStore {
         if session.generation != generation {
             return Err(ProjectError::StaleDocument);
         }
+        let blocked = if session.analysis_quarantined {
+            Some(ProjectError::AnalysisQuarantined)
+        } else {
+            blocked
+        };
         session.open_mut()?.pending_plan = Some(plan.clone());
         Ok(PlanResolution {
             plan: Some(plan),
@@ -2039,6 +2050,9 @@ impl ProjectStore {
         let (mut guard, cancellation, generation) = self.start_job(job, true)?;
         let (plan, input, binding_path, project_id, plan_recorded) = {
             let session = self.locked();
+            if session.analysis_quarantined {
+                return Err(ProjectError::AnalysisQuarantined);
+            }
             let project = session.open()?;
             let recorded = project.document.plan(plan_sha256).cloned();
             let plan = project
@@ -2100,6 +2114,14 @@ impl ProjectStore {
         let finished_at = now_rfc3339();
 
         let mut session = self.locked();
+        // Before anything else can return: whatever becomes of this run's
+        // record, a worker whose end was not observed keeps every other run out.
+        if matches!(
+            &end,
+            AttemptEnd::Failed { failure, .. } if failure.code == FailureCode::WorkerNotAccountedFor
+        ) {
+            session.analysis_quarantined = true;
+        }
         let staged = matches!(end, AttemptEnd::Completed { .. });
         let discard = || {
             if staged {
@@ -2442,15 +2464,53 @@ fn observe_payloads(document: &ProjectDocument, published_at: &Path) -> PayloadS
     }
 }
 
-/// Whether two names are the same published document, by object.
+/// Whether two names are the same published document: one object, under one
+/// name, in one directory.
+///
+/// The same object is not enough: a result store is found by the document's
+/// name, so a hard link to the bound document under another name or in another
+/// directory has a store of its own, and results have to be copied into it.
 fn same_published_document(bound: &Path, destination: &Path) -> bool {
-    match (
+    let same_object = match (
         local_document::object_identity(bound),
         local_document::object_identity(destination),
     ) {
         (Some(left), Some(right)) => left == right,
         _ => false,
+    };
+    let same_directory = match (bound.parent(), destination.parent()) {
+        (Some(left), Some(right)) => {
+            match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+                (Ok(left), Ok(right)) => left == right,
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+    let same_name = match (bound.file_name(), destination.file_name()) {
+        (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
+        _ => false,
+    };
+    same_object && same_directory && same_name
+}
+
+/// The document a Save As into `directory` would publish, with every
+/// reference rebased there, or why it cannot be published.
+fn rebased_for(
+    document: &ProjectDocument,
+    resolved: &[PathBuf],
+    directory: &Path,
+) -> Result<ProjectDocument, ProjectError> {
+    let mut candidate = document.clone();
+    for (input, path) in candidate.inputs.iter_mut().zip(resolved) {
+        input.locator = record::locator_for(path, directory);
     }
+    candidate.revision = candidate.revision.saturating_add(1);
+    record::validate(&candidate).map_err(ProjectError::Document)?;
+    if record::serialize(&candidate).is_none_or(|bytes| bytes.len() as u64 > MAX_DOCUMENT_BYTES) {
+        return Err(ProjectError::Oversized);
+    }
+    Ok(candidate)
 }
 
 /// The moments a Save As test needs to act in.

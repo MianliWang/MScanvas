@@ -1046,6 +1046,52 @@ fn a_plan_that_is_neither_resolved_nor_recorded_is_refused_and_records_nothing()
 }
 
 #[test]
+fn a_new_store_is_placed_whole_and_leaves_no_pending_directory() {
+    let scratch = Scratch::new("m91-store-placed");
+    let (store, layer, document) = fake_project(&scratch);
+    let executor = Fake::new(completed);
+    let plan = plan(&store, layer, one_target(), &executor);
+    run(&store, &plan, &executor).expect("run");
+    let store_dir = payload::store_of(&document).expect("store");
+    assert!(store_dir.join(".owner.json").is_file());
+    let residue: Vec<String> = fs::read_dir(document.parent().expect("parent"))
+        .expect("dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".pending"))
+        .collect();
+    assert!(residue.is_empty(), "{residue:?}");
+}
+
+#[test]
+fn a_worker_whose_end_was_not_observed_keeps_every_later_run_out() {
+    let scratch = Scratch::new("m91-quarantine");
+    let (store, layer, _) = fake_project(&scratch);
+    let first = Fake::new(failed_with(
+        FailureCode::WorkerNotAccountedFor,
+        FailureStage::Runtime,
+    ));
+    let plan = plan(&store, layer, one_target(), &first);
+    let end = run(&store, &plan, &first).expect("the run is recorded");
+    assert_eq!(end.outcome, TerminalOutcome::Failed);
+
+    // The next run is refused before it exists, and records nothing.
+    let executor = Fake::new(completed);
+    assert!(matches!(
+        run(&store, &plan, &executor),
+        Err(ProjectError::AnalysisQuarantined)
+    ));
+    assert_eq!(store.describe().runs.len(), 1);
+    // A review says why a plan cannot run here.
+    let resolution = store
+        .resolve_targeted_ms1_plan(layer, &draft(one_target()), &executor)
+        .expect("resolved");
+    assert_eq!(resolution.blocked, Some(ProjectError::AnalysisQuarantined));
+    // Anything else in the project goes on as before.
+    store.save().expect("save");
+}
+
+#[test]
 fn a_retry_is_a_new_run_of_the_same_recorded_plan() {
     let scratch = Scratch::new("m91-retry");
     let (store, layer, _) = fake_project(&scratch);
@@ -1420,6 +1466,22 @@ fn save_as_does_not_copy_a_corrupt_result_into_a_whole_looking_one() {
             .exists()
     );
     assert_eq!(availability_on_open(&copy).0, "payloadMissing");
+}
+
+#[test]
+fn a_hard_link_to_the_document_under_another_name_gets_a_store_of_its_own() {
+    let scratch = Scratch::new("m91-save-as-hard-link");
+    let (store, document, artifact) = saved_with_result(&scratch);
+    let alias = scratch.join("alias.mscanvas");
+    fs::hard_link(&document, &alias).expect("hard link");
+    store.save_as(&alias).expect("save as");
+    // The results were copied beside the new name, not assumed to be there.
+    let alias_store = payload::store_of(&alias).expect("store");
+    assert!(payload::is_plain_directory(
+        &alias_store.join(artifact.to_string())
+    ));
+    assert!(store.read_targeted_ms1_rows(artifact, 0).is_ok());
+    assert_eq!(availability_on_open(&alias), ("available", true, 0));
 }
 
 #[test]
@@ -1847,6 +1909,41 @@ fn a_payload_is_accepted_only_when_every_row_says_what_its_outcome_requires() {
             "case {index}"
         );
     }
+    // An absence over a window no spectrum fell into is a claim about
+    // nothing. The same row is accepted only as the failure that says so, and
+    // that failure is refused where spectra were visited.
+    let first_id = plan.targets[0].target_id.to_string();
+    let empty_evidence: String = String::from_utf8(evidence.clone())
+        .expect("utf-8")
+        .lines()
+        .map(|line| {
+            let line = if line.contains(&first_id) {
+                line.replace("[[80,40.0,0.0],[81,40.5,0.0]]", "[]")
+            } else {
+                line.to_owned()
+            };
+            line + "\n"
+        })
+        .collect();
+    let empty = first.replace("\"points\":2", "\"points\":0");
+    assert!(validate_payload(&plan, &with(&empty), empty_evidence.as_bytes(), false).is_none());
+    let as_failure = |row: &str| {
+        row.replace(
+            "\"outcome\":\"NOT_DETECTED\",\"failureReason\":null",
+            "\"outcome\":\"FAILED\",\"failureReason\":\"WINDOW_WITHOUT_MS1_PEAKS\"",
+        )
+    };
+    assert!(
+        validate_payload(
+            &plan,
+            &with(&as_failure(&empty)),
+            empty_evidence.as_bytes(),
+            false
+        )
+        .is_some()
+    );
+    assert!(validate_payload(&plan, &with(&as_failure(first)), &evidence, false).is_none());
+
     // Evidence that does not match its row's signal.
     let short = String::from_utf8(evidence)
         .expect("utf-8")
@@ -2042,6 +2139,82 @@ fn an_all_absent_batch_is_a_completed_run_of_absences_through_the_measured_recov
                 .all(|line| line.points.len() == signal.points as usize)
         );
     }
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_window_beyond_the_last_ms1_spectrum_fails_its_row_and_leaves_the_others() {
+    // The source ends at 120 s. A retention time typed in the wrong unit puts
+    // a window where nothing was measured, which is not an absence.
+    let area = WorkArea::new("beyond-the-run");
+    let (store, layer, _) = real_project(&area, "plain.mzML", &mzml(&plain(), ""));
+    let supervisor = real();
+    let plan = plan(
+        &store,
+        layer,
+        vec![
+            target("caffeine", CAFFEINE, "60", "20"),
+            target("adenine", ADENINE, "500", "20"),
+        ],
+        &supervisor,
+    );
+    let end = run(&store, &plan, &supervisor).expect("recorded");
+    assert_eq!(
+        end.outcome,
+        TerminalOutcome::Completed,
+        "{:?}",
+        failure_of(&store)
+    );
+    let rows = rows_of(&store, end.artifact.expect("result"));
+    assert_eq!(rows[0].outcome, RowOutcome::Detected);
+    assert_eq!(rows[1].outcome, RowOutcome::Failed);
+    assert_eq!(
+        rows[1].failure_reason,
+        Some(payload::RowFailure::WindowWithoutMs1Peaks)
+    );
+    assert_eq!(rows[1].signal.as_ref().expect("signal").points, 0);
+    let described = store.describe();
+    let summary = &described.artifacts[0]
+        .targeted_ms1
+        .as_ref()
+        .expect("result")
+        .result
+        .summary;
+    assert_eq!((summary.not_detected, summary.failed), (0, 1));
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_batch_whose_every_window_is_beyond_the_run_reports_no_absence() {
+    let area = WorkArea::new("all-beyond");
+    let (store, layer, _) = real_project(&area, "plain.mzML", &mzml(&plain(), ""));
+    let supervisor = real();
+    let plan = plan(
+        &store,
+        layer,
+        vec![
+            target("paracetamol", PARACETAMOL, "500", "20"),
+            target("adenine", ADENINE, "600", "20"),
+        ],
+        &supervisor,
+    );
+    let end = run(&store, &plan, &supervisor).expect("recorded");
+    // Whatever the engine does with nothing to extract, no row may say absent.
+    match end.outcome {
+        TerminalOutcome::Completed => {
+            for row in rows_of(&store, end.artifact.expect("result")) {
+                assert_eq!(row.outcome, RowOutcome::Failed, "{row:?}");
+                assert_eq!(
+                    row.failure_reason,
+                    Some(payload::RowFailure::WindowWithoutMs1Peaks)
+                );
+            }
+        }
+        TerminalOutcome::Failed => assert!(end.artifact.is_none()),
+        TerminalOutcome::Cancelled => panic!("nothing cancelled this run"),
+    }
+    // Which of the two the engine took, for the evidence record.
+    eprintln!("all-beyond: {:?} {:?}", end.outcome, failure_of(&store));
 }
 
 #[test]
