@@ -26,6 +26,10 @@ export interface MessageParameters {
   readonly projectShowLayerNamed: { readonly name: string };
   readonly projectRemoveLayerNamed: { readonly name: string };
   readonly provenanceInspectLayer: { readonly name: string };
+  readonly projectCaptureQcNamed: { readonly name: string };
+  readonly projectRunLayer: { readonly name: string };
+  readonly qcReportRecorded: { readonly when: string };
+  readonly qcReportMsLevel: { readonly level: string };
   readonly m74ErrorFigureSize: { readonly minWidth: number; readonly minHeight: number; readonly max: number };
   readonly m74ErrorDpi: { readonly min: number; readonly max: number };
   readonly m74ErrorRasterBudget: { readonly max: number };

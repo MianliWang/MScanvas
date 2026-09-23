@@ -403,3 +403,104 @@
   font-size: 12px;
   color: var(--color-text-secondary);
 }
+
+/*
+ * The QC summary report (M8.5).
+ *
+ * Small tables of exact values, in the surface's own quiet tones. No grade and
+ * no status colour: this report defines no threshold, so nothing here is
+ * green or red. Numbers use tabular figures so a column reads down cleanly,
+ * and every cell wraps rather than pushing the surface sideways -- a source
+ * name is whatever an instrument wrote, and a retention time can be long.
+ */
+.qc-report {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  overflow-wrap: anywhere;
+}
+
+.qc-report-of {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.qc-report-when {
+  color: var(--color-text-tertiary);
+}
+
+.qc-report-tables {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 24px;
+}
+
+.qc-report-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  max-width: 100%;
+}
+
+.qc-report-table caption {
+  text-align: left;
+  padding-bottom: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.qc-report-table th,
+.qc-report-table td {
+  padding: 4px 12px 4px 0;
+  text-align: left;
+  vertical-align: top;
+  border-top: 1px solid var(--color-border);
+}
+
+.qc-report-table thead th {
+  border-top: none;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.qc-report-table tbody th {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.qc-report-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Why a layer's QC summary cannot be captured, under its row. */
+.project-qc-reason {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* The build that produced a snapshot's preview, in Details. */
+.provenance-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.provenance-facts dt {
+  color: var(--color-text-secondary);
+}
+
+.provenance-facts dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.provenance-digest {
+  font-family: var(--font-mono);
+}

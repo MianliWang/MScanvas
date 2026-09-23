@@ -26,8 +26,9 @@
 import { useEffect, useRef } from "react";
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { attachedRow } from "./lineage";
-import type { ProjectInput } from "./projectApi";
+import { attachedRow, qcUnavailable, type ViewedPreview } from "./lineage";
+import type { ProjectInput, ProjectRun } from "./projectApi";
+import { QcReport } from "./QcReport";
 import type { ProjectBusy, ProjectSession } from "./useProject";
 
 /** The message key for one verification outcome. */
@@ -97,6 +98,12 @@ const REFUSALS = {
   unsafeTarget: "projectRefusedUnsafe",
   notInWorkbench: "projectRefusedNotInWorkbench",
   layerDependsOnInput: "projectRefusedLayerDependsOnInput",
+  layerUsedByRun: "projectRefusedLayerUsedByRun",
+  previewNotCurrent: "projectRefusedPreviewNotCurrent",
+  producerUnidentified: "projectRefusedProducerUnidentified",
+  // A capture's own names for two shared refusals; see `useProject`.
+  qcProjectChanged: "projectRefusedQcProjectChanged",
+  qcNotInWorkbench: "projectRefusedQcNotInWorkbench",
 } as const;
 
 function refusalKey(code: string) {
@@ -112,7 +119,22 @@ const BUSY = {
   capturing: "projectBusyCapturing",
   linking: "projectBusyLinking",
   admitting: "projectBusyAdmitting",
+  recording: "projectBusyRecordingQc",
 } as const;
+
+/** The sentence for each reason a QC capture is unavailable. */
+const QC_REASONS = {
+  qcNeedsWorkbench: "projectQcNeedsWorkbench",
+  qcNeedsPreview: "projectQcNeedsPreview",
+  qcProducerUnidentified: "projectQcProducerUnidentified",
+} as const;
+
+/** What one recorded run is called. */
+export function operationKey(run: ProjectRun) {
+  return run.operation === "captureAcquisitionQcSnapshotV1"
+    ? ("projectOperationCaptureQc" as const)
+    : ("projectOperationCapture" as const);
+}
 
 function busyKey(busy: ProjectBusy) {
   return busy === "idle" ? null : BUSY[busy];
@@ -208,6 +230,14 @@ export interface ProjectPanelProps {
    * a press that quietly does nothing.
    */
   readonly workspaceBusy?: boolean;
+  /**
+   * The preview the Workbench is showing, or `null`.
+   *
+   * What a QC capture copies, and the only one it may: its token names the
+   * run summary Rust retained for it, and its row is what decides which layer
+   * it may be recorded under.
+   */
+  readonly viewedPreview?: ViewedPreview | null;
 }
 
 export function ProjectPanel({
@@ -217,6 +247,7 @@ export function ProjectPanel({
   liveDatasetHandles,
   onShowInWorkbench,
   workspaceBusy = false,
+  viewedPreview = null,
 }: ProjectPanelProps) {
   const t = useUiMessages();
   const { state, busy, problem, cancelled, pending, selected, inspecting } = session;
@@ -287,6 +318,18 @@ export function ProjectPanel({
   /** The layer sourced from one reference, or `null` where none has been created. */
   const layerOf = (input: ProjectInput) =>
     state.layers.find((layer) => layer.sourceInputId === input.id) ?? null;
+
+  /** The QC snapshot being inspected, with what the report needs beside it. */
+  const provenance = session.provenance;
+  const report =
+    provenance?.kind === "artifact" && provenance.artifact.qcSnapshot !== null
+      ? {
+          artifact: provenance.artifact,
+          snapshot: provenance.artifact.qcSnapshot,
+          sourceName: provenance.layerSources[0]?.record?.label ?? null,
+          recordedAt: provenance.producedBy?.record?.finishedAt ?? null,
+        }
+      : null;
 
   const proposalInput = state.inputs.find((input) => input.id === proposed);
   const announcement =
@@ -475,6 +518,21 @@ export function ProjectPanel({
 
       {state.open ? (
         <>
+          {/* The report surface, while a QC summary snapshot is the object
+              being inspected. In the main region, above the lists, because it
+              is the evidence; Details beside it keeps the lineage and the
+              build. */}
+          {report === null ? null : (
+            <QcReport
+              artifactId={report.artifact.id}
+              snapshot={report.snapshot}
+              sourceName={report.sourceName}
+              recordedWhen={
+                report.recordedAt === null ? null : recordedAt(report.recordedAt, locale)
+              }
+            />
+          )}
+
           <section className="project-section" aria-label={t("projectReferences")}>
             <div className="project-section-head">
               <h3>{t("projectReferences")}</h3>
@@ -764,6 +822,8 @@ export function ProjectPanel({
                   const handle = source === undefined ? null : inWorkbench(source);
                   const availability = handle === null ? "detached" : "attached";
                   const name = source?.label ?? t("provenanceRelatedGone");
+                  const qcReason = qcUnavailable(source, liveDatasetHandles, viewedPreview);
+                  const qcReasonId = `project-qc-reason-${layer.id}`;
                   return (
                     <li
                       key={layer.id}
@@ -818,6 +878,28 @@ export function ProjectPanel({
                             {t("projectShowInWorkbench")}
                           </button>
                         )}
+                        {/* Copies the run summary of the preview on screen, and
+                            only when that preview is this layer's source. It
+                            never starts a preview and never attaches a source:
+                            where it cannot run it stays reachable and points at
+                            the one step that would let it. */}
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          aria-disabled={working || qcReason !== null || undefined}
+                          aria-describedby={qcReason === null ? undefined : qcReasonId}
+                          title={qcReason === null ? undefined : t(QC_REASONS[qcReason])}
+                          aria-label={t("projectCaptureQcNamed", { name })}
+                          data-project-capture-qc={layer.id}
+                          data-project-qc-unavailable={qcReason ?? undefined}
+                          onClick={() => {
+                            const token = viewedPreview?.token ?? null;
+                            if (working || qcReason !== null || token === null) return;
+                            void session.captureQc(layer.id, token);
+                          }}
+                        >
+                          {t("projectCaptureQc")}
+                        </button>
                         <button
                           type="button"
                           className="link-button"
@@ -836,6 +918,22 @@ export function ProjectPanel({
                           {t("projectRemoveLayer")}
                         </button>
                       </div>
+                      {/* The reason is read out with the control, and shown
+                          where the row does not already say it: a detached row
+                          says "Not in the Workbench" in its facts above. */}
+                      {qcReason === null ? null : (
+                        <p
+                          id={qcReasonId}
+                          className={
+                            qcReason === "qcNeedsWorkbench"
+                              ? "visually-hidden"
+                              : "project-qc-reason"
+                          }
+                          data-project-qc-reason={qcReason}
+                        >
+                          {t(QC_REASONS[qcReason])}
+                        </p>
+                      )}
                     </li>
                   );
                 })}
@@ -877,9 +975,10 @@ export function ProjectPanel({
                             when: recordedAt(run.finishedAt, locale),
                           })}
                           data-project-inspect-run={run.id}
+                          data-operation={run.operation}
                           onClick={() => session.inspect({ kind: "run", id: run.id })}
                         >
-                          {t("projectOperationCapture")}
+                          {t(operationKey(run))}
                         </button>
                         <span className="project-run-outcome">
                           {t(
@@ -898,7 +997,23 @@ export function ProjectPanel({
                         </span>
                       </p>
                       <p className="project-run-relationship">
-                        {t("projectRunInputs", { count: run.inputIds.length })}
+                        {run.layerIds.length > 0
+                          ? // A QC capture consumed a layer, and says which by
+                            // its source's name, as a layer row does.
+                            run.layerIds.map((layerId) => {
+                              const layer = state.layers.find((each) => each.id === layerId);
+                              const source = state.inputs.find(
+                                (input) => input.id === layer?.sourceInputId,
+                              );
+                              return (
+                                <span key={layerId} data-project-run-layer={layerId}>
+                                  {t("projectRunLayer", {
+                                    name: source?.label ?? t("provenanceRelatedGone"),
+                                  })}
+                                </span>
+                              );
+                            })
+                          : t("projectRunInputs", { count: run.inputIds.length })}
                         {artifacts.length === 0 ? (
                           <span data-project-no-artifact="">{t("projectRunNoArtifact")}</span>
                         ) : (
@@ -921,14 +1036,23 @@ export function ProjectPanel({
                                   when: recordedAt(run.finishedAt, locale),
                                 })}
                                 data-project-inspect-artifact={artifact.id}
+                                data-artifact-kind={artifact.kind}
                                 onClick={() => session.inspect({ kind: "artifact", id: artifact.id })}
                               >
-                                {t("projectArtifactFileFacts")}
+                                {t(
+                                  artifact.kind === "acquisitionQcSnapshotV1"
+                                    ? "projectArtifactQcSummary"
+                                    : "projectArtifactFileFacts",
+                                )}
                               </button>
-                              {" — "}
-                              {t("projectArtifactMembers", {
-                                count: artifact.observedMemberCount,
-                              })}
+                              {artifact.kind === "fileFactsV1" ? (
+                                <>
+                                  {" — "}
+                                  {t("projectArtifactMembers", {
+                                    count: artifact.observedMemberCount,
+                                  })}
+                                </>
+                              ) : null}
                             </span>
                           ))
                         )}

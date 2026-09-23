@@ -31,7 +31,8 @@ export type ProjectBusy =
   | "checking"
   | "capturing"
   | "linking"
-  | "admitting";
+  | "admitting"
+  | "recording";
 
 /**
  * An action that was refused because the project has unsaved changes.
@@ -116,7 +117,29 @@ export interface ProjectSession {
    */
   readonly createLayer: (inputId: string) => Promise<void>;
   readonly removeLayer: (layerId: string) => Promise<void>;
+  /**
+   * Records a QC summary snapshot of one layer's source, from the preview the
+   * Workbench is showing, named by that preview's token.
+   *
+   * The new report is inspected on arrival only if the reader has not chosen
+   * something else while the request was out: a late answer does not take the
+   * Details region away from what they moved on to.
+   */
+  readonly captureQc: (layerId: string, previewToken: string) => Promise<void>;
 }
+
+/**
+ * Refusals a QC capture reports in its own words.
+ *
+ * The identifiers are the store's shared ones, and their shared sentences are
+ * about other operations -- "the project file changed since it was opened" is
+ * a save's refusal, and "add this reference before creating its layer" is a
+ * layer's. For a capture both mean something narrower, so it names them.
+ */
+const QC_REFUSALS: Readonly<Record<string, string>> = {
+  staleDocument: "qcProjectChanged",
+  notInWorkbench: "qcNotInWorkbench",
+};
 
 /**
  * Reads a refusal's stable identifier out of whatever the boundary threw.
@@ -317,6 +340,10 @@ export function useProject(
     setInspecting(null);
   }, [identity]);
 
+  /** What is inspected now, for an answer that arrives after a press. */
+  const inspectingNow = useRef(inspecting);
+  inspectingNow.current = inspecting;
+
   const createProject = useCallback(
     (name: string, discardUnsaved = false) =>
       run("saving", () => api.createProject(name, discardUnsaved), {
@@ -444,6 +471,25 @@ export function useProject(
     ),
     removeLayer: useCallback(
       (layerId: string) => run("saving", () => api.removeProjectLayer(layerId)),
+      [api, run],
+    ),
+    captureQc: useCallback(
+      (layerId: string, previewToken: string) => {
+        const pressedWhile = inspectingNow.current;
+        return run("recording", async () => {
+          let answer;
+          try {
+            answer = await api.captureProjectQcSummary(layerId, previewToken);
+          } catch (refusal) {
+            const code = refusalId(refusal);
+            throw code in QC_REFUSALS ? { kind: QC_REFUSALS[code] } : refusal;
+          }
+          if (mounted.current && inspectingNow.current === pressedWhile) {
+            setInspecting({ kind: "artifact", id: answer.artifactId });
+          }
+          return answer.project;
+        });
+      },
       [api, run],
     ),
   };

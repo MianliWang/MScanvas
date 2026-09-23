@@ -152,6 +152,22 @@ export function PreviewWorkspace() {
   );
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
   /**
+   * The preview on screen, as a QC capture needs it: which row, its opaque
+   * run-summary token, and whether its build can be identified. Only a loaded
+   * preview counts -- one still opening is not yet a summary anyone has seen.
+   */
+  const viewedPreview = useMemo(
+    () =>
+      preview.status === "loaded"
+        ? {
+            handle: preview.preview.file.handle,
+            token: preview.preview.qcSnapshotToken,
+            producerIdentified: preview.preview.qcProducerIdentified,
+          }
+        : null,
+    [preview],
+  );
+  /**
    * Whether the contextual region has anything to describe *on this surface*.
    *
    * It was a loaded acquisition and nothing else, which left the Details
@@ -760,6 +776,7 @@ export function PreviewWorkspace() {
             session={project}
             liveDatasetHandles={liveDatasetHandles}
             onShowInWorkbench={revealInWorkbench}
+            viewedPreview={viewedPreview}
             workspaceBusy={
               workspace.pickerBusy ||
               workspace.folderBusy ||

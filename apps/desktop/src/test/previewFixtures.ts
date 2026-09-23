@@ -485,6 +485,10 @@ export function buildPreview(rowCount = 6, truncated = false, receipt = 1): Prev
     // Issued exactly where Rust issues one: for a run the viewer would draw. A
     // truncated table has no chromatogram on screen and no chromatogram export.
     chromatogramExportToken: truncated || rowCount === 0 ? null : "chromatogram-token",
+    // The latest open always retains its summary, and the fixture build is
+    // one that can be identified.
+    qcSnapshotToken: "run-summary-token",
+    qcProducerIdentified: true,
     file: selectedFile,
     metadata: {
       sections: [

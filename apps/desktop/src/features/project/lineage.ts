@@ -7,8 +7,8 @@
  * local state over data the page already has, which is what makes navigation
  * incapable of reading a backend, re-checking a file or touching the document.
  *
- * The two derived edges -- which runs consumed a reference, which run produced
- * an artifact -- are not computed here. Rust computes them once, in
+ * The derived edges -- which runs consumed a reference or a layer, which run
+ * produced an artifact -- are not computed here. Rust computes them once, in
  * `project/lineage.rs`, and sends them as `consumedByRunIds` and
  * `producedByRunId`. A second implementation here would be a second answer that
  * could disagree with the first.
@@ -58,10 +58,11 @@ export type Provenance =
       readonly kind: "layer";
       readonly layer: ProjectLayer;
       readonly source: Related<ProjectInput>;
+      /** The runs that consumed this layer: its own history. */
+      readonly usedBy: readonly Related<ProjectRun>[];
       /**
-       * The runs that consumed the source. A layer has no runs of its own --
-       * it is identity, not work -- so what it is related to is what its
-       * source is related to. Empty where the source is gone.
+       * The runs that consumed the source, which are the source's history and
+       * not the layer's. Empty where the source is gone.
        */
       readonly consumedBy: readonly Related<ProjectRun>[];
     }
@@ -69,6 +70,9 @@ export type Provenance =
       readonly kind: "run";
       readonly run: ProjectRun;
       readonly inputs: readonly Related<ProjectInput>[];
+      readonly layers: readonly Related<ProjectLayer>[];
+      /** Each consumed layer's source, by the layer's position above. */
+      readonly layerSources: readonly (ProjectInput | null)[];
       readonly produced: readonly Related<ProjectArtifact>[];
     }
   | {
@@ -77,6 +81,13 @@ export type Provenance =
       /** `null` where no run in this project claims it, which is a state. */
       readonly producedBy: Related<ProjectRun> | null;
       readonly sources: readonly Related<ProjectInput>[];
+      /**
+       * The layers the producing run consumed, and each one's source. This is
+       * how a QC snapshot reaches its reference: it observed none itself, so
+       * `sources` is empty and this chain is its lineage.
+       */
+      readonly layers: readonly Related<ProjectLayer>[];
+      readonly layerSources: readonly Related<ProjectInput>[];
     };
 
 function relate<T extends { readonly id: string }>(
@@ -102,6 +113,42 @@ export function attachedRow(
   const handle = input.workbenchDatasetHandle;
   if (handle === null || liveDatasetHandles === undefined) return null;
   return liveDatasetHandles.has(handle) ? handle : null;
+}
+
+/**
+ * The preview the Workbench is showing, as far as a QC capture is concerned:
+ * which row it is of, its opaque run-summary token, and whether the build that
+ * produced it can be identified. `null` where no preview is loaded.
+ */
+export interface ViewedPreview {
+  readonly handle: string;
+  readonly token: string | null;
+  readonly producerIdentified: boolean;
+}
+
+/** Why a layer's QC summary cannot be captured right now. */
+export type QcUnavailable = "qcNeedsWorkbench" | "qcNeedsPreview" | "qcProducerUnidentified";
+
+/**
+ * Why this layer's source cannot have its QC summary captured now, or `null`
+ * where it can.
+ *
+ * One answer, in the order a reader has to act on it: the source must be in
+ * the Workbench, the preview on screen must be that row's, and the build that
+ * produced it must be identifiable. Pressing capture never starts a preview
+ * and never attaches a source; each reason points at the step that does.
+ */
+export function qcUnavailable(
+  source: ProjectInput | undefined,
+  liveDatasetHandles: ReadonlySet<string> | undefined,
+  viewed: ViewedPreview | null,
+): QcUnavailable | null {
+  const handle = source === undefined ? null : attachedRow(source, liveDatasetHandles);
+  if (handle === null) return "qcNeedsWorkbench";
+  if (viewed === null || viewed.handle !== handle || viewed.token === null) {
+    return "qcNeedsPreview";
+  }
+  return viewed.producerIdentified ? null : "qcProducerUnidentified";
 }
 
 /**
@@ -137,6 +184,7 @@ export function provenanceOf(
       kind: "layer",
       layer,
       source,
+      usedBy: layer.consumedByRunIds.map((id) => relate(state.runs, id)),
       consumedBy: (source.record?.consumedByRunIds ?? []).map((id) => relate(state.runs, id)),
     };
   }
@@ -148,17 +196,28 @@ export function provenanceOf(
       kind: "run",
       run,
       inputs: run.inputIds.map((id) => relate(state.inputs, id)),
+      layers: run.layerIds.map((id) => relate(state.layers, id)),
+      layerSources: run.layerIds.map((id) => {
+        const layer = state.layers.find((candidate) => candidate.id === id);
+        return state.inputs.find((input) => input.id === layer?.sourceInputId) ?? null;
+      }),
       produced: run.outputArtifactIds.map((id) => relate(state.artifacts, id)),
     };
   }
 
   const artifact = state.artifacts.find((candidate) => candidate.id === selection.id);
   if (artifact === undefined) return { kind: "gone", selected: selection };
+  const producedBy =
+    artifact.producedByRunId === null ? null : relate(state.runs, artifact.producedByRunId);
+  const layers = (producedBy?.record?.layerIds ?? []).map((id) => relate(state.layers, id));
   return {
     kind: "artifact",
     artifact,
-    producedBy:
-      artifact.producedByRunId === null ? null : relate(state.runs, artifact.producedByRunId),
+    producedBy,
     sources: artifact.sourceInputIds.map((id) => relate(state.inputs, id)),
+    layers,
+    layerSources: layers.flatMap((layer) =>
+      layer.record === null ? [] : [relate(state.inputs, layer.record.sourceInputId)],
+    ),
   };
 }

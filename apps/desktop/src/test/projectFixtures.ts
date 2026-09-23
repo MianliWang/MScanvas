@@ -78,6 +78,7 @@ export function projectRun(overrides: Partial<ProjectRun> = {}): ProjectRun {
     operation: "captureFileFactsV1",
     outcome: "completed",
     inputIds: [],
+    layerIds: [],
     outputArtifactIds: [],
     applicationVersion: "0.1.0",
     startedAt: "2026-09-22T10:00:00Z",
@@ -90,8 +91,10 @@ export function projectArtifact(overrides: Partial<ProjectArtifact> = {}): Proje
   return {
     id: "eeeeeeee-1111-4111-8111-111111111111",
     label: "File facts: sample.mzML",
+    kind: "fileFactsV1",
     observedInputCount: 1,
     observedMemberCount: 1,
+    qcSnapshot: null,
     producedByRunId: null,
     sourceInputIds: [],
     ...overrides,
@@ -103,6 +106,7 @@ export function projectLayer(overrides: Partial<ProjectLayer> = {}): ProjectLaye
   return {
     id: "dddddddd-1111-4111-8111-111111111111",
     sourceInputId: projectInput().id,
+    consumedByRunIds: [],
     ...overrides,
   };
 }
@@ -255,6 +259,15 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     removeProjectLayer: vi.fn(
       (_layerId: string) => answer("removeProjectLayer") as Promise<ProjectState>,
     ),
+    captureProjectQcSummary: vi.fn(async (_layerId: string, _previewToken: string) => {
+      const project = (await answer("captureProjectQcSummary")) as ProjectState;
+      // The newest snapshot the staged answer holds, which is the one a real
+      // capture would have just appended.
+      const recorded = project.artifacts.filter(
+        (artifact) => artifact.kind === "acquisitionQcSnapshotV1",
+      );
+      return { project, artifactId: recorded.at(-1)?.id ?? "" };
+    }),
   };
   return api;
 }

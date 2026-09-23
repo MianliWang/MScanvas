@@ -54,7 +54,7 @@ const ARTIFACT = "eeeeeeee-2222-4111-8111-111111111111";
 const LAYER = "dddddddd-2222-4111-8111-111111111111";
 
 /** The one layer this scenario creates, exactly as the projection carries it. */
-const LAYER_RECORD = { id: LAYER, sourceInputId: INPUT };
+const LAYER_RECORD = { id: LAYER, sourceInputId: INPUT, consumedByRunIds: [] as readonly string[] };
 
 /** What a session with no project open answers. */
 const NO_PROJECT = {
@@ -108,6 +108,8 @@ function checkedProject(options: {
         label: "File facts: 1 reference",
         observedInputCount: 1,
         observedMemberCount: 1,
+        kind: "fileFactsV1",
+        qcSnapshot: null,
         producedByRunId: RUN,
         sourceInputIds: [INPUT],
       },
@@ -118,6 +120,7 @@ function checkedProject(options: {
         operation: "captureFileFactsV1",
         outcome: "completed",
         inputIds: [INPUT],
+        layerIds: [],
         outputArtifactIds: [ARTIFACT],
         applicationVersion: "0.1.0",
         startedAt: "2026-09-22T10:00:00Z",

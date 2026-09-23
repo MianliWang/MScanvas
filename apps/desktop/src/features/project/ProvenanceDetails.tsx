@@ -6,10 +6,10 @@
  * object and the real relationships between them, and every relationship is a
  * control: activating one selects that object and re-reads this same panel.
  *
- * A layer is identity, not a file: its name is its source's label, its current
- * availability is whether that source's Workbench row is live, and what it is
- * related to is what its source is related to. Nothing here gives it a fact of
- * its own beyond the one it was created with.
+ * A layer is identity, not a file: its name is its source's label and its
+ * current availability is whether that source's Workbench row is live. Its own
+ * history is the QC captures that consumed it; its source's history is listed
+ * separately, under the source's name.
  *
  * ## Two kinds of fact, kept apart
  *
@@ -20,10 +20,12 @@
  * it, and a reference that is gone did not erase what was recorded from it.
  * Nothing here rewrites the first because of the second.
  *
- * An artifact has no current file state at all. `FileFactsV1` is a payload
- * inside the project document and there is no locator that could name a file
- * for it, so this says where it lives rather than leaving a gap a reader would
- * fill in with a guess.
+ * An artifact has no current file state at all. File facts and a QC snapshot
+ * are payloads inside the project document and there is no locator that could
+ * name a file for either, so this says where it lives rather than leaving a gap
+ * a reader would fill in with a guess. A QC snapshot's values are the report's
+ * to show, in the main region; this says where it came from and which build
+ * produced it.
  *
  * ## What activating a relationship does
  *
@@ -33,8 +35,8 @@
  */
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { recordedAt } from "./ProjectPanel";
-import type { ProjectInput, ProjectRun } from "./projectApi";
+import { operationKey, recordedAt } from "./ProjectPanel";
+import type { ProjectArtifact, ProjectInput, ProjectRun, QcSnapshot } from "./projectApi";
 import { attachedRow, type Provenance, type ProjectSelection, type Related } from "./lineage";
 
 /** The message key for one reference's current check outcome. */
@@ -163,14 +165,19 @@ export function ProvenanceDetails({
     );
   }
 
-  // The schema records one operation, and a document naming any other is
-  // refused when it is opened -- so there is one name to give, and no branch
-  // here for an operation that cannot reach this panel.
-  const runName = () => t("projectOperationCapture");
+  // The schema records two operations, and a document naming any other is
+  // refused when it is opened -- so each run and each record is named by the
+  // one kind it can be.
+  const runName = (run: ProjectRun) => t(operationKey(run));
   const inputName = (input: ProjectInput) => input.label;
-  const artifactName = () => t("projectArtifactFileFacts");
-  // Every capture is called the same thing, so a run and the record it
-  // produced are named by when the run ended. Without that, a project with
+  const artifactName = (artifact: ProjectArtifact) =>
+    t(
+      artifact.kind === "acquisitionQcSnapshotV1"
+        ? "projectArtifactQcSummary"
+        : "projectArtifactFileFacts",
+    );
+  // Every capture of one kind is called the same thing, so a run and the record
+  // it produced are named by when the run ended. Without that, a project with
   // three runs offers three controls with one name between them.
   const runAt = (run: ProjectRun) =>
     t("provenanceInspectRunAt", { when: recordedAt(run.finishedAt, locale) });
@@ -193,7 +200,10 @@ export function ProvenanceDetails({
    */
   function usedBy(
     consumedBy: readonly Related<ProjectRun>[],
-    nothing: "provenanceUsedByNothing" | "provenanceLayerSourceUsedByNothing",
+    nothing:
+      | "provenanceUsedByNothing"
+      | "provenanceLayerSourceUsedByNothing"
+      | "provenanceLayerUsedByNothing",
   ) {
     return consumedBy.length === 0 ? (
       <p className="provenance-empty">{t(nothing)}</p>
@@ -274,6 +284,9 @@ export function ProvenanceDetails({
               currentState(input),
             )}
           </ul>
+          {/* The layer's own history: the QC captures that consumed it. */}
+          <p className="provenance-section-label">{t("provenanceLayerUsedBy")}</p>
+          {usedBy(provenance.usedBy, "provenanceLayerUsedByNothing")}
           {/* The source's history, named as the source's: the layer did not
               exist when those runs ran, and a heading that read as its own
               would say it had been used. */}
@@ -283,7 +296,7 @@ export function ProvenanceDetails({
       ) : provenance.kind === "run" ? (
         <div data-provenance="run">
           <p className="provenance-kind">{t("provenanceKindRun")}</p>
-          <h3 className="provenance-name">{t("projectOperationCapture")}</h3>
+          <h3 className="provenance-name">{runName(provenance.run)}</h3>
           <p className="provenance-current-row">
             <span className="provenance-outcome" data-provenance-outcome={provenance.run.outcome}>
               {t(outcomeKey(provenance.run))}
@@ -294,6 +307,15 @@ export function ProvenanceDetails({
             {provenance.inputs.map((related) =>
               link(related, "input", inputName, inspectInput, (input) => currentState(input)),
             )}
+            {provenance.layers.map((related, index) => {
+              const name = provenance.layerSources[index]?.label ?? t("provenanceRelatedGone");
+              return link(
+                related,
+                "layer",
+                () => name,
+                () => t("provenanceInspectLayer", { name }),
+              );
+            })}
           </ul>
           <p className="provenance-section-label">{t("provenanceProduced")}</p>
           {provenance.produced.length === 0 ? (
@@ -312,9 +334,9 @@ export function ProvenanceDetails({
           </p>
         </div>
       ) : (
-        <div data-provenance="artifact">
+        <div data-provenance="artifact" data-artifact-kind={provenance.artifact.kind}>
           <p className="provenance-kind">{t("provenanceKindArtifact")}</p>
-          <h3 className="provenance-name">{t("projectArtifactFileFacts")}</h3>
+          <h3 className="provenance-name">{artifactName(provenance.artifact)}</h3>
           {/* An artifact has no file of its own. Said, rather than left as a
               gap beside the references above, which do have one. */}
           <p className="provenance-current-row">
@@ -332,18 +354,89 @@ export function ProvenanceDetails({
               {link(provenance.producedBy, "run", runName, runAt)}
             </ul>
           )}
-          <p className="provenance-section-label">{t("provenanceSources")}</p>
-          {provenance.sources.length === 0 ? (
-            <p className="provenance-empty">{t("provenanceNoSources")}</p>
-          ) : (
-            <ul className="provenance-list">
-              {provenance.sources.map((related) =>
-                link(related, "input", inputName, inspectInput, (input) => currentState(input)),
+          {provenance.artifact.qcSnapshot === null ? (
+            <>
+              <p className="provenance-section-label">{t("provenanceSources")}</p>
+              {provenance.sources.length === 0 ? (
+                <p className="provenance-empty">{t("provenanceNoSources")}</p>
+              ) : (
+                <ul className="provenance-list">
+                  {provenance.sources.map((related) =>
+                    link(related, "input", inputName, inspectInput, (input) =>
+                      currentState(input),
+                    ),
+                  )}
+                </ul>
               )}
-            </ul>
+            </>
+          ) : (
+            <>
+              {/* A snapshot observed no reference itself. Its lineage is the
+                  layer its run consumed, and that layer's source. */}
+              <p className="provenance-section-label">{t("provenanceSourceLayer")}</p>
+              <ul className="provenance-list">
+                {provenance.layers.map((related, index) => {
+                  const name =
+                    provenance.layerSources[index]?.record?.label ?? t("provenanceRelatedGone");
+                  return link(
+                    related,
+                    "layer",
+                    () => name,
+                    () => t("provenanceInspectLayer", { name }),
+                  );
+                })}
+              </ul>
+              <p className="provenance-section-label">{t("provenanceLayerSource")}</p>
+              <ul className="provenance-list">
+                {provenance.layerSources.map((related) =>
+                  link(related, "input", inputName, inspectInput, (input) => currentState(input)),
+                )}
+              </ul>
+              <ProducerFacts snapshot={provenance.artifact.qcSnapshot} />
+            </>
           )}
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Which build produced the preview a snapshot copied, as MSCanvas identified
+ * it at the time.
+ *
+ * Software facts, never a location: the executable's digest and the build's
+ * reported release, date and revision. One that the build did not report is
+ * said to be unreported rather than left blank. A later installation changes
+ * none of it.
+ */
+function ProducerFacts({ snapshot }: { readonly snapshot: QcSnapshot }) {
+  const t = useUiMessages();
+  const producer = snapshot.producer;
+  const reported = (value: string | null) =>
+    value === null ? (
+      <span className="provenance-empty">{t("provenanceProducerNotReported")}</span>
+    ) : (
+      value
+    );
+  return (
+    <>
+      <p className="provenance-section-label">{t("provenanceProducer")}</p>
+      <dl className="provenance-facts" data-provenance-producer="">
+        <dt>{t("provenanceProducerTool")}</dt>
+        <dd data-producer-tool={producer.tool}>{t("provenanceProducerMsaccess")}</dd>
+        <dt>{t("provenanceProducerRelease")}</dt>
+        <dd>{reported(producer.release)}</dd>
+        <dt>{t("provenanceProducerBuildDate")}</dt>
+        <dd>{reported(producer.buildDate)}</dd>
+        <dt>{t("provenanceProducerRevision")}</dt>
+        <dd>{reported(producer.sourceRevision)}</dd>
+        <dt>{t("provenanceProducerDigest")}</dt>
+        <dd className="provenance-digest" data-producer-digest="">
+          {producer.executableSha256}
+        </dd>
+      </dl>
+      <p className="provenance-note">{t("provenanceProducerNote")}</p>
+    </>
   );
 }
