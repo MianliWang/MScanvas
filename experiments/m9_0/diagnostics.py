@@ -177,7 +177,59 @@ def timeout_path(root: Path) -> dict:
                               "staging_files")}
 
 
+def relocation(root: Path) -> dict:
+    """Copy the runtime elsewhere and run `r2_plain` from ASCII and CJK-named locations (ANSI code page matters)."""
+    import ctypes  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    import shutil  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    import protocol_r2  # noqa: PLC0415
+
+    base = root / "relocation"
+    shutil.rmtree(base, ignore_errors=True)
+    runtimes = {"ascii": base / "ascii-runtime" / "cpython", "cjk": base / "运行时 副本" / "cpython"}
+    sources = {"ascii": base / "ascii-data" / "r2_plain.mzML", "cjk": base / "数据 目录" / "样品 r2_plain.mzML"}
+    for path in runtimes.values():
+        shutil.copytree(controller.RUNTIME, path)
+    for path in sources.values():
+        path.parent.mkdir(parents=True)
+        shutil.copy2(root / "round2/fixtures/r2_plain.mzML", path)
+    case = next(c for c in protocol_r2.CASES if c["id"] == "r2_plain")
+    original = json.loads((root / "round2/runs/r2_plain/published/result.json").read_text(encoding="utf-8"))
+    report = {"ansi_code_page": ctypes.windll.kernel32.GetACP()}
+    for rt_kind, src_kind in (("ascii", "ascii"), ("ascii", "cjk"), ("cjk", "ascii")):
+        out_root = base / f"runs-{rt_kind}-runtime-{src_kind}-source"
+        script = (f"import sys; sys.path.insert(0, {str(HERE)!r}); import controller, protocol_r2, pathlib; "
+                  f"case = next(c for c in protocol_r2.CASES if c['id'] == 'r2_plain'); "
+                  f"controller.run_case(case, pathlib.Path({str(out_root)!r}), pathlib.Path({str(sources[src_kind])!r}), "
+                  f"protocol_r2.request_targets(case['targets']))")
+        env = dict(os.environ, M90_RUNTIME=str(runtimes[rt_kind]))
+        subprocess.run([str(runtimes["ascii"] / "python.exe"), "-X", "utf8", "-c", script], env=env, check=True)
+        attempt = json.loads((out_root / "runs/r2_plain/attempt.json").read_text(encoding="utf-8"))
+        entry = {k: attempt[k] for k in ("status", "code", "message", "exit_code", "wall_s")}
+        entry["stdout_tail"] = (out_root / "runs/r2_plain/staging/stdout.log").read_text(
+            encoding="utf-8", errors="replace")[-300:]
+        pub = out_root / "runs/r2_plain/published/result.json"
+        if pub.exists():
+            moved = json.loads(pub.read_text(encoding="utf-8"))
+            for doc in (moved, original):
+                for row in doc["targets"]:
+                    row.pop("assay_ref", None)
+            entry["rows_identical_to_original"] = moved["targets"] == original["targets"]
+            entry["key_modules_under_this_runtime"] = all(
+                m["path"].startswith(str(runtimes[rt_kind])) for m in moved["runtime"]["key_modules"])
+        report[f"{rt_kind}_runtime_{src_kind}_source"] = entry
+    return report
+
+
 def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[1] == "relocate":
+        report = relocation(Path(argv[2]).resolve())
+        Path(argv[2], "relocation.json").write_text(json.dumps(report, indent=1, ensure_ascii=False) + "\n",
+                                                    encoding="utf-8", newline="\n")
+        print(json.dumps(report, indent=1, ensure_ascii=False))
+        return 0
     root = Path(argv[1]).resolve()
     diag_root = root / "diagnostics"
     if (diag_root / "fixtures").exists() is False:
