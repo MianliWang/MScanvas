@@ -35,10 +35,13 @@ pub const SCHEMA_VERSION: u32 = 3;
 
 /// The largest project document this build will read.
 ///
-/// Four mebibytes against the bounds below, whose worst case is roughly a
-/// quarter of that: it is a bound on what a reader will pull into memory and
-/// parse, not a budget to grow into. A document over it is refused before it is
-/// parsed, so an unusable file cannot become an unbounded read.
+/// A bound on what a reader will pull into memory and parse. A document over it
+/// is refused before it is parsed, so an unusable file cannot become an
+/// unbounded read. The count bounds below do not keep a document under it:
+/// recorded history can reach it well before 2,048 runs -- roughly 460 QC
+/// snapshots of 64 buckets each, or a few hundred file-facts captures over
+/// many references -- which is why both captures measure a document's bytes
+/// before they keep what they wrote.
 pub const MAX_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 
 /// The most inputs one project may reference.

@@ -3772,15 +3772,13 @@ fn a_schema_two_document_is_refused_as_unsupported_and_not_migrated() {
     );
 }
 
-#[test]
-fn a_capture_that_would_make_the_document_unsaveable_is_refused_whole() {
-    // A snapshot cannot be removed once recorded, so one that took the
-    // document past what a Save publishes would leave it unsaveable forever.
-    // The document is filled, directly, to just short of that size -- with a
-    // record whose observations are only padding, because the capture measures
-    // bytes rather than validating what it did not write.
-    let scratch = Scratch::new("qc-store-size");
-    let (store, _, layer) = qc_ready(&scratch);
+/// Fills the open document, directly, to within `slack` bytes -- and at most one
+/// padding observation more -- of the size a Save publishes.
+///
+/// With a record whose observations are only padding: a capture measures bytes
+/// rather than validating what it did not write. Answers how to take the
+/// padding back out.
+fn fill_to_just_short(store: &ProjectStore, slack: u64) -> impl Fn(&ProjectStore) {
     let size = |store: &ProjectStore| {
         record::serialize(&document_of(store))
             .expect("serializable")
@@ -3812,21 +3810,42 @@ fn a_capture_that_would_make_the_document_unsaveable_is_refused_whole() {
     };
     // One first, so every measured record is added to an array that already
     // has one: the first element of an empty array costs differently.
-    pad(&store, 1);
-    let unpadded = size(&store);
-    pad(&store, 1);
-    let one = size(&store);
-    pad(&store, 2);
-    let two = size(&store);
+    pad(store, 1);
+    let unpadded = size(store);
+    pad(store, 1);
+    let one = size(store);
+    pad(store, 2);
+    let two = size(store);
     // What one more observation costs, and what a padding record costs besides.
     let each = (two - one) - (one - unpadded);
     let overhead = (one - unpadded) - each;
-    // Close enough to the bound that no snapshot fits, and not over it.
-    let wanted = (record::MAX_DOCUMENT_BYTES - two - overhead - 256) / each;
-    pad(&store, usize::try_from(wanted).expect("a count"));
-    let filled = size(&store);
-    assert!(filled <= record::MAX_DOCUMENT_BYTES);
-    assert!(record::MAX_DOCUMENT_BYTES - filled < 1024, "{filled}");
+    let wanted = (record::MAX_DOCUMENT_BYTES - two - overhead - slack) / each;
+    pad(store, usize::try_from(wanted).expect("a count"));
+    let filled = size(store);
+    assert!(filled + slack <= record::MAX_DOCUMENT_BYTES, "{filled}");
+    assert!(
+        record::MAX_DOCUMENT_BYTES - filled < slack + each,
+        "{filled}"
+    );
+    |store: &ProjectStore| {
+        let mut session = store
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let document = &mut session.project.as_mut().expect("open").document;
+        document
+            .artifacts
+            .retain(|artifact| !artifact.label.starts_with("padding"));
+    }
+}
+
+#[test]
+fn a_capture_that_would_make_the_document_unsaveable_is_refused_whole() {
+    // A snapshot cannot be removed once recorded, so one that took the
+    // document past what a Save publishes would leave it unsaveable forever.
+    let scratch = Scratch::new("qc-store-size");
+    let (store, _, layer) = qc_ready(&scratch);
+    let unpad = fill_to_just_short(&store, 256);
     let before = document_of(&store);
 
     assert_eq!(
@@ -3840,20 +3859,79 @@ fn a_capture_that_would_make_the_document_unsaveable_is_refused_whole() {
     );
 
     // Control: with room for it, the same capture commits.
-    {
+    unpad(&store);
+    store
+        .capture_qc_snapshot(layer, |_| Ok(qc_snapshot()))
+        .expect("captured once there is room");
+}
+
+#[test]
+fn a_file_facts_capture_that_would_make_the_document_unsaveable_records_nothing() {
+    // The same rule on the other writer of history: once a QC run pins a
+    // reference, its file-facts history cannot be removed either, so a
+    // file-facts capture must not be what makes the document unsaveable.
+    let scratch = Scratch::new("facts-store-size");
+    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let unpad = fill_to_just_short(&store, 64);
+    let before = document_of(&store);
+
+    assert_eq!(capture(&store, &[id]), Err(ProjectError::Oversized));
+    assert_eq!(
+        document_of(&store),
+        before,
+        "neither the run nor the record stayed"
+    );
+
+    // Control: with room for it, the same capture commits both.
+    unpad(&store);
+    let runs = document_of(&store).runs.len();
+    capture(&store, &[id]).expect("captured once there is room");
+    let after = document_of(&store);
+    assert_eq!(after.runs.len(), runs + 1);
+    assert!(
+        after
+            .artifacts
+            .iter()
+            .any(|artifact| !artifact.label.starts_with("padding"))
+    );
+}
+
+#[test]
+fn the_size_measure_keeps_room_for_the_widest_revision() {
+    // A Save writes the revision plus one, so a document that fits exactly now
+    // fails the first Save that gives its revision another digit. The measure
+    // keeps room for the widest revision there is; set here to the byte.
+    let scratch = Scratch::new("store-revision-room");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let _unpad = fill_to_just_short(&store, 1024);
+    let leave = |room: u64| {
         let mut session = store
             .session
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        session
-            .project
-            .as_mut()
-            .expect("open")
-            .document
-            .artifacts
-            .pop();
-    }
-    store
-        .capture_qc_snapshot(layer, |_| Ok(qc_snapshot()))
-        .expect("captured once there is room");
+        let document = &mut session.project.as_mut().expect("open").document;
+        let last = document.artifacts.len() - 1;
+        document.artifacts[last].label = "padding".to_owned();
+        let now = record::serialize(document).expect("serializable").len() as u64;
+        let widen = usize::try_from(record::MAX_DOCUMENT_BYTES - now - room).expect("a width");
+        document.artifacts[last].label = format!("padding{}", "x".repeat(widen));
+        let after = record::serialize(document).expect("serializable").len() as u64;
+        assert_eq!(record::MAX_DOCUMENT_BYTES - after, room);
+    };
+
+    leave(0);
+    assert!(
+        !super::fits_every_later_save(&document_of(&store)),
+        "exactly full"
+    );
+    leave(18);
+    assert!(
+        !super::fits_every_later_save(&document_of(&store)),
+        "one digit short"
+    );
+    leave(19);
+    assert!(
+        super::fits_every_later_save(&document_of(&store)),
+        "room for any revision"
+    );
 }

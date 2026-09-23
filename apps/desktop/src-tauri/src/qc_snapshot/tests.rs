@@ -139,6 +139,13 @@ fn build(label: &str, digest: u8) -> InstallationIdentity {
 #[derive(Clone)]
 struct Machine {
     installed: Arc<Mutex<Option<InstallationIdentity>>>,
+    /// A build only the run-summary operation reports, where a test sets one.
+    ///
+    /// Production binds one resolution for a whole batch, so every attempt
+    /// reports the same build. A provider that resolved per operation would
+    /// not, and this is how a test tells which attempt a snapshot's producer
+    /// was read from.
+    summary_build: Arc<Mutex<Option<InstallationIdentity>>>,
     runs: Arc<AtomicUsize>,
     looks: Arc<AtomicUsize>,
 }
@@ -147,6 +154,7 @@ impl Machine {
     fn new(installed: Option<InstallationIdentity>) -> Self {
         Self {
             installed: Arc::new(Mutex::new(installed)),
+            summary_build: Arc::new(Mutex::new(None)),
             runs: Arc::new(AtomicUsize::new(0)),
             looks: Arc::new(AtomicUsize::new(0)),
         }
@@ -226,7 +234,16 @@ impl PreviewProvider for SummaryProvider {
         };
         let outcome =
             interpret_preview(operation, &process, &manifest).map_err(interpretation_error)?;
-        let installation = self.machine.installed();
+        let summary_build = self
+            .machine
+            .summary_build
+            .lock()
+            .expect("test lock")
+            .clone();
+        let installation = match (operation, summary_build) {
+            (PreviewOperation::RunSummary, Some(build)) => Some(build),
+            _ => self.machine.installed(),
+        };
         Ok(OperationAttempt {
             preview_availability: if installation.is_some() {
                 PreviewAvailability::Usable
@@ -578,6 +595,24 @@ fn a_backend_changed_after_the_preview_does_not_become_its_producer() {
         world.snapshots()[1].producer.executable_sha256,
         "B2".repeat(32)
     );
+}
+
+#[test]
+fn the_producer_is_the_build_the_run_summary_operation_reported() {
+    // The metadata attempt comes first in a batch and reports one build; the
+    // run-summary attempt reports another. The snapshot's facts came from the
+    // second, so its producer is the second.
+    let world = World::new("qc-summary-attempt", Some(build("3.0.26204", 0xA1)));
+    *world.machine.summary_build.lock().expect("test lock") = Some(build("3.0.26300", 0xB2));
+    let (_, layer, handle) = world.attached("sample.mzML");
+    let preview = world.open(&handle);
+    assert!(preview.qc_producer_identified);
+
+    world.capture(layer, &token(&preview)).expect("captured");
+
+    let producer = world.snapshots()[0].producer.clone();
+    assert_eq!(producer.executable_sha256, "B2".repeat(32));
+    assert_eq!(producer.release.as_deref(), Some("3.0.26300"));
 }
 
 #[test]

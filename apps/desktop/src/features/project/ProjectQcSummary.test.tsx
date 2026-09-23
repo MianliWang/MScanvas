@@ -417,6 +417,46 @@ describe("the recorded report", () => {
     expect(document.activeElement).toBe(elsewhere);
   });
 
+  it("does not give the keyboard to a report the reader opened while the capture was out", async () => {
+    // An earlier report exists. The reader presses capture, then opens that
+    // earlier report while the answer is out, with the keyboard still on the
+    // pressed control. The answer arrives: the selection moved, so the new
+    // report does not open -- and the one on screen is the reader's, not the
+    // capture's, so it does not take the keyboard either.
+    const { api } = mount(captured());
+    await ready();
+    const release = api.holdOnce("captureProjectQcSummary");
+
+    captureControl().focus();
+    await press(captureControl());
+    await press(query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`));
+    expect(document.activeElement).toBe(captureControl());
+    await act(async () => {
+      release();
+    });
+
+    expect(report().getAttribute("data-qc-report")).toBe(QC_ARTIFACT);
+    expect(document.activeElement).toBe(captureControl());
+  });
+
+  it("leaves the keyboard on the control when a capture is refused beside an open report", async () => {
+    const { api } = mount(captured());
+    await ready();
+    await press(query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`));
+    expect(report()).toBeTruthy();
+    api.refuseOnce("captureProjectQcSummary", "previewNotCurrent");
+
+    captureControl().focus();
+    await press(captureControl());
+
+    // The report on screen was there before the press; nothing was made.
+    expect(query("[data-project-problem]").textContent).toContain(
+      en.projectRefusedPreviewNotCurrent,
+    );
+    expect(report().getAttribute("data-qc-report")).toBe(QC_ARTIFACT);
+    expect(document.activeElement).toBe(captureControl());
+  });
+
   it("walks from the report to its run, its layer and its reference without sending anything", async () => {
     const { api } = mount(captured());
     await ready();

@@ -373,7 +373,14 @@ export function ProjectPanel({
   const shownReport = report?.artifact.id ?? null;
   useEffect(() => {
     const armed = capturing.current;
-    if (armed === null || busy !== "idle") return;
+    if (armed === null) return;
+    // While the request is out, a report the reader opens is theirs, not the
+    // capture's: it becomes the baseline, so only a report the settling answer
+    // makes current counts as the one this press produced.
+    if (busy !== "idle") {
+      capturing.current = { ...armed, shown: shownReport };
+      return;
+    }
     capturing.current = null;
     if (shownReport === null || shownReport === armed.shown) return;
     if (document.activeElement?.getAttribute("data-project-capture-qc") !== armed.layerId) return;

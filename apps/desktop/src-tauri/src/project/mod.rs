@@ -1019,12 +1019,15 @@ impl ProjectStore {
     ///
     /// # Errors
     ///
-    /// The reason the capture did not complete. The run is recorded either way,
-    /// with one exception: where the history is at its bound -- before the
-    /// read, or by the time it commits, because a QC capture can add a run
-    /// while this one reads -- there is no room for even a failed or cancelled
-    /// run, so nothing is recorded and the answer is
-    /// [`ProjectError::Oversized`].
+    /// The reason the capture did not complete. A capture that reaches its
+    /// commit records its run however it ended -- completed, failed or
+    /// cancelled -- except where it cannot: a project replaced or closed while
+    /// it read ([`ProjectError::StaleDocument`], [`ProjectError::NoOpenProject`]),
+    /// or history at its count bound or a document a Save could no longer
+    /// publish ([`ProjectError::Oversized`]), each of which records nothing. A
+    /// capture refused before it reads -- nothing selected, an unknown
+    /// reference, an operation that is not the accepted one -- records nothing
+    /// either.
     pub fn capture_file_facts(
         &self,
         id: ProjectJobId,
@@ -1144,6 +1147,18 @@ impl ProjectStore {
             started_at,
             finished_at,
         });
+        // The same measure a QC capture takes, for the same reason: this
+        // history may be pinned by a QC run over the same reference. Nothing is
+        // kept where a Save could not publish it -- not the run, and not the
+        // record a completed capture pushed before it.
+        if !fits_every_later_save(&project.document) {
+            project.document.runs.pop();
+            if outcome == TerminalOutcome::Completed {
+                project.document.artifacts.pop();
+            }
+            guard.release(&mut session);
+            return Err(ProjectError::Oversized);
+        }
         project.dirty = true;
         guard.release(&mut session);
 
@@ -1665,14 +1680,8 @@ impl ProjectStore {
             started_at: recorded_at.clone(),
             finished_at: recorded_at,
         });
-        // A snapshot cannot be removed -- its layer and reference are pinned by
-        // it -- so one that took the document past the size this build saves
-        // would leave a project no Save could ever publish again. Measured on
-        // the bytes a Save would write, and taken back out, both together,
-        // where it would.
-        let fits = record::serialize(&project.document)
-            .is_some_and(|bytes| bytes.len() as u64 <= MAX_DOCUMENT_BYTES);
-        if !fits {
+        // Taken back out, both together, where a Save could not publish them.
+        if !fits_every_later_save(&project.document) {
             project.document.runs.pop();
             project.document.artifacts.pop();
             return Err(ProjectError::Oversized);
@@ -1690,6 +1699,24 @@ fn refuse_full_history(document: &ProjectDocument) -> Result<(), ProjectError> {
         return Err(ProjectError::Oversized);
     }
     Ok(())
+}
+
+/// Whether every later Save could still publish this document.
+///
+/// Recorded history can be permanent: a QC run pins its layer, the layer pins
+/// its reference, and so every run and record over that reference -- a
+/// snapshot or file facts alike -- can no longer be removed. A capture that
+/// took the document past what a Save publishes would leave a project nothing
+/// could ever save again, so both captures measure before they keep what they
+/// wrote. Measured on the bytes a Save writes, with room for the revision to
+/// grow to its widest: every Save increments it, and a document one digit
+/// short of the bound would otherwise fail the first Save that adds one.
+fn fits_every_later_save(document: &ProjectDocument) -> bool {
+    /// The most a revision's decimal spelling can grow by: `u64::MAX` has
+    /// twenty digits, and the shortest has one.
+    const REVISION_GROWTH: u64 = 19;
+    record::serialize(document)
+        .is_some_and(|bytes| bytes.len() as u64 + REVISION_GROWTH <= MAX_DOCUMENT_BYTES)
 }
 
 /// Releases one accepted operation when its work ends, however it ends.

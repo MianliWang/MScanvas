@@ -1418,18 +1418,29 @@ refuses `staleDocument` with nothing committed. (The interface says a capture's
 `staleDocument` and `notInWorkbench` in its own words; their shared sentences are
 a save's and a layer's.) Because a capture now adds runs without advancing the
 generation, the file-facts commit rechecks its own bounds too, instead of only
-checking them before it released the lock. That has one consequence worth
-stating: a file-facts capture that finds the history full at commit records
-nothing at all -- not even its cancelled or failed run -- and answers
-`oversized`; its doc comment says so.
+checking them before it released the lock.
 
-A snapshot cannot be removed (below), so one that took the document past the
-size a Save publishes (`MAX_DOCUMENT_BYTES`, 4 MiB) would leave a project no
-Save could ever write again. The commit therefore measures the bytes a Save
-would write and, where they would not fit, takes the run and the snapshot back
-out together and answers `oversized`. The review estimated the reach at roughly
-460 captures with 64 buckets each, or about 1,800 ordinary ones -- below the
-2,048-run bound, which is why the count bound alone was not enough.
+**Recorded history can now be permanent**, and that decides the next rule. A QC
+run pins its layer, the layer pins its reference, and so every run and record
+over that reference -- a snapshot or file facts alike -- can no longer be
+removed. A capture that took the document past what a Save publishes
+(`MAX_DOCUMENT_BYTES`, 4 MiB) would therefore leave a project no Save could
+ever write again, and the count bounds do not prevent it: the reviews estimated
+roughly 460 snapshots of 64 buckets, about 1,800 ordinary ones, or a few hundred
+file-facts captures over many references -- all below the 2,048-run bound. So
+**both** captures measure, through one helper, the bytes a Save would write,
+with room for the revision to grow to its widest (a Save writes the revision
+plus one, and a document one digit short of the bound would fail the first Save
+that adds one); where they would not fit, the capture takes what it pushed back
+out -- the run and the snapshot together, or the file-facts run and, for a
+completed capture, its record -- and answers `oversized`. The consequence for
+file facts is stated in its doc comment: a capture that reaches its commit
+records its run however it ended, except where the project was replaced or
+closed while it read, or where the history is at its count bound or would no
+longer fit a Save -- each of which records nothing, not even a cancelled or
+failed run. Other edits that grow the document -- registering a reference,
+creating a layer, relinking to a longer path -- are not measured: the first two
+can be removed again, and a relink changes one bounded locator.
 
 Each explicit press is its own observation: two captures with identical values
 are two runs and two artifacts, and nothing earlier is overwritten.
@@ -1481,8 +1492,10 @@ something else while the request was out, and then the keyboard moves to the
 report's heading: the report arrives above the lists and pushes the pressed
 control down by its whole height -- out of view at 1366x768 -- so leaving the
 keyboard there would leave it where nobody can see it. It moves only when the
-keyboard is still on the control that was pressed; a refusal, a late answer
-and a reader who moved focus keep their place. (The first candidate kept the
+keyboard is still on the control that was pressed, and only to a report the
+settling answer made current -- a report the reader opened while the request
+was out is theirs, and does not take it; a refusal, a late answer and a reader
+who moved focus keep their place. (The first candidate kept the
 keyboard on the control; the review found it pushed out of view, and the
 browser frame at 1366x768 shows the control below the fold after a capture.)
 Each QC history control's accessible name contains the words it shows ("Show
@@ -1535,15 +1548,19 @@ interpreter, and counts every run and every look at the backend:
   the workspace and the source going, while its layer and reference refuse
   removal;
 - a summary of 65 well-formed buckets is refused as `summaryTooLarge`, with 64
-  recorded whole as the control.
+  recorded whole as the control;
+- a provider whose metadata attempt and run-summary attempt report different
+  builds gives a snapshot the run-summary attempt's producer.
 
 Rust, at the store and document level in `project/tests.rs`: the commit and what
 it asks; no remembered row refused before the workspace is asked; a workspace
 refusal records nothing; a project that moved in five different ways while the
 workspace was asked commits nothing and stays valid, with an unmoved control;
-the history bound refused before the workspace is asked; a capture that would
-take the document past the size a Save publishes refused with nothing committed,
-with the same capture committing once there is room; the layer-removal refusal
+the history bound refused before the workspace is asked; a QC capture and a
+file-facts capture that would each take the document past the size a Save
+publishes refused with nothing committed, each with the same capture committing
+once there is room; the measure's revision room held to the byte -- a document
+18 bytes short of the bound is not kept, 19 is; the layer-removal refusal
 with a layer nothing consumed as its control; the fixture document read back
 exactly, including a reported zero count and absent retention times; digest case
 normalization; every run that crosses its operation; ten snapshot values that
@@ -1567,7 +1584,10 @@ sending exactly the layer and the token; the report's values, order, `Other`,
 "Not reported" and unreported units; a reported zero and absent retention times;
 the keyboard moving to the new report's heading; a late answer taking neither
 the selection nor the keyboard, and a reader who moved only the keyboard
-keeping it while the report still opens; report → run → layer → reference in
+keeping it while the report still opens; a report the reader opened while the
+capture was out not taking the keyboard when the answer arrives; a refusal
+beside an already open report leaving the keyboard on the control; report → run
+→ layer → reference in
 Details with no request; the history controls' names containing what they show;
 the report whole after the row leaves and after a reopen; the stylesheet rules
 that wrap a long name; each capture refusal and the layer-removal refusal in its
@@ -1602,6 +1622,11 @@ put back, because the M8.4 record got that wrong.
   constrained case's "heading visible" assertion; `QcReport.tsx` was copied
   aside, the committed version written over it for the run, and the copy
   restored and compared byte-for-byte.
+- During the affected-delta closure, the same way and in the same log: removing
+  the file-facts size check, giving the measure no revision room, reading the
+  producer from the batch's first attempt again, not re-arming the focus guard
+  while the capture is out, and removing the guard that the report must be one
+  the answer made current -- each failed its test.
 
 ### The M8.5 review, and what it changed
 
@@ -1621,7 +1646,8 @@ was done:
   its own refusal and sentence now.
 - **The document size was not checked at capture**, and a QC report cannot be
   removed, so enough captures could make a project permanently unsaveable. The
-  commit now measures the bytes and refuses with nothing committed.
+  QC commit then measured the bytes and refused with nothing committed; the
+  affected-delta review below found that this closed only half of it.
 - **The file-facts bound recheck changed a documented contract** (a run recorded
   either way); the doc comment states the exception.
 - **The retained summary's two ordering rules had no behavioural test** --
@@ -1638,6 +1664,34 @@ was done:
   they show, in both locales.
 - **Noted, not changed:** counts are shown as JavaScript numbers, so "grouping
   changes no digit" holds up to 2^53 spectra.
+
+### The M8.5 affected-delta review
+
+One review of the repair commit `2e589ea` alone, read-only, while that
+commit's gates ran. No high-severity finding. What it found, and what was done:
+
+- **medium -- the size check guarded only the QC path.** M8.5 is what made
+  file-facts history permanent too (a QC run pins the layer, which pins the
+  reference, which pins everything recorded over it), so a run of file-facts
+  captures, or one file-facts capture after QC captures had filled a document
+  to just under the bound, could still make it unsaveable -- and the record had
+  presented the problem as closed. Both commits now go through one helper, the
+  file-facts commit takes back its run and record where they would not fit, and
+  the record above says what is and is not measured.
+- **The measure ignored the revision a Save adds.** It now keeps room for the
+  widest revision there is, tested to the byte.
+- **The stale comment on `MAX_DOCUMENT_BYTES`** ("the bounds' worst case is
+  roughly a quarter of it") is replaced with what the bounds do and do not keep.
+- **The keyboard could go to a report the press did not produce**: a reader who
+  opened an earlier report while the capture was out, with the keyboard back on
+  the pressed control, would have it moved to that report. The guard now
+  re-arms while the request is out, and two cases exercise both guards -- the
+  first repair's refusal assertion could not fail, because no report heading
+  existed in that test.
+- **The file-facts doc comment named one exception where there are several**;
+  it now names them.
+- **The producer-from-the-run-summary-attempt fix had no test**; a provider that
+  reports different builds for the two attempts now pins it.
 
 ## Out of scope, explicitly
 
