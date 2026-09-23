@@ -504,3 +504,250 @@
 .provenance-digest {
   font-family: var(--font-mono);
 }
+
+/*
+ * The targeted MS1 recipe (M9.1): a setup, a report of one stored result, and
+ * one target's extracted points.
+ *
+ * The same quiet report tones as the QC summary. The only colours added are
+ * the chart tokens the viewer already uses for its two series, so M and M+1
+ * read the way two traces read elsewhere. Outcomes carry a word and a shape,
+ * never colour alone; a failure is never drawn in an absence's style.
+ */
+.targeted-setup,
+.targeted-report {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  overflow-wrap: anywhere;
+}
+
+.targeted-experimental {
+  margin: 0;
+  max-width: 72ch;
+  padding: 6px 8px;
+  border-left: 3px solid var(--color-warning);
+  background: var(--color-warning-soft);
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.targeted-parameters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.targeted-parameters label,
+.targeted-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.targeted-parameters input,
+.targeted-targets textarea {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.targeted-parameters input {
+  width: 12ch;
+}
+
+.targeted-targets textarea {
+  width: 100%;
+  max-width: 72ch;
+  box-sizing: border-box;
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.targeted-targets textarea:focus-visible,
+.project-surface summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.targeted-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.targeted-digest {
+  font-family: var(--font-mono);
+}
+
+/* The row table scrolls inside itself, so 200 targets never push the page. */
+.targeted-rows {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  padding: 0 8px;
+}
+
+.targeted-rows .qc-report-table {
+  width: 100%;
+}
+
+.targeted-rows caption {
+  padding-top: 4px;
+}
+
+.targeted-rows tr.is-chosen > * {
+  background: var(--color-surface-selected);
+}
+
+.targeted-rows tr[data-outcome="FAILED"] td:nth-child(2) {
+  color: var(--color-danger);
+}
+
+.targeted-symbol {
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+}
+
+.targeted-reason {
+  color: var(--color-text-secondary);
+}
+
+.targeted-selected {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.targeted-selected h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.targeted-plot {
+  margin: 0;
+  max-width: 720px;
+}
+
+.targeted-plot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.targeted-grid {
+  stroke: var(--color-chart-grid);
+}
+
+.targeted-axis {
+  stroke: var(--color-border-strong);
+}
+
+.targeted-window {
+  stroke: var(--color-text-tertiary);
+  stroke-dasharray: 4 3;
+}
+
+.targeted-candidate {
+  fill: none;
+  stroke: var(--color-text-tertiary);
+  stroke-dasharray: 2 2;
+}
+
+.targeted-feature {
+  fill: var(--color-accent-soft);
+  opacity: 0.7;
+}
+
+.targeted-apex {
+  stroke: var(--color-accent);
+}
+
+.targeted-trace polyline {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.targeted-trace.is-m0 polyline,
+.targeted-trace.is-m0 circle {
+  stroke: var(--color-chart-line);
+}
+
+.targeted-trace.is-m0 circle {
+  fill: var(--color-chart-line);
+}
+
+.targeted-trace.is-m1 polyline {
+  stroke: var(--color-chart-secondary);
+  stroke-dasharray: 5 3;
+}
+
+.targeted-trace.is-m1 circle {
+  fill: var(--color-surface);
+  stroke: var(--color-chart-secondary);
+}
+
+.targeted-tick {
+  font-size: 11px;
+  fill: var(--color-text-secondary);
+}
+
+.targeted-points,
+.targeted-modules {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.targeted-points summary,
+.targeted-modules summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+/* A `<div>` grouping a label with its value keeps the two-column grid. */
+.targeted-member {
+  display: contents;
+}
+
+/* A table keeps its label beside its value rather than stretching across the
+   section, and the row table fills its own scroller. */
+.targeted-setup .qc-report-table,
+.targeted-report > .qc-report-table {
+  align-self: flex-start;
+}
+
+/* Run is the one control here whose unavailability decides the next step, so
+   an inert control reads as inert. Scoped to this setup: the rest of the
+   surface keeps its own treatment. */
+.targeted-setup button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+/* The fixed engine profile, as text: it wraps rather than scrolling sideways. */
+.targeted-profile {
+  margin: 4px 0 0;
+  max-width: 72ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-primary);
+}

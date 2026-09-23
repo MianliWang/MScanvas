@@ -35,9 +35,16 @@
  */
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { inspectRecordName, inspectRunName, operationKey, recordedAt } from "./ProjectPanel";
+import {
+  artifactKey,
+  inspectRecordName,
+  inspectRunName,
+  operationKey,
+  recordedAt,
+} from "./ProjectPanel";
 import type { ProjectArtifact, ProjectInput, ProjectRun, QcSnapshot } from "./projectApi";
 import { attachedRow, type Provenance, type ProjectSelection, type Related } from "./lineage";
+import { AVAILABILITY_KEYS, TargetedFacts } from "./TargetedMs1";
 
 /** The message key for one reference's current check outcome. */
 function currentStateKey(input: ProjectInput) {
@@ -165,17 +172,12 @@ export function ProvenanceDetails({
     );
   }
 
-  // The schema records two operations, and a document naming any other is
-  // refused when it is opened -- so each run and each record is named by the
-  // one kind it can be.
+  // The schema records a closed set of operations, and a document naming any
+  // other is refused when it is opened -- so each run and each record is named
+  // by the one kind it can be.
   const runName = (run: ProjectRun) => t(operationKey(run));
   const inputName = (input: ProjectInput) => input.label;
-  const artifactName = (artifact: ProjectArtifact) =>
-    t(
-      artifact.kind === "acquisitionQcSnapshotV1"
-        ? "projectArtifactQcSummary"
-        : "projectArtifactFileFacts",
-    );
+  const artifactName = (artifact: ProjectArtifact) => t(artifactKey(artifact));
   // Every capture of one kind is called the same thing, so a run and the record
   // it produced are named by when the run ended. Without that, a project with
   // three runs offers three controls with one name between them.
@@ -317,6 +319,7 @@ export function ProvenanceDetails({
               );
             })}
           </ul>
+          {provenance.targeted === null ? null : <TargetedFacts lineage={provenance.targeted} />}
           <p className="provenance-section-label">{t("provenanceProduced")}</p>
           {provenance.produced.length === 0 ? (
             <p className="provenance-empty" data-provenance-no-artifact="">
@@ -339,13 +342,38 @@ export function ProvenanceDetails({
         <div data-provenance="artifact" data-artifact-kind={provenance.artifact.kind}>
           <p className="provenance-kind">{t("provenanceKindArtifact")}</p>
           <h3 className="provenance-name">{artifactName(provenance.artifact)}</h3>
-          {/* An artifact has no file of its own. Said, rather than left as a
-              gap beside the references above, which do have one. */}
-          <p className="provenance-current-row">
-            <span className="provenance-stored" data-provenance-stored="">
-              {t("provenanceArtifactStored")}
-            </span>
-          </p>
+          {/* Where the record lives, said rather than left as a gap beside the
+              references above, which have files of their own. File facts and
+              a snapshot live inside the document; a targeted result's rows
+              and evidence live beside it, and were whole or not when last
+              looked at. */}
+          {provenance.artifact.targetedMs1 ? (
+            <>
+              <p className="provenance-current-row">
+                <span className="provenance-stored" data-provenance-stored="beside">
+                  {t("provenanceTargetedStored")}
+                </span>
+              </p>
+              <p className="provenance-current-row">
+                <span
+                  className={`provenance-current ${
+                    provenance.artifact.targetedMs1.availability === "available"
+                      ? "is-matching"
+                      : "is-unavailable"
+                  }`}
+                  data-provenance-availability={provenance.artifact.targetedMs1.availability}
+                >
+                  {t(AVAILABILITY_KEYS[provenance.artifact.targetedMs1.availability])}
+                </span>
+              </p>
+            </>
+          ) : (
+            <p className="provenance-current-row">
+              <span className="provenance-stored" data-provenance-stored="">
+                {t("provenanceArtifactStored")}
+              </span>
+            </p>
+          )}
           <p className="provenance-section-label">{t("provenanceProducedBy")}</p>
           {provenance.producedBy === null ? (
             <p className="provenance-empty" data-provenance-no-producer="">
@@ -356,7 +384,8 @@ export function ProvenanceDetails({
               {link(provenance.producedBy, "run", runName, runAt)}
             </ul>
           )}
-          {provenance.artifact.qcSnapshot === null ? (
+          {provenance.artifact.qcSnapshot === null &&
+          provenance.artifact.kind !== "targetedMs1ResultV1" ? (
             <>
               <p className="provenance-section-label">{t("provenanceSources")}</p>
               {provenance.sources.length === 0 ? (
@@ -394,7 +423,12 @@ export function ProvenanceDetails({
                   link(related, "input", inputName, inspectInput, (input) => currentState(input)),
                 )}
               </ul>
-              <ProducerFacts snapshot={provenance.artifact.qcSnapshot} />
+              {provenance.artifact.qcSnapshot === null ? null : (
+                <ProducerFacts snapshot={provenance.artifact.qcSnapshot} />
+              )}
+              {provenance.targeted === null ? null : (
+                <TargetedFacts lineage={provenance.targeted} />
+              )}
             </>
           )}
         </div>

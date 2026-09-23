@@ -23,12 +23,13 @@
  * is running rather than leaving silence to stand for it.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { attachedRow, qcUnavailable, type ViewedPreview } from "./lineage";
 import type { ProjectArtifact, ProjectInput, ProjectRun } from "./projectApi";
 import { QcReport } from "./QcReport";
+import { phaseKey, TargetedMs1Report, TargetedMs1Setup } from "./TargetedMs1";
 import type { ProjectBusy, ProjectSession } from "./useProject";
 
 /** The message key for one verification outcome. */
@@ -106,9 +107,20 @@ const REFUSALS = {
   // A capture's own names for two shared refusals; see `useProject`.
   qcProjectChanged: "projectRefusedQcProjectChanged",
   qcNotInWorkbench: "projectRefusedQcNotInWorkbench",
+  // The targeted MS1 recipe and the results stored beside a project.
+  analysisRunning: "projectRefusedAnalysisRunning",
+  recipeUnavailable: "projectRefusedRecipeUnavailable",
+  recipeSourceUnsupported: "projectRefusedRecipeSourceUnsupported",
+  sourceOnAnotherVolume: "projectRefusedSourceOnAnotherVolume",
+  planNotCurrent: "projectRefusedPlanNotCurrent",
+  payloadStoreUnusable: "projectRefusedPayloadStoreUnusable",
+  destinationStoreExists: "projectRefusedDestinationStoreExists",
+  payloadNotCopied: "projectRefusedPayloadNotCopied",
+  payloadMissing: "targetedPayloadMissing",
+  payloadCorrupt: "targetedPayloadCorrupt",
 } as const;
 
-function refusalKey(code: string) {
+export function refusalKey(code: string) {
   return code in REFUSALS
     ? REFUSALS[code as keyof typeof REFUSALS]
     : ("projectRefusedUnknown" as const);
@@ -122,6 +134,8 @@ const BUSY = {
   linking: "projectBusyLinking",
   admitting: "projectBusyAdmitting",
   recording: "projectBusyRecordingQc",
+  reviewing: "projectBusyReviewingPlan",
+  analysing: "projectBusyAnalysing",
 } as const;
 
 /** The sentence for each reason a QC capture is unavailable. */
@@ -135,7 +149,18 @@ const QC_REASONS = {
 export function operationKey(run: ProjectRun) {
   return run.operation === "captureAcquisitionQcSnapshotV1"
     ? ("projectOperationCaptureQc" as const)
-    : ("projectOperationCapture" as const);
+    : run.operation === "targetedMs1V1"
+      ? ("projectOperationTargetedMs1" as const)
+      : ("projectOperationCapture" as const);
+}
+
+/** What one recorded artifact is called. */
+export function artifactKey(artifact: ProjectArtifact) {
+  return artifact.kind === "acquisitionQcSnapshotV1"
+    ? ("projectArtifactQcSummary" as const)
+    : artifact.kind === "targetedMs1ResultV1"
+      ? ("projectArtifactTargetedMs1" as const)
+      : ("projectArtifactFileFacts" as const);
 }
 
 /**
@@ -149,13 +174,17 @@ export function operationKey(run: ProjectRun) {
 export function inspectRunName(run: ProjectRun) {
   return run.operation === "captureAcquisitionQcSnapshotV1"
     ? ("provenanceInspectQcRunAt" as const)
-    : ("provenanceInspectRunAt" as const);
+    : run.operation === "targetedMs1V1"
+      ? ("provenanceInspectTargetedRunAt" as const)
+      : ("provenanceInspectRunAt" as const);
 }
 
 export function inspectRecordName(artifact: ProjectArtifact) {
   return artifact.kind === "acquisitionQcSnapshotV1"
     ? ("provenanceInspectQcSnapshotOf" as const)
-    : ("provenanceInspectArtifactOf" as const);
+    : artifact.kind === "targetedMs1ResultV1"
+      ? ("provenanceInspectTargetedResultOf" as const)
+      : ("provenanceInspectArtifactOf" as const);
 }
 
 function busyKey(busy: ProjectBusy) {
@@ -390,6 +419,36 @@ export function ProjectPanel({
       ?.focus({ preventScroll: true });
   }, [busy, shownReport]);
 
+  /**
+   * The layer whose targeted MS1 setup is open, in the project it was opened
+   * in. Local to this surface: nothing is sent until the user asks for a
+   * review, and a project replaced under it closes it.
+   */
+  const [targeted, setTargeted] = useState<{
+    readonly projectId: string | null;
+    readonly layerId: string;
+  } | null>(null);
+  const targetedLayer =
+    targeted !== null && targeted.projectId === state.projectId
+      ? (state.layers.find((layer) => layer.id === targeted.layerId) ?? null)
+      : null;
+  const targetedSource =
+    targetedLayer === null
+      ? undefined
+      : state.inputs.find((input) => input.id === targetedLayer.sourceInputId);
+
+  /** The targeted result being inspected, with what its report needs. */
+  const targetedReport =
+    provenance?.kind === "artifact" && provenance.artifact.kind === "targetedMs1ResultV1"
+      ? {
+          artifact: provenance.artifact,
+          plan: provenance.targeted?.plan ?? null,
+          sourceName: provenance.layerSources[0]?.record?.label ?? null,
+          recordedAt: provenance.producedBy?.record?.finishedAt ?? null,
+        }
+      : null;
+  const phase = phaseKey(session.analysisPhase);
+
   const proposalInput = state.inputs.find((input) => input.id === proposed);
   const announcement =
     busyKey(busy) !== null
@@ -399,7 +458,7 @@ export function ProjectPanel({
         : problem !== null
           ? t(refusalKey(problem))
           : cancelled
-            ? t("projectCancelled")
+            ? t(session.cancelledRunRecorded ? "projectCancelledRunRecorded" : "projectCancelled")
             : proposalInput !== undefined
               ? t(
                   proposalInput.relinkCandidateMatches
@@ -492,6 +551,9 @@ export function ProjectPanel({
       {busyKey(busy) === null ? null : (
         <p className="project-busy" data-project-busy={busy}>
           {t(busyKey(busy) as "projectBusySaving")}
+          {busy === "analysing" && phase !== null ? (
+            <span data-project-busy-phase={session.analysisPhase ?? ""}>{t(phase)}</span>
+          ) : null}
           {/* Offered only for an operation this session accepted and is still
               waiting on. A save or a dialog is busy too, but it is not a thing
               a cancel can name -- and once the answer is in, the control is
@@ -571,7 +633,7 @@ export function ProjectPanel({
 
       {cancelled ? (
         <p className="project-note" data-project-cancelled="">
-          {t("projectCancelled")}
+          {t(session.cancelledRunRecorded ? "projectCancelledRunRecorded" : "projectCancelled")}
         </p>
       ) : null}
 
@@ -581,6 +643,38 @@ export function ProjectPanel({
               being inspected. In the main region, above the lists, because it
               is the evidence; Details beside it keeps the lineage and the
               build. */}
+          {targetedLayer === null ? null : (
+            <TargetedMs1Setup
+              key={targetedLayer.id}
+              session={session}
+              layerId={targetedLayer.id}
+              sourceName={targetedSource?.label ?? t("provenanceRelatedGone")}
+              refusalText={(code) => t(refusalKey(code))}
+              onClose={() => {
+                const layerId = targetedLayer.id;
+                setTargeted(null);
+                // Back to the control that opened it, which stays mounted.
+                surfaceRef.current
+                  ?.querySelector<HTMLElement>(`[data-project-targeted="${layerId}"]`)
+                  ?.focus();
+              }}
+            />
+          )}
+
+          {targetedReport === null ? null : (
+            <TargetedMs1Report
+              artifact={targetedReport.artifact}
+              plan={targetedReport.plan}
+              sourceName={targetedReport.sourceName}
+              recordedWhen={
+                targetedReport.recordedAt === null
+                  ? null
+                  : recordedAt(targetedReport.recordedAt, locale)
+              }
+              refusalText={(code) => t(refusalKey(code))}
+            />
+          )}
+
           {report === null ? null : (
             <QcReport
               artifactId={report.artifact.id}
@@ -960,6 +1054,24 @@ export function ProjectPanel({
                         >
                           {t("projectCaptureQc")}
                         </button>
+                        {/* Opens the setup and sends nothing. Whether a plan
+                            can run here -- a saved project, one mzML source --
+                            is Rust's answer to a review, shown there. */}
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          aria-disabled={working || undefined}
+                          aria-expanded={targetedLayer?.id === layer.id}
+                          aria-label={t("projectTargetedNamed", { name })}
+                          data-project-targeted={layer.id}
+                          onClick={() => {
+                            if (!working) {
+                              setTargeted({ projectId: state.projectId, layerId: layer.id });
+                            }
+                          }}
+                        >
+                          {t("projectTargeted")}
+                        </button>
                         <button
                           type="button"
                           className="link-button"
@@ -1099,17 +1211,21 @@ export function ProjectPanel({
                                 data-artifact-kind={artifact.kind}
                                 onClick={() => session.inspect({ kind: "artifact", id: artifact.id })}
                               >
-                                {t(
-                                  artifact.kind === "acquisitionQcSnapshotV1"
-                                    ? "projectArtifactQcSummary"
-                                    : "projectArtifactFileFacts",
-                                )}
+                                {t(artifactKey(artifact))}
                               </button>
                               {artifact.kind === "fileFactsV1" ? (
                                 <>
                                   {" — "}
                                   {t("projectArtifactMembers", {
                                     count: artifact.observedMemberCount,
+                                  })}
+                                </>
+                              ) : artifact.targetedMs1 ? (
+                                <>
+                                  {" — "}
+                                  {t("projectArtifactTargetedCounts", {
+                                    count: artifact.targetedMs1.result.summary.detected,
+                                    total: artifact.targetedMs1.result.summary.targets,
                                   })}
                                 </>
                               ) : null}

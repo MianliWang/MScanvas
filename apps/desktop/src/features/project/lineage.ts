@@ -20,6 +20,8 @@ import type {
   ProjectLayer,
   ProjectRun,
   ProjectState,
+  TargetedMs1Execution,
+  TargetedMs1Plan,
 } from "./projectApi";
 
 /** The four kinds of project object a user can inspect. */
@@ -42,6 +44,16 @@ export interface ProjectSelection {
 export interface Related<T> {
   readonly id: string;
   readonly record: T | null;
+}
+
+/**
+ * A targeted run's own block and the plan it executed, or `null` for any other
+ * run. The plan is looked up by the digest the run names; a valid document
+ * always holds it, and one that does not says so with `null` here.
+ */
+export interface TargetedLineage {
+  readonly execution: TargetedMs1Execution;
+  readonly plan: TargetedMs1Plan | null;
 }
 
 export type Provenance =
@@ -74,6 +86,7 @@ export type Provenance =
       /** Each consumed layer's source, by the layer's position above. */
       readonly layerSources: readonly (ProjectInput | null)[];
       readonly produced: readonly Related<ProjectArtifact>[];
+      readonly targeted: TargetedLineage | null;
     }
   | {
       readonly kind: "artifact";
@@ -88,7 +101,19 @@ export type Provenance =
        */
       readonly layers: readonly Related<ProjectLayer>[];
       readonly layerSources: readonly Related<ProjectInput>[];
+      /** The producing run's targeted block and plan, for a targeted result. */
+      readonly targeted: TargetedLineage | null;
     };
+
+/** The targeted block of one run, with the plan it names. */
+export function targetedLineage(state: ProjectState, run: ProjectRun | null): TargetedLineage | null {
+  const execution = run?.targetedMs1 ?? null;
+  if (execution === null) return null;
+  return {
+    execution,
+    plan: (state.plans ?? []).find((plan) => plan.planSha256 === execution.planSha256) ?? null,
+  };
+}
 
 function relate<T extends { readonly id: string }>(
   records: readonly T[],
@@ -202,6 +227,7 @@ export function provenanceOf(
         return state.inputs.find((input) => input.id === layer?.sourceInputId) ?? null;
       }),
       produced: run.outputArtifactIds.map((id) => relate(state.artifacts, id)),
+      targeted: targetedLineage(state, run),
     };
   }
 
@@ -219,5 +245,6 @@ export function provenanceOf(
     layerSources: layers.flatMap((layer) =>
       layer.record === null ? [] : [relate(state.inputs, layer.record.sourceInputId)],
     ),
+    targeted: targetedLineage(state, producedBy?.record ?? null),
   };
 }

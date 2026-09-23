@@ -20,7 +20,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { WorkspaceAddResult } from "../mzml-preview/contracts";
-import { NO_PROJECT, useProjectApi, type ProjectState } from "./projectApi";
+import {
+  NO_PROJECT,
+  useProjectApi,
+  type PlanRequest,
+  type PlanResolution,
+  type ProjectState,
+  type TargetedMs1RunEnd,
+} from "./projectApi";
 import { provenanceOf, type Provenance, type ProjectSelection } from "./lineage";
 
 /** What the surface is doing, so it can say so rather than only dim. */
@@ -32,7 +39,12 @@ export type ProjectBusy =
   | "capturing"
   | "linking"
   | "admitting"
-  | "recording";
+  | "recording"
+  | "reviewing"
+  | "analysing";
+
+/** How the last targeted run this session started ended. */
+export type TargetedRunEnd = Pick<TargetedMs1RunEnd, "runId" | "outcome" | "artifactId">;
 
 /**
  * An action that was refused because the project has unsaved changes.
@@ -60,6 +72,11 @@ export interface ProjectSession {
   readonly problem: string | null;
   /** Set when the last operation was cancelled rather than refused. */
   readonly cancelled: boolean;
+  /**
+   * Set with `cancelled` when what was cancelled was a targeted run, which is
+   * recorded in the history rather than leaving nothing behind.
+   */
+  readonly cancelledRunRecorded: boolean;
   /** The action waiting on an answer about unsaved changes, or `null`. */
   readonly pending: PendingIntent | null;
   /** Which references the next capture will cover. */
@@ -126,6 +143,23 @@ export interface ProjectSession {
    * Details region away from what they moved on to.
    */
   readonly captureQc: (layerId: string, previewToken: string) => Promise<void>;
+  /**
+   * Asks Rust to resolve a targeted MS1 request into a plan for review.
+   * Answers the review, or `null` where it was refused -- the refusal is then
+   * `problem`, like any other.
+   */
+  readonly reviewTargetedMs1: (request: PlanRequest) => Promise<PlanResolution | null>;
+  /**
+   * Runs one reviewed plan as an accepted operation, so Cancel can name it.
+   * A run that started is recorded however it ends; its result, or the run
+   * itself where there is none, is inspected on arrival unless the reader
+   * chose something else meanwhile.
+   */
+  readonly runTargetedMs1: (planSha256: string) => Promise<void>;
+  /** Where the targeted run in progress is, as Rust reports it, or `null`. */
+  readonly analysisPhase: string | null;
+  /** How the last targeted run this session started ended, or `null`. */
+  readonly lastTargetedRun: TargetedRunEnd | null;
 }
 
 /**
@@ -182,10 +216,12 @@ export function useProject(
   const [state, setState] = useState<ProjectState>(NO_PROJECT);
   const [busy, setBusy] = useState<ProjectBusy>("idle");
   const [problem, setProblem] = useState<string | null>(null);
-  const [cancelled, setCancelled] = useState(false);
+  const [cancelled, setCancelled] = useState<false | "operation" | "targetedRun">(false);
   const [pending, setPending] = useState<PendingIntent | null>(null);
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [inspecting, setInspecting] = useState<ProjectSelection | null>(null);
+  const [analysisPhase, setAnalysisPhase] = useState<string | null>(null);
+  const [lastTargetedRun, setLastTargetedRun] = useState<TargetedRunEnd | null>(null);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -262,7 +298,7 @@ export function useProject(
             // The user asked for this. Reporting it as a refusal would tell
             // them something went wrong with their own decision -- and would
             // sit beside the cancelled run the capture just recorded.
-            setCancelled(true);
+            setCancelled("operation");
           } else {
             setProblem(code);
           }
@@ -340,6 +376,27 @@ export function useProject(
   const inspectingNow = useRef(inspecting);
   inspectingNow.current = inspecting;
 
+  // Where a targeted run is, read while one is out. A read of session state
+  // and nothing else: it never goes through `settle`, so a poll can neither
+  // replace the project nor reorder an answer.
+  useEffect(() => {
+    if (busy !== "analysing") return;
+    let live = true;
+    const poll = () =>
+      void api
+        .getTargetedMs1Progress()
+        .then((progress) => {
+          if (live) setAnalysisPhase(progress?.phase ?? null);
+        })
+        .catch(() => undefined);
+    poll();
+    const timer = window.setInterval(poll, 500);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [api, busy]);
+
   const createProject = useCallback(
     (name: string, discardUnsaved = false) =>
       run("saving", () => api.createProject(name, discardUnsaved), {
@@ -364,10 +421,13 @@ export function useProject(
     busy,
     activeOperation,
     problem,
-    cancelled,
+    cancelled: cancelled !== false,
+    cancelledRunRecorded: cancelled === "targetedRun",
     pending,
     selected,
     inspecting,
+    analysisPhase: busy === "analysing" ? analysisPhase : null,
+    lastTargetedRun,
     provenance: provenanceOf(state, inspecting),
     inspect: setInspecting,
     toggleSelected,
@@ -487,6 +547,46 @@ export function useProject(
         });
       },
       [api, run],
+    ),
+    reviewTargetedMs1: useCallback(
+      async (request: PlanRequest) => {
+        let resolution: PlanResolution | null = null;
+        // A review changes no document, so there is no project to settle.
+        await run("reviewing", async () => {
+          resolution = await api.resolveTargetedMs1Plan(request);
+          return null;
+        });
+        return resolution;
+      },
+      [api, run],
+    ),
+    runTargetedMs1: useCallback(
+      (planSha256: string) => {
+        const pressedWhile = inspectingNow.current;
+        setAnalysisPhase(null);
+        return runAccepted("analysing", async (operationId) => {
+          const end = await api.runTargetedMs1(operationId, planSha256);
+          if (mounted.current) {
+            setLastTargetedRun({
+              runId: end.runId,
+              outcome: end.outcome,
+              artifactId: end.artifactId,
+            });
+            // A cancelled run is recorded rather than refused, and is still
+            // the user's own decision, so it is reported as one.
+            if (end.outcome === "cancelled") setCancelled("targetedRun");
+            if (inspectingNow.current === pressedWhile) {
+              setInspecting(
+                end.artifactId === null
+                  ? { kind: "run", id: end.runId }
+                  : { kind: "artifact", id: end.artifactId },
+              );
+            }
+          }
+          return end.project;
+        });
+      },
+      [api, runAccepted],
     ),
   };
 }
