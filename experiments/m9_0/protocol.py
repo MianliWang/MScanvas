@@ -522,9 +522,15 @@ MAIN_EXPECT = {
 }
 FMT_EXPECT = {"pos_control": {"DETECTED"}}
 
+# Pre-run amendment 1 (before any engine execution): `main_no_candidates` exists to
+# show that capturing candidates does not change the final selection. Without the
+# capture the adapter cannot know a selection was ambiguous, so its expectation for
+# `two_peaks` is the undisclosed `DETECTED`, and the candidate checks do not apply.
+NO_CAPTURE_EXPECT = dict(MAIN_EXPECT, two_peaks={"DETECTED"})
+
 CASES = [
     {"id": "main", "fixture": "main", "targets": MAIN_TARGETS, "expect": MAIN_EXPECT},
-    {"id": "main_no_candidates", "fixture": "main", "targets": MAIN_TARGETS, "expect": MAIN_EXPECT,
+    {"id": "main_no_candidates", "fixture": "main", "targets": MAIN_TARGETS, "expect": NO_CAPTURE_EXPECT,
      "experiment": {"capture_candidates": False}, "same_selection_as": "main"},
     {"id": "truncated_other_batch", "fixture": "main", "targets": ["truncated", "pos_control", "boundary"],
      "expect": {k: MAIN_EXPECT[k] for k in ("truncated", "pos_control", "boundary")},
@@ -712,7 +718,7 @@ def evaluate_case(case: dict, run_dir: Path, fixtures: dict, others: dict) -> li
             _check(rows, cid, "truncated.intensity_source_disclosed",
                    feat["engine_intensity_source"] in {"imputed_from_run_regression", "zero_after_failed_fit"},
                    f"source={feat['engine_intensity_source']} engine_intensity={feat['engine_intensity']!r}")
-        if name == "two_peaks":
+        if name == "two_peaks" and row["candidates"] is not None:
             _check(rows, cid, "two_peaks.candidates_reported", len(row["candidates"]) >= 2,
                    f"candidates={len(row['candidates'])}")
     if {"iso_a", "iso_b"} <= set(by_id):
