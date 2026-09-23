@@ -15,13 +15,18 @@ import { vi } from "vitest";
 import type { WorkspaceAddResult } from "../features/mzml-preview/contracts";
 import {
   NO_PROJECT,
+  type AnalysisRun,
   type CancelOutcome,
+  type PayloadRow,
+  type PlanResolution,
   type ProjectApi,
   type ProjectArtifact,
   type ProjectInput,
   type ProjectLayer,
   type ProjectRun,
   type ProjectState,
+  type TargetEvidence,
+  type TargetedMs1Plan,
 } from "../features/project/projectApi";
 
 export interface FakeProjectApi extends ProjectApi {
@@ -53,7 +58,19 @@ export interface FakeProjectApi extends ProjectApi {
   readonly setAdmission: (result: WorkspaceAddResult) => void;
   /** What the next cancels answer. `cancelled` unless a test says otherwise. */
   readonly setCancelOutcome: (outcome: CancelOutcome) => void;
+  /**
+   * What the targeted-MS1 reads answer: a review, the stored rows, each
+   * target's evidence, and the phase a progress poll reports.
+   */
+  readonly setTargeted: (next: Partial<FakeTargeted>) => void;
   readonly calls: string[];
+}
+
+export interface FakeTargeted {
+  readonly resolution: PlanResolution;
+  readonly rows: readonly PayloadRow[];
+  readonly evidence: Readonly<Record<string, TargetEvidence>>;
+  readonly progress: AnalysisRun | null;
 }
 
 export function projectInput(overrides: Partial<ProjectInput> = {}): ProjectInput {
@@ -109,6 +126,235 @@ export function projectLayer(overrides: Partial<ProjectLayer> = {}): ProjectLaye
     consumedByRunIds: [],
     ...overrides,
   };
+}
+
+const DIGEST = "A".repeat(64);
+
+/** The engine identity every fake review answers with. */
+export const FAKE_ENGINE = {
+  package: "pyOpenMS",
+  version: "3.5.0",
+  algorithm: "FeatureFinderMetaboIdent",
+  revision: "c1370fb",
+  maturity: "experimental",
+  fixedProfile: "{}",
+} as const;
+
+/** One reviewed plan over the default layer, with two targets. */
+export function targetedPlan(overrides: Partial<TargetedMs1Plan> = {}): TargetedMs1Plan {
+  return {
+    planSha256: "B".repeat(64),
+    recipe: {
+      recipe: "targetedMs1",
+      recipeVersion: 1,
+      adapterSha256: DIGEST,
+      engineProfileSha256: DIGEST,
+      runtimeManifestSha256: DIGEST,
+    },
+    layerId: projectLayer().id,
+    inputId: projectInput().id,
+    expectedContent: [
+      { role: "primary", relativeName: "", byteLength: 1024, sha256: DIGEST },
+    ],
+    parameters: { mzHalfWidthPpm: "5", expectedPeakWidthS: "6" },
+    targetListSha256: "C".repeat(64),
+    targets: [
+      {
+        targetId: "77777777-0000-4111-8111-000000000001",
+        label: "Caffeine",
+        formula: "C8H10N4O2",
+        neutralMass: null,
+        rtS: "120",
+        rtHalfWidthS: "30",
+      },
+      {
+        targetId: "77777777-0000-4111-8111-000000000002",
+        label: "Absent",
+        formula: "C9H9NO4",
+        neutralMass: null,
+        rtS: "300",
+        rtHalfWidthS: "30",
+      },
+    ],
+    ...overrides,
+  };
+}
+
+/** A detected row for the plan's first target. */
+export function detectedRow(overrides: Partial<PayloadRow> = {}): PayloadRow {
+  return {
+    targetId: targetedPlan().targets[0].targetId,
+    outcome: "DETECTED",
+    failureReason: null,
+    edgeTraceCount: 0,
+    ion: {
+      adduct: "[M+H]+",
+      charge: 1,
+      mzTheoretical: [195.0877, 196.0911],
+      isotopeProbability: [0.9, 0.1],
+    },
+    windows: {
+      rtClosedS: [90, 150],
+      mzOpen: [
+        [195.0867, 195.0887],
+        [196.0901, 196.0921],
+      ],
+    },
+    signal: { points: 3, sum: [3000, 300], max: [2000, 200], anyNonzeroPoint: true },
+    feature: {
+      apexRtS: 120,
+      leftS: 114,
+      rightS: 126,
+      rawArea: 21000,
+      modelStatus: "0 (converged)",
+      modelArea: 20500,
+      modelFwhmS: 5.9,
+      engineIntensity: 20500,
+      engineIntensitySource: "modelArea",
+    },
+    candidates: [{ apexRtS: 120, leftS: 114, rightS: 126, rawArea: 21000 }],
+    overlapWinner: false,
+    relations: { sharedWith: [], suppressedBy: null, overlapRemoved: [] },
+    recoveredFromEmptySelection: false,
+    ...overrides,
+  };
+}
+
+/** An absent row for the plan's second target. */
+export function absentRow(overrides: Partial<PayloadRow> = {}): PayloadRow {
+  return detectedRow({
+    targetId: targetedPlan().targets[1].targetId,
+    outcome: "NOT_DETECTED",
+    ion: {
+      adduct: "[M+H]+",
+      charge: 1,
+      mzTheoretical: [196.0604, 197.0638],
+      isotopeProbability: [0.9, 0.1],
+    },
+    windows: {
+      rtClosedS: [270, 330],
+      mzOpen: [
+        [196.0594, 196.0614],
+        [197.0628, 197.0648],
+      ],
+    },
+    signal: { points: 3, sum: [0, 0], max: [0, 0], anyNonzeroPoint: false },
+    feature: null,
+    candidates: [],
+    ...overrides,
+  });
+}
+
+/** The evidence a detected row's two traces carry. */
+export function detectedEvidence(): TargetEvidence {
+  const targetId = targetedPlan().targets[0].targetId;
+  return {
+    targetId,
+    traces: [
+      {
+        targetId,
+        trace: 0,
+        mzTheoretical: 195.0877,
+        points: [
+          [10, 114, 500],
+          [11, 120, 2000],
+          [12, 126, 500],
+        ],
+      },
+      {
+        targetId,
+        trace: 1,
+        mzTheoretical: 196.0911,
+        points: [
+          [10, 114, 50],
+          [11, 120, 200],
+          [12, 126, 50],
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * A saved project with one layer, one completed targeted run over it and the
+ * result it produced, wired the way Rust wires them.
+ */
+export function targetedProject(
+  availability: "available" | "payloadMissing" | "payloadCorrupt" = "available",
+): ProjectState {
+  const plan = targetedPlan();
+  const runId = "ffffffff-7777-4111-8111-111111111111";
+  const artifactId = "eeeeeeee-7777-4111-8111-111111111111";
+  const layer = projectLayer({ consumedByRunIds: [runId] });
+  const input = projectInput({ verification: "matchingRecordedContent" });
+  return openProject({
+    published: true,
+    inputs: [input],
+    layers: [layer],
+    plans: [plan],
+    runs: [
+      projectRun({
+        id: runId,
+        operation: "targetedMs1V1",
+        layerIds: [layer.id],
+        outputArtifactIds: [artifactId],
+        targetedMs1: {
+          planSha256: plan.planSha256,
+          consumedContent: plan.expectedContent,
+          attempt: {
+            adapterSha256: DIGEST,
+            runtimeManifestSha256: DIGEST,
+            interpreterSha256: DIGEST,
+            sourceView: "hardLinkInWorkArea",
+            engineReport: {
+              python: "3.13.15",
+              pyopenms: "3.5.0",
+              openms: "3.5.0",
+              openmsRevision: "c1370fb",
+              openmsBuildTime: "2025-01-01",
+            },
+            loadedModules: [{ name: "pyopenms/_pyopenms_1.pyd", sha256: DIGEST }],
+          },
+          failure: null,
+          stop: null,
+        },
+      }),
+    ],
+    artifacts: [
+      projectArtifact({
+        id: artifactId,
+        label: "Targeted MS1 result",
+        kind: "targetedMs1ResultV1",
+        observedInputCount: 0,
+        observedMemberCount: 0,
+        producedByRunId: runId,
+        targetedMs1: {
+          result: {
+            summary: {
+              targets: 2,
+              detected: 1,
+              detectedAmbiguous: 0,
+              shared: 0,
+              suppressedByOverlap: 0,
+              notDetected: 1,
+              failed: 0,
+            },
+            noCandidateRecovery: false,
+            payload: {
+              manifestSha256: DIGEST,
+              files: [
+                { name: "rows.jsonl", byteLength: 2048, sha256: DIGEST },
+                { name: "evidence.jsonl", byteLength: 4096, sha256: DIGEST },
+                { name: "evidence.index.json", byteLength: 512, sha256: DIGEST },
+              ],
+            },
+          },
+          availability,
+        },
+      }),
+    ],
+    resultStore: { storeFound: availability !== "payloadMissing", unreferencedResults: 0 },
+  });
 }
 
 /**
@@ -169,6 +415,23 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
   const cancelled: string[] = [];
   /** What the next reattachment answers with on the workspace half. */
   let admission: WorkspaceAddResult = { roster: { datasets: [], capacity: 24 }, outcomes: [] };
+  let targeted: FakeTargeted = {
+    resolution: { plan: targetedPlan(), problems: [], blocked: null, engine: FAKE_ENGINE },
+    rows: [detectedRow(), absentRow()],
+    evidence: { [detectedEvidence().targetId]: detectedEvidence() },
+    progress: null,
+  };
+
+  /** A read's answer, after recording the call and honouring a staged refusal. */
+  function read<T>(operation: keyof ProjectApi, value: () => T): Promise<T> {
+    calls.push(operation);
+    const refusal = refusals.get(operation);
+    if (refusal !== undefined) {
+      refusals.delete(operation);
+      return Promise.reject({ kind: refusal, summary: refusal, detail: null, retryable: false });
+    }
+    return Promise.resolve(value());
+  }
 
   /** One answer, after recording the call and honouring any staged outcome. */
   function answer(operation: keyof ProjectApi): Promise<ProjectState | null> {
@@ -214,6 +477,9 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     },
     setAdmission: (result) => {
       admission = result;
+    },
+    setTargeted: (next) => {
+      targeted = { ...targeted, ...next };
     },
     calls,
     getProjectState: vi.fn(() => answer("getProjectState") as Promise<ProjectState>),
@@ -268,6 +534,34 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
       );
       return { project, artifactId: recorded.at(-1)?.id ?? "" };
     }),
+    resolveTargetedMs1Plan: vi.fn(() =>
+      read("resolveTargetedMs1Plan", () => targeted.resolution),
+    ),
+    runTargetedMs1: vi.fn(async (_operationId: string, _planSha256: string) => {
+      const project = (await answer("runTargetedMs1")) as ProjectState;
+      // The newest targeted run the staged answer holds, which is the one a
+      // real run would have just recorded.
+      const run = project.runs.filter((each) => each.operation === "targetedMs1V1").at(-1);
+      return {
+        project,
+        runId: run?.id ?? "",
+        outcome: run?.outcome ?? "failed",
+        artifactId: run?.outputArtifactIds[0] ?? null,
+      };
+    }),
+    // Not recorded in `calls`: it is polled while a run is out, and a test's
+    // list of what the user caused would otherwise depend on timing.
+    getTargetedMs1Progress: vi.fn(() => Promise.resolve(targeted.progress)),
+    readTargetedMs1Rows: vi.fn((_artifactId: string, offset: number) =>
+      read("readTargetedMs1Rows", () => ({
+        total: targeted.rows.length,
+        offset,
+        rows: targeted.rows.slice(offset),
+      })),
+    ),
+    readTargetedMs1Evidence: vi.fn((_artifactId: string, targetId: string) =>
+      read("readTargetedMs1Evidence", () => targeted.evidence[targetId] ?? { targetId, traces: [] }),
+    ),
   };
   return api;
 }

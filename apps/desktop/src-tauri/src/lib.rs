@@ -19,6 +19,9 @@ mod qc_snapshot;
 /// workspace. Separate from both, so the crossing is a named thing rather than
 /// a dependency either of them grew. See the module for what each side decides.
 mod reattachment;
+/// The targeted MS1 supervisor: the only place the recipe's worker process is
+/// started, behind the executor boundary the project store runs it through.
+mod targeted_ms1;
 
 use preferences::UiPreferenceStore;
 use preferences::dto::{UiPreferenceReadDto, UiPreferenceSaveDto, UiPreferenceWriteDto};
@@ -138,6 +141,31 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         }
         Refusal::SummaryTooLarge => {
             "This run summary reports more MS levels than a QC summary snapshot records."
+        }
+        Refusal::AnalysisRunning => {
+            "A targeted MS1 run is in progress. Wait for it to end, or cancel it."
+        }
+        Refusal::RecipeUnavailable => {
+            "This build cannot run the targeted MS1 recipe: its runtime is not available."
+        }
+        Refusal::RecipeSourceUnsupported => {
+            "The targeted MS1 recipe reads one mzML file, and this layer's source is not one."
+        }
+        Refusal::SourceOnAnotherVolume => {
+            "The source is on a different drive from the MSCanvas work area. Move it to that drive to run this recipe."
+        }
+        Refusal::PlanNotCurrent => "That plan is no longer the one reviewed. Review it again.",
+        Refusal::PayloadStoreUnusable => {
+            "The results folder beside this project cannot be used, so nothing was run."
+        }
+        Refusal::DestinationStoreExists => {
+            "A results folder already exists beside that destination. Choose another name."
+        }
+        Refusal::PayloadNotCopied => {
+            "A stored result could not be copied whole, so the project was not saved there."
+        }
+        Refusal::PayloadUnavailable(_) => {
+            "This stored result is missing or damaged, so it cannot be shown."
         }
     };
     PreviewErrorDto::new(error.stable_id(), message, error.retryable())
@@ -571,6 +599,145 @@ async fn capture_project_qc_summary(
     })
 }
 
+/// Resolves a targeted MS1 request over one layer into a plan for review.
+///
+/// Sends the text the user typed and the layer; Rust decides what every value
+/// means, mints the target identifiers and holds the plan for this session.
+/// Reads no file's content and starts nothing. Problems with the request come
+/// back as data, row by row, and so does anything that would stop the plan
+/// running now.
+#[tauri::command]
+async fn resolve_targeted_ms1_plan(
+    request: project::dto::PlanRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::PlanResolutionDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let layer = parsed_layer_id(&request.layer_id)?;
+    let draft = request.draft();
+    let projects = Arc::clone(&projects);
+    // Off the async runtime: the placement question opens the source by name
+    // and reads the runtime's manifest.
+    off_the_async_runtime(move || {
+        let executor = targeted_ms1::executor();
+        projects
+            .resolve_targeted_ms1_plan(layer, &draft, executor.as_ref())
+            .map(project::dto::plan_resolution)
+            .map_err(project_error)
+    })
+    .await?
+}
+
+/// Runs one reviewed targeted MS1 plan as the operation `begin_project_job`
+/// accepted.
+///
+/// Names the plan by its digest and nothing else: the runtime, the adapter,
+/// the argv, the work area and the source are all Rust's. A run refused before
+/// its attempt starts records nothing and answers the refusal; a run that
+/// started is recorded however it ends, and answers the project with its run.
+#[tauri::command]
+async fn run_targeted_ms1(
+    operation_id: String,
+    plan_sha256: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedMs1RunDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let job = parsed_job_id(&operation_id)?;
+    if plan_sha256.len() != 64 || !plan_sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(project_error(project::ProjectError::PlanNotCurrent));
+    }
+    let projects = Arc::clone(&projects);
+    // Off the async runtime for the whole attempt: it verifies the runtime,
+    // hashes the source and waits for the worker.
+    off_the_async_runtime(move || {
+        let executor = targeted_ms1::executor();
+        let end = projects
+            .run_targeted_ms1(job, &plan_sha256, executor.as_ref())
+            .map_err(project_error)?;
+        Ok(project::dto::run_end(projects.describe(), end))
+    })
+    .await?
+}
+
+/// Where the targeted run in progress is, or `null` when none is.
+///
+/// Read-only and cheap, so a page can ask while its run is pending without
+/// re-describing the whole project.
+#[tauri::command]
+async fn get_targeted_ms1_progress(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<Option<project::dto::AnalysisRunDto>, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    Ok(projects
+        .analysis_run()
+        .map(|(id, phase)| project::dto::AnalysisRunDto {
+            operation_id: id.handle(),
+            phase: phase.stable_id(),
+        }))
+}
+
+/// One page of a stored targeted result's rows, checked against its record.
+#[tauri::command]
+async fn read_targeted_ms1_rows(
+    artifact_id: String,
+    offset: u32,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::RowsPageDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || {
+        let page = projects
+            .read_targeted_ms1_rows(artifact, offset as usize)
+            .map_err(project_error)?;
+        Ok(project::dto::RowsPageDto {
+            total: page.total,
+            offset: page.offset,
+            rows: page.rows,
+        })
+    })
+    .await?
+}
+
+/// One target's evidence from a stored targeted result, checked line by line.
+#[tauri::command]
+async fn read_targeted_ms1_evidence(
+    artifact_id: String,
+    target_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::EvidenceDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let target: project::record::TargetId = target_id
+        .parse()
+        .map_err(|()| project_error(project::ProjectError::UnknownRecord))?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || {
+        let traces = projects
+            .read_targeted_ms1_evidence(artifact, target)
+            .map_err(project_error)?;
+        Ok(project::dto::EvidenceDto {
+            target_id: target.to_string(),
+            traces,
+        })
+    })
+    .await?
+}
+
 /// Abandons an outstanding relink proposal.
 #[tauri::command]
 async fn abandon_project_relink(
@@ -625,6 +792,13 @@ fn parsed_layer_id(value: &str) -> Result<project::record::LayerId, PreviewError
     value
         .parse()
         .map_err(|()| project_error(project::ProjectError::UnknownRecord))
+}
+
+/// Reads one artifact identifier the webview sent, under the same rule.
+fn parsed_artifact_id(value: &str) -> Result<mscanvas_core::ArtifactId, PreviewErrorDto> {
+    value
+        .parse()
+        .map_err(|_| project_error(project::ProjectError::UnknownRecord))
 }
 
 #[tauri::command]
@@ -1990,6 +2164,11 @@ pub fn run() {
             create_project_layer,
             remove_project_layer,
             capture_project_qc_summary,
+            resolve_targeted_ms1_plan,
+            run_targeted_ms1,
+            get_targeted_ms1_progress,
+            read_targeted_ms1_rows,
+            read_targeted_ms1_evidence,
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,

@@ -320,6 +320,36 @@ pub fn object_identity_of(file: &std::fs::File) -> Option<(u64, [u8; 16])> {
     Some((metadata.dev(), file_id))
 }
 
+/// The volume a directory is on, as the filesystem numbers it.
+///
+/// The same 64-bit serial [`object_identity`] answers for a file, so the two
+/// can be compared to ask whether a file and a directory share a volume.
+/// `None` where the directory cannot be opened or its volume cannot say --
+/// which a caller must treat as "not established", never as "different".
+#[cfg(windows)]
+#[must_use]
+pub fn directory_volume(path: &Path) -> Option<u64> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    /// FILE_FLAG_BACKUP_SEMANTICS: the flag that lets a directory be opened.
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let directory = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(SHARE_ALL)
+        .custom_flags(BACKUP_SEMANTICS | OPEN_REPARSE_POINT)
+        .open(path)
+        .ok()?;
+    object_identity_of(&directory).map(|(volume, _)| volume)
+}
+
+/// The device a directory is on.
+#[cfg(not(windows))]
+#[must_use]
+pub fn directory_volume(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    std::fs::metadata(path).ok().map(|metadata| metadata.dev())
+}
+
 /// Why a name that exists could not be opened.
 fn unopenable_name(target: &Path) -> ReadRefusal {
     match std::fs::symlink_metadata(target) {
@@ -352,6 +382,37 @@ pub fn publish_through_temporary(
     bytes: &[u8],
     temporary_prefix: &str,
 ) -> Result<(), PublishFailure> {
+    publish(directory, target, bytes, temporary_prefix, true)
+}
+
+/// [`publish_through_temporary`], for a name that must not exist yet.
+///
+/// The same private sibling and the same handle-bound rename, with replacement
+/// refused: a document that appeared at the name after the caller looked is
+/// left exactly where it is and the publish fails. For a first publish to a
+/// chosen name, where replacing anything would be replacing something nobody
+/// approved.
+///
+/// # Errors
+///
+/// As [`publish_through_temporary`], with [`WriteRefusal::NotPublished`] where
+/// the name was taken.
+pub fn publish_new_through_temporary(
+    directory: &Path,
+    target: &Path,
+    bytes: &[u8],
+    temporary_prefix: &str,
+) -> Result<(), PublishFailure> {
+    publish(directory, target, bytes, temporary_prefix, false)
+}
+
+fn publish(
+    directory: &Path,
+    target: &Path,
+    bytes: &[u8],
+    temporary_prefix: &str,
+    replace: bool,
+) -> Result<(), PublishFailure> {
     if unsafe_published_name(target) {
         return Err(PublishFailure::of(WriteRefusal::UnsafeTarget));
     }
@@ -363,7 +424,7 @@ pub fn publish_through_temporary(
             WriteRefusal::NotWritten,
         ));
     }
-    match replace_with(&temporary, &temporary_path, target) {
+    match replace_with(&temporary, &temporary_path, target, replace) {
         Ok(()) => {
             // The handle now names the published document. Dropping it
             // publishes nothing further and withholds nothing further.
@@ -466,14 +527,21 @@ fn discard(temporary: std::fs::File, path: &Path, refusal: WriteRefusal) -> Publ
     }
 }
 
-/// Gives the open object the published name, replacing what is there.
+/// Gives the open object the published name, replacing what is there only
+/// where `replace` says so.
 ///
 /// By handle, so the temporary name may already mean something else and it does
 /// not matter: the kernel renames the object these bytes went into. `Flags` is
-/// written as a `1` `DWORD`, which is `ReplaceIfExists = TRUE` under either
-/// reading of the SDK union and leaves no indeterminate filler byte.
+/// written as a whole `DWORD` -- `1` is `ReplaceIfExists = TRUE` under either
+/// reading of the SDK union, `0` refuses an existing name -- and leaves no
+/// indeterminate filler byte.
 #[cfg(windows)]
-fn replace_with(file: &std::fs::File, _temporary_path: &Path, target: &Path) -> io::Result<()> {
+fn replace_with(
+    file: &std::fs::File,
+    _temporary_path: &Path,
+    target: &Path,
+    replace: bool,
+) -> io::Result<()> {
     use std::mem::{align_of, offset_of, size_of};
     use std::os::windows::ffi::OsStrExt as _;
     use std::os::windows::io::AsRawHandle as _;
@@ -516,7 +584,7 @@ fn replace_with(file: &std::fs::File, _temporary_path: &Path, target: &Path) -> 
     // and the name with its terminator fits exactly in the trailing bytes.
     unsafe {
         let header = base.cast::<FILE_RENAME_INFO>();
-        (&raw mut (*header).Anonymous.Flags).write(1);
+        (&raw mut (*header).Anonymous.Flags).write(u32::from(replace));
         (&raw mut (*header).RootDirectory).write(HANDLE(std::ptr::null_mut()));
         (&raw mut (*header).FileNameLength).write(name_length);
         base.add(NAME_OFFSET)
@@ -544,6 +612,14 @@ fn replace_with(file: &std::fs::File, _temporary_path: &Path, target: &Path) -> 
 /// being renamed, not the object the bytes went into. Windows is the supported
 /// target and carries the stronger form above.
 #[cfg(not(windows))]
-fn replace_with(_file: &std::fs::File, temporary_path: &Path, target: &Path) -> io::Result<()> {
+fn replace_with(
+    _file: &std::fs::File,
+    temporary_path: &Path,
+    target: &Path,
+    replace: bool,
+) -> io::Result<()> {
+    if !replace && std::fs::symlink_metadata(target).is_ok() {
+        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+    }
     std::fs::rename(temporary_path, target)
 }

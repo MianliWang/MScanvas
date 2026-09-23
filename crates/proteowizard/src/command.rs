@@ -11,6 +11,23 @@ use crate::intent::{ConversionIntent, OutputFormat};
 pub enum BackendTool {
     MsConvert,
     MsAccess,
+    /// The application's fixed analysis worker: a pinned interpreter running
+    /// one reviewed adapter. Not a ProteoWizard tool, never discovered, and
+    /// built only by [`CommandSpec::analysis_worker`].
+    AnalysisWorker,
+}
+
+/// The limits the owned Job applies to an analysis worker, beyond the
+/// kill-on-close every supervised run carries.
+///
+/// ProteoWizard runs carry none: a conversion legitimately starts helper
+/// processes, and its tests measure that it does. A worker is one process by
+/// construction, so the Job refuses it a second one, caps what the whole tree
+/// may commit, and runs it below normal priority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkerLimits {
+    /// The most committed memory the owned Job may hold, in bytes.
+    pub job_memory_bytes: u64,
 }
 
 /// A provider-level output format.
@@ -438,6 +455,11 @@ pub struct CommandSpec {
     /// more only where a family's acquisition is measurably more than one file.
     pub(crate) source_identity: Option<SourceIdentitySet>,
     pub(crate) output_safety: OutputSafety,
+    /// Variables set after the minimal environment, and only for an analysis
+    /// worker. Empty for every ProteoWizard run.
+    pub(crate) environment: Vec<(OsString, OsString)>,
+    /// Present only for an analysis worker.
+    pub(crate) worker_limits: Option<WorkerLimits>,
 }
 
 impl CommandSpec {
@@ -455,7 +477,44 @@ impl CommandSpec {
             executable_sha256: None,
             source_identity: None,
             output_safety: OutputSafety::None,
+            environment: Vec::new(),
+            worker_limits: None,
         }
+    }
+
+    /// The one command an analysis worker runs.
+    ///
+    /// Deliberately narrow. The executable is bound to the digest the caller
+    /// measured, and is hashed again immediately before the process is created,
+    /// exactly as a ProteoWizard executable is. The argv is an array, never a
+    /// shell string. The environment is the minimal one every supervised run
+    /// gets, with `environment` set over it -- the caller's own per-run
+    /// directories, not anything a user typed. And the owned Job applies
+    /// [`WorkerLimits`] as well as kill-on-close.
+    ///
+    /// It lives beside the ProteoWizard commands because this is where the one
+    /// reviewed process supervisor is: suspended creation, ownership before
+    /// execution, bounded capture, and cancellation that terminates the owned
+    /// Job. A second supervisor would be a second place to get that wrong.
+    #[must_use]
+    pub fn analysis_worker(
+        executable: PathBuf,
+        executable_sha256: Sha256Digest,
+        args: Vec<OsString>,
+        working_directory: PathBuf,
+        environment: Vec<(OsString, OsString)>,
+        limits: WorkerLimits,
+    ) -> Self {
+        let mut spec = Self::new(
+            BackendTool::AnalysisWorker,
+            executable,
+            args,
+            working_directory,
+        )
+        .with_executable_identity(executable_sha256);
+        spec.environment = environment;
+        spec.worker_limits = Some(limits);
+        spec
     }
 
     pub(crate) fn with_executable_identity(mut self, sha256: Sha256Digest) -> Self {

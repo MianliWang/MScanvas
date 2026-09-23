@@ -1058,6 +1058,8 @@ fn tool_program(tool: BackendTool) -> &'static str {
     match tool {
         BackendTool::MsConvert => "msconvert",
         BackendTool::MsAccess => "msaccess",
+        // Never help-parsed: a worker has no capability evidence to read.
+        BackendTool::AnalysisWorker => "analysis-worker",
     }
 }
 

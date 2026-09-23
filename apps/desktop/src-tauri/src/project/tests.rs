@@ -687,6 +687,7 @@ fn valid_document() -> ProjectDocument {
         application_version: "0.1.0".to_owned(),
         started_at: "2026-09-19T00:00:00Z".to_owned(),
         finished_at: "2026-09-19T00:00:01Z".to_owned(),
+        targeted_ms1: None,
     });
     document
 }
@@ -2182,6 +2183,7 @@ fn two_runs_claiming_one_artifact_are_refused_rather_than_resolved() {
             application_version: "0.1.0".to_owned(),
             started_at: "2026-09-22T00:00:00Z".to_owned(),
             finished_at: "2026-09-22T00:00:01Z".to_owned(),
+            targeted_ms1: None,
         });
     }
 
@@ -2295,6 +2297,7 @@ fn an_unknown_schema_version_still_governs_a_document_with_lineage() {
             application_version: "0.1.0".to_owned(),
             started_at: "2026-09-22T00:00:00Z".to_owned(),
             finished_at: "2026-09-22T00:00:01Z".to_owned(),
+            targeted_ms1: None,
         });
     }
 
@@ -3026,10 +3029,13 @@ fn a_document_with_a_remembered_row_and_a_layer_serializes_no_session_fact() {
 
 #[test]
 fn the_development_only_earlier_schemas_are_refused_rather_than_migrated() {
-    assert_eq!(record::SCHEMA_VERSION, 3);
-    assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 3);
+    assert_eq!(record::SCHEMA_VERSION, 4);
+    assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 4);
 
-    for earlier in [1, 2] {
+    // Schema 3 is M8's, and it was never published either: M9.1 refuses it
+    // exactly as M8.5 refused schema 2, rather than carrying a migration for
+    // a format no user holds.
+    for earlier in [1, 2, 3] {
         let mut document = valid_document();
         document.schema_version = earlier;
         assert_eq!(
@@ -3397,6 +3403,7 @@ fn a_capture_at_the_history_bound_is_refused_before_the_workspace_is_asked() {
             application_version: "0.1.0".to_owned(),
             started_at: "2026-09-22T00:00:00Z".to_owned(),
             finished_at: "2026-09-22T00:00:01Z".to_owned(),
+            targeted_ms1: None,
         };
         document.runs.resize(record::MAX_RUNS, filler);
     }
@@ -3461,6 +3468,7 @@ fn qc_document() -> (ProjectDocument, LayerId, mscanvas_core::ArtifactId) {
         application_version: "0.1.0".to_owned(),
         started_at: "2026-09-22T00:00:00Z".to_owned(),
         finished_at: "2026-09-22T00:00:00Z".to_owned(),
+        targeted_ms1: None,
     });
     (document, layer, artifact)
 }
@@ -3469,7 +3477,10 @@ fn qc_document() -> (ProjectDocument, LayerId, mscanvas_core::ArtifactId) {
 fn snapshot_in(document: &mut ProjectDocument) -> &mut record::AcquisitionQcSnapshotV1 {
     match &mut document.artifacts.last_mut().expect("the snapshot").payload {
         record::ArtifactPayload::AcquisitionQcSnapshotV1(snapshot) => snapshot,
-        record::ArtifactPayload::FileFactsV1(_) => panic!("not the snapshot"),
+        record::ArtifactPayload::FileFactsV1(_)
+        | record::ArtifactPayload::TargetedMs1ResultV1(_) => {
+            panic!("not the snapshot")
+        }
     }
 }
 
@@ -3521,7 +3532,10 @@ fn a_lower_case_producer_digest_is_read_in_the_one_spelling_this_build_writes() 
         record::ArtifactPayload::AcquisitionQcSnapshotV1(snapshot) => {
             assert_eq!(snapshot.producer.executable_sha256, "A1".repeat(32));
         }
-        record::ArtifactPayload::FileFactsV1(_) => panic!("not the snapshot"),
+        record::ArtifactPayload::FileFactsV1(_)
+        | record::ArtifactPayload::TargetedMs1ResultV1(_) => {
+            panic!("not the snapshot")
+        }
     }
 }
 

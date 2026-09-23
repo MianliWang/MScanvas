@@ -3,8 +3,10 @@
 //! A project is a private local working document. It records which local files
 //! a user chose to reference, what those files contained when they were
 //! registered, which operations were run over them, which references the user
-//! made a layer from, and the run-summary facts a QC capture copied from a
-//! preview that had already established them. It is not a workspace
+//! made a layer from, the run-summary facts a QC capture copied from a
+//! preview that had already established them, and the plans a targeted MS1
+//! run executed with a reference to the result each completed run published
+//! beside the document. It is not a workspace
 //! serialization: no handle, no lease, no admission, no process ownership, no
 //! `DatasetId` and no executable command is representable in these types at
 //! all. The allowlist is the type, not a filter applied to a wider one.
@@ -25,13 +27,15 @@ use uuid::Uuid;
 /// The only schema this build reads or writes.
 ///
 /// A document carrying anything else is refused as unsupported, not migrated.
-/// Schema 1 was the shape before layers existed, and schema 2 the shape before
-/// a run could consume a layer and an artifact could hold a QC snapshot.
-/// Neither was published outside development, so a document carrying either is
+/// Schema 1 was the shape before layers existed, schema 2 the shape before a
+/// run could consume a layer and an artifact could hold a QC snapshot, and
+/// schema 3 the shape before a run could execute a reviewed recipe plan and an
+/// artifact could reference a result stored beside the document. None of them
+/// was published outside development, so a document carrying any of them is
 /// refused exactly as any other version is: a migration path would be code for
 /// a format no user ever held. A later schema belongs to the build that wrote
 /// it.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// The largest project document this build will read.
 ///
@@ -80,6 +84,22 @@ pub const MAX_LABEL_CHARS: usize = 200;
 /// Well under the extended path limit, and a bound the reader applies before
 /// it ever touches the filesystem.
 pub const MAX_LOCATOR_CHARS: usize = 1024;
+
+/// The most targets one targeted MS1 plan may hold.
+///
+/// Every target is stored inline in its plan, and plans are history, so this
+/// is also a bound on how fast a project grows. A run's result depends on the
+/// whole batch it was given, so a plan is never split to fit.
+pub const MAX_TARGETS: usize = 200;
+
+/// The most plans one project may record. One per run at most.
+pub const MAX_PLANS: usize = MAX_RUNS;
+
+/// The most loaded modules one attempt records the files of.
+pub const MAX_LOADED_MODULES: usize = 32;
+
+/// The longest sum formula a target may carry, in characters.
+pub const MAX_FORMULA_CHARS: usize = 100;
 
 /// The longest single path component this build will join.
 ///
@@ -160,6 +180,17 @@ fresh_identifier!(ProjectId);
 fresh_identifier!(InputId);
 fresh_identifier!(RunId);
 fresh_identifier!(LayerId);
+
+/// A durable identifier for one target of one plan.
+///
+/// Minted by the application, never typed by the user. It is also the only
+/// name the engine sees for the target, so no user text reaches the engine,
+/// and it is how a result row and its evidence name the target they are about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TargetId(Uuid);
+
+fresh_identifier!(TargetId);
 
 /// What one member is to the input it belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -447,6 +478,10 @@ pub enum ArtifactPayload {
     #[serde(rename = "acquisitionQcSnapshotV1")]
     /// Boxed so a file-facts record does not carry a snapshot-sized hole.
     AcquisitionQcSnapshotV1(Box<AcquisitionQcSnapshotV1>),
+    /// A targeted MS1 result: a summary, and a reference by digest to the rows
+    /// and evidence published beside the document. The bulk is never inline.
+    #[serde(rename = "targetedMs1ResultV1")]
+    TargetedMs1ResultV1(Box<TargetedMs1ResultV1>),
 }
 
 impl ArtifactPayload {
@@ -455,7 +490,16 @@ impl ArtifactPayload {
     pub const fn file_facts(&self) -> Option<&FileFactsV1> {
         match self {
             Self::FileFactsV1(facts) => Some(facts),
-            Self::AcquisitionQcSnapshotV1(_) => None,
+            Self::AcquisitionQcSnapshotV1(_) | Self::TargetedMs1ResultV1(_) => None,
+        }
+    }
+
+    /// The targeted MS1 result, where this is one.
+    #[must_use]
+    pub fn targeted_ms1(&self) -> Option<&TargetedMs1ResultV1> {
+        match self {
+            Self::TargetedMs1ResultV1(result) => Some(result),
+            Self::FileFactsV1(_) | Self::AcquisitionQcSnapshotV1(_) => None,
         }
     }
 
@@ -465,6 +509,7 @@ impl ArtifactPayload {
         match self {
             Self::FileFactsV1(_) => RecordedOperation::CaptureFileFactsV1,
             Self::AcquisitionQcSnapshotV1(_) => RecordedOperation::CaptureAcquisitionQcSnapshotV1,
+            Self::TargetedMs1ResultV1(_) => RecordedOperation::TargetedMs1V1,
         }
     }
 }
@@ -482,9 +527,9 @@ pub struct ArtifactRecord {
 ///
 /// An enumeration rather than a free string precisely because the document is
 /// untrusted: an operation name this build does not implement is a refusal to
-/// open, not a row to render. Neither takes a parameter, so neither variant
-/// carries one -- a closed operation with nothing to configure, not an empty
-/// property bag waiting to be filled.
+/// open, not a row to render. The two captures take no parameter, so neither
+/// variant carries one. The targeted MS1 run does, and its parameters live in
+/// the typed plan the run names -- never in a property bag on the operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecordedOperation {
     #[serde(rename = "captureFileFactsV1")]
@@ -493,6 +538,10 @@ pub enum RecordedOperation {
     /// no file and starts no process.
     #[serde(rename = "captureAcquisitionQcSnapshotV1")]
     CaptureAcquisitionQcSnapshotV1,
+    /// Runs the fixed targeted MS1 adapter over one layer's source, as one
+    /// reviewed plan describes. The one operation that starts a process.
+    #[serde(rename = "targetedMs1V1")]
+    TargetedMs1V1,
 }
 
 impl RecordedOperation {
@@ -502,6 +551,7 @@ impl RecordedOperation {
         match self {
             Self::CaptureFileFactsV1 => "captureFileFactsV1",
             Self::CaptureAcquisitionQcSnapshotV1 => "captureAcquisitionQcSnapshotV1",
+            Self::TargetedMs1V1 => "targetedMs1V1",
         }
     }
 }
@@ -536,9 +586,11 @@ pub enum TerminalOutcome {
 
 /// One recorded run.
 ///
-/// There is no parameter field. Neither operation consumes variable
-/// parameters, and a field for parameters that do not exist is where an opaque
-/// blob gets in.
+/// There is no free parameter field. The captures consume no parameters, and a
+/// field for parameters that do not exist is where an opaque blob gets in. A
+/// targeted MS1 run carries one typed block naming the plan it executed and
+/// what its attempt established; every other run carries an explicit `null`
+/// there, so an omitted field is refused rather than read as absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunRecord {
@@ -555,6 +607,10 @@ pub struct RunRecord {
     /// RFC 3339, from the system clock at the time. Bounds, not a measurement.
     pub started_at: String,
     pub finished_at: String,
+    /// Present exactly when the operation is `targetedMs1V1`. Boxed so the
+    /// captures do not carry an execution-sized hole.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub targeted_ms1: Option<Box<TargetedMs1Execution>>,
 }
 
 impl RunRecord {
@@ -569,6 +625,447 @@ impl RunRecord {
     pub fn consumes_layer(&self, id: LayerId) -> bool {
         self.inputs.contains(&RunInput::Layer { layer_id: id })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Schema 4: the targeted MS1 recipe
+//
+// Five things stay distinct here, and none of them is another's identifier.
+// The recipe definition is code: this build's adapter, engine profile and
+// runtime, bound into every plan by digest. A plan is what the user reviewed,
+// named by the digest of its canonical form. A run is one execution of one
+// plan. Its attempt is what the supervisor and the worker established while it
+// ran. A result record summarises what a completed run published and names
+// that publication by digest; the rows and the evidence themselves live beside
+// the document, never inside it.
+// ---------------------------------------------------------------------------
+
+/// A finite number stored as the shortest decimal text that reads back to the
+/// same `f64`.
+///
+/// Text, for the reason [`RecordedRetentionTime`] gives: this build's JSON
+/// parser can read a float one unit in the last place away from what was
+/// written. A plan is named by the digest of its canonical form, and a plan
+/// whose parameters moved by one bit on reopen would be a different plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DecimalValue(String);
+
+impl DecimalValue {
+    /// One finite value in its one canonical spelling.
+    #[must_use]
+    pub fn of(value: f64) -> Option<Self> {
+        value.is_finite().then(|| Self(value.to_string()))
+    }
+
+    /// The value, where the stored text is a finite number in the canonical
+    /// spelling this build writes. Anything else is not a value it recorded.
+    #[must_use]
+    pub fn number(&self) -> Option<f64> {
+        let parsed: f64 = self.0.parse().ok()?;
+        (parsed.is_finite() && parsed.to_string() == self.0).then_some(parsed)
+    }
+}
+
+/// The recipes this schema can have planned. One.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RecipeId {
+    #[serde(rename = "targetedMs1")]
+    TargetedMs1,
+}
+
+/// What a plan was bound to: the code-owned recipe, by version and by digest.
+///
+/// Recorded rather than implied, because the build that runs a plan is not
+/// necessarily the build that reads it back, and a plan reviewed against one
+/// adapter must not be executed by another.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecipeBinding {
+    pub recipe: RecipeId,
+    pub recipe_version: u32,
+    /// SHA-256 of the adapter source the building application ships.
+    pub adapter_sha256: String,
+    /// SHA-256 of the canonical fixed engine profile.
+    pub engine_profile_sha256: String,
+    /// SHA-256 of the runtime manifest the building application pins.
+    pub runtime_manifest_sha256: String,
+}
+
+/// The two parameters a user chooses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetedMs1Parameters {
+    /// Half the width of the open m/z interval, in ppm.
+    pub mz_half_width_ppm: DecimalValue,
+    /// The expected chromatographic peak width, in seconds.
+    pub expected_peak_width_s: DecimalValue,
+}
+
+/// One target, exactly as the plan hands it to the engine.
+///
+/// The ion is `[M+H]+`: charge one is the recipe's measured domain and is not
+/// a choice, so there is no field for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetDefinition {
+    pub target_id: TargetId,
+    /// What the user called it. Kept in the project; never sent to the engine.
+    pub label: String,
+    /// A plain neutral sum formula. Required: the isotope model needs it.
+    pub formula: String,
+    /// A neutral monoisotopic mass that overrides the formula's, or `null`.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub neutral_mass: Option<DecimalValue>,
+    /// The expected retention time, in seconds.
+    pub rt_s: DecimalValue,
+    /// Half the width of the closed retention-time interval, in seconds.
+    pub rt_half_width_s: DecimalValue,
+}
+
+/// One reviewed plan.
+///
+/// Named by the digest of its canonical form, so two runs of the same reviewed
+/// plan name the same plan and a changed target, order, parameter or recipe is
+/// a different one. The target list is part of that identity, in order: the
+/// engine's answer for one target can depend on the others it was given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetedMs1Plan {
+    pub plan_sha256: String,
+    pub recipe: RecipeBinding,
+    pub layer_id: LayerId,
+    /// The reference the layer is sourced from. Stated, not only derived, so
+    /// the plan says which content it expects without a second lookup.
+    pub input_id: InputId,
+    /// The bytes the plan expects each member to hold: the reference's
+    /// recorded baseline when the plan was resolved.
+    pub expected_content: Vec<ObservedMember>,
+    pub parameters: TargetedMs1Parameters,
+    /// SHA-256 of the canonical target list, in order.
+    pub target_list_sha256: String,
+    /// In the order the engine receives them.
+    pub targets: Vec<TargetDefinition>,
+}
+
+/// The canonical form a plan's digest covers: everything but the digest, with
+/// the targets by their own digest. Tagged so it can never be mistaken for the
+/// canonical form of anything else.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanBody<'a> {
+    schema: &'static str,
+    recipe: &'a RecipeBinding,
+    layer_id: LayerId,
+    input_id: InputId,
+    expected_content: &'a [ObservedMember],
+    parameters: &'a TargetedMs1Parameters,
+    target_list_sha256: &'a str,
+}
+
+/// SHA-256 of one canonical form, upper-case, or `None` where either the
+/// serialization or the platform digest is unavailable.
+fn canonical_digest(value: &impl Serialize) -> Option<String> {
+    let bytes = serde_json::to_vec(value).ok()?;
+    Sha256Digest::calculate(&bytes)
+        .ok()
+        .map(|digest| digest.to_string())
+}
+
+/// The digest a target list is named by.
+#[must_use]
+pub fn target_list_digest(targets: &[TargetDefinition]) -> Option<String> {
+    canonical_digest(&targets)
+}
+
+/// The digest a plan is named by. Covers the target list through its digest,
+/// which the caller has already set.
+#[must_use]
+pub fn plan_digest(plan: &TargetedMs1Plan) -> Option<String> {
+    canonical_digest(&PlanBody {
+        schema: "mscanvas.targetedMs1Plan/1",
+        recipe: &plan.recipe,
+        layer_id: plan.layer_id,
+        input_id: plan.input_id,
+        expected_content: &plan.expected_content,
+        parameters: &plan.parameters,
+        target_list_sha256: &plan.target_list_sha256,
+    })
+}
+
+/// Where a run stopped, when it did not run to its end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FailureStage {
+    /// Reaching, pinning, measuring or reading the source.
+    Source,
+    /// The runtime, the adapter or the worker process around the engine.
+    Runtime,
+    /// The request the worker was given.
+    Request,
+    /// The engine, or the worker while it ran the engine.
+    Engine,
+    /// What the worker wrote, as the supervisor validated it.
+    Result,
+    /// Publishing a validated result beside the document.
+    Publish,
+}
+
+/// Why a run failed. Closed: a code this build does not know is a document it
+/// does not read, and there is no field for a message, a path or a log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FailureCode {
+    /// The source could not be opened for a stable read, or went missing.
+    SourceUnavailable,
+    /// The pinned source does not hold the bytes the plan expects.
+    SourceChanged,
+    /// The worker saw the bytes change while it read them.
+    SourceChangedDuringRead,
+    /// The engine's reader could not read the source.
+    SourceUnreadable,
+    /// The reader returned fewer spectra than the file declares: a
+    /// namespace-prefixed mzML is read as empty, and is refused, not rewritten.
+    SourceReadIncomplete,
+    SourceNoMs1,
+    SourceNotCentroid,
+    SourceMixedPolarity,
+    SourcePolarityUnsupported,
+    SourceRtUndeclaredOrNonmonotonic,
+    /// Two MS1 spectra share a retention time, which the engine was measured
+    /// to turn into a silent false negative.
+    SourceRtNotStrictlyIncreasing,
+    SourceIonMobilityUnsupported,
+    SourceUnsortedMz,
+    SourceNonfinite,
+    /// No execution view of the source could be made in the work area.
+    ExecutionViewUnavailable,
+    /// The runtime, adapter or interpreter was not the one this build pins.
+    RuntimeUnverified,
+    /// A module the worker loaded was not the file the runtime pins.
+    RuntimeModuleMismatch,
+    /// The worker process could not be created or supervised.
+    WorkerLaunchFailed,
+    /// The worker's processes could not be shown to have ended.
+    WorkerNotAccountedFor,
+    /// The worker refused the request it was given.
+    RequestRefused,
+    /// The engine could not use one of the target formulas.
+    TargetInvalid,
+    /// The engine raised, and not in the one measured way the adapter maps.
+    EngineError,
+    /// The engine raised its empty-selection error and the adapter could not
+    /// establish, for every target, that no candidate existed.
+    EngineNoCandidates,
+    /// The extracted chromatograms did not map onto the visited spectra.
+    EvidenceMappingMismatch,
+    /// The worker ran past the wall-clock budget and was stopped.
+    WorkerTimeout,
+    /// The worker ended without saying how its run ended.
+    WorkerExitedAbnormally,
+    /// The worker ended on an error it did not anticipate.
+    WorkerInternal,
+    /// The worker's result did not validate. Nothing of it was published.
+    ResultInvalid,
+    /// A validated result could not be published beside the document.
+    PayloadNotPublished,
+}
+
+/// One failure: a code and a stage, and nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunFailure {
+    pub code: FailureCode,
+    pub stage: FailureStage,
+}
+
+/// Why the supervisor asked a run to stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StopReason {
+    /// The user cancelled this operation.
+    CancelRequested,
+    /// The run exceeded its wall-clock budget.
+    TimeBudgetExceeded,
+}
+
+/// A stop, recorded apart from what it achieved.
+///
+/// The request, the termination and the exit are three facts: a stop can be
+/// requested of a worker that has already exited, and only an observed exit
+/// ends a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StopFacts {
+    pub reason: StopReason,
+    /// Whether a worker was running and the supervisor terminated it.
+    pub worker_terminated: bool,
+    /// Whether the worker's exit was observed afterwards.
+    pub exit_observed: bool,
+}
+
+/// How the engine was given the source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceView {
+    /// A hard link to the pinned source, made in the ASCII work area and shown
+    /// to be the pinned object before the worker started.
+    HardLinkInWorkArea,
+}
+
+/// What the loaded engine said about itself. Self-reported, not measured.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EngineReport {
+    pub python: String,
+    pub pyopenms: String,
+    pub openms: String,
+    pub openms_revision: String,
+    pub openms_build_time: String,
+}
+
+/// One loaded module, hashed from its file after the worker loaded it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LoadedModule {
+    /// Its path below the runtime directory, with forward slashes.
+    pub name: String,
+    pub sha256: String,
+}
+
+/// What one attempt established, each fact at the strength of how it was
+/// learned.
+///
+/// The digests of the adapter, the runtime manifest and the interpreter were
+/// measured by the supervisor before the worker was created; every runtime
+/// file was checked against that manifest at the same time. The engine report
+/// is what the loaded binary said about itself. The module digests were taken
+/// by the worker from the files at the loaded paths after loading, not from
+/// memory. No path, process identifier or operation identifier is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttemptFacts {
+    pub adapter_sha256: String,
+    pub runtime_manifest_sha256: String,
+    pub interpreter_sha256: String,
+    pub source_view: SourceView,
+    /// `null` where the worker ended before it reported.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub engine_report: Option<EngineReport>,
+    pub loaded_modules: Vec<LoadedModule>,
+}
+
+/// What one targeted MS1 run executed and what its attempt established.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetedMs1Execution {
+    /// The plan executed, by the digest that names it.
+    pub plan_sha256: String,
+    /// What the attempt measured of each member through its pinned read.
+    /// Empty where the attempt ended before it measured anything.
+    pub consumed_content: Vec<ObservedMember>,
+    /// `null` where no worker was prepared.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub attempt: Option<AttemptFacts>,
+    /// Present exactly when the run failed.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub failure: Option<RunFailure>,
+    /// Present where the supervisor asked the run to stop.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub stop: Option<StopFacts>,
+}
+
+/// How many rows ended in each outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OutcomeSummary {
+    pub targets: u32,
+    pub detected: u32,
+    pub detected_ambiguous: u32,
+    pub shared: u32,
+    pub suppressed_by_overlap: u32,
+    pub not_detected: u32,
+    pub failed: u32,
+}
+
+impl OutcomeSummary {
+    /// Whether the outcome counts add up to the targets.
+    #[must_use]
+    pub fn is_whole(&self) -> bool {
+        [
+            self.detected,
+            self.detected_ambiguous,
+            self.shared,
+            self.suppressed_by_overlap,
+            self.not_detected,
+            self.failed,
+        ]
+        .iter()
+        .try_fold(0_u32, |total, count| total.checked_add(*count))
+            == Some(self.targets)
+    }
+}
+
+/// The files one published result consists of. Closed, because a reader
+/// opens exactly these names and nothing a document could name instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum PayloadFileName {
+    #[serde(rename = "rows.jsonl")]
+    Rows,
+    #[serde(rename = "evidence.jsonl")]
+    Evidence,
+    #[serde(rename = "evidence.index.json")]
+    EvidenceIndex,
+}
+
+impl PayloadFileName {
+    /// Every file, in the order a payload lists them.
+    pub const ALL: [Self; 3] = [Self::Rows, Self::Evidence, Self::EvidenceIndex];
+
+    /// The file's name inside the payload directory.
+    #[must_use]
+    pub const fn file_name(self) -> &'static str {
+        match self {
+            Self::Rows => "rows.jsonl",
+            Self::Evidence => "evidence.jsonl",
+            Self::EvidenceIndex => "evidence.index.json",
+        }
+    }
+}
+
+/// One file of a published result, by length and digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PayloadFile {
+    pub name: PayloadFileName,
+    pub byte_length: u64,
+    pub sha256: String,
+}
+
+/// Which published result a record is about, by digest and never by path.
+///
+/// The directory is the one named by the record's own identifier inside the
+/// store beside the document; nothing here could name another one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PayloadReference {
+    /// SHA-256 of the payload's `manifest.json`.
+    pub manifest_sha256: String,
+    /// Every file, once each, in [`PayloadFileName::ALL`] order.
+    pub files: Vec<PayloadFile>,
+}
+
+/// The targeted MS1 result record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetedMs1ResultV1 {
+    pub summary: OutcomeSummary,
+    /// Whether the engine raised its measured empty-selection error in this
+    /// run, so that every `notDetected` row came from the adapter establishing
+    /// that no target had a candidate rather than from the engine's own list
+    /// of unassigned targets.
+    pub no_candidate_recovery: bool,
+    pub payload: PayloadReference,
 }
 
 /// Which project record a layer is sourced from. One variant, because one
@@ -622,6 +1119,9 @@ pub struct ProjectDocument {
     pub artifacts: Vec<ArtifactRecord>,
     pub runs: Vec<RunRecord>,
     pub layers: Vec<LayerRecord>,
+    /// Every plan a recorded run executed, once each. A plan no run executed
+    /// is not recorded: reviewing is not history.
+    pub plans: Vec<TargetedMs1Plan>,
 }
 
 impl ProjectDocument {
@@ -637,7 +1137,22 @@ impl ProjectDocument {
             artifacts: Vec::new(),
             runs: Vec::new(),
             layers: Vec::new(),
+            plans: Vec::new(),
         }
+    }
+
+    /// The plan this digest names, if the document records it.
+    #[must_use]
+    pub fn plan(&self, sha256: &str) -> Option<&TargetedMs1Plan> {
+        self.plans
+            .iter()
+            .find(|plan| plan.plan_sha256.eq_ignore_ascii_case(sha256))
+    }
+
+    /// The artifact with this identifier, if the document has one.
+    #[must_use]
+    pub fn artifact(&self, id: ArtifactId) -> Option<&ArtifactRecord> {
+        self.artifacts.iter().find(|artifact| artifact.id == id)
     }
 
     /// The input with this identifier, if the document has one.
@@ -799,8 +1314,45 @@ fn normalize_digests(document: &mut ProjectDocument) {
                 snapshot.producer.executable_sha256 =
                     snapshot.producer.executable_sha256.to_ascii_uppercase();
             }
+            ArtifactPayload::TargetedMs1ResultV1(result) => {
+                upper(&mut result.payload.manifest_sha256);
+                for file in &mut result.payload.files {
+                    upper(&mut file.sha256);
+                }
+            }
         }
     }
+    for plan in &mut document.plans {
+        upper(&mut plan.plan_sha256);
+        upper(&mut plan.target_list_sha256);
+        upper(&mut plan.recipe.adapter_sha256);
+        upper(&mut plan.recipe.engine_profile_sha256);
+        upper(&mut plan.recipe.runtime_manifest_sha256);
+        for member in &mut plan.expected_content {
+            upper(&mut member.sha256);
+        }
+    }
+    for run in &mut document.runs {
+        let Some(execution) = run.targeted_ms1.as_mut() else {
+            continue;
+        };
+        upper(&mut execution.plan_sha256);
+        for member in &mut execution.consumed_content {
+            upper(&mut member.sha256);
+        }
+        if let Some(attempt) = execution.attempt.as_mut() {
+            upper(&mut attempt.adapter_sha256);
+            upper(&mut attempt.runtime_manifest_sha256);
+            upper(&mut attempt.interpreter_sha256);
+            for module in &mut attempt.loaded_modules {
+                upper(&mut module.sha256);
+            }
+        }
+    }
+}
+
+fn upper(digest: &mut String) {
+    *digest = digest.to_ascii_uppercase();
 }
 
 /// The bytes one validated document is stored as.
@@ -832,6 +1384,7 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
         || document.artifacts.len() > MAX_ARTIFACTS
         || document.runs.len() > MAX_RUNS
         || document.layers.len() > MAX_LAYERS
+        || document.plans.len() > MAX_PLANS
     {
         return Err(DocumentProblem::Oversized);
     }
@@ -879,7 +1432,21 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
         match &artifact.payload {
             ArtifactPayload::FileFactsV1(facts) => validate_file_facts(facts, &input_ids)?,
             ArtifactPayload::AcquisitionQcSnapshotV1(snapshot) => validate_qc_snapshot(snapshot)?,
+            ArtifactPayload::TargetedMs1ResultV1(result) => validate_targeted_result(result)?,
         }
+    }
+
+    // Plans before runs, because a targeted run names one.
+    let mut plan_digests: Vec<&str> = Vec::with_capacity(document.plans.len());
+    for plan in &document.plans {
+        if plan_digests
+            .iter()
+            .any(|seen| seen.eq_ignore_ascii_case(&plan.plan_sha256))
+        {
+            return Err(DocumentProblem::DuplicateIdentifier);
+        }
+        plan_digests.push(&plan.plan_sha256);
+        validate_plan(plan, document)?;
     }
 
     let mut run_ids = Vec::with_capacity(document.runs.len());
@@ -939,7 +1506,7 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
             }
             _ => {}
         }
-        validate_run_shape(run, &document.artifacts)?;
+        validate_run_shape(run, &document.artifacts, &document.plans)?;
         bounded_label(&run.application_version)?;
         bounded_label(&run.started_at)?;
         bounded_label(&run.finished_at)?;
@@ -948,15 +1515,32 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
     // A QC snapshot names no record of its own, so the run that produced it is
     // the whole of its lineage: which layer, and through it which reference.
     // One nobody claims has lost that, and is refused rather than shown as a
-    // report of nothing in particular. A file-facts record keeps the rule it
-    // always had -- its observations say what it is about -- so it may stand
-    // unclaimed.
+    // report of nothing in particular. A targeted result is the same: its
+    // plan, its layer and its reference are all reached through its run. A
+    // file-facts record keeps the rule it always had -- its observations say
+    // what it is about -- so it may stand unclaimed.
     for artifact in &document.artifacts {
         if matches!(
             artifact.payload,
-            ArtifactPayload::AcquisitionQcSnapshotV1(_)
+            ArtifactPayload::AcquisitionQcSnapshotV1(_) | ArtifactPayload::TargetedMs1ResultV1(_)
         ) && !claimed.contains(&artifact.id)
         {
+            return Err(DocumentProblem::InconsistentRecord);
+        }
+    }
+
+    // A plan is recorded because a run executed it. One no run names is a
+    // review that became history without anything happening, which is not a
+    // thing this build writes.
+    for plan in &document.plans {
+        let executed = document.runs.iter().any(|run| {
+            run.targeted_ms1.as_ref().is_some_and(|execution| {
+                execution
+                    .plan_sha256
+                    .eq_ignore_ascii_case(&plan.plan_sha256)
+            })
+        });
+        if !executed {
             return Err(DocumentProblem::InconsistentRecord);
         }
     }
@@ -972,6 +1556,7 @@ pub fn validate(document: &ProjectDocument) -> Result<(), DocumentProblem> {
 fn validate_run_shape(
     run: &RunRecord,
     artifacts: &[ArtifactRecord],
+    plans: &[TargetedMs1Plan],
 ) -> Result<(), DocumentProblem> {
     let produces_only_its_own_kind = run.output_artifact_ids.iter().all(|id| {
         artifacts
@@ -980,14 +1565,25 @@ fn validate_run_shape(
             .is_some_and(|artifact| artifact.payload.produced_by() == run.operation)
     });
     let shaped = match run.operation {
-        RecordedOperation::CaptureFileFactsV1 => run
-            .inputs
-            .iter()
-            .all(|consumed| matches!(consumed, RunInput::Input { .. })),
+        RecordedOperation::CaptureFileFactsV1 => {
+            run.targeted_ms1.is_none()
+                && run
+                    .inputs
+                    .iter()
+                    .all(|consumed| matches!(consumed, RunInput::Input { .. }))
+        }
         RecordedOperation::CaptureAcquisitionQcSnapshotV1 => {
-            matches!(run.inputs.as_slice(), [RunInput::Layer { .. }])
+            run.targeted_ms1.is_none()
+                && matches!(run.inputs.as_slice(), [RunInput::Layer { .. }])
                 && run.outcome == TerminalOutcome::Completed
                 && run.output_artifact_ids.len() == 1
+        }
+        RecordedOperation::TargetedMs1V1 => {
+            let Some(execution) = run.targeted_ms1.as_deref() else {
+                return Err(DocumentProblem::InconsistentRecord);
+            };
+            validate_targeted_run(run, execution, artifacts, plans)?;
+            true
         }
     };
     if shaped && produces_only_its_own_kind {
@@ -995,6 +1591,309 @@ fn validate_run_shape(
     } else {
         Err(DocumentProblem::InconsistentRecord)
     }
+}
+
+/// Every rule a targeted MS1 run's own block must satisfy.
+///
+/// The run consumes exactly its plan's layer. A completed run measured the
+/// bytes its plan expected, carries its attempt and produced exactly one
+/// result of as many rows as the plan has targets; a failed one says why and
+/// produced nothing; a cancelled one produced nothing and records the stop.
+fn validate_targeted_run(
+    run: &RunRecord,
+    execution: &TargetedMs1Execution,
+    artifacts: &[ArtifactRecord],
+    plans: &[TargetedMs1Plan],
+) -> Result<(), DocumentProblem> {
+    let plan = plans
+        .iter()
+        .find(|plan| {
+            plan.plan_sha256
+                .eq_ignore_ascii_case(&execution.plan_sha256)
+        })
+        .ok_or(DocumentProblem::DanglingReference)?;
+    if run.inputs.as_slice()
+        != [RunInput::Layer {
+            layer_id: plan.layer_id,
+        }]
+    {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    valid_digest(&execution.plan_sha256)?;
+    if execution.consumed_content.len() > MAX_MEMBERS {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    for member in &execution.consumed_content {
+        bounded_member_name(&member.relative_name)?;
+        valid_digest(&member.sha256)?;
+    }
+    if let Some(attempt) = &execution.attempt {
+        valid_digest(&attempt.adapter_sha256)?;
+        valid_digest(&attempt.runtime_manifest_sha256)?;
+        valid_digest(&attempt.interpreter_sha256)?;
+        if attempt.loaded_modules.len() > MAX_LOADED_MODULES {
+            return Err(DocumentProblem::Oversized);
+        }
+        for module in &attempt.loaded_modules {
+            bounded_label(&module.name)?;
+            valid_digest(&module.sha256)?;
+        }
+        if let Some(report) = &attempt.engine_report {
+            for label in [
+                &report.python,
+                &report.pyopenms,
+                &report.openms,
+                &report.openms_revision,
+                &report.openms_build_time,
+            ] {
+                bounded_label(label)?;
+            }
+        }
+    }
+    let stop_reason = execution.stop.map(|stop| stop.reason);
+    let consistent = match run.outcome {
+        TerminalOutcome::Completed => {
+            execution.failure.is_none()
+                && stop_reason.is_none()
+                && execution.attempt.is_some()
+                && execution.consumed_content == plan.expected_content
+                && match run.output_artifact_ids.as_slice() {
+                    [only] => artifacts
+                        .iter()
+                        .find(|artifact| artifact.id == *only)
+                        .and_then(|artifact| artifact.payload.targeted_ms1())
+                        .is_some_and(|result| {
+                            usize::try_from(result.summary.targets)
+                                .is_ok_and(|targets| targets == plan.targets.len())
+                        }),
+                    _ => false,
+                }
+        }
+        TerminalOutcome::Failed => match execution.failure {
+            Some(failure) => {
+                let timed_out = failure.code == FailureCode::WorkerTimeout;
+                stop_reason
+                    == if timed_out {
+                        Some(StopReason::TimeBudgetExceeded)
+                    } else {
+                        None
+                    }
+            }
+            None => false,
+        },
+        TerminalOutcome::Cancelled => {
+            execution.failure.is_none() && stop_reason == Some(StopReason::CancelRequested)
+        }
+    };
+    if consistent {
+        Ok(())
+    } else {
+        Err(DocumentProblem::InconsistentRecord)
+    }
+}
+
+/// The admitted ranges of the plan's numbers. Bounds on what the recipe was
+/// measured over, not statements about chemistry.
+pub mod domain {
+    /// Half-width of the open m/z interval, ppm, closed range. Below 0.5 the
+    /// engine would read the full window as Da rather than ppm.
+    pub const MZ_HALF_WIDTH_PPM: (f64, f64) = (0.5, 50.0);
+    /// Expected peak width, seconds: above zero, at most this.
+    pub const EXPECTED_PEAK_WIDTH_S_MAX: f64 = 600.0;
+    /// Expected retention time, seconds: at least zero, at most a day.
+    pub const RT_S_MAX: f64 = 86_400.0;
+    /// RT half-width, seconds: above zero -- a zero range would make the
+    /// engine substitute its global window silently -- and at most this.
+    pub const RT_HALF_WIDTH_S_MAX: f64 = 3_600.0;
+    /// Neutral monoisotopic mass override, Da: above zero, at most this.
+    pub const NEUTRAL_MASS_MAX: f64 = 5_000.0;
+}
+
+/// Whether one value is a finite number in canonical spelling inside
+/// `low..=high`, with the low end open where `low_open`.
+#[must_use]
+pub fn decimal_in(value: &DecimalValue, low: f64, low_open: bool, high: f64) -> bool {
+    value.number().is_some_and(|number| {
+        (if low_open {
+            number > low
+        } else {
+            number >= low
+        }) && number <= high
+    })
+}
+
+/// The element symbols a sum formula may use.
+const ELEMENTS: [&str; 118] = [
+    "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al", "Si", "P", "S", "Cl",
+    "Ar", "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As",
+    "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In",
+    "Sn", "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb",
+    "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg", "Tl",
+    "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk",
+    "Cf", "Es", "Fm", "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds", "Rg", "Cn", "Nh",
+    "Fl", "Mc", "Lv", "Ts", "Og",
+];
+
+/// Whether a formula is a plain neutral sum formula: element symbols, each
+/// with an optional count of one to four digits that does not start with
+/// zero. No isotopes, charges, groups or spaces -- the engine's own parser
+/// accepts more, and whatever it accepts beyond this is not what was measured.
+#[must_use]
+pub fn plain_formula(value: &str) -> bool {
+    if value.is_empty() || value.chars().count() > MAX_FORMULA_CHARS {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_uppercase() {
+            return false;
+        }
+        let mut end = index + 1;
+        if end < bytes.len() && bytes[end].is_ascii_lowercase() {
+            end += 1;
+        }
+        if !ELEMENTS.contains(&&value[index..end]) {
+            return false;
+        }
+        let digits_start = end;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        let digits = &value[digits_start..end];
+        if digits.len() > 4 || digits.starts_with('0') {
+            return false;
+        }
+        index = end;
+    }
+    true
+}
+
+/// Every rule one target satisfies, in a plan or about to enter one.
+#[must_use]
+pub fn target_is_valid(target: &TargetDefinition) -> bool {
+    use domain::{NEUTRAL_MASS_MAX, RT_HALF_WIDTH_S_MAX, RT_S_MAX};
+    storable_label(&target.label)
+        && plain_formula(&target.formula)
+        && target
+            .neutral_mass
+            .as_ref()
+            .is_none_or(|mass| decimal_in(mass, 0.0, true, NEUTRAL_MASS_MAX))
+        && decimal_in(&target.rt_s, 0.0, false, RT_S_MAX)
+        && decimal_in(&target.rt_half_width_s, 0.0, true, RT_HALF_WIDTH_S_MAX)
+}
+
+/// Every rule the parameters satisfy.
+#[must_use]
+pub fn parameters_are_valid(parameters: &TargetedMs1Parameters) -> bool {
+    use domain::{EXPECTED_PEAK_WIDTH_S_MAX, MZ_HALF_WIDTH_PPM};
+    decimal_in(
+        &parameters.mz_half_width_ppm,
+        MZ_HALF_WIDTH_PPM.0,
+        false,
+        MZ_HALF_WIDTH_PPM.1,
+    ) && decimal_in(
+        &parameters.expected_peak_width_s,
+        0.0,
+        true,
+        EXPECTED_PEAK_WIDTH_S_MAX,
+    )
+}
+
+/// What a reference's recorded baseline says each member holds, as the plan
+/// states it.
+#[must_use]
+pub fn expected_content_of(input: &InputRecord) -> Vec<ObservedMember> {
+    input
+        .members
+        .iter()
+        .map(|member| ObservedMember {
+            role: member.role,
+            relative_name: member.relative_name.clone(),
+            byte_length: member.baseline.byte_length,
+            sha256: member.baseline.sha256.to_ascii_uppercase(),
+        })
+        .collect()
+}
+
+/// Every rule one plan satisfies.
+///
+/// Its layer and reference exist and belong together; it expects exactly the
+/// bytes the reference's baseline records, which never changes; every value is
+/// in the recipe's domain; and both digests are recomputed here from the
+/// canonical form, so a hand-edited plan cannot keep a name it no longer has.
+fn validate_plan(
+    plan: &TargetedMs1Plan,
+    document: &ProjectDocument,
+) -> Result<(), DocumentProblem> {
+    for digest in [
+        &plan.plan_sha256,
+        &plan.target_list_sha256,
+        &plan.recipe.adapter_sha256,
+        &plan.recipe.engine_profile_sha256,
+        &plan.recipe.runtime_manifest_sha256,
+    ] {
+        valid_digest(digest)?;
+    }
+    if plan.recipe.recipe_version != 1 {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    let layer = document
+        .layer(plan.layer_id)
+        .ok_or(DocumentProblem::DanglingReference)?;
+    let input = document
+        .input(plan.input_id)
+        .ok_or(DocumentProblem::DanglingReference)?;
+    if layer.source.input_id() != plan.input_id
+        || plan.expected_content != expected_content_of(input)
+    {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    if plan.targets.is_empty() {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    if plan.targets.len() > MAX_TARGETS {
+        return Err(DocumentProblem::Oversized);
+    }
+    let mut target_ids = Vec::with_capacity(plan.targets.len());
+    for target in &plan.targets {
+        if target_ids.contains(&target.target_id) {
+            return Err(DocumentProblem::DuplicateIdentifier);
+        }
+        target_ids.push(target.target_id);
+        if !target_is_valid(target) {
+            return Err(DocumentProblem::Malformed);
+        }
+    }
+    if !parameters_are_valid(&plan.parameters) {
+        return Err(DocumentProblem::Malformed);
+    }
+    let recomputed_list = target_list_digest(&plan.targets).ok_or(DocumentProblem::Malformed)?;
+    if !recomputed_list.eq_ignore_ascii_case(&plan.target_list_sha256) {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    let recomputed = plan_digest(plan).ok_or(DocumentProblem::Malformed)?;
+    if !recomputed.eq_ignore_ascii_case(&plan.plan_sha256) {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    Ok(())
+}
+
+/// Every rule one targeted result record satisfies.
+fn validate_targeted_result(result: &TargetedMs1ResultV1) -> Result<(), DocumentProblem> {
+    let targets = usize::try_from(result.summary.targets).unwrap_or(usize::MAX);
+    if targets == 0 || targets > MAX_TARGETS || !result.summary.is_whole() {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    valid_digest(&result.payload.manifest_sha256)?;
+    let names: Vec<PayloadFileName> = result.payload.files.iter().map(|file| file.name).collect();
+    if names != PayloadFileName::ALL {
+        return Err(DocumentProblem::InconsistentRecord);
+    }
+    for file in &result.payload.files {
+        valid_digest(&file.sha256)?;
+    }
+    Ok(())
 }
 
 fn validate_file_facts(facts: &FileFactsV1, input_ids: &[InputId]) -> Result<(), DocumentProblem> {

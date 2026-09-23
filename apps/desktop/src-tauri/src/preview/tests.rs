@@ -4013,6 +4013,16 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // file and starts no process -- it copies what the preview
             // already retained, with the build that preview reported.
             "capture_project_qc_summary",
+            // The M9.1 targeted MS1 recipe. Five commands and no path in any
+            // of them: a review sends the typed text and a layer and gets a
+            // plan back; a run names that plan by its digest under an
+            // accepted operation; a progress read is cheap; and the result is
+            // read back a bounded page or one target's evidence at a time.
+            "resolve_targeted_ms1_plan",
+            "run_targeted_ms1",
+            "get_targeted_ms1_progress",
+            "read_targeted_ms1_rows",
+            "read_targeted_ms1_evidence",
             "inspect_backend",
             "choose_backend_installation",
             "use_automatic_backend_discovery",

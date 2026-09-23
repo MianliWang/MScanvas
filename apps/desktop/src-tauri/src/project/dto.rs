@@ -12,13 +12,14 @@
 //! along. Where the interface has to say something about location it says that,
 //! never a path.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use super::recipe::RunPhase;
 use super::record::{
     AcquisitionQcSnapshotV1, ArtifactPayload, Locator, MemberRole, ProjectDocument, RunInput,
-    TerminalOutcome,
+    TargetedMs1Execution, TargetedMs1Plan, TargetedMs1ResultV1, TerminalOutcome,
 };
-use super::{OpenProject, lineage};
+use super::{OpenProject, ProjectJobId, lineage};
 
 /// Whether a reference travels with the project or points outside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -104,12 +105,28 @@ pub struct ArtifactDto {
     pub produced_by_run_id: Option<String>,
     /// The references this artifact actually recorded observations of.
     pub source_input_ids: Vec<String>,
+    /// The targeted result, where this is one: the record as stored, and
+    /// whether its stored rows and evidence were whole when last looked at.
+    pub targeted_ms1: Option<TargetedMs1ArtifactDto>,
 }
 
-// An artifact carries no locator and no current file state, and there is
-// deliberately no field here for one. Both payloads live inside the document;
-// a "current file" line beside an artifact would be describing a file that
-// does not exist.
+/// A targeted result record, and what the last look at its payload found.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetedMs1ArtifactDto {
+    /// Exactly the record the document stores: a summary and digests, never
+    /// a path.
+    pub result: TargetedMs1ResultV1,
+    /// `available`, `payloadMissing` or `payloadCorrupt`, as observed when
+    /// the project was opened, saved elsewhere or produced it. Never stored.
+    pub availability: &'static str,
+}
+
+// A file-facts or QC artifact carries no locator and no current file state,
+// and there is deliberately no field here for one: both payloads live inside
+// the document. A targeted result's rows and evidence live beside it, named by
+// the record's own identifier and digests, and the one current fact reported
+// about them is whether they are whole.
 
 /// One recorded run.
 #[derive(Debug, Clone, Serialize)]
@@ -129,6 +146,30 @@ pub struct RunDto {
     pub application_version: String,
     pub started_at: String,
     pub finished_at: String,
+    /// A targeted run's own block, exactly as stored: the plan it executed,
+    /// what its attempt measured and established, and how it ended.
+    pub targeted_ms1: Option<TargetedMs1Execution>,
+}
+
+/// The targeted run in progress, if one is. Session-only.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisRunDto {
+    /// The accepted operation a cancel names.
+    pub operation_id: String,
+    pub phase: &'static str,
+}
+
+/// What the last look at the result store beside the document found.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultStoreDto {
+    /// Whether a store was beside the published document at all. `false` for
+    /// a project whose document was renamed or moved away from it.
+    pub store_found: bool,
+    /// Whole results in the store that no record of this project names --
+    /// a run whose project was never saved afterwards. Counted, not deleted.
+    pub unreferenced_results: usize,
 }
 
 /// One layer: its identity and the reference it is sourced from.
@@ -188,6 +229,167 @@ pub struct ProjectStateDto {
     pub artifacts: Vec<ArtifactDto>,
     pub runs: Vec<RunDto>,
     pub layers: Vec<LayerDto>,
+    /// Every plan a recorded run executed, exactly as stored.
+    pub plans: Vec<TargetedMs1Plan>,
+    pub analysis_run: Option<AnalysisRunDto>,
+    pub result_store: ResultStoreDto,
+}
+
+// ---------------------------------------------------------------------------
+// The targeted MS1 recipe's own boundary
+// ---------------------------------------------------------------------------
+
+/// What a plan review sends: the layer, and the text the user typed. Every
+/// number is text, because deciding what it means is Rust's job.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanRequestDto {
+    pub layer_id: String,
+    pub mz_half_width_ppm: String,
+    pub expected_peak_width_s: String,
+    pub targets: Vec<TargetRequestDto>,
+}
+
+/// One target row as typed.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetRequestDto {
+    pub label: String,
+    pub formula: String,
+    pub neutral_mass: Option<String>,
+    pub rt_s: String,
+    pub rt_half_width_s: String,
+}
+
+impl PlanRequestDto {
+    /// The request as the recipe reads it.
+    #[must_use]
+    pub fn draft(self) -> super::recipe::PlanDraft {
+        super::recipe::PlanDraft {
+            mz_half_width_ppm: self.mz_half_width_ppm,
+            expected_peak_width_s: self.expected_peak_width_s,
+            targets: self
+                .targets
+                .into_iter()
+                .map(|target| super::recipe::TargetDraft {
+                    label: target.label,
+                    formula: target.formula,
+                    neutral_mass: target.neutral_mass,
+                    rt_s: target.rt_s,
+                    rt_half_width_s: target.rt_half_width_s,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One problem with a request.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanProblemDto {
+    /// The target row, counted from one, or `null` for a parameter.
+    pub row: Option<usize>,
+    pub field: &'static str,
+    pub problem: &'static str,
+}
+
+/// The engine the recipe runs, as the review names it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineDto {
+    pub package: &'static str,
+    pub version: &'static str,
+    pub algorithm: &'static str,
+    pub revision: &'static str,
+    /// Upstream's own label for the algorithm, repeated here.
+    pub maturity: &'static str,
+    /// The canonical fixed profile, exactly as its digest covers it.
+    pub fixed_profile: &'static str,
+}
+
+/// What resolving a request answered.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanResolutionDto {
+    pub plan: Option<TargetedMs1Plan>,
+    pub problems: Vec<PlanProblemDto>,
+    /// Why this plan cannot run now, as a refusal identifier, or `null`.
+    pub blocked: Option<&'static str>,
+    pub engine: EngineDto,
+}
+
+/// The engine, for a review and for Details.
+#[must_use]
+pub fn engine() -> EngineDto {
+    use super::recipe::{
+        ENGINE_ALGORITHM, ENGINE_PACKAGE, ENGINE_REVISION, ENGINE_VERSION, FIXED_ENGINE_PROFILE,
+    };
+    EngineDto {
+        package: ENGINE_PACKAGE,
+        version: ENGINE_VERSION,
+        algorithm: ENGINE_ALGORITHM,
+        revision: ENGINE_REVISION,
+        maturity: "experimental",
+        fixed_profile: FIXED_ENGINE_PROFILE,
+    }
+}
+
+/// What one resolution becomes on the wire.
+#[must_use]
+pub fn plan_resolution(resolution: super::PlanResolution) -> PlanResolutionDto {
+    PlanResolutionDto {
+        plan: resolution.plan,
+        problems: resolution
+            .problems
+            .iter()
+            .map(|problem| PlanProblemDto {
+                row: problem.row,
+                field: problem.field.stable_id(),
+                problem: problem.problem.stable_id(),
+            })
+            .collect(),
+        blocked: resolution.blocked.map(super::ProjectError::stable_id),
+        engine: engine(),
+    }
+}
+
+/// What one recorded run answers with: the project as it now is, and the run.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetedMs1RunDto {
+    pub project: ProjectStateDto,
+    pub run_id: String,
+    /// `completed`, `failed` or `cancelled`.
+    pub outcome: &'static str,
+    pub artifact_id: Option<String>,
+}
+
+/// What one run's end becomes on the wire.
+#[must_use]
+pub fn run_end(project: ProjectStateDto, end: super::TargetedMs1RunEnd) -> TargetedMs1RunDto {
+    TargetedMs1RunDto {
+        project,
+        run_id: end.run.to_string(),
+        outcome: outcome_id(end.outcome),
+        artifact_id: end.artifact.map(|artifact| artifact.to_string()),
+    }
+}
+
+/// One page of a stored result's rows.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RowsPageDto {
+    pub total: usize,
+    pub offset: usize,
+    pub rows: Vec<super::payload::PayloadRow>,
+}
+
+/// One target's evidence from a stored result.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceDto {
+    pub target_id: String,
+    pub traces: Vec<super::payload::EvidenceLine>,
 }
 
 const fn role_id(role: MemberRole) -> &'static str {
@@ -213,7 +415,10 @@ const fn locator_kind(locator: &Locator) -> LocatorKind {
 }
 
 /// Describes the open project, or the absence of one.
-pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
+pub(super) fn describe(
+    open: Option<&OpenProject>,
+    run: Option<(ProjectJobId, RunPhase)>,
+) -> ProjectStateDto {
     let Some(project) = open else {
         return ProjectStateDto::default();
     };
@@ -264,6 +469,7 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
             kind: match &artifact.payload {
                 ArtifactPayload::FileFactsV1(_) => "fileFactsV1",
                 ArtifactPayload::AcquisitionQcSnapshotV1(_) => "acquisitionQcSnapshotV1",
+                ArtifactPayload::TargetedMs1ResultV1(_) => "targetedMs1ResultV1",
             },
             observed_input_count: artifact
                 .payload
@@ -278,7 +484,7 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
             }),
             qc_snapshot: match &artifact.payload {
                 ArtifactPayload::AcquisitionQcSnapshotV1(snapshot) => Some((**snapshot).clone()),
-                ArtifactPayload::FileFactsV1(_) => None,
+                ArtifactPayload::FileFactsV1(_) | ArtifactPayload::TargetedMs1ResultV1(_) => None,
             },
             produced_by_run_id: lineage::producing_run(document, artifact.id)
                 .map(|run| run.to_string()),
@@ -286,6 +492,16 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
+            targeted_ms1: artifact
+                .payload
+                .targeted_ms1()
+                .map(|result| TargetedMs1ArtifactDto {
+                    result: result.clone(),
+                    availability: project
+                        .availability_of(artifact.id)
+                        .unwrap_or(super::payload::Availability::Missing)
+                        .stable_id(),
+                }),
         })
         .collect();
 
@@ -323,6 +539,7 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
             application_version: run.application_version.clone(),
             started_at: run.started_at.clone(),
             finished_at: run.finished_at.clone(),
+            targeted_ms1: run.targeted_ms1.as_deref().cloned(),
         })
         .collect();
 
@@ -349,5 +566,14 @@ pub(super) fn describe(open: Option<&OpenProject>) -> ProjectStateDto {
         artifacts,
         runs,
         layers,
+        plans: document.plans.clone(),
+        analysis_run: run.map(|(id, phase)| AnalysisRunDto {
+            operation_id: id.handle(),
+            phase: phase.stable_id(),
+        }),
+        result_store: ResultStoreDto {
+            store_found: project.payloads.store_found,
+            unreferenced_results: project.payloads.unreferenced,
+        },
     }
 }

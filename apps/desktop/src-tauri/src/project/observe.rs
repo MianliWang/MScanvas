@@ -38,10 +38,10 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-use mscanvas_proteowizard::Sha256Digest;
+use mscanvas_proteowizard::{CancellationToken, Sha256Digest};
 
 use crate::local_document;
 
@@ -169,10 +169,13 @@ pub enum MemberObservation {
 /// way for a request to land on whatever happens to run next.
 ///
 /// A small type rather than the conversion lane's cancellation, which carries
-/// staging-recovery duties that have nothing to do with reading a file.
+/// staging-recovery duties that have nothing to do with reading a file. The
+/// flag itself is the process supervisor's token, so a cancel of an operation
+/// that runs a worker reaches the worker's supervision directly: one flag, not
+/// two kept in step.
 #[derive(Clone, Default)]
 pub struct Cancellation {
-    requested: Arc<AtomicBool>,
+    requested: CancellationToken,
     /// Test-only: called once per chunk the cooperative reader hands to the
     /// digest, so a test can hold an operation inside a read and cancel it
     /// there. Absent from every non-test build.
@@ -183,20 +186,25 @@ pub struct Cancellation {
 impl Cancellation {
     /// Asks the operation this belongs to to stop at its next opportunity.
     pub fn request(&self) {
-        self.requested.store(true, Ordering::Relaxed);
+        self.requested.cancel();
     }
 
     /// Whether a stop has been asked for.
     #[must_use]
     pub fn requested(&self) -> bool {
-        self.requested.load(Ordering::Relaxed)
+        self.requested.is_cancelled()
+    }
+
+    /// The token a supervised process is cancelled through.
+    pub(crate) fn token(&self) -> &CancellationToken {
+        &self.requested
     }
 
     /// Lets a test observe and hold each chunk the reader hands to the digest.
     #[cfg(test)]
     pub fn with_gate(gate: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self {
-            requested: Arc::new(AtomicBool::new(false)),
+            requested: CancellationToken::new(),
             gate: Some(gate),
         }
     }
@@ -301,13 +309,49 @@ fn is_sharing_refusal(_error: &io::Error) -> bool {
 /// by asking the flag, which is the one thing that knows.
 #[must_use]
 pub fn observe_member(path: &Path, cancellation: &Cancellation) -> MemberObservation {
+    match hold_member(path, cancellation) {
+        // The handle closes here: a measurement holds its file for exactly as
+        // long as the measurement takes.
+        Ok(held) => MemberObservation::Observed {
+            byte_length: held.byte_length,
+            digest: held.digest,
+            identity: held.identity,
+        },
+        Err(reason) => MemberObservation::Unavailable(reason),
+    }
+}
+
+/// One member measured through a stable read, with the handle still open.
+///
+/// For an operation that must keep the bytes it measured fixed for longer
+/// than the measurement: while this is held, the file cannot be opened for
+/// writing, renamed or deleted by its name. It is released by dropping it.
+pub(crate) struct HeldMember {
+    /// Held, not read: this open handle is what keeps the bytes fixed.
+    #[allow(dead_code)]
+    pub(crate) file: std::fs::File,
+    pub(crate) byte_length: u64,
+    pub(crate) digest: Sha256Digest,
+    pub(crate) identity: Option<ObjectIdentity>,
+}
+
+/// [`observe_member`], answering the open handle as well as what it measured.
+///
+/// # Errors
+///
+/// The reason the member could not be measured, exactly as
+/// [`observe_member`] reports it.
+pub(crate) fn hold_member(
+    path: &Path,
+    cancellation: &Cancellation,
+) -> Result<HeldMember, UnavailableReason> {
     let file = match open_for_stable_read(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return MemberObservation::Unavailable(UnavailableReason::MissingAtCheckedLocation);
+            return Err(UnavailableReason::MissingAtCheckedLocation);
         }
         Err(error) if is_sharing_refusal(&error) => {
-            return MemberObservation::Unavailable(UnavailableReason::UnstableRead);
+            return Err(UnavailableReason::UnstableRead);
         }
         // Everything else is classified from the name rather than guessed at
         // from the open error. A directory refuses this open with "access
@@ -315,20 +359,20 @@ pub fn observe_member(path: &Path, cancellation: &Cancellation) -> MemberObserva
         // asked for -- so trusting the error kind here would report every
         // directory as a permission problem, which is a different thing to tell
         // a user and the wrong one.
-        Err(_) => return MemberObservation::Unavailable(unopenable(path)),
+        Err(_) => return Err(unopenable(path)),
     };
     let Ok(metadata) = file.metadata() else {
-        return MemberObservation::Unavailable(UnavailableReason::Unreadable);
+        return Err(UnavailableReason::Unreadable);
     };
     // Asked of the open object rather than of the name, so what is judged and
     // what is read are the same thing.
     if !local_document::is_ordinary_file(&metadata) {
-        return MemberObservation::Unavailable(UnavailableReason::UnsafeReference);
+        return Err(UnavailableReason::UnsafeReference);
     }
     let byte_length = metadata.len();
     let mut handle = &file;
     if io::Seek::rewind(&mut handle).is_err() {
-        return MemberObservation::Unavailable(UnavailableReason::UnstableRead);
+        return Err(UnavailableReason::UnstableRead);
     }
     let reader = Cooperative {
         inner: &file,
@@ -338,7 +382,7 @@ pub fn observe_member(path: &Path, cancellation: &Cancellation) -> MemberObserva
         Ok(digest) => digest,
         // The handle was open and the read did not finish. That is not a fact
         // about the content, so it must not be reported as one.
-        Err(_) => return MemberObservation::Unavailable(UnavailableReason::UnstableRead),
+        Err(_) => return Err(UnavailableReason::UnstableRead),
     };
     // Taken from the object the bytes came out of, while `file` is still open,
     // and deliberately not from the path afterwards. The whole point of the
@@ -347,11 +391,12 @@ pub fn observe_member(path: &Path, cancellation: &Cancellation) -> MemberObserva
     // whatever the name means then, and two such answers agreeing proves only
     // that they were taken after the same replacement.
     let identity = local_document::object_identity_of(&file);
-    MemberObservation::Observed {
+    Ok(HeldMember {
+        file,
         byte_length,
         digest,
         identity,
-    }
+    })
 }
 
 /// Why a name that exists could not be opened.

@@ -951,6 +951,8 @@ fn probe_tool(backend_tool: BackendTool, tool: &mut DiscoveredTool, executor: &d
     let executable_name = match backend_tool {
         BackendTool::MsConvert => MSCONVERT_EXE,
         BackendTool::MsAccess => MSACCESS_EXE,
+        // Discovery probes ProteoWizard tools only; a worker is never discovered.
+        BackendTool::AnalysisWorker => return,
     };
     let pre_probe_sha256 = match Sha256Digest::calculate_file(&path) {
         Ok(digest) => digest,

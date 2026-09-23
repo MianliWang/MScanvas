@@ -112,7 +112,278 @@ export interface QcSnapshot {
   };
 }
 
-export type ArtifactKind = "fileFactsV1" | "acquisitionQcSnapshotV1";
+export type ArtifactKind = "fileFactsV1" | "acquisitionQcSnapshotV1" | "targetedMs1ResultV1";
+
+// ---------------------------------------------------------------------------
+// The targeted MS1 recipe, as Rust records and describes it
+// ---------------------------------------------------------------------------
+
+/** What one member held, as a plan expects it or an attempt measured it. */
+export interface ObservedMember {
+  readonly role: "primary" | "requiredCompanion";
+  readonly relativeName: string;
+  readonly byteLength: number;
+  readonly sha256: string;
+}
+
+/**
+ * One target exactly as the plan hands it to the engine. Numbers are the
+ * canonical decimal text the plan is named by; the label never reaches the
+ * engine.
+ */
+export interface TargetDefinition {
+  readonly targetId: string;
+  readonly label: string;
+  readonly formula: string;
+  readonly neutralMass: string | null;
+  readonly rtS: string;
+  readonly rtHalfWidthS: string;
+}
+
+/** One reviewed plan, named by the digest of its canonical form. */
+export interface TargetedMs1Plan {
+  readonly planSha256: string;
+  readonly recipe: {
+    readonly recipe: "targetedMs1";
+    readonly recipeVersion: number;
+    readonly adapterSha256: string;
+    readonly engineProfileSha256: string;
+    readonly runtimeManifestSha256: string;
+  };
+  readonly layerId: string;
+  readonly inputId: string;
+  readonly expectedContent: readonly ObservedMember[];
+  readonly parameters: { readonly mzHalfWidthPpm: string; readonly expectedPeakWidthS: string };
+  readonly targetListSha256: string;
+  /** In the order the engine receives them. */
+  readonly targets: readonly TargetDefinition[];
+}
+
+export type FailureStage = "source" | "runtime" | "request" | "engine" | "result" | "publish";
+
+/** Why a run failed: a closed code and a stage, never a message or a path. */
+export type FailureCode =
+  | "sourceUnavailable"
+  | "sourceChanged"
+  | "sourceChangedDuringRead"
+  | "sourceUnreadable"
+  | "sourceReadIncomplete"
+  | "sourceNoMs1"
+  | "sourceNotCentroid"
+  | "sourceMixedPolarity"
+  | "sourcePolarityUnsupported"
+  | "sourceRtUndeclaredOrNonmonotonic"
+  | "sourceRtNotStrictlyIncreasing"
+  | "sourceIonMobilityUnsupported"
+  | "sourceUnsortedMz"
+  | "sourceNonfinite"
+  | "executionViewUnavailable"
+  | "runtimeUnverified"
+  | "runtimeModuleMismatch"
+  | "workerLaunchFailed"
+  | "workerNotAccountedFor"
+  | "requestRefused"
+  | "targetInvalid"
+  | "engineError"
+  | "engineNoCandidates"
+  | "evidenceMappingMismatch"
+  | "workerTimeout"
+  | "workerExitedAbnormally"
+  | "workerInternal"
+  | "resultInvalid"
+  | "payloadNotPublished";
+
+/** What one attempt established, each fact at the strength of how it was learned. */
+export interface AttemptFacts {
+  readonly adapterSha256: string;
+  readonly runtimeManifestSha256: string;
+  readonly interpreterSha256: string;
+  readonly sourceView: "hardLinkInWorkArea";
+  readonly engineReport: {
+    readonly python: string;
+    readonly pyopenms: string;
+    readonly openms: string;
+    readonly openmsRevision: string;
+    readonly openmsBuildTime: string;
+  } | null;
+  readonly loadedModules: readonly { readonly name: string; readonly sha256: string }[];
+}
+
+/** A targeted run's own block, exactly as the document stores it. */
+export interface TargetedMs1Execution {
+  readonly planSha256: string;
+  readonly consumedContent: readonly ObservedMember[];
+  readonly attempt: AttemptFacts | null;
+  readonly failure: { readonly code: FailureCode; readonly stage: FailureStage } | null;
+  readonly stop: {
+    readonly reason: "cancelRequested" | "timeBudgetExceeded";
+    readonly workerTerminated: boolean;
+    readonly exitObserved: boolean;
+  } | null;
+}
+
+/** How many rows ended in each outcome. */
+export interface OutcomeSummary {
+  readonly targets: number;
+  readonly detected: number;
+  readonly detectedAmbiguous: number;
+  readonly shared: number;
+  readonly suppressedByOverlap: number;
+  readonly notDetected: number;
+  readonly failed: number;
+}
+
+/** A targeted result record: a summary and digests, never a path. */
+export interface TargetedMs1Result {
+  readonly summary: OutcomeSummary;
+  /** The absences came from the measured empty-selection recovery. */
+  readonly noCandidateRecovery: boolean;
+  readonly payload: {
+    readonly manifestSha256: string;
+    readonly files: readonly {
+      readonly name: "rows.jsonl" | "evidence.jsonl" | "evidence.index.json";
+      readonly byteLength: number;
+      readonly sha256: string;
+    }[];
+  };
+}
+
+/** Whether a stored result was whole when last looked at. Observed, never stored. */
+export type PayloadAvailability = "available" | "payloadMissing" | "payloadCorrupt";
+
+export type RowOutcome =
+  | "DETECTED"
+  | "DETECTED_AMBIGUOUS"
+  | "SHARED"
+  | "SUPPRESSED_BY_OVERLAP"
+  | "NOT_DETECTED"
+  | "FAILED";
+
+export type RowFailure =
+  | "EXTRACTION_AT_SPECTRUM_EDGE"
+  | "RELATED_TARGET_AT_SPECTRUM_EDGE"
+  | "CANDIDATES_WITHOUT_FEATURE"
+  | "ENGINE_DISCARDED_NO_VALID_FIT"
+  | "TARGET_ABSENT_FROM_ENGINE_LIBRARY"
+  | "TARGET_UNACCOUNTED";
+
+/** One target's row, as the stored result holds it. */
+export interface PayloadRow {
+  readonly targetId: string;
+  readonly outcome: RowOutcome;
+  readonly failureReason: RowFailure | null;
+  readonly edgeTraceCount: number;
+  readonly ion: {
+    readonly adduct: string;
+    readonly charge: number;
+    readonly mzTheoretical: readonly number[];
+    readonly isotopeProbability: readonly number[];
+  } | null;
+  readonly windows: {
+    readonly rtClosedS: readonly [number, number];
+    readonly mzOpen: readonly (readonly [number, number])[];
+  } | null;
+  readonly signal: {
+    readonly points: number;
+    readonly sum: readonly number[];
+    readonly max: readonly number[];
+    readonly anyNonzeroPoint: boolean;
+  } | null;
+  readonly feature: {
+    readonly apexRtS: number;
+    readonly leftS: number;
+    readonly rightS: number;
+    readonly rawArea: number;
+    readonly modelStatus: string;
+    readonly modelArea: number | null;
+    readonly modelFwhmS: number | null;
+    readonly engineIntensity: number | null;
+    readonly engineIntensitySource: "modelArea" | "imputedFromRunRegression";
+  } | null;
+  readonly candidates: readonly {
+    readonly apexRtS: number;
+    readonly leftS: number;
+    readonly rightS: number;
+    readonly rawArea: number;
+  }[];
+  readonly overlapWinner: boolean;
+  readonly relations: {
+    readonly sharedWith: readonly string[];
+    readonly suppressedBy: string | null;
+    readonly overlapRemoved: readonly string[];
+  };
+  readonly recoveredFromEmptySelection: boolean;
+}
+
+export interface RowsPage {
+  readonly total: number;
+  readonly offset: number;
+  readonly rows: readonly PayloadRow[];
+}
+
+/** One trace of one target: `[spectrum index, retention time (s), intensity]`. */
+export interface EvidenceTrace {
+  readonly targetId: string;
+  readonly trace: number;
+  readonly mzTheoretical: number;
+  readonly points: readonly (readonly [number, number, number])[];
+}
+
+export interface TargetEvidence {
+  readonly targetId: string;
+  readonly traces: readonly EvidenceTrace[];
+}
+
+/** What a plan review sends: the layer and the text the user typed. */
+export interface PlanRequest {
+  readonly layerId: string;
+  readonly mzHalfWidthPpm: string;
+  readonly expectedPeakWidthS: string;
+  readonly targets: readonly {
+    readonly label: string;
+    readonly formula: string;
+    readonly neutralMass: string | null;
+    readonly rtS: string;
+    readonly rtHalfWidthS: string;
+  }[];
+}
+
+export interface PlanProblem {
+  /** The target row, counted from one, or `null` for a parameter. */
+  readonly row: number | null;
+  readonly field: string;
+  readonly problem: string;
+}
+
+export interface EngineIdentity {
+  readonly package: string;
+  readonly version: string;
+  readonly algorithm: string;
+  readonly revision: string;
+  readonly maturity: "experimental";
+  readonly fixedProfile: string;
+}
+
+export interface PlanResolution {
+  readonly plan: TargetedMs1Plan | null;
+  readonly problems: readonly PlanProblem[];
+  /** Why this plan cannot run now, as a refusal identifier, or `null`. */
+  readonly blocked: string | null;
+  readonly engine: EngineIdentity;
+}
+
+export interface TargetedMs1RunEnd {
+  readonly project: ProjectState;
+  readonly runId: string;
+  readonly outcome: "completed" | "failed" | "cancelled";
+  readonly artifactId: string | null;
+}
+
+/** The targeted run in progress. Session-only. */
+export interface AnalysisRun {
+  readonly operationId: string;
+  readonly phase: string;
+}
 
 export interface ProjectArtifact {
   readonly id: string;
@@ -130,10 +401,21 @@ export interface ProjectArtifact {
   readonly producedByRunId: string | null;
   /** The references this artifact actually recorded observations of. */
   readonly sourceInputIds: readonly string[];
+  /**
+   * The targeted result, where this is one, and whether its stored rows and
+   * evidence were whole when last looked at. Absent from a build before M9.1.
+   */
+  readonly targetedMs1?: {
+    readonly result: TargetedMs1Result;
+    readonly availability: PayloadAvailability;
+  } | null;
 }
 
 /** The operations a project can have recorded, exactly as Rust names them. */
-export type RecordedOperation = "captureFileFactsV1" | "captureAcquisitionQcSnapshotV1";
+export type RecordedOperation =
+  | "captureFileFactsV1"
+  | "captureAcquisitionQcSnapshotV1"
+  | "targetedMs1V1";
 
 export interface ProjectRun {
   readonly id: string;
@@ -147,6 +429,8 @@ export interface ProjectRun {
   readonly applicationVersion: string;
   readonly startedAt: string;
   readonly finishedAt: string;
+  /** A targeted run's own block, or `null`. Absent from a build before M9.1. */
+  readonly targetedMs1?: TargetedMs1Execution | null;
 }
 
 /**
@@ -181,6 +465,12 @@ export interface ProjectState {
   readonly artifacts: readonly ProjectArtifact[];
   readonly runs: readonly ProjectRun[];
   readonly layers: readonly ProjectLayer[];
+  /** Every plan a recorded run executed. Absent from a build before M9.1. */
+  readonly plans?: readonly TargetedMs1Plan[];
+  /** The targeted run in progress, if one is. */
+  readonly analysisRun?: AnalysisRun | null;
+  /** What the last look at the result store beside the document found. */
+  readonly resultStore?: { readonly storeFound: boolean; readonly unreferencedResults: number };
 }
 
 /** The state of a session with no project open. */
@@ -285,6 +575,23 @@ export interface ProjectApi {
    * value, and starts nothing: Rust copies what the preview already retained.
    */
   captureProjectQcSummary(layerId: string, previewToken: string): Promise<QcCapture>;
+  /**
+   * Resolves a targeted MS1 request over one layer into a plan for review.
+   * Sends the typed text; Rust decides what every value means, mints the
+   * target identifiers, and answers the plan or every problem it has.
+   */
+  resolveTargetedMs1Plan(request: PlanRequest): Promise<PlanResolution>;
+  /**
+   * Runs one reviewed plan as an accepted operation, named by its digest. A
+   * run that started is recorded however it ends, and answers with it.
+   */
+  runTargetedMs1(operationId: string, planSha256: string): Promise<TargetedMs1RunEnd>;
+  /** Where the targeted run in progress is, or `null`. */
+  getTargetedMs1Progress(): Promise<AnalysisRun | null>;
+  /** One bounded page of a stored result's rows. */
+  readTargetedMs1Rows(artifactId: string, offset: number): Promise<RowsPage>;
+  /** One target's evidence from a stored result. */
+  readTargetedMs1Evidence(artifactId: string, targetId: string): Promise<TargetEvidence>;
 }
 
 export const tauriProjectApi: ProjectApi = {
@@ -338,6 +645,28 @@ export const tauriProjectApi: ProjectApi = {
       { layerId, previewToken },
       documentAuthorityHeaders(),
     ),
+  resolveTargetedMs1Plan: (request) =>
+    invoke<PlanResolution>(
+      "resolve_targeted_ms1_plan",
+      { request: { ...request, targets: [...request.targets] } },
+      documentAuthorityHeaders(),
+    ),
+  runTargetedMs1: (operationId, planSha256) =>
+    invoke<TargetedMs1RunEnd>(
+      "run_targeted_ms1",
+      { operationId, planSha256 },
+      documentAuthorityHeaders(),
+    ),
+  getTargetedMs1Progress: () =>
+    invoke<AnalysisRun | null>("get_targeted_ms1_progress", {}, documentAuthorityHeaders()),
+  readTargetedMs1Rows: (artifactId, offset) =>
+    invoke<RowsPage>("read_targeted_ms1_rows", { artifactId, offset }, documentAuthorityHeaders()),
+  readTargetedMs1Evidence: (artifactId, targetId) =>
+    invoke<TargetEvidence>(
+      "read_targeted_ms1_evidence",
+      { artifactId, targetId },
+      documentAuthorityHeaders(),
+    ),
 };
 
 /**
@@ -368,6 +697,11 @@ export const unavailableProjectApi: ProjectApi = {
   createProjectLayer: () => Promise.reject(new Error("noProjectStore")),
   removeProjectLayer: () => Promise.reject(new Error("noProjectStore")),
   captureProjectQcSummary: () => Promise.reject(new Error("noProjectStore")),
+  resolveTargetedMs1Plan: () => Promise.reject(new Error("noProjectStore")),
+  runTargetedMs1: () => Promise.reject(new Error("noProjectStore")),
+  getTargetedMs1Progress: () => Promise.resolve(null),
+  readTargetedMs1Rows: () => Promise.reject(new Error("noProjectStore")),
+  readTargetedMs1Evidence: () => Promise.reject(new Error("noProjectStore")),
 };
 
 /**

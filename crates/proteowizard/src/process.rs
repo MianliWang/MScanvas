@@ -472,7 +472,7 @@ fn execute_command_after_assignment(
         .spawn()
         .map_err(|error| launch_error(spec, &error))?;
 
-    let owned_job = match OwnedProcessJob::assign(&child) {
+    let owned_job = match OwnedProcessJob::assign_with(&child, spec.worker_limits.as_ref()) {
         Ok(job) => job,
         Err(error) => {
             // Ownership was never established — and the root has still executed
@@ -1161,6 +1161,11 @@ fn process_command(spec: &CommandSpec) -> Result<Command, ProcessError> {
         .current_dir(&spec.working_directory)
         .stdin(Stdio::null());
     configure_minimal_environment(&mut command, spec)?;
+    // After the minimal environment, so a worker's own per-run directories
+    // take the place of the shared ones. Empty for every ProteoWizard run.
+    for (key, value) in &spec.environment {
+        command.env(key, value);
+    }
     Ok(command)
 }
 
@@ -1380,6 +1385,10 @@ impl OwnedProcessJob {
         Ok(Self)
     }
 
+    fn assign_with(child: &Child, _limits: Option<&crate::WorkerLimits>) -> io::Result<Self> {
+        Self::assign(child)
+    }
+
     fn terminate(&self) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -1415,6 +1424,10 @@ mod windows_job {
     type Bool = i32;
 
     const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+    const JOB_OBJECT_LIMIT_ACTIVE_PROCESS: u32 = 0x0000_0008;
+    const JOB_OBJECT_LIMIT_PRIORITY_CLASS: u32 = 0x0000_0020;
+    const JOB_OBJECT_LIMIT_JOB_MEMORY: u32 = 0x0000_0200;
+    const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
     const TH32CS_SNAPTHREAD: u32 = 0x0000_0004;
     const THREAD_SUSPEND_RESUME: u32 = 0x0002;
     const INVALID_HANDLE_VALUE: isize = -1;
@@ -1687,7 +1700,23 @@ mod windows_job {
         /// the kernel, so ownership established here cannot be given up later.
         /// Nested Jobs are what makes this safe to do inside another Job — the
         /// child joins both, and terminating this one still terminates it.
+        /// The assignment every ProteoWizard run gets. Production reaches it
+        /// through [`Self::assign_with`]; the tests that build their own
+        /// suspended child call it directly.
+        #[cfg(test)]
         pub(super) fn assign(child: &Child) -> io::Result<Self> {
+            Self::assign_with(child, None)
+        }
+
+        /// Assigns the child, with an analysis worker's limits where given.
+        ///
+        /// One active process, a cap on what the whole Job may commit, and
+        /// below-normal priority -- each enforced by the kernel for the Job,
+        /// not by anything the worker does.
+        pub(super) fn assign_with(
+            child: &Child,
+            limits: Option<&crate::WorkerLimits>,
+        ) -> io::Result<Self> {
             // SAFETY: Both optional pointers are null, requesting an unnamed job with
             // default security attributes. The returned handle is checked before use.
             let raw_job = unsafe { create_job_object_w(ptr::null(), ptr::null()) };
@@ -1699,6 +1728,15 @@ mod windows_job {
             let handle = unsafe { OwnedHandle::from_raw_handle(raw_job) };
             let mut information = ExtendedLimitInformation::default();
             information.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if let Some(limits) = limits {
+                information.basic_limit_information.limit_flags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+                    | JOB_OBJECT_LIMIT_PRIORITY_CLASS
+                    | JOB_OBJECT_LIMIT_JOB_MEMORY;
+                information.basic_limit_information.active_process_limit = 1;
+                information.basic_limit_information.priority_class = BELOW_NORMAL_PRIORITY_CLASS;
+                information.job_memory_limit = usize::try_from(limits.job_memory_bytes)
+                    .map_err(|_| io::Error::other("the memory limit does not fit this platform"))?;
+            }
             let information_length = structure_size::<ExtendedLimitInformation>()?;
             // SAFETY: The job HANDLE is live, the information pointer references the
             // correct repr(C) structure for the supplied class, and its byte size is

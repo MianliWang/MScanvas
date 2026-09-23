@@ -32,6 +32,8 @@
 pub mod dto;
 pub mod lineage;
 pub mod observe;
+pub mod payload;
+pub mod recipe;
 pub mod record;
 
 /// This module's own suite. Reachable from the crate's other test modules so
@@ -50,11 +52,14 @@ use crate::local_document::{self, WriteRefusal};
 use observe::{
     Cancellation, InputVerification, MemberObservation, ObjectIdentity, UnavailableReason,
 };
+use payload::Availability;
+use recipe::{AttemptEnd, AttemptOrder, PlanDraft, PlanProblem, RecipeExecutor, RunPhase};
 use record::{
-    AcquisitionQcSnapshotV1, ArtifactPayload, ArtifactRecord, DocumentProblem, InputId,
-    InputRecord, LayerId, LayerRecord, LayerSource, MAX_ARTIFACTS, MAX_DOCUMENT_BYTES, MAX_INPUTS,
-    MAX_LAYERS, MAX_RUNS, ProjectDocument, RecordedOperation, RunId, RunInput, RunRecord,
-    TerminalOutcome,
+    AcquisitionQcSnapshotV1, ArtifactPayload, ArtifactRecord, DocumentProblem, FailureCode,
+    FailureStage, InputId, InputRecord, LayerId, LayerRecord, LayerSource, MAX_ARTIFACTS,
+    MAX_DOCUMENT_BYTES, MAX_INPUTS, MAX_LAYERS, MAX_RUNS, PayloadReference, ProjectDocument,
+    RecordedOperation, RunFailure, RunId, RunInput, RunRecord, StopFacts, StopReason, TargetId,
+    TargetedMs1Execution, TargetedMs1Plan, TerminalOutcome,
 };
 
 /// The extension a project document carries.
@@ -149,6 +154,29 @@ pub enum ProjectError {
     /// The run summary reports more MS-level buckets than a snapshot holds. It
     /// is refused rather than recorded in part.
     SummaryTooLarge,
+    /// A targeted MS1 run is in progress, and this would change the project it
+    /// is running for: its document, its location or a record it names.
+    AnalysisRunning,
+    /// This build cannot run the recipe now: its pinned runtime is not there
+    /// or is not the runtime it pins, or this is not a development build.
+    RecipeUnavailable,
+    /// The layer's source is not one file named as mzML. Nothing is converted.
+    RecipeSourceUnsupported,
+    /// The source is on a different volume from the work area, where the
+    /// engine can only be given it through a copy, and no copy is made.
+    SourceOnAnotherVolume,
+    /// The plan named is not the one resolved for review and not one this
+    /// project recorded, or its layer, reference or recipe is not what it was.
+    PlanNotCurrent,
+    /// Something at the result store's name is not this project's store.
+    PayloadStoreUnusable,
+    /// A result store already exists beside the chosen destination. It is
+    /// never replaced or deleted.
+    DestinationStoreExists,
+    /// A result could not be copied whole for Save As. Nothing was published.
+    PayloadNotCopied,
+    /// A stored result is not whole, so it cannot be read.
+    PayloadUnavailable(Availability),
 }
 
 impl ProjectError {
@@ -182,6 +210,15 @@ impl ProjectError {
             Self::PreviewNotCurrent => "previewNotCurrent",
             Self::ProducerUnidentified => "producerUnidentified",
             Self::SummaryTooLarge => "summaryTooLarge",
+            Self::AnalysisRunning => "analysisRunning",
+            Self::RecipeUnavailable => "recipeUnavailable",
+            Self::RecipeSourceUnsupported => "recipeSourceUnsupported",
+            Self::SourceOnAnotherVolume => "sourceOnAnotherVolume",
+            Self::PlanNotCurrent => "planNotCurrent",
+            Self::PayloadStoreUnusable => "payloadStoreUnusable",
+            Self::DestinationStoreExists => "destinationStoreExists",
+            Self::PayloadNotCopied => "payloadNotCopied",
+            Self::PayloadUnavailable(availability) => availability.stable_id(),
         }
     }
 
@@ -190,7 +227,11 @@ impl ProjectError {
     pub const fn retryable(self) -> bool {
         matches!(
             self,
-            Self::NotPublished | Self::StaleDocument | Self::Unavailable(_) | Self::AlreadyRunning
+            Self::NotPublished
+                | Self::StaleDocument
+                | Self::Unavailable(_)
+                | Self::AlreadyRunning
+                | Self::AnalysisRunning
         )
     }
 }
@@ -280,6 +321,12 @@ struct AcceptedJob {
     /// Whether a worker has taken it. A started job is never superseded; an
     /// unstarted one at a stale generation is.
     started: bool,
+    /// Whether it holds the project still while it runs: a targeted MS1 run,
+    /// which publishes beside the document it started from and records its
+    /// run against the layer it read.
+    exclusive: bool,
+    /// Where an exclusive run is, for the interface.
+    phase: Option<RunPhase>,
 }
 
 /// Where this session last published the open project, and at which revision.
@@ -330,6 +377,23 @@ struct OpenProject {
     /// rows exist, and the interface resolves a remembered handle against it
     /// rather than trusting this list to be current.
     admitted: Vec<(InputId, String)>,
+    /// The plan last resolved for review, which a run may execute. Session-
+    /// only: a plan becomes history when a run executes it, not when it is
+    /// reviewed.
+    pending_plan: Option<TargetedMs1Plan>,
+    /// What the last look at the result store found. Session-only, like
+    /// `verification`: whether a result is whole is observed, never stored.
+    payloads: PayloadState,
+}
+
+/// What one look at a project's result store found.
+#[derive(Debug, Clone, Default)]
+struct PayloadState {
+    /// Whether a store was beside the published document at all.
+    store_found: bool,
+    availability: Vec<(ArtifactId, Availability)>,
+    /// Whole results in the store that no record of this project names.
+    unreferenced: usize,
 }
 
 impl OpenProject {
@@ -346,7 +410,18 @@ impl OpenProject {
             verification,
             proposal: None,
             admitted: Vec::new(),
+            pending_plan: None,
+            payloads: PayloadState::default(),
         }
+    }
+
+    /// Whether one referenced result was whole when last looked at.
+    fn availability_of(&self, id: ArtifactId) -> Option<Availability> {
+        self.payloads
+            .availability
+            .iter()
+            .find(|(recorded, _)| *recorded == id)
+            .map(|(_, availability)| *availability)
     }
 
     /// The workspace row this session admitted for a reference, if any.
@@ -437,6 +512,20 @@ impl Session {
     fn open_mut(&mut self) -> Result<&mut OpenProject, ProjectError> {
         self.project.as_mut().ok_or(ProjectError::NoOpenProject)
     }
+
+    /// Refuses a change to the open project while a targeted run holds it.
+    ///
+    /// Asked by everything that would replace the project, move its document,
+    /// or remove or re-point a record a run names. A run publishes its result
+    /// beside the document it started from and records itself against the
+    /// layer it read; letting either move under it would leave a failure with
+    /// nowhere to be recorded, or a result beside a document nobody opened.
+    fn refuse_during_analysis(&self) -> Result<(), ProjectError> {
+        match &self.job {
+            Some(job) if job.started && job.exclusive => Err(ProjectError::AnalysisRunning),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// The session's one project.
@@ -484,7 +573,23 @@ impl ProjectStore {
     #[must_use]
     pub fn describe(&self) -> dto::ProjectStateDto {
         let session = self.locked();
-        dto::describe(session.project.as_ref())
+        let run = session
+            .job
+            .as_ref()
+            .filter(|job| job.started && job.exclusive)
+            .map(|job| (job.id, job.phase.unwrap_or(RunPhase::Preparing)));
+        dto::describe(session.project.as_ref(), run)
+    }
+
+    /// The targeted run in progress, and where it is.
+    #[must_use]
+    pub fn analysis_run(&self) -> Option<(ProjectJobId, RunPhase)> {
+        let session = self.locked();
+        session
+            .job
+            .as_ref()
+            .filter(|job| job.started && job.exclusive)
+            .map(|job| (job.id, job.phase.unwrap_or(RunPhase::Preparing)))
     }
 
     /// Starts a new empty project.
@@ -494,6 +599,7 @@ impl ProjectStore {
     /// [`ProjectError::UnsavedChanges`] unless the caller said to discard them.
     pub fn create(&self, name: String, discard_unsaved: bool) -> Result<(), ProjectError> {
         let mut session = self.locked();
+        session.refuse_during_analysis()?;
         refuse_unsaved(session.project.as_ref(), discard_unsaved)?;
         let mut document = ProjectDocument::new(bounded_name(name));
         document.revision = 0;
@@ -509,6 +615,7 @@ impl ProjectStore {
     /// [`ProjectError::UnsavedChanges`] unless the caller said to discard them.
     pub fn close(&self, discard_unsaved: bool) -> Result<(), ProjectError> {
         let mut session = self.locked();
+        session.refuse_during_analysis()?;
         refuse_unsaved(session.project.as_ref(), discard_unsaved)?;
         session.replace(None);
         Ok(())
@@ -529,19 +636,26 @@ impl ProjectStore {
     pub fn open_document(&self, path: &Path, discard_unsaved: bool) -> Result<(), ProjectError> {
         {
             let session = self.locked();
+            session.refuse_during_analysis()?;
             refuse_unsaved(session.project.as_ref(), discard_unsaved)?;
         }
         let document = read_document(path)?;
         let revision = document.revision;
+        // Outside the lock: this hashes every stored result, and says what it
+        // found without repairing anything. A missing store is reported as
+        // such; nothing looks for it elsewhere.
+        let payloads = observe_payloads(&document, path);
         let mut project = OpenProject::fresh(document);
         project.binding = Some(PublishedBinding {
             path: path.to_path_buf(),
             revision,
         });
+        project.payloads = payloads;
         let mut session = self.locked();
         // Re-checked under the lock this replacement happens under. The read
         // above released it, and a commit that arrived meanwhile is exactly
         // what the caller asked not to discard.
+        session.refuse_during_analysis()?;
         refuse_unsaved(session.project.as_ref(), discard_unsaved)?;
         session.replace(Some(project));
         Ok(())
@@ -556,12 +670,34 @@ impl ProjectStore {
     /// silently re-pointing at whatever sits at the same relative name under
     /// the new directory.
     ///
+    /// A project with stored results takes them along. Every result that is
+    /// whole is copied into a store assembled beside the destination, checked
+    /// byte for byte, and given the store's name by a rename that refuses an
+    /// existing one -- and only then is the document published, so a new
+    /// document never names results it does not have. A result already missing
+    /// or damaged is carried forward as the record it is and stays unavailable;
+    /// copying cannot make it whole. An existing store at the destination is
+    /// refused and never deleted, whoever it seems to belong to.
+    ///
     /// # Errors
     ///
     /// A destination this build will not write to, or a publish that did not
     /// happen. On every failing path whatever was at the destination is
-    /// untouched.
+    /// untouched, and the open project is still bound where it was.
     pub fn save_as(&self, destination: &Path) -> Result<(), ProjectError> {
+        self.save_as_with(destination, &SaveAsSeams::PRODUCTION)
+    }
+
+    /// [`Self::save_as`], with the moments a test needs to fail in.
+    ///
+    /// Production passes [`SaveAsSeams::PRODUCTION`] and goes through this
+    /// same body, so there is one implementation rather than a tested one and
+    /// a shipped one.
+    pub(crate) fn save_as_with(
+        &self,
+        destination: &Path,
+        seams: &SaveAsSeams<'_>,
+    ) -> Result<(), ProjectError> {
         if !names_a_project(destination) {
             return Err(ProjectError::DestinationNotNamed);
         }
@@ -573,8 +709,9 @@ impl ProjectStore {
         // anything about the destination is decided. This is the list the
         // aliasing check needs and the list the rebase needs, and taking it
         // once means both see the same thing.
-        let (generation, resolved, project_id, binding_revision) = {
+        let (generation, resolved, project_id, binding, managed) = {
             let session = self.locked();
+            session.refuse_during_analysis()?;
             let project = session.open()?;
             let existing_base = project.base_directory().map(Path::to_path_buf);
             let mut resolved = Vec::with_capacity(project.document.inputs.len());
@@ -587,7 +724,8 @@ impl ProjectStore {
                 session.generation,
                 resolved,
                 project.document.project_id,
-                project.binding.as_ref().map(|binding| binding.revision),
+                project.binding.clone(),
+                managed_results(&project.document),
             )
         };
 
@@ -595,7 +733,36 @@ impl ProjectStore {
         // compare identities, and on a slow volume with a full roster that is
         // seconds of work. Holding the session lock through it would stop the
         // interface describing the project for that whole time.
-        refuse_unwritable_destination(destination, &resolved, project_id, binding_revision)?;
+        refuse_unwritable_destination(
+            destination,
+            &resolved,
+            project_id,
+            binding.as_ref().map(|binding| binding.revision),
+        )?;
+        let destination_existed = std::fs::symlink_metadata(destination).is_ok();
+        // The document this session is bound to, chosen again: its store is the
+        // one it already has, and there is nothing to copy.
+        let same_document = binding
+            .as_ref()
+            .is_some_and(|binding| same_published_document(&binding.path, destination));
+        let pending = if managed.is_empty() || same_document {
+            None
+        } else {
+            Some(assemble_store(
+                destination,
+                directory,
+                project_id,
+                binding.as_ref().map(|binding| binding.path.as_path()),
+                &managed,
+                seams,
+            )?)
+        };
+        let abandon = |pending: &Option<PendingStore>| {
+            if let Some(pending) = pending {
+                // This operation's own directory, created fresh above.
+                let _ = std::fs::remove_dir_all(&pending.path);
+            }
+        };
 
         let mut session = self.locked();
         // The project may have been replaced, closed, or had a reference
@@ -603,17 +770,57 @@ impl ProjectStore {
         // document this operation cloned would then write something nobody is
         // looking at, over a destination that was approved for something else.
         if session.generation != generation {
+            abandon(&pending);
             return Err(ProjectError::StaleDocument);
         }
-        let project = session.open_mut()?;
+        if let Err(refusal) = session.refuse_during_analysis() {
+            abandon(&pending);
+            return Err(refusal);
+        }
+        let Some(project) = session.project.as_mut() else {
+            abandon(&pending);
+            return Err(ProjectError::NoOpenProject);
+        };
+        // A result recorded after the copy was taken is not in the store being
+        // assembled, and a document naming it there would name nothing.
+        if managed_results(&project.document) != managed {
+            abandon(&pending);
+            return Err(ProjectError::StaleDocument);
+        }
 
         let mut candidate = project.document.clone();
         for (input, path) in candidate.inputs.iter_mut().zip(&resolved) {
             input.locator = record::locator_for(path, directory);
         }
         candidate.revision = candidate.revision.saturating_add(1);
-        record::validate(&candidate).map_err(ProjectError::Document)?;
-        publish(directory, destination, &candidate)?;
+        if let Err(problem) = record::validate(&candidate) {
+            abandon(&pending);
+            return Err(ProjectError::Document(problem));
+        }
+        if record::serialize(&candidate).is_none_or(|bytes| bytes.len() as u64 > MAX_DOCUMENT_BYTES)
+        {
+            abandon(&pending);
+            return Err(ProjectError::Oversized);
+        }
+        if let Some(pending) = &pending
+            && let Err(error) = payload::rename_without_replacing(&pending.path, &pending.store)
+        {
+            let _ = std::fs::remove_dir_all(&pending.path);
+            return Err(if error.kind() == std::io::ErrorKind::AlreadyExists {
+                ProjectError::DestinationStoreExists
+            } else {
+                ProjectError::NotPublished
+            });
+        }
+        // From here a published store is whole whatever happens next. A document
+        // publish that fails leaves it unreferenced beside a destination with no
+        // document -- which is reported, not undone.
+        (seams.before_document)()?;
+        if destination_existed {
+            publish(directory, destination, &candidate)?;
+        } else {
+            publish_new(directory, destination, &candidate)?;
+        }
 
         project.document = candidate;
         project.binding = Some(PublishedBinding {
@@ -621,6 +828,28 @@ impl ProjectStore {
             revision: project.document.revision,
         });
         project.dirty = false;
+        if !same_document {
+            // About the new store now: what was copied is there whole, and what
+            // was not is not there at all, whatever state it was in before.
+            let copied = pending
+                .as_ref()
+                .map_or(&[][..], |pending| pending.copied.as_slice());
+            project.payloads = PayloadState {
+                store_found: pending.is_some(),
+                availability: managed
+                    .iter()
+                    .map(|(id, _)| {
+                        let availability = if copied.contains(id) {
+                            Availability::Available
+                        } else {
+                            Availability::Missing
+                        };
+                        (*id, availability)
+                    })
+                    .collect(),
+                unreferenced: 0,
+            };
+        }
         // The base directory may have moved, so what an earlier check
         // established was about different files. Saying nothing is correct;
         // carrying the old answers forward would not be.
@@ -784,6 +1013,7 @@ impl ProjectStore {
     /// is sourced from it. Nothing changes on any of them.
     pub fn remove_input(&self, id: InputId) -> Result<(), ProjectError> {
         let mut session = self.locked();
+        session.refuse_during_analysis()?;
         let project = session.open_mut()?;
         let document = &project.document;
         if document.input(id).is_none() {
@@ -877,6 +1107,8 @@ impl ProjectStore {
             generation,
             cancellation,
             started: false,
+            exclusive: false,
+            phase: None,
         });
         Ok(id)
     }
@@ -914,6 +1146,7 @@ impl ProjectStore {
     fn start_job(
         &self,
         id: ProjectJobId,
+        exclusive: bool,
     ) -> Result<(JobGuard<'_>, Cancellation, u64), ProjectError> {
         let mut session = self.locked();
         session.open()?;
@@ -932,6 +1165,10 @@ impl ProjectStore {
             return Err(ProjectError::StaleOperation);
         }
         job.started = true;
+        // Under the same lock that starts it, so no lifecycle change can land
+        // between the start and the moment it is held still.
+        job.exclusive = exclusive;
+        job.phase = exclusive.then_some(RunPhase::Preparing);
         let cancellation = job.cancellation.clone();
         Ok((
             JobGuard {
@@ -959,7 +1196,7 @@ impl ProjectStore {
     /// identifier that is not the accepted operation, or
     /// [`ProjectError::AlreadyRunning`] where it already is.
     pub fn check_linked_files(&self, id: ProjectJobId) -> Result<(), ProjectError> {
-        let (mut guard, cancellation, generation) = self.start_job(id)?;
+        let (mut guard, cancellation, generation) = self.start_job(id, false)?;
         let (inputs, base) = {
             let session = self.locked();
             let project = session.open()?;
@@ -1034,7 +1271,7 @@ impl ProjectStore {
         id: ProjectJobId,
         selected: &[InputId],
     ) -> Result<RunId, ProjectError> {
-        let (mut guard, cancellation, generation) = self.start_job(id)?;
+        let (mut guard, cancellation, generation) = self.start_job(id, false)?;
         let (inputs, base) = {
             let session = self.locked();
             let project = session.open()?;
@@ -1147,6 +1384,7 @@ impl ProjectStore {
             application_version: env!("CARGO_PKG_VERSION").to_owned(),
             started_at,
             finished_at,
+            targeted_ms1: None,
         });
         // The same measure a QC capture takes, for the same reason: this
         // history may be pinned by a QC run over the same reference. Nothing is
@@ -1251,6 +1489,7 @@ impl ProjectStore {
     /// outstanding.
     pub fn commit_relink(&self, id: InputId) -> Result<(), ProjectError> {
         let mut session = self.locked();
+        session.refuse_during_analysis()?;
         let project = session.open_mut()?;
         let proposal = project
             .proposal
@@ -1337,7 +1576,7 @@ impl ProjectStore {
         job: ProjectJobId,
         id: InputId,
     ) -> Result<AdmissibleInput, ProjectError> {
-        let (mut guard, cancellation, generation) = self.start_job(job)?;
+        let (mut guard, cancellation, generation) = self.start_job(job, false)?;
         let (input, base) = {
             let session = self.locked();
             let project = session.open()?;
@@ -1574,6 +1813,7 @@ impl ProjectStore {
     /// Nothing changes on either.
     pub fn remove_layer(&self, id: LayerId) -> Result<(), ProjectError> {
         let mut session = self.locked();
+        session.refuse_during_analysis()?;
         let project = session.open_mut()?;
         if project.document.layer(id).is_none() {
             return Err(ProjectError::UnknownRecord);
@@ -1680,6 +1920,7 @@ impl ProjectStore {
             // already retained and waits on nothing.
             started_at: recorded_at.clone(),
             finished_at: recorded_at,
+            targeted_ms1: None,
         });
         // Taken back out, both together, where a Save could not publish them.
         if !fits_every_later_save(&project.document) {
@@ -1692,6 +1933,604 @@ impl ProjectStore {
         project.dirty = true;
         Ok(artifact_id)
     }
+}
+
+impl ProjectStore {
+    /// Resolves a targeted MS1 request over one layer into a plan for review.
+    ///
+    /// Reads no file's content and starts nothing. The plan is held for this
+    /// session so a run can execute exactly what was reviewed; it becomes
+    /// history only when a run does. Problems with the request come back as
+    /// data, row by row, rather than as a refusal, and so does anything that
+    /// would stop the plan running now -- an unsaved project, a runtime that
+    /// is not there, a source on another volume -- so the review can say why.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::UnknownRecord`] for a layer this project has no record
+    /// of, [`ProjectError::RecipeSourceUnsupported`] for a source that is not
+    /// one mzML file, or [`ProjectError::StaleDocument`] where the project
+    /// moved while the plan was resolved.
+    pub fn resolve_targeted_ms1_plan(
+        &self,
+        layer: LayerId,
+        draft: &PlanDraft,
+        executor: &dyn RecipeExecutor,
+    ) -> Result<PlanResolution, ProjectError> {
+        let (generation, layer_record, input, base) = {
+            let session = self.locked();
+            let project = session.open()?;
+            let layer_record = project
+                .document
+                .layer(layer)
+                .ok_or(ProjectError::UnknownRecord)?
+                .clone();
+            let input = project
+                .document
+                .input(layer_record.source.input_id())
+                .ok_or(ProjectError::UnknownRecord)?
+                .clone();
+            (
+                session.generation,
+                layer_record,
+                input,
+                project.base_directory().map(Path::to_path_buf),
+            )
+        };
+        if !recipe::source_is_supported(&input) {
+            return Err(ProjectError::RecipeSourceUnsupported);
+        }
+        let plan = match recipe::resolve(&layer_record, &input, draft, recipe::this_build()) {
+            Ok(plan) => plan,
+            Err(problems) => {
+                return Ok(PlanResolution {
+                    plan: None,
+                    problems,
+                    blocked: None,
+                });
+            }
+        };
+        // Outside the lock: the placement question opens the source by name.
+        let blocked = match base {
+            None => Some(ProjectError::NotYetPublished),
+            Some(base) => match record::resolve(&input.locator, &base) {
+                Ok(source) => executor.preflight(&plan, &source).err(),
+                Err(problem) => Some(ProjectError::Document(problem)),
+            },
+        };
+        let mut session = self.locked();
+        if session.generation != generation {
+            return Err(ProjectError::StaleDocument);
+        }
+        session.open_mut()?.pending_plan = Some(plan.clone());
+        Ok(PlanResolution {
+            plan: Some(plan),
+            problems: Vec::new(),
+            blocked,
+        })
+    }
+
+    /// Runs one targeted MS1 plan, as the accepted operation `job`.
+    ///
+    /// Executes the plan resolved for review, or a plan this project already
+    /// recorded -- a retry is a new run of the same plan. The project is held
+    /// still for the whole run: New, Open, Close and Save As, and removing or
+    /// re-pointing what the run names, are refused until it ends.
+    ///
+    /// Anything refused before the attempt starts records nothing: no saved
+    /// document, a plan that is not current, a source this recipe does not
+    /// read, a runtime that is not there, a source on another volume, a store
+    /// that is not this project's. Once the attempt starts, the run is
+    /// recorded however it ends. A completed attempt's result is published
+    /// beside the document first and referenced second; a failed or cancelled
+    /// one publishes nothing and keeps its run, with its code and stage.
+    ///
+    /// # Errors
+    ///
+    /// A refusal before the attempt, or a run that could not be recorded: the
+    /// project moved ([`ProjectError::StaleDocument`]) or its history is full
+    /// ([`ProjectError::Oversized`]), each of which records nothing.
+    pub fn run_targeted_ms1(
+        &self,
+        job: ProjectJobId,
+        plan_sha256: &str,
+        executor: &dyn RecipeExecutor,
+    ) -> Result<TargetedMs1RunEnd, ProjectError> {
+        let (mut guard, cancellation, generation) = self.start_job(job, true)?;
+        let (plan, input, binding_path, project_id, plan_recorded) = {
+            let session = self.locked();
+            let project = session.open()?;
+            let recorded = project.document.plan(plan_sha256).cloned();
+            let plan = project
+                .pending_plan
+                .as_ref()
+                .filter(|pending| pending.plan_sha256.eq_ignore_ascii_case(plan_sha256))
+                .cloned()
+                .or_else(|| recorded.clone())
+                .ok_or(ProjectError::PlanNotCurrent)?;
+            let layer = project
+                .document
+                .layer(plan.layer_id)
+                .ok_or(ProjectError::PlanNotCurrent)?;
+            let input = project
+                .document
+                .input(plan.input_id)
+                .ok_or(ProjectError::PlanNotCurrent)?
+                .clone();
+            // A plan is executed only by the recipe it was reviewed against,
+            // over the reference and the bytes it expects.
+            if layer.source.input_id() != plan.input_id
+                || record::expected_content_of(&input) != plan.expected_content
+                || plan.recipe != recipe::this_build()
+            {
+                return Err(ProjectError::PlanNotCurrent);
+            }
+            let binding = project
+                .binding
+                .clone()
+                .ok_or(ProjectError::NotYetPublished)?;
+            refuse_full_history(&project.document)?;
+            (
+                plan,
+                input,
+                binding.path,
+                project.document.project_id,
+                recorded.is_some(),
+            )
+        };
+        if !recipe::source_is_supported(&input) {
+            return Err(ProjectError::RecipeSourceUnsupported);
+        }
+        let base = binding_path.parent().unwrap_or_else(|| Path::new(""));
+        let source = record::resolve(&input.locator, base).map_err(ProjectError::Document)?;
+        executor.preflight(&plan, &source)?;
+        let store = payload::store_of(&binding_path).ok_or(ProjectError::NotYetPublished)?;
+        payload::ensure_store(&store, project_id)
+            .map_err(|_| ProjectError::PayloadStoreUnusable)?;
+
+        let artifact = ArtifactId::new();
+        let started_at = now_rfc3339();
+        let order = AttemptOrder {
+            plan: &plan,
+            source: &source,
+            store: &store,
+            artifact,
+        };
+        let end = executor.attempt(&order, &cancellation, &|phase| self.set_phase(job, phase));
+        let finished_at = now_rfc3339();
+
+        let mut session = self.locked();
+        let staged = matches!(end, AttemptEnd::Completed { .. });
+        let discard = || {
+            if staged {
+                payload::discard_staging(&store, artifact);
+            }
+        };
+        // Unreachable while the run holds the project -- every change that
+        // would move the generation, the binding or the layer is refused --
+        // and checked anyway, because a run recorded against a project it did
+        // not run for would be history nobody made.
+        if session.generation != generation {
+            discard();
+            guard.release(&mut session);
+            return Err(ProjectError::StaleDocument);
+        }
+        let Some(project) = session.project.as_mut() else {
+            discard();
+            guard.release(&mut session);
+            return Err(ProjectError::NoOpenProject);
+        };
+        let still_there = project
+            .document
+            .layer(plan.layer_id)
+            .is_some_and(|layer| layer.source.input_id() == plan.input_id)
+            && project.binding.as_ref().map(|binding| &binding.path) == Some(&binding_path);
+        if !still_there {
+            discard();
+            guard.release(&mut session);
+            return Err(ProjectError::StaleDocument);
+        }
+        if refuse_full_history(&project.document).is_err() {
+            discard();
+            guard.release(&mut session);
+            return Err(ProjectError::Oversized);
+        }
+        // A cancel that reached the commit before it is still a cancel that
+        // won: what it stops is the publication of the result.
+        let end = match end {
+            AttemptEnd::Completed {
+                consumed, attempt, ..
+            } if cancellation.requested() => {
+                discard();
+                AttemptEnd::Cancelled {
+                    consumed,
+                    attempt: Some(attempt),
+                    stop: StopFacts {
+                        reason: StopReason::CancelRequested,
+                        worker_terminated: false,
+                        exit_observed: true,
+                    },
+                }
+            }
+            other => other,
+        };
+
+        let new_plan = !plan_recorded && project.document.plan(&plan.plan_sha256).is_none();
+        if new_plan {
+            project.document.plans.push(plan.clone());
+        }
+        let (outcome, execution, result) = match end {
+            AttemptEnd::Completed {
+                consumed,
+                attempt,
+                result,
+            } => (
+                TerminalOutcome::Completed,
+                TargetedMs1Execution {
+                    plan_sha256: plan.plan_sha256.clone(),
+                    consumed_content: consumed,
+                    attempt: Some(attempt),
+                    failure: None,
+                    stop: None,
+                },
+                Some(result),
+            ),
+            AttemptEnd::Failed {
+                consumed,
+                attempt,
+                failure,
+                stop,
+            } => (
+                TerminalOutcome::Failed,
+                TargetedMs1Execution {
+                    plan_sha256: plan.plan_sha256.clone(),
+                    consumed_content: consumed,
+                    attempt,
+                    failure: Some(failure),
+                    stop,
+                },
+                None,
+            ),
+            AttemptEnd::Cancelled {
+                consumed,
+                attempt,
+                stop,
+            } => (
+                TerminalOutcome::Cancelled,
+                TargetedMs1Execution {
+                    plan_sha256: plan.plan_sha256.clone(),
+                    consumed_content: consumed,
+                    attempt,
+                    failure: None,
+                    stop: Some(stop),
+                },
+                None,
+            ),
+        };
+        let run_id = RunId::new();
+        let completed = result.is_some();
+        if let Some(result) = result {
+            project.document.artifacts.push(ArtifactRecord {
+                id: artifact,
+                label: bounded_name(format!(
+                    "Targeted MS1: {}",
+                    project
+                        .document
+                        .input(plan.input_id)
+                        .map_or("", |input| input.label.as_str())
+                )),
+                payload: ArtifactPayload::TargetedMs1ResultV1(Box::new(result)),
+            });
+        }
+        project.document.runs.push(RunRecord {
+            id: run_id,
+            operation: RecordedOperation::TargetedMs1V1,
+            inputs: vec![RunInput::Layer {
+                layer_id: plan.layer_id,
+            }],
+            output_artifact_ids: if completed {
+                vec![artifact]
+            } else {
+                Vec::new()
+            },
+            outcome,
+            application_version: env!("CARGO_PKG_VERSION").to_owned(),
+            started_at,
+            finished_at,
+            targeted_ms1: Some(Box::new(execution)),
+        });
+        // Measured before anything is published: a result a Save could never
+        // write into the document is not published beside it either.
+        if !fits_every_later_save(&project.document) {
+            project.document.runs.pop();
+            if completed {
+                project.document.artifacts.pop();
+            }
+            if new_plan {
+                project.document.plans.pop();
+            }
+            discard();
+            guard.release(&mut session);
+            return Err(ProjectError::Oversized);
+        }
+        let mut outcome = outcome;
+        if completed {
+            if let Some(job) = session.job.as_mut() {
+                job.phase = Some(RunPhase::Publishing);
+            }
+            let project = session
+                .project
+                .as_mut()
+                .expect("the project checked above is still open under the same lock");
+            match payload::publish(&store, artifact) {
+                Ok(()) => {
+                    project.payloads.store_found = true;
+                    project
+                        .payloads
+                        .availability
+                        .push((artifact, Availability::Available));
+                }
+                // A validated result that could not take its name publishes
+                // nothing, and the run says so rather than disappearing.
+                Err(_) => {
+                    payload::discard_staging(&store, artifact);
+                    project.document.artifacts.pop();
+                    if let Some(run) = project.document.runs.last_mut() {
+                        run.outcome = TerminalOutcome::Failed;
+                        run.output_artifact_ids.clear();
+                        if let Some(execution) = run.targeted_ms1.as_mut() {
+                            execution.failure = Some(RunFailure {
+                                code: FailureCode::PayloadNotPublished,
+                                stage: FailureStage::Publish,
+                            });
+                        }
+                    }
+                    outcome = TerminalOutcome::Failed;
+                }
+            }
+        }
+        if let Some(project) = session.project.as_mut() {
+            project.dirty = true;
+        }
+        guard.release(&mut session);
+        Ok(TargetedMs1RunEnd {
+            run: run_id,
+            outcome,
+            artifact: (outcome == TerminalOutcome::Completed).then_some(artifact),
+        })
+    }
+
+    /// Records where the exclusive run `job` is, if it is still the one.
+    fn set_phase(&self, job: ProjectJobId, phase: RunPhase) {
+        let mut session = self.locked();
+        if let Some(accepted) = session.job.as_mut().filter(|accepted| accepted.id == job) {
+            accepted.phase = Some(phase);
+        }
+    }
+
+    /// Where one stored result is, and what its record says it holds.
+    fn result_location(
+        &self,
+        artifact: ArtifactId,
+    ) -> Result<(std::path::PathBuf, PayloadReference), ProjectError> {
+        let session = self.locked();
+        let project = session.open()?;
+        let reference = project
+            .document
+            .artifact(artifact)
+            .and_then(|record| record.payload.targeted_ms1())
+            .ok_or(ProjectError::UnknownRecord)?
+            .payload
+            .clone();
+        let store = project
+            .binding
+            .as_ref()
+            .and_then(|binding| payload::store_of(&binding.path))
+            .ok_or(ProjectError::PayloadUnavailable(Availability::Missing))?;
+        Ok((store, reference))
+    }
+
+    /// One page of a stored result's rows, checked against its record.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::UnknownRecord`], or [`ProjectError::PayloadUnavailable`]
+    /// where the result is missing or does not match its record.
+    pub fn read_targeted_ms1_rows(
+        &self,
+        artifact: ArtifactId,
+        offset: usize,
+    ) -> Result<payload::RowsPage, ProjectError> {
+        let (store, reference) = self.result_location(artifact)?;
+        payload::read_rows(&store, artifact, &reference, offset, payload::MAX_PAGE_ROWS)
+            .map_err(read_refusal)
+    }
+
+    /// One target's evidence from a stored result, checked line by line.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_targeted_ms1_rows`], and [`ProjectError::UnknownRecord`]
+    /// for a target the result does not have.
+    pub fn read_targeted_ms1_evidence(
+        &self,
+        artifact: ArtifactId,
+        target: TargetId,
+    ) -> Result<Vec<payload::EvidenceLine>, ProjectError> {
+        let (store, reference) = self.result_location(artifact)?;
+        payload::read_evidence(&store, artifact, &reference, target).map_err(read_refusal)
+    }
+}
+
+/// What resolving a request produced.
+#[derive(Debug)]
+pub struct PlanResolution {
+    /// The plan, where the request had no problem.
+    pub plan: Option<TargetedMs1Plan>,
+    /// Every problem with the request, row by row.
+    pub problems: Vec<PlanProblem>,
+    /// What would stop this plan running now, if anything.
+    pub blocked: Option<ProjectError>,
+}
+
+/// How one recorded targeted run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TargetedMs1RunEnd {
+    pub run: RunId,
+    pub outcome: TerminalOutcome,
+    /// The result, where the run completed.
+    pub artifact: Option<ArtifactId>,
+}
+
+fn read_refusal(refusal: payload::ReadRefusal) -> ProjectError {
+    match refusal {
+        payload::ReadRefusal::Unavailable(availability) => {
+            ProjectError::PayloadUnavailable(availability)
+        }
+        payload::ReadRefusal::UnknownTarget => ProjectError::UnknownRecord,
+    }
+}
+
+/// Every stored result a document references, in document order.
+fn managed_results(document: &ProjectDocument) -> Vec<(ArtifactId, PayloadReference)> {
+    document
+        .artifacts
+        .iter()
+        .filter_map(|artifact| {
+            artifact
+                .payload
+                .targeted_ms1()
+                .map(|result| (artifact.id, result.payload.clone()))
+        })
+        .collect()
+}
+
+/// What the store beside a published document holds of what it references.
+fn observe_payloads(document: &ProjectDocument, published_at: &Path) -> PayloadState {
+    let managed = managed_results(document);
+    let Some(store) = payload::store_of(published_at) else {
+        return PayloadState {
+            store_found: false,
+            availability: managed
+                .iter()
+                .map(|(id, _)| (*id, Availability::Missing))
+                .collect(),
+            unreferenced: 0,
+        };
+    };
+    let store_found = payload::is_plain_directory(&store);
+    let availability = managed
+        .iter()
+        .map(|(id, reference)| {
+            let availability = if store_found {
+                payload::observe(&store, *id, reference)
+            } else {
+                Availability::Missing
+            };
+            (*id, availability)
+        })
+        .collect();
+    let ids: Vec<ArtifactId> = managed.iter().map(|(id, _)| *id).collect();
+    PayloadState {
+        store_found,
+        availability,
+        unreferenced: if store_found {
+            payload::unreferenced(&store, &ids)
+        } else {
+            0
+        },
+    }
+}
+
+/// Whether two names are the same published document, by object.
+fn same_published_document(bound: &Path, destination: &Path) -> bool {
+    match (
+        local_document::object_identity(bound),
+        local_document::object_identity(destination),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// The moments a Save As test needs to act in.
+pub(crate) struct SaveAsSeams<'a> {
+    /// Copies one file of one stored result.
+    pub(crate) copy_file: &'a (dyn Fn(&Path, &Path) -> std::io::Result<()> + Sync),
+    /// Runs after the destination store was published and before the
+    /// document is.
+    pub(crate) before_document: &'a (dyn Fn() -> Result<(), ProjectError> + Sync),
+}
+
+impl SaveAsSeams<'static> {
+    const PRODUCTION: Self = Self {
+        copy_file: &payload::plain_copy,
+        before_document: &|| Ok(()),
+    };
+}
+
+/// A store assembled for Save As and not yet published.
+struct PendingStore {
+    /// This operation's own directory beside the destination.
+    path: std::path::PathBuf,
+    /// The name it will be published under.
+    store: std::path::PathBuf,
+    /// The results copied into it, whole.
+    copied: Vec<ArtifactId>,
+}
+
+/// Copies every whole result into a new store beside the destination.
+///
+/// Refuses an existing store at the destination's store name before anything
+/// is written. The pending directory is this operation's own; on any failure
+/// it is removed and nothing else is touched.
+fn assemble_store(
+    destination: &Path,
+    directory: &Path,
+    project: record::ProjectId,
+    bound: Option<&Path>,
+    managed: &[(ArtifactId, PayloadReference)],
+    seams: &SaveAsSeams<'_>,
+) -> Result<PendingStore, ProjectError> {
+    let store = payload::store_of(destination).ok_or(ProjectError::DestinationNotNamed)?;
+    if std::fs::symlink_metadata(&store).is_ok() {
+        return Err(ProjectError::DestinationStoreExists);
+    }
+    let name = store
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(ProjectError::DestinationNotNamed)?;
+    let path = directory.join(format!(".{name}.{}.pending", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&path).map_err(|_| ProjectError::NotPublished)?;
+    let source_store = bound.and_then(payload::store_of);
+    let mut copied = Vec::new();
+    for (id, reference) in managed {
+        // Asked of the source now, not taken from the last open: only a result
+        // that is whole at the moment of copying is copied.
+        let whole = source_store.as_deref().is_some_and(|source| {
+            payload::observe(source, *id, reference) == Availability::Available
+        });
+        if !whole {
+            continue;
+        }
+        let source = source_store
+            .as_deref()
+            .expect("a whole result was observed in the source store");
+        if payload::copy_result(source, &path, *id, reference, seams.copy_file).is_err() {
+            let _ = std::fs::remove_dir_all(&path);
+            return Err(ProjectError::PayloadNotCopied);
+        }
+        copied.push(*id);
+    }
+    if payload::write_owner(&path, project).is_err() {
+        let _ = std::fs::remove_dir_all(&path);
+        return Err(ProjectError::NotPublished);
+    }
+    Ok(PendingStore {
+        path,
+        store,
+        copied,
+    })
 }
 
 /// Refuses a capture that would take the history past its bounds.
@@ -1965,6 +2804,25 @@ fn publish(
         return Err(ProjectError::Oversized);
     }
     local_document::publish_through_temporary(directory, destination, &bytes, TEMPORARY_PREFIX)
+        .map_err(|failure| match failure.refusal {
+            WriteRefusal::UnsafeTarget => ProjectError::Document(DocumentProblem::UnsafeTarget),
+            WriteRefusal::NotWritten | WriteRefusal::NotPublished => ProjectError::NotPublished,
+        })
+}
+
+/// Serializes and publishes a validated document under a name that must not
+/// exist yet: a Save As to a new name, where replacing anything that appeared
+/// meanwhile would be replacing something nobody approved.
+fn publish_new(
+    directory: &Path,
+    destination: &Path,
+    document: &ProjectDocument,
+) -> Result<(), ProjectError> {
+    let bytes = record::serialize(document).ok_or(ProjectError::NotPublished)?;
+    if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err(ProjectError::Oversized);
+    }
+    local_document::publish_new_through_temporary(directory, destination, &bytes, TEMPORARY_PREFIX)
         .map_err(|failure| match failure.refusal {
             WriteRefusal::UnsafeTarget => ProjectError::Document(DocumentProblem::UnsafeTarget),
             WriteRefusal::NotWritten | WriteRefusal::NotPublished => ProjectError::NotPublished,
