@@ -357,6 +357,13 @@ describe("a run", () => {
     expect(liveRegion()).toBe(en.targetedLastCompleted);
     expect(query(`[data-targeted-report="${ARTIFACT}"]`)).toBeTruthy();
     expect(api.readTargetedMs1Rows).toHaveBeenCalledWith(ARTIFACT, 0);
+
+    // Announced once: a later Save does not say it again, while the setup's
+    // own paragraph still does.
+    await press(screen.getByRole("button", { name: en.projectSave }));
+    expect(api.saveProject).toHaveBeenCalledTimes(1);
+    expect(liveRegion()).not.toContain(en.targetedLastCompleted);
+    expect(query('[data-targeted-last="completed"]')).toBeTruthy();
   });
 
   it("records a failure in its own words and never as an absence", async () => {
@@ -537,6 +544,44 @@ describe("a stored result", () => {
     }
     const control = query(`[data-project-targeted="${LAYER}"]`);
     expect(control.getAttribute("aria-label")).toBe(`对 ${projectInput().label} 做靶向 MS1`);
+  });
+});
+
+describe("the recovery note", () => {
+  function recovered(notDetected: number, failed: number): ProjectState {
+    const state = targetedProject();
+    const artifact = state.artifacts[0];
+    const result = artifact.targetedMs1!.result;
+    return {
+      ...state,
+      artifacts: [
+        {
+          ...artifact,
+          targetedMs1: {
+            ...artifact.targetedMs1!,
+            result: {
+              ...result,
+              noCandidateRecovery: true,
+              summary: { ...result.summary, detected: 0, notDetected, failed, targets: 2 },
+            },
+          },
+        },
+      ],
+    };
+  }
+
+  it("speaks of the absences the recovery recorded", async () => {
+    mount(recovered(2, 0));
+    await screen.findByText(en.projectReferences);
+    await press(query(`[data-project-inspect-artifact="${ARTIFACT}"]`));
+    expect(query("[data-targeted-recovery]").textContent).toBe(en.targetedRecoveryNote);
+  });
+
+  it("is absent where the recovery recorded none", async () => {
+    mount(recovered(0, 2));
+    await screen.findByText(en.projectReferences);
+    await press(query(`[data-project-inspect-artifact="${ARTIFACT}"]`));
+    expect(document.querySelector("[data-targeted-recovery]")).toBeNull();
   });
 });
 

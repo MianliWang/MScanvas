@@ -665,7 +665,9 @@ export function TargetedMs1Report({
           </tbody>
         </table>
       )}
-      {result?.noCandidateRecovery === true ? (
+      {/* About the absences the recovery recorded, so only where there are
+          some: a batch whose every window held nothing records none. */}
+      {result?.noCandidateRecovery === true && result.summary.notDetected > 0 ? (
         <p className="project-note" data-targeted-recovery="">
           {t("targetedRecoveryNote")}
         </p>

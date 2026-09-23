@@ -477,8 +477,9 @@ export function ProjectPanel({
 
   const proposalInput = state.inputs.find((input) => input.id === proposed);
   // How the last targeted run ended, while that run is in this project.
+  // Announced once: a later operation that settles clears it.
   const lastTargeted =
-    session.lastTargetedRun === null
+    session.lastTargetedRun === null || !session.targetedRunJustEnded
       ? undefined
       : state.runs.find((run) => run.id === session.lastTargetedRun?.runId);
   const lastTargetedFailure = lastTargeted?.targetedMs1?.failure ?? null;

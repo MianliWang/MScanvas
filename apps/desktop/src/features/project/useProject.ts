@@ -161,6 +161,11 @@ export interface ProjectSession {
   readonly analysisPhase: string | null;
   /** How the last targeted run this session started ended, or `null`. */
   readonly lastTargetedRun: TargetedRunEnd | null;
+  /**
+   * Whether the last operation to settle was that targeted run, so its end is
+   * announced once and not again after a later Save or check.
+   */
+  readonly targetedRunJustEnded: boolean;
 }
 
 /**
@@ -223,6 +228,7 @@ export function useProject(
   const [inspecting, setInspecting] = useState<ProjectSelection | null>(null);
   const [analysisPhase, setAnalysisPhase] = useState<string | null>(null);
   const [lastTargetedRun, setLastTargetedRun] = useState<TargetedRunEnd | null>(null);
+  const [targetedRunJustEnded, setTargetedRunJustEnded] = useState(false);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -271,6 +277,7 @@ export function useProject(
       setBusy(kind);
       setProblem(null);
       setCancelled(false);
+      setTargetedRunJustEnded(false);
       try {
         const answer = await operation();
         // `null` is a cancelled dialog: nothing was chosen, so nothing changed.
@@ -429,6 +436,7 @@ export function useProject(
     inspecting,
     analysisPhase: busy === "analysing" ? analysisPhase : null,
     lastTargetedRun,
+    targetedRunJustEnded,
     provenance: provenanceOf(state, inspecting),
     inspect: setInspecting,
     toggleSelected,
@@ -573,6 +581,7 @@ export function useProject(
               outcome: end.outcome,
               artifactId: end.artifactId,
             });
+            setTargetedRunJustEnded(true);
             // A cancelled run is recorded rather than refused, and is still
             // the user's own decision, so it is reported as one.
             if (end.outcome === "cancelled") setCancelled("targetedRun");

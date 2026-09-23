@@ -2165,7 +2165,8 @@ fn a_window_beyond_the_last_ms1_spectrum_fails_its_row_and_leaves_the_others() {
         "{:?}",
         failure_of(&store)
     );
-    let rows = rows_of(&store, end.artifact.expect("result"));
+    let artifact = end.artifact.expect("result");
+    let rows = rows_of(&store, artifact);
     assert_eq!(rows[0].outcome, RowOutcome::Detected);
     assert_eq!(rows[1].outcome, RowOutcome::Failed);
     assert_eq!(
@@ -2173,6 +2174,12 @@ fn a_window_beyond_the_last_ms1_spectrum_fails_its_row_and_leaves_the_others() {
         Some(payload::RowFailure::WindowWithoutMs1Peaks)
     );
     assert_eq!(rows[1].signal.as_ref().expect("signal").points, 0);
+    // Its evidence reads back as two traces with nothing in them.
+    let evidence = store
+        .read_targeted_ms1_evidence(artifact, plan.targets[1].target_id)
+        .expect("evidence");
+    assert_eq!(evidence.len(), 2);
+    assert!(evidence.iter().all(|line| line.points.is_empty()));
     let described = store.describe();
     let summary = &described.artifacts[0]
         .targeted_ms1
@@ -2214,7 +2221,17 @@ fn a_batch_whose_every_window_is_beyond_the_run_reports_no_absence() {
         TerminalOutcome::Cancelled => panic!("nothing cancelled this run"),
     }
     // Which of the two the engine took, for the evidence record.
-    eprintln!("all-beyond: {:?} {:?}", end.outcome, failure_of(&store));
+    let recovery = store.describe().artifacts.first().and_then(|artifact| {
+        artifact
+            .targeted_ms1
+            .as_ref()
+            .map(|block| block.result.no_candidate_recovery)
+    });
+    eprintln!(
+        "all-beyond: {:?} {:?} recovery={recovery:?}",
+        end.outcome,
+        failure_of(&store)
+    );
 }
 
 #[test]
