@@ -827,9 +827,14 @@ closure and the M9 handoff.
 
 ## M9 — First analysis recipes
 
-**NEXT / NOT STARTED.** Its first recipe is not chosen; the decisions it needs
-from the owner, and the M8 contracts it builds on, are in the
-[M8 handoff](docs/product/M8_1_FIRST_CLOSED_LOOP.md#m9-handoff).
+**IN PROGRESS — M9.1 NOT STARTED.** M9.0 measured one proposed first recipe,
+targeted MS1 signal and candidate detection on pyOpenMS 3.5.0, locally and
+unpublished, and ended with a **conditional recommendation that admits no
+route**: the [route evidence](docs/spikes/M9_0_TARGETED_MS1_ROUTE_EVIDENCE.md)
+and the [decision and M9.1 handoff](docs/product/M9_1_TARGETED_MS1_HANDOFF.md).
+Nothing is implemented in the product. The owner decisions the
+[M8 handoff](docs/product/M8_1_FIRST_CLOSED_LOOP.md#m9-handoff) names, the worker
+runtime and its packaging among them, remain open.
 
 - Isolated worker contract and one or two reviewed recipes backed by mature
   packages.
