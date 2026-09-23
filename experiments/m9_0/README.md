@@ -20,6 +20,7 @@ Reproduce on Windows x64 with scratch at `.tmp/m90-evidence/` (ignored):
    `controller.py run2 .tmp/m90-evidence/round2 .tmp/m90-evidence` and
    `protocol_r2.py evaluate .tmp/m90-evidence/round2 .tmp/m90-evidence`;
    `diagnostics.py .tmp/m90-evidence`, `diagnostics.py relocate .tmp/m90-evidence`,
+   `review_checks.py .tmp/m90-evidence before` (reviewed adapter) or `after`,
    `storage_proto.py .tmp/m90-evidence` and `report.py .tmp/m90-evidence`.
 
 The upstream regression case needs the three `FeatureFinderMetaboIdent_1` files

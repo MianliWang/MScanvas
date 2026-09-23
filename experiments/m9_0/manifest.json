@@ -405,12 +405,19 @@
   "round1": {
    "commit": "5030b674c22a09cd27cddd0a8d80a2f7b97843a0",
    "tree": "fd8fcef28a52fb38b88a591910a927b8eb19c0b9",
-   "worker_sha256": "ce68cfa82ea381d563babbc887ae7a45282a1ce0b88070641394724b64389c7e"
+   "worker_sha256": "ce68cfa82ea381d563babbc887ae7a45282a1ce0b88070641394724b64389c7e",
+   "note": "committed after the scored runs; the worker digest recorded in every attempt is the binding"
   },
   "round2": {
    "commit": "847936cc04fc1416c7f1c8a13537799e1cfea78e",
    "tree": "03c409bc333d418e36f654c5c83c4e1c4d806741",
    "worker_sha256": "859611e40115c8c2fcf05c414036e1521b352e1e0f527d49c613c87af0ff6aa8"
+  },
+  "post_review": {
+   "commit": "ebc39b06b7dfb8875aec3ce00f2b363d9f774b22",
+   "tree": "e8bc4a22546b996d6de43af7ba9a724bce09f9ba",
+   "worker_sha256": "42b5dbd96b36abd026c05af29bc6e3f961a5e82c7eea97c8a9d66b8ae502ad99",
+   "note": "review-closure checks and the round-two rerun; round one's code was committed after its runs and is bound by the worker digest"
   }
  }
 }
