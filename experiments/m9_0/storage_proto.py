@@ -17,7 +17,8 @@ Ordering: stage -> validate -> publish the payload directory by one rename ->
 reference it from the in-memory document -> Save publishes the document by
 temporary + rename. A crash between payload publication and Save leaves an
 unreferenced payload, which an open reports and never deletes; a document never
-references a payload that was not already whole.
+references a payload that was not already whole. Save As never deletes a store:
+a destination store that already exists is refused.
 """
 
 from __future__ import annotations
@@ -98,26 +99,31 @@ def check_payloads(document: Path) -> dict:
     return {"artifacts": report, "unreferenced_payloads": sorted(present - referenced)}
 
 
-def save_as(src: Path, dst: Path) -> None:
-    """Copy every referenced payload into a store the new document owns, verified, before publishing it."""
+def save_as(src: Path, dst: Path, copy=shutil.copytree) -> list[str]:
+    """Copy every available payload into a store the new document owns, verified, before publishing it.
+
+    Returns the artifacts carried forward as unavailable: a payload already missing or
+    corrupt in the source cannot be made whole by copying, and its record stays in history.
+    An existing destination store is never deleted, whoever it seems to belong to.
+    """
     doc = json.loads(src.read_text(encoding="utf-8"))
     if dst.exists():
         raise FileExistsError("Save As refuses an existing destination")
     dst_store = store_of(dst)
     if dst_store.exists():
-        owner = dst_store / ".owner.json"
-        leftover = owner.exists() and json.loads(owner.read_text(encoding="utf-8"))["project_id"] == doc["project_id"]
-        if not leftover:
-            raise PermissionError(f"{dst_store.name} exists and is not this project's store")
-        shutil.rmtree(dst_store)  # a store this project left behind by an interrupted Save As, with no document
+        raise FileExistsError(f"{dst_store.name} already exists; choose another name or remove it yourself")
+    status = check_payloads(src)["artifacts"]
+    unavailable = [a for a, st in status.items() if st != "available"]
     pending = dst.with_name(f".{dst_store.name}.{uuid.uuid4().hex}.pending")
     pending.mkdir()
     try:
         for art in doc["artifacts"]:
             ref = art["payload"]
+            if art["artifact_id"] in unavailable:
+                continue
             source = store_of(src) / ref["artifact_id"]
             target = pending / ref["artifact_id"]
-            shutil.copytree(source, target)
+            copy(source, target)
             if sha256(target / "manifest.json") != ref["manifest_sha256"] or any(
                     sha256(target / n) != m["sha256"] for n, m in ref["files"].items()):
                 raise OSError(f"payload {ref['artifact_id']} did not copy whole")
@@ -127,6 +133,7 @@ def save_as(src: Path, dst: Path) -> None:
         raise
     os.replace(pending, dst_store)
     write_json_atomically(dst, doc)  # identifiers unchanged; source locators are rebased by M8's own rule
+    return unavailable
 
 
 def main(argv: list[str]) -> int:
@@ -176,28 +183,45 @@ def main(argv: list[str]) -> int:
     log["S3_missing"] = check_payloads(doc_path)
     assert log["S3_missing"]["artifacts"][ref["artifact_id"]] == "payload_missing"
 
-    # S6: Save As from a project whose payload is incomplete publishes nothing.
+    # S6a: a payload already missing in the source is carried forward as unavailable, not invented.
+    carried_dst = work / "carried" / "study-carried.mscanvas"
+    carried_dst.parent.mkdir()
+    carried = save_as(doc_path, carried_dst)
+    log["S6a_unavailable_carried_forward"] = dict(check_payloads(carried_dst),
+                                                  reported_unavailable=[a == ref["artifact_id"] for a in carried])
+    assert log["S6a_unavailable_carried_forward"]["artifacts"][ref["artifact_id"]] == "payload_missing"
+
+    # S6b: a copy of an available payload that does not verify publishes nothing and leaves nothing.
+    good_src = copy_path
     failed_dst = work / "failed" / "study-failed.mscanvas"
     failed_dst.parent.mkdir()
+
+    def damaging_copy(source, target):
+        shutil.copytree(source, target)
+        (target / "rows.jsonl").write_bytes(b"{}\n")
+
     try:
-        save_as(doc_path, failed_dst)
+        save_as(good_src, failed_dst, copy=damaging_copy)
         raise AssertionError("Save As published an incomplete copy")
     except OSError as exc:
-        log["S6_failed_copy"] = {"error": str(exc).replace(ref["artifact_id"], "<artifact>"),
-                                 "document_published": failed_dst.exists(),
-                                 "store_published": store_of(failed_dst).exists(),
-                                 "leftovers": sorted(p.name for p in failed_dst.parent.iterdir())}
-    assert log["S6_failed_copy"] == dict(log["S6_failed_copy"], document_published=False, store_published=False,
-                                         leftovers=[])
+        log["S6b_failed_copy"] = {"error": str(exc).replace(ref["artifact_id"], "<artifact>"),
+                                  "document_published": failed_dst.exists(),
+                                  "store_published": store_of(failed_dst).exists(),
+                                  "leftovers": sorted(p.name for p in failed_dst.parent.iterdir())}
+    assert log["S6b_failed_copy"] == dict(log["S6b_failed_copy"], document_published=False, store_published=False,
+                                          leftovers=[])
 
-    # S7: a Save As interrupted after its store was renamed, before its document: retry recognises the leftover.
+    # S7: a store left at the destination by an interrupted Save As is refused, never deleted.
     interrupted = work / "interrupted" / "study-2.mscanvas"
     interrupted.parent.mkdir()
-    copy_store = store_of(copy_path)
-    shutil.copytree(copy_store, store_of(interrupted))
-    save_as(copy_path, interrupted)
-    log["S7_retry_after_interrupt"] = check_payloads(interrupted)
-    assert set(log["S7_retry_after_interrupt"]["artifacts"].values()) == {"available"}
+    shutil.copytree(store_of(copy_path), store_of(interrupted))
+    try:
+        save_as(copy_path, interrupted)
+        raise AssertionError("Save As replaced an existing store")
+    except FileExistsError:
+        log["S7_leftover_store_refused"] = {"document_published": interrupted.exists(),
+                                            "store_kept": store_of(interrupted).exists()}
+    assert log["S7_leftover_store_refused"] == {"document_published": False, "store_kept": True}
 
     # S8: a destination store that belongs to another project is refused.
     other = work / "other" / "study-3.mscanvas"
@@ -207,7 +231,7 @@ def main(argv: list[str]) -> int:
     try:
         save_as(copy_path, other)
         raise AssertionError("Save As took over another project's store")
-    except PermissionError:
+    except FileExistsError:
         log["S8_foreign_store_refused"] = {"document_published": other.exists()}
     assert not other.exists()
 

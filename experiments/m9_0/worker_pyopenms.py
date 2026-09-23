@@ -246,8 +246,9 @@ def check_source(oms, exp, accept_profile: bool, accept_duplicate_rt: bool) -> l
             raise refuse("SOURCE_RT_NOT_STRICTLY_INCREASING",
                          f"MS1 spectra share the retention time {rt} ({s.getNativeID()})")
         previous = rt
-        if s.getDriftTime() >= 0 or s.getFloatDataArrays():
-            raise refuse("SOURCE_ION_MOBILITY_UNSUPPORTED", "ion mobility or extra arrays are outside the domain")
+        # FAIMS compensation voltages are negative drift times with their own unit.
+        if s.getDriftTimeUnit() != oms.DriftTimeUnit.NONE or s.getDriftTime() != -1.0 or s.getFloatDataArrays():
+            raise refuse("SOURCE_ION_MOBILITY_UNSUPPORTED", "ion mobility, FAIMS or extra arrays are outside the domain")
         if not s.isSorted():
             raise refuse("SOURCE_UNSORTED_MZ", f"{s.getNativeID()} has unsorted m/z")
         mz, inten = s.get_peaks()
@@ -362,9 +363,11 @@ def run(req: dict, staging: Staging) -> dict:
         ion_of.setdefault(ref, []).append((tr.getNativeID(), tr.getProductMZ(), tr.getLibraryIntensity()))
     chroms = {}
     for ch in ff.getChromatograms().getChromatograms():
-        rt, inten = ch.get_peaks()
+        # Per peak, not get_peaks(): the array accessor returns binary32 intensities,
+        # while the engine holds binary64 sums (of binary32 spectrum intensities).
         nid = ch.getNativeID()
-        chroms[nid.decode() if isinstance(nid, bytes) else nid] = (list(map(float, rt)), list(map(float, inten)))
+        chroms[nid.decode() if isinstance(nid, bytes) else nid] = (
+            [ch[i].getRT() for i in range(ch.size())], [ch[i].getIntensity() for i in range(ch.size())])
 
     candidates = None
     if capture:
@@ -399,17 +402,25 @@ def run(req: dict, staging: Staging) -> dict:
             row["relations"]["failure"] = "target absent from the engine library"
             continue
         traces = sorted(ion_of[ref], key=lambda x: x[1])
-        half_da = [mz * 2 * req["parameters"]["mz_half_width_ppm"] / 2.0 * 1.0e-6 for _, mz, _ in traces]
+        full_ppm = 2 * req["parameters"]["mz_half_width_ppm"]  # the engine's own operation order below
+        bounds = [(mz - mz * full_ppm / 2.0 * 1.0e-6, mz + mz * full_ppm / 2.0 * 1.0e-6) for _, mz, _ in traces]
         start, end = t["rt_s"] - t["rt_half_width_s"], t["rt_s"] + t["rt_half_width_s"]
         row["ion"] = {"charge": 1, "adduct": "[M+H]+", "mz": [mz for _, mz, _ in traces],
                       "isotope_probability": [p for _, _, p in traces]}
         row["windows"] = {"rt_closed_s": [start, end],
-                          "mz_open": [[mz - h, mz + h] for (_, mz, _), h in zip(traces, half_da)]}
+                          "mz_open": [list(b) for b in bounds]}
         # Map chromatogram points to spectra the way the extractor visits them:
         # MS1 in file order, empty spectra skipped, closed RT interval.
         visited = [s for s in ms1 if s.size() > 0 and start <= s.getRT() <= end]
-        sums, maxima = [], []
+        sums, maxima, edge = [], [], 0
         for trace, (nid, mz, _) in enumerate(traces):
+            lo, hi = bounds[trace]
+            for s in visited:  # measured extractor defects at a spectrum's first and last peak
+                peaks = s.get_peaks()[0]
+                below = int((peaks < mz).sum())
+                last_twice = below == len(peaks) and lo < peaks[-1] < hi
+                first_lost = below >= 2 and lo < peaks[0] < hi
+                edge += bool(last_twice or first_lost)
             nid = nid.decode() if isinstance(nid, bytes) else nid
             rts, values = chroms.get(nid, ([], []))
             if len(rts) != len(visited) or any(r != s.getRT() for r, s in zip(rts, visited)):
@@ -421,6 +432,9 @@ def run(req: dict, staging: Staging) -> dict:
             maxima.append(max(values, default=0.0))
         row["signal"] = {"points": len(visited), "sum": sums, "max": maxima, "in_window": any(m > 0 for m in maxima)}
         row["candidates"] = None if candidates is None else candidates.get(ref, [])
+        if edge:
+            row["relations"]["failure"] = f"EXTRACTION_AT_SPECTRUM_EDGE in {edge} spectrum traces"
+            continue
         own = by_ref.get(ref)
         shared_into = alt_of.get(ref)
         if own is not None:
@@ -443,8 +457,14 @@ def run(req: dict, staging: Staging) -> dict:
         elif ref in suppressed_by:
             row["outcome"] = "SUPPRESSED_BY_OVERLAP"
             row["relations"]["suppressed_by"] = target_of_ref.get(suppressed_by[ref], suppressed_by[ref])
-        elif ref in unassigned:
+        elif ref in unassigned and not row["candidates"]:
             row["outcome"] = "NOT_DETECTED"
+        elif ref in unassigned:
+            row["relations"]["failure"] = "CANDIDATES_WITHOUT_FEATURE"
+        elif row["candidates"]:
+            # Read from ElutionModelFitter at the pin, not exercised: with no valid fit in the
+            # run every feature is discarded after targets were marked as found.
+            row["relations"]["failure"] = "ENGINE_DISCARDED_NO_VALID_FIT"
         else:
             row["relations"]["failure"] = "target neither in features nor unassigned"
     engine_features = [{"label": meta(f, "label"), "rt_s": f.getRT(), "mz": f.getMZ(),
