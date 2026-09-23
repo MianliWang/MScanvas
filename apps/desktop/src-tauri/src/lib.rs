@@ -129,6 +129,7 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
             "Remove this reference's layer before removing the reference."
         }
         Refusal::LayerUsedByRun => "A recorded run used this layer, so it was not removed.",
+        Refusal::InputUsedByRun => "Recorded work used this reference, so it was not removed.",
         Refusal::PreviewNotCurrent => {
             "The preview on screen is no longer this layer's source. View the source again."
         }

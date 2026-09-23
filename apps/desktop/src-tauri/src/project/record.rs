@@ -396,12 +396,16 @@ pub enum ProducerTool {
 /// the preview, at the time it produced it.
 ///
 /// Stable, path-free facts about software, never where it is installed. The
-/// digest is the one discovery took of the executable around its help probe,
-/// in the resolution the preview's batch ran under; the release, build date
-/// and source revision are that installation's reported build identity. Each
-/// of the last three is explicit `null` where the build did not report it:
-/// the field must be present, so an omitted one is refused rather than read as
-/// unreported.
+/// digest is the `msaccess` executable identity bound to the preview
+/// operation and successfully re-verified before its process was launched:
+/// discovery hashed the executable around its help probe, the run-summary
+/// command was bound to that digest, and the process boundary hashed the file
+/// again immediately before spawn and would have refused a mismatch. It is not
+/// a measurement of the process image after creation. The release, build date
+/// and source revision are labels the installation reported about itself --
+/// not executable identity, and no substitute for the digest. Each of the last
+/// three is explicit `null` where the build did not report it: the field must
+/// be present, so an omitted one is refused rather than read as unreported.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreviewProducer {

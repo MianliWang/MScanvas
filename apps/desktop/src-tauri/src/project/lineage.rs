@@ -16,12 +16,15 @@
 //! derived here, once, so that every consumer gets the same answer.
 //!
 //! [`producing_run`] can answer `None`, and that is a real state rather than a
-//! fault: the schema permits an artifact no run in this document claims, which
-//! is what lets [`super::ProjectStore::remove_input`] drop a run without having
-//! to invent a replacement producer for what it produced. What the schema does
-//! *not* permit is two runs claiming one artifact, because then "what produced
-//! this" would have two answers; [`super::record::validate`] refuses that
-//! document rather than letting this module pick one.
+//! fault: the schema permits a file-facts artifact no run in this document
+//! claims -- a document another build wrote, or one edited by hand -- because
+//! its observations still say what it is about. This build never makes one:
+//! history is append-only, and [`super::ProjectStore::remove_input`] refuses a
+//! reference any run or record depends on rather than dropping that history.
+//! What the schema does *not* permit is two runs claiming one artifact, because
+//! then "what produced this" would have two answers, nor a QC snapshot no run
+//! claims, because its run is its whole lineage; [`super::record::validate`]
+//! refuses either document rather than letting this module pick an answer.
 //!
 //! ## Why there is no cycle detection
 //!

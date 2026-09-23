@@ -17,6 +17,7 @@ import { PreferencesApiProvider } from "../preferences/preferencesApi";
 import { UI_RESOURCES } from "../preferences/i18n";
 import { createFakePreferencesApi, storedRecord } from "../../test/preferenceFixtures";
 import {
+  capturedProject,
   createFakeProjectApi,
   openProject,
   projectInput,
@@ -300,6 +301,26 @@ describe("the project surface", () => {
     await waitFor(() => expect(screen.getByText(en.projectRunFailed)).toBeTruthy());
     expect(document.querySelector("[data-project-no-artifact]")).toBeTruthy();
     expect(document.querySelector("[data-project-artifact]")).toBeNull();
+  });
+
+  it("keeps a reference recorded work used, and says why in its own words", async () => {
+    const api = mount(capturedProject());
+    await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
+
+    api.refuseOnce("removeProjectInput", "inputUsedByRun");
+    await press(screen.getByRole("button", { name: "Remove QC_pool_01.mzML from this project" }));
+
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-project-problem]")?.getAttribute("data-project-problem"),
+      ).toBe("inputUsedByRun"),
+    );
+    expect(announced()).toBe(en.projectRefusedInputUsedByRun);
+    // Nothing was cascaded: the reference, its run and its record all stay.
+    expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy();
+    expect(document.querySelector("[data-project-run]")).toBeTruthy();
+    expect(document.querySelector("[data-project-artifact]")).toBeTruthy();
+    expect(zh.projectRefusedInputUsedByRun).not.toEqual(en.projectRefusedInputUsedByRun);
   });
 
   it("says which refusal it was, and keeps the project on screen", async () => {

@@ -190,10 +190,9 @@ async function press(control: HTMLElement) {
   });
 }
 
-/** The project on screen, with its first-load effect flushed (see ProjectLayers.test). */
+/** The project on screen (see ProjectLayers.test). */
 async function ready(label: string = en.projectReferences) {
   await screen.findByText(label);
-  await act(async () => {});
 }
 
 function query<T extends HTMLElement>(selector: string): T {

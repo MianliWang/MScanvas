@@ -1099,20 +1099,43 @@ fn a_capture_of_nothing_is_refused() {
 }
 
 #[test]
-fn removing_a_reference_removes_the_history_that_named_it_and_no_file() {
+fn a_reference_recorded_work_used_is_refused_removal_and_one_nothing_used_goes() {
     let scratch = Scratch::new("remove");
-    let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
-    capture(&store, &[id]).expect("capture");
-    assert_eq!(store.describe().artifacts.len(), 1);
+    let (store, captured) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let cancelled = store
+        .register_input(&scratch.write("cancelled.txt", b"cancelled"))
+        .expect("register");
+    let unused = store
+        .register_input(&scratch.write("unused.txt", b"unused"))
+        .expect("register");
+    capture(&store, &[captured]).expect("capture");
+    // A cancelled capture is history too: it records a run and no artifact.
+    let operation = store.accept_job().expect("accept");
+    assert_eq!(store.cancel_job(operation), CancelOutcome::Cancelled);
+    assert_eq!(
+        store.capture_file_facts(operation, &[cancelled]),
+        Err(ProjectError::Cancelled)
+    );
+    store
+        .save_as(&scratch.join("project.mscanvas"))
+        .expect("saved, so a refusal that dirtied it would show");
+    let before = document_of(&store);
 
-    store.remove_input(id).expect("remove");
+    // Neither is cascaded: the run, the record and the reference all stay.
+    for pinned in [captured, cancelled] {
+        assert_eq!(
+            store.remove_input(pinned),
+            Err(ProjectError::InputUsedByRun)
+        );
+    }
+    assert_eq!(document_of(&store), before, "nothing was removed");
+    assert!(!store.describe().dirty, "a refusal dirties nothing");
 
-    let described = store.describe();
-    assert!(described.inputs.is_empty());
-    assert!(described.runs.is_empty());
-    assert!(described.artifacts.is_empty());
+    // Control: a reference nothing recorded goes, and its file stays.
+    store.remove_input(unused).expect("removed");
+    assert_eq!(document_of(&store).inputs.len(), 2);
     assert!(
-        scratch.join("sample.txt").exists(),
+        scratch.join("unused.txt").exists(),
         "removing a record never removes a file"
     );
 }
@@ -1541,7 +1564,7 @@ fn cross_volume_behaviour_is_not_covered_by_these_tests() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn removing_a_reference_also_removes_an_artifact_no_run_produced() {
+fn a_reference_a_record_observed_is_refused_removal_with_no_run_naming_it() {
     let scratch = Scratch::new("orphan-artifact");
     let store = ProjectStore::new();
     store.create("Fixture".to_owned(), false).expect("new");
@@ -1577,12 +1600,14 @@ fn removing_a_reference_also_removes_an_artifact_no_run_produced() {
             });
     }
 
-    store.remove_input(id).expect("remove");
+    let before = document_of(&store);
 
-    // If that artifact had survived, its observation would name an input the
-    // document no longer has -- and every later save would be refused with
-    // `DanglingReference`, with no way to remove it.
-    assert!(store.describe().artifacts.is_empty());
+    // The record is history whatever produced it. Removing the reference
+    // alone would leave it observing an input the document no longer has --
+    // refused as `DanglingReference` on every later Save -- and removing the
+    // record with it would be deleting history nobody asked to delete.
+    assert_eq!(store.remove_input(id), Err(ProjectError::InputUsedByRun));
+    assert_eq!(document_of(&store), before);
     store
         .save_as(&scratch.join("project.mscanvas"))
         .expect("the project is still saveable");
@@ -2311,7 +2336,7 @@ fn a_lineage_query_answers_fully_for_files_that_are_not_there() {
 }
 
 #[test]
-fn removing_a_reference_removes_the_lineage_that_named_it_and_leaves_the_rest() {
+fn removing_an_unused_reference_leaves_every_lineage_edge_where_it_was() {
     let scratch = Scratch::new("lineage-remove");
     let store = ProjectStore::new();
     store.create("Fixture".to_owned(), false).expect("new");
@@ -2322,19 +2347,17 @@ fn removing_a_reference_removes_the_lineage_that_named_it_and_leaves_the_rest() 
         .register_input(&scratch.write("removed.txt", b"removed"))
         .expect("register");
     capture(&store, &[kept]).expect("capture kept");
-    capture(&store, &[removed]).expect("capture removed");
-    assert_eq!(store.describe().runs.len(), 2);
+    let before = document_of(&store);
 
     store.remove_input(removed).expect("remove");
 
+    // The reference goes and nothing else does: its removal is not an edit to
+    // any recorded relationship.
+    let after = document_of(&store);
+    assert_eq!(after.inputs, before.inputs[..1]);
+    assert_eq!(after.runs, before.runs);
+    assert_eq!(after.artifacts, before.artifacts);
     let described = store.describe();
-    // The run and artifact that named it are gone with it -- a dangling edge
-    // is what `validate` refuses, so leaving one would make the project
-    // unsaveable.
-    assert_eq!(described.inputs.len(), 1);
-    assert_eq!(described.runs.len(), 1);
-    assert_eq!(described.artifacts.len(), 1);
-    // And the lineage that did not name it is untouched.
     assert_eq!(described.inputs[0].id, kept.to_string());
     assert_eq!(
         described.inputs[0].consumed_by_run_ids,
@@ -3399,10 +3422,9 @@ fn a_layer_a_run_consumed_is_not_removed_and_a_layer_nothing_consumed_is() {
 
     assert_eq!(store.remove_layer(layer), Err(ProjectError::LayerUsedByRun));
     assert_eq!(document_of(&store), before, "nothing was removed");
-    assert_eq!(
-        store.remove_input(id),
-        Err(ProjectError::LayerDependsOnInput)
-    );
+    // The run consumed the reference through its layer, so the reference is
+    // pinned by history -- not sent to remove a layer that cannot go.
+    assert_eq!(store.remove_input(id), Err(ProjectError::InputUsedByRun));
     assert_eq!(document_of(&store), before);
 
     // Control: a layer with no history of its own still goes.
@@ -3654,6 +3676,63 @@ fn snapshot_values_that_contradict_the_run_summary_contract_are_refused() {
         let (mut document, _, _) = qc_document();
         broken(snapshot_in(&mut document));
         assert_eq!(refused(&document), problem, "{what}");
+    }
+}
+
+#[test]
+fn a_retention_time_has_one_spelling_and_it_reads_back_to_the_same_bits() {
+    use record::{RecordedRetentionTime, RecordedUnit};
+
+    // Values whose shortest spelling is long, tiny, huge, signed zero, or not
+    // the decimal a reader would guess.
+    for value in [
+        0.1 + 0.2,
+        1.0 / 3.0,
+        123.456,
+        5e-324,
+        2.225_073_858_507_201_4e-308,
+        f64::MAX,
+        1e21,
+        -0.0,
+        0.0,
+    ] {
+        let recorded = RecordedRetentionTime::of(value, RecordedUnit::NotEmitted).expect("finite");
+        assert_eq!(
+            recorded.number().map(f64::to_bits),
+            Some(value.to_bits()),
+            "{value:e}"
+        );
+        let text = serde_json::to_string(&recorded).expect("json");
+        let back: RecordedRetentionTime = serde_json::from_str(&text).expect("read back");
+        assert_eq!(back, recorded, "{value:e}");
+    }
+    assert_eq!(
+        RecordedRetentionTime::of(f64::NAN, RecordedUnit::NotEmitted),
+        None
+    );
+    assert_eq!(
+        RecordedRetentionTime::of(f64::INFINITY, RecordedUnit::NotEmitted),
+        None
+    );
+
+    // Every one of these is the same binary64 as 0.3, and none is the text
+    // this build writes for it, so none is a value it recorded.
+    for spelling in [
+        "0.30",
+        "3e-1",
+        "+0.3",
+        ".3",
+        "0.299999999999999988897769753748434595763683319091796875",
+    ] {
+        assert_eq!(
+            spelling.parse::<f64>().map(f64::to_bits),
+            Ok(0.3_f64.to_bits())
+        );
+        let recorded = RecordedRetentionTime {
+            value: spelling.to_owned(),
+            unit: RecordedUnit::NotEmitted,
+        };
+        assert_eq!(recorded.number(), None, "{spelling}");
     }
 }
 

@@ -13,6 +13,7 @@
  */
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useLayoutEffect, useRef } from "react";
 import { describe, expect, it } from "vitest";
 
 import { SessionPreferencesProvider } from "../preferences/SessionPreferencesProvider";
@@ -402,5 +403,53 @@ describe("the provenance consumer", () => {
     expect(zh.provenanceUsedBy).not.toEqual(en.provenanceUsedBy);
     expect(zh.provenanceArtifactStored).not.toEqual(en.provenanceArtifactStored);
     expect(zh.provenanceSelectionGone).not.toEqual(en.provenanceSelectionGone);
+  });
+});
+
+describe("the project's first arrival", () => {
+  /**
+   * Inspects a reference in the first commit that shows the project.
+   *
+   * A layout effect runs once the rows are in the document and before any
+   * passive effect of the same commit, which is the window a reader's press
+   * lands in when it follows the first paint closely. Pressing from here puts
+   * the press in that window every time, rather than when this machine is slow.
+   */
+  function InspectOnArrival() {
+    const session = useProject();
+    const pressed = useRef(false);
+    useLayoutEffect(() => {
+      if (session.state.open && !pressed.current) {
+        pressed.current = true;
+        session.inspect({ kind: "input", id: INPUT });
+      }
+    });
+    return (
+      <aside id="workbench-inspector">
+        <ProvenanceDetails provenance={session.provenance} onSelect={session.inspect} />
+      </aside>
+    );
+  }
+
+  it("keeps a press made in the first frame that shows the project", async () => {
+    const api = createFakeProjectApi(capturedProject());
+    const release = api.holdOnce("getProjectState");
+    render(
+      <PreferencesApiProvider value={createFakePreferencesApi({ stored: storedRecord() })}>
+        <SessionPreferencesProvider>
+          <ProjectApiProvider value={api}>
+            <InspectOnArrival />
+          </ProjectApiProvider>
+        </SessionPreferencesProvider>
+      </PreferencesApiProvider>,
+    );
+
+    await act(async () => {
+      release();
+    });
+
+    // The arrival of the first project is not the replacement of an earlier
+    // one, so nothing the reader chose in its first frame is forgotten.
+    expect(describing()).toBe("input");
   });
 });

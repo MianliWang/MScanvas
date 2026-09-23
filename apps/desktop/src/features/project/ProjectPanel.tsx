@@ -98,6 +98,7 @@ const REFUSALS = {
   unsafeTarget: "projectRefusedUnsafe",
   notInWorkbench: "projectRefusedNotInWorkbench",
   layerDependsOnInput: "projectRefusedLayerDependsOnInput",
+  inputUsedByRun: "projectRefusedInputUsedByRun",
   layerUsedByRun: "projectRefusedLayerUsedByRun",
   previewNotCurrent: "projectRefusedPreviewNotCurrent",
   producerUnidentified: "projectRefusedProducerUnidentified",

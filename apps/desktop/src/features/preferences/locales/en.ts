@@ -1138,7 +1138,7 @@ export const en = {
   projectRelinkDiffers: "This file is at a new location and its content differs from the record.",
   projectHistory: "Recorded work",
   projectNoRuns: "Nothing has been run over these references yet.",
-  projectCaptureMeaning: "Capturing file facts records each file's length and SHA-256. A QC summary snapshot records the run-summary facts a preview already reported. Neither converts, analyses or judges quality, and neither verifies scientific provenance.",
+  projectCaptureMeaning: "Capturing file facts records each file's length and SHA-256. A QC summary snapshot records the run-summary facts a preview already reported. Neither converts, analyses or judges quality, and neither verifies scientific provenance. Recorded work is kept: MSCanvas cannot yet remove it, or the references and layers it used.",
   projectOperationCapture: "Capture file facts",
   projectRunCompleted: "Completed",
   projectRunFailed: "Failed",
@@ -1271,6 +1271,8 @@ export const en = {
   projectRemoveLayerNamed: "Remove layer: {{name}}",
   projectRefusedNotInWorkbench: "Add this reference to the Workbench before creating its layer.",
   projectRefusedLayerDependsOnInput: "Remove this reference's layer before removing the reference.",
+  // M8 closure: recorded history is kept whole, so what it used stays.
+  projectRefusedInputUsedByRun: "Recorded work used this reference, so it was not removed. MSCanvas keeps recorded work and cannot remove it yet.",
   provenanceKindLayer: "Layer",
   provenanceLayerAvailability: "Current availability",
   provenanceLayerSource: "Source reference",

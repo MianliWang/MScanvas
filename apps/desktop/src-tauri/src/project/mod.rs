@@ -130,6 +130,10 @@ pub enum ProjectError {
     /// A layer is sourced from this reference. The layer is removed first, by
     /// the user, or the reference stays.
     LayerDependsOnInput,
+    /// Recorded history depends on this reference: a run consumed it or its
+    /// layer, or a record observed it. History is kept whole, and nothing in
+    /// this build removes it, so the reference stays.
+    InputUsedByRun,
     /// A recorded run consumed this layer, so removing it would leave that
     /// run's lineage pointing at nothing. History is not cascaded away to make
     /// room for a removal.
@@ -173,6 +177,7 @@ impl ProjectError {
             Self::StaleOperation => "staleOperation",
             Self::NotInWorkbench => "notInWorkbench",
             Self::LayerDependsOnInput => "layerDependsOnInput",
+            Self::InputUsedByRun => "inputUsedByRun",
             Self::LayerUsedByRun => "layerUsedByRun",
             Self::PreviewNotCurrent => "previewNotCurrent",
             Self::ProducerUnidentified => "producerUnidentified",
@@ -753,62 +758,58 @@ impl ProjectStore {
         Ok(id)
     }
 
-    /// Removes one reference, and any run and artifact that named it.
+    /// Removes one reference that nothing recorded depends on.
     ///
-    /// Removing a reference never touches the file it referenced. The history
-    /// that named it goes with it, because a run whose inputs are gone is a
-    /// dangling record and this schema does not hold one.
+    /// Removing a reference never touches the file it referenced.
     ///
-    /// A reference with a layer is refused rather than cascaded. History is
-    /// something this application wrote; a layer is an identity the user
-    /// created, and deleting one silently to satisfy a removal would remove
-    /// something the user did not ask to remove. They remove the layer first,
-    /// and then the reference goes.
+    /// Recorded history is append-only: an object its lineage needs is not
+    /// removed independently of it, and this build has no operation that
+    /// prunes history or cascades a removal through it. So a reference is
+    /// refused while a run consumed it -- completed, failed or cancelled -- or
+    /// consumed its layer, or while a record observed it. Deleting that
+    /// history to satisfy a removal would remove something the user did not
+    /// ask to remove, and silently.
+    ///
+    /// A reference with only a layer is refused too, and differently: the
+    /// layer is an identity the user created and can remove, so they remove it
+    /// first and then the reference goes. History is asked about first, so a
+    /// reference whose layer a run consumed is not sent to remove a layer that
+    /// cannot be removed.
     ///
     /// # Errors
     ///
     /// [`ProjectError::UnknownRecord`] for an identifier this project has no
-    /// input for, or [`ProjectError::LayerDependsOnInput`] where a layer is
-    /// sourced from it. Nothing changes on either.
+    /// input for, [`ProjectError::InputUsedByRun`] where recorded history
+    /// depends on it, or [`ProjectError::LayerDependsOnInput`] where a layer
+    /// is sourced from it. Nothing changes on any of them.
     pub fn remove_input(&self, id: InputId) -> Result<(), ProjectError> {
         let mut session = self.locked();
         let project = session.open_mut()?;
-        if project.document.input(id).is_none() {
+        let document = &project.document;
+        if document.input(id).is_none() {
             return Err(ProjectError::UnknownRecord);
         }
-        if project.document.layer_of_input(id).is_some() {
+        let layer = document.layer_of_input(id).map(|layer| layer.id);
+        let recorded = document.runs.iter().any(|run| {
+            run.consumes_input(id) || layer.is_some_and(|layer| run.consumes_layer(layer))
+        }) || document.artifacts.iter().any(|artifact| {
+            // A record may observe a reference no run in this document names
+            // -- one written by another build, or edited by hand -- and it is
+            // history all the same.
+            artifact.payload.file_facts().is_some_and(|facts| {
+                facts
+                    .observations
+                    .iter()
+                    .any(|observation| observation.input_id == id)
+            })
+        });
+        if recorded {
+            return Err(ProjectError::InputUsedByRun);
+        }
+        if layer.is_some() {
             return Err(ProjectError::LayerDependsOnInput);
         }
         project.document.inputs.retain(|input| input.id != id);
-        // Every run that named it, and every artifact that observed it.
-        //
-        // Both, and not just the artifacts reachable through those runs: an
-        // artifact may observe an input without any run in this document naming
-        // it -- a document written by another build, or one a user edited --
-        // and leaving that one behind would make the document permanently
-        // unsaveable, because the same dangling reference this removal exists
-        // to avoid is what `validate` refuses on every later Save.
-        //
-        // A run that consumed the reference's layer is never among them: the
-        // layer would have refused this removal above, and its own removal is
-        // refused while such a run exists.
-        let orphaned: Vec<ArtifactId> = project
-            .document
-            .runs
-            .iter()
-            .filter(|run| run.consumes_input(id))
-            .flat_map(|run| run.output_artifact_ids.iter().copied())
-            .collect();
-        project.document.runs.retain(|run| !run.consumes_input(id));
-        project.document.artifacts.retain(|artifact| {
-            !orphaned.contains(&artifact.id)
-                && !artifact.payload.file_facts().is_some_and(|facts| {
-                    facts
-                        .observations
-                        .iter()
-                        .any(|observation| observation.input_id == id)
-                })
-        });
         project.verification.retain(|(recorded, _)| *recorded != id);
         // The reference is gone, so there is no longer anything for a
         // remembered row to be the row *of*. The row itself is untouched:

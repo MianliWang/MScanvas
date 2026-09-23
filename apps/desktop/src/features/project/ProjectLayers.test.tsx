@@ -135,17 +135,14 @@ function details(): HTMLElement {
 }
 
 /**
- * Waits for the project to be on screen, with its arrival fully settled.
+ * Waits for the project to be on screen.
  *
- * The session forgets what is inspected when the open project changes, and
- * the first read is such a change. That is a passive effect, flushed a moment
- * after the rows appear -- so a press landing in between would select and
- * then be forgotten, and the test would describe this machine's timing rather
- * than the interface. The empty act flushes it.
+ * Nothing further to wait for: the session resets what is inspected in the
+ * render that first sees a project, so a press the instant the rows appear is
+ * kept (ProvenanceDetails.test pins that first frame).
  */
 async function ready(label: string = en.projectReferences) {
   await screen.findByText(label);
-  await act(async () => {});
 }
 
 function describing(): string | null {

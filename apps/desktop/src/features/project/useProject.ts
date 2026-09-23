@@ -185,7 +185,11 @@ export function useProject(
   const [cancelled, setCancelled] = useState(false);
   const [pending, setPending] = useState<PendingIntent | null>(null);
   const [selected, setSelected] = useState<readonly string[]>([]);
-  const [inspecting, setInspecting] = useState<ProjectSelection | null>(null);
+  /** What is inspected, and the open project it was chosen in. */
+  const [inspection, setInspection] = useState<{
+    readonly project: string | null;
+    readonly selection: ProjectSelection | null;
+  }>({ project: null, selection: null });
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -334,11 +338,23 @@ export function useProject(
    * A *removal* deliberately does not clear it. The identity is unchanged, so
    * the selection survives and is reported as gone -- which is the true thing
    * to say, rather than silently moving the reader to some other object.
+   *
+   * Adjusted while rendering, not in an effect. An effect runs after the
+   * commit that already shows the new project, so a press landing in that
+   * commit was applied and then forgotten -- on a project's first arrival
+   * too, which replaces nothing. Here the render that first sees a new
+   * identity resets it, before any of that project is on screen.
    */
   const identity = state.open ? state.projectId : null;
-  useEffect(() => {
-    setInspecting(null);
-  }, [identity]);
+  if (inspection.project !== identity) {
+    setInspection({ project: identity, selection: null });
+  }
+  const inspecting = inspection.project === identity ? inspection.selection : null;
+  const setInspecting = useCallback(
+    (selection: ProjectSelection | null) =>
+      setInspection((current) => ({ project: current.project, selection })),
+    [],
+  );
 
   /** What is inspected now, for an answer that arrives after a press. */
   const inspectingNow = useRef(inspecting);

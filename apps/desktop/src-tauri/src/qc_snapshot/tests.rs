@@ -788,7 +788,7 @@ fn a_snapshot_is_unchanged_by_the_row_the_source_and_the_workspace_going() {
     );
     assert_eq!(
         world.projects.remove_input(input),
-        Err(ProjectError::LayerDependsOnInput)
+        Err(ProjectError::InputUsedByRun)
     );
     assert!(world.projects.describe().artifacts[0].qc_snapshot.is_some());
 }
@@ -869,4 +869,209 @@ fn a_summary_with_more_buckets_than_a_snapshot_holds_is_refused_in_its_own_words
     let recorded = super::snapshot_of(&summary_with(64), producer()).expect("recorded");
     assert_eq!(recorded.ms_level_counts.len(), 64);
     assert_eq!(recorded.total_spectrum_count, 64);
+}
+
+// ---------------------------------------------------------------------------
+// M8 closure: every M8 record in one project
+// ---------------------------------------------------------------------------
+
+/// One project holding every kind of record M8 writes, built only through the
+/// operations the application runs -- no hand-authored JSON -- then saved,
+/// closed, reopened and saved again.
+///
+/// Composition evidence for M8 and nothing wider: the provider is the
+/// controlled one above, and no process runs.
+#[test]
+fn a_mixed_project_reopens_with_its_whole_lineage_and_saves_again_unchanged() {
+    let world = World::new("m8-mixed", Some(build("3.0.26204", 0xA1)));
+    let projects = &world.projects;
+
+    // Two references: one only ever observed, one that becomes a layer.
+    let observed = projects
+        .register_input(&world.scratch.write("observed.txt", b"observed bytes"))
+        .expect("registered");
+    let source = projects
+        .register_input(
+            &world
+                .scratch
+                .write("sample.mzML", b"<mzML>sample.mzML</mzML>"),
+        )
+        .expect("registered");
+    // File facts over both.
+    let job = projects.accept_job().expect("accepted");
+    let facts_run = projects
+        .capture_file_facts(job, &[observed, source])
+        .expect("file facts captured");
+    // The source handed to the Workbench, and made a layer.
+    let job = projects.accept_job().expect("accepted");
+    let admitted = add_project_input_to_workspace(projects, &world.service, job, source)
+        .unwrap_or_else(|_| panic!("admitted"));
+    let handle = admitted_handle(&admitted).expect("a row").to_owned();
+    let layer = projects
+        .create_layer(source, |row| {
+            world.service.dataset_object_identities(row).is_some()
+        })
+        .expect("a layer");
+    // A QC snapshot from the preview the Workbench retained.
+    let preview = world.open(&handle);
+    let report = world.capture(layer, &token(&preview)).expect("QC captured");
+
+    let before = projects.describe();
+    let source_row = |described: &crate::project::dto::ProjectStateDto| {
+        described
+            .inputs
+            .iter()
+            .find(|input| input.id == source.to_string())
+            .expect("the source")
+            .workbench_dataset_handle
+            .clone()
+    };
+    assert_eq!(
+        source_row(&before),
+        Some(handle.clone()),
+        "the session remembers the row"
+    );
+
+    let document = world.scratch.join("mixed.mscanvas");
+    projects.save_as(&document).expect("saved");
+    let saved = fs::read(&document).expect("the document");
+    projects.close(false).expect("closed");
+    let (runs, looks) = (world.machine.runs(), world.machine.looks());
+    projects.open_document(&document, false).expect("reopened");
+    let after = projects.describe();
+
+    // Reopening asked no backend and ran nothing.
+    assert_eq!((world.machine.runs(), world.machine.looks()), (runs, looks));
+    // Every durable identifier and every recorded record came back exactly.
+    assert_eq!(after.project_id, before.project_id);
+    for (label, a, b) in [
+        (
+            "runs",
+            serde_json::to_value(&after.runs),
+            serde_json::to_value(&before.runs),
+        ),
+        (
+            "artifacts",
+            serde_json::to_value(&after.artifacts),
+            serde_json::to_value(&before.artifacts),
+        ),
+        (
+            "layers",
+            serde_json::to_value(&after.layers),
+            serde_json::to_value(&before.layers),
+        ),
+    ] {
+        assert_eq!(a.expect("json"), b.expect("json"), "{label}");
+    }
+    let ids = |described: &crate::project::dto::ProjectStateDto| {
+        described
+            .inputs
+            .iter()
+            .map(|input| input.id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&after), vec![observed.to_string(), source.to_string()]);
+
+    // The lineage, each edge read off the one record that states it.
+    // Input -> Run -> Artifact, for the file facts:
+    let facts = after
+        .runs
+        .iter()
+        .find(|run| run.id == facts_run.to_string())
+        .expect("the file-facts run");
+    assert_eq!(
+        facts.input_ids,
+        vec![observed.to_string(), source.to_string()]
+    );
+    let [facts_record] = facts.output_artifact_ids.as_slice() else {
+        panic!("one file-facts record");
+    };
+    let record = |id: &str| {
+        after
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.id == id)
+            .expect("a record")
+    };
+    assert_eq!(
+        record(facts_record).produced_by_run_id.as_deref(),
+        Some(facts.id.as_str())
+    );
+    assert_eq!(record(facts_record).source_input_ids, facts.input_ids);
+    // Layer -> Input:
+    assert_eq!(after.layers.len(), 1);
+    assert_eq!(after.layers[0].id, layer.to_string());
+    assert_eq!(after.layers[0].source_input_id, source.to_string());
+    // Report -> Run -> Layer, and so -> Input:
+    let qc_run_id = record(&report.to_string())
+        .produced_by_run_id
+        .clone()
+        .expect("the report's producer");
+    let qc_run = after
+        .runs
+        .iter()
+        .find(|run| run.id == qc_run_id)
+        .expect("the QC run");
+    assert_eq!(qc_run.layer_ids, vec![layer.to_string()]);
+    assert!(
+        qc_run.input_ids.is_empty(),
+        "the QC run names its source only through the layer"
+    );
+    assert_eq!(after.layers[0].consumed_by_run_ids, vec![qc_run_id.clone()]);
+    assert!(record(&report.to_string()).source_input_ids.is_empty());
+    // Each reference's own history is the file-facts run alone.
+    for input in &after.inputs {
+        assert_eq!(input.consumed_by_run_ids, vec![facts.id.clone()]);
+    }
+
+    // Current facts are not restored: nothing is checked, and no row is
+    // remembered or written.
+    assert!(
+        after
+            .inputs
+            .iter()
+            .all(|input| input.verification == "notChecked")
+    );
+    assert!(
+        after
+            .inputs
+            .iter()
+            .all(|input| input.workbench_dataset_handle.is_none())
+    );
+    let text = String::from_utf8(saved.clone()).expect("utf-8");
+    assert!(!text.contains(handle.as_str()) && !text.contains("dataset"));
+    // The report keeps the build that produced its preview.
+    let producer = record(&report.to_string())
+        .qc_snapshot
+        .clone()
+        .expect("the report")
+        .producer;
+    assert_eq!(producer.executable_sha256, "A1".repeat(32));
+
+    // Saved again, the document differs only in its revision.
+    projects.save().expect("saved again");
+    let resaved = fs::read(&document).expect("the document again");
+    let mut first: serde_json::Value = serde_json::from_slice(&saved).expect("json");
+    let mut second: serde_json::Value = serde_json::from_slice(&resaved).expect("json");
+    assert_eq!(
+        second["revision"].as_u64(),
+        first["revision"].as_u64().map(|revision| revision + 1)
+    );
+    first["revision"] = serde_json::Value::Null;
+    second["revision"] = serde_json::Value::Null;
+    assert_eq!(first, second);
+
+    // And the history is append-only: what it used stays.
+    assert_eq!(
+        projects.remove_input(observed),
+        Err(ProjectError::InputUsedByRun)
+    );
+    assert_eq!(
+        projects.remove_input(source),
+        Err(ProjectError::InputUsedByRun)
+    );
+    assert_eq!(
+        projects.remove_layer(layer),
+        Err(ProjectError::LayerUsedByRun)
+    );
 }

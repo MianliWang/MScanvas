@@ -342,13 +342,10 @@ describe("M8.1 project records, rendered", () => {
     // The relationship is on screen: this run produced that artifact.
     expect(measured.runs[0].artifacts).toEqual(["eeeeeeee-1111-4111-8111-111111111111"]);
     // And what a capture is is stated where it is displayed, so nobody reads
-    // it as analysis.
-    expect(
-      await browser
-        .$(".project-note")
-        .getText()
-        .then((text) => text.includes("not conversion, analysis or quality control")),
-    ).toBe(true);
+    // it as analysis -- nor as something a later press can take back.
+    const note = await browser.$(".project-note").getText();
+    expect(note).toContain("Neither converts, analyses or judges quality");
+    expect(note).toContain("Recorded work is kept");
     // Unsaved, because a capture changed the project and nothing saved it.
     expect(await browser.$("[data-project-unsaved]").isDisplayed()).toBe(true);
   });
@@ -360,9 +357,12 @@ describe("M8.1 project records, rendered", () => {
 
     // A refusal, and the project as it stands after it: the run is recorded and
     // the artifact is not.
+    // The shape the boundary rejects with: `PreviewErrorDto`, whose stable
+    // identifier is `kind`.
     await setInvokeRejection("capture_project_file_facts", {
-      code: "missingAtCheckedLocation",
-      message: "That file could not be read.",
+      kind: "missingAtCheckedLocation",
+      summary: "That file could not be read.",
+      detail: null,
       retryable: true,
     });
     await setInvokeResult(
@@ -399,6 +399,12 @@ describe("M8.1 project records, rendered", () => {
     expect(measured.runs[0].outcome).toBe("failed");
     expect(measured.runs[0].artifacts).toEqual([]);
     expect(measured.runs[0].noArtifact).toBe(true);
+    // The refusal arrives named, so the reader gets its own sentence rather
+    // than the catch-all.
+    const banner = browser.$("[data-project-problem]");
+    await banner.waitForDisplayed();
+    expect(await banner.getAttribute("data-project-problem")).toBe("missingAtCheckedLocation");
+    expect(await banner.getText()).toContain("not found where this project recorded it");
     // And the project is still on screen. A refusal changed nothing about what
     // the reader is looking at.
     expect(measured.references).toHaveLength(1);
@@ -498,8 +504,9 @@ describe("M8.1 project records, rendered", () => {
     await metrics(1366, 768, 1);
 
     await setInvokeRejection("save_project", {
-      code: "staleDocument",
-      message: "That project file has changed since it was opened.",
+      kind: "staleDocument",
+      summary: "That project file has changed since it was opened, so it was not replaced.",
+      detail: null,
       retryable: true,
     });
     await browser.$("button=Save").click();
