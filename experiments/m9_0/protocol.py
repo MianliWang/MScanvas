@@ -571,8 +571,15 @@ CASES = [
     # The upstream regression bundle, with the upstream test's own parameters:
     # -extract:mz_window 5 -extract:rt_window 20 -detect:peak_width 3 and TSV RT ranges of 0,
     # which the engine replaces by rt_window 20, i.e. a half-width of 10 s.
+    # Pre-run amendment 2: the upstream input declares all 380 spectra as profile
+    # (MS:1000128), outside the recipe's centroid domain; this was found while probing
+    # the binding API, which ran the engine once on this bundle for one target (not
+    # scored). The case lifts only that one refusal through an experiment flag the
+    # result records; it is agreement evidence for the adapter, not evidence that
+    # profile input is supported.
     {"id": "reg_upstream_1", "fixture": "upstream", "targets": "upstream-tsv", "expect": {"_run": {"completed"}},
-     "parameters": {"mz_half_width_ppm": 2.5, "expected_peak_width_s": 3.0}, "upstream_half_s": 10.0},
+     "parameters": {"mz_half_width_ppm": 2.5, "expected_peak_width_s": 3.0}, "upstream_half_s": 10.0,
+     "experiment": {"accept_profile": True}},
     # Owned-process controls. Cancellation is requested once the worker reports the
     # source-loading phase; the timeout is a wall-clock budget from launch.
     {"id": "ctl_cancel", "fixture": "ctl_large", "targets": ["pos_control"], "expect": {"_run": {"cancelled"}},
