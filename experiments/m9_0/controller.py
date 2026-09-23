@@ -111,13 +111,15 @@ def publish(staging: Path, run_dir: Path, run_id: str, exit_code: int) -> tuple[
     return True, "published"
 
 
-def run_case(case: dict, root: Path) -> dict:
+def run_case(case: dict, root: Path, source: Path | None = None, targets: list | None = None) -> dict:
     run_dir = root / "runs" / case["id"]
     if run_dir.exists():
         shutil.rmtree(run_dir)
     staging = run_dir / "staging"
     staging.mkdir(parents=True)
-    if case["fixture"] == "upstream":
+    if source is not None:
+        pass
+    elif case["fixture"] == "upstream":
         source = UPSTREAM / "FeatureFinderMetaboIdent_1_input.mzML"
         targets = protocol.upstream_targets((UPSTREAM / "FeatureFinderMetaboIdent_1_input.tsv").read_text(
             encoding="utf-8"), case["upstream_half_s"])
@@ -202,6 +204,20 @@ def main(argv: list[str]) -> int:
             print(f"{a['case']:22} {a['status']:9} {str(a['code']):36} exit={a['exit_code']:<3} "
                   f"wall={a['wall_s']:7.2f}s peak_ws={(a['peak_working_set_bytes'] or 0) / 2**20:7.1f}MiB")
         print(f"~/.OpenMS existed before={before} after={home_marker.exists()}")
+        return 0
+    if len(argv) >= 4 and argv[1] == "run2":  # run2 <round2-root> <round1-root> [case-id ...]
+        import protocol_r2  # noqa: PLC0415
+
+        root, r1 = Path(argv[2]).resolve(), Path(argv[3]).resolve()
+        for case in protocol_r2.CASES:
+            if argv[4:] and case["id"] not in argv[4:]:
+                continue
+            if case.get("r1_targets"):
+                src, targets = r1 / "fixtures" / f"{case['fixture'][3:]}.mzML", protocol.request_targets(case["targets"])
+            else:
+                src, targets = root / "fixtures" / f"{case['fixture']}.mzML", protocol_r2.request_targets(case["targets"])
+            a = run_case(case, root, src, targets)
+            print(f"{a['case']:30} {a['status']:9} {str(a['code']):36} exit={a['exit_code']:<3} wall={a['wall_s']:6.2f}s")
         return 0
     if len(argv) == 3 and argv[1] == "evaluate":
         root = Path(argv[2]).resolve()

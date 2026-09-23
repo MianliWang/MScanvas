@@ -28,6 +28,9 @@ import sys
 import time
 from ctypes import wintypes
 from pathlib import Path
+from xml.parsers import expat
+
+MZML_NS = "http://psi.hupo.org/ms/mzml"
 
 EXIT_COMPLETED, EXIT_REFUSED, EXIT_FAILED = 0, 3, 4
 T0 = time.perf_counter()
@@ -125,9 +128,27 @@ def load_request(path: Path) -> dict:
     if set(src) != {"path", "bytes", "sha256"} or not re.fullmatch(r"[0-9a-f]{64}", str(src.get("sha256"))):
         raise refuse("REQUEST_INVALID", "source must name path, bytes and sha256")
     exp = req.get("experiment", {})
-    if set(exp) - {"capture_candidates", "accept_profile"}:
+    if set(exp) - {"capture_candidates", "accept_profile", "accept_duplicate_rt"}:
         raise refuse("REQUEST_INVALID", "unknown experiment flag")
     return req
+
+
+def count_spectra(path: Path) -> int:
+    """Count mzML spectrum elements by namespace, independently of the engine's reader."""
+    count = 0
+
+    def start(name, _attrs):
+        nonlocal count
+        count += name == f"{MZML_NS} spectrum"
+
+    parser = expat.ParserCreate(namespace_separator=" ")
+    parser.StartElementHandler = start
+    try:
+        with open(path, "rb") as f:
+            parser.ParseFile(f)
+    except expat.ExpatError:
+        return -1
+    return count
 
 
 def digest(path: Path) -> tuple[int, str]:
@@ -201,7 +222,7 @@ def profile(params: dict, targets: list[dict], candidates_out: str) -> dict:
     }
 
 
-def check_source(oms, exp, accept_profile: bool) -> list:
+def check_source(oms, exp, accept_profile: bool, accept_duplicate_rt: bool) -> list:
     ms1 = [s for s in exp if s.getMSLevel() == 1]
     if not ms1:
         raise refuse("SOURCE_NO_MS1", "the source contains no MS1 spectrum")
@@ -219,6 +240,11 @@ def check_source(oms, exp, accept_profile: bool) -> list:
         if not math.isfinite(rt) or rt < 0 or rt < previous:
             raise refuse("SOURCE_RT_UNDECLARED_OR_NONMONOTONIC",
                          f"MS1 retention time of {s.getNativeID()} is {rt}, after {previous}")
+        # Round one measured a silent false negative when two MS1 spectra share a
+        # retention time inside a peak, so equal times are refused, not reported.
+        if rt == previous and not accept_duplicate_rt:
+            raise refuse("SOURCE_RT_NOT_STRICTLY_INCREASING",
+                         f"MS1 spectra share the retention time {rt} ({s.getNativeID()})")
         previous = rt
         if s.getDriftTime() >= 0 or s.getFloatDataArrays():
             raise refuse("SOURCE_ION_MOBILITY_UNSUPPORTED", "ion mobility or extra arrays are outside the domain")
@@ -259,9 +285,7 @@ def feature_record(f) -> dict:
         "engine_intensity": finite_or_none(f.getIntensity()),
         "engine_intensity_finite": math.isfinite(f.getIntensity()),
         "engine_intensity_source": source,
-        "mz_reported": f.getMZ(),
-        "scores": {k: meta(f, k) for k in ("sn_ratio", "masserror_ppm", "var_library_corr", "rt_deviation",
-                                           "peak_apices_sum", "total_xic")},
+        "mz_reported": f.getMZ(),  # the theoretical PrecursorMZ, not an observed m/z
     }
 
 
@@ -291,8 +315,14 @@ def run(req: dict, staging: Staging) -> dict:
         raise fail("SOURCE_UNREADABLE", f"the mzML reader failed: {str(exc)[:300]}") from None
     if digest(src) != before:
         raise refuse("SOURCE_CHANGED_DURING_READ", "the source changed while it was read")
+    # The reader returns an empty experiment, without error, for a legal
+    # namespace-prefixed document; an independent count catches any short read.
+    declared = count_spectra(src)
+    if declared != exp.size():
+        raise fail("SOURCE_READ_INCOMPLETE", f"the reader returned {exp.size()} of {declared} spectra")
     exp_index = {s.getNativeID(): i for i, s in enumerate(exp)}
-    ms1 = check_source(oms, exp, req.get("experiment", {}).get("accept_profile", False))
+    flags = req.get("experiment", {})
+    ms1 = check_source(oms, exp, flags.get("accept_profile", False), flags.get("accept_duplicate_rt", False))
 
     staging.event("engine_run")
     capture = req.get("experiment", {}).get("capture_candidates", True)
@@ -310,6 +340,12 @@ def run(req: dict, staging: Staging) -> dict:
     try:
         ff.run(compounds, fmap, str(src))
     except Exception as exc:  # noqa: BLE001
+        if capture and cand_path.exists():
+            empty = oms.FeatureMap()
+            oms.FeatureXMLFile().load(str(cand_path), empty)
+            if empty.size() == 0:  # measured: the engine raises when no target has any candidate
+                raise fail("ENGINE_NO_CANDIDATES", "no target produced a candidate; the engine cannot "
+                           "report an all-absent run") from None
         raise fail("ENGINE_ERROR", f"the engine raised: {str(exc)[:300]}") from None
     staging.event("collect")
     resolved = ff.getParameters()
@@ -383,7 +419,7 @@ def run(req: dict, staging: Staging) -> dict:
                                         for s, r, v in zip(visited, rts, values)]})
             sums.append(math.fsum(values))
             maxima.append(max(values, default=0.0))
-        row["signal"] = {"points": len(visited), "sum": sums, "max": maxima}
+        row["signal"] = {"points": len(visited), "sum": sums, "max": maxima, "in_window": any(m > 0 for m in maxima)}
         row["candidates"] = None if candidates is None else candidates.get(ref, [])
         own = by_ref.get(ref)
         shared_into = alt_of.get(ref)
