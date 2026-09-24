@@ -46,7 +46,7 @@ named PID 50140, which was not running; no other writer.
 | `a_cancel_during_a_copy_stops_it_between_chunks_with_no_digest` | Cancelled as the third chunk was about to be read: exactly two chunks written, no digest |
 | `a_destination_that_refuses_a_chunk_is_named_by_why` | A destination refusing with `StorageFull` after 100 KiB is `DestinationFull` with at most a prefix written, and so is one refusing with `QuotaExceeded`; `PermissionDenied` is `DestinationUnwritable`; the same handle then copies whole |
 | `an_empty_member_copies_as_empty_with_the_empty_digest` | Zero bytes, the empty SHA-256 |
-| `a_volume_says_what_this_process_may_write_and_an_object_how_many_names_it_has` | `available_bytes` answers a positive number for a real directory and nothing for a missing one; `link_count_of` follows a second name being made and removed |
+| `a_volume_says_how_many_bytes_this_process_may_write_there` | `available_bytes` answers a positive number for a real directory and nothing for a missing one. (Until M9.3.C1 this test also covered `link_count_of`, which C1 removed with the rule that used it.) |
 
 ## Real cross-volume execution
 
@@ -116,7 +116,7 @@ Without the runtime (`targeted_ms1/tests.rs`, always run), `execution_view` and
 | `this_process_is_alive_and_an_id_nobody_has_is_gone` | Against the real process table |
 | `a_sweep_removes_only_scratch_whose_owner_is_gone` | 2 removed (no such process; reused id), 1 live (this process), 6 unowned left as found: no marker, a marker naming another directory, an unreadable marker, a non-UUID name, a loose file, an upper-case UUID |
 | `a_process_that_has_exited_is_gone_and_one_that_runs_is_not` | A real `cmd` child that exited and was reaped: removed; one waiting on its input: kept whole |
-| `a_source_link_that_may_be_the_last_name_of_its_bytes_keeps_its_directory` | A link whose original still exists: removed, original intact; a link whose other name was deleted: directory kept, bytes readable, marker kept |
+| *(replaced by M9.3.C1)* `a_source_link_that_may_be_the_last_name_of_its_bytes_keeps_its_directory` | Asserted the withdrawn rule — a link whose original still existed was removed. See "M9.3.C1" below for the tests that replace it |
 | `a_removal_that_cannot_finish_keeps_its_marker_for_the_next_sweep` | A scratch file held without delete sharing: uncertain, marker and file kept; released: removed next sweep |
 | `an_attempt_directory_is_marked_before_use_and_removed_with_everything_in_it` | Marker names the directory and this process; a dropped directory goes whole; a kept one stays, and a sweep in the same session counts it live |
 
@@ -269,3 +269,61 @@ run the only Python processes on the machine were editor and extension
 servers, and no ChromeDriver, Vite or runtime worker remained. The review
 exports are under `.tmp/m93-evidence/`; nothing in `.tmp` that this task did
 not create was deleted.
+
+## M9.3.C1 — crash-recovery link safety
+
+A narrow closure repair, on the same branch, of the one blocking limit M9.3
+reported: a sweep counted a crash-left link's names and then removed it, and
+the user's own name could be deleted between the two, leaving the removal to
+unlink the last name of the user's bytes. Decision: ADR 0049 §7, amended.
+
+| Binding | Value |
+| --- | --- |
+| Start | `32b1e5d82c9b1b20bb430a2c0c4b009fcf13572a`, tree `cbe274d667b315d77f32e0a227675e676f2e0720`, a documentation-only child of the M9.3 tested code `23ba012` (tree `03a082a6…`) |
+| Repair — **the tested code** | `59c77f8d3f529945c12b0d0cf34d6a662bee7096`, tree `ab0db6e7f4591ebf9b87e546d495f77bd0773626` |
+
+**The rule, as built.** No count is taken. A gone owner's attempt directory
+with any entry at the link name (`source.mzML`, in any ASCII case), or whose
+entries cannot be listed, is left whole and counted `linked`. `remove_owned`
+refuses the link name on every path — a sweep's removal and an attempt's own
+directory removal alike — so a directory that still has one keeps its marker.
+A link is only ever made at an attempt directory's top level
+(`execution_view`) and only ever unlinked by `ExecutionView`'s drop, inside the
+attempt that made it, while the source is held; a grep of the two modules
+shows no other statement that could. A directory whose marker could not be
+written is removed as marker and empty directory only. A gone owner's copy is
+removed as before.
+
+**`owner.json` did not change** (schema `/1`, no view field). The view a
+directory held is read from its two view names, which are journaled directory
+entries: a crash before either exists leaves only the attempt's own files, a
+link that exists is kept, a copy is the attempt's own. Every directory marked
+before C1 is judged by the same rule.
+
+| Required case | Test | Result |
+| --- | --- | --- |
+| 1. Gone owner, link, the user's name still there → not unlinked | `a_gone_owners_source_link_is_never_unlinked_however_many_names_it_has` | Kept whole, marker and scratch included; `linked` counted; the user's name untouched; a second sweep leaves it again |
+| 2. Gone owner, the link the only name left → not unlinked | same test | Kept whole; the bytes readable through the link |
+| — the link under another case (`SOURCE.MZML`) | same test | Kept whole |
+| 3. Link under an unreadable marker, or no marker | `a_source_link_under_a_marker_that_is_not_proof_is_left_as_found` | Both `unowned`, both links intact |
+| 4. Same-session link cleanup while the source is held | `a_link_view_removes_its_link_while_the_source_name_cannot_go_first` | With the link beside it, the source's own name could **not** be deleted or renamed while the view held it (measured); dropping the view removed the link and left the source byte-identical; released afterwards, the source could be deleted |
+| — an attempt's own removal finding a link | `a_directory_removal_leaves_a_link_it_finds_with_the_marker` | Link and marker kept, the rest removed; counted live in this session |
+| 5. Gone owner's copy → removed | `a_sweep_removes_only_scratch_whose_owner_is_gone`, `a_process_that_has_exited_is_gone_and_one_that_runs_is_not`, and the real `an_attempt_removes_crash_left_scratch_and_nothing_it_cannot_prove_is_its_own` | Removed |
+| 6. Live or uncertain copy → retained | the same two unit tests (this process; a running child), and `the_owner_decision_is_the_id_and_the_creation_time_together` for an owner that cannot be asked | Retained |
+| 7. Published payload untouched | `a_sweep_over_a_project_and_its_result_store_removes_none_of_it` | A sweep over the directory holding a saved project and its store removed only a dead copy attempt placed there; sweeps over the store and over a result directory (named by its UUID, unmarked) removed nothing |
+| 8. M9.2 result available after recovery | same test, and the real cross-volume test | `available` on reopen, rows identical |
+| 9. A retained link is not given up to make room | `a_link_left_by_a_crash_is_not_given_up_to_make_room_for_a_copy` | With no room before or after, the preflight's reclaim removed a dead copy and kept the link; the refusal stood; the user's bytes intact |
+
+**Capacity.** The preflight measures the volume's real free space; it neither
+counts a retained link as a copy's allocation nor removes one to make room. A
+retained link costs a directory entry while the user's own name exists; if
+the user deletes that name, the link alone keeps the file's clusters
+allocated, and nothing reclaims or reports them.
+
+### M9.3.C1 review
+
+Pending.
+
+### M9.3.C1 validation
+
+Pending.

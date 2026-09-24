@@ -1,6 +1,7 @@
 # ADR 0049 — Content-bound execution snapshots and attempt-scratch ownership
 
-Status: **accepted locally for M9.3; unpublished.** Date: 2026-09-23.
+Status: **accepted locally for M9.3; decision 7 amended by M9.3.C1 (2026-09-24);
+unpublished.** Date: 2026-09-23.
 Builds on the [M9.1 record](../../product/M9_1_TARGETED_MS1_HANDOFF.md#m91-record)
 (the execution view, the supervisor and the quarantine) and
 [ADR 0048](0048-stored-targeted-result-reuse-and-export.md) (stored results are
@@ -155,9 +156,9 @@ supervisor sweeps the attempts root, and a preflight does the same where the
 copy it needs would not otherwise fit (decision 5). A directory is removed only when it is a
 plain directory named by a canonical UUID, its marker reads and names that
 UUID, the marker's process is gone (`OpenProcess` finds no process with the
-id, or the process with the id was created at another time), and its
-`source.mzML`, if any, is a hard link whose bytes still have another name.
-Removal empties the directory first, removes the marker last and the directory
+id, or the process with the id was created at another time), and it has no
+entry at the link name `source.mzML`, in any ASCII case (amended by M9.3.C1,
+below). Removal empties the directory first, removes the marker last and the directory
 after it. A removal that fails before the directory is empty keeps the marker
 for the next sweep; a directory that is empty but cannot itself be removed
 (something holds a handle to it) is left empty and unmarked, and stays.
@@ -173,22 +174,48 @@ termination is requested, not instant: a worker stuck in the kernel can
 outlive it for a while, and then the files it holds cannot be removed, so the
 directory keeps its marker for a later sweep.
 
-A crash-left **link** can be the last name of a user's bytes if the user
-deleted their original while MSCanvas was not running; a sweep that finds it
-the last name leaves its directory. The count and the removal are two steps,
-not one: a user deleting the other name between them, or two overlapping
-sweeps — in two sessions, or a plan review beside a run's start in one — each
-removing one of two links to a file whose original is gone, can remove the
-last name. In a running attempt, the link's name is now removed while the
-source is still held, so the source's other name cannot have gone first.
+**A sweep never unlinks a link.** A crash-left `source.mzML` is another name
+for the user's source, and once the attempt that made it is gone nothing holds
+that source: whatever a sweep observes about the bytes' other names can change
+before a removal acts on it. So a gone owner's directory with an entry at the
+link name — or whose entries cannot be listed to show it has none — is left
+whole and counted `linked`, and the removal routine refuses the link name on
+every path, including an attempt's own directory removal, so a link that
+appears after a directory was judged, or one an attempt failed to remove, is
+never unlinked either. The link is only ever made at the directory's top level
+and only ever unlinked by the attempt that made it, in `ExecutionView`'s drop,
+while the source is still held by the name it was opened through; Windows
+refuses to delete or rename that name while it is held, with the link beside
+it (measured), so the link is not its last name then.
+
+A copy (`snapshot.mzML`) is created new in the attempt's own directory and is
+never another name for anything, so a gone owner's copy is still removed. The
+view a directory held is read from these two names — journaled directory
+entries — so the marker keeps schema `/1` with no view field: a crash before
+either exists leaves only the attempt's own files, a link that exists is
+kept, and every directory M9.3 marked before this amendment is judged by the
+same rule.
+
+> **Amended by M9.3.C1 (2026-09-24).** As first accepted, a sweep removed a
+> gone owner's link when its bytes had another name (a link count above one),
+> and stated that the count and the removal were two steps a concurrent
+> deletion could fall between. That authority is withdrawn rather than
+> narrowed: no count is taken, and no sweep or directory removal unlinks a
+> link. The cost is stated as it is: a retained link costs one directory entry
+> while the user's own name exists, but if the user later deletes that name,
+> the retained link alone keeps the file's clusters allocated, and nothing in
+> MSCanvas reclaims them. The capacity preflight measures the volume's real
+> free space, so it neither counts a retained link as a copy's allocation nor
+> removes one to make room.
 
 No sweep lifts a quarantine. A session that could not observe its worker's end
 keeps refusing runs until MSCanvas exits, whatever happens to a directory; the
 quarantined attempt's directory is live scratch for as long as that session
-runs, and the first sweep of a later session may remove it.
+runs, and the first sweep of a later session may remove it — unless it holds a
+link, which a quarantined link attempt does, and which is then kept.
 
-The sweep's outcome (removed / live / unowned / uncertain) is typed and tested;
-it is not shown in the interface.
+The sweep's outcome (removed / live / unowned / linked / uncertain) is typed
+and tested; it is not shown in the interface or logged.
 
 ## Alternatives rejected
 

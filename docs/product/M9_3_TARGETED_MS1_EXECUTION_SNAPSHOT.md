@@ -70,6 +70,7 @@ plan, the result and the record are the same as for a link.
 | A cancel during the copy, or while it is hashed again, stops between 64 KiB chunks and starts no worker; consumed content is recorded only once the source was read whole | `Cooperative` reader, `snapshot` |
 | Every attempt directory is marked before use, removed marker last when its attempt ends, and kept while an unaccounted worker may use it | `targeted_ms1/scratch.rs` |
 | Each attempt first removes crash-left attempt directories whose owner process is gone, and nothing it cannot prove is one; a preflight does the same before refusing for want of room | `scratch::sweep` |
+| A sweep never unlinks a link, however many names its bytes have: a gone owner's directory holding a link is kept whole (`linked`), and no directory removal ever unlinks the link name; only the attempt that made a link unlinks it, while it holds the source (M9.3.C1) | `scratch::classify`, `remove_owned`, `ExecutionView::drop` |
 | A link's name is removed while the source is still held | `ExecutionView::drop` |
 | Reading, drawing or exporting a stored result never opens, copies or inspects a source | unchanged from M9.2 |
 
@@ -111,12 +112,16 @@ is used: not `%TEMP%`, not `%LOCALAPPDATA%`, not a drive root.
   is gone are removed, at the start of a later attempt or before a preflight
   refuses for want of room; nothing is swept on startup, and what a sweep
   leaves is not shown in the interface. A plan review does not wait for a run
-  in progress, so two sweeps can overlap in one session. A crash-left link that
-  a sweep finds to be the last name of a user's bytes is kept; the count and
-  the removal are two steps, so a name deleted between them, or by an
-  overlapping sweep, is not seen. A directory that is
+  in progress, so two sweeps can overlap in one session. A directory that is
   emptied but cannot itself be removed is left empty and unmarked. Attempt
   directories from before M9.3 carry no marker and are never removed.
+- **Retained links (M9.3.C1).** A crash-left link attempt — a crash or a kill
+  during a same-drive run, or a session quarantined by a worker it could not
+  account for — is never removed automatically. It costs one directory entry
+  while the user's own name for the source exists; if the user later deletes
+  that name, the retained link alone keeps the file's space allocated, and
+  nothing in MSCanvas reclaims it or tells anyone it is there. Removing one is
+  left to a person, or to a future explicit tool; M9.3 has none.
 - **What the worker writes.** Running out of room while the worker itself
   writes its output is the worker's own failure, as in M9.1, and is not
   classified as `insufficientWorkAreaSpace`.
