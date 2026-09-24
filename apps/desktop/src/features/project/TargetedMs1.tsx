@@ -545,6 +545,7 @@ export function TargetedMs1Setup({
         <BatchProgress
           members={progress}
           running={analysing}
+          canStop={session.activeOperation !== null}
           phase={session.analysisPhase}
           runs={session.state.runs}
           nameOf={nameOf}
@@ -884,6 +885,7 @@ export function batchSummary(members: readonly BatchMemberProgress[], t: UiMessa
 function BatchProgress({
   members,
   running,
+  canStop,
   phase,
   runs,
   nameOf,
@@ -894,6 +896,11 @@ function BatchProgress({
 }: {
   readonly members: readonly BatchMemberProgress[];
   readonly running: boolean;
+  /**
+   * Whether there is an accepted operation to name, so a Stop can send
+   * something. Not for the instant before the batch's operation is accepted.
+   */
+  readonly canStop: boolean;
   readonly phase: string | null;
   readonly runs: ProjectSession["state"]["runs"];
   readonly nameOf: (layerId: string) => string;
@@ -1011,7 +1018,7 @@ function BatchProgress({
         </table>
       </div>
       <p className="project-note">{t("targetedBatchOperationalNote")}</p>
-      {running ? (
+      {running && canStop ? (
         <div className="project-actions">
           <button
             type="button"
