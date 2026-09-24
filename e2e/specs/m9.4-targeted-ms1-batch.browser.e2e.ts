@@ -30,6 +30,7 @@ import {
   releaseInvokeHold,
   setInvokeRejection,
   setInvokeResult,
+  revealInDetails,
 } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
@@ -608,9 +609,7 @@ describe("M9.4 targeted MS1 batch: choose, review, run, stop and follow, rendere
     // Operational counts only; no member's target outcomes are on the panel.
     expect(mixed.batch?.text).not.toContain(en.targetedOutcomeDetected);
     await browser.$(`[data-targeted-batch-run="${RUNS[1]}"]`).click();
-    const hint = browser.$("[data-project-inspect-hint] button");
-    if (await hint.isExisting()) await hint.click();
-    await browser.$('[data-provenance="run"]').waitForDisplayed();
+    await revealInDetails('[data-provenance="run"]');
     await capture("m94-07-failed-member-details-1366");
     expect(await unexpectedConsole()).toEqual([]);
   });

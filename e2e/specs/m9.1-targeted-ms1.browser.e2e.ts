@@ -40,6 +40,7 @@ import {
   releaseInvokeHold,
   setInvokeRejection,
   setInvokeResult,
+  revealInDetails,
 } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
@@ -630,9 +631,7 @@ describe("M9.1 targeted MS1 setup, run and report, rendered", () => {
     await releaseInvokeHold("run_targeted_ms1");
     await browser.$('[data-targeted-last="cancelled"]').waitForDisplayed();
     // Below the roomy breakpoint Details waits to be asked for.
-    const hint = browser.$("[data-project-inspect-hint] button");
-    if (await hint.isExisting()) await hint.click();
-    await browser.$('[data-provenance="run"]').waitForDisplayed();
+    await revealInDetails('[data-provenance="run"]');
     const cancelled = await capture("m91-04-cancelled-1366");
     expect(cancelled.report).toBeNull();
     expect(cancelled.details?.describing).toBe("run");
@@ -659,9 +658,7 @@ describe("M9.1 targeted MS1 setup, run and report, rendered", () => {
       expect(shown.report?.text).toContain(long);
       expect(shown.report?.x ?? -1).toBeGreaterThanOrEqual(0);
       expect((shown.report?.x ?? 0) + (shown.report?.width ?? Infinity)).toBeLessThanOrEqual(width + 1);
-      const hint = browser.$("[data-project-inspect-hint] button");
-      if (await hint.isExisting()) await hint.click();
-      await browser.$('[data-provenance="artifact"]').waitForDisplayed();
+      await revealInDetails('[data-provenance="artifact"]');
       await capture(`${label}-details`);
       expect(await unexpectedConsole()).toEqual([]);
     }
@@ -780,9 +777,7 @@ describe("M9.3 a source from another drive, prepared and read through a verified
       [960, 640, "m93-03-copy-details-960"],
     ] as const) {
       await metrics(width, height);
-      const hint = browser.$("[data-project-inspect-hint] button");
-      if (await hint.isExisting()) await hint.click();
-      await browser.$('[data-targeted-source-view="verifiedSnapshotInWorkArea"]').waitForDisplayed();
+      await revealInDetails('[data-targeted-source-view="verifiedSnapshotInWorkArea"]');
       await inView("[data-targeted-source-view]");
       const shown = await capture(label);
       expect(shown.details?.text).toContain(en.targetedSourceViewSnapshot);
@@ -839,9 +834,7 @@ describe("M9.3 a source from another drive, prepared and read through a verified
     });
     await releaseInvokeHold("run_targeted_ms1");
     await browser.$(`[data-targeted-report="${ARTIFACT}"] [data-targeted-row]`).waitForDisplayed();
-    const hint = browser.$("[data-project-inspect-hint] button");
-    if (await hint.isExisting()) await hint.click();
-    await browser.$('[data-targeted-source-view="verifiedSnapshotInWorkArea"]').waitForDisplayed();
+    await revealInDetails('[data-targeted-source-view="verifiedSnapshotInWorkArea"]');
     await inView("[data-targeted-source-view]");
     const shown = await capture("m93-06-copy-details-zh-CN");
     expect(shown.details?.text).toContain(zh.targetedSourceViewSnapshot);

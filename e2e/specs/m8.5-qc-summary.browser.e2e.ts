@@ -32,6 +32,7 @@ import {
   installIpcBoundary,
   ipcCalls,
   setInvokeResult,
+  revealInDetails,
 } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { FAKE_WORKSPACE_CAPACITY } from "../../apps/desktop/src/test/previewFixtures";
@@ -664,9 +665,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
 
       // Below the roomy breakpoint the region waits to be asked for, and the
       // surface says where the answer went.
-      const hint = browser.$("[data-project-inspect-hint] button");
-      if (await hint.isExisting()) await hint.click();
-      await browser.$('[data-provenance="artifact"]').waitForDisplayed();
+      await revealInDetails('[data-provenance="artifact"]');
       const inspected = await capture(`${label}-details`);
       expect(inspected.details?.describing).toBe("artifact");
       expect(inspected.details?.digest).toBe(DIGEST);
