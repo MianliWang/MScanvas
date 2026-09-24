@@ -77,8 +77,14 @@ moved. None has an upstream.
 | A | `scripts/inspect_candidate.ps1` |
 | A | `scripts/verify_installed_payload.py` |
 
-No application source, no test, no manifest and no lock file. CI's desktop
-build passes `--no-bundle`, so the bundle section is never constructed there.
+No application source, no test, no manifest and no lock file. No CI job runs
+the bundler: the only desktop-build workflow, `windows-smoke.yml`, is manually
+dispatched and passes `--no-bundle`. The Rust job's cargo builds do run
+`tauri-build`, which copies `bundle.resources` (the licence and the notices)
+into the target directory and embeds `bundle.publisher` and `bundle.copyright`
+in the Windows version resource of every binary it builds. On the candidate,
+`python -B scripts/generate_notices.py --check` exits 0: the generated notices
+still match the dependency graph M8 and M9 left.
 
 **Would integrating these commits make `main` read as release-qualified?**
 Before this candidate, in two places:
@@ -90,8 +96,13 @@ Before this candidate, in two places:
   progress*, which is no longer what happened: the slice stopped and its
   qualification was deferred.
 
-Both are corrected (§4). The history is not rewritten: the thirteen commits
-stay as they are, and integrating any M8 or M9 commit publishes them.
+Both are corrected (§4); the CHANGELOG entry's present-tense check of the
+packaged build is also scoped to the M7.6 candidate build it ran on.
+`THIRD_PARTY_NOTICES.md` also speaks of *what the installer actually carries*
+in the present tense; that states the inventory's scope, not a release, and
+the file is generated, so it is left as it is. The history is not rewritten:
+the thirteen commits stay as they are, and integrating any M8 or M9 commit
+publishes them.
 
 ## 4. Current-state documents reconciled
 
@@ -104,13 +115,13 @@ left to this record.
 | File | Change |
 | --- | --- |
 | `README.md` | the status block names M8/M9; a new section, *Beyond the published M7.5 product*, states the projects, the bounded experimental targeted-MS1 recipe and its development-only runtime, the partial M7.6 and the named test debt; the *not implemented* list no longer denies the stored-result exports and says what a project does not restore; *Analysis is deferred* is narrowed; *What is next* no longer names M6; repository status, prerequisites and map updated |
-| `CHANGELOG.md` | M8 and M9 entries; the M7.6 entry says an unqualified candidate, not a release, and that no installer or public beta exists |
+| `CHANGELOG.md` | M8 and M9 entries; the M7.6 entry says an unqualified candidate, not a release, scopes its packaged-build check to the M7.6 candidate build, and says no installer or public beta exists |
 | `ROADMAP.md` | M7, M8 and M9 status lines and *After M9* |
 | `BOOTSTRAP_STATUS.md` | the current-route paragraph, including the named test debt |
 | `PROJECT_PROPOSAL.md` | §18 status sentences for M7.6, M8 and M9 |
 | `docs/product/FEATURE_CATALOG.md` | VIEW-008, the *Projects* introduction and ANA-004 |
 | `docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md` | the status line only: partial and deferred |
-| `docs/product/M9_CLOSURE.md` | forward pointers to this record in §11 and §14; nothing else |
+| `docs/product/M9_CLOSURE.md` | *at this closure* and forward pointers to this record in §1, §11 and §14; nothing else |
 
 `docs/product/PRIMARY_WORKFLOWS.md` and `docs/product/SCREEN_MODEL.md` were
 checked and needed nothing. Slice records, ADRs and evidence documents are
@@ -144,7 +155,9 @@ green. The owner decides at publication.
   `main`.** From the M9 closure's test-by-test comparison
   ([evidence §8](../spikes/M9_CLOSURE_EVIDENCE.md#8-the-repository-wide-browser-suite)):
   of the 317 tests in the 21 spec files that published `main` (tree of
-  `1daf802`) and the closure code (`59cbf1c`) share, **174 fail on each side and
+  `1daf802`) and the closure code (`59cbf1c`; the m4.1, m4.3 and m4.4 results
+  from `d8310ce`, because their WebDriver sessions failed to open in the
+  `59cbf1c` run) share, **174 fail on each side and
   0 differ**; the 7 M8/M9 spec files (36 tests) pass. The failing specs are
   legacy M4–M7 and viewer-r1 specs; two families are obsolete selectors
   confirmed statically. The final closure code differs from `59cbf1c` only in
@@ -155,15 +168,22 @@ green. The owner decides at publication.
   `M73Viewer.test.tsx > … exports only committed axis ranges while drawing or
   pending, then the newly confirmed range from retained tokens`, 5,000 ms limit;
   it failed the whole `pnpm test` in two of the M9 closure's four campaigns
-  (5,065 and 5,103 ms) and in the M8.4 and M8.5 records, and passed alone every
-  time. The frontend source is unchanged since M9.4.
+  (5,065 and 5,103 ms) and in the M8.5 record (5,023 ms; M8.4 recorded two
+  unnamed timeouts in the same file), and passed alone every time it was run
+  alone. The frontend source is unchanged since M9.4.
 - **The browser harness can fail to open a WebDriver session** for a spec (no
   test result in that run).
 
 ## 7. Publication risks to watch
 
-Neither is fixed here; both are for the publication run.
+None is changed here; each is for the owner and the publication run.
 
+- **Publishing starts schema 4's compatibility promise.** The project document
+  schema is an unpublished development schema whose promise begins only when
+  this source line is published
+  ([M9 closure §4](../product/M9_CLOSURE.md#4-schema-4--the-canonical-disposition));
+  earlier M9 development builds are not compatible with each other. Authorizing
+  the merge is also that decision.
 - **The Frontend check runs `pnpm test` on `ubuntu-latest`** and is required by
   the `main` ruleset. The timeout in §6 could fail it. A failed required check
   is recorded as it happened; whether to re-run a job is the owner's call, and
@@ -191,17 +211,22 @@ candidate:
 
 1. **Rebind live state.** `git ls-remote origin refs/heads/main` still
    `1daf802f06d0149b5de3dbd12e8b01e7e86862ec`; the effective `main` ruleset read
-   from the rulesets API ([PUBLISHING.md](PUBLISHING.md)); the local branch head
-   equals the candidate's documentation successor named in §8, whose diff from
-   the candidate is this file alone.
+   from the rulesets API ([PUBLISHING.md](PUBLISHING.md)); the repository's
+   *automatically delete head branches* setting, which would delete the remote
+   branch at merge without step 8's consent; the local branch head equals the
+   candidate's documentation successor named in §8, whose diff from the
+   candidate is this file alone.
 2. **Push the branch as it is**, without force, and open one pull request:
    base `main`, head this branch. Its body names the candidate commit and
    tree, the evidence in §8, the debt in §6 and the risks in §7, and states that
    no release, installer or public beta follows from it.
 3. **Let the required checks run on the exact head** and record their results
    as they are.
-4. **Merge with a merge commit (a true merge).** No squash, no rebase merge, no
-   cherry-pick, no force push, no administrator bypass. Verify afterwards: first
+4. **Merge with a merge commit (a true merge), bound to the reviewed head** —
+   for example `gh pr merge <number> --merge --match-head-commit <head sha>`, or
+   the merge API's `sha` parameter — so that a head that moved is refused rather
+   than merged. No squash, no rebase merge, no cherry-pick, no force push, no
+   administrator bypass. Verify afterwards: first
    parent = the `main` it merged into, second parent = the branch head; while
    `main` has not moved since `1daf802`, the merge commit's tree equals the
    branch head's tree.

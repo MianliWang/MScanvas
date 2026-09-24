@@ -37,10 +37,12 @@ All notable changes will be documented here once versioned releases begin.
   installed resources. ProteoWizard is still yours to install and is never
   bundled.
 
-  The build that is packaged is a production build. Every QA-only string this
+  The build that is packaged is a production build. In the M7.6 candidate build,
+  made before the project and targeted MS1 work above, every QA-only string this
   project's rendered tests rely on — derived from the QA sources rather than
-  transcribed — is absent from it, and the check that says so first proves it
-  can find each of those strings in a QA build.
+  transcribed — was absent, and the check that says so first proves it can find
+  each of those strings in a QA build. No build containing that later work has
+  been packaged or inspected yet.
 
   A first beta, when there is one, is planned **unsigned**, so Windows will warn
   about it. There is no advice here for getting around that, and none for

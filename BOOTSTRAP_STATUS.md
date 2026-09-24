@@ -21,9 +21,9 @@ source-integration candidate, recorded in the
 [M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md);
 the merge on `main`, not this paragraph, is the evidence that it was published.
 None of it is in an installer or a release. Named test debt travels with it: the
-repository-wide browser suite fails 174 of the 317 tests shared with published
-`main`, identically on both (legacy M4–M7 and viewer-r1 specs; the M8/M9 specs
-pass), and one App-level Vitest case can exceed its 5 s limit under load. The first Windows x64 beta's scope and
+repository-wide browser suite fails 174 of the 317 tests shared with the M7.5
+`main` it follows (`1daf802`), identically on both (legacy M4–M7 and viewer-r1
+specs; the M8/M9 specs pass), and one App-level Vitest case can exceed its 5 s limit under load. The first Windows x64 beta's scope and
 route remain
 [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)'s;
 no public beta is built or released, and M10 is not started. The dated entries below retain their original milestone and

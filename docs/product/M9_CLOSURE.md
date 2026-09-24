@@ -35,8 +35,10 @@ or the source.
 It is not chemical identification, not a validated quantitative assay, not
 untargeted feature detection, not a general or exportable XIC, not a
 multi-sample comparison, and not a distributable feature: the runtime exists
-only in a development checkout. Nothing here is source-integrated, installed,
-qualified or released (§11).
+only in a development checkout. At this closure nothing here was
+source-integrated, installed, qualified or released (§11); source integration
+is recorded in the
+[M8/M9 source-integration record](../development/M8_M9_SOURCE_INTEGRATION.md).
 
 ## 2. Identities
 

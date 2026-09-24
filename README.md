@@ -17,7 +17,7 @@ MSCanvas aims to be a Windows-first, local-first desktop application for importi
 
 Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (public; visibility verified 2026-09-12).
 
-**M7.5**, the newest published slice, keeps the UI preferences you set across a
+**M7.5**, the last slice published before the M8/M9 stack, keeps the UI preferences you set across a
 restart — language, roster density and which workspace panels you asked for —
 recovers from a stored record it cannot read or cannot write, explains offline
 what ProteoWizard is yours to install and how long a folder you choose lasts,
@@ -78,8 +78,9 @@ None of them is in an installer or a release.
 No public beta exists, and no installer containing M8 or M9 has been qualified.
 ProteoWizard is still yours to install; MSCanvas never downloads or bundles it.
 Known test debt travels with this source: the repository-wide browser suite
-fails 174 legacy M4–M7 and viewer tests exactly as it does on published `main`
-(the M8 and M9 browser specs pass), and one App-level Vitest case can exceed its
+fails 174 legacy M4–M7 and viewer tests exactly as it does on `1daf802`, the
+M7.5 `main` the stack follows (the M8 and M9 browser specs pass), and one
+App-level Vitest case can exceed its
 5-second limit under load. The integration record gives the evidence.
 
 ## What works today
@@ -202,8 +203,9 @@ already running; a conversion queue that survives closing the application;
 diagnostics for anything but the latest attempt of each item, a diagnostics
 history, complete raw converter logs, and sending a diagnostics file anywhere;
 and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV,
-the chromatogram's, the linked two-panel figure of the two, and one target of a
-stored targeted-MS1 result -- there is no
+the chromatogram's, the linked two-panel figure of the two, and a stored
+targeted-MS1 result's figure of one target (SVG, PNG) and its whole-result
+CSV/TSV table -- there is no
 saved figure specification, no figure composer, and figure settings are not
 remembered across a restart. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
@@ -386,10 +388,10 @@ above is deferred rather than prohibited. MSCanvas should reuse mature algorithm
 
 ## What is next
 
-The order the repository's plans are consistent with, none of it promised:
-source integration of the stack
-[described above](#beyond-the-published-m75-product); a concentrated
-real-workflow UI/UX cleanup; a frozen new product candidate, and M7.6-style
+Once the stack [described above](#beyond-the-published-m75-product) is
+source-integrated, the order the repository's plans are consistent with, none
+of it promised: a concentrated real-workflow UI/UX cleanup; a frozen new
+product candidate, and M7.6-style
 installed, native, provider and release qualification against it; then a
 decision between a public beta and M10 -- a headless CLI, then skills, then a
 narrow local MCP. See [`ROADMAP.md`](ROADMAP.md) and the
@@ -445,7 +447,8 @@ The repository contains:
   conversion-integrity checking;
 - in the desktop crate, the project store (M8) and the targeted-MS1 recipe, its
   worker supervisor and its pinned adapter (M9); the M9.0 route experiment under
-  `experiments/m9_0/`; and the development-runtime provisioning script;
+  `experiments/m9_0/` and the M9.1 entry and review probes under `experiments/m9_1/`; and
+  the development-runtime provisioning script;
 - product, UX and architecture source documents;
 - repo-local Codex guidance and skills;
 - frontend, Rust and repository-quality CI workflows.

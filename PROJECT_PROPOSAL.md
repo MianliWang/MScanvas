@@ -672,8 +672,8 @@ All seven mandatory native scenarios pass on attributed Build 04 inputs. Its
 controlled/native evidence and retained failures. Protected publication,
 natural-main CI and local closeout identities belong to PR #124.
 M7.5 is published (PR #125). M7.6 is partially implemented and not qualified
--- an NSIS per-user candidate configuration, shipped notices and inspection
-scripts, with installed qualification not started -- and its release
+-- an NSIS per-user candidate configuration, generated third-party notices and
+inspection scripts, with installed qualification not started -- and its release
 qualification is deferred: it resumes against a later product candidate that
 contains M8/M9, not the M7.6 one. No public beta is built or released.
 
