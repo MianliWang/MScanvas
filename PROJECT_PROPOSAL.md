@@ -3,7 +3,7 @@
 ## Product & Engineering Source of Truth
 
 **Status:** Pre-alpha proposal and repository contract  
-**Updated:** 2026-07-24
+**Updated:** 2026-09-24
 **License:** Apache-2.0  
 **Canonical repository:** `MianliWang/MScanvas`  
 **Initial target:** Windows desktop  
@@ -671,7 +671,11 @@ All seven mandatory native scenarios pass on attributed Build 04 inputs. Its
 [implementation record](docs/ux/M7_4_CONVERSION_RESULTS_FIGURES.md) separates
 controlled/native evidence and retained failures. Protected publication,
 natural-main CI and local closeout identities belong to PR #124.
-M7.5 remains next and not started. This slice builds or releases no public beta.
+M7.5 is published (PR #125). M7.6 is partially implemented locally and
+unpublished -- an NSIS per-user candidate, shipped notices and inspection
+scripts, with installed qualification not started -- and its release
+qualification is deferred: it resumes against the M8/M9 product candidate, not
+the M7.6 one. No public beta is built or released.
 
 ### M8 — Artifact, run and QC foundation
 
@@ -679,7 +683,7 @@ Durable project/artifact/run lineage and first useful QC reports, including the 
 
 ### M9 — First analysis recipes
 
-Isolated worker and one or two reviewed, typed recipes backed by mature packages; multi-layer comparison semantics on top of M8's layer identity; a reusable XIC export, which M5 deliberately does not build. M9.1 implemented the first recipe locally and unpublished as an experimental, bounded targeted MS1 lookup: a supervised pyOpenMS worker in a development-only runtime, a project-adjacent result store and schema 4. Runtime packaging, M9.2 and later recipes are not started. See the [M9.1 record](docs/product/M9_1_TARGETED_MS1_HANDOFF.md#m91-record).
+Isolated worker and one or two reviewed, typed recipes backed by mature packages; multi-layer comparison semantics on top of M8's layer identity; a reusable XIC export, which M5 deliberately does not build. **M9 is complete locally and unpublished** (M9.0–M9.4 and the M9 closure) as one bounded, experimental targeted-MS1 recipe: a supervised pyOpenMS worker in a development-only runtime, a project-adjacent result store under schema 4, stored results reopened and exported as SVG, PNG and CSV/TSV without the runtime or the source, sources read from any local volume through a verified copy, and sequential batches of 2–16 independent acquisitions. It is not identification, a validated assay, a general XIC or a multi-sample comparison. Multi-layer comparison, the XIC export and a second recipe were not delivered and are moved out of M9; runtime packaging is not started. See the [M9 closure](docs/product/M9_CLOSURE.md), which states the current contract and the source-integration handoff.
 
 ### M10 — Automation
 

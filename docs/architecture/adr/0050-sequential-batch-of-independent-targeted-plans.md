@@ -172,3 +172,11 @@ shows two members' results together.
   target, a 16-member batch of 200 targets adds roughly 0.5–0.65 MB of plans to
   a document limited to 4 MiB. When history is full, the member that meets it
   is refused `oversized` and no later member starts.
+
+> **Measured at the M9 closure (2026-09-24).** The estimate above is low. With
+> this build's serializer, which writes the document pretty-printed, a member
+> over 200 targets adds about 54.8 kB (48.9 kB of plan, 4.7 kB of run, 1.2 kB of
+> result record), so a 16 × 200 batch adds about 0.84 MiB and four such batches
+> fit. The member that meets the bound has already run its worker. See the
+> [M9 closure](../../product/M9_CLOSURE.md#8-document-growth). The decision is
+> unchanged.

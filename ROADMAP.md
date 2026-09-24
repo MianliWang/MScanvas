@@ -763,10 +763,14 @@ a real ProteoWizard conversion read and exported in Simplified Chinese with the
 exported document unchanged. Its protected publication, natural-main CI and
 local closeout identities belong to PR #125. The first
 beta's support target is decided: **Windows 11 25H2 x64**, with other Windows
-versions and ARM64 not promised supported. M7.6 remains
-**NEXT / NOT STARTED** and owns installed-candidate qualification on that
-target. M8/M9/M10
-remain later owners. External support/signing/distribution/sample/release
+versions and ARM64 not promised supported. M7.6 is **partially implemented
+locally and unpublished** — an NSIS per-user candidate build, shipped notices
+and inspection scripts, with installed qualification not started
+([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)) — and its
+release qualification is **deferred / incomplete**: it resumes against the
+M8/M9 product candidate, not the M7.6 one (see the
+[M9 closure](docs/product/M9_CLOSURE.md#15-after-m9)). M8 and M9 are complete
+locally and unpublished; M10 is not started. External support/signing/distribution/sample/release
 decisions have explicit owner deadlines in ADR 0047; they are not waived.
 
 M5 hands it the interaction principles it proved rather than asserted:
@@ -827,26 +831,31 @@ closure and the M9 handoff.
 
 ## M9 — First analysis recipes
 
-**IN PROGRESS — M9.1 LOCAL VERTICAL IMPLEMENTATION COMPLETE; M9.2 NOT
-STARTED.** M9.0 measured one proposed first recipe, targeted MS1 signal and
-candidate detection on pyOpenMS 3.5.0, and ended with a conditional
-recommendation ([route evidence](docs/spikes/M9_0_TARGETED_MS1_ROUTE_EVIDENCE.md)).
-M9.1 built it as one bounded, **experimental** vertical slice, locally and
-unpublished: a reviewed, digest-named plan over one mzML layer; a supervised
-worker in a fixed, verified CPython 3.13.15 + pyOpenMS 3.5.0 runtime reading
-the held source through a same-volume hard link; typed, fail-closed outcomes; a
-validated result stored beside the project and referenced by schema 4; and a
-Project-surface setup, report and evidence plot
-([M9.1 record](docs/product/M9_1_TARGETED_MS1_HANDOFF.md#m91-record),
-[M9.1 evidence](docs/spikes/M9_1_TARGETED_MS1_VERTICAL_EVIDENCE.md)). The
-runtime exists only in a development checkout: bundling, installation, updates
-and licence review remain the owner's packaging decision, and Route B (TOPP) is
-neither authorized nor executed.
+**M9 LOCAL IMPLEMENTATION COMPLETE — TARGETED-MS1 ANALYSIS PHASE CLOSED
+LOCALLY; SOURCE UNPUBLISHED.** M9 delivered one **bounded, experimental
+targeted-MS1 recipe, implemented locally**: M9.0 measured the route and ended
+with a conditional recommendation; M9.1 built the recipe (a reviewed,
+digest-named plan over one mzML layer, a supervised worker in a fixed,
+verified, development-only CPython 3.13.15 + pyOpenMS 3.5.0 runtime, typed
+fail-closed outcomes, a result stored beside the project under schema 4); M9.2
+made a stored result reopenable and exportable as SVG, PNG and CSV/TSV without
+the runtime or the source; M9.3 let a source on another volume run through a
+verified copy and made attempt scratch recoverable; M9.4 runs one request over
+2–16 independent acquisitions one after another. The current contract, the
+schema-4 disposition, the remaining limits with their owners and the
+source-integration handoff are in the
+[M9 closure](docs/product/M9_CLOSURE.md), which future work reads first. It is
+not identification, a validated assay, a general XIC or a multi-sample
+comparison; the runtime is not packaged, and Route B (TOPP) is neither
+authorized nor executed.
 
 - Isolated worker contract and one or two reviewed recipes backed by mature
-  packages.
+  packages. **One recipe delivered.** A second recipe is not an M9 obligation
+  and is a separate owner decision after the UI and release work.
 - Recipe mode first; no generic workflow canvas until real needs justify it.
-- **A reusable XIC export**, if an XIC ever exists. M5 measured
+- **A reusable XIC export**, if an XIC ever exists. **Not delivered by M9 and
+  moved out of it at closure**: the conditions below stand, and a targeted-MS1
+  evidence trace is not an admitted XIC. M5 measured
   `XIC_SOURCE_REFUSED` and built neither a trace nor an artifact, so the
   condition this entry was written under — *if M5 admitted one* — can no longer
   be met. It is **not** thereby closed. **Re-entry now has two owners, and they
@@ -862,8 +871,10 @@ neither authorized nor executed.
   of M8's artifact identity. See
   [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md) and
   [ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md).
-- **Multi-layer comparison (VIEW-008)** belongs here for its semantics, on top of
-  M8's layer identity. Deferred from M5 with a recorded dependency audit: the
+- **Multi-layer comparison (VIEW-008)** was placed here for its semantics, on
+  top of M8's layer identity. **Not delivered by M9 and moved out of it at
+  closure** to a future comparison decision gated on an admitted normalization;
+  M9.4's batch deliberately compares nothing. Deferred from M5 with a recorded dependency audit: the
   application holds one preview by contract — Rust's open ticket states that
   there is only one chromatogram the user is looking at and only one that may be
   exported — two runs' intensities are not comparable without a normalization
@@ -871,6 +882,16 @@ neither authorized nor executed.
   type from the one selected scan every linked view consumes. See
   [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
 
+### After M9
+
+Not started and not promised: an explicit source-integration decision; a
+concentrated real-workflow UI/UX cleanup; a frozen new product candidate;
+M7.6-style installed, native, provider and release qualification against that
+candidate; then a decision between a public beta and M10. See the
+[M9 closure](docs/product/M9_CLOSURE.md#15-after-m9).
+
 ## M10 — Automation
+
+**NOT STARTED.**
 
 - Stable CLI and schemas, then repo/user skills, then a narrow local MCP adapter.

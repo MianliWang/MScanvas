@@ -92,8 +92,13 @@ Contextual rather than permanently dense:
 - plot layer selected → layer/style/source;
 - conversion scope selected → semantic settings and output summary;
 - analysis result selected → lineage and module parameters. Implemented for the
-  targeted MS1 result (M9.1): the report opens in the Project surface's main
-  region, and Details shows the plan, the source as read and the attempt facts.
+  targeted MS1 result (M9.1–M9.4): the report opens in the Project surface's
+  main region and says whether its stored payload is whole, the source's
+  last-checked state and whether new runs are available; Details shows the
+  plan, the source as read and how it was given to the engine, and the attempt
+  facts. A batch shows each member's execution state in its setup and opens
+  one member's result at a time, never two together. See the
+  [M9 closure](M9_CLOSURE.md).
 
 ### Runs panel
 

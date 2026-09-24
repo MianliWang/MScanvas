@@ -67,7 +67,8 @@ in a fixed CPython 3.13.15 + pyOpenMS 3.5.0 runtime. What it settled:
 
 The runtime is provisioned into a development checkout only; nothing here
 satisfies the packaging gate below. See the
-[M9.1 record](../product/M9_1_TARGETED_MS1_HANDOFF.md#m91-record).
+[M9.1 record](../product/M9_1_TARGETED_MS1_HANDOFF.md#m91-record), and the
+[M9 closure](../product/M9_CLOSURE.md) for the current contract.
 
 ## Packaging gate
 

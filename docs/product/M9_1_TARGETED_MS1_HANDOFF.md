@@ -32,6 +32,9 @@ job with one Stop. Each member is a run exactly as described below, over its
 own layer and its own plan; the exclusive-run rules hold from the first member
 to the last. See the [M9.4 record](M9_4_TARGETED_MS1_BATCH.md).
 
+Update: the [M9 closure](M9_CLOSURE.md) has since closed M9 locally. It is the
+one place that states the current M9 contract; this document is history.
+
 The first section records what M9.1 built. Everything after it is the M9.0
 decision and the handoff M9.1 was built against, kept as written; where the
 build differs from the handoff, the first section says so.

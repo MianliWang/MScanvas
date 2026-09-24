@@ -615,3 +615,19 @@ spectrum's own export surface is set to. See
 6. Result artifacts appear with lineage and suitable views.
 
 **Success:** no package-specific command/API knowledge is required, and results remain inspectable.
+
+**Implemented for one recipe: targeted MS1 (M9.1–M9.4, experimental,
+development runtime only).** In a saved project: **Targeted MS1…** on a layer
+row → choose that acquisition or 2–16 of them → type targets, one per line, and
+the two parameters → **Review plan** (Rust resolves a digest-named plan per
+acquisition and says, per line or per acquisition, what stops it) → **Run** or
+**Run N analyses**, one worker at a time, with **Cancel** or **Stop batch** →
+the result report (outcome counts, rows in plan order, one target's stored
+evidence as the canonical figure) → **Export** SVG, PNG, CSV or TSV, with
+**Details** for the plan, the source as read and the attempt. Recovery: a
+problem in the request is named by line and nothing runs; a refusal before a
+run (unsaved project, no runtime, no room for a copy, a quarantined session)
+records nothing and says what to change; a failed or cancelled run is kept in
+history with its code and stage and publishes nothing; a stored result whose
+payload is missing or damaged says so and offers nothing it cannot read. The
+current contract is the [M9 closure](M9_CLOSURE.md).
