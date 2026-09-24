@@ -711,24 +711,25 @@ fn execution_view(
             progress,
         );
     }
-    let identity = held.identity;
-    let view = ExecutionView {
-        held,
-        path: link,
-        kind: SourceView::HardLinkInWorkArea,
-        consumed,
-    };
     // A link that is not the held object is refused, and never replaced by a
-    // copy: something other than this attempt put it there.
-    if identity.is_none() || local_document::object_identity(&view.path) != identity {
+    // copy: something other than this attempt put it there. Refused before it
+    // becomes a view, so it is never unlinked either -- what is at that name
+    // is not shown to be a name of the held source, and may be the last name
+    // of something else. It stays, and its directory with it.
+    if held.identity.is_none() || local_document::object_identity(&link) != held.identity {
         return Err(Box::new(failed(
-            view.consumed.clone(),
+            consumed,
             None,
             FailureCode::ExecutionViewUnavailable,
             FailureStage::Source,
         )));
     }
-    Ok(view)
+    Ok(ExecutionView {
+        held,
+        path: link,
+        kind: SourceView::HardLinkInWorkArea,
+        consumed,
+    })
 }
 
 /// Copies the held source into `directory` and holds the copy, refusing any

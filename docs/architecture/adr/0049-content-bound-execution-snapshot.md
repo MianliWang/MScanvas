@@ -186,7 +186,10 @@ never unlinked either. The link is only ever made at the directory's top level
 and only ever unlinked by the attempt that made it, in `ExecutionView`'s drop,
 while the source is still held by the name it was opened through; Windows
 refuses to delete or rename that name while it is held, with the link beside
-it (measured), so the link is not its last name then.
+it (measured), so the link is not its last name then. A view is built only
+after the entry is shown to be the held object: an entry that is not (the
+decision 1 refusal) is left where it is, never unlinked, and its directory is
+kept like any other that holds something at the link name.
 
 A copy (`snapshot.mzML`) is created new in the attempt's own directory and is
 never another name for anything, so a gone owner's copy is still removed. The
@@ -194,7 +197,10 @@ view a directory held is read from these two names — journaled directory
 entries — so the marker keeps schema `/1` with no view field: a crash before
 either exists leaves only the attempt's own files, a link that exists is
 kept, and every directory M9.3 marked before this amendment is judged by the
-same rule.
+same rule. The reverse does not hold: a build from before the amendment,
+sharing this checkout's `.tmp`, would still apply the withdrawn rule to a
+link directory. That residual is confined to unpublished development builds
+of this branch.
 
 > **Amended by M9.3.C1 (2026-09-24).** As first accepted, a sweep removed a
 > gone owner's link when its bytes had another name (a link count above one),

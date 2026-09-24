@@ -116,8 +116,10 @@ is used: not `%TEMP%`, not `%LOCALAPPDATA%`, not a drive root.
   emptied but cannot itself be removed is left empty and unmarked. Attempt
   directories from before M9.3 carry no marker and are never removed.
 - **Retained links (M9.3.C1).** A crash-left link attempt — a crash or a kill
-  during a same-drive run, or a session quarantined by a worker it could not
-  account for — is never removed automatically. It costs one directory entry
+  during a same-drive run, a session quarantined by a worker it could not
+  account for, an attempt whose own removal of its link failed (another
+  program had it open), or an entry at the link name that was not shown to be
+  the held source — is never removed automatically. It costs one directory entry
   while the user's own name for the source exists; if the user later deletes
   that name, the retained link alone keeps the file's space allocated, and
   nothing in MSCanvas reclaims it or tells anyone it is there. Removing one is

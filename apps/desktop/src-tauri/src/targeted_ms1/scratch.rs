@@ -46,10 +46,12 @@
 //! `remove_owned` refuses the link name on every path, so a link that appears
 //! after a directory was judged, or one left by an attempt whose own removal
 //! failed, is never unlinked either. The link is only ever made at the
-//! directory's top level (`execution_view`), and the one statement that unlinks it is
-//! `ExecutionView`'s drop, inside the attempt that made it and while it still
-//! holds the source by the name the source was opened through, which Windows
-//! then refuses to delete or rename.
+//! directory's top level (`execution_view`), and the one statement that
+//! unlinks it is `ExecutionView`'s drop -- for a view built only once the
+//! entry was shown to be the held source -- inside the attempt that made it
+//! and while it still holds the source by the name the source was opened
+//! through, which Windows then refuses to delete or rename. An entry that is
+//! not shown to be the held source is never unlinked at all.
 //!
 //! A copy (`snapshot.mzML`) is created new by the attempt in its own
 //! directory and is never another name for anything; which view a directory
@@ -644,15 +646,28 @@ mod tests {
         )
         .expect("marker");
         fs::hard_link(&original, malformed.join(LINK_NAME)).expect("link");
+        // Whole and consistent -- its own name, a gone owner -- but a schema
+        // this build does not know.
+        let future = marked(&root, NOBODY, 1);
+        fs::remove_file(future.join("snapshot.mzML")).expect("a link attempt has no copy");
+        let name = future.file_name().expect("name").to_str().expect("utf-8");
+        fs::write(
+            future.join(MARKER),
+            format!(
+                "{{\"schema\":\"mscanvas.targetedMs1.attemptScratch/2\",\"attemptId\":\"{name}\",\"ownerProcessId\":{NOBODY},\"ownerProcessCreated\":1}}"
+            ),
+        )
+        .expect("marker");
+        fs::hard_link(&original, future.join(LINK_NAME)).expect("link");
 
         assert_eq!(
             sweep(&root),
             Sweep {
-                unowned: 2,
+                unowned: 3,
                 ..Sweep::default()
             }
         );
-        for attempt in [&unmarked, &malformed] {
+        for attempt in [&unmarked, &malformed, &future] {
             assert_eq!(
                 fs::read(attempt.join(LINK_NAME)).expect("kept"),
                 b"user bytes"

@@ -2610,6 +2610,7 @@ fn a_source_under_a_non_ascii_path_is_read_through_its_ascii_link() {
         real_project(&area, "数据 目录/样品 plain.mzML", &mzml(&plain(), ""));
     assert!(!source.to_str().expect("utf-8").is_ascii());
     let supervisor = real();
+    let before = attempt_entries(&supervisor);
     let plan = plan(
         &store,
         layer,
@@ -2634,7 +2635,9 @@ fn a_source_under_a_non_ascii_path_is_read_through_its_ascii_link() {
             .map(|attempt| attempt.source_view),
         Some(SourceView::HardLinkInWorkArea)
     );
-    // The link is gone and the source is where it was.
+    // The link is gone -- with its whole attempt directory, which nothing
+    // but the attempt itself would remove -- and the source is where it was.
+    assert_eq!(attempt_entries(&supervisor), before);
     assert!(source.is_file());
 }
 
@@ -3582,6 +3585,7 @@ fn a_link_view_removes_its_link_while_the_source_name_cannot_go_first() {
 }
 
 /// A marked attempt of a gone owner holding a hard link to `original`.
+#[cfg(windows)]
 fn dead_link_attempt(root: &Path, original: &Path) -> PathBuf {
     let attempt = crash_left(root, 0xFFFF_FFFD);
     fs::remove_file(attempt.join(SNAPSHOT_NAME)).expect("a link attempt has no copy");
@@ -3589,6 +3593,7 @@ fn dead_link_attempt(root: &Path, original: &Path) -> PathBuf {
     attempt
 }
 
+#[cfg(windows)]
 #[test]
 fn a_link_left_by_a_crash_is_not_given_up_to_make_room_for_a_copy() {
     let scratch = Scratch::new("m93c1-room");
@@ -3620,6 +3625,7 @@ fn a_link_left_by_a_crash_is_not_given_up_to_make_room_for_a_copy() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn a_sweep_over_a_project_and_its_result_store_removes_none_of_it() {
     let scratch = Scratch::new("m93c1-store");
@@ -3706,6 +3712,7 @@ fn an_attempt_removes_crash_left_scratch_and_nothing_it_cannot_prove_is_its_own(
     let (store, layer, _) = real_project(&area, "plain.mzML", &mzml(&plain(), ""));
     let supervisor = real();
     fs::create_dir_all(&supervisor.attempts).expect("attempts root");
+    let before = attempt_entries(&supervisor);
     // Process ids are multiples of four; no process has this one.
     let crashed = crash_left(&supervisor.attempts, 0xFFFF_FFFD);
     // Beside it, what looks like an attempt and is not provably one.
@@ -3745,6 +3752,11 @@ fn an_attempt_removes_crash_left_scratch_and_nothing_it_cannot_prove_is_its_own(
         b"not ours to remove"
     );
     fs::remove_dir_all(&unmarked).expect("the test's own fixture");
+    assert_eq!(
+        attempt_entries(&supervisor),
+        before,
+        "the run's own link attempt left nothing"
+    );
     // The published result is outside the work area and untouched by it.
     assert_eq!(
         store.describe().artifacts[0]
