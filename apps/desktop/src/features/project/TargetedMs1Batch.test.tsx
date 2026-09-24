@@ -476,8 +476,29 @@ describe("a batch run", () => {
 
   it("says each member's end in its own words and never as a finding", async () => {
     const api = mount(three());
-    api.setTargeted({ batchResolution: reviewOf() });
+    api.setTargeted({
+      batchResolution: reviewOf(),
+      // Mid-batch: one member completed, one failed, one running.
+      progress: {
+        operationId: "project-job-1",
+        phase: "loadingSource",
+        batch: [
+          member(0, "completed", { runId: RUN_A, artifactId: ARTIFACT_A }),
+          member(1, "failed", { runId: RUN_B }),
+          member(2, "running"),
+        ],
+      },
+    });
     await reviewAll(api);
+    const release = api.holdOnce("runTargetedMs1Batch");
+    await press(query("[data-targeted-run]"));
+    await screen.findByText(en.targetedBatchRunningTitle);
+    await screen.findByText(en.targetedBatchStateFailed);
+    // Neither a finished member's result nor its run is offered while the
+    // project on screen holds neither.
+    expect(document.querySelector("[data-targeted-batch-open]")).toBeNull();
+    expect(document.querySelector("[data-targeted-batch-run]")).toBeNull();
+
     api.set(afterBatch());
     api.setTargeted({
       batchMembers: [
@@ -486,7 +507,9 @@ describe("a batch run", () => {
         member(2, "refused", { reason: "insufficientWorkAreaSpace" }),
       ],
     });
-    await press(query("[data-targeted-run]"));
+    await act(async () => {
+      release();
+    });
 
     await screen.findByText(en.targetedBatchEndedTitle);
     expect(query(`[data-targeted-batch-member="${LAYERS[1].id}"]`).textContent).toContain(

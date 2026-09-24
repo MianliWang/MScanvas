@@ -2947,7 +2947,6 @@ pub struct MemberResolution {
 }
 
 /// Which plan a run executes.
-#[derive(Clone, Copy)]
 enum PlanChoice<'a> {
     /// By digest: the plan resolved for review, or one this project recorded.
     Named(&'a str),
