@@ -3065,6 +3065,46 @@ fn a_worker_that_fails_after_the_copy_records_its_view_and_leaves_no_copy() {
     assert_eq!(attempt_entries(&supervisor), before);
 }
 
+/// Once the copy is verified the source's part is over: removing it, and
+/// putting other bytes at its name, while the worker reads does not change
+/// what the attempt consumed.
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_source_removed_and_replaced_while_the_worker_reads_its_copy_changes_nothing() {
+    let area = WorkArea::new("copy-then-source-gone");
+    let elsewhere = Scratch::new("m93-copy-then-source-gone");
+    let (plan, source, store) =
+        cross_volume_order_parts(&area, &elsewhere, &plain(), recipe::ADAPTER_SOURCE);
+    let supervisor = real();
+    let replaced = std::sync::atomic::AtomicBool::new(false);
+    let order = AttemptOrder {
+        plan: &plan,
+        source: &source,
+        store: &store,
+        artifact: ArtifactId::new(),
+    };
+    let end = supervisor.attempt(&order, &Cancellation::default(), &|phase| {
+        if phase == RunPhase::LoadingSource && !replaced.swap(true, Ordering::SeqCst) {
+            fs::remove_file(&source).expect("the source is no longer held");
+            fs::write(&source, b"other bytes under the same name").expect("replaced");
+        }
+    });
+    assert!(replaced.load(Ordering::SeqCst), "the worker was reading");
+    match end {
+        AttemptEnd::Completed {
+            consumed, attempt, ..
+        } => {
+            assert_eq!(consumed, plan.expected_content);
+            assert_eq!(attempt.source_view, SourceView::VerifiedSnapshotInWorkArea);
+        }
+        other => panic!("not completed: {other:?}"),
+    }
+    assert_eq!(
+        fs::read(&source).expect("the replacement"),
+        b"other bytes under the same name"
+    );
+}
+
 #[test]
 #[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
 fn a_result_that_cannot_be_staged_after_the_copy_publishes_nothing_and_leaves_no_copy() {

@@ -168,7 +168,10 @@ owner — this process included — and an owner that cannot be asked about.
 Why a gone owner is enough: the worker runs in a Job its owner created with
 kill-on-close and no inheritable handle
 (`crates/proteowizard/src/process.rs`, `assign_with`), so the owner's exit
-closes the Job's last handle and Windows terminates every process in it.
+closes the Job's last handle and Windows terminates every process in it. That
+termination is requested, not instant: a worker stuck in the kernel can
+outlive it for a while, and then the files it holds cannot be removed, so the
+directory keeps its marker for a later sweep.
 
 A crash-left **link** can be the last name of a user's bytes if the user
 deleted their original while MSCanvas was not running; a sweep that finds it

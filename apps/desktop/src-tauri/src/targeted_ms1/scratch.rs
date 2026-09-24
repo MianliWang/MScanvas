@@ -40,7 +40,9 @@
 //! with kill-on-close and no inheritable handle
 //! (`crates/proteowizard/src/process.rs`, `assign_with`), so the owner's exit
 //! closes the Job's last handle and Windows terminates every process in it. A
-//! worker does not outlive the process its marker names. A removal that fails
+//! worker stuck in the kernel can outlive that request for a while; the files
+//! it still holds then cannot be removed, and the directory keeps its marker
+//! for a later sweep. A removal that fails
 //! before the directory is empty -- a file somebody holds -- stops there and
 //! keeps the marker, so the next sweep recognises the remainder. A directory
 //! that is empty but cannot itself be removed is left empty and unmarked, and
