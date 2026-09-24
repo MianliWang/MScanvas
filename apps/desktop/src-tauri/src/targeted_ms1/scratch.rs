@@ -40,9 +40,15 @@
 //! with kill-on-close and no inheritable handle
 //! (`crates/proteowizard/src/process.rs`, `assign_with`), so the owner's exit
 //! closes the Job's last handle and Windows terminates every process in it. A
-//! worker does not outlive the process its marker names. A removal that still
-//! fails -- a file somebody holds -- stops there, and the marker, removed
-//! last, keeps the remainder recognisable to the next sweep.
+//! worker does not outlive the process its marker names. A removal that fails
+//! before the directory is empty -- a file somebody holds -- stops there and
+//! keeps the marker, so the next sweep recognises the remainder. A directory
+//! that is empty but cannot itself be removed is left empty and unmarked, and
+//! later sweeps leave it too.
+//!
+//! A sweep runs at the start of each attempt, and in a run's preflight where
+//! the copy it needs would not otherwise fit; never on startup or on opening a
+//! project, and not in the background.
 //!
 //! Nothing here lifts a quarantine. A session that could not account for its
 //! worker keeps refusing runs until it exits, whatever became of a directory.

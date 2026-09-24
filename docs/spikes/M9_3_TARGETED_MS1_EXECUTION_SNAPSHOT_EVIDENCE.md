@@ -35,9 +35,9 @@ named PID 50140, which was not running; no other writer.
 | Test | What it shows |
 | --- | --- |
 | `a_copy_through_the_held_handle_is_the_objects_bytes_and_their_digest` | 307,217 varied bytes: the destination holds exactly the source's bytes, the digest is theirs, the copy was streamed in more than one write with none larger than 64 KiB, and measuring the same handle afterwards gives the same length and digest |
-| `a_held_member_cannot_be_changed_deleted_or_renamed_while_it_is_copied` | Held inside the first chunk, the source's name could not be deleted or renamed and the file could not be opened for writing; the copy then finished with the original bytes |
+| `a_held_member_cannot_be_changed_deleted_or_renamed_while_it_is_copied` | Held as the third chunk was about to be read (two already copied), the source's name could not be deleted or renamed and the file could not be opened for writing; the copy then finished with the original bytes. (The first version held it before the first chunk; the review's F7 asked for mid-copy.) |
 | `a_cancel_during_a_copy_stops_it_between_chunks_with_no_digest` | Cancelled as the third chunk was about to be read: exactly two chunks written, no digest |
-| `a_destination_that_refuses_a_chunk_is_named_by_why` | A destination refusing with `StorageFull` after 100 KiB is `DestinationFull` with at most a prefix written; `PermissionDenied` is `DestinationUnwritable`; the same handle then copies whole |
+| `a_destination_that_refuses_a_chunk_is_named_by_why` | A destination refusing with `StorageFull` after 100 KiB is `DestinationFull` with at most a prefix written, and so is one refusing with `QuotaExceeded`; `PermissionDenied` is `DestinationUnwritable`; the same handle then copies whole |
 | `an_empty_member_copies_as_empty_with_the_empty_digest` | Zero bytes, the empty SHA-256 |
 | `a_volume_says_what_this_process_may_write_and_an_object_how_many_names_it_has` | `available_bytes` answers a positive number for a real directory and nothing for a missing one; `link_count_of` follows a second name being made and removed |
 
@@ -67,8 +67,18 @@ all on the pinned runtime and adapter, unchanged:
 | Worker fails after a verified copy (an adapter that exits 7) | Failed `workerExitedAbnormally`; consumed equal to the plan; `verifiedSnapshotInWorkArea`; no copy left |
 | Result cannot be staged after a verified copy and a completed worker (a file where `.staging` goes) | Failed `payloadNotPublished` at `publish`; `verifiedSnapshotInWorkArea`; nothing published; the blocking file untouched; no copy left |
 | Preflight with the real volumes | The plan as is passes; the same plan expecting `u64::MAX / 2` bytes from `C:` is refused `insufficientWorkAreaSpace`; from `D:` it passes, because nothing is copied |
+| Preflight with a crash-left 256 MiB copy in the real attempts root (review F1) | A plan expecting the free space measured with that copy present plus 64 MiB passes, and the copy is gone: the preflight reclaimed it before judging; a plan expecting `u64::MAX / 2` is still refused |
 
 Every M9.1 and M9.2 real-runtime case passed unchanged in the same run.
+
+Without the runtime (`targeted_ms1/tests.rs`, always run), `execution_view` and
+`snapshot` are called directly on `D:`:
+
+| Test | What it shows |
+| --- | --- |
+| `a_link_that_cannot_be_made_falls_back_to_a_verified_copy_through_the_held_handle` | With the link's name occupied, `CreateHardLink` fails and the view is a verified copy (`verifiedSnapshotInWorkArea`, consumed equal to the plan, bytes equal to the source); what occupied the name is untouched. Cancelled during that copy, the run keeps what the first read established: consumed equal to the plan |
+| `a_cancel_while_the_copy_is_hashed_again_records_what_the_copy_read` | Cancelled in the second chunk of hashing the copy again: cancelled, consumed equal to the plan, no attempt facts. Cancelled in the copy's second chunk: nothing consumed |
+| `a_copy_that_does_not_fit_is_judged_again_once_crash_left_scratch_is_reclaimed` | The space rule: a copy that fits reclaims nothing; one that fits only after reclaiming passes after exactly one reclaim; one that never fits is refused; space that cannot be told refuses nothing |
 
 ## Simulated, not physical
 
@@ -81,8 +91,14 @@ Every M9.1 and M9.2 real-runtime case passed unchanged in the same run.
   fixture: marked, its owner an id no process has, or this process's id with
   another creation time, or a real child process that has exited and been
   reaped. A running child keeps its directory.
-- **A volume without hard links or file identities**, FAT/exFAT and network
+- **A link that cannot be made** is produced by occupying the link's name;
+  a volume without hard links or file identities, FAT/exFAT and network
   shares were not available and were not run.
+- **Not exercised by any test:** a link that is made and is not the held
+  object (refused, never copied), and a copy changed between its write handle
+  closing and its read hold opening (refused `executionViewUnavailable`). Each
+  is one comparison in `execution_view` / `snapshot`; no seam was added to
+  reach the window between two adjacent statements.
 
 ## Scratch ownership and the sweep (`targeted_ms1/scratch.rs`)
 
@@ -138,7 +154,26 @@ controlled answer table; no worker ran.
 
 ## Isolated review
 
-Pending.
+One read-only review ran over an isolated export of `2bdbc7e` (code, browser
+scenarios and these documents) at `.tmp/m93-evidence/review-2bdbc7e/`, with the
+milestone's focus list: same-object binding, TOCTOU, digest and length,
+cross-volume mode, cancellation, disk space, provenance, cleanup ownership,
+live-process safety, quarantine, published results and M9.2 independence. It
+modified and ran nothing. No high-severity finding. Each finding was checked
+against the code before it was repaired.
+
+| Finding | Verdict | Disposition |
+| --- | --- | --- |
+| F1 — a crash-left copy's space counts against the preflight, which refuses before any attempt (and so any sweep) can run: a cross-volume source can stay blocked | Confirmed, medium | Fixed: where the copy would not fit, the preflight sweeps and measures again before refusing (`room_after_reclaiming`); a unit test of the rule and a real test with a crash-left 256 MiB copy |
+| F2 — "the marker keeps the remainder recognisable" is false when only the directory's own removal fails | Confirmed, low | Wording corrected in `scratch.rs`, ADR 0049 and the record: such a directory is left empty and unmarked. Deliberately not swept: an empty unmarked UUID directory is also what a live session has between making its directory and marking it |
+| F3 — a quota met during the copy, and room running out while the adapter or request is written, were `executionViewUnavailable` | Confirmed, low | Fixed: `QuotaExceeded` is `DestinationFull`, and both are `insufficientWorkAreaSpace`; the worker's own output is still the worker's failure (documented). Primitive test for the quota |
+| F4 — a cancel while the copy is hashed again records consumed content; a cancel during a copy after a failed link recorded none although the first read measured it | Confirmed, low | Rule made uniform and documented (ADR 0049 §6): consumed is what the attempt had established when the cancel landed; `snapshot` receives what was already measured. Two tests |
+| F5 — "none can make the worker read bytes other than the plan's" | Confirmed, low (doc) | Reworded: a change made and reverted during the worker's read, by a program bypassing the share mode, is not detected |
+| F6 — "the link path is unchanged" | Confirmed, low (doc) | The M9.1 note, ADR 0049 and the record now name the two changes (a failed link falls back to a copy; the link is removed before the source is released); the setup's domain sentence says a copy is made "where no link can be made there" |
+| F7 — test gaps; "measured mid-copy" was measured before the first chunk | Confirmed, low | The hold test now waits at the third chunk; the link fallback and both cancel cases are tested. A mismatching link and a copy changed before its hold remain untested (listed above) |
+| F8 — two concurrent sweeps, or a user deleting a name between count and removal, can remove a last link | Plausible, low (doc) | Stated in ADR 0049 §7 and the record as a two-step limit |
+
+The repairs were then given one targeted review of their own diff (below).
 
 ## Validation record
 

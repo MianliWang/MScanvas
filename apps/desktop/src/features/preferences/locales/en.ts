@@ -1363,7 +1363,7 @@ export const en = {
   targetedSetupTitle: "Targeted MS1 lookup (experimental)",
   targetedSetupClose: "Close",
   targetedExperimental: "Experimental. A bounded targeted lookup, not a validated quantitative method: outcomes are the engine's categories, and no value here is a concentration.",
-  targetedDomain: "Reads positive-mode, centroided MS1 spectra from one mzML file and looks for each target's [M+H]+ ion in its M and M+1 traces, inside the retention-time and m/z windows given. The source is read in place through a link in the MSCanvas work area or, from another drive, through a temporary copy there checked to hold exactly its bytes; the source itself is never changed. One run at a time; a run is stopped after 10 minutes. Results are stored beside the saved project.",
+  targetedDomain: "Reads positive-mode, centroided MS1 spectra from one mzML file and looks for each target's [M+H]+ ion in its M and M+1 traces, inside the retention-time and m/z windows given. The source is read in place through a link in the MSCanvas work area or, where no link can be made there (a source on another drive, for example), through a temporary copy checked to hold exactly its bytes; the source itself is never changed. One run at a time; a run is stopped after 10 minutes. Results are stored beside the saved project.",
   targetedFieldTargets: "Targets",
   targetedFieldLabel: "Target",
   targetedFieldFormula: "Formula",

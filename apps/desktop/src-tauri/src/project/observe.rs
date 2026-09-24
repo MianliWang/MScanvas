@@ -380,7 +380,8 @@ pub(crate) enum CopyFailure {
     /// The source could not be read to its end through the held handle, or
     /// its end was not where its length at the open said.
     SourceUnstable,
-    /// The destination refused a chunk because its volume is full.
+    /// The destination refused a chunk because its volume, or the user's
+    /// quota on it, is full.
     DestinationFull,
     /// The destination refused a chunk for any other reason.
     DestinationUnwritable,
@@ -510,7 +511,9 @@ impl OpenedMember {
         // What happened, in the order it can be known: a destination that
         // refused a chunk said so itself, and a cancel is the flag's answer.
         match (digest, tee.refused) {
-            (_, Some(io::ErrorKind::StorageFull)) => Err(CopyFailure::DestinationFull),
+            (_, Some(io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded)) => {
+                Err(CopyFailure::DestinationFull)
+            }
             (_, Some(_)) => Err(CopyFailure::DestinationUnwritable),
             (Err(_), None) if cancellation.requested() => Err(CopyFailure::Cancelled),
             (Ok(digest), None) if tee.copied == self.byte_length => Ok(CopiedMember {

@@ -3214,6 +3214,7 @@ fn measure_a_verified_copy_between_volumes() {
     let view = super::snapshot(
         &order,
         crate::project::observe::open_member(&source).expect("opened"),
+        Vec::new(),
         &whole,
         &Cancellation::default(),
         &|_| {},
@@ -3252,6 +3253,7 @@ fn measure_a_verified_copy_between_volumes() {
     let end = super::snapshot(
         &order,
         crate::project::observe::open_member(&source).expect("opened"),
+        Vec::new(),
         &cancelled_at,
         &cancellation,
         &|_| {},
@@ -3301,6 +3303,215 @@ fn measure_a_verified_copy_between_volumes() {
     .expect("record");
     assert_eq!(copy_bytes, byte_length);
     assert!(partial < byte_length);
+}
+
+/// How many reads a whole pass over `path` hands the digest: one per 64 KiB
+/// chunk, and the read that finds its end.
+fn reads_of(path: &Path) -> usize {
+    usize::try_from(fs::metadata(path).expect("file").len().div_ceil(64 * 1024) + 1).expect("fits")
+}
+
+/// An order over a source in `area`, and the store it names.
+fn order_in(area: &WorkArea) -> (TargetedMs1Plan, PathBuf, PathBuf) {
+    let source = area.write("data/plain.mzML", &mzml(&plain(), ""));
+    let store = area.join("results");
+    fs::create_dir_all(&store).expect("store");
+    (plan_over(&source, recipe::ADAPTER_SOURCE), source, store)
+}
+
+fn cancelled_having_read(consumed: Vec<record::ObservedMember>) -> AttemptEnd {
+    AttemptEnd::Cancelled {
+        consumed,
+        attempt: None,
+        stop: StopFacts {
+            reason: StopReason::CancelRequested,
+            worker_terminated: false,
+            exit_observed: false,
+        },
+    }
+}
+
+#[test]
+fn a_copy_that_does_not_fit_is_judged_again_once_crash_left_scratch_is_reclaimed() {
+    let scratch = Scratch::new("m93-reclaim");
+    let plan = plan_over(
+        &scratch.write("plain.mzML", b"<mzML/>"),
+        recipe::ADAPTER_SOURCE,
+    );
+    let needed = plan.expected_content[0].byte_length;
+    let reclaimed = std::cell::Cell::new(0);
+    let reclaim = || reclaimed.set(reclaimed.get() + 1);
+
+    assert!(super::room_after_reclaiming(
+        &plan,
+        || Some(needed),
+        reclaim
+    ));
+    assert_eq!(reclaimed.get(), 0, "a copy that fits reclaims nothing");
+
+    let free = std::cell::Cell::new(needed - 1);
+    assert!(super::room_after_reclaiming(
+        &plan,
+        || Some(free.get()),
+        || {
+            reclaim();
+            free.set(needed);
+        }
+    ));
+    assert_eq!(reclaimed.get(), 1, "judged again after one reclaim");
+
+    assert!(!super::room_after_reclaiming(&plan, || Some(0), reclaim));
+    assert_eq!(reclaimed.get(), 2);
+
+    assert!(super::room_after_reclaiming(&plan, || None, reclaim));
+    assert_eq!(
+        reclaimed.get(),
+        2,
+        "space that cannot be told refuses nothing"
+    );
+}
+
+#[test]
+fn a_link_that_cannot_be_made_falls_back_to_a_verified_copy_through_the_held_handle() {
+    let area = WorkArea::new("link-refused");
+    let (plan, source, store) = order_in(&area);
+    let order = AttemptOrder {
+        plan: &plan,
+        source: &source,
+        store: &store,
+        artifact: ArtifactId::new(),
+    };
+    // Something already at the link's name: `CreateHardLink` refuses, as it
+    // does on a volume that has no links.
+    let blocked = |name: &str| {
+        let attempt = area.join(name);
+        fs::create_dir_all(&attempt).expect("attempt");
+        fs::write(attempt.join(LINK_NAME), b"in the way").expect("blocker");
+        attempt
+    };
+
+    let attempt = blocked("attempt");
+    let view = super::execution_view(
+        &order,
+        crate::project::observe::open_member(&source).expect("opened"),
+        &attempt,
+        &Cancellation::default(),
+        &|_| {},
+    )
+    .map_err(|end| format!("{end:?}"))
+    .expect("a view");
+    assert_eq!(view.kind, SourceView::VerifiedSnapshotInWorkArea);
+    assert_eq!(view.path, attempt.join(SNAPSHOT_NAME));
+    assert_eq!(view.consumed, plan.expected_content);
+    drop(view);
+    assert_eq!(
+        fs::read(attempt.join(SNAPSHOT_NAME)).expect("copy"),
+        fs::read(&source).expect("source")
+    );
+    assert_eq!(
+        fs::read(attempt.join(LINK_NAME)).expect("kept"),
+        b"in the way"
+    );
+
+    // Cancelled during that copy, the attempt keeps what its first read of
+    // the source established.
+    let attempt = blocked("attempt-cancelled");
+    let (cancellation, slot) = cancelling_at(reads_of(&source) + 2);
+    let end = super::execution_view(
+        &order,
+        crate::project::observe::open_member(&source).expect("opened"),
+        &attempt,
+        &cancellation,
+        &|_| {},
+    );
+    slot.lock().expect("slot").take();
+    assert_eq!(
+        end.err().map(|end| *end),
+        Some(cancelled_having_read(plan.expected_content.clone()))
+    );
+}
+
+#[test]
+fn a_cancel_while_the_copy_is_hashed_again_records_what_the_copy_read() {
+    let area = WorkArea::new("cancel-recheck");
+    let (plan, source, store) = order_in(&area);
+    let order = AttemptOrder {
+        plan: &plan,
+        source: &source,
+        store: &store,
+        artifact: ArtifactId::new(),
+    };
+    let attempt = area.join("attempt");
+    fs::create_dir_all(&attempt).expect("attempt");
+    // Past the copy's own reads, into the second chunk of hashing it again.
+    let (cancellation, slot) = cancelling_at(reads_of(&source) + 2);
+    let end = super::snapshot(
+        &order,
+        crate::project::observe::open_member(&source).expect("opened"),
+        Vec::new(),
+        &attempt,
+        &cancellation,
+        &|_| {},
+    );
+    slot.lock().expect("slot").take();
+    assert_eq!(
+        end.err().map(|end| *end),
+        Some(cancelled_having_read(plan.expected_content.clone())),
+        "the source's bytes were read whole and were the plan's"
+    );
+
+    // Cancelled during the copy itself, nothing was read whole.
+    let early = area.join("attempt-early");
+    fs::create_dir_all(&early).expect("attempt");
+    let (cancellation, slot) = cancelling_at(2);
+    let end = super::snapshot(
+        &order,
+        crate::project::observe::open_member(&source).expect("opened"),
+        Vec::new(),
+        &early,
+        &cancellation,
+        &|_| {},
+    );
+    slot.lock().expect("slot").take();
+    assert_eq!(
+        end.err().map(|end| *end),
+        Some(cancelled_having_read(Vec::new()))
+    );
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_copy_that_fits_once_crash_left_scratch_is_reclaimed_is_not_refused() {
+    let area = WorkArea::new("reclaim-real");
+    let elsewhere = Scratch::new("m93-reclaim-real");
+    let (plan, source, _) =
+        cross_volume_order_parts(&area, &elsewhere, &plain(), recipe::ADAPTER_SOURCE);
+    let supervisor = real();
+    fs::create_dir_all(&supervisor.attempts).expect("attempts root");
+    // A crash-left copy holding 256 MiB of the work area's volume.
+    let crashed = crash_left(&supervisor.attempts, 0xFFFF_FFFD);
+    let held_back: u64 = 256 * 1024 * 1024;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(crashed.join(SNAPSHOT_NAME))
+        .expect("the crash-left copy")
+        .set_len(held_back)
+        .expect("allocated");
+    let free = crate::local_document::available_bytes(&supervisor.attempts).expect("free space");
+
+    // A plan that fits only once that space is back, with room for the
+    // volume's other writers meanwhile; and one that fits in neither case.
+    let mut fits_after = plan.clone();
+    fits_after.expected_content[0].byte_length = free + held_back / 4;
+    assert_eq!(supervisor.preflight(&fits_after, &source), Ok(()));
+    assert!(!crashed.exists(), "the crash-left copy was reclaimed first");
+
+    let mut never = plan;
+    never.expected_content[0].byte_length = u64::MAX / 2;
+    assert_eq!(
+        supervisor.preflight(&never, &source),
+        Err(ProjectError::InsufficientWorkAreaSpace)
+    );
 }
 
 /// A crash-left attempt directory, as a session that died mid-attempt leaves

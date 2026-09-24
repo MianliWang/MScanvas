@@ -30,19 +30,22 @@ collection, crash resume, and M9.4.
 In a saved project, on a layer whose source is one supported mzML file:
 
 1. **Run a source from any local drive.** A source on the MSCanvas work area's
-   drive runs exactly as in M9.1, through a read-only link. A source on another
-   drive — including one under a path with non-ASCII characters — now runs too:
-   while MSCanvas makes a temporary copy the run shows **Preparing analysis
-   input…**, and the run can be cancelled there like anywhere else.
+   drive runs as in M9.1, through a read-only link. A source on another drive —
+   including one under a path with non-ASCII characters — now runs too, and so
+   does one on the same drive where no link can be made: while MSCanvas makes a
+   temporary copy the run shows **Preparing analysis input…**, and the run can
+   be cancelled there like anywhere else.
 2. **See why a run cannot start or did not finish**, in the recipe's own words:
    - at review, and again when Run is pressed: *the drive holding the MSCanvas
      work area has less free space than this source needs for its temporary
-     copy* (`insufficientWorkAreaSpace`) — nothing is run or recorded; free
-     space and try again;
+     copy* (`insufficientWorkAreaSpace`), said only after what crashed earlier
+     sessions left in the work area has been reclaimed — nothing is run or
+     recorded; free space and try again;
    - as a failed run at the source stage: the source changed since the plan
      (`sourceChanged`), could not be read (`sourceUnavailable`), the work
-     area's drive ran out of room during the copy (`insufficientWorkAreaSpace`),
-     or MSCanvas could not prepare the source for the engine
+     area's drive or the user's quota on it ran out of room while the copy or
+     the worker's request was written (`insufficientWorkAreaSpace`), or
+     MSCanvas could not prepare the source for the engine
      (`executionViewUnavailable`). None of them is a finding about a target.
 3. **Read in Details how the engine was given the source**: *in place, through
    a read-only link* or *from a temporary copy in the MSCanvas work area,
@@ -57,13 +60,13 @@ plan, the result and the record are the same as for a link.
 | Rule | Where |
 | --- | --- |
 | The source is opened once, read-only with write and delete sharing withheld, before any byte is read; the view is chosen from that handle's volume | `targeted_ms1.rs`, `execution_view` |
-| A source that can be linked is linked, never copied; a link that is not the held object fails the run and is never replaced by a copy | `execution_view` |
+| A source that can be linked is linked, never copied; a link that cannot be made falls back to a copy read again through the same handle; a link that is not the held object fails the run and is never replaced by a copy | `execution_view` |
 | A copy is made in one read through the held handle, each chunk hashed as it is written, and refused unless its length and SHA-256 are the plan's; it is then held read-only and hashed again before the worker is given its name | `observe.rs` `copy_into`; `targeted_ms1.rs` `snapshot` |
 | The source is released once the copy is verified; the run is bound to the bytes, which were the plan's | `snapshot` |
-| A copy the work area provably cannot hold is refused before a run exists; one that runs out of room fails at the source stage | `preflight`, `room_for_snapshot` |
-| A cancel during the copy stops between 64 KiB chunks and starts no worker | `Cooperative` reader |
+| A copy the work area provably cannot hold, even after crash-left scratch is reclaimed, is refused before a run exists; one that runs out of room fails at the source stage | `preflight`, `room_after_reclaiming` |
+| A cancel during the copy, or while it is hashed again, stops between 64 KiB chunks and starts no worker; consumed content is recorded only once the source was read whole | `Cooperative` reader, `snapshot` |
 | Every attempt directory is marked before use, removed marker last when its attempt ends, and kept while an unaccounted worker may use it | `targeted_ms1/scratch.rs` |
-| Each attempt first removes crash-left attempt directories whose owner process is gone, and nothing it cannot prove is one | `scratch::sweep` |
+| Each attempt first removes crash-left attempt directories whose owner process is gone, and nothing it cannot prove is one; a preflight does the same before refusing for want of room | `scratch::sweep` |
 | A link's name is removed while the source is still held | `ExecutionView::drop` |
 | Reading, drawing or exporting a stored result never opens, copies or inspects a source | unchanged from M9.2 |
 
@@ -102,17 +105,22 @@ is used: not `%TEMP%`, not `%LOCALAPPDATA%`, not a drive root.
   Windows provides an immutable snapshot; see ADR 0049 for what is protected
   and what is only detected.
 - **Crash-left scratch.** Only marked attempt directories whose owner process
-  is gone are removed, at the start of a later attempt; nothing is swept on
-  startup, and what a sweep leaves is not shown in the interface. A crash-left
-  link whose other names are all gone is kept, because it is the last name of
-  a user's bytes. Attempt directories from before M9.3 carry no marker and are
-  never removed.
+  is gone are removed, at the start of a later attempt or before a preflight
+  refuses for want of room; nothing is swept on startup, and what a sweep
+  leaves is not shown in the interface. A crash-left link that a sweep finds
+  to be the last name of a user's bytes is kept; the count and the removal are
+  two steps, so a name deleted between them is not seen. A directory that is
+  emptied but cannot itself be removed is left empty and unmarked. Attempt
+  directories from before M9.3 carry no marker and are never removed.
+- **What the worker writes.** Running out of room while the worker itself
+  writes its output is the worker's own failure, as in M9.1, and is not
+  classified as `insufficientWorkAreaSpace`.
 - **Not reclaimed:** the payload store's own `.staging/` left by a crash,
   beside the user's document.
 - **Not qualified:** network shares, removable media that disappear mid-copy
-  beyond the typed `sourceUnavailable`, FAT/exFAT work areas, and a work area
-  whose volume reports no file identity (the copy path covers them in code;
-  none was run).
+  beyond the typed `sourceUnavailable`, FAT/exFAT work areas, and a volume
+  that reports no file identity. A link that cannot be made is exercised by
+  occupying the link's name, not on a volume without links.
 
 ## Unchanged M9.2 limitations
 

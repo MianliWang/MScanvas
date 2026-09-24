@@ -20,7 +20,10 @@ Update: M9.3 has since replaced the same-volume restriction below. A source on
 another volume is no longer refused (`sourceOnAnotherVolume` is gone): it is
 read through a copy made in the attempt directory in one read through the held
 handle and verified against the plan's bytes, and attempt directories are now
-marked and swept when their owner is gone. The link path is unchanged. See the
+marked and swept when their owner is gone. Two changes reach the link path: a
+link that cannot be made, or a held source with no file identity, now falls
+back to that copy instead of failing `executionViewUnavailable`; and the
+link's name is removed before the source is released. See the
 [M9.3 record](M9_3_TARGETED_MS1_EXECUTION_SNAPSHOT.md).
 
 The first section records what M9.1 built. Everything after it is the M9.0

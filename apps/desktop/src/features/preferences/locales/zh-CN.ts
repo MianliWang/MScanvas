@@ -1322,7 +1322,7 @@ export const zhCN = {
   targetedSetupTitle: "靶向 MS1 查找（实验性）",
   targetedSetupClose: "关闭",
   targetedExperimental: "实验性功能。这是有边界的靶向查找，而非经过验证的定量方法：结果是引擎给出的类别，此处任何数值都不是浓度。",
-  targetedDomain: "从单个 mzML 文件读取正离子模式、已质心化的 MS1 谱图，在给定的保留时间与 m/z 窗口内，按 M 与 M+1 两条迹线查找每个目标的 [M+H]+ 离子。来源通过 MSCanvas 工作区中的链接原位读取；若来源在其他驱动器上，则读取工作区中经核验字节完全一致的临时副本。来源本身绝不会被修改。一次只运行一个；运行超过 10 分钟即停止。结果存放在已保存项目的旁边。",
+  targetedDomain: "从单个 mzML 文件读取正离子模式、已质心化的 MS1 谱图，在给定的保留时间与 m/z 窗口内，按 M 与 M+1 两条迹线查找每个目标的 [M+H]+ 离子。来源通过 MSCanvas 工作区中的链接原位读取；若无法在工作区中创建链接（例如来源在其他驱动器上），则读取工作区中经核验字节完全一致的临时副本。来源本身绝不会被修改。一次只运行一个；运行超过 10 分钟即停止。结果存放在已保存项目的旁边。",
   targetedFieldTargets: "目标",
   targetedFieldLabel: "目标",
   targetedFieldFormula: "分子式",

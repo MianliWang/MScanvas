@@ -560,7 +560,17 @@ fn a_held_member_cannot_be_changed_deleted_or_renamed_while_it_is_copied() {
     let path = scratch.write("source.bin", &bytes);
     let reached = Arc::new(Barrier::new(2));
     let proceed = Arc::new(Barrier::new(2));
-    let (cancellation, _) = gated(Arc::clone(&reached), Arc::clone(&proceed));
+    // Held as the third chunk is about to be read: two are already copied.
+    let cancellation = {
+        let (reached, proceed) = (Arc::clone(&reached), Arc::clone(&proceed));
+        let seen = Arc::new(AtomicUsize::new(0));
+        Cancellation::with_gate(Arc::new(move || {
+            if seen.fetch_add(1, Ordering::SeqCst) == 2 {
+                reached.wait();
+                proceed.wait();
+            }
+        }))
+    };
 
     let copied = std::thread::scope(|scope| {
         let copying = scope.spawn(|| {
@@ -638,6 +648,13 @@ fn a_destination_that_refuses_a_chunk_is_named_by_why() {
         Err(observe::CopyFailure::DestinationFull)
     );
     assert!(full.bytes.len() <= 100 * 1024, "a prefix at most");
+
+    // A quota met is the same want of room as a full volume.
+    let mut quota = Recorder::refusing_after(100 * 1024, std::io::ErrorKind::QuotaExceeded);
+    assert_eq!(
+        opened.copy_into(&mut quota, &Cancellation::default()),
+        Err(observe::CopyFailure::DestinationFull)
+    );
 
     let mut refused = Recorder::refusing_after(0, std::io::ErrorKind::PermissionDenied);
     assert_eq!(

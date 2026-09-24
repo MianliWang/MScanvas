@@ -215,16 +215,26 @@ impl RecipeExecutor for Supervisor {
         }
         fs::create_dir_all(&self.attempts).map_err(|_| ProjectError::RecipeUnavailable)?;
         // A source on another volume is copied into the work area for the
-        // attempt. Refused only where that copy provably cannot fit: where
-        // either volume or the free space cannot be established -- the source
-        // is missing, busy or unreadable -- the attempt goes ahead, and its
-        // pinned read or its own write records the real reason.
-        if let (Some(work), Some((volume, _)), Some(available)) = (
-            local_document::directory_volume(&self.attempts),
-            local_document::object_identity(source),
-            local_document::available_bytes(&self.attempts),
-        ) && work != volume
-            && !room_for_snapshot(available, plan)
+        // attempt. Refused only where that copy provably cannot fit, even once
+        // what earlier sessions' attempts left there is reclaimed: where either
+        // volume or the free space cannot be established -- the source is
+        // missing, busy or unreadable -- the attempt goes ahead, and its pinned
+        // read or its own write records the real reason.
+        let another_volume = matches!(
+            (
+                local_document::directory_volume(&self.attempts),
+                local_document::object_identity(source),
+            ),
+            (Some(work), Some((volume, _))) if work != volume
+        );
+        if another_volume
+            && !room_after_reclaiming(
+                plan,
+                || local_document::available_bytes(&self.attempts),
+                || {
+                    scratch::sweep(&self.attempts);
+                },
+            )
         {
             return Err(ProjectError::InsufficientWorkAreaSpace);
         }
@@ -316,13 +326,14 @@ impl Supervisor {
             .and_then(|()| fs::create_dir(&out))
             .and_then(|()| fs::create_dir(directory.path.join("home")))
             .and_then(|()| fs::create_dir(directory.path.join("tmp")));
-        if prepared.is_err() {
-            return failed(
-                consumed,
-                Some(facts),
-                FailureCode::ExecutionViewUnavailable,
-                FailureStage::Source,
-            );
+        if let Err(error) = prepared {
+            // Out of room here is out of room, whichever file met it.
+            let code = if out_of_room(error.kind()) {
+                FailureCode::InsufficientWorkAreaSpace
+            } else {
+                FailureCode::ExecutionViewUnavailable
+            };
+            return failed(consumed, Some(facts), code, FailureStage::Source);
         }
         // The adapter as the interpreter will read it, not as this build holds it.
         if Sha256Digest::calculate_file(&adapter)
@@ -596,6 +607,30 @@ impl Drop for ExecutionView {
     }
 }
 
+/// Whether a write failed because its volume, or this user's quota on it, had
+/// no room left.
+fn out_of_room(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded
+    )
+}
+
+/// Whether the copy fits: on what is free now, and where it does not, on what
+/// is free once `reclaim` has removed what earlier sessions' attempts left.
+/// Free space that cannot be established refuses nothing.
+fn room_after_reclaiming(
+    plan: &TargetedMs1Plan,
+    available: impl Fn() -> Option<u64>,
+    reclaim: impl FnOnce(),
+) -> bool {
+    let fits = |free: Option<u64>| free.is_none_or(|free| room_for_snapshot(free, plan));
+    fits(available()) || {
+        reclaim();
+        fits(available())
+    }
+}
+
 /// Whether `available` bytes hold a copy of what the plan reads: its length,
 /// and nothing added for what the worker writes, which is not the copy's.
 fn room_for_snapshot(available: u64, plan: &TargetedMs1Plan) -> bool {
@@ -634,7 +669,7 @@ fn execution_view(
         .zip(local_document::directory_volume(directory))
         .is_some_and(|((volume, _), work)| volume == work);
     if !same_volume {
-        return snapshot(order, source, directory, cancellation, progress);
+        return snapshot(order, source, Vec::new(), directory, cancellation, progress);
     }
     let held = match source.measure(cancellation) {
         Ok(held) => held,
@@ -664,7 +699,14 @@ fn execution_view(
         // No link on this volume -- a filesystem without them, or a volume
         // serial two volumes happen to share. The bytes are copied instead,
         // read again through the same held handle.
-        return snapshot(order, held.into_opened(), directory, cancellation, progress);
+        return snapshot(
+            order,
+            held.into_opened(),
+            consumed,
+            directory,
+            cancellation,
+            progress,
+        );
     }
     let identity = held.identity;
     let view = ExecutionView {
@@ -696,9 +738,14 @@ fn execution_view(
 /// handle closed, since the engine's reader shares reads only -- is held
 /// read-only and hashed again through that hold, so what the worker reads is
 /// shown to be the plan's bytes and cannot be changed while it reads them.
+///
+/// `measured` is what this attempt already established the source holds --
+/// nothing, unless a link was tried first -- and is what an attempt that ends
+/// before the copy is read whole records as consumed.
 fn snapshot(
     order: &AttemptOrder<'_>,
     source: observe::OpenedMember,
+    measured: Vec<ObservedMember>,
     directory: &Path,
     cancellation: &Cancellation,
     progress: &(dyn Fn(RunPhase) + Sync),
@@ -714,23 +761,23 @@ fn snapshot(
     #[cfg(windows)]
     std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
     let Ok(mut file) = options.open(&path) else {
-        return unavailable(Vec::new(), FailureCode::ExecutionViewUnavailable);
+        return unavailable(measured, FailureCode::ExecutionViewUnavailable);
     };
     let copied = source.copy_into(&mut file, cancellation);
     drop(file);
     let copied = match copied {
         Ok(copied) => copied,
         Err(CopyFailure::Cancelled) => {
-            return Err(Box::new(cancelled_before_launch(Vec::new(), None)));
+            return Err(Box::new(cancelled_before_launch(measured, None)));
         }
         Err(CopyFailure::SourceUnstable) => {
-            return unavailable(Vec::new(), FailureCode::SourceUnavailable);
+            return unavailable(measured, FailureCode::SourceUnavailable);
         }
         Err(CopyFailure::DestinationFull) => {
-            return unavailable(Vec::new(), FailureCode::InsufficientWorkAreaSpace);
+            return unavailable(measured, FailureCode::InsufficientWorkAreaSpace);
         }
         Err(CopyFailure::DestinationUnwritable) => {
-            return unavailable(Vec::new(), FailureCode::ExecutionViewUnavailable);
+            return unavailable(measured, FailureCode::ExecutionViewUnavailable);
         }
     };
     let consumed = consumed_of(copied.byte_length, copied.digest);
