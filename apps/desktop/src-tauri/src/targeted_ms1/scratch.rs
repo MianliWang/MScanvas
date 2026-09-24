@@ -26,15 +26,36 @@
 //! - its marker reads, is this schema and names that same UUID;
 //! - the process the marker names is gone: no process has its id, or the one
 //!   that does was created at another time;
-//! - its `source.mzML`, where there is one, is a hard link whose bytes have
-//!   another name on the volume -- removing it removes a name, never the last
-//!   way to a user's data.
+//! - it has no entry at the link name (`source.mzML`, in any ASCII case), and
+//!   its entries can be listed to show so.
 //!
 //! Anything else is left exactly as it was found and counted: a directory
 //! with no marker (every attempt made before markers existed among them), a
 //! marker that does not read, an owner that is running -- this process
 //! included, so a directory an unaccounted worker may still use is never
-//! touched -- and an owner whose state cannot be asked.
+//! touched -- an owner whose state cannot be asked, and a gone owner's
+//! directory that holds a link.
+//!
+//! ## Links are never a sweep's to remove
+//!
+//! A link attempt's `source.mzML` is another name for the user's source. Once
+//! the attempt that made it is gone, nothing holds the source any more, so no
+//! check made now -- however many names the bytes have -- still holds when a
+//! removal acts on it: the other name can go in between. A sweep therefore
+//! never unlinks one. It leaves the whole directory, counted as `linked`, and
+//! `remove_owned` refuses the link name on every path, so a link that appears
+//! after a directory was judged, or one left by an attempt whose own removal
+//! failed, is never unlinked either. The link is only ever made at the
+//! directory's top level (`execution_view`), and the one statement that unlinks it is
+//! `ExecutionView`'s drop, inside the attempt that made it and while it still
+//! holds the source by the name the source was opened through, which Windows
+//! then refuses to delete or rename.
+//!
+//! A copy (`snapshot.mzML`) is created new by the attempt in its own
+//! directory and is never another name for anything; which view a directory
+//! held is read from these names, which are journaled directory entries, so
+//! the marker carries no view field. A crash before either exists leaves only
+//! the attempt's own files.
 //!
 //! Why a gone owner is enough: the worker runs in a Job its owner created
 //! with kill-on-close and no inheritable handle
@@ -96,7 +117,8 @@ impl AttemptDirectory {
     ///
     /// `None` where it could not be made or marked; a directory that was made
     /// and could not be marked is removed again, being certainly this
-    /// attempt's and holding at most part of a marker.
+    /// attempt's and holding at most part of a marker -- and only as that:
+    /// what else might be in it is not removed.
     pub(super) fn create(root: &Path) -> Option<Self> {
         let (owner_process_id, owner_process_created) = this_process()?;
         let name = uuid::Uuid::new_v4().to_string();
@@ -113,7 +135,8 @@ impl AttemptDirectory {
             .and_then(|bytes| super::write_new(&path.join(MARKER), &bytes).ok())
             .is_none()
         {
-            let _ = fs::remove_dir_all(&path);
+            let _ = fs::remove_file(path.join(MARKER));
+            let _ = fs::remove_dir(&path);
             return None;
         }
         Some(Self {
@@ -135,9 +158,22 @@ impl Drop for AttemptDirectory {
     }
 }
 
+/// Whether `name` is the execution view's hard-link name, as NTFS compares
+/// names: without regard to ASCII case.
+fn is_link_name(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|name| name.eq_ignore_ascii_case(LINK_NAME))
+}
+
 /// Removes an attempt directory whose ownership is established: everything
 /// in it, then its marker, then the directory. `false` where any of that
 /// failed, which leaves the marker wherever something else remains.
+///
+/// Never the link name. Its entry may be a hard link to a user's source, and
+/// only the attempt that made it -- while it still holds the source, so the
+/// source's own name cannot go first -- may unlink it (`ExecutionView`'s
+/// drop, the one statement in this build that does). A directory that still
+/// has one is not emptied, and keeps its marker.
 fn remove_owned(directory: &Path) -> bool {
     let Ok(entries) = fs::read_dir(directory) else {
         return false;
@@ -149,6 +185,10 @@ fn remove_owned(directory: &Path) -> bool {
             continue;
         };
         if entry.file_name() == MARKER {
+            continue;
+        }
+        if is_link_name(&entry.file_name()) {
+            emptied = false;
             continue;
         }
         let path = entry.path();
@@ -170,9 +210,11 @@ pub(super) struct Sweep {
     pub(super) live: usize,
     /// Not established as attempt scratch at all: left as found.
     pub(super) unowned: usize,
+    /// Scratch whose owner is gone and which holds, or may hold, a hard link
+    /// to a source: left whole, because a sweep never unlinks one.
+    pub(super) linked: usize,
     /// Attempt scratch this sweep could not settle -- an owner it could not
-    /// ask about, a source link that may be the last name of its bytes, or a
-    /// removal that did not finish: left.
+    /// ask about, or a removal that did not finish: left.
     pub(super) uncertain: usize,
 }
 
@@ -188,6 +230,7 @@ pub(super) fn sweep(root: &Path) -> Sweep {
         match classify(&path) {
             Found::Unowned => sweep.unowned += 1,
             Found::Live => sweep.live += 1,
+            Found::Linked => sweep.linked += 1,
             Found::Uncertain => sweep.uncertain += 1,
             Found::Abandoned if remove_owned(&path) => sweep.removed += 1,
             Found::Abandoned => sweep.uncertain += 1,
@@ -200,6 +243,7 @@ pub(super) fn sweep(root: &Path) -> Sweep {
 enum Found {
     Unowned,
     Live,
+    Linked,
     Uncertain,
     Abandoned,
 }
@@ -225,26 +269,21 @@ fn classify(directory: &Path) -> Found {
     match owner(marker.owner_process_id, marker.owner_process_created) {
         Owner::Alive => Found::Live,
         Owner::Unknown => Found::Uncertain,
-        Owner::Gone if link_is_not_the_last_name(&directory.join(LINK_NAME)) => Found::Abandoned,
-        Owner::Gone => Found::Uncertain,
+        Owner::Gone if may_hold_a_link(directory) => Found::Linked,
+        Owner::Gone => Found::Abandoned,
     }
 }
 
-/// Whether removing `link` would remove only a name: there is nothing there,
-/// or it is an ordinary file with at least one other name.
-fn link_is_not_the_last_name(link: &Path) -> bool {
-    match fs::symlink_metadata(link) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-        Err(_) => false,
-        Ok(_) => local_document::open_for_read(link)
-            .ok()
-            .filter(|file| {
-                file.metadata()
-                    .is_ok_and(|metadata| local_document::is_ordinary_file(&metadata))
-            })
-            .and_then(|file| local_document::link_count_of(&file))
-            .is_some_and(|names| names > 1),
-    }
+/// Whether `directory` has, or cannot be shown not to have, an entry at the
+/// link name. How many other names its bytes have is deliberately not asked:
+/// that answer can change before a removal acts on it.
+fn may_hold_a_link(directory: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return true;
+    };
+    entries
+        .into_iter()
+        .any(|entry| entry.map_or(true, |entry| is_link_name(&entry.file_name())))
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +497,7 @@ mod tests {
                 removed: 2,
                 live: 1,
                 unowned: 6,
+                linked: 0,
                 uncertain: 0
             }
         );
@@ -528,33 +568,117 @@ mod tests {
         assert!(alive.join("snapshot.mzML").is_file());
     }
 
+    /// A link attempt of a gone owner, holding a hard link to `bytes` under
+    /// `link_name`, whose own name in `user` is kept or removed.
+    #[cfg(windows)]
+    fn linked(root: &Path, user: &Path, link_name: &str, bytes: &[u8], keep: bool) -> PathBuf {
+        let attempt = marked(root, NOBODY, 1);
+        fs::remove_file(attempt.join("snapshot.mzML")).expect("a link attempt has no copy");
+        let original = user.join(format!("{}.mzML", uuid::Uuid::new_v4()));
+        fs::write(&original, bytes).expect("user file");
+        fs::hard_link(&original, attempt.join(link_name)).expect("link");
+        if !keep {
+            fs::remove_file(&original).expect("the user removed their name");
+        }
+        attempt
+    }
+
     #[cfg(windows)]
     #[test]
-    fn a_source_link_that_may_be_the_last_name_of_its_bytes_keeps_its_directory() {
-        let root = Scratch::new("sweep-link");
-        let user = root.directory().join("user-data");
+    fn a_gone_owners_source_link_is_never_unlinked_however_many_names_it_has() {
+        let scratch = Scratch::new("sweep-link");
+        let (root, user) = (scratch.join("attempts"), scratch.join("user-data"));
+        fs::create_dir(&root).expect("dir");
         fs::create_dir(&user).expect("dir");
-        let original = user.join("run.mzML");
-        fs::write(&original, b"the user's bytes").expect("user file");
 
-        let linked = marked(root.directory(), NOBODY, 1);
-        fs::hard_link(&original, linked.join(LINK_NAME)).expect("link");
-        let orphaned = marked(root.directory(), NOBODY, 1);
-        let only = user.join("deleted-later.mzML");
-        fs::write(&only, b"bytes whose other name went").expect("user file");
-        fs::hard_link(&only, orphaned.join(LINK_NAME)).expect("link");
-        fs::remove_file(&only).expect("the user removed their name");
+        // The user's name is still there; the link is the only name left; and
+        // the link under another case of the same name.
+        let named = linked(&root, &user, LINK_NAME, b"still named", true);
+        let last = linked(&root, &user, LINK_NAME, b"only the link", false);
+        let cased = linked(&root, &user, "SOURCE.MZML", b"cased", true);
 
-        let swept = sweep(root.directory());
-        assert_eq!((swept.removed, swept.uncertain), (1, 1), "{swept:?}");
-        assert!(!linked.exists(), "a link with another name is only a name");
-        assert_eq!(fs::read(&original).expect("intact"), b"the user's bytes");
+        let swept = sweep(&root);
         assert_eq!(
-            fs::read(orphaned.join(LINK_NAME)).expect("kept"),
-            b"bytes whose other name went",
-            "the last name of a user's bytes is never removed"
+            swept,
+            Sweep {
+                linked: 3,
+                ..Sweep::default()
+            }
         );
-        assert!(orphaned.join(MARKER).is_file());
+        for (attempt, name, bytes) in [
+            (&named, LINK_NAME, &b"still named"[..]),
+            (&last, LINK_NAME, &b"only the link"[..]),
+            (&cased, "SOURCE.MZML", &b"cased"[..]),
+        ] {
+            assert_eq!(fs::read(attempt.join(name)).expect("kept"), bytes);
+            assert!(attempt.join(MARKER).is_file(), "left whole");
+            assert!(
+                attempt.join("out").join("rows.jsonl").is_file(),
+                "left whole"
+            );
+        }
+        assert_eq!(
+            fs::read_dir(&user).expect("user data").count(),
+            2,
+            "both kept names untouched"
+        );
+        assert_eq!(sweep(&root).linked, 3, "and left again");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_source_link_under_a_marker_that_is_not_proof_is_left_as_found() {
+        let scratch = Scratch::new("sweep-link-unowned");
+        let original = scratch.write("user.mzML", b"user bytes");
+        let root = scratch.join("attempts");
+        fs::create_dir(&root).expect("dir");
+
+        let unmarked = root.join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir(&unmarked).expect("dir");
+        fs::hard_link(&original, unmarked.join(LINK_NAME)).expect("link");
+        let malformed = root.join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir(&malformed).expect("dir");
+        fs::write(
+            malformed.join(MARKER),
+            b"{\"schema\":\"mscanvas.targetedMs1.attemptScratch/2\"}",
+        )
+        .expect("marker");
+        fs::hard_link(&original, malformed.join(LINK_NAME)).expect("link");
+
+        assert_eq!(
+            sweep(&root),
+            Sweep {
+                unowned: 2,
+                ..Sweep::default()
+            }
+        );
+        for attempt in [&unmarked, &malformed] {
+            assert_eq!(
+                fs::read(attempt.join(LINK_NAME)).expect("kept"),
+                b"user bytes"
+            );
+        }
+    }
+
+    /// Removing an attempt's own directory never unlinks a link left in it:
+    /// that is `ExecutionView`'s to do while the source is held, and a link it
+    /// could not remove stays, with the directory and its marker.
+    #[cfg(windows)]
+    #[test]
+    fn a_directory_removal_leaves_a_link_it_finds_with_the_marker() {
+        let root = Scratch::new("attempt-link-left");
+        let original = root.directory().join("user.mzML");
+        fs::write(&original, b"user bytes").expect("user file");
+        let directory = AttemptDirectory::create(root.directory()).expect("made");
+        let path = directory.path.clone();
+        fs::hard_link(&original, path.join(LINK_NAME)).expect("link");
+        fs::write(path.join("request.json"), b"{}").expect("scratch");
+        drop(directory);
+
+        assert_eq!(fs::read(path.join(LINK_NAME)).expect("kept"), b"user bytes");
+        assert!(path.join(MARKER).is_file(), "the marker stays with it");
+        assert!(!path.join("request.json").exists(), "the rest is removed");
+        assert_eq!(sweep(root.directory()).live, 1, "this session's own");
     }
 
     /// Windows-specific: a file somebody holds without delete sharing cannot

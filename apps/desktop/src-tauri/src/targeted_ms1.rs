@@ -598,9 +598,12 @@ struct ExecutionView {
 impl Drop for ExecutionView {
     fn drop(&mut self) {
         // A link's name goes before the source is released -- `held` is
-        // dropped after this body -- so it is never the last name of the
-        // source's bytes. A copy is the attempt's own and goes with its
-        // directory.
+        // dropped after this body -- and the name the source was opened
+        // through cannot be deleted while it is held, so the link is never the
+        // last name of the source's bytes. This is the only place a link is
+        // unlinked: one this fails to remove stays, and no directory removal
+        // or sweep will remove it later. A copy is the attempt's own and goes
+        // with its directory.
         if self.kind == SourceView::HardLinkInWorkArea {
             let _ = fs::remove_file(&self.path);
         }

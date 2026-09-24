@@ -673,8 +673,8 @@ fn a_destination_that_refuses_a_chunk_is_named_by_why() {
 
 #[cfg(windows)]
 #[test]
-fn a_volume_says_what_this_process_may_write_and_an_object_how_many_names_it_has() {
-    let scratch = Scratch::new("names");
+fn a_volume_says_how_many_bytes_this_process_may_write_there() {
+    let scratch = Scratch::new("free");
     assert!(
         crate::local_document::available_bytes(scratch.directory()).is_some_and(|free| free > 0)
     );
@@ -683,14 +683,6 @@ fn a_volume_says_what_this_process_may_write_and_an_object_how_many_names_it_has
         None,
         "a directory that is not there answers nothing, not zero"
     );
-    let path = scratch.write("one.bin", b"named once");
-    let count =
-        |path: &Path| crate::local_document::link_count_of(&fs::File::open(path).expect("open"));
-    assert_eq!(count(&path), Some(1));
-    fs::hard_link(&path, scratch.join("two.bin")).expect("a second name");
-    assert_eq!(count(&path), Some(2));
-    fs::remove_file(&path).expect("the first name goes");
-    assert_eq!(count(&scratch.join("two.bin")), Some(1));
 }
 
 #[test]

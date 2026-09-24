@@ -3527,6 +3527,123 @@ fn a_cancel_while_the_copy_is_hashed_again_records_what_the_copy_read() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// M9.3.C1: a sweep never unlinks a link; the attempt that made it does
+// ---------------------------------------------------------------------------
+
+/// Windows-specific. The one place a link is unlinked is the attempt's own
+/// view, while it holds the source: the source's name cannot be deleted or
+/// renamed while the link beside it exists, so the link is never its last
+/// name, and dropping the view removes the link and leaves the source whole.
+#[cfg(windows)]
+#[test]
+fn a_link_view_removes_its_link_while_the_source_name_cannot_go_first() {
+    let area = WorkArea::new("link-view-drop");
+    let (plan, source, store) = order_in(&area);
+    let order = AttemptOrder {
+        plan: &plan,
+        source: &source,
+        store: &store,
+        artifact: ArtifactId::new(),
+    };
+    let attempt = area.join("attempt");
+    fs::create_dir_all(&attempt).expect("attempt");
+    let bytes = fs::read(&source).expect("source");
+    let view = super::execution_view(
+        &order,
+        crate::project::observe::open_member(&source).expect("opened"),
+        &attempt,
+        &Cancellation::default(),
+        &|_| {},
+    )
+    .map_err(|end| format!("{end:?}"))
+    .expect("a view");
+    assert_eq!(view.kind, SourceView::HardLinkInWorkArea);
+    let link = attempt.join(LINK_NAME);
+    assert_eq!(
+        crate::local_document::object_identity(&link),
+        crate::local_document::object_identity(&source),
+        "the link is a second name of the source"
+    );
+    assert!(
+        fs::remove_file(&source).is_err(),
+        "the source's own name cannot be deleted while it is held, link or no link"
+    );
+    assert!(fs::rename(&source, area.join("moved.mzML")).is_err());
+
+    drop(view);
+    assert!(!link.exists(), "the attempt removed its own link");
+    assert_eq!(
+        fs::read(&source).expect("source"),
+        bytes,
+        "and the source is whole"
+    );
+    fs::remove_file(&source).expect("and released");
+}
+
+/// A marked attempt of a gone owner holding a hard link to `original`.
+fn dead_link_attempt(root: &Path, original: &Path) -> PathBuf {
+    let attempt = crash_left(root, 0xFFFF_FFFD);
+    fs::remove_file(attempt.join(SNAPSHOT_NAME)).expect("a link attempt has no copy");
+    fs::hard_link(original, attempt.join(LINK_NAME)).expect("link");
+    attempt
+}
+
+#[test]
+fn a_link_left_by_a_crash_is_not_given_up_to_make_room_for_a_copy() {
+    let scratch = Scratch::new("m93c1-room");
+    let root = scratch.join("attempts");
+    fs::create_dir_all(&root).expect("attempts root");
+    let original = scratch.write("user/run.mzML", &vec![b'x'; 256 * 1024]);
+    let linked = dead_link_attempt(&root, &original);
+    let copied = crash_left(&root, 0xFFFF_FFFD);
+    let plan = plan_over(
+        &scratch.write("plain.mzML", b"<mzML/>"),
+        recipe::ADAPTER_SOURCE,
+    );
+
+    // No room, before or after: the sweep reclaims the dead copy and leaves
+    // the link, and the refusal stands.
+    let swept = std::cell::Cell::new(super::scratch::Sweep::default());
+    assert!(!super::room_after_reclaiming(
+        &plan,
+        || Some(0),
+        || swept.set(super::scratch::sweep(&root))
+    ));
+    let swept = swept.get();
+    assert_eq!((swept.removed, swept.linked), (1, 1), "{swept:?}");
+    assert!(!copied.exists());
+    assert!(linked.join(LINK_NAME).is_file(), "the link is kept");
+    assert_eq!(
+        fs::read(&original).expect("user bytes"),
+        vec![b'x'; 256 * 1024]
+    );
+}
+
+#[test]
+fn a_sweep_over_a_project_and_its_result_store_removes_none_of_it() {
+    let scratch = Scratch::new("m93c1-store");
+    let (store, document, artifact) = saved_with_result(&scratch);
+    let expected_rows = rows_of(&store, artifact);
+    drop(store);
+    let store_dir = payload::store_of(&document).expect("store");
+    let result_dir = store_dir.join(artifact.to_string());
+    assert!(payload::is_plain_directory(&result_dir));
+    // A dead copy attempt beside them is the only thing a sweep may remove.
+    let dead = crash_left(scratch.directory(), 0xFFFF_FFFD);
+
+    assert_eq!(super::scratch::sweep(scratch.directory()).removed, 1);
+    assert!(!dead.exists());
+    for root in [store_dir.as_path(), result_dir.as_path()] {
+        assert_eq!(super::scratch::sweep(root).removed, 0, "{}", root.display());
+    }
+    assert!(document.is_file());
+    assert_eq!(availability_on_open(&document).0, "available");
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    assert_eq!(rows_of(&reopened, artifact), expected_rows);
+}
+
 #[test]
 #[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
 fn a_copy_that_fits_once_crash_left_scratch_is_reclaimed_is_not_refused() {
