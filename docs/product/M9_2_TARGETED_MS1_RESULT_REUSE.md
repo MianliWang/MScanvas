@@ -13,6 +13,11 @@ NOT STARTED · M7.6 RELEASE QUALIFICATION DEFERRED / INCOMPLETE · PROTEOWIZARD
 HOLD UNCHANGED · ROUTE B NOT AUTHORIZED / NOT EXECUTED · PUBLIC BETA NOT
 RELEASED; M10 NOT STARTED
 
+Update: M9.3 has since let a source on another volume run through a verified
+copy; nothing here changed, and a stored result is still read without opening,
+copying or inspecting a source. See the
+[M9.3 record](M9_3_TARGETED_MS1_EXECUTION_SNAPSHOT.md).
+
 ## Scope
 
 M9.2 turns a targeted MS1 result M9.1 already produced into a durable

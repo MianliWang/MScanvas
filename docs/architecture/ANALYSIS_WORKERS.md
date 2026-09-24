@@ -54,6 +54,12 @@ in a fixed CPython 3.13.15 + pyOpenMS 3.5.0 runtime. What it settled:
   every launch, and the modules the worker reports loading are checked against
   it after.
 - **Not enforced:** filesystem read confinement and network confinement.
+- **Execution view (M9.3):** the worker is only ever given an ASCII name in its
+  own attempt directory: a hard link to the held source on the work area's
+  volume, or elsewhere a copy made in one read through the held handle and
+  verified against the plan's bytes before launch. Attempt directories carry
+  an owner marker and are swept only when their owner process is gone
+  ([ADR 0049](adr/0049-content-bound-execution-snapshot.md)).
 
 The runtime is provisioned into a development checkout only; nothing here
 satisfies the packaging gate below. See the

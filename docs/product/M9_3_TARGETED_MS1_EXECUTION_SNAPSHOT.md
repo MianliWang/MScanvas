@@ -1,0 +1,123 @@
+# M9.3 record — content-bound execution snapshots and bounded attempt lifecycle
+
+Status: **candidate — set to its completion line only after the isolated
+review and the final validation.** Date: 2026-09-23. Branch
+`feat/m9.3-content-bound-execution-snapshot`, from the M9.2 endpoint
+`d1d9f586bef73715fc4bddf39795498059c0fada`. Decision:
+[ADR 0049](../architecture/adr/0049-content-bound-execution-snapshot.md).
+Evidence: [M9.3 evidence](../spikes/M9_3_TARGETED_MS1_EXECUTION_SNAPSHOT_EVIDENCE.md).
+Builds on the [M9.1 record](M9_1_TARGETED_MS1_HANDOFF.md#m91-record) and the
+[M9.2 record](M9_2_TARGETED_MS1_RESULT_REUSE.md).
+
+SOURCE UNPUBLISHED · M8 LOCAL IMPLEMENTATION COMPLETE · M9 IN PROGRESS — M9.4
+NOT STARTED · M7.6 RELEASE QUALIFICATION DEFERRED / INCOMPLETE · PROTEOWIZARD
+HOLD UNCHANGED · ROUTE B NOT AUTHORIZED / NOT EXECUTED · PUBLIC BETA NOT
+RELEASED; M10 NOT STARTED
+
+## Scope
+
+M9.3 changes how the exact approved bytes of a targeted MS1 source are
+presented to the same fixed worker, and cleans up after attempts. It does not
+change what the worker computes: the recipe, the adapter, the runtime,
+pyOpenMS, the tolerances, the target semantics, the fitting and the outcome
+taxonomy are M9.1's, and so are the plan, run, attempt, artifact and schema-4
+identities. Not in scope and not done: multi-file analysis, a second recipe,
+runtime packaging, network shares, general project or payload garbage
+collection, crash resume, and M9.4.
+
+## What a user can do
+
+In a saved project, on a layer whose source is one supported mzML file:
+
+1. **Run a source from any local drive.** A source on the MSCanvas work area's
+   drive runs exactly as in M9.1, through a read-only link. A source on another
+   drive — including one under a path with non-ASCII characters — now runs too:
+   while MSCanvas makes a temporary copy the run shows **Preparing analysis
+   input…**, and the run can be cancelled there like anywhere else.
+2. **See why a run cannot start or did not finish**, in the recipe's own words:
+   - at review, and again when Run is pressed: *the drive holding the MSCanvas
+     work area has less free space than this source needs for its temporary
+     copy* (`insufficientWorkAreaSpace`) — nothing is run or recorded; free
+     space and try again;
+   - as a failed run at the source stage: the source changed since the plan
+     (`sourceChanged`), could not be read (`sourceUnavailable`), the work
+     area's drive ran out of room during the copy (`insufficientWorkAreaSpace`),
+     or MSCanvas could not prepare the source for the engine
+     (`executionViewUnavailable`). None of them is a finding about a target.
+3. **Read in Details how the engine was given the source**: *in place, through
+   a read-only link* or *from a temporary copy in the MSCanvas work area,
+   checked to hold exactly the plan's bytes before the engine read it*. Never
+   where: no work-area path, drive or scratch name is shown or stored.
+
+Copying is not conversion: the copy's bytes are the source's bytes, and the
+plan, the result and the record are the same as for a link.
+
+## Rules
+
+| Rule | Where |
+| --- | --- |
+| The source is opened once, read-only with write and delete sharing withheld, before any byte is read; the view is chosen from that handle's volume | `targeted_ms1.rs`, `execution_view` |
+| A source that can be linked is linked, never copied; a link that is not the held object fails the run and is never replaced by a copy | `execution_view` |
+| A copy is made in one read through the held handle, each chunk hashed as it is written, and refused unless its length and SHA-256 are the plan's; it is then held read-only and hashed again before the worker is given its name | `observe.rs` `copy_into`; `targeted_ms1.rs` `snapshot` |
+| The source is released once the copy is verified; the run is bound to the bytes, which were the plan's | `snapshot` |
+| A copy the work area provably cannot hold is refused before a run exists; one that runs out of room fails at the source stage | `preflight`, `room_for_snapshot` |
+| A cancel during the copy stops between 64 KiB chunks and starts no worker | `Cooperative` reader |
+| Every attempt directory is marked before use, removed marker last when its attempt ends, and kept while an unaccounted worker may use it | `targeted_ms1/scratch.rs` |
+| Each attempt first removes crash-left attempt directories whose owner process is gone, and nothing it cannot prove is one | `scratch::sweep` |
+| A link's name is removed while the source is still held | `ExecutionView::drop` |
+| Reading, drawing or exporting a stored result never opens, copies or inspects a source | unchanged from M9.2 |
+
+## Records
+
+`attempt.sourceView` is `hardLinkInWorkArea` or, new in M9.3,
+`verifiedSnapshotInWorkArea`. `FailureCode` gains `insufficientWorkAreaSpace`.
+Both are additions to schema 4, which does not advance: a schema-5 bump would
+refuse every M9.1/M9.2 project. An M9.1 or M9.2 build refuses a document that
+carries either word. `RunPhase` gains `preparingInput`, which is session-only.
+The refusal `sourceOnAnotherVolume` no longer exists; `insufficientWorkAreaSpace`
+is its only successor.
+
+## The work area
+
+`.tmp/m91-jobs/attempts/<uuid>/` in a development checkout, as in M9.1. An
+attempt directory holds `owner.json` (schema, attempt id, owner process id and
+creation time), the view (`source.mzML` for a link, `snapshot.mzML` for a
+copy), the request, the adapter and what the worker wrote. No new host storage
+is used: not `%TEMP%`, not `%LOCALAPPDATA%`, not a drive root.
+
+## Known limits
+
+- **Development runtime only**, as in M9.1: a release build has no runtime and
+  every review answers `recipeUnavailable`.
+- **Space.** A copy needs free space for one source-sized file on the work
+  area's drive while it runs. The check before a run is an observation, not a
+  reservation.
+- **Time.** A copy costs a full read of the source and a full read of the
+  copy. Measured copy-and-verify times (0.28 s for 156 MB, 0.87 s for 482 MB)
+  were taken right after the test wrote its own source and are not throughput
+  figures; see the evidence.
+- **What a copy can and cannot promise.** It is exactly the plan's bytes when
+  the worker is given it, and it is held read-only while the worker reads it.
+  It is not a claim that the original stayed unchanged afterwards, nor that
+  Windows provides an immutable snapshot; see ADR 0049 for what is protected
+  and what is only detected.
+- **Crash-left scratch.** Only marked attempt directories whose owner process
+  is gone are removed, at the start of a later attempt; nothing is swept on
+  startup, and what a sweep leaves is not shown in the interface. A crash-left
+  link whose other names are all gone is kept, because it is the last name of
+  a user's bytes. Attempt directories from before M9.3 carry no marker and are
+  never removed.
+- **Not reclaimed:** the payload store's own `.staging/` left by a crash,
+  beside the user's document.
+- **Not qualified:** network shares, removable media that disappear mid-copy
+  beyond the typed `sourceUnavailable`, FAT/exFAT work areas, and a work area
+  whose volume reports no file identity (the copy path covers them in code;
+  none was run).
+
+## Unchanged M9.2 limitations
+
+Recorded as M9.2 left them and not touched here: no clipboard copy of a stored
+result; native save dialogs not truly qualified; a PNG is not self-describing
+the way SVG and CSV are; a spreadsheet may interpret a table cell as a
+formula; the whole browser suite remains historically red (`pnpm
+e2e:browser`: exit 1, 7 spec files passed and 20 failed, in M9.1).
