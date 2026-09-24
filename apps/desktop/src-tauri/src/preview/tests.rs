@@ -4020,6 +4020,11 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // read back a bounded page or one target's evidence at a time.
             "resolve_targeted_ms1_plan",
             "run_targeted_ms1",
+            // M9.4: a batch -- one request over several layers resolved into
+            // one plan per layer, and those plans run one after another under
+            // one accepted operation, whose cancel is the batch's Stop.
+            "resolve_targeted_ms1_batch",
+            "run_targeted_ms1_batch",
             "get_targeted_ms1_progress",
             "read_targeted_ms1_rows",
             "read_targeted_ms1_evidence",
