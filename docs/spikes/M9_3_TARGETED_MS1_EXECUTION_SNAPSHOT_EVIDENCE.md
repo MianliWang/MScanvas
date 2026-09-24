@@ -67,7 +67,7 @@ all on the pinned runtime and adapter, unchanged:
 | Worker fails after a verified copy (an adapter that exits 7) | Failed `workerExitedAbnormally`; consumed equal to the plan; `verifiedSnapshotInWorkArea`; no copy left |
 | Result cannot be staged after a verified copy and a completed worker (a file where `.staging` goes) | Failed `payloadNotPublished` at `publish`; `verifiedSnapshotInWorkArea`; nothing published; the blocking file untouched; no copy left |
 | Preflight with the real volumes | The plan as is passes; the same plan expecting `u64::MAX / 2` bytes from `C:` is refused `insufficientWorkAreaSpace`; from `D:` it passes, because nothing is copied |
-| Preflight with a crash-left 256 MiB copy in the real attempts root (review F1) | A plan expecting the free space measured with that copy present plus 64 MiB passes, and the copy is gone: the preflight reclaimed it before judging; a plan expecting `u64::MAX / 2` is still refused |
+| Preflight with a crash-left 256 MiB copy in the real attempts root (review F1) | A plan expecting the free space measured with that copy present plus 128 MiB passes, and the copy is gone: the preflight found no room, swept, measured again and then passed; a plan expecting `u64::MAX / 2` is still refused. The 128 MiB either way absorbs other writers on the volume; a larger swing between the measurements would make this opt-in test fail, not pass wrongly |
 
 Every M9.1 and M9.2 real-runtime case passed unchanged in the same run.
 
@@ -173,7 +173,22 @@ against the code before it was repaired.
 | F7 — test gaps; "measured mid-copy" was measured before the first chunk | Confirmed, low | The hold test now waits at the third chunk; the link fallback and both cancel cases are tested. A mismatching link and a copy changed before its hold remain untested (listed above) |
 | F8 — two concurrent sweeps, or a user deleting a name between count and removal, can remove a last link | Plausible, low (doc) | Stated in ADR 0049 §7 and the record as a two-step limit |
 
-The repairs were then given one targeted review of their own diff (below).
+The repairs (`46c7b27`) were then given one targeted, read-only review of
+their own diff, exported to `.tmp/m93-evidence/review-46c7b27/`, on the two
+invariant changes — a sweep in the preflight, and what a cancel records as
+consumed — and on the new tests. No high or medium finding; it found the F1,
+F3 and F4 invariants hold as coded, including for this session's own running
+or quarantined directory, a directory another process is still marking, and
+parallel test threads.
+
+| Finding | Verdict | Disposition |
+| --- | --- | --- |
+| L1 — the link-fallback test would also pass on a volume with no identity, without taking the fallback | Confirmed, low | The test now asserts both volumes are known and the same |
+| L2 — plan review still documented as reading no file and starting nothing | Confirmed, low | Both doc comments say a review may remove crash-left scratch where the copy would not fit |
+| L3 — a review's sweep can overlap a run's in one process | Confirmed, low | Harmless (removals fail softly and the next sweep finishes); stated in `scratch.rs`, ADR 0049 and the record, including for the two-link race |
+| L4 — room running out when the copy's file is created, or when the attempt directory is marked, was `executionViewUnavailable` | Plausible, low | The copy's creation is now classified like its writes; the attempt directory's own creation stays `executionViewUnavailable`, and ADR 0049 says so |
+| L5 — the real reclaim test's margin protected one direction only | Plausible, low | 128 MiB either way; ADR 0049 notes a refusal can pass on retry once space is released |
+| L6 — wording: "reclaimed" overstated what a sweep removes; the evidence had the preflight's order wrong; the quota error was not measured | Confirmed, low | Corrected; the record also says the review-time refusal applies only to a source proven to be on another drive |
 
 ## Validation record
 

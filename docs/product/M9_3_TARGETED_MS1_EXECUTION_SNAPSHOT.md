@@ -38,9 +38,11 @@ In a saved project, on a layer whose source is one supported mzML file:
 2. **See why a run cannot start or did not finish**, in the recipe's own words:
    - at review, and again when Run is pressed: *the drive holding the MSCanvas
      work area has less free space than this source needs for its temporary
-     copy* (`insufficientWorkAreaSpace`), said only after what crashed earlier
-     sessions left in the work area has been reclaimed — nothing is run or
-     recorded; free space and try again;
+     copy* (`insufficientWorkAreaSpace`), said only after the crash-left
+     scratch a sweep can prove abandoned has been removed — nothing is run or
+     recorded; free space and try again. This is asked only where the source
+     is proven to be on another drive; a same-drive copy after a failed link
+     meets its space at run time;
    - as a failed run at the source stage: the source changed since the plan
      (`sourceChanged`), could not be read (`sourceUnavailable`), the work
      area's drive or the user's quota on it ran out of room while the copy or
@@ -63,7 +65,7 @@ plan, the result and the record are the same as for a link.
 | A source that can be linked is linked, never copied; a link that cannot be made falls back to a copy read again through the same handle; a link that is not the held object fails the run and is never replaced by a copy | `execution_view` |
 | A copy is made in one read through the held handle, each chunk hashed as it is written, and refused unless its length and SHA-256 are the plan's; it is then held read-only and hashed again before the worker is given its name | `observe.rs` `copy_into`; `targeted_ms1.rs` `snapshot` |
 | The source is released once the copy is verified; the run is bound to the bytes, which were the plan's | `snapshot` |
-| A copy the work area provably cannot hold, even after crash-left scratch is reclaimed, is refused before a run exists; one that runs out of room fails at the source stage | `preflight`, `room_after_reclaiming` |
+| A copy the work area provably cannot hold, even once the crash-left scratch a sweep can prove abandoned is removed, is refused before a run exists; one that runs out of room fails at the source stage | `preflight`, `room_after_reclaiming` |
 | A cancel during the copy, or while it is hashed again, stops between 64 KiB chunks and starts no worker; consumed content is recorded only once the source was read whole | `Cooperative` reader, `snapshot` |
 | Every attempt directory is marked before use, removed marker last when its attempt ends, and kept while an unaccounted worker may use it | `targeted_ms1/scratch.rs` |
 | Each attempt first removes crash-left attempt directories whose owner process is gone, and nothing it cannot prove is one; a preflight does the same before refusing for want of room | `scratch::sweep` |
@@ -107,9 +109,11 @@ is used: not `%TEMP%`, not `%LOCALAPPDATA%`, not a drive root.
 - **Crash-left scratch.** Only marked attempt directories whose owner process
   is gone are removed, at the start of a later attempt or before a preflight
   refuses for want of room; nothing is swept on startup, and what a sweep
-  leaves is not shown in the interface. A crash-left link that a sweep finds
-  to be the last name of a user's bytes is kept; the count and the removal are
-  two steps, so a name deleted between them is not seen. A directory that is
+  leaves is not shown in the interface. A plan review does not wait for a run
+  in progress, so two sweeps can overlap in one session. A crash-left link that
+  a sweep finds to be the last name of a user's bytes is kept; the count and
+  the removal are two steps, so a name deleted between them, or by an
+  overlapping sweep, is not seen. A directory that is
   emptied but cannot itself be removed is left empty and unmarked. Attempt
   directories from before M9.3 carry no marker and are never removed.
 - **What the worker writes.** Running out of room while the worker itself

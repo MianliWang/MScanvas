@@ -607,9 +607,10 @@ async fn capture_project_qc_summary(
 ///
 /// Sends the text the user typed and the layer; Rust decides what every value
 /// means, mints the target identifiers and holds the plan for this session.
-/// Reads no file's content and starts nothing. Problems with the request come
-/// back as data, row by row, and so does anything that would stop the plan
-/// running now.
+/// Reads no source's content and starts nothing; where the source's copy would
+/// not fit the work area, it removes crash-left attempt scratch before saying
+/// so. Problems with the request come back as data, row by row, and so does
+/// anything that would stop the plan running now.
 #[tauri::command]
 async fn resolve_targeted_ms1_plan(
     request: project::dto::PlanRequestDto,

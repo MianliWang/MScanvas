@@ -115,12 +115,17 @@ blocked and the run refused with `insufficientWorkAreaSpace` (retryable);
 nothing is recorded. Where the space or either volume cannot be established,
 nothing is refused and the attempt's own read or write says why. The
 observation is not a reservation: a copy that runs out of room during the
-attempt — the volume full or the user's quota met — fails the run with
-`insufficientWorkAreaSpace` at the `source` stage, and so does running out of
-room while the adapter, the request or the worker's directories are written.
-Each is a failed run, never a scientific negative, and a partial copy goes
-with its directory. What the worker itself fails to write is the worker's own
-failure, as in M9.1. No percentage, multiple or margin is invented.
+attempt — its file created or written with the volume full or the user's
+quota met — fails the run with `insufficientWorkAreaSpace` at the `source`
+stage, and so does running out of room while the adapter, the request or the
+worker's directories are written. Both error kinds (`StorageFull`,
+`QuotaExceeded`) are mapped; which of them an NTFS per-user quota raises was
+not measured. Each is a failed run, never a scientific negative, and a partial
+copy goes with its directory. Room running out while the attempt directory
+and its marker are made is still `executionViewUnavailable`, and what the
+worker itself fails to write is the worker's own failure, as in M9.1. A
+refusal can pass on a retry once space a sweep freed, or another program
+briefly held, is released. No percentage, multiple or margin is invented.
 
 ### 6. Cancellation during the copy
 
@@ -168,7 +173,8 @@ closes the Job's last handle and Windows terminates every process in it.
 A crash-left **link** can be the last name of a user's bytes if the user
 deleted their original while MSCanvas was not running; a sweep that finds it
 the last name leaves its directory. The count and the removal are two steps,
-not one: a user deleting the other name between them, or two sessions each
+not one: a user deleting the other name between them, or two overlapping
+sweeps — in two sessions, or a plan review beside a run's start in one — each
 removing one of two links to a file whose original is gone, can remove the
 last name. In a running attempt, the link's name is now removed while the
 source is still held, so the source's other name cannot have gone first.

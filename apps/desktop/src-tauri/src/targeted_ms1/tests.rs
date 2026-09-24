@@ -3391,6 +3391,14 @@ fn a_link_that_cannot_be_made_falls_back_to_a_verified_copy_through_the_held_han
     };
 
     let attempt = blocked("attempt");
+    // The link path is the one taken only where both volumes are known and
+    // the same; otherwise this would test the direct copy instead.
+    let source_volume = crate::local_document::object_identity(&source).map(|(volume, _)| volume);
+    assert!(
+        source_volume.is_some()
+            && source_volume == crate::local_document::directory_volume(&attempt),
+        "this test needs the source and the attempt on one identifying volume"
+    );
     let view = super::execution_view(
         &order,
         crate::project::observe::open_member(&source).expect("opened"),
@@ -3502,7 +3510,8 @@ fn a_copy_that_fits_once_crash_left_scratch_is_reclaimed_is_not_refused() {
     // A plan that fits only once that space is back, with room for the
     // volume's other writers meanwhile; and one that fits in neither case.
     let mut fits_after = plan.clone();
-    fits_after.expected_content[0].byte_length = free + held_back / 4;
+    // Half the held-back space either way, for other writers on the volume.
+    fits_after.expected_content[0].byte_length = free + held_back / 2;
     assert_eq!(supervisor.preflight(&fits_after, &source), Ok(()));
     assert!(!crashed.exists(), "the crash-left copy was reclaimed first");
 

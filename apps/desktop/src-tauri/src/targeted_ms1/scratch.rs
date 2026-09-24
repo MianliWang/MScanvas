@@ -46,9 +46,11 @@
 //! that is empty but cannot itself be removed is left empty and unmarked, and
 //! later sweeps leave it too.
 //!
-//! A sweep runs at the start of each attempt, and in a run's preflight where
-//! the copy it needs would not otherwise fit; never on startup or on opening a
-//! project, and not in the background.
+//! A sweep runs at the start of each attempt, and in the preflight of a plan
+//! review or of a Run where the copy it needs would not otherwise fit; never on
+//! startup or on opening a project, and not in the background. A review is not
+//! held off by a run in progress, so two sweeps can overlap in one process;
+//! overlapping removals fail softly and the next sweep finishes them.
 //!
 //! Nothing here lifts a quarantine. A session that could not account for its
 //! worker keeps refusing runs until it exits, whatever became of a directory.

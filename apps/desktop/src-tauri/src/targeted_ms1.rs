@@ -760,8 +760,12 @@ fn snapshot(
     // rename or remove the copy under the bytes being hashed into it.
     #[cfg(windows)]
     std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
-    let Ok(mut file) = options.open(&path) else {
-        return unavailable(measured, FailureCode::ExecutionViewUnavailable);
+    let mut file = match options.open(&path) {
+        Ok(file) => file,
+        Err(error) if out_of_room(error.kind()) => {
+            return unavailable(measured, FailureCode::InsufficientWorkAreaSpace);
+        }
+        Err(_) => return unavailable(measured, FailureCode::ExecutionViewUnavailable),
     };
     let copied = source.copy_into(&mut file, cancellation);
     drop(file);

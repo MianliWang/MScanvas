@@ -1966,7 +1966,9 @@ impl ProjectStore {
 impl ProjectStore {
     /// Resolves a targeted MS1 request over one layer into a plan for review.
     ///
-    /// Reads no file's content and starts nothing. The plan is held for this
+    /// Reads no source's content and starts nothing; the executor's preflight
+    /// may remove crash-left attempt scratch where the source's copy would not
+    /// otherwise fit (see `targeted_ms1::scratch`). The plan is held for this
     /// session so a run can execute exactly what was reviewed; it becomes
     /// history only when a run does. Problems with the request come back as
     /// data, row by row, rather than as a refusal, and so does anything that
