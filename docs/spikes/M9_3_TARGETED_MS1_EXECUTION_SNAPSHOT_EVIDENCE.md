@@ -1,7 +1,8 @@
 # M9.3 — content-bound execution snapshot evidence
 
-Status: **candidate — see the [M9.3 record](../product/M9_3_TARGETED_MS1_EXECUTION_SNAPSHOT.md)
-for the milestone line.** Date: 2026-09-23. What was built, its rules and its
+Status: **M9.3 LOCAL EXECUTION SNAPSHOT COMPLETE — CONTENT-BOUND CROSS-VOLUME
+TARGETED-MS1 EXECUTION.** Date: 2026-09-23. Record:
+[M9.3 record](../product/M9_3_TARGETED_MS1_EXECUTION_SNAPSHOT.md). What was built, its rules and its
 limits are in the record and in
 [ADR 0049](../architecture/adr/0049-content-bound-execution-snapshot.md); this
 document holds what was measured and how.
@@ -22,6 +23,10 @@ RELEASED; M10 NOT STARTED
 | M9.0 / M9.1 / M9.2 branch heads | `1652aff…`, `96f2d8c…`, `d1d9f58…`, untouched |
 | Code | `9c09395` (execution views, snapshot, scratch, vocabulary, interface) |
 | Browser scenarios | `c823013` |
+| Documentation, the isolated review's input | `2bdbc7e` |
+| Review repairs | `46c7b27` |
+| Targeted-review repairs — **the tested code** | `c5c19f6857814418f3d04771a7c24beaaaafb11e`, tree `730c78d2c0652d4a1c865c24869bfc5d24e7de65` |
+| This validation record | a documentation-only successor of `c5c19f6` |
 
 At the start: branch, HEAD and tree as above, index and worktree clean, no
 stash, no operation in progress. `.claude/scheduled_tasks.lock` (git-excluded)
@@ -122,10 +127,15 @@ on `D:`, then a second copy cancelled as its middle chunk is about to be read.
 Peak memory is the test process's `K32GetProcessMemoryInfo`. Records under
 `test-results/m9.3/measure/`.
 
+On the tested code `c5c19f6` (logs `test-results/m9.3/final/14-measure-*.log`):
+
 | Fixture | Bytes | Copy and verify | Peak working set before → after | Peak private bytes | Cancel → return | Partial copy |
 | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| M9.0 `ctl_large.mzML` | 156,168,011 | 0.28 s | 8,273,920 → 8,613,888 | 1,339,392, unchanged | 0.1 ms (chunk 1,191) | 77,987,840 |
-| M7.4 `synthetic-long.mzML` | 482,478,703 | 0.87 s | 8,273,920 → 8,613,888 | 1,335,296, unchanged | 0.14 ms (chunk 3,681) | 241,172,480 |
+| M9.0 `ctl_large.mzML` | 156,168,011 | 0.30 s | 8,335,360 → 8,683,520 | 1,339,392, unchanged | 0.11 ms (chunk 1,191) | 77,987,840 |
+| M7.4 `synthetic-long.mzML` | 482,478,703 | 0.88 s | 8,339,456 → 8,683,520 | 1,335,296, unchanged | 0.13 ms (chunk 3,681) | 241,172,480 |
+
+The same measurement on `9c09395`, before the repairs, gave 0.28 s and 0.87 s
+with the same peak-memory behaviour.
 
 Peak memory did not grow with the source: a file three times larger left the
 same peak working set and the same peak private bytes, which is what a bounded
@@ -192,4 +202,51 @@ parallel test threads.
 
 ## Validation record
 
-Pending.
+Run one command at a time, in this order, on the tested code `c5c19f6` (tree
+`730c78d2…`), by `test-results/m9.3/final/run.sh`; logs and `exits.txt` in
+`test-results/m9.3/final/`, not committed.
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `cargo fmt --all --check` | 0 | |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --workspace` | 0 | 1,864 passed, 0 failed, 51 ignored (the real-runtime tests among them) |
+| `cargo test -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1` | 0 | 28 passed: 27 real-runtime cases, and the opt-in measurement, which without `MSCANVAS_M93_MEASURE` returns having measured nothing |
+| `cargo check -p mscanvas-desktop --release` | 0 | The release branch, which has no runtime, compiles |
+| `pnpm lint` | 0 | |
+| `pnpm typecheck` | 0 | |
+| `pnpm test` | 0 | 105 files, 2,157 tests |
+| `pnpm build` | 0 | |
+| `pnpm e2e:typecheck` | 0 | |
+| `wdio run ./e2e/wdio.browser.conf.ts --spec ./e2e/specs/m9.1-targeted-ms1.browser.e2e.ts` | 0 | 12 passing: M9.1 5, M9.3 3, M9.2 4; M9.3 frames in `test-results/m9.3/browser-Egj5RI/` |
+| `python scripts/check_repo.py` | 0 | |
+| `git diff --exit-code d1d9f58 -- Cargo.lock pnpm-lock.yaml` | 0 | No dependency added, removed or updated; no `Cargo.toml` feature changed |
+| The measurement, once per fixture, with `MSCANVAS_M93_MEASURE` set | 0, 0 | The table under "Resources" |
+
+**The whole browser suite was not run.** Its known state is M9.1's: `pnpm
+e2e:browser` exit 1, 7 spec files passed and 20 failed, dominated by
+`browser.tauri.execute()` being unsupported in browser mode and by stale
+roster selectors. M9.3 changes no surface those specs own; the one spec that
+owns the targeted surface was run alone, above.
+
+**Earlier runs, kept as observed.** On the first candidate, one full `pnpm
+test` ran while the isolated review read the tree alongside it and failed
+(exit 1): `preferencePersistence.test.tsx` could not resolve `motion-dom`
+(which is installed and linked), and two tests elsewhere in `M74FigureComposition`
+and `conversionScopeInteractions` timed out at 5 s. The three files passed
+alone (40 of 40), and the full run above, made alone, passed. The failure is
+attributed to contention; that is a basis, not a proof. The first `cargo fmt`
+and `clippy` runs failed on formatting and on lints the code then met, before
+the first commit. Every test above that touches the work area left
+`.tmp/m91-jobs/attempts/` and `.tmp/m91-jobs/tests/` empty.
+
+## Custody
+
+Local commits only on `feat/m9.3-content-bound-execution-snapshot`; no amend,
+rebase, squash, cherry-pick, push, pull request or merge. `main`,
+`origin/main` and the M9.0–M9.2 branch heads did not move. No stash was made
+and nothing was discarded. No owned process was left running: after the last
+run the only Python processes on the machine were editor and extension
+servers, and no ChromeDriver, Vite or runtime worker remained. The review
+exports are under `.tmp/m93-evidence/`; nothing in `.tmp` that this task did
+not create was deleted.

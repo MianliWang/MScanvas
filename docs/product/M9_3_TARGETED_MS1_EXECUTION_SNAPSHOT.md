@@ -1,7 +1,8 @@
 # M9.3 record — content-bound execution snapshots and bounded attempt lifecycle
 
-Status: **candidate — set to its completion line only after the isolated
-review and the final validation.** Date: 2026-09-23. Branch
+Status: **M9.3 LOCAL EXECUTION SNAPSHOT COMPLETE — CONTENT-BOUND CROSS-VOLUME
+TARGETED-MS1 EXECUTION.** Date: 2026-09-23. Tested code
+`c5c19f6857814418f3d04771a7c24beaaaafb11e`. Branch
 `feat/m9.3-content-bound-execution-snapshot`, from the M9.2 endpoint
 `d1d9f586bef73715fc4bddf39795498059c0fada`. Decision:
 [ADR 0049](../architecture/adr/0049-content-bound-execution-snapshot.md).
@@ -98,7 +99,7 @@ is used: not `%TEMP%`, not `%LOCALAPPDATA%`, not a drive root.
   area's drive while it runs. The check before a run is an observation, not a
   reservation.
 - **Time.** A copy costs a full read of the source and a full read of the
-  copy. Measured copy-and-verify times (0.28 s for 156 MB, 0.87 s for 482 MB)
+  copy. Measured copy-and-verify times (0.30 s for 156 MB, 0.88 s for 482 MB)
   were taken right after the test wrote its own source and are not throughput
   figures; see the evidence.
 - **What a copy can and cannot promise.** It is exactly the plan's bytes when
