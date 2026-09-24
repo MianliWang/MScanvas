@@ -108,6 +108,14 @@ TSV refusal of a tab or a line break, Unicode labels, a label starting with
 
 The native save dialog was not exercised for these commands.
 
+Where each output carries provenance:
+
+| Output | Provenance it carries |
+| --- | --- |
+| CSV / TSV | the `#` preamble: recipe and version, result and run identifiers, plan, target-list, source, adapter, engine-profile, runtime-manifest and payload-manifest digests, the engine's reported versions, parameters, units and row order |
+| SVG | the title (`<label> — <Outcome>`) and the description, which names the result identifier and the plan SHA-256 (checked in the real-runtime output) |
+| PNG | the drawn title only. The existing PNG path writes no text chunks, so a PNG carries no identifier or digest |
+
 ## Rendered interface
 
 Unit (Vitest, jsdom): `apps/desktop/src/features/project/TargetedMs1.test.tsx`
@@ -159,7 +167,7 @@ to a documented limit.
 | Plan-match check never reached by its test | Confirmed, low | Fixed: `rows_fit_plan`, tested directly |
 | DPI refusal names `Copy plot`, which this surface does not offer | Confirmed, low | Fixed: own sentence; test |
 | A figure export's outcome shown under another target | Confirmed, low | Fixed: said under its own target; test |
-| "New runs" never re-asked (two reviewers) | Plausible / confirmed, low | Fixed: re-asked when a run is recorded |
+| "New runs" never re-asked (two reviewers) | Plausible / confirmed, low | Fixed: re-asked when a run is recorded. **No test** |
 | Window end hidden under the axis; interval roles not labelled in the image | Plausible, low (narrowed) | Caption now says an end at the edge lies on the axis; labels recorded as a limit |
 | Screen-equals-export test does not pass through the commands | Refuted | Both commands build and render through the same helper and renderer |
 
@@ -175,12 +183,15 @@ Project-surface spec M8.1–M8.5, M9.1 and `m7.4-preview-observer` passed; the
 M4, M5, M6, M7.1–M7.5 and viewer-r1 specs failed). That result is not
 rewritten here and is not called green.
 
-The specs M9.2 affects were run on the final code: M8.1–M8.5 and the M9.1 spec
-with the M9.2 scenarios. Before the review: 6 of 6 spec files passed (28
-tests). After the repairs: M8.2–M8.5 and M9.1/M9.2 passed (20 tests); M8.1's
-worker could not create a WebDriver session (`Failed to fetch [POST]
-http://localhost:6667/session`) and ran no test, so M8.1 was run once alone and
-passed (8 tests). Logs: `test-results/m9.2/logs/`. M4.2 figure settings and
+The specs M9.2 affects are M8.1–M8.5 and the M9.1 spec with the M9.2
+scenarios. They were run on working trees, not on a commit: once before the
+review (6 of 6 spec files, 28 tests, on the tree committed as `e96b695`), and
+once after the repairs on the tree then committed unchanged as `4e4e00c`. In
+that second run M8.2–M8.5 and M9.1/M9.2 passed (20 tests); M8.1's worker could
+not create a WebDriver session (`Failed to fetch [POST]
+http://localhost:6667/session`) and ran no test, so M8.1 was run once more,
+alone, and passed (8 tests). Only the M9.1/M9.2 spec was run again on the
+committed code, in the validation record below. Logs: `test-results/m9.2/logs/`. M4.2 figure settings and
 M7.1 settings, which render the shared settings component M9.2 reuses without
 changing it, were in the failing baseline and were not re-run.
 
@@ -208,3 +219,14 @@ record was written, on the docs-only commit's tree.
 | `python scripts/check_repo.py` | 0 | |
 
 `pnpm e2e:browser` (the whole suite) was not run: see "Browser suite" above.
+
+## Custody
+
+After the validation record, one headless test browser was found still
+running: `chrome.exe` PID 48172 with seven children, profile directory
+`wdio-chrome-0-8-1789837682482` under the user's temporary folder, started
+2026-09-23 14:15:48 local time — before any M9.2 browser run, and with no
+ChromeDriver or runner alive. Its WebdriverIO profile and worker number match
+an earlier full browser-suite run, so it was a leftover test browser, not one
+M9.2 started. It was stopped; the user's own Chrome profile was not touched.
+No runner, driver, dev server or test browser remained afterwards.
