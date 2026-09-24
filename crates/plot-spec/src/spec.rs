@@ -32,7 +32,15 @@ use std::fmt;
 /// feature that would create one (FIG-007) is unimplemented. The cost of this
 /// decision is repository fixtures, and it was paid deliberately rather than by
 /// leaving a version number that quietly disagreed with `deny_unknown_fields`.
-pub const SCHEMA_VERSION: u32 = 2;
+///
+/// **Three since M9.2**, for the same reason. The targeted MS1 evidence figure
+/// needs two pieces of meaning version 2 cannot represent: a joined series whose
+/// every sample is also marked, because a sparse extracted trace is read point by
+/// point, and [`IntervalSpec`] -- a stretch of the domain axis with a semantic
+/// role, for the extraction window, the interval the engine selected and the
+/// others it considered. A version 2 reader refuses both, so the version says so.
+/// A figure using neither renders exactly as it did.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The longest a label may be.
 ///
@@ -125,6 +133,10 @@ pub enum SpecError {
     VisibleValueDomainOutsideValueDomain,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
+    /// An interval was placed where the panel's source does not reach.
+    IntervalOutsideFullDomain,
+    /// A series drawn as marks from zero was asked to mark its samples again.
+    SampleMarksOnDiscreteSeries,
 }
 
 impl fmt::Display for SpecError {
@@ -160,6 +172,10 @@ impl fmt::Display for SpecError {
                 "a panel's visible value window left the value range its source covers"
             }
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
+            Self::IntervalOutsideFullDomain => "an interval was outside the panel's source domain",
+            Self::SampleMarksOnDiscreteSeries => {
+                "a series drawn as marks from zero was asked to mark its samples"
+            }
         })
     }
 }
@@ -670,6 +686,18 @@ pub struct SeriesSpec {
     pub(crate) scope: DataScope,
     x: Vec<f64>,
     y: Vec<f64>,
+    /// Whether every sample of a joined series is also drawn as its own mark.
+    ///
+    /// A joined line says the samples are ordered; it does not say where they
+    /// are. A trace of a few dozen extracted points is read point by point --
+    /// where the scans fell, which of them carried signal -- and a line through
+    /// them hides exactly that. Marking them adds no value between samples and
+    /// asserts nothing the series did not already carry.
+    ///
+    /// Only for a joined series: a discrete series already draws each sample as
+    /// its own mark, and marking it twice is refused rather than ignored.
+    #[serde(default)]
+    pub(crate) marks_samples: bool,
 }
 
 /// The coordinate rules every measurement series obeys, over borrowed slices.
@@ -839,9 +867,26 @@ impl SeriesSpec {
             scope,
             x,
             y,
+            marks_samples: false,
         };
         series.validate()?;
         Ok(series)
+    }
+
+    /// Marks every sample of this series as well as joining them.
+    ///
+    /// Whether the series is joined is the panel's question, so the panel
+    /// refuses this for a series it draws as marks from zero.
+    #[must_use]
+    pub fn with_sample_marks(mut self) -> Self {
+        self.marks_samples = true;
+        self
+    }
+
+    /// Whether every sample is drawn as its own mark as well.
+    #[must_use]
+    pub const fn marks_samples(&self) -> bool {
+        self.marks_samples
     }
 
     fn validate(&self) -> Result<(), SpecError> {
@@ -957,6 +1002,8 @@ struct WireSeries {
     scope: DataScope,
     x: Vec<f64>,
     y: Vec<f64>,
+    #[serde(default)]
+    marks_samples: bool,
 }
 
 impl<'de> Deserialize<'de> for SeriesSpec {
@@ -978,6 +1025,7 @@ impl From<WireSeries> for SeriesSpec {
             scope: wire.scope,
             x: wire.x,
             y: wire.y,
+            marks_samples: wire.marks_samples,
         }
     }
 }
@@ -1015,6 +1063,130 @@ impl Marker {
     }
 }
 
+/// What one interval on the domain axis is, semantically.
+///
+/// Roles rather than colours, as [`StyleRole`]: a renderer maps each to its own
+/// treatment, and a reader is told the role in words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntervalRole {
+    /// The stretch a search or an extraction covered. Nothing outside it was
+    /// looked at, which is what a reader needs before reading an absence.
+    Window,
+    /// The interval an analysis selected as its answer.
+    Selected,
+    /// Another interval the analysis considered and did not select.
+    Considered,
+}
+
+/// A stretch of the domain axis, and what it is.
+///
+/// Not a marker with two ends: a marker is a point of interest, and an interval
+/// is a claim about everything between its ends -- where a feature starts and
+/// stops, or how far an extraction reached. `Deserialize` is implemented rather
+/// than derived, as [`Domain`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IntervalSpec {
+    pub(crate) low: f64,
+    pub(crate) high: f64,
+    pub(crate) role: IntervalRole,
+    pub(crate) label: Option<Label>,
+}
+
+#[derive(Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
+struct WireInterval {
+    low: f64,
+    high: f64,
+    role: IntervalRole,
+    label: Option<Label>,
+}
+
+impl From<WireInterval> for IntervalSpec {
+    fn from(wire: WireInterval) -> Self {
+        Self {
+            low: wire.low,
+            high: wire.high,
+            role: wire.role,
+            label: wire.label,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for IntervalSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let interval = Self::from(WireInterval::deserialize(deserializer)?);
+        interval.validate().map_err(serde::de::Error::custom)?;
+        Ok(interval)
+    }
+}
+
+impl IntervalSpec {
+    /// Accepts one interval, or says why it is not one.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a non-finite end, ends the wrong way round, and a label the
+    /// label rules refuse. A zero-width interval is accepted: an engine can
+    /// report a feature whose ends coincide, and the figure says so rather than
+    /// widening it.
+    pub fn new(
+        low: f64,
+        high: f64,
+        role: IntervalRole,
+        label: Option<Label>,
+    ) -> Result<Self, SpecError> {
+        let interval = Self {
+            low,
+            high,
+            role,
+            label,
+        };
+        interval.validate()?;
+        Ok(interval)
+    }
+
+    fn validate(&self) -> Result<(), SpecError> {
+        if !self.low.is_finite() || !self.high.is_finite() {
+            return Err(SpecError::NotFinite);
+        }
+        if self.low > self.high {
+            return Err(SpecError::DomainInverted);
+        }
+        if let Some(label) = self.label.as_ref() {
+            label.validate()?;
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub const fn low(&self) -> f64 {
+        self.low
+    }
+
+    #[must_use]
+    pub const fn high(&self) -> f64 {
+        self.high
+    }
+
+    #[must_use]
+    pub const fn role(&self) -> IntervalRole {
+        self.role
+    }
+
+    #[must_use]
+    pub const fn label(&self) -> Option<&Label> {
+        self.label.as_ref()
+    }
+}
+
 /// One plot.
 ///
 /// `Deserialize` is implemented rather than derived, as [`Domain`].
@@ -1045,6 +1217,10 @@ pub struct PanelSpec {
     pub(crate) visible_value_domain: Option<Domain>,
     pub(crate) series: Vec<SeriesSpec>,
     pub(crate) markers: Vec<Marker>,
+    /// Stretches of the domain axis with a semantic role, drawn under the
+    /// series. Empty in every figure before M9.2, which render as they did.
+    #[serde(default)]
+    pub(crate) intervals: Vec<IntervalSpec>,
 }
 
 #[derive(Deserialize)]
@@ -1069,6 +1245,8 @@ struct WirePanel {
     visible_value_domain: Option<WireDomain>,
     series: Vec<WireSeries>,
     markers: Vec<WireMarker>,
+    #[serde(default)]
+    intervals: Vec<WireInterval>,
 }
 
 impl From<WirePanel> for PanelSpec {
@@ -1083,6 +1261,7 @@ impl From<WirePanel> for PanelSpec {
             visible_value_domain: wire.visible_value_domain.map(Into::into),
             series: wire.series.into_iter().map(Into::into).collect(),
             markers: wire.markers.into_iter().map(Into::into).collect(),
+            intervals: wire.intervals.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -1128,6 +1307,7 @@ impl PanelSpec {
             visible_value_domain: None,
             series,
             markers: Vec::new(),
+            intervals: Vec::new(),
         };
         panel.validate()?;
         Ok(panel)
@@ -1288,6 +1468,22 @@ impl PanelSpec {
                 return Err(SpecError::MarkerOutsideFullDomain);
             }
         }
+        // Held to the full domain for the marker's reason: an interval beyond
+        // the source is one the panel can never draw at any window, so it
+        // would be an annotation that silently does not exist.
+        for interval in &self.intervals {
+            interval.validate()?;
+            if interval.low < self.full_domain.low() || interval.high > self.full_domain.high() {
+                return Err(SpecError::IntervalOutsideFullDomain);
+            }
+        }
+        // A series drawn as marks from zero is already one mark per sample;
+        // marking it again would stack a second glyph on every stick.
+        for series in &self.series {
+            if series.marks_samples && !self.joins(series) {
+                return Err(SpecError::SampleMarksOnDiscreteSeries);
+            }
+        }
         Ok(())
     }
 
@@ -1325,6 +1521,18 @@ impl PanelSpec {
     /// another -- the defect this whole boundary exists to prevent.
     pub fn with_markers(mut self, markers: Vec<Marker>) -> Result<Self, SpecError> {
         self.markers = markers;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Attaches intervals to the panel.
+    ///
+    /// # Errors
+    ///
+    /// Refuses anything `validate` refuses, for the reason [`Self::with_markers`]
+    /// gives.
+    pub fn with_intervals(mut self, intervals: Vec<IntervalSpec>) -> Result<Self, SpecError> {
+        self.intervals = intervals;
         self.validate()?;
         Ok(self)
     }
@@ -1382,6 +1590,11 @@ impl PanelSpec {
     #[must_use]
     pub fn markers(&self) -> &[Marker] {
         &self.markers
+    }
+
+    #[must_use]
+    pub fn intervals(&self) -> &[IntervalSpec] {
+        &self.intervals
     }
 
     /// Whether this panel joins that series into a line rather than drawing

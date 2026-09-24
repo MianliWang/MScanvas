@@ -1,10 +1,10 @@
 //! Deterministic tests for the semantic contract and its SVG renderer.
 
 use crate::spec::{
-    AxisSpec, Caption, DataScope, DecodeError, Domain, FigureSize, FigureSpec, FigureTheme, Label,
-    MAX_LABEL_CHARS, MIN_FIGURE_CHROME_HEIGHT, MIN_FIGURE_WIDTH, MIN_PANEL_HEIGHT, Marker,
-    PanelSpec, PlotKind, ReductionRule, SCHEMA_VERSION, SeriesSpec, SpecError,
-    SpectrumRepresentation, StyleRole, UnitState,
+    AxisSpec, Caption, DataScope, DecodeError, Domain, FigureSize, FigureSpec, FigureTheme,
+    IntervalRole, IntervalSpec, Label, MAX_LABEL_CHARS, MIN_FIGURE_CHROME_HEIGHT, MIN_FIGURE_WIDTH,
+    MIN_PANEL_HEIGHT, Marker, PanelSpec, PlotKind, ReductionRule, SCHEMA_VERSION, SeriesSpec,
+    SpecError, SpectrumRepresentation, StyleRole, UnitState,
 };
 use crate::svg;
 
@@ -6547,8 +6547,9 @@ fn a_one_scan_chromatogram_draws_both_series() {
 fn the_schema_version_records_the_extended_shape() {
     // Not an accident of a constant: a document carrying either new field is
     // exactly what a version 1 reader cannot decode, and the version is what
-    // says so.
-    assert_eq!(SCHEMA_VERSION, 2);
+    // says so. Three since M9.2 added sample marks and intervals, which a
+    // version 2 reader cannot decode either.
+    assert_eq!(SCHEMA_VERSION, 3);
 
     let json = FigureSpec::new(
         FigureTheme::Light,
@@ -6576,7 +6577,7 @@ fn the_schema_version_records_the_extended_shape() {
     .to_json()
     .expect("a figure serializes");
 
-    assert!(json.contains("\"schema_version\":2"));
+    assert!(json.contains("\"schema_version\":3"));
     assert!(json.contains("secondary_measurement"));
     assert!(json.contains("visible_value_domain"));
 
@@ -6622,4 +6623,239 @@ fn a_decoded_visible_value_window_is_validated() {
         FigureSpec::from_json(&forged).is_err(),
         "a window outside the source range is refused however it arrives"
     );
+}
+
+// ------------------------------------------------ version 3: marks, intervals
+
+/// An evidence panel of the shape the targeted MS1 figure uses: two marked
+/// traces over retention time, with a window, a selected feature and one other
+/// candidate, and an apex marker.
+fn evidence_panel(intervals: Vec<IntervalSpec>) -> PanelSpec {
+    PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(
+            label("Retention time"),
+            UnitState::Known { unit: label("s") },
+        ),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(90.0, 150.0),
+        domain(0.0, 2_000.0),
+        vec![
+            chromatogram_series(
+                "M",
+                StyleRole::Measurement,
+                vec![100.0, 110.0, 120.0, 130.0],
+                vec![0.0, 500.0, 2_000.0, 400.0],
+            )
+            .with_sample_marks(),
+            chromatogram_series(
+                "M+1",
+                StyleRole::SecondaryMeasurement,
+                vec![100.0, 110.0, 120.0, 130.0],
+                vec![0.0, 50.0, 200.0, 40.0],
+            )
+            .with_sample_marks(),
+        ],
+    )
+    .expect("an evidence panel")
+    .with_intervals(intervals)
+    .expect("intervals inside the domain")
+    .with_markers(vec![
+        Marker::new(120.0, Some(label("Apex"))).expect("a marker"),
+    ])
+    .expect("a marker inside the domain")
+}
+
+fn evidence_intervals() -> Vec<IntervalSpec> {
+    vec![
+        IntervalSpec::new(90.0, 150.0, IntervalRole::Window, Some(label("RT window")))
+            .expect("a window"),
+        IntervalSpec::new(114.0, 126.0, IntervalRole::Selected, Some(label("Feature")))
+            .expect("a feature"),
+        IntervalSpec::new(100.0, 105.0, IntervalRole::Considered, None).expect("a candidate"),
+    ]
+}
+
+#[test]
+fn an_interval_is_refused_where_no_interval_can_be() {
+    assert_eq!(
+        IntervalSpec::new(2.0, 1.0, IntervalRole::Selected, None).unwrap_err(),
+        SpecError::DomainInverted
+    );
+    assert_eq!(
+        IntervalSpec::new(f64::NAN, 1.0, IntervalRole::Window, None).unwrap_err(),
+        SpecError::NotFinite
+    );
+    // A zero-width interval is a real answer, and is kept.
+    assert!(IntervalSpec::new(1.0, 1.0, IntervalRole::Selected, None).is_ok());
+    // Beyond the source is an annotation that could never be drawn.
+    let beyond = IntervalSpec::new(80.0, 95.0, IntervalRole::Window, None).expect("an interval");
+    assert_eq!(
+        evidence_panel(Vec::new())
+            .with_intervals(vec![beyond])
+            .unwrap_err(),
+        SpecError::IntervalOutsideFullDomain
+    );
+}
+
+#[test]
+fn sample_marks_are_refused_on_a_series_already_drawn_as_marks() {
+    let marked = series(vec![100.0, 200.0], vec![1.0, 2.0]).with_sample_marks();
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 200.0),
+        domain(0.0, 2.0),
+        vec![marked],
+    );
+    assert_eq!(panel.unwrap_err(), SpecError::SampleMarksOnDiscreteSeries);
+}
+
+#[test]
+fn each_interval_role_is_drawn_in_its_own_way_under_the_traces() {
+    let document = svg::render(&figure_of(evidence_panel(evidence_intervals())));
+    // The window's two ends, dotted.
+    assert_eq!(document.matches("stroke-dasharray=\"1 3\"").count(), 2);
+    // The selected feature as one translucent band, the candidate as one
+    // dashed outline -- neither by colour alone.
+    assert_eq!(document.matches("fill-opacity=\"0.16\"").count(), 1);
+    assert_eq!(
+        document
+            .matches("fill=\"none\" stroke=\"#5c5c5c\" stroke-width=\"1\" stroke-dasharray=\"2 2\"")
+            .count(),
+        1
+    );
+    // Under the traces: every interval is written before the first trace.
+    let first_trace = document.find("<path d=\"").expect("a trace");
+    let band = document.find("fill-opacity").expect("a band");
+    assert!(band < first_trace);
+}
+
+#[test]
+fn every_sample_of_a_marked_trace_is_marked_filled_or_open_by_role() {
+    let document = svg::render(&figure_of(evidence_panel(Vec::new())));
+    // Four filled marks for M, four open ones for M+1, plus one of each in the
+    // legend's swatches.
+    assert_eq!(
+        document.matches("r=\"2.500\" fill=\"#1f4e9c\"/>").count(),
+        5
+    );
+    assert_eq!(
+        document
+            .matches("r=\"2.500\" fill=\"#ffffff\" stroke=\"#9a4a00\"")
+            .count(),
+        5
+    );
+    // No mark at an interpolated crossing: a window cutting the trace draws
+    // the crossing in the line and marks only the samples inside it.
+    let windowed = figure_of(
+        evidence_panel(Vec::new())
+            .with_visible_domain(domain(105.0, 125.0))
+            .expect("a window"),
+    );
+    let document = svg::render(&windowed);
+    assert_eq!(
+        document.matches("r=\"2.500\" fill=\"#1f4e9c\"/>").count(),
+        3,
+        "two samples inside the window, and the legend's"
+    );
+}
+
+#[test]
+fn the_description_names_every_drawn_interval_its_role_and_its_ends() {
+    let document = svg::render(&figure_of(evidence_panel(evidence_intervals())));
+    let description = description_of(&document);
+    assert!(description.contains(
+        "Every sample is marked as well as joined: &quot;M&quot; with filled dots, \
+         &quot;M+1&quot; with open dots."
+    ));
+    assert!(description.contains("Intervals on the Retention time axis, drawn with"));
+    assert!(description.contains("the window &quot;RT window&quot; from 90.0 to 150.0"));
+    assert!(description.contains("the selected interval &quot;Feature&quot; from 114.0 to 126.0"));
+    assert!(description.contains("a considered interval from 100.0 to 105.0"));
+    assert!(description.contains("&quot;Apex&quot; at 120.0"));
+    // A known unit is printed with its axis.
+    assert!(document.contains(">Retention time (s)</text>"));
+}
+
+#[test]
+fn an_interval_outside_the_window_is_neither_drawn_nor_described() {
+    let figure = figure_of(
+        evidence_panel(evidence_intervals())
+            .with_visible_domain(domain(110.0, 140.0))
+            .expect("a window"),
+    );
+    let document = svg::render(&figure);
+    let description = description_of(&document);
+    assert!(!description.contains("considered interval"));
+    assert!(!document.contains("stroke-dasharray=\"2 2\""));
+    // The window reaches past the view on both sides: its ends are not drawn,
+    // and the words say only part of it is shown.
+    assert_eq!(document.matches("stroke-dasharray=\"1 3\"").count(), 0);
+    assert!(description.contains("of which only part lies in the range shown"));
+}
+
+#[test]
+fn a_zero_width_selected_interval_is_one_rule_rather_than_a_widened_band() {
+    let panel = evidence_panel(vec![
+        IntervalSpec::new(120.0, 120.0, IntervalRole::Selected, None).expect("an interval"),
+    ]);
+    let document = svg::render(&figure_of(panel));
+    assert!(!document.contains("fill-opacity"));
+    assert!(document.contains("stroke=\"#1f4e9c\" stroke-width=\"1\" stroke-dasharray=\"none\""));
+}
+
+#[test]
+fn close_interval_ends_stay_distinct_in_the_written_coordinates() {
+    // Ends a millionth of the domain apart are distinct drawn positions, and
+    // three decimals would write neighbouring ones as one.
+    let panel = evidence_panel(vec![
+        IntervalSpec::new(120.0, 120.000_01, IntervalRole::Window, None).expect("an interval"),
+        IntervalSpec::new(120.000_02, 120.000_03, IntervalRole::Window, None).expect("an interval"),
+    ]);
+    let document = svg::render(&figure_of(panel));
+    let rules: Vec<&str> = document
+        .lines()
+        .filter(|line| line.contains("stroke-dasharray=\"1 3\""))
+        .filter_map(|line| line.split("x1=\"").nth(1))
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert_eq!(rules.len(), 4, "four window ends drawn");
+    let mut unique = rules.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), 4, "{rules:?}");
+}
+
+#[test]
+fn a_version_three_figure_round_trips_and_renders_the_same_bytes_twice() {
+    let figure = figure_of(evidence_panel(evidence_intervals()));
+    let json = figure.to_json().expect("encodes");
+    assert!(json.contains("\"intervals\""));
+    assert!(json.contains("\"marks_samples\":true"));
+    let decoded = FigureSpec::from_json(&json).expect("decodes");
+    assert_eq!(decoded, figure);
+    assert_eq!(svg::render(&decoded), svg::render(&figure));
+    // A decoded interval is held to the same rule as a constructed one.
+    let forged = json.replace("\"low\":114.0", "\"low\":127.0");
+    assert_ne!(forged, json);
+    assert!(FigureSpec::from_json(&forged).is_err());
+}
+
+#[test]
+fn a_figure_without_marks_or_intervals_writes_nothing_new() {
+    let plain = figure_of(chromatogram_panel(vec![chromatogram_series(
+        "TIC",
+        StyleRole::Measurement,
+        vec![1.0, 2.0, 3.0],
+        vec![5.0, 9.0, 4.0],
+    )]));
+    let document = svg::render(&plain);
+    assert!(!document.contains("<circle"));
+    assert!(!document.contains("fill-opacity"));
+    assert!(!description_of(&document).contains("Intervals"));
+    assert!(!description_of(&document).contains("marked as well as joined"));
 }

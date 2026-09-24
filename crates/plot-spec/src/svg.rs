@@ -15,8 +15,8 @@
 //! measurement.
 
 use crate::spec::{
-    DataScope, Domain, FigureSpec, FigureTheme, Label, PanelSpec, PlotKind, SeriesSpec,
-    SpectrumRepresentation, StyleRole, UnitState,
+    DataScope, Domain, FigureSpec, FigureTheme, IntervalRole, IntervalSpec, Label, PanelSpec,
+    PlotKind, SeriesSpec, SpectrumRepresentation, StyleRole, UnitState,
 };
 use std::fmt::Write as _;
 
@@ -72,6 +72,24 @@ const MAX_AXIS_DECIMALS: usize = 17;
 
 /// Half the width of the mark a single-sample trace is drawn as.
 const LONE_SAMPLE_TICK: f64 = 2.0;
+
+/// The radius of the mark each sample of a marked series is drawn as.
+///
+/// Small enough that neighbouring samples of a dense trace stay apart, large
+/// enough that an open mark is visibly open rather than a dot.
+const SAMPLE_MARK_RADIUS: f64 = 2.5;
+
+/// How opaque the band of a selected interval is.
+///
+/// A band is drawn under the traces, and the traces must stay readable through
+/// it: this tints the stretch without hiding a sample inside it.
+const SELECTED_BAND_OPACITY: &str = "0.16";
+
+/// The narrowest an interval is drawn as a band rather than a single rule.
+///
+/// An interval whose ends project closer than this is drawn as one line at its
+/// position, which is the honest drawing of a stretch the figure cannot widen.
+const NARROWEST_BAND: f64 = 1.0;
 
 /// The width one character of laid-out text is given, in em.
 ///
@@ -144,6 +162,10 @@ struct Palette {
     secondary_measurement: &'static str,
     baseline: &'static str,
     marker: &'static str,
+    /// The fill of a selected interval's band, drawn translucent.
+    selected: &'static str,
+    /// The outline of a considered interval.
+    considered: &'static str,
 }
 
 const fn palette(theme: FigureTheme) -> Palette {
@@ -168,6 +190,10 @@ const fn palette(theme: FigureTheme) -> Palette {
             secondary_measurement: "#9a4a00",
             baseline: "#8a8a8a",
             marker: "#b3261e",
+            selected: "#1f4e9c",
+            // 6.45:1 against this background: an outline a reader has to find,
+            // held to the graphical-object floor like every other role.
+            considered: "#5c5c5c",
         },
         FigureTheme::Dark => Palette {
             background: "#12161c",
@@ -177,6 +203,8 @@ const fn palette(theme: FigureTheme) -> Palette {
             secondary_measurement: "#f0a35e",
             baseline: "#5c6470",
             marker: "#ff7b72",
+            selected: "#7aa7ff",
+            considered: "#a3adb8",
         },
     }
 }
@@ -367,6 +395,17 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
             .filter(|marker| marker.at() >= drawn.low() && marker.at() <= drawn.high())
             .map(|marker| project(marker.at(), drawn, frame.left, frame.right))
             .collect();
+        // An interval's drawn ends are rules and band edges at a domain
+        // position, asked the marker's question: two written at one x are one.
+        // Only the ends inside the drawn window, which are the ones drawn.
+        placed.extend(
+            panel
+                .intervals()
+                .iter()
+                .flat_map(|interval| [interval.low(), interval.high()])
+                .filter(|at| *at >= drawn.low() && *at <= drawn.high())
+                .map(|at| project(at, drawn, frame.left, frame.right)),
+        );
         placed.sort_unstable_by(f64::total_cmp);
         for pair in placed.windows(2) {
             // Strictly apart, so two markers genuinely at one position stay
@@ -659,6 +698,27 @@ fn panel_description(
             .collect::<Vec<_>>()
             .join(", ");
         sentences.push(format!("Series: {named}."));
+    }
+
+    // Which series mark every sample, and how, so the two glyphs are told apart
+    // in words as well as by shape.
+    let marked_series: Vec<String> = panel
+        .series
+        .iter()
+        .filter(|series| series.marks_samples())
+        .map(|series| {
+            format!(
+                "\"{}\" with {}",
+                series.id().as_str(),
+                sample_mark_words(series.role())
+            )
+        })
+        .collect();
+    if !marked_series.is_empty() {
+        sentences.push(format!(
+            "Every sample is marked as well as joined: {}.",
+            marked_series.join(", ")
+        ));
     }
 
     // A value axis that is a window rather than the whole range, said in words.
@@ -1096,7 +1156,79 @@ fn panel_description(
         )),
     }
 
+    // Every interval the figure draws, each named by its role and placed, for
+    // the marker's reason: a `role="img"` document is read through these words.
+    let intervals: Vec<String> = panel
+        .intervals()
+        .iter()
+        .filter(|interval| interval.high() >= drawn.low() && interval.low() <= drawn.high())
+        .map(|interval| {
+            let low = marker_number(interval.low(), notation);
+            let high = marker_number(interval.high(), notation);
+            let named = interval
+                .label()
+                .map_or_else(String::new, |label| format!(" \"{}\"", label.as_str()));
+            let partial = if interval.low() < drawn.low() || interval.high() > drawn.high() {
+                ", of which only part lies in the range shown"
+            } else {
+                ""
+            };
+            format!(
+                "{}{named} from {low} to {high}{partial}",
+                interval_words(interval.role())
+            )
+        })
+        .collect();
+    if !intervals.is_empty() {
+        sentences.push(format!(
+            "Intervals on the {} axis, {}: {}.",
+            panel.x_axis.label.as_str(),
+            interval_treatments(panel, drawn),
+            intervals.join("; "),
+        ));
+    }
+
     sentences.join(" ")
+}
+
+/// What a sample mark of one role looks like, in words.
+const fn sample_mark_words(role: StyleRole) -> &'static str {
+    match role {
+        StyleRole::Measurement => "filled dots",
+        StyleRole::SecondaryMeasurement => "open dots",
+        StyleRole::Baseline => "small squares",
+    }
+}
+
+/// What one interval role is called in a sentence.
+const fn interval_words(role: IntervalRole) -> &'static str {
+    match role {
+        IntervalRole::Window => "the window",
+        IntervalRole::Selected => "the selected interval",
+        IntervalRole::Considered => "a considered interval",
+    }
+}
+
+/// How the drawn roles are drawn, only for the roles present.
+fn interval_treatments(panel: &PanelSpec, drawn: Domain) -> String {
+    let present = |role: IntervalRole| {
+        panel.intervals().iter().any(|interval| {
+            interval.role() == role
+                && interval.high() >= drawn.low()
+                && interval.low() <= drawn.high()
+        })
+    };
+    let mut treatments = Vec::new();
+    if present(IntervalRole::Window) {
+        treatments.push("window ends as dotted lines");
+    }
+    if present(IntervalRole::Selected) {
+        treatments.push("the selected interval as a shaded band");
+    }
+    if present(IntervalRole::Considered) {
+        treatments.push("considered intervals as dashed outlines");
+    }
+    format!("drawn with {}", treatments.join(", "))
 }
 
 /// The plotting area of one panel, in figure units.
@@ -1351,6 +1483,11 @@ fn render_panel(
         precision.coordinate(plot_bottom),
         colours.axis,
     );
+
+    // Under the traces, so a band tints the stretch without covering a sample.
+    for interval in panel.intervals() {
+        render_interval(out, interval, domain, frame, colours, precision);
+    }
 
     for series in &panel.series {
         render_series(out, panel, series, frame, colours, precision);
@@ -1704,14 +1841,153 @@ fn render_series(
         }
     }
 
-    if path.is_empty() {
-        return;
+    if !path.is_empty() {
+        let _ = writeln!(
+            out,
+            "<path d=\"{path}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1\"{dashes}/>",
+        );
     }
 
-    let _ = writeln!(
-        out,
-        "<path d=\"{path}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1\"{dashes}/>",
-    );
+    // Each sample inside the window as its own mark, after the line so it is
+    // not drawn under it. Only real samples: nothing at the interpolated
+    // crossings the clipping draws, which nobody measured.
+    if series.marks_samples() {
+        for (x, y) in series.x().iter().zip(series.y().iter()) {
+            if *x < low || *x > high {
+                continue;
+            }
+            let _ = writeln!(
+                out,
+                "{}",
+                sample_mark(
+                    series.role(),
+                    project(*x, domain, frame.left, frame.right),
+                    project(*y, values, plot_bottom, plot_top),
+                    colours,
+                    precision,
+                )
+            );
+        }
+    }
+}
+
+/// One sample mark, shaped by role so the two measured series are told apart
+/// without colour: filled for the measurement, open for the second one.
+fn sample_mark(role: StyleRole, x: f64, y: f64, colours: &Palette, precision: Precision) -> String {
+    let (stroke, _) = stroke_for(role, colours);
+    match role {
+        StyleRole::Measurement => format!(
+            "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{stroke}\"/>",
+            precision.coordinate(x),
+            precision.coordinate(y),
+            precision.coordinate(SAMPLE_MARK_RADIUS),
+        ),
+        StyleRole::SecondaryMeasurement => format!(
+            "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" stroke=\"{stroke}\" \
+             stroke-width=\"1\"/>",
+            precision.coordinate(x),
+            precision.coordinate(y),
+            precision.coordinate(SAMPLE_MARK_RADIUS),
+            colours.background,
+        ),
+        StyleRole::Baseline => format!(
+            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{stroke}\"/>",
+            precision.coordinate(x - SAMPLE_MARK_RADIUS),
+            precision.coordinate(y - SAMPLE_MARK_RADIUS),
+            precision.coordinate(2.0 * SAMPLE_MARK_RADIUS),
+            precision.coordinate(2.0 * SAMPLE_MARK_RADIUS),
+        ),
+    }
+}
+
+/// Draws one interval, clipped to the drawn window.
+///
+/// Each role has its own treatment, none of them colour alone: a window's ends
+/// are dotted rules, the selected interval a translucent band, a considered one
+/// a dashed outline. An interval wholly outside the window draws nothing, and
+/// the description says nothing of it either.
+fn render_interval(
+    out: &mut String,
+    interval: &IntervalSpec,
+    domain: Domain,
+    frame: &Frame,
+    colours: &Palette,
+    precision: Precision,
+) {
+    if interval.high() < domain.low() || interval.low() > domain.high() {
+        return;
+    }
+    let rule = |at: f64, stroke: &str, dashes: &str| {
+        let x = project(at, domain, frame.left, frame.right);
+        format!(
+            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{stroke}\" \
+             stroke-width=\"1\" stroke-dasharray=\"{dashes}\"/>",
+            precision.coordinate(x),
+            precision.coordinate(frame.plot_top),
+            precision.coordinate(x),
+            precision.coordinate(frame.plot_bottom),
+        )
+    };
+    match interval.role() {
+        // The window's own ends, where they are in view. A clipped end is the
+        // edge of the view, not the edge of the window, and is not drawn.
+        IntervalRole::Window => {
+            for at in [interval.low(), interval.high()] {
+                if at >= domain.low() && at <= domain.high() {
+                    let _ = writeln!(out, "{}", rule(at, colours.axis, "1 3"));
+                }
+            }
+        }
+        IntervalRole::Selected | IntervalRole::Considered => {
+            let left = project(
+                interval.low().max(domain.low()),
+                domain,
+                frame.left,
+                frame.right,
+            );
+            let right = project(
+                interval.high().min(domain.high()),
+                domain,
+                frame.left,
+                frame.right,
+            );
+            let selected = interval.role() == IntervalRole::Selected;
+            if right - left < NARROWEST_BAND {
+                let (stroke, dashes) = if selected {
+                    (colours.selected, "none")
+                } else {
+                    (colours.considered, "2 2")
+                };
+                let at = f64::midpoint(
+                    interval.low().max(domain.low()),
+                    interval.high().min(domain.high()),
+                );
+                let _ = writeln!(out, "{}", rule(at, stroke, dashes));
+            } else if selected {
+                let _ = writeln!(
+                    out,
+                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\" \
+                     fill-opacity=\"{SELECTED_BAND_OPACITY}\"/>",
+                    precision.coordinate(left),
+                    precision.coordinate(frame.plot_top),
+                    precision.coordinate(right - left),
+                    precision.coordinate(frame.plot_bottom - frame.plot_top),
+                    colours.selected,
+                );
+            } else {
+                let _ = writeln!(
+                    out,
+                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"none\" \
+                     stroke=\"{}\" stroke-width=\"1\" stroke-dasharray=\"2 2\"/>",
+                    precision.coordinate(left),
+                    precision.coordinate(frame.plot_top),
+                    precision.coordinate(right - left),
+                    precision.coordinate(frame.plot_bottom - frame.plot_top),
+                    colours.considered,
+                );
+            }
+        }
+    }
 }
 
 /// How one role is drawn: its colour, and whether the stroke is broken.
@@ -1790,6 +2066,22 @@ fn render_legend(
             precision.coordinate(swatch_right.max(frame.left)),
             precision.coordinate(baseline - LEGEND_SIZE / 3.0),
         );
+        // The sample mark too, where the series draws one: the legend has to
+        // show what the trace shows, and the mark is what tells the two apart
+        // in a monochrome print.
+        if series.marks_samples() {
+            let _ = writeln!(
+                out,
+                "{}",
+                sample_mark(
+                    series.role(),
+                    f64::midpoint(swatch_left.max(frame.left), swatch_right.max(frame.left)),
+                    baseline - LEGEND_SIZE / 3.0,
+                    colours,
+                    precision,
+                )
+            );
+        }
         let _ = writeln!(
             out,
             "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
