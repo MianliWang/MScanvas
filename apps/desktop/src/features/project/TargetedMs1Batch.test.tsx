@@ -13,7 +13,7 @@
  */
 
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SessionPreferencesProvider } from "../preferences/SessionPreferencesProvider";
 import { PreferencesApiProvider } from "../preferences/preferencesApi";
@@ -385,6 +385,10 @@ describe("a batch run", () => {
     expect(query(`[data-targeted-batch-member="${LAYERS[1].id}"]`).textContent).toContain(
       en.targetedPhaseRunningEngine,
     );
+    // The project on screen holds no member's run until the batch ends, so a
+    // finished member is not offered yet.
+    expect(document.querySelector("[data-targeted-batch-open]")).toBeNull();
+    expect(document.querySelector("[data-targeted-batch-run]")).toBeNull();
     expect(query('[data-project-busy="analysing"]').textContent).toContain(
       en.projectBusyBatch.replace("{{position}}", "2").replace("{{total}}", "3"),
     );
@@ -434,6 +438,40 @@ describe("a batch run", () => {
     // A completed member opens its own result, in the existing report.
     await press(within(ended).getByRole("button", { name: `Open the result for ${INPUTS[0].label}` }));
     expect(query(`[data-targeted-report="${ARTIFACT_A}"]`)).toBeTruthy();
+  });
+
+  it("does not carry a finished batch's progress into a later single run", async () => {
+    const api = mount(three());
+    api.setTargeted({
+      batchResolution: reviewOf(),
+      progress: {
+        operationId: "project-job-1",
+        phase: "runningEngine",
+        batch: [member(0, "running"), member(1, "queued"), member(2, "queued")],
+      },
+    });
+    await reviewAll(api);
+    const releaseBatch = api.holdOnce("runTargetedMs1Batch");
+    await press(query("[data-targeted-run]"));
+    await screen.findByText(en.targetedBatchRunningTitle);
+    api.setTargeted({ batchMembers: [member(0, "completed"), member(1, "completed"), member(2, "completed")] });
+    await act(async () => {
+      releaseBatch();
+    });
+
+    // One acquisition chosen again: a single run, whose progress has no batch.
+    await press(query(`[data-targeted-member="${LAYERS[1].id}"]`));
+    await press(query(`[data-targeted-member="${LAYERS[2].id}"]`));
+    await press(query("[data-targeted-review]"));
+    // A progress read that has not answered yet: what the busy line says
+    // until it does is the session's own state.
+    vi.mocked(api.getTargetedMs1Progress).mockImplementation(() => new Promise(() => undefined));
+    api.holdOnce("runTargetedMs1");
+    await press(query("[data-targeted-run]"));
+    expect(query('[data-project-busy="analysing"]').textContent).toContain(en.projectBusyAnalysing);
+    expect(query('[data-project-busy="analysing"]').textContent).not.toContain(
+      en.projectBusyBatch.split("{{position}}")[0] ?? "",
+    );
   });
 
   it("says each member's end in its own words and never as a finding", async () => {

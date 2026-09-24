@@ -472,6 +472,38 @@ fn review_says_for_each_member_what_would_stop_it_running_now() {
     );
 }
 
+#[test]
+fn a_review_made_while_a_batch_runs_changes_nothing_the_batch_runs() {
+    let scratch = Scratch::new("m94-frozen");
+    let (store, layers, _) = project_of(&scratch, 3);
+    let plans = review(&store, &layers, &Members::new(completes));
+    let first = layers[0];
+    let executor = Members::new(|order, _, _| {
+        if order.plan.layer_id == first {
+            // Reviews are not held off by a run in progress (M9.3); each one
+            // replaces what is held for review, with fresh target identifiers.
+            super::plan(&store, first, two_targets(), &Members::new(completes));
+            review(&store, &layers, &Members::new(completes));
+        }
+        completed(order)
+    });
+    let members = run_batch(&store, &plans, &executor).expect("ran");
+    assert!(members.iter().all(|member| matches!(
+        member.state,
+        MemberState::Ended(end) if end.outcome == TerminalOutcome::Completed
+    )));
+    // Every member ran the plan the batch was accepted with.
+    assert_eq!(
+        executor
+            .given()
+            .iter()
+            .map(|given| given.plan_sha256.clone())
+            .collect::<Vec<_>>(),
+        digests(&plans)
+    );
+    assert_eq!(store.describe().plans, plans);
+}
+
 // ---------------------------------------------------------------------------
 // Failure isolation
 // ---------------------------------------------------------------------------

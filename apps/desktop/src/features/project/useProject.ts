@@ -605,6 +605,7 @@ export function useProject(
       (planSha256: string) => {
         const pressedWhile = inspectingNow.current;
         setAnalysisPhase(null);
+        setAnalysisBatch(null);
         return runAccepted("analysing", async (operationId) => {
           const end = await api.runTargetedMs1(operationId, planSha256);
           if (mounted.current) {

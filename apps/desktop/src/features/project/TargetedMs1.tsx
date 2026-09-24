@@ -985,7 +985,11 @@ function BatchProgress({
                     {detail === null ? null : <span className="targeted-reason"> — {detail}</span>}
                   </td>
                   <td>
-                    {member.state === "completed" && member.artifactId !== null ? (
+                    {/* Once the batch has ended: while it runs, the project
+                        on screen is the one it started from, and holds no
+                        member's run yet -- as every control but Stop waits
+                        while a run is out. */}
+                    {running ? null : member.state === "completed" && member.artifactId !== null ? (
                       <button
                         type="button"
                         className="link-button"

@@ -2126,8 +2126,13 @@ impl ProjectStore {
         executor: &dyn RecipeExecutor,
     ) -> Result<TargetedMs1RunEnd, ProjectError> {
         let (mut guard, cancellation, generation) = self.start_job(job, true)?;
-        let (end, mut session) =
-            self.run_plan(job, &cancellation, generation, plan_sha256, executor);
+        let (end, mut session) = self.run_plan(
+            job,
+            &cancellation,
+            generation,
+            PlanChoice::Named(plan_sha256),
+            executor,
+        );
         // Under the lock the run was recorded under, so no cancel can find an
         // operation that has already committed.
         guard.release(&mut session);
@@ -2291,7 +2296,10 @@ impl ProjectStore {
         executor: &dyn RecipeExecutor,
     ) -> Result<Vec<BatchMember>, ProjectError> {
         let (mut guard, cancellation, generation) = self.start_job(job, true)?;
-        let mut members = {
+        // Every member's plan, frozen as the batch is accepted: a review made
+        // while the batch runs replaces what is held for review, never what
+        // this batch runs.
+        let (plans, mut members) = {
             let mut session = self.locked();
             let reviewed = session.open().map(|project| {
                 let pending = &project.pending_plans;
@@ -2301,19 +2309,10 @@ impl ProjectStore {
                         .iter()
                         .zip(plan_sha256s)
                         .all(|(plan, asked)| plan.plan_sha256.eq_ignore_ascii_case(asked));
-                same.then(|| {
-                    pending
-                        .iter()
-                        .map(|plan| BatchMember {
-                            layer_id: plan.layer_id,
-                            plan_sha256: plan.plan_sha256.clone(),
-                            state: MemberState::Queued,
-                        })
-                        .collect::<Vec<_>>()
-                })
+                same.then(|| pending.clone())
             });
-            let members = match reviewed {
-                Ok(Some(members)) => members,
+            let plans = match reviewed {
+                Ok(Some(plans)) => plans,
                 Ok(None) => {
                     guard.release(&mut session);
                     return Err(ProjectError::PlanNotCurrent);
@@ -2323,10 +2322,18 @@ impl ProjectStore {
                     return Err(error);
                 }
             };
+            let members: Vec<BatchMember> = plans
+                .iter()
+                .map(|plan| BatchMember {
+                    layer_id: plan.layer_id,
+                    plan_sha256: plan.plan_sha256.clone(),
+                    state: MemberState::Queued,
+                })
+                .collect();
             if let Some(accepted) = session.job.as_mut().filter(|accepted| accepted.id == job) {
                 accepted.batch = Some(members.clone());
             }
-            members
+            (plans, members)
         };
         let mut index = 0;
         loop {
@@ -2348,9 +2355,13 @@ impl ProjectStore {
                     accepted.batch = Some(members.clone());
                 }
             }
-            let plan_sha256 = members[index].plan_sha256.clone();
-            let (end, mut session) =
-                self.run_plan(job, &cancellation, generation, &plan_sha256, executor);
+            let (end, mut session) = self.run_plan(
+                job,
+                &cancellation,
+                generation,
+                PlanChoice::Frozen(&plans[index]),
+                executor,
+            );
             // A fact about the whole session or project, which would refuse
             // every later member alike: none of them is started.
             let halt = if session.analysis_quarantined {
@@ -2399,7 +2410,7 @@ impl ProjectStore {
         job: ProjectJobId,
         cancellation: &Cancellation,
         generation: u64,
-        plan_sha256: &str,
+        choice: PlanChoice<'_>,
         executor: &dyn RecipeExecutor,
     ) -> (
         Result<TargetedMs1RunEnd, ProjectError>,
@@ -2411,7 +2422,7 @@ impl ProjectStore {
             store,
             binding_path,
             plan_recorded,
-        } = match self.prepare_run(plan_sha256, executor) {
+        } = match self.prepare_run(choice, executor) {
             Ok(prepared) => prepared,
             Err(error) => return (Err(error), self.locked()),
         };
@@ -2637,7 +2648,7 @@ impl ProjectStore {
     /// established. A refusal here records nothing.
     fn prepare_run(
         &self,
-        plan_sha256: &str,
+        choice: PlanChoice<'_>,
         executor: &dyn RecipeExecutor,
     ) -> Result<PreparedRun, ProjectError> {
         let (plan, input, binding_path, project_id, plan_recorded) = {
@@ -2646,14 +2657,23 @@ impl ProjectStore {
                 return Err(ProjectError::AnalysisQuarantined);
             }
             let project = session.open()?;
-            let recorded = project.document.plan(plan_sha256).cloned();
-            let plan = project
-                .pending_plans
-                .iter()
-                .find(|pending| pending.plan_sha256.eq_ignore_ascii_case(plan_sha256))
-                .cloned()
-                .or_else(|| recorded.clone())
-                .ok_or(ProjectError::PlanNotCurrent)?;
+            let (plan, recorded) = match choice {
+                PlanChoice::Named(plan_sha256) => {
+                    let recorded = project.document.plan(plan_sha256).cloned();
+                    let plan = project
+                        .pending_plans
+                        .iter()
+                        .find(|pending| pending.plan_sha256.eq_ignore_ascii_case(plan_sha256))
+                        .cloned()
+                        .or_else(|| recorded.clone())
+                        .ok_or(ProjectError::PlanNotCurrent)?;
+                    (plan, recorded)
+                }
+                PlanChoice::Frozen(plan) => (
+                    plan.clone(),
+                    project.document.plan(&plan.plan_sha256).cloned(),
+                ),
+            };
             let layer = project
                 .document
                 .layer(plan.layer_id)
@@ -2924,6 +2944,16 @@ pub struct MemberResolution {
     pub refused: Option<ProjectError>,
     /// What would stop its plan running now, if anything.
     pub blocked: Option<ProjectError>,
+}
+
+/// Which plan a run executes.
+#[derive(Clone, Copy)]
+enum PlanChoice<'a> {
+    /// By digest: the plan resolved for review, or one this project recorded.
+    Named(&'a str),
+    /// A batch member's plan, frozen when its batch was accepted. Checked
+    /// against the project as it is now, like any other.
+    Frozen(&'a TargetedMs1Plan),
 }
 
 /// What a run established before its attempt started.
