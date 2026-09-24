@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use mscanvas_core::ArtifactId;
 
-use super::{Supervisor, validate_payload, verify_runtime};
+use super::{Supervisor, Unavailable, validate_payload, verify_runtime};
 use crate::project::observe::Cancellation;
 use crate::project::payload::{self, Availability, RowOutcome};
 use crate::project::recipe::{
@@ -2878,4 +2878,182 @@ except OSError as error:\n    print('refused', getattr(error, 'winerror', None))
     );
     assert!(stdout.starts_with("refused"), "{stdout}");
     assert_eq!(output.total_owned_processes, Some(1));
+}
+
+// ---------------------------------------------------------------------------
+// M9.2: a stored result is history, read without running anything
+//
+// What a result holds is read from its managed payload alone. Neither the
+// analysis runtime nor the source is needed to open it, list its rows or read
+// a target's evidence, and none of those reads records anything.
+// ---------------------------------------------------------------------------
+
+/// Moves a fixture this test owns out of the way, and back when dropped.
+struct Aside {
+    from: PathBuf,
+    to: PathBuf,
+}
+
+impl Aside {
+    fn new(path: &Path) -> Self {
+        let to = path.with_extension("away");
+        fs::rename(path, &to).expect("move the owned fixture aside");
+        Self {
+            from: path.to_path_buf(),
+            to,
+        }
+    }
+}
+
+impl Drop for Aside {
+    fn drop(&mut self) {
+        let _ = fs::rename(&self.to, &self.from);
+    }
+}
+
+/// Every row and every target's evidence, as a fresh store reads them.
+fn everything(
+    store: &ProjectStore,
+    artifact: ArtifactId,
+    plan: &TargetedMs1Plan,
+) -> (Vec<payload::PayloadRow>, Vec<Vec<payload::EvidenceLine>>) {
+    let rows = rows_of(store, artifact);
+    let evidence = plan
+        .targets
+        .iter()
+        .zip(&rows)
+        .filter(|(_, row)| row.ion.is_some())
+        .map(|(target, _)| {
+            store
+                .read_targeted_ms1_evidence(artifact, target.target_id)
+                .expect("evidence")
+        })
+        .collect();
+    (rows, evidence)
+}
+
+#[test]
+fn a_saved_result_reopens_and_reads_with_neither_the_runtime_nor_the_source() {
+    let scratch = Scratch::new("m92-history");
+    let (store, layer, document) = fake_project(&scratch);
+    let executor = Fake::new(completed);
+    let plan = plan(&store, layer, one_target(), &executor);
+    let end = run(&store, &plan, &executor).expect("run");
+    let artifact = end.artifact.expect("result");
+    store.save().expect("save");
+    let before = everything(&store, artifact, &plan);
+    let consumed_before = store.describe().runs[0].targeted_ms1.clone();
+
+    // The source goes away, and the only executor on offer runs nothing.
+    let _aside = Aside::new(&scratch.join("data/sample.mzML"));
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    let opened = reopened.describe();
+    assert_eq!((opened.runs.len(), opened.artifacts.len()), (1, 1));
+    assert!(!opened.dirty);
+    assert_eq!(opened.inputs[0].verification, "notChecked");
+    assert_eq!(
+        opened.artifacts[0]
+            .targeted_ms1
+            .as_ref()
+            .expect("result")
+            .availability,
+        "available"
+    );
+
+    // A check the user asks for says where the source is now; the result is
+    // untouched by it.
+    let check = reopened.accept_job().expect("accept");
+    reopened.check_linked_files(check).expect("check");
+    let checked = reopened.describe();
+    assert_eq!(checked.inputs[0].verification, "unavailable");
+    assert_eq!(
+        checked.inputs[0].unavailable_reason,
+        Some("missingAtCheckedLocation")
+    );
+    assert_eq!(
+        checked.artifacts[0]
+            .targeted_ms1
+            .as_ref()
+            .expect("result")
+            .availability,
+        "available"
+    );
+
+    // Everything the result holds reads back unchanged.
+    assert_eq!(everything(&reopened, artifact, &plan), before);
+
+    // A new run is what the missing runtime blocks, and only that.
+    let resolution = reopened
+        .resolve_targeted_ms1_plan(layer, &draft(one_target()), &Unavailable)
+        .expect("resolved");
+    assert_eq!(resolution.blocked, Some(ProjectError::RecipeUnavailable));
+    assert!(matches!(
+        run(&reopened, &plan, &Unavailable),
+        Err(ProjectError::RecipeUnavailable)
+    ));
+
+    // Nothing was recorded or changed by any of it.
+    let after = reopened.describe();
+    assert_eq!((after.runs.len(), after.artifacts.len()), (1, 1));
+    assert!(!after.dirty);
+    assert_eq!(after.runs[0].targeted_ms1, consumed_before);
+    assert_eq!(everything(&reopened, artifact, &plan), before);
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_real_result_is_read_after_reopen_and_save_as_with_neither_the_runtime_nor_the_source() {
+    let area = WorkArea::new("m92-real-history");
+    let (store, layer, source) = real_project(&area, "plain.mzML", &mzml(&plain(), ""));
+    let supervisor = real();
+    let plan = plan(
+        &store,
+        layer,
+        vec![
+            target("caffeine", CAFFEINE, "60", "20"),
+            target("adenine", ADENINE, "40", "10"),
+        ],
+        &supervisor,
+    );
+    let end = run(&store, &plan, &supervisor).expect("recorded");
+    assert_eq!(
+        end.outcome,
+        TerminalOutcome::Completed,
+        "{:?}",
+        failure_of(&store)
+    );
+    let artifact = end.artifact.expect("result");
+    store.save().expect("save");
+    let document = area.join("study.mscanvas");
+    let before = everything(&store, artifact, &plan);
+    let execution_before = store.describe().runs[0].targeted_ms1.clone();
+    drop(store);
+
+    let _aside = Aside::new(&source);
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    let check = reopened.accept_job().expect("accept");
+    reopened.check_linked_files(check).expect("check");
+    assert_eq!(reopened.describe().inputs[0].verification, "unavailable");
+    assert_eq!(everything(&reopened, artifact, &plan), before);
+    let resolution = reopened
+        .resolve_targeted_ms1_plan(
+            layer,
+            &draft(vec![target("caffeine", CAFFEINE, "60", "20")]),
+            &Unavailable,
+        )
+        .expect("resolved");
+    assert_eq!(resolution.blocked, Some(ProjectError::RecipeUnavailable));
+
+    // Save As carries the result whole, and the copy reads the same.
+    let copy = area.join("copy/study-copy.mscanvas");
+    fs::create_dir_all(copy.parent().expect("parent")).expect("dir");
+    reopened.save_as(&copy).expect("save as");
+    let copied = ProjectStore::new();
+    copied.open_document(&copy, false).expect("open the copy");
+    assert_eq!(everything(&copied, artifact, &plan), before);
+    let described = copied.describe();
+    assert_eq!((described.runs.len(), described.artifacts.len()), (1, 1));
+    assert_eq!(described.runs[0].targeted_ms1, execution_before);
 }
