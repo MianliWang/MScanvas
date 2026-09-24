@@ -16,6 +16,13 @@ NOT STARTED · M7.6 RELEASE QUALIFICATION DEFERRED / INCOMPLETE · PROTEOWIZARD
 HOLD UNCHANGED · ROUTE B NOT AUTHORIZED / NOT EXECUTED · PUBLIC BETA NOT
 RELEASED; M10 NOT STARTED
 
+Update: M9.4 has since let one reviewed action run the same request over 2–16
+chosen acquisitions, one after another. Nothing here changed: each member is
+given its source through exactly the view and the scratch rules below, chosen
+for that member alone, and a batch of linked and copied members holds at most
+one member's copy at a time. See the
+[M9.4 record](M9_4_TARGETED_MS1_BATCH.md).
+
 ## Scope
 
 M9.3 changes how the exact approved bytes of a targeted MS1 source are

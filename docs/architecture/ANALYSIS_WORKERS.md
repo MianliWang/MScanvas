@@ -60,6 +60,10 @@ in a fixed CPython 3.13.15 + pyOpenMS 3.5.0 runtime. What it settled:
   verified against the plan's bytes before launch. Attempt directories carry
   an owner marker and are swept only when their owner process is gone
   ([ADR 0049](adr/0049-content-bound-execution-snapshot.md)).
+- **Batches (M9.4):** several acquisitions reviewed together still run one
+  worker at a time, one acquisition per worker, in one loop inside one
+  exclusive project job; no worker is ever given more than one acquisition
+  ([ADR 0050](adr/0050-sequential-batch-of-independent-targeted-plans.md)).
 
 The runtime is provisioned into a development checkout only; nothing here
 satisfies the packaging gate below. See the
