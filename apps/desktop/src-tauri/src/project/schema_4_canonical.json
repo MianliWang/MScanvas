@@ -1,0 +1,597 @@
+{
+  "schemaVersion": 4,
+  "projectId": "3f6c2d9e-5b1a-4c8e-9f2d-7a1b0c4e5d01",
+  "revision": 7,
+  "name": "Canonical schema 4",
+  "inputs": [
+    {
+      "id": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a01",
+      "label": "plain.mzML",
+      "locator": {
+        "kind": "projectRelative",
+        "path": "data/plain.mzML"
+      },
+      "members": [
+        {
+          "role": "primary",
+          "relativeName": "",
+          "baseline": {
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a02",
+      "label": "matrix only.mzML",
+      "locator": {
+        "kind": "localAbsolute",
+        "path": "C:\\data\\matrix only.mzML"
+      },
+      "members": [
+        {
+          "role": "primary",
+          "relativeName": "",
+          "baseline": {
+            "byteLength": 446737,
+            "sha256": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f01",
+      "label": "File facts: plain.mzML",
+      "payload": {
+        "kind": "fileFactsV1",
+        "observations": [
+          {
+            "inputId": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a01",
+            "members": [
+              {
+                "role": "primary",
+                "relativeName": "",
+                "byteLength": 455961,
+                "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f02",
+      "label": "QC summary: plain.mzML",
+      "payload": {
+        "kind": "acquisitionQcSnapshotV1",
+        "totalSpectrumCount": 126,
+        "msLevelCounts": [
+          {
+            "kind": "level",
+            "msLevel": 1,
+            "spectrumCount": 121
+          },
+          {
+            "kind": "other",
+            "spectrumCount": 5
+          }
+        ],
+        "chromatogramCount": {
+          "kind": "reported",
+          "count": 0
+        },
+        "retentionTime": {
+          "kind": "reported",
+          "minimum": {
+            "value": "0",
+            "unit": "notEmitted"
+          },
+          "at25PercentBasePeakIntensity": {
+            "value": "55.5",
+            "unit": "notEmitted"
+          },
+          "at50PercentBasePeakIntensity": {
+            "value": "60",
+            "unit": "notEmitted"
+          },
+          "at75PercentBasePeakIntensity": {
+            "value": "64.25",
+            "unit": "notEmitted"
+          },
+          "maximum": {
+            "value": "120",
+            "unit": "notEmitted"
+          }
+        },
+        "producer": {
+          "tool": "msaccess",
+          "executableSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+          "release": "3.0.25100",
+          "buildDate": null,
+          "sourceRevision": null
+        }
+      }
+    },
+    {
+      "id": "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f03",
+      "label": "Targeted MS1: plain.mzML",
+      "payload": {
+        "kind": "targetedMs1ResultV1",
+        "summary": {
+          "targets": 2,
+          "detected": 1,
+          "detectedAmbiguous": 0,
+          "shared": 0,
+          "suppressedByOverlap": 0,
+          "notDetected": 1,
+          "failed": 0
+        },
+        "noCandidateRecovery": false,
+        "payload": {
+          "manifestSha256": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+          "files": [
+            {
+              "name": "rows.jsonl",
+              "byteLength": 1850,
+              "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+            },
+            {
+              "name": "evidence.jsonl",
+              "byteLength": 9120,
+              "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+            },
+            {
+              "name": "evidence.index.json",
+              "byteLength": 412,
+              "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f04",
+      "label": "Targeted MS1: matrix only.mzML",
+      "payload": {
+        "kind": "targetedMs1ResultV1",
+        "summary": {
+          "targets": 2,
+          "detected": 0,
+          "detectedAmbiguous": 0,
+          "shared": 0,
+          "suppressedByOverlap": 0,
+          "notDetected": 2,
+          "failed": 0
+        },
+        "noCandidateRecovery": true,
+        "payload": {
+          "manifestSha256": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+          "files": [
+            {
+              "name": "rows.jsonl",
+              "byteLength": 1850,
+              "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+            },
+            {
+              "name": "evidence.jsonl",
+              "byteLength": 9120,
+              "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+            },
+            {
+              "name": "evidence.index.json",
+              "byteLength": 412,
+              "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "runs": [
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-0e2d9b7f5a01",
+      "operation": "captureFileFactsV1",
+      "inputs": [
+        {
+          "kind": "input",
+          "inputId": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a01"
+        }
+      ],
+      "outputArtifactIds": [
+        "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f01"
+      ],
+      "outcome": "completed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": null
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-0e2d9b7f5a02",
+      "operation": "captureAcquisitionQcSnapshotV1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [
+        "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f02"
+      ],
+      "outcome": "completed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": null
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-0e2d9b7f5a03",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [
+        "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f03"
+      ],
+      "outcome": "completed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": {
+            "python": "3.13.15",
+            "pyopenms": "3.5.0",
+            "openms": "3.5.0",
+            "openmsRevision": "c1370fb",
+            "openmsBuildTime": "2025-10-08T00:00:00"
+          },
+          "loadedModules": [
+            {
+              "name": "python313.dll",
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "name": "site-packages/pyopenms/openms.dll",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            },
+            {
+              "name": "site-packages/pyopenms/openswathalgo.dll",
+              "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+            },
+            {
+              "name": "site-packages/pyopenms/qt6core.dll",
+              "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+            }
+          ]
+        },
+        "failure": null,
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-0e2d9b7f5a04",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e02"
+        }
+      ],
+      "outputArtifactIds": [
+        "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f04"
+      ],
+      "outcome": "completed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "4AF4FBCC4D32A863269849CAC30CC724D0C738B92D6DF9980D0CF8C8853FAF60",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 446737,
+            "sha256": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "verifiedSnapshotInWorkArea",
+          "engineReport": {
+            "python": "3.13.15",
+            "pyopenms": "3.5.0",
+            "openms": "3.5.0",
+            "openmsRevision": "c1370fb",
+            "openmsBuildTime": "2025-10-08T00:00:00"
+          },
+          "loadedModules": [
+            {
+              "name": "python313.dll",
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "name": "site-packages/pyopenms/openms.dll",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            },
+            {
+              "name": "site-packages/pyopenms/openswathalgo.dll",
+              "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+            },
+            {
+              "name": "site-packages/pyopenms/qt6core.dll",
+              "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+            }
+          ]
+        },
+        "failure": null,
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-0e2d9b7f5a05",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e02"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "4AF4FBCC4D32A863269849CAC30CC724D0C738B92D6DF9980D0CF8C8853FAF60",
+        "consumedContent": [],
+        "attempt": null,
+        "failure": {
+          "code": "insufficientWorkAreaSpace",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-0e2d9b7f5a06",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e02"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "4AF4FBCC4D32A863269849CAC30CC724D0C738B92D6DF9980D0CF8C8853FAF60",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 446740,
+            "sha256": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+          }
+        ],
+        "attempt": null,
+        "failure": {
+          "code": "sourceChanged",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-0e2d9b7f5a07",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "workerTimeout",
+          "stage": "engine"
+        },
+        "stop": {
+          "reason": "timeBudgetExceeded",
+          "workerTerminated": true,
+          "exitObserved": true
+        }
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-0e2d9b7f5a08",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "cancelled",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": null,
+        "stop": {
+          "reason": "cancelRequested",
+          "workerTerminated": true,
+          "exitObserved": true
+        }
+      }
+    }
+  ],
+  "layers": [
+    {
+      "id": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01",
+      "source": {
+        "kind": "input",
+        "inputId": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a01"
+      }
+    },
+    {
+      "id": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e02",
+      "source": {
+        "kind": "input",
+        "inputId": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a02"
+      }
+    }
+  ],
+  "plans": [
+    {
+      "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+      "recipe": {
+        "recipe": "targetedMs1",
+        "recipeVersion": 1,
+        "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+        "engineProfileSha256": "ACA2C008B7FA312C42B59DE88F872EFC45BBB65545281B57163C0B181A958AF4",
+        "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295"
+      },
+      "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01",
+      "inputId": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a01",
+      "expectedContent": [
+        {
+          "role": "primary",
+          "relativeName": "",
+          "byteLength": 455961,
+          "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ],
+      "parameters": {
+        "mzHalfWidthPpm": "5",
+        "expectedPeakWidthS": "6"
+      },
+      "targetListSha256": "5F72EA34D151DC3540B9A14A76A6015A8001D77CDC34973F613DC806404A69CC",
+      "targets": [
+        {
+          "targetId": "5c1f7a52-0f3e-4c55-9b7d-2a8e6f1d4c01",
+          "label": "caffeine",
+          "formula": "C8H10N4O2",
+          "neutralMass": null,
+          "rtS": "60",
+          "rtHalfWidthS": "20"
+        },
+        {
+          "targetId": "5c1f7a52-0f3e-4c55-9b7d-2a8e6f1d4c02",
+          "label": "phenylalanine",
+          "formula": "C9H11NO2",
+          "neutralMass": "165.078978601",
+          "rtS": "100.5",
+          "rtHalfWidthS": "10"
+        }
+      ]
+    },
+    {
+      "planSha256": "4AF4FBCC4D32A863269849CAC30CC724D0C738B92D6DF9980D0CF8C8853FAF60",
+      "recipe": {
+        "recipe": "targetedMs1",
+        "recipeVersion": 1,
+        "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+        "engineProfileSha256": "ACA2C008B7FA312C42B59DE88F872EFC45BBB65545281B57163C0B181A958AF4",
+        "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295"
+      },
+      "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e02",
+      "inputId": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a02",
+      "expectedContent": [
+        {
+          "role": "primary",
+          "relativeName": "",
+          "byteLength": 446737,
+          "sha256": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        }
+      ],
+      "parameters": {
+        "mzHalfWidthPpm": "5",
+        "expectedPeakWidthS": "6"
+      },
+      "targetListSha256": "5F72EA34D151DC3540B9A14A76A6015A8001D77CDC34973F613DC806404A69CC",
+      "targets": [
+        {
+          "targetId": "5c1f7a52-0f3e-4c55-9b7d-2a8e6f1d4c01",
+          "label": "caffeine",
+          "formula": "C8H10N4O2",
+          "neutralMass": null,
+          "rtS": "60",
+          "rtHalfWidthS": "20"
+        },
+        {
+          "targetId": "5c1f7a52-0f3e-4c55-9b7d-2a8e6f1d4c02",
+          "label": "phenylalanine",
+          "formula": "C9H11NO2",
+          "neutralMass": "165.078978601",
+          "rtS": "100.5",
+          "rtHalfWidthS": "10"
+        }
+      ]
+    }
+  ]
+}

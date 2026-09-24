@@ -26,8 +26,8 @@ use crate::project::observe::Cancellation;
 use crate::project::payload::{self, RowOutcome};
 use crate::project::recipe::{AttemptEnd, AttemptOrder, RecipeExecutor, RunPhase, TargetDraft};
 use crate::project::record::{
-    FailureCode, FailureStage, InputId, LayerId, RunFailure, SourceView, StopFacts, StopReason,
-    TargetedMs1Plan, TerminalOutcome,
+    EngineReport, FailureCode, FailureStage, InputId, LayerId, LoadedModule, RunFailure,
+    SourceView, StopFacts, StopReason, TargetedMs1Plan, TerminalOutcome,
 };
 use crate::project::targeted_output::{TableFormat, result_table};
 use crate::project::tests::Scratch;
@@ -950,6 +950,144 @@ fn every_result_of_a_batch_survives_save_reopen_and_save_as_and_reads_without_it
     assert!(!later.describe().dirty, "reading recorded nothing");
 }
 
+/// The attempt facts of a real completed run: the engine's report and every
+/// module the adapter hashes, which is the most one run records.
+fn real_sized_facts(order: &AttemptOrder<'_>) -> AttemptEnd {
+    let mut end = completed(order);
+    if let AttemptEnd::Completed { attempt, .. } = &mut end {
+        attempt.engine_report = Some(EngineReport {
+            python: "3.13.15".to_owned(),
+            pyopenms: "3.5.0".to_owned(),
+            openms: "3.5.0".to_owned(),
+            openms_revision: "c1370fb".to_owned(),
+            openms_build_time: "Oct  8 2025, 12:00:00".to_owned(),
+        });
+        let pyopenms = (1..=8).map(|n| format!("_pyopenms_{n}.cp313-win_amd64.pyd"));
+        let packaged = [
+            "OpenMS.dll",
+            "OpenSwathAlgo.dll",
+            "Qt6Core.dll",
+            "msvcp140.dll",
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+        ]
+        .into_iter()
+        .map(str::to_owned);
+        attempt.loaded_modules = ["python313.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+            .into_iter()
+            .map(str::to_owned)
+            .chain(
+                packaged
+                    .chain(pyopenms)
+                    .map(|name| format!("site-packages/pyopenms/{name}")),
+            )
+            .map(|name| LoadedModule {
+                name,
+                sha256: "F".repeat(64),
+            })
+            .collect();
+    }
+    end
+}
+
+/// How fast the largest batches fill one project document (M9 closure).
+///
+/// Every member stores its own plan, with the whole target list, and its own
+/// run and result record in the document; its rows and evidence are beside
+/// it. Batches of 16 members over 200 targets are run and saved until a
+/// member meets the document bound, and what then happens is asserted: that
+/// member's attempt ran, it is refused `oversized` with nothing recorded, no
+/// later member starts, and the history already recorded stays whole and
+/// saveable.
+#[test]
+#[ignore = "measures document growth: run with --ignored --nocapture"]
+fn measure_how_many_of_the_largest_batches_one_project_document_holds() {
+    let scratch = Scratch::new("m9c-size");
+    let (store, layers, _) = project_of(&scratch, crate::project::recipe::MAX_BATCH_MEMBERS);
+    let document = scratch.join("study.mscanvas");
+    let size = || std::fs::metadata(&document).expect("saved").len();
+    let targets: Vec<TargetDraft> = (0..crate::project::record::MAX_TARGETS)
+        .map(|n| {
+            target(
+                &format!("compound {n:03}"),
+                CAFFEINE,
+                &format!("{}.{}", 30 + n, n % 10),
+                "15",
+            )
+        })
+        .collect();
+    let executor = Members::new(|order, _, _| real_sized_facts(order));
+    let empty = size();
+    let mut sizes = vec![empty];
+    let mut batches = 0;
+    let halted = loop {
+        let resolution = store
+            .resolve_targeted_ms1_batch(&layers, &draft(targets.clone()), &executor)
+            .expect("resolved");
+        let plans: Vec<TargetedMs1Plan> = resolution
+            .members
+            .into_iter()
+            .map(|member| member.plan.expect("a plan"))
+            .collect();
+        let attempts_before = executor.given().len();
+        let members = run_batch(&store, &plans, &executor).expect("ran");
+        let ended = members
+            .iter()
+            .filter(|member| matches!(member.state, MemberState::Ended(_)))
+            .count();
+        store
+            .save()
+            .expect("the history recorded so far always saves");
+        sizes.push(size());
+        if ended < members.len() {
+            break (members, executor.given().len() - attempts_before);
+        }
+        batches += 1;
+    };
+    let (members, attempts) = halted;
+    let first = sizes[1] - sizes[0];
+    let bound = crate::project::record::MAX_DOCUMENT_BYTES;
+
+    // Where the bound is met: that member's worker ran, then it was refused
+    // and recorded nothing; nothing after it started.
+    let refused = members
+        .iter()
+        .position(|member| matches!(member.state, MemberState::Refused(ProjectError::Oversized)))
+        .expect("a member meets the bound");
+    assert_eq!(attempts, refused + 1, "the refused member's attempt ran");
+    assert!(members[refused + 1..].iter().all(|member| matches!(
+        member.state,
+        MemberState::NotStarted(Some(ProjectError::Oversized))
+    )));
+    // What was recorded stays, and nothing was taken back to make room.
+    let recorded = batches * members.len() + refused;
+    assert_eq!(store.describe().runs.len(), recorded);
+    assert!(*sizes.last().expect("a size") <= bound);
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&document).expect("read")).expect("json");
+    let without = |key: &str| {
+        let mut less = value.clone();
+        less[key] = serde_json::json!([]);
+        serde_json::to_vec_pretty(&less).expect("bytes").len()
+    };
+    let whole = serde_json::to_vec_pretty(&value).expect("bytes").len();
+    let runs = value["runs"].as_array().expect("runs").len();
+    let per = |key: &str| (whole - without(key)) / runs;
+    eprintln!(
+        "M9C_EVIDENCE size: empty_bytes={empty} first_batch_bytes={first} \
+         per_member_bytes={} whole_batches={batches} refused_member_index={refused} \
+         members_recorded={recorded} final_bytes={} bound_bytes={bound} \
+         per_member_plan_bytes={} per_member_run_bytes={} per_member_artifact_bytes={} \
+         sizes={sizes:?}",
+        first / members.len() as u64,
+        sizes.last().expect("a size"),
+        per("plans"),
+        per("runs"),
+        per("artifacts"),
+    );
+}
+
 // ---------------------------------------------------------------------------
 // With the real runtime
 //
@@ -1242,6 +1380,136 @@ fn a_batch_of_linked_and_copied_members_runs_one_worker_at_a_time_and_leaves_no_
             &copied_store.join(artifact.to_string())
         ));
     }
+
+    // M9 closure: the rest of the assembled path. The all-negative member's
+    // stored result is tabulated in the payload's own words -- absences with
+    // no feature, so empty cells and never zeros -- as CSV and as TSV, and its
+    // evidence is drawn by the renderer every figure export uses.
+    let negative = reopened
+        .stored_targeted_result(artifacts[2])
+        .expect("stored");
+    for format in [TableFormat::Csv, TableFormat::Tsv] {
+        let (table, count) = result_table(&negative, format).expect("a table");
+        assert_eq!(count, 2);
+        let delimiter = if format == TableFormat::Csv {
+            ','
+        } else {
+            '\t'
+        };
+        let mut records = table.lines().filter(|line| !line.starts_with('#'));
+        let header: Vec<&str> = records.next().expect("a header").split(delimiter).collect();
+        let column = |name: &str| {
+            header
+                .iter()
+                .position(|field| *field == name)
+                .expect("a column")
+        };
+        let records: Vec<Vec<&str>> = records
+            .map(|line| line.split(delimiter).collect())
+            .collect();
+        assert_eq!(records.len(), 2);
+        for fields in records {
+            assert_eq!(fields[column("outcome")], "NOT_DETECTED");
+            assert_eq!(fields[column("failure_reason")], "");
+            assert_eq!(fields[column("candidate_count")], "0");
+            for absent in ["feature_apex_rt_s", "raw_area", "engine_intensity"] {
+                assert_eq!(fields[column(absent)], "", "{absent} is absent, never zero");
+            }
+        }
+    }
+    let (figure, _) = reopened
+        .targeted_evidence_figure(
+            artifacts[2],
+            plans[2].targets[0].target_id,
+            FigureSize::new(1_200.0, 640.0).expect("a size"),
+            FigureTheme::Light,
+        )
+        .expect("drawn");
+    let svg = mscanvas_plot_spec::svg::render(&figure);
+    assert!(svg.contains("<svg") && svg.contains("caffeine") && svg.contains("Not detected"));
+
+    // The Save As copy reads every result from its own store.
+    let from_copy = ProjectStore::new();
+    from_copy
+        .open_document(&copy, false)
+        .expect("open the copy");
+    for (artifact, plan) in artifacts.iter().zip(&plans) {
+        let stored = from_copy
+            .stored_targeted_result(*artifact)
+            .expect("read from the copy's own store");
+        assert_eq!(&stored.plan, plan);
+    }
+    assert!(!from_copy.describe().dirty, "reading recorded nothing");
+
+    // Nothing about an attempt -- its work area, its files, its process, its
+    // output streams or the source's file identity -- is in what the project
+    // keeps: both documents and every file of both result stores. (The
+    // sources' own locators may name this test's work area, which is below
+    // the same `.tmp/m91-jobs` as the attempts root; they are the project's
+    // references, so the attempts root is what is looked for.)
+    let mut kept = vec![document.clone(), copy.clone()];
+    for store in [payload::store_of(&document).expect("store"), copied_store] {
+        for entry in walk(&store) {
+            kept.push(entry);
+        }
+    }
+    for path in &kept {
+        let text = std::fs::read_to_string(path)
+            .expect("kept files are text")
+            .to_ascii_lowercase();
+        for forbidden in [
+            "attempts",
+            "owner.json",
+            "ownerprocess",
+            "snapshot.mzml",
+            "source.mzml",
+            "request.json",
+            "adapter_v1.py",
+            "openms_home",
+            "stderr",
+            "stdout",
+            "\"pid\"",
+            "processid",
+            "fileid",
+            "volume",
+            "dataset",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "{} holds {forbidden:?}",
+                path.display()
+            );
+        }
+    }
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&document).expect("read")).expect("json");
+    eprintln!(
+        "M9C_EVIDENCE combined: document_bytes={} loaded_modules_per_run={:?} files_scanned={}",
+        std::fs::metadata(&document).expect("saved").len(),
+        saved["runs"]
+            .as_array()
+            .expect("runs")
+            .iter()
+            .map(|run| run["targetedMs1"]["attempt"]["loadedModules"]
+                .as_array()
+                .map_or(0, Vec::len))
+            .collect::<Vec<_>>(),
+        kept.len()
+    );
+}
+
+/// Every file below `root`.
+fn walk(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(root).expect("a directory").flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(walk(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
 }
 
 #[test]

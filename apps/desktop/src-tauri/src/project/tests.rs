@@ -4283,3 +4283,35 @@ fn the_size_measure_keeps_room_for_the_widest_revision() {
         "room for any revision"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The canonical schema-4 document
+// ---------------------------------------------------------------------------
+
+/// Schema 4 as this build writes it, frozen at the M9 closure.
+///
+/// Every other document test builds its document from these types and so moves
+/// with them. This one is a file: every record kind, operation, locator form,
+/// source view, stop reason and run outcome schema 4 can hold -- a file-facts
+/// and a QC capture, a linked and a copied completed targeted run (one of them
+/// all-negative through the no-candidate recovery), a work area without room,
+/// a source changed since review, a timeout and a cancel -- with the digests
+/// this build computed for its two plans, which share one target list as a
+/// batch's members do. Reading it recomputes both plan digests and the target
+/// list digest, so a change to a plan's canonical form fails here, and that is
+/// the property a recorded plan's name depends on. Writing it back must give
+/// the same document.
+///
+/// Schema 4 is unpublished: this pins the current meaning, and no promise to
+/// documents written by earlier M9 development builds. Change it only with the
+/// schema, and say so where the schema's disposition is recorded.
+#[test]
+fn the_canonical_schema_four_document_reads_and_writes_back_unchanged() {
+    const CANONICAL: &str = include_str!("schema_4_canonical.json");
+    let document = record::parse(CANONICAL.as_bytes()).expect("the canonical document is read");
+    let expected: serde_json::Value = serde_json::from_str(CANONICAL).expect("json");
+    let written: serde_json::Value =
+        serde_json::from_slice(&record::serialize(&document).expect("written")).expect("json");
+    assert_eq!(written, expected);
+    assert_eq!(document.schema_version, record::SCHEMA_VERSION);
+}
