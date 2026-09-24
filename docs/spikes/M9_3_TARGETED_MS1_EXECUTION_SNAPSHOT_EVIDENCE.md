@@ -25,8 +25,10 @@ RELEASED; M10 NOT STARTED
 | Browser scenarios | `c823013` |
 | Documentation, the isolated review's input | `2bdbc7e` |
 | Review repairs | `46c7b27` |
-| Targeted-review repairs — **the tested code** | `c5c19f6857814418f3d04771a7c24beaaaafb11e`, tree `730c78d2c0652d4a1c865c24869bfc5d24e7de65` |
-| This validation record | a documentation-only successor of `c5c19f6` |
+| Targeted-review repairs; the full validation below | `c5c19f6857814418f3d04771a7c24beaaaafb11e`, tree `730c78d2c0652d4a1c865c24869bfc5d24e7de65` |
+| Its validation record | `13363a6`, documentation only |
+| One real-runtime test, two comments and the ADR's matching sentence — **the tested code** | `23ba012d7024611891080537db35bd73a4b86e32`, tree `03a082a6e6dcbcb1e09a60b0da1562b83c7d627c` |
+| This record's last update | a documentation-only successor of `23ba012` |
 
 At the start: branch, HEAD and tree as above, index and worktree clean, no
 stash, no operation in progress. `.claude/scheduled_tasks.lock` (git-excluded)
@@ -64,11 +66,12 @@ all on the pinned runtime and adapter, unchanged:
 | Source on `C:`, two targets, through the store | Review not blocked; completed; caffeine `DETECTED`; consumed content equal to the plan's; `sourceView` `verifiedSnapshotInWorkArea`; source byte-identical; the attempts root afterwards exactly as before; the saved document says `verifiedSnapshotInWorkArea` and none of `m91-jobs`, `attempts`, `snapshot.mzML`, `source.mzML`, `.tmp` |
 | … then, with the source moved away | Reopened: `available`; every row and evidence line identical; a figure drawn and a CSV table of both targets built; nothing recorded (M9.2 unchanged) |
 | Source on `C:` under `数据 目录/样品 plain.mzML` | Completed through the ASCII copy; `DETECTED`; `verifiedSnapshotInWorkArea` |
-| Source on `D:` under a non-ASCII path | Completed through the ASCII link; `DETECTED`; `hardLinkInWorkArea` (the link path unchanged) |
+| Source on `D:` under a non-ASCII path | Completed through the ASCII link; `DETECTED`; `hardLinkInWorkArea`: a linkable source is still linked, never copied |
 | Crash-left fixtures in the real attempts root, then a real same-volume run | A marked directory naming no live process (id `0xFFFFFFFD`) and one naming this process's id with another creation time were removed; an unmarked UUID directory beside them was left byte-identical; the run completed with `hardLinkInWorkArea` and its result `available` |
 | Source on `C:` changed after the plan | Failed `sourceChanged` at `source`; what the copy read recorded and unequal to the plan; no attempt facts; no artifact; no copy left |
 | Source on `C:` removed after the plan | Failed `sourceUnavailable` at `source`; nothing consumed; nothing left |
 | Cancel as the third copy chunk is read (supervisor) | `Cancelled`, nothing consumed, no attempt facts, `workerTerminated` and `exitObserved` false; `preparingInput` reported and `loadingSource` never; no partial copy or staging left; source intact |
+| Source on `C:` removed, and other bytes written at its name, as the worker began reading its verified copy (supervisor) | Completed; consumed equal to the plan; `verifiedSnapshotInWorkArea`; the name holds the replacement afterwards: once the copy is verified the source's part is over |
 | Worker fails after a verified copy (an adapter that exits 7) | Failed `workerExitedAbnormally`; consumed equal to the plan; `verifiedSnapshotInWorkArea`; no copy left |
 | Result cannot be staged after a verified copy and a completed worker (a file where `.staging` goes) | Failed `payloadNotPublished` at `publish`; `verifiedSnapshotInWorkArea`; nothing published; the blocking file untouched; no copy left |
 | Preflight with the real volumes | The plan as is passes; the same plan expecting `u64::MAX / 2` bytes from `C:` is refused `insufficientWorkAreaSpace`; from `D:` it passes, because nothing is copied |
@@ -127,7 +130,7 @@ on `D:`, then a second copy cancelled as its middle chunk is about to be read.
 Peak memory is the test process's `K32GetProcessMemoryInfo`. Records under
 `test-results/m9.3/measure/`.
 
-On the tested code `c5c19f6` (logs `test-results/m9.3/final/14-measure-*.log`):
+On `c5c19f6`, whose copy path `23ba012` leaves unchanged (logs `test-results/m9.3/final/14-measure-*.log`):
 
 | Fixture | Bytes | Copy and verify | Peak working set before → after | Peak private bytes | Cancel → return | Partial copy |
 | --- | ---: | ---: | --- | ---: | ---: | ---: |
@@ -202,7 +205,7 @@ parallel test threads.
 
 ## Validation record
 
-Run one command at a time, in this order, on the tested code `c5c19f6` (tree
+Run one command at a time, in this order, on `c5c19f6` (tree
 `730c78d2…`), by `test-results/m9.3/final/run.sh`; logs and `exits.txt` in
 `test-results/m9.3/final/`, not committed.
 
@@ -222,6 +225,22 @@ Run one command at a time, in this order, on the tested code `c5c19f6` (tree
 | `python scripts/check_repo.py` | 0 | |
 | `git diff --exit-code d1d9f58 -- Cargo.lock pnpm-lock.yaml` | 0 | No dependency added, removed or updated; no `Cargo.toml` feature changed |
 | The measurement, once per fixture, with `MSCANVAS_M93_MEASURE` set | 0, 0 | The table under "Resources" |
+
+**Then, on the tested code `23ba012`** (logs `test-results/m9.3/final-2/`). It
+adds one `#[ignore]` real-runtime test and changes two comments and one ADR
+sentence; no production statement, frontend file or dependency changed, so
+the checks it cannot affect (the release check, lint, typecheck, Vitest,
+build, the e2e typecheck and the browser spec) stand from `c5c19f6`, and the
+rest were run again, one at a time:
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `cargo fmt --all --check` | 0 | |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --workspace` | 0 | 1,864 passed, 0 failed, 52 ignored |
+| `cargo test -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1` | 0 | 29 passed: 28 real-runtime cases and the opt-in measurement, which measured nothing without its variable |
+| `python scripts/check_repo.py` | 0 | |
+| `git diff --exit-code d1d9f58 -- Cargo.lock pnpm-lock.yaml` | 0 | |
 
 **The whole browser suite was not run.** Its known state is M9.1's: `pnpm
 e2e:browser` exit 1, 7 spec files passed and 20 failed, dominated by

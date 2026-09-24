@@ -2,7 +2,7 @@
 
 Status: **M9.3 LOCAL EXECUTION SNAPSHOT COMPLETE — CONTENT-BOUND CROSS-VOLUME
 TARGETED-MS1 EXECUTION.** Date: 2026-09-23. Tested code
-`c5c19f6857814418f3d04771a7c24beaaaafb11e`. Branch
+`23ba012d7024611891080537db35bd73a4b86e32`. Branch
 `feat/m9.3-content-bound-execution-snapshot`, from the M9.2 endpoint
 `d1d9f586bef73715fc4bddf39795498059c0fada`. Decision:
 [ADR 0049](../architecture/adr/0049-content-bound-execution-snapshot.md).
