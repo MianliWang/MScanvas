@@ -807,8 +807,10 @@
   overflow: auto;
 }
 
-.targeted-batch-scroll .qc-report-table {
-  width: 100%;
+/* Sized to its content like the review's tables, so a member's state and its
+   action stay beside its name; a narrow window scrolls it inside itself. */
+.targeted-batch .qc-report-table :is(th, td) {
+  vertical-align: middle;
 }
 
 .targeted-batch tr[aria-current="step"] > * {
@@ -817,4 +819,9 @@
 
 .targeted-batch tr[data-state="failed"] td:nth-child(3) {
   color: var(--color-danger);
+}
+
+/* A member's position never wraps, however long the sentence beside it. */
+:is([data-targeted-batch-members], [data-targeted-batch-progress]) :is(th, td):first-child {
+  white-space: nowrap;
 }

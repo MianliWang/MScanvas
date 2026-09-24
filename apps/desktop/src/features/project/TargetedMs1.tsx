@@ -904,17 +904,28 @@ function BatchProgress({
 }) {
   const t = useUiMessages();
   const ids = useId();
+  const section = useRef<HTMLElement | null>(null);
+  const heading = useRef<HTMLHeadingElement | null>(null);
   const [stopping, setStopping] = useState(false);
   useEffect(() => {
     if (!running) setStopping(false);
   }, [running]);
+  // Appears when Run is pressed, below it: the surface scrolls to it, and the
+  // keyboard follows from Run -- now inert -- to what the press made.
+  useEffect(() => {
+    bringIntoView(section.current);
+    if (document.activeElement?.hasAttribute("data-targeted-run") === true) {
+      heading.current?.focus({ preventScroll: true });
+    }
+  }, []);
   return (
     <section
+      ref={section}
       className="targeted-batch"
       aria-labelledby={`${ids}-title`}
       data-targeted-batch={running ? "running" : "ended"}
     >
-      <h4 id={`${ids}-title`}>
+      <h4 ref={heading} id={`${ids}-title`} tabIndex={-1}>
         {t(running ? "targetedBatchRunningTitle" : "targetedBatchEndedTitle")}
       </h4>
       <p className="project-note" data-targeted-batch-summary="">
