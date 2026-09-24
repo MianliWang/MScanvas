@@ -105,6 +105,8 @@ function project(options: {
   readonly label?: string;
   /** Where a check last found the source: at its recorded location, or not. */
   readonly source?: "matching" | "missing";
+  /** How the engine was given the source (M9.3). */
+  readonly view?: "hardLinkInWorkArea" | "verifiedSnapshotInWorkArea";
 }) {
   const ran = options.run !== undefined;
   const completed = options.run === "completed";
@@ -150,7 +152,7 @@ function project(options: {
                     adapterSha256: DIGEST,
                     runtimeManifestSha256: DIGEST,
                     interpreterSha256: DIGEST,
-                    sourceView: "hardLinkInWorkArea",
+                    sourceView: options.view ?? "hardLinkInWorkArea",
                     engineReport: {
                       python: "3.13.15",
                       pyopenms: "3.5.0",
@@ -708,6 +710,142 @@ ${chinese.details?.text ?? ""}`;
     expect(chinese.setup?.text).toContain(zh.targetedSetupTitle);
     expect(chinese.report?.text).toContain(zh.targetedMeaning);
     expect(chinese.details?.text).toContain(zh.provenanceTargetedStored);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+});
+
+/** Text a work-area path or its scratch names would leave on screen. */
+const WORK_AREA_TRACES = /\.tmp|m91-jobs|attempts|snapshot\.mzML|source\.mzML|owner\.json/u;
+
+/** Brings one element to the middle of its scrolling ancestors, for the frame. */
+async function inView(selector: string) {
+  await browser.execute((wanted: string) => {
+    document.querySelector(wanted)?.scrollIntoView({ block: "center", inline: "nearest" });
+  }, selector);
+}
+
+describe("M9.3 a source from another drive, prepared and read through a verified copy, rendered", () => {
+  before(() => {
+    const root = process.env["MSCANVAS_M93_OUTPUT_ROOT"] ?? resolve("test-results/m9.3");
+    mkdirSync(root, { recursive: true });
+    output = mkdtempSync(join(root, "browser-"));
+    console.log(`M9.3 browser evidence: ${output}`);
+  });
+
+  after(async () => {
+    evidence.push({ console: await consoleEntries() });
+    writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2));
+  });
+
+  afterEach(async function () {
+    evidence.push({
+      test: this.currentTest?.title,
+      state: this.currentTest?.state,
+      console: await consoleEntries(),
+    });
+    if (this.currentTest?.state === "failed") {
+      await browser.saveScreenshot(join(output, `failure-${evidence.length}.png`));
+    }
+    writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2));
+  });
+
+  it("shows the preparing phase while the copy is made and says in Details that the engine read a verified copy", async () => {
+    await metrics(1366, 768);
+    const answers = table(project({}));
+    answers.get_targeted_ms1_progress = { operationId: OPERATION, phase: "preparingInput" };
+    await installIpcBoundary(answers);
+    await browser.url("/");
+    await toProject();
+    await review();
+
+    await holdInvoke("run_targeted_ms1");
+    await browser.$("[data-targeted-run]").click();
+    await browser.$("[data-project-busy-phase]").waitForDisplayed();
+    await inView("[data-project-busy-phase]");
+    const preparing = await capture("m93-01-preparing-input-1366");
+    expect(preparing.busy).toContain(en.targetedPhasePreparingInput);
+    expect(preparing.cancel).toBe(OPERATION);
+    expect(preparing.setup?.text ?? "").not.toMatch(WORK_AREA_TRACES);
+
+    await setInvokeResult("run_targeted_ms1", {
+      project: project({ run: "completed", view: "verifiedSnapshotInWorkArea" }),
+      runId: RUN,
+      outcome: "completed",
+      artifactId: ARTIFACT,
+    });
+    await releaseInvokeHold("run_targeted_ms1");
+    await browser.$(`[data-targeted-report="${ARTIFACT}"] [data-targeted-row]`).waitForDisplayed();
+    for (const [width, height, label] of [
+      [1366, 768, "m93-02-copy-details-1366"],
+      [960, 640, "m93-03-copy-details-960"],
+    ] as const) {
+      await metrics(width, height);
+      const hint = browser.$("[data-project-inspect-hint] button");
+      if (await hint.isExisting()) await hint.click();
+      await browser.$('[data-targeted-source-view="verifiedSnapshotInWorkArea"]').waitForDisplayed();
+      await inView("[data-targeted-source-view]");
+      const shown = await capture(label);
+      expect(shown.details?.text).toContain(en.targetedSourceViewSnapshot);
+      expect(shown.details?.text ?? "").not.toMatch(WORK_AREA_TRACES);
+      expect(shown.report?.availability).toBe("available");
+    }
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("says at review that the work area has no room for the copy, and offers no run", async () => {
+    await metrics(1366, 768);
+    const answers = table(project({}));
+    answers.resolve_targeted_ms1_plan = {
+      plan: PLAN,
+      problems: [],
+      blocked: "insufficientWorkAreaSpace",
+      engine: ENGINE,
+    };
+    await installIpcBoundary(answers);
+    await browser.url("/");
+    await toProject();
+    await review();
+    await browser.$('[data-targeted-blocked="insufficientWorkAreaSpace"]').waitForDisplayed();
+    await inView('[data-targeted-blocked="insufficientWorkAreaSpace"]');
+    const blocked = await capture("m93-04-no-room-1366");
+    expect(blocked.setup?.text).toContain(en.projectRefusedInsufficientWorkAreaSpace);
+    expect(await browser.$("[data-targeted-run]").getAttribute("aria-disabled")).toBe("true");
+    expect((await ipcCalls()).some((call) => call.command === "run_targeted_ms1")).toBe(false);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("says the preparing phase and the verified copy in Simplified Chinese", async () => {
+    await metrics(1366, 768);
+    const answers = table(project({}), "zh-CN");
+    answers.get_targeted_ms1_progress = { operationId: OPERATION, phase: "preparingInput" };
+    await installIpcBoundary(answers);
+    await browser.url("/");
+    await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
+    await toProject();
+    await review();
+    await holdInvoke("run_targeted_ms1");
+    await browser.$("[data-targeted-run]").click();
+    await browser.$("[data-project-busy-phase]").waitForDisplayed();
+    await inView("[data-project-busy-phase]");
+    const preparing = await capture("m93-05-preparing-input-zh-CN");
+    expect(preparing.busy).toContain(zh.targetedPhasePreparingInput);
+    expect(preparing.busy).not.toContain(en.targetedPhasePreparingInput);
+    expect(preparing.setup?.text).toContain(zh.targetedDomain);
+    await setInvokeResult("run_targeted_ms1", {
+      project: project({ run: "completed", view: "verifiedSnapshotInWorkArea" }),
+      runId: RUN,
+      outcome: "completed",
+      artifactId: ARTIFACT,
+    });
+    await releaseInvokeHold("run_targeted_ms1");
+    await browser.$(`[data-targeted-report="${ARTIFACT}"] [data-targeted-row]`).waitForDisplayed();
+    const hint = browser.$("[data-project-inspect-hint] button");
+    if (await hint.isExisting()) await hint.click();
+    await browser.$('[data-targeted-source-view="verifiedSnapshotInWorkArea"]').waitForDisplayed();
+    await inView("[data-targeted-source-view]");
+    const shown = await capture("m93-06-copy-details-zh-CN");
+    expect(shown.details?.text).toContain(zh.targetedSourceViewSnapshot);
+    expect(shown.details?.text).not.toContain(en.targetedSourceViewSnapshot);
     expect(await unexpectedConsole()).toEqual([]);
   });
 });
