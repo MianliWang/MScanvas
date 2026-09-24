@@ -1,7 +1,8 @@
 # M9.3 — content-bound execution snapshot evidence
 
-Status: **M9.3 LOCAL EXECUTION SNAPSHOT COMPLETE — CONTENT-BOUND CROSS-VOLUME
-TARGETED-MS1 EXECUTION.** Date: 2026-09-23. Record:
+Status: **M9.3 COMPLETE — CROSS-VOLUME EXECUTION SNAPSHOT AND SAFE ATTEMPT
+RECOVERY.** Dates: 2026-09-23 (M9.3), 2026-09-24 (M9.3.C1, the last section).
+Record:
 [M9.3 record](../product/M9_3_TARGETED_MS1_EXECUTION_SNAPSHOT.md). What was built, its rules and its
 limits are in the record and in
 [ADR 0049](../architecture/adr/0049-content-bound-execution-snapshot.md); this
@@ -280,7 +281,10 @@ unlink the last name of the user's bytes. Decision: ADR 0049 §7, amended.
 | Binding | Value |
 | --- | --- |
 | Start | `32b1e5d82c9b1b20bb430a2c0c4b009fcf13572a`, tree `cbe274d667b315d77f32e0a227675e676f2e0720`, a documentation-only child of the M9.3 tested code `23ba012` (tree `03a082a6…`) |
-| Repair — **the tested code** | `59c77f8d3f529945c12b0d0cf34d6a662bee7096`, tree `ab0db6e7f4591ebf9b87e546d495f77bd0773626` |
+| Repair | `59c77f8d3f529945c12b0d0cf34d6a662bee7096`, tree `ab0db6e7f4591ebf9b87e546d495f77bd0773626` |
+| Its documentation, the narrow review's input | `d9e775f` |
+| Narrow-review repairs — **the tested code** | `c69889ba840a67072ebbaed5a32e1d2ede20a1b3`, tree `15070fb747e964a067ade58c6111a5d79e721b01` |
+| This record's last update | a documentation-only successor of `c69889b` |
 
 **The rule, as built.** No count is taken. A gone owner's attempt directory
 with any entry at the link name (`source.mzML`, in any ASCII case), or whose
@@ -320,10 +324,68 @@ retained link costs a directory entry while the user's own name exists; if
 the user deletes that name, the link alone keeps the file's clusters
 allocated, and nothing reclaims or reports them.
 
+Also asserted since the narrow review: the two real link runs
+(`a_source_under_a_non_ascii_path_is_read_through_its_ascii_link` and
+`an_attempt_removes_crash_left_scratch_and_nothing_it_cannot_prove_is_its_own`)
+find the attempts root exactly as before them, so the attempt's own view did
+remove its link and the directory went with it. Not exercised by a test, as in
+M9.3: a link that is made and is not the held object, now refused without
+being unlinked.
+
 ### M9.3.C1 review
 
-Pending.
+One narrow read-only review of `59c77f8` + `d9e775f` against `32b1e5d`,
+exported to `.tmp/m93-evidence/review-c1-d9e775f/`, on the questions the
+closure asked: whether cross-session cleanup can still unlink user-owned link
+bytes, crash points before and after a view exists, same-session versus
+recovery, snapshot cleanup bounds, malformed and legacy state, published
+payloads and the quarantine. It found that no sweep or other recovery path can
+unlink a `source.mzML` link, and no high or medium finding.
+
+| Finding | Verdict | Disposition |
+| --- | --- | --- |
+| 1 — `execution_view` built the view before checking the link was the held object, so a refused entry, not shown to be a name of the held source, was unlinked by the view's drop | Confirmed (unverified unlink); plausible (data loss, via a retargeted junction or a replaced link), low | Fixed: the check comes first; a refused entry is left, with its directory |
+| 2 — no end-to-end test that a link run's own cleanup removes its link | Confirmed, low | Both real link runs now assert the attempts root is as before |
+| 3 — the marker's schema comparison was untested (the `/2` fixture failed to parse first); the owner-unknown row overstated | Confirmed, low | A whole `/2` marker fixture added; the row now says what is and is not tested |
+| 4 — the C1 table reported results while validation was pending | Confirmed, low | The validation below; the real runs were also run on `59c77f8` before the review (29 passed) |
+| 5 — two new tests rely on Windows process identity without a gate | Confirmed, low | Gated to Windows |
+| 6 — pre-amendment builds sharing `.tmp` would still apply the withdrawn rule | Confirmed, low (residual) | Stated in ADR 0049 §7; confined to unpublished development builds of this branch |
+| 7 — the record's causes of a retained link were incomplete | Confirmed, low | Completed |
+
+Out of scope and pre-existing, recorded as the review gave it: a program
+running as the same user could swap a judged UUID directory for a junction
+between the judgement and the removal; M9.3 states no boundary against such a
+program.
 
 ### M9.3.C1 validation
 
-Pending.
+Run one command at a time, in this order, on `c69889b` (tree `15070fb7…`), by
+`test-results/m9.3c1/final/run.sh`; logs in `test-results/m9.3c1/final/`, not
+committed. No frontend file changed, so no frontend gate was run, and the
+whole browser suite was not run (its known state is unchanged: 7 spec files
+passed, 20 failed).
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `cargo fmt --all --check` | 0 | |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test -p mscanvas-desktop --lib -- targeted_ms1::scratch targeted_ms1::tests` | 0 | 71 passed, 29 ignored (the real-runtime tests) |
+| `cargo test --workspace` | 0 | 1,869 passed, 0 failed, 52 ignored |
+| `cargo test -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1` | 0 | 29 passed: 28 real-runtime cases and the opt-in measurement, which measured nothing without its variable |
+| `cargo check -p mscanvas-desktop --release` | 0 | |
+| `python scripts/check_repo.py` | 0 | |
+| `git diff --exit-code d1d9f58 -- Cargo.lock pnpm-lock.yaml` | 0 | No dependency changed |
+
+After the last run, `.tmp/m91-jobs/attempts/` and `.tmp/m91-jobs/tests/` were
+empty. Earlier during the repair, the first run of the new scratch tests
+failed twice on fixture counts — user data had been placed inside the swept
+root and was counted `unowned` — and passed once it was moved out; that is
+recorded, not hidden. No retry changed a result.
+
+### M9.3.C1 custody
+
+Ordinary local commits only, on `feat/m9.3-content-bound-execution-snapshot`;
+no amend, rebase, squash, cherry-pick, push, pull request, merge or release.
+`main`, `origin/main` and the M9.0–M9.2 heads did not move. No stash, no
+memory write, no connector used, no external message. No owned process left
+running.

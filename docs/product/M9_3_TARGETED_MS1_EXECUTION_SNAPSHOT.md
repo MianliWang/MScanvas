@@ -1,8 +1,9 @@
 # M9.3 record — content-bound execution snapshots and bounded attempt lifecycle
 
-Status: **M9.3 LOCAL EXECUTION SNAPSHOT COMPLETE — CONTENT-BOUND CROSS-VOLUME
-TARGETED-MS1 EXECUTION.** Date: 2026-09-23. Tested code
-`23ba012d7024611891080537db35bd73a4b86e32`. Branch
+Status: **M9.3 COMPLETE — CROSS-VOLUME EXECUTION SNAPSHOT AND SAFE ATTEMPT
+RECOVERY.** Date: 2026-09-24, after the M9.3.C1 closure repair. Tested code
+`c69889ba840a67072ebbaed5a32e1d2ede20a1b3` (M9.3 itself was first closed on
+`23ba012` on 2026-09-23). Branch
 `feat/m9.3-content-bound-execution-snapshot`, from the M9.2 endpoint
 `d1d9f586bef73715fc4bddf39795498059c0fada`. Decision:
 [ADR 0049](../architecture/adr/0049-content-bound-execution-snapshot.md).
