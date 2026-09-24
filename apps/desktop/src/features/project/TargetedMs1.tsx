@@ -39,13 +39,19 @@ import type { UiMessage } from "../preferences/i18n";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import {
   useProjectApi,
+  type BatchMemberProgress,
+  type BatchMemberState,
+  type BatchResolution,
+  type EngineIdentity,
   type EvidenceTrace,
   type FailureCode,
   type FailureStage,
   type PayloadAvailability,
   type PayloadRow,
+  type PlanProblem,
   type PlanRequest,
   type PlanResolution,
+  type TargetDefinition,
   type ProjectArtifact,
   type RowFailure,
   type RowOutcome,
@@ -234,6 +240,9 @@ export function parseTargets(text: string): {
   return { targets, lines, overfull };
 }
 
+/** The most acquisitions one batch names. Rust enforces it; this only says it. */
+export const MAX_BATCH_MEMBERS = 16;
+
 export interface TargetedMs1SetupProps {
   readonly session: ProjectSession;
   readonly layerId: string;
@@ -242,6 +251,19 @@ export interface TargetedMs1SetupProps {
   /** The sentence for one refusal identifier, as the surface words it. */
   readonly refusalText: (code: string) => string;
 }
+
+/** What the last review answered: one plan, or one plan per chosen acquisition. */
+type Review =
+  | {
+      readonly kind: "single";
+      readonly resolution: PlanResolution;
+      readonly lines: readonly number[];
+    }
+  | {
+      readonly kind: "batch";
+      readonly resolution: BatchResolution;
+      readonly lines: readonly number[];
+    };
 
 export function TargetedMs1Setup({
   session,
@@ -255,10 +277,13 @@ export function TargetedMs1Setup({
   const [ppm, setPpm] = useState("5");
   const [width, setWidth] = useState("6");
   const [text, setText] = useState("");
-  const [review, setReview] = useState<{
-    readonly resolution: PlanResolution;
-    readonly lines: readonly number[];
-  } | null>(null);
+  // Which acquisitions the request is for. The layer whose control opened the
+  // setup is the one the user asked about; every other is theirs to add.
+  const [chosen, setChosen] = useState<readonly string[]>([layerId]);
+  const [review, setReview] = useState<Review | null>(null);
+  // Whether the batch on screen was run from here, so its progress and its
+  // end are shown beside the review they came from.
+  const [ranBatch, setRanBatch] = useState(false);
   const [overfull, setOverfull] = useState<number | null>(null);
   const working = session.busy !== "idle";
   const analysing = session.busy === "analysing";
@@ -271,47 +296,106 @@ export function TargetedMs1Setup({
     heading.current?.focus({ preventScroll: true });
   }, []);
 
-  // Any edit makes the plan on screen a plan for other text, so it goes. The
-  // inputs are held while anything is out, so a review cannot answer for text
-  // that changed while it was being asked.
-  const edited = (set: (value: string) => void) => (value: string) => {
-    set(value);
+  const layers = session.state.layers.map((layer) => ({
+    id: layer.id,
+    name:
+      session.state.inputs.find((input) => input.id === layer.sourceInputId)?.label ??
+      t("provenanceRelatedGone"),
+  }));
+  const nameOf = (id: string) =>
+    layers.find((layer) => layer.id === id)?.name ?? t("provenanceRelatedGone");
+  // In the project's own layer order, whatever order they were ticked in: the
+  // order a batch runs in is one the user can read off the list.
+  const members = layers.filter((layer) => chosen.includes(layer.id)).map((layer) => layer.id);
+
+  // Any edit makes the plan on screen a plan for other text or other
+  // acquisitions, so it goes. The inputs are held while anything is out, so a
+  // review cannot answer for a request that changed while it was being asked.
+  const forget = () => {
     setReview(null);
     setOverfull(null);
+    setRanBatch(false);
+  };
+  const edited = (set: (value: string) => void) => (value: string) => {
+    set(value);
+    forget();
+  };
+  const toggle = (id: string) => {
+    setChosen((current) =>
+      current.includes(id) ? current.filter((each) => each !== id) : [...current, id],
+    );
+    forget();
   };
 
   const onReview = async () => {
-    if (working) return;
+    const [only] = members;
+    if (working || only === undefined) return;
     const parsed = parseTargets(text);
     if (parsed.overfull !== null) {
       setOverfull(parsed.overfull);
       setReview(null);
       return;
     }
-    const resolution = await session.reviewTargetedMs1({
-      layerId,
+    const request = {
       mzHalfWidthPpm: ppm,
       expectedPeakWidthS: width,
       targets: parsed.targets,
-    });
-    setReview(resolution === null ? null : { resolution, lines: parsed.lines });
+    };
+    if (members.length === 1) {
+      const resolution = await session.reviewTargetedMs1({ layerId: only, ...request });
+      setReview(resolution === null ? null : { kind: "single", resolution, lines: parsed.lines });
+    } else {
+      const resolution = await session.reviewTargetedMs1Batch({ layerIds: members, ...request });
+      setReview(resolution === null ? null : { kind: "batch", resolution, lines: parsed.lines });
+    }
   };
 
-  const plan = review?.resolution.plan ?? null;
-  const blocked = review?.resolution.blocked ?? null;
-  const runnable = plan !== null && blocked === null;
+  const plan = review?.kind === "single" ? review.resolution.plan : null;
+  const blocked = review?.kind === "single" ? review.resolution.blocked : null;
+  const batch = review?.kind === "batch" ? review.resolution : null;
+  const runnable = batch !== null ? batchRunnable(batch) : plan !== null && blocked === null;
   const phase = phaseKey(session.analysisPhase);
 
-  // How the last run this session started over this layer ended, while that
-  // run is still in the project.
+  const onRun = () => {
+    if (working || !runnable) return;
+    if (batch !== null) {
+      setRanBatch(true);
+      void session.runTargetedMs1Batch(batch.members.map((member) => member.planSha256 ?? ""));
+    } else if (plan !== null) {
+      void session.runTargetedMs1(plan.planSha256);
+    }
+  };
+
+  // The batch this setup ran: as Rust reports it while it runs -- every member
+  // queued until the first report arrives -- and as it ended.
+  const queued: readonly BatchMemberProgress[] | null =
+    batch === null
+      ? null
+      : batch.members.map((member) => ({
+          layerId: member.layerId,
+          planSha256: member.planSha256 ?? "",
+          state: "queued",
+          runId: null,
+          artifactId: null,
+          reason: null,
+        }));
+  const progress = !ranBatch
+    ? null
+    : analysing
+      ? (session.analysisBatch ?? queued)
+      : session.lastTargetedBatch;
+
+  // How the last single run this session started over a chosen layer ended,
+  // while that run is still in the project.
   const last = session.lastTargetedRun;
   const lastRun =
-    last === null
+    last === null || ranBatch
       ? undefined
       : session.state.runs.find(
-          (run) => run.id === last.runId && run.layerIds.includes(layerId),
+          (run) => run.id === last.runId && run.layerIds.some((id) => members.includes(id)),
         );
   const lastFailure = lastRun?.targetedMs1?.failure ?? null;
+  const [only] = members;
 
   return (
     <section
@@ -335,11 +419,38 @@ export function TargetedMs1Setup({
           {t("targetedSetupClose")}
         </button>
       </div>
-      <p className="qc-report-of">{sourceName}</p>
+      <p className="qc-report-of" data-targeted-chosen={members.length}>
+        {members.length === 1 && only !== undefined
+          ? only === layerId
+            ? sourceName
+            : nameOf(only)
+          : t("targetedAcquisitionsCount", { count: members.length, max: MAX_BATCH_MEMBERS })}
+      </p>
       <p className="targeted-experimental" data-targeted-experimental="">
         {t("targetedExperimental")}
       </p>
       <p className="project-note">{t("targetedDomain")}</p>
+
+      <fieldset className="targeted-members" data-targeted-members="">
+        <legend>{t("targetedAcquisitions")}</legend>
+        <p className="project-note">{t("targetedAcquisitionsHelp")}</p>
+        <ul className="targeted-member-list">
+          {layers.map((layer) => (
+            <li key={layer.id}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={chosen.includes(layer.id)}
+                  disabled={working}
+                  data-targeted-member={layer.id}
+                  onChange={() => toggle(layer.id)}
+                />
+                <span>{layer.name}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      </fieldset>
 
       <div className="targeted-parameters">
         <label>
@@ -386,7 +497,7 @@ export function TargetedMs1Setup({
         <button
           type="button"
           className="secondary-button"
-          aria-disabled={working || text.trim() === "" || undefined}
+          aria-disabled={working || text.trim() === "" || members.length === 0 || undefined}
           data-targeted-review=""
           onClick={() => {
             if (text.trim() !== "") void onReview();
@@ -398,19 +509,21 @@ export function TargetedMs1Setup({
           type="button"
           className="primary-button"
           aria-disabled={working || !runnable || undefined}
-          title={runnable ? undefined : t("targetedRunNeedsReview")}
-          data-targeted-run=""
-          onClick={() => {
-            if (!working && plan !== null && blocked === null) {
-              void session.runTargetedMs1(plan.planSha256);
-            }
-          }}
+          title={
+            runnable
+              ? undefined
+              : t(batch !== null && batch.members.length > 0 ? "targetedBatchNotReady" : "targetedRunNeedsReview")
+          }
+          data-targeted-run={batch === null ? "" : "batch"}
+          onClick={onRun}
         >
-          {t("targetedRun")}
+          {batch === null
+            ? t("targetedRun")
+            : t("targetedRunBatch", { count: batch.members.length })}
         </button>
       </div>
 
-      {analysing ? (
+      {analysing && !ranBatch ? (
         <p className="project-note" data-targeted-phase={session.analysisPhase ?? ""}>
           {t(phase ?? "targetedPhasePreparing")}
         </p>
@@ -428,20 +541,143 @@ export function TargetedMs1Setup({
         </p>
       ) : null}
 
+      {progress === null ? null : (
+        <BatchProgress
+          members={progress}
+          running={analysing}
+          phase={session.analysisPhase}
+          runs={session.state.runs}
+          nameOf={nameOf}
+          refusalText={refusalText}
+          onStop={() => void session.cancelJob()}
+          onOpen={(artifactId) => session.inspect({ kind: "artifact", id: artifactId })}
+          onShowRun={(runId) => session.inspect({ kind: "run", id: runId })}
+        />
+      )}
+
       {overfull === null ? null : (
         <p className="project-problem" data-targeted-overfull={overfull}>
           {t("targetedLineOverfull", { line: String(overfull) })}
         </p>
       )}
 
-      {review === null ? null : (
+      {review === null ? null : review.kind === "single" ? (
         <PlanReview
           resolution={review.resolution}
           lines={review.lines}
           refusalText={refusalText}
         />
+      ) : (
+        <BatchReview
+          resolution={review.resolution}
+          lines={review.lines}
+          nameOf={nameOf}
+          refusalText={refusalText}
+        />
       )}
     </section>
+  );
+}
+
+/** The engine and its whole fixed profile, as the build fixes them. */
+function EngineFacts({ engine }: { readonly engine: EngineIdentity }) {
+  const t = useUiMessages();
+  return (
+    <>
+      <p className="project-note" data-targeted-engine="">
+        {t("targetedEngine", {
+          engine: `${engine.package} ${engine.version} · ${engine.algorithm} · ${engine.revision}`,
+        })}
+      </p>
+      {/* The whole profile the engine runs with, as the build fixes it: no
+          value in it is the user's to change in this recipe. */}
+      <details className="targeted-modules" data-targeted-profile="">
+        <summary>{t("targetedEngineProfile")}</summary>
+        <pre className="targeted-profile">{engine.fixedProfile}</pre>
+      </details>
+    </>
+  );
+}
+
+/** Every problem with the typed request, where it was typed. */
+function ProblemsTable({
+  problems,
+  lines,
+}: {
+  readonly problems: readonly PlanProblem[];
+  readonly lines: readonly number[];
+}) {
+  const t = useUiMessages();
+  return (
+    <table className="qc-report-table" data-targeted-problems="">
+      <caption>{t("targetedProblems")}</caption>
+      <thead>
+        <tr>
+          <th scope="col">{t("targetedProblemWhere")}</th>
+          <th scope="col">{t("targetedProblemField")}</th>
+          <th scope="col">{t("targetedProblemWhat")}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {problems.map((problem, index) => (
+          <tr key={index} data-targeted-problem={problem.problem}>
+            <th scope="row">
+              {problem.row === null
+                ? t("targetedWhereParameters")
+                : t("targetedWhereLine", {
+                    line: String(lines[problem.row - 1] ?? problem.row),
+                  })}
+            </th>
+            <td>{t(keyed(FIELD_KEYS, problem.field, FIELD_KEYS.targets))}</td>
+            <td>{t(keyed(PROBLEM_KEYS, problem.problem, PROBLEM_KEYS.invalid))}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** The ordered targets and the two parameters, as Rust resolved them. */
+function TargetsTable({
+  parameters,
+  targets,
+  tableProps,
+}: {
+  readonly parameters: TargetedMs1Plan["parameters"];
+  readonly targets: readonly TargetDefinition[];
+  /** The table's own data attributes. */
+  readonly tableProps: Readonly<Record<`data-${string}`, string>>;
+}) {
+  const t = useUiMessages();
+  return (
+    <table className="qc-report-table" {...tableProps}>
+      <caption>
+        {t("targetedPlanCaption", {
+          ppm: parameters.mzHalfWidthPpm,
+          width: parameters.expectedPeakWidthS,
+        })}
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">{t("targetedFieldLabel")}</th>
+          <th scope="col">{t("targetedFieldFormula")}</th>
+          <th scope="col">{t("targetedFieldRt")}</th>
+          <th scope="col">{t("targetedFieldRtHalfWidth")}</th>
+          <th scope="col">{t("targetedFieldNeutralMass")}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {targets.map((target) => (
+          <tr key={target.targetId} data-targeted-plan-target={target.targetId}>
+            <th scope="row">{target.label}</th>
+            <td>{target.formula}</td>
+            <td>{target.rtS}</td>
+            <td>{target.rtHalfWidthS}</td>
+            <td>{target.neutralMass ?? t("targetedMassFromFormula")}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -458,74 +694,15 @@ function PlanReview({
   const { plan, problems, blocked, engine } = resolution;
   return (
     <div className="targeted-review" data-targeted-review-result={plan === null ? "problems" : "plan"}>
-      <p className="project-note" data-targeted-engine="">
-        {t("targetedEngine", {
-          engine: `${engine.package} ${engine.version} · ${engine.algorithm} · ${engine.revision}`,
-        })}
-      </p>
-      {/* The whole profile the engine runs with, as the build fixes it: no
-          value in it is the user's to change in this recipe. */}
-      <details className="targeted-modules" data-targeted-profile="">
-        <summary>{t("targetedEngineProfile")}</summary>
-        <pre className="targeted-profile">{engine.fixedProfile}</pre>
-      </details>
-      {problems.length > 0 ? (
-        <table className="qc-report-table" data-targeted-problems="">
-          <caption>{t("targetedProblems")}</caption>
-          <thead>
-            <tr>
-              <th scope="col">{t("targetedProblemWhere")}</th>
-              <th scope="col">{t("targetedProblemField")}</th>
-              <th scope="col">{t("targetedProblemWhat")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {problems.map((problem, index) => (
-              <tr key={index} data-targeted-problem={problem.problem}>
-                <th scope="row">
-                  {problem.row === null
-                    ? t("targetedWhereParameters")
-                    : t("targetedWhereLine", {
-                        line: String(lines[problem.row - 1] ?? problem.row),
-                      })}
-                </th>
-                <td>{t(keyed(FIELD_KEYS, problem.field, FIELD_KEYS.targets))}</td>
-                <td>{t(keyed(PROBLEM_KEYS, problem.problem, PROBLEM_KEYS.invalid))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
+      <EngineFacts engine={engine} />
+      {problems.length > 0 ? <ProblemsTable problems={problems} lines={lines} /> : null}
       {plan === null ? null : (
         <>
-          <table className="qc-report-table" data-targeted-plan={plan.planSha256}>
-            <caption>
-              {t("targetedPlanCaption", {
-                ppm: plan.parameters.mzHalfWidthPpm,
-                width: plan.parameters.expectedPeakWidthS,
-              })}
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">{t("targetedFieldLabel")}</th>
-                <th scope="col">{t("targetedFieldFormula")}</th>
-                <th scope="col">{t("targetedFieldRt")}</th>
-                <th scope="col">{t("targetedFieldRtHalfWidth")}</th>
-                <th scope="col">{t("targetedFieldNeutralMass")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plan.targets.map((target) => (
-                <tr key={target.targetId} data-targeted-plan-target={target.targetId}>
-                  <th scope="row">{target.label}</th>
-                  <td>{target.formula}</td>
-                  <td>{target.rtS}</td>
-                  <td>{target.rtHalfWidthS}</td>
-                  <td>{target.neutralMass ?? t("targetedMassFromFormula")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <TargetsTable
+            parameters={plan.parameters}
+            targets={plan.targets}
+            tableProps={{ "data-targeted-plan": plan.planSha256 }}
+          />
           <p className="project-note targeted-digest">
             {t("targetedPlanDigest", { digest: plan.planSha256 })}
           </p>
@@ -537,6 +714,311 @@ function PlanReview({
         </p>
       )}
     </div>
+  );
+}
+
+/** Whether every member of a batch review has a plan that could run now. */
+export function batchRunnable(resolution: BatchResolution) {
+  return (
+    resolution.problems.length === 0 &&
+    resolution.members.length >= 2 &&
+    resolution.members.every(
+      (member) => member.planSha256 !== null && member.refused === null && member.blocked === null,
+    )
+  );
+}
+
+/**
+ * A batch review: the one request every member shares, then every member in
+ * the order it will run, each ready or saying what stops it. Nothing is
+ * pooled: each member is its own plan over its own source.
+ */
+function BatchReview({
+  resolution,
+  lines,
+  nameOf,
+  refusalText,
+}: {
+  readonly resolution: BatchResolution;
+  readonly lines: readonly number[];
+  readonly nameOf: (layerId: string) => string;
+  readonly refusalText: (code: string) => string;
+}) {
+  const t = useUiMessages();
+  const { problems, common, members, engine } = resolution;
+  return (
+    <div
+      className="targeted-review"
+      data-targeted-review-result={problems.length > 0 ? "problems" : "batch"}
+    >
+      <EngineFacts engine={engine} />
+      {problems.length > 0 ? <ProblemsTable problems={problems} lines={lines} /> : null}
+      {common === null ? null : (
+        <>
+          <TargetsTable
+            parameters={common.parameters}
+            targets={common.targets}
+            tableProps={{ "data-targeted-batch-targets": common.targetListSha256 }}
+          />
+          <p className="project-note targeted-digest">
+            {t("targetedTargetListDigestLine", { digest: common.targetListSha256 })}
+          </p>
+        </>
+      )}
+      {members.length === 0 ? null : (
+        <>
+          <p className="targeted-independent" data-targeted-batch-independent="">
+            {t("targetedBatchIndependent", { count: members.length })}
+          </p>
+          <table className="qc-report-table" data-targeted-batch-members={members.length}>
+            <caption>{t("targetedBatchMembersCaption")}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{t("targetedBatchColumnOrder")}</th>
+                <th scope="col">{t("targetedBatchColumnAcquisition")}</th>
+                <th scope="col">{t("targetedBatchColumnReadiness")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {members.map((member, index) => {
+                const stop = member.refused ?? member.blocked;
+                return (
+                  <tr
+                    key={member.layerId}
+                    data-targeted-batch-plan={member.layerId}
+                    data-ready={stop === null ? "ready" : stop}
+                  >
+                    <td>{index + 1}</td>
+                    <th scope="row">{nameOf(member.layerId)}</th>
+                    <td className={stop === null ? undefined : "targeted-not-ready"}>
+                      {stop === null ? t("targetedBatchReady") : refusalText(stop)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {/* Technical provenance, on request: what each member's own plan
+              binds and is named by. */}
+          <details className="targeted-modules" data-targeted-batch-details="">
+            <summary>{t("targetedBatchPlanDetails")}</summary>
+            <dl className="provenance-facts">
+              {members.map((member) => (
+                <div key={member.layerId} className="targeted-member">
+                  <dt>{nameOf(member.layerId)}</dt>
+                  <dd>
+                    {member.planSha256 === null ? (
+                      t("targetedBatchNoPlan")
+                    ) : (
+                      <>
+                        {member.expectedContent.map((content) => (
+                          <span key={content.relativeName} className="targeted-batch-fact">
+                            {t("targetedSourceBytes")} {formatCount(content.byteLength)} · SHA-256{" "}
+                            <span className="provenance-digest">{content.sha256}</span>
+                          </span>
+                        ))}
+                        <span className="targeted-batch-fact">
+                          {t("targetedPlanDigestLabel")}{" "}
+                          <span className="provenance-digest">{member.planSha256}</span>
+                        </span>
+                      </>
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </details>
+        </>
+      )}
+    </div>
+  );
+}
+
+const MEMBER_STATE_KEYS = {
+  queued: "targetedBatchStateQueued",
+  running: "targetedBatchStateRunning",
+  completed: "targetedBatchStateCompleted",
+  failed: "targetedBatchStateFailed",
+  cancelled: "targetedBatchStateCancelled",
+  refused: "targetedBatchStateRefused",
+  notStarted: "targetedBatchStateNotStarted",
+} as const satisfies Record<BatchMemberState, string>;
+
+/** A shape per execution state, beside its word and never instead of it. */
+const MEMBER_STATE_SYMBOLS: Record<BatchMemberState, string> = {
+  queued: "○",
+  running: "◔",
+  completed: "✓",
+  failed: "✕",
+  cancelled: "■",
+  refused: "–",
+  notStarted: "–",
+};
+
+/**
+ * How a batch's members ended, counted by execution state. Operational only:
+ * no count here says anything about what any member's targets were found to be.
+ */
+export function batchSummary(members: readonly BatchMemberProgress[], t: UiMessage): string {
+  const count = (states: readonly BatchMemberState[]) =>
+    members.filter((member) => states.includes(member.state)).length;
+  const failed = count(["failed"]);
+  const cancelled = count(["cancelled"]);
+  const notRun = count(["refused", "notStarted"]);
+  return [
+    t("targetedBatchCountCompleted", { count: count(["completed"]), total: members.length }),
+    failed === 0 ? null : t("targetedBatchCountFailed", { count: failed }),
+    cancelled === 0 ? null : t("targetedBatchCountCancelled", { count: cancelled }),
+    notRun === 0 ? null : t("targetedBatchCountNotRun", { count: notRun }),
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+}
+
+/**
+ * A batch's members as they run and as they ended, in order.
+ *
+ * Execution states only. A completed member opens its own result in the
+ * existing report; nothing here shows two members' results together.
+ */
+function BatchProgress({
+  members,
+  running,
+  phase,
+  runs,
+  nameOf,
+  refusalText,
+  onStop,
+  onOpen,
+  onShowRun,
+}: {
+  readonly members: readonly BatchMemberProgress[];
+  readonly running: boolean;
+  readonly phase: string | null;
+  readonly runs: ProjectSession["state"]["runs"];
+  readonly nameOf: (layerId: string) => string;
+  readonly refusalText: (code: string) => string;
+  readonly onStop: () => void;
+  readonly onOpen: (artifactId: string) => void;
+  readonly onShowRun: (runId: string) => void;
+}) {
+  const t = useUiMessages();
+  const ids = useId();
+  const [stopping, setStopping] = useState(false);
+  useEffect(() => {
+    if (!running) setStopping(false);
+  }, [running]);
+  return (
+    <section
+      className="targeted-batch"
+      aria-labelledby={`${ids}-title`}
+      data-targeted-batch={running ? "running" : "ended"}
+    >
+      <h4 id={`${ids}-title`}>
+        {t(running ? "targetedBatchRunningTitle" : "targetedBatchEndedTitle")}
+      </h4>
+      <p className="project-note" data-targeted-batch-summary="">
+        {batchSummary(members, t)}
+      </p>
+      <div className="targeted-batch-scroll">
+        <table className="qc-report-table" data-targeted-batch-progress={members.length}>
+          <caption>{t("targetedBatchMembersCaption")}</caption>
+          <thead>
+            <tr>
+              <th scope="col">{t("targetedBatchColumnOrder")}</th>
+              <th scope="col">{t("targetedBatchColumnAcquisition")}</th>
+              <th scope="col">{t("targetedBatchColumnStatus")}</th>
+              <th scope="col">{t("targetedBatchColumnActions")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {members.map((member, index) => {
+              const name = nameOf(member.layerId);
+              const failure =
+                member.runId === null
+                  ? null
+                  : (runs.find((run) => run.id === member.runId)?.targetedMs1?.failure ?? null);
+              const detail =
+                member.state === "running"
+                  ? t(phaseKey(phase) ?? "targetedPhasePreparing")
+                  : member.state === "failed" && failure !== null
+                    ? t(FAILURE_KEYS[failure.code])
+                    : member.state === "refused" && member.reason !== null
+                      ? refusalText(member.reason)
+                      : member.state === "notStarted"
+                        ? member.reason === null
+                          ? t("targetedBatchStoppedBefore")
+                          : refusalText(member.reason)
+                        : null;
+              return (
+                <tr
+                  key={member.layerId}
+                  data-targeted-batch-member={member.layerId}
+                  data-state={member.state}
+                  aria-current={member.state === "running" ? "step" : undefined}
+                >
+                  <td>{index + 1}</td>
+                  <th scope="row">{name}</th>
+                  <td>
+                    <span aria-hidden="true" className="targeted-symbol">
+                      {MEMBER_STATE_SYMBOLS[member.state]}
+                    </span>{" "}
+                    {t(MEMBER_STATE_KEYS[member.state])}
+                    {detail === null ? null : <span className="targeted-reason"> — {detail}</span>}
+                  </td>
+                  <td>
+                    {member.state === "completed" && member.artifactId !== null ? (
+                      <button
+                        type="button"
+                        className="link-button"
+                        aria-label={t("targetedBatchOpenResultNamed", { name })}
+                        data-targeted-batch-open={member.artifactId}
+                        onClick={() => {
+                          if (member.artifactId !== null) onOpen(member.artifactId);
+                        }}
+                      >
+                        {t("targetedBatchOpenResult")}
+                      </button>
+                    ) : member.runId !== null ? (
+                      <button
+                        type="button"
+                        className="link-button"
+                        aria-label={t("targetedBatchShowRunNamed", { name })}
+                        data-targeted-batch-run={member.runId}
+                        onClick={() => {
+                          if (member.runId !== null) onShowRun(member.runId);
+                        }}
+                      >
+                        {t("targetedBatchShowRun")}
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="project-note">{t("targetedBatchOperationalNote")}</p>
+      {running ? (
+        <div className="project-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            aria-disabled={stopping || undefined}
+            data-targeted-batch-stop=""
+            onClick={() => {
+              if (stopping) return;
+              setStopping(true);
+              onStop();
+            }}
+          >
+            {t(stopping ? "targetedBatchStopping" : "targetedBatchStop")}
+          </button>
+          <span className="project-note">{t("targetedBatchStopHelp")}</span>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

@@ -51,6 +51,18 @@ export interface MessageParameters {
   readonly targetedSignalNone: { readonly count: number };
   readonly targetedFailureStage: { readonly stage: string };
   readonly targetedModules: { readonly count: number };
+  readonly targetedAcquisitionsCount: { readonly count: number; readonly max: number };
+  readonly targetedRunBatch: { readonly count: number };
+  readonly targetedBatchIndependent: { readonly count: number };
+  readonly targetedTargetListDigestLine: { readonly digest: string };
+  readonly targetedBatchOpenResultNamed: { readonly name: string };
+  readonly targetedBatchShowRunNamed: { readonly name: string };
+  readonly targetedBatchCountCompleted: { readonly count: number; readonly total: number };
+  readonly targetedBatchCountFailed: { readonly count: number };
+  readonly targetedBatchCountCancelled: { readonly count: number };
+  readonly targetedBatchCountNotRun: { readonly count: number };
+  readonly targetedBatchEndedAnnouncement: { readonly summary: string };
+  readonly projectBusyBatch: { readonly position: number; readonly total: number };
   readonly m74ErrorFigureSize: { readonly minWidth: number; readonly minHeight: number; readonly max: number };
   readonly m74ErrorDpi: { readonly min: number; readonly max: number };
   readonly m74ErrorRasterBudget: { readonly max: number };

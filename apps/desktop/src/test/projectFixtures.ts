@@ -16,6 +16,8 @@ import type { FigureSettings, WorkspaceAddResult } from "../features/mzml-previe
 import {
   NO_PROJECT,
   type AnalysisRun,
+  type BatchMemberProgress,
+  type BatchResolution,
   type CancelOutcome,
   type PayloadRow,
   type PlanResolution,
@@ -74,6 +76,10 @@ export interface FakeTargeted {
   readonly progress: AnalysisRun | null;
   /** What the runtime read answers: whether a new run could start. */
   readonly newRuns: TargetedNewRuns;
+  /** What a batch review answers. */
+  readonly batchResolution: BatchResolution;
+  /** Every member a finished batch answers with, in order. */
+  readonly batchMembers: readonly BatchMemberProgress[];
 }
 
 /**
@@ -435,6 +441,8 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     evidence: { [detectedEvidence().targetId]: detectedEvidence() },
     progress: null,
     newRuns: "available",
+    batchResolution: { problems: [], common: null, members: [], engine: FAKE_ENGINE },
+    batchMembers: [],
   };
 
   /** A dialog output's answer: cancelled when staged so, otherwise what was saved. */
@@ -581,6 +589,13 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
         outcome: run?.outcome ?? "failed",
         artifactId: run?.outputArtifactIds[0] ?? null,
       };
+    }),
+    resolveTargetedMs1Batch: vi.fn(() =>
+      read("resolveTargetedMs1Batch", () => targeted.batchResolution),
+    ),
+    runTargetedMs1Batch: vi.fn(async (_operationId: string, _planSha256s: readonly string[]) => {
+      const project = (await answer("runTargetedMs1Batch")) as ProjectState;
+      return { project, members: targeted.batchMembers };
     }),
     // Not recorded in `calls`: it is polled while a run is out, and a test's
     // list of what the user caused would otherwise depend on timing.

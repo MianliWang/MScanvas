@@ -716,3 +716,105 @@
   font-size: 11px;
   color: var(--color-text-primary);
 }
+
+/*
+ * A batch of independent targeted MS1 analyses (M9.4): which acquisitions,
+ * and each one's execution state as the batch runs and as it ended.
+ *
+ * The same quiet report tones. Execution states carry a word and a shape,
+ * never colour alone, and nothing here is drawn as a finding: a member's
+ * targets are in its own result.
+ */
+.targeted-members {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.targeted-members > legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* A long project's layers scroll inside the group, not the page. */
+.targeted-member-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 168px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.targeted-member-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.targeted-member-list input {
+  flex: none;
+}
+
+/* The independence statement is a scientific boundary, so it reads as body
+   text rather than as a footnote. */
+.targeted-independent {
+  margin: 0;
+  max-width: 72ch;
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.targeted-not-ready {
+  color: var(--color-warning);
+}
+
+.targeted-batch-fact {
+  display: block;
+}
+
+.targeted-batch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.targeted-batch h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+/* Sixteen members scroll inside the section, never sideways across the page. */
+.targeted-batch-scroll {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.targeted-batch-scroll .qc-report-table {
+  width: 100%;
+}
+
+.targeted-batch tr[aria-current="step"] > * {
+  background: var(--color-surface-selected);
+}
+
+.targeted-batch tr[data-state="failed"] td:nth-child(3) {
+  color: var(--color-danger);
+}

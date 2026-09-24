@@ -23,6 +23,9 @@ import type { WorkspaceAddResult } from "../mzml-preview/contracts";
 import {
   NO_PROJECT,
   useProjectApi,
+  type BatchMemberProgress,
+  type BatchRequest,
+  type BatchResolution,
   type PlanRequest,
   type PlanResolution,
   type ProjectState,
@@ -166,6 +169,24 @@ export interface ProjectSession {
    * announced once and not again after a later Save or check.
    */
   readonly targetedRunJustEnded: boolean;
+  /**
+   * Asks Rust to resolve one request over several layers into one plan per
+   * layer, for review as a batch. Answers the review, or `null` where it was
+   * refused -- the refusal is then `problem`.
+   */
+  readonly reviewTargetedMs1Batch: (request: BatchRequest) => Promise<BatchResolution | null>;
+  /**
+   * Runs the batch last reviewed as one accepted operation, so Cancel -- the
+   * batch's Stop -- can name it. Each member that ran is an ordinary recorded
+   * run; nothing is inspected on arrival, because a batch has no one result.
+   */
+  readonly runTargetedMs1Batch: (planSha256s: readonly string[]) => Promise<void>;
+  /** Every member of the batch in progress, as Rust last reported it, or `null`. */
+  readonly analysisBatch: readonly BatchMemberProgress[] | null;
+  /** Every member of the last batch this session ran, as it ended, or `null`. */
+  readonly lastTargetedBatch: readonly BatchMemberProgress[] | null;
+  /** Whether the last operation to settle was that batch, so its end is announced once. */
+  readonly targetedBatchJustEnded: boolean;
 }
 
 /**
@@ -229,6 +250,11 @@ export function useProject(
   const [analysisPhase, setAnalysisPhase] = useState<string | null>(null);
   const [lastTargetedRun, setLastTargetedRun] = useState<TargetedRunEnd | null>(null);
   const [targetedRunJustEnded, setTargetedRunJustEnded] = useState(false);
+  const [analysisBatch, setAnalysisBatch] = useState<readonly BatchMemberProgress[] | null>(null);
+  const [lastTargetedBatch, setLastTargetedBatch] = useState<
+    readonly BatchMemberProgress[] | null
+  >(null);
+  const [targetedBatchJustEnded, setTargetedBatchJustEnded] = useState(false);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -278,6 +304,7 @@ export function useProject(
       setProblem(null);
       setCancelled(false);
       setTargetedRunJustEnded(false);
+      setTargetedBatchJustEnded(false);
       try {
         const answer = await operation();
         // `null` is a cancelled dialog: nothing was chosen, so nothing changed.
@@ -394,7 +421,9 @@ export function useProject(
       void api
         .getTargetedMs1Progress()
         .then((progress) => {
-          if (live) setAnalysisPhase(progress?.phase ?? null);
+          if (!live) return;
+          setAnalysisPhase(progress?.phase ?? null);
+          setAnalysisBatch(progress?.batch ?? null);
         })
         .catch(() => undefined);
     poll();
@@ -437,6 +466,9 @@ export function useProject(
     analysisPhase: busy === "analysing" ? analysisPhase : null,
     lastTargetedRun,
     targetedRunJustEnded,
+    analysisBatch: busy === "analysing" ? analysisBatch : null,
+    lastTargetedBatch,
+    targetedBatchJustEnded,
     provenance: provenanceOf(state, inspecting),
     inspect: setInspecting,
     toggleSelected,
@@ -592,6 +624,33 @@ export function useProject(
                   : { kind: "artifact", id: end.artifactId },
               );
             }
+          }
+          return end.project;
+        });
+      },
+      [api, runAccepted],
+    ),
+    reviewTargetedMs1Batch: useCallback(
+      async (request: BatchRequest) => {
+        let resolution: BatchResolution | null = null;
+        await run("reviewing", async () => {
+          resolution = await api.resolveTargetedMs1Batch(request);
+          return null;
+        });
+        return resolution;
+      },
+      [api, run],
+    ),
+    runTargetedMs1Batch: useCallback(
+      (planSha256s: readonly string[]) => {
+        setAnalysisPhase(null);
+        setAnalysisBatch(null);
+        setLastTargetedBatch(null);
+        return runAccepted("analysing", async (operationId) => {
+          const end = await api.runTargetedMs1Batch(operationId, planSha256s);
+          if (mounted.current) {
+            setLastTargetedBatch(end.members);
+            setTargetedBatchJustEnded(true);
           }
           return end.project;
         });

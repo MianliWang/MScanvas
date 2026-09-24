@@ -423,10 +423,77 @@ export interface TargetedMs1RunEnd {
   readonly artifactId: string | null;
 }
 
-/** The targeted run in progress. Session-only. */
+/** The targeted run or batch in progress. Session-only. */
 export interface AnalysisRun {
+  /** For a batch, names the whole batch: a cancel stops it. */
   readonly operationId: string;
+  /** Where the run -- for a batch, the member running -- is. */
   readonly phase: string;
+  /** Every member of the batch in progress, in order. Absent or `null` for one run. */
+  readonly batch?: readonly BatchMemberProgress[] | null;
+}
+
+/** What a batch review sends: the layers, in the order they run, and the typed text once. */
+export interface BatchRequest {
+  readonly layerIds: readonly string[];
+  readonly mzHalfWidthPpm: string;
+  readonly expectedPeakWidthS: string;
+  readonly targets: PlanRequest["targets"];
+}
+
+/** One member of a batch review: its own plan, or why it has none. */
+export interface BatchMemberPlan {
+  readonly layerId: string;
+  readonly inputId: string;
+  readonly planSha256: string | null;
+  /** The bytes its plan expects its source to hold. */
+  readonly expectedContent: readonly ObservedMember[];
+  /** Why it has no plan, as a refusal identifier. */
+  readonly refused: string | null;
+  /** Why its plan cannot run now, as a refusal identifier. */
+  readonly blocked: string | null;
+}
+
+export interface BatchResolution {
+  readonly problems: readonly PlanProblem[];
+  /** What every member's plan shares, or `null` where no member has a plan. */
+  readonly common: {
+    readonly recipe: TargetedMs1Plan["recipe"];
+    readonly parameters: TargetedMs1Plan["parameters"];
+    readonly targetListSha256: string;
+    readonly targets: readonly TargetDefinition[];
+  } | null;
+  readonly members: readonly BatchMemberPlan[];
+  readonly engine: EngineIdentity;
+}
+
+/**
+ * How far one batch member's execution got. Never what its targets were found
+ * to be: those are in its own result.
+ */
+export type BatchMemberState =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "refused"
+  | "notStarted";
+
+export interface BatchMemberProgress {
+  readonly layerId: string;
+  readonly planSha256: string;
+  readonly state: BatchMemberState;
+  readonly runId: string | null;
+  readonly artifactId: string | null;
+  /** For `refused`, why; for `notStarted`, what kept it out, or `null` where the batch was stopped. */
+  readonly reason: string | null;
+}
+
+/** What a batch answers with once its last member has ended. */
+export interface TargetedMs1BatchEnd {
+  readonly project: ProjectState;
+  readonly members: readonly BatchMemberProgress[];
 }
 
 export interface ProjectArtifact {
@@ -632,6 +699,21 @@ export interface ProjectApi {
    * publish, when it is refused (`oversized`) and nothing is recorded.
    */
   runTargetedMs1(operationId: string, planSha256: string): Promise<TargetedMs1RunEnd>;
+  /**
+   * Resolves one request over several layers into one plan per layer, for
+   * review as a batch. Rust resolves the typed text once and binds a plan to
+   * each layer; each member says what would stop it running now.
+   */
+  resolveTargetedMs1Batch(request: BatchRequest): Promise<BatchResolution>;
+  /**
+   * Runs the batch last reviewed as an accepted operation, one member at a
+   * time; the plans must be exactly those reviewed, in order. Cancelling the
+   * operation stops the batch.
+   */
+  runTargetedMs1Batch(
+    operationId: string,
+    planSha256s: readonly string[],
+  ): Promise<TargetedMs1BatchEnd>;
   /** Where the targeted run in progress is, or `null`. */
   getTargetedMs1Progress(): Promise<AnalysisRun | null>;
   /** One bounded page of a stored result's rows. */
@@ -726,6 +808,18 @@ export const tauriProjectApi: ProjectApi = {
       { operationId, planSha256 },
       documentAuthorityHeaders(),
     ),
+  resolveTargetedMs1Batch: (request) =>
+    invoke<BatchResolution>(
+      "resolve_targeted_ms1_batch",
+      { request: { ...request, layerIds: [...request.layerIds], targets: [...request.targets] } },
+      documentAuthorityHeaders(),
+    ),
+  runTargetedMs1Batch: (operationId, planSha256s) =>
+    invoke<TargetedMs1BatchEnd>(
+      "run_targeted_ms1_batch",
+      { operationId, planSha256s: [...planSha256s] },
+      documentAuthorityHeaders(),
+    ),
   getTargetedMs1Progress: () =>
     invoke<AnalysisRun | null>("get_targeted_ms1_progress", {}, documentAuthorityHeaders()),
   readTargetedMs1Rows: (artifactId, offset) =>
@@ -792,6 +886,8 @@ export const unavailableProjectApi: ProjectApi = {
   captureProjectQcSummary: () => Promise.reject(new Error("noProjectStore")),
   resolveTargetedMs1Plan: () => Promise.reject(new Error("noProjectStore")),
   runTargetedMs1: () => Promise.reject(new Error("noProjectStore")),
+  resolveTargetedMs1Batch: () => Promise.reject(new Error("noProjectStore")),
+  runTargetedMs1Batch: () => Promise.reject(new Error("noProjectStore")),
   getTargetedMs1Progress: () => Promise.resolve(null),
   readTargetedMs1Rows: () => Promise.reject(new Error("noProjectStore")),
   readTargetedMs1Evidence: () => Promise.reject(new Error("noProjectStore")),

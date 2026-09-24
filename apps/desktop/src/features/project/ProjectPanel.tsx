@@ -43,6 +43,7 @@ import {
   phaseKey,
   TargetedMs1Report,
   TargetedMs1Setup,
+  batchSummary,
 } from "./TargetedMs1";
 import type { ProjectBusy, ProjectSession } from "./useProject";
 
@@ -134,6 +135,8 @@ const REFUSALS = {
   payloadMissing: "targetedPayloadMissing",
   payloadCorrupt: "targetedPayloadCorrupt",
   exportInProgress: "projectRefusedExportInProgress",
+  batchSizeOutOfRange: "projectRefusedBatchSize",
+  batchDuplicateInput: "projectRefusedBatchDuplicate",
 } as const;
 
 export function refusalKey(code: string) {
@@ -487,6 +490,21 @@ export function ProjectPanel({
       ? undefined
       : state.runs.find((run) => run.id === session.lastTargetedRun?.runId);
   const lastTargetedFailure = lastTargeted?.targetedMs1?.failure ?? null;
+  // A batch in progress: which member is running, counted from one. Between
+  // members, the next one to start.
+  const batch = session.analysisBatch;
+  const batchPosition =
+    batch === null
+      ? 0
+      : Math.min(
+          batch.length,
+          batch.findIndex((member) => member.state === "running") + 1 ||
+            batch.filter((member) => member.state !== "queued").length + 1,
+        );
+  const endedBatch =
+    session.targetedBatchJustEnded && session.lastTargetedBatch !== null
+      ? session.lastTargetedBatch
+      : null;
   const announcement =
     busyKey(busy) !== null
       ? t(busyKey(busy) as "projectBusySaving")
@@ -496,7 +514,9 @@ export function ProjectPanel({
           ? t(refusalKey(problem))
           : cancelled
             ? t(session.cancelledRunRecorded ? "projectCancelledRunRecorded" : "projectCancelled")
-            : proposalInput !== undefined
+            : endedBatch !== null
+              ? t("targetedBatchEndedAnnouncement", { summary: batchSummary(endedBatch, t) })
+              : proposalInput !== undefined
               ? t(
                   proposalInput.relinkCandidateMatches
                     ? "projectRelinkMatches"
@@ -593,7 +613,9 @@ export function ProjectPanel({
 
       {busyKey(busy) === null ? null : (
         <p className="project-busy" data-project-busy={busy}>
-          {t(busyKey(busy) as "projectBusySaving")}
+          {batch !== null
+            ? t("projectBusyBatch", { position: batchPosition, total: batch.length })
+            : t(busyKey(busy) as "projectBusySaving")}
           {busy === "analysing" && phase !== null ? (
             <span data-project-busy-phase={session.analysisPhase ?? ""}>{t(phase)}</span>
           ) : null}
@@ -610,7 +632,9 @@ export function ProjectPanel({
               data-project-cancel={session.activeOperation}
               onClick={() => void session.cancelJob()}
             >
-              {t("projectCancel")}
+              {/* A batch's one operation is the whole batch: cancelling it is
+                  the batch's Stop, so it is named that. */}
+              {t(batch === null ? "projectCancel" : "targetedBatchStop")}
             </button>
           )}
         </p>
