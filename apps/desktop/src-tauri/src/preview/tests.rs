@@ -4023,13 +4023,12 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "get_targeted_ms1_progress",
             "read_targeted_ms1_rows",
             "read_targeted_ms1_evidence",
-            // M9.2: a stored result drawn, exported and copied, and its table
-            // written, each naming the result and a target by identifier and
-            // nothing else. None reaches a source, the runtime or a worker;
-            // the runtime read answers only whether a new run could start.
+            // M9.2: a stored result drawn and exported, and its table written,
+            // each naming the result and a target by identifier and nothing
+            // else. None reaches a source, the runtime or a worker; the
+            // runtime read answers only whether a new run could start.
             "preview_targeted_ms1_figure",
             "export_targeted_ms1_figure",
-            "copy_targeted_ms1_figure",
             "export_targeted_ms1_table",
             "get_targeted_ms1_runtime",
             "inspect_backend",

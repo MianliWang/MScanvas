@@ -770,7 +770,7 @@ def validate_every_raster_entry_point_asks_the_budget(errors: list[str]) -> None
     if not output.is_file():
         return
     content = output.read_text(encoding="utf-8")
-    for method in ("png", "copy"):
+    for method in ("png",):
         start = content.find(f"pub(crate) fn {method}(")
         if start < 0:
             errors.append(

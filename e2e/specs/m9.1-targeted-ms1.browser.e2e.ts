@@ -314,7 +314,6 @@ function table(state: unknown, locale: "en" | "zh-CN" = "en") {
     fileName: "mscanvas-targeted-ms1-eeeeeeee-target-1.svg",
     figure: { ...FIGURE, dpi: null },
   };
-  answers.copy_targeted_ms1_figure = { status: "copied", figure: FIGURE };
   answers.export_targeted_ms1_table = {
     status: "saved",
     format: "csv",
@@ -825,16 +824,19 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
       "Saved mscanvas-targeted-ms1-eeeeeeee-results.csv with 2 target rows.",
     ]);
 
-    // The figure: open its disclosure and save an SVG, then copy.
+    // The figure: open its disclosure and save an SVG. No clipboard copy is
+    // offered for a stored result.
     await openDisclosure("[data-targeted-figure-export]");
+    expect(await browser.execute(() => document.querySelector('[data-targeted-export="copy"]') === null)).toBe(true);
     await browser.$('[data-targeted-export="svg"]').click();
     await browser.$('[data-targeted-figure-export] [data-targeted-output="savedFigure"]').waitForDisplayed();
-    await browser.$('[data-targeted-export="copy"]').click();
-    await browser.$('[data-targeted-figure-export] [data-targeted-output="copied"]').waitForDisplayed();
     // One output is said at a time, in the region that asked for it: the
-    // copy's sentence replaces the table's.
-    const exported = await capture("m92-03-figure-copied-1366");
-    expect(exported.outputs).toContainEqual(["copied", "Copied the plot with 1,200 by 640 pixels, Light theme."]);
+    // figure's sentence replaces the table's.
+    const exported = await capture("m92-03-figure-saved-1366");
+    expect(exported.outputs).toContainEqual([
+      "savedFigure",
+      "Saved mscanvas-targeted-ms1-eeeeeeee-target-1.svg with 1,200 by 640 pixels, Light theme.",
+    ]);
     expect(exported.outputs.filter(([state]) => state !== "idle")).toHaveLength(1);
     const figureCall = (await ipcCalls()).find((call) => call.command === "export_targeted_ms1_figure");
     expect(figureCall?.args).toEqual({

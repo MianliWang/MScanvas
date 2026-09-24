@@ -1554,4 +1554,6 @@ export const en = {
   targetedTableExports: "Export the results table",
   targetedTableExportHelp: "Every target in plan order, one row each, with this result's provenance in lines starting with # above the header. An empty cell is a value the result does not have, never a zero. Values are written as stored; a spreadsheet may reinterpret some of them.",
   targetedTableSaved: "Saved {{name}} with {{count, number}} target rows.",
+  targetedTargetListDigest: "Target list SHA-256",
+  targetedPayloadDigest: "Stored result manifest SHA-256",
 } as const;

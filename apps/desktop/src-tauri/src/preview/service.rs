@@ -3348,7 +3348,7 @@ impl PreviewService {
     // not have. Its own constructor rather than the export one with a `None`
     // threaded through, because that is what stopped a PNG's semantics being
     /// borrowed for an artifact that is not one.
-    pub(super) fn copied_figure(settings: FigureRenderSettings) -> CopiedFigureDto {
+    fn copied_figure(settings: FigureRenderSettings) -> CopiedFigureDto {
         CopiedFigureDto {
             width: settings.width(),
             height: settings.height(),

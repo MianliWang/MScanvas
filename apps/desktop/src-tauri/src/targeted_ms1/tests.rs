@@ -3760,6 +3760,101 @@ fn the_tables_outcome_words_are_the_payloads_own() {
 }
 
 #[test]
+fn a_stored_result_changed_on_disk_after_reopen_is_neither_drawn_nor_tabulated() {
+    let scratch = Scratch::new("m92-changed-on-disk");
+    let (store, document, artifact) = saved_with_result(&scratch);
+    drop(store);
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    let target = reopened
+        .stored_targeted_result(artifact)
+        .expect("whole")
+        .plan
+        .targets[0]
+        .target_id;
+    let directory = payload::store_of(&document)
+        .expect("store")
+        .join(artifact.to_string());
+    let figure = |store: &ProjectStore| {
+        store
+            .targeted_evidence_figure(artifact, target, size(), FigureTheme::Light)
+            .map(|_| ())
+    };
+    let refused_as = |availability: payload::Availability| {
+        Err(crate::project::TargetedFigureRefusal::Project(
+            ProjectError::PayloadUnavailable(availability),
+        ))
+    };
+    // One digit, at the same length, so only the digest can tell.
+    let one_digit_changed = |path: &Path| -> Vec<u8> {
+        let original = fs::read(path).expect("read");
+        let mut changed = original.clone();
+        let at = changed.len() / 2
+            + changed[changed.len() / 2..]
+                .iter()
+                .position(u8::is_ascii_digit)
+                .expect("a digit");
+        changed[at] = if changed[at] == b'9' {
+            b'8'
+        } else {
+            changed[at] + 1
+        };
+        fs::write(path, &changed).expect("change");
+        original
+    };
+
+    // The rows: neither the table nor the figure is built from them.
+    let rows = directory.join("rows.jsonl");
+    let original = one_digit_changed(&rows);
+    assert_eq!(
+        reopened.stored_targeted_result(artifact).err(),
+        Some(ProjectError::PayloadUnavailable(
+            payload::Availability::Corrupt
+        ))
+    );
+    assert_eq!(
+        figure(&reopened),
+        refused_as(payload::Availability::Corrupt)
+    );
+    fs::write(&rows, &original).expect("restore");
+
+    // The evidence: the figure is refused; the table, which is the rows
+    // alone, is not.
+    let evidence = directory.join("evidence.jsonl");
+    let original = one_digit_changed(&evidence);
+    assert_eq!(
+        figure(&reopened),
+        refused_as(payload::Availability::Corrupt)
+    );
+    let stored = reopened
+        .stored_targeted_result(artifact)
+        .expect("rows whole");
+    assert!(result_table(&stored, TableFormat::Csv).is_ok());
+    fs::write(&evidence, &original).expect("restore");
+    assert_eq!(figure(&reopened), Ok(()));
+
+    // Gone altogether: missing, not corrupt, and nothing regenerated.
+    let away = directory.with_extension("away");
+    fs::rename(&directory, &away).expect("move the result away");
+    assert_eq!(
+        reopened.stored_targeted_result(artifact).err(),
+        Some(ProjectError::PayloadUnavailable(
+            payload::Availability::Missing
+        ))
+    );
+    assert_eq!(
+        figure(&reopened),
+        refused_as(payload::Availability::Missing)
+    );
+    assert!(!directory.exists());
+    fs::rename(&away, &directory).expect("put it back");
+
+    let described = reopened.describe();
+    assert_eq!((described.runs.len(), described.artifacts.len()), (1, 1));
+    assert!(!described.dirty);
+}
+
+#[test]
 fn a_stored_result_whose_rows_no_longer_match_its_plan_is_corrupt() {
     let scratch = Scratch::new("m92-tampered");
     let (store, stored) = stored_three(&scratch);

@@ -971,35 +971,6 @@ async fn export_targeted_ms1_figure(
     .await?
 }
 
-/// Puts one target's stored evidence figure on the clipboard, from Rust.
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-async fn copy_targeted_ms1_figure(
-    artifact_id: String,
-    target_id: String,
-    settings: preview::dto::FigureSettingsDto,
-    ipc_request: tauri::ipc::Request<'_>,
-    webview: tauri::Webview<tauri::Wry>,
-    app: tauri::AppHandle,
-    service: State<'_, SharedService>,
-    projects: State<'_, SharedProjects>,
-) -> Result<project::dto::TargetedFigureCopyDto, PreviewErrorDto> {
-    verified_document_epoch(&ipc_request, &webview, &service).await?;
-    let artifact = parsed_artifact_id(&artifact_id)?;
-    let target = parsed_target_id(&target_id)?;
-    let output = preview::scientific_output::FigureOutput::from_wire(&settings)?;
-    let lane = projects.begin_output().map_err(project_error)?;
-    let projects = Arc::clone(&projects);
-    off_the_async_runtime(move || {
-        let _lane = lane;
-        let (figure, _) = targeted_figure(&projects, artifact, target, output)?;
-        Ok(project::dto::TargetedFigureCopyDto::Copied {
-            figure: output.copy(&app, &figure)?,
-        })
-    })
-    .await?
-}
-
 /// Exports every target's stored row as one CSV or TSV table.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -2513,7 +2484,6 @@ pub fn run() {
             read_targeted_ms1_evidence,
             preview_targeted_ms1_figure,
             export_targeted_ms1_figure,
-            copy_targeted_ms1_figure,
             export_targeted_ms1_table,
             get_targeted_ms1_runtime,
             inspect_backend,

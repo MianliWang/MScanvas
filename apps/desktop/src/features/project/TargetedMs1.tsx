@@ -22,11 +22,10 @@
  * own word and is never drawn as an absence.
  */
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import {
   toPreviewError,
-  type CopiedFigure,
   type ExportedFigure,
   type FigureSettings,
   type PreviewError,
@@ -592,7 +591,7 @@ const DEFAULT_FIGURE: FigureSettingsDraft = {
   theme: "light",
 };
 
-type Operation = "svg" | "png" | "copy" | "csv" | "tsv";
+type Operation = "svg" | "png" | "csv" | "tsv";
 
 /** How the last output this report asked for ended, described when shown. */
 type OutputState =
@@ -600,17 +599,16 @@ type OutputState =
   | { readonly status: "running"; readonly operation: Operation }
   | { readonly status: "cancelled" }
   | { readonly status: "savedFigure"; readonly fileName: string; readonly figure: ExportedFigure }
-  | { readonly status: "copied"; readonly figure: CopiedFigure }
   | { readonly status: "savedTable"; readonly fileName: string; readonly rowCount: number }
   | { readonly status: "failed"; readonly error: PreviewError };
 
-function describeFigure(figure: ExportedFigure | CopiedFigure, t: UiMessage): string {
+function describeFigure(figure: ExportedFigure, t: UiMessage): string {
   return (
     t("viewerFigureSize", {
       width: formatCount(figure.width),
       height: formatCount(figure.height),
       theme: t(figure.theme),
-    }) + ("dpi" in figure && figure.dpi !== null ? `, ${formatCount(figure.dpi)} DPI` : "")
+    }) + (figure.dpi !== null ? `, ${formatCount(figure.dpi)} DPI` : "")
   );
 }
 
@@ -619,15 +617,11 @@ function describeOutput(state: OutputState, t: UiMessage, errorText: (error: Pre
     case "idle":
       return "";
     case "running":
-      return state.operation === "copy"
-        ? t("viewerExportClipboard")
-        : t("viewerExportChoose", { name: state.operation.toUpperCase() });
+      return t("viewerExportChoose", { name: state.operation.toUpperCase() });
     case "cancelled":
       return t("viewerExportCancelled");
     case "savedFigure":
       return t("viewerExportSaved", { name: state.fileName, details: describeFigure(state.figure, t) });
-    case "copied":
-      return t("viewerExportCopied", { details: describeFigure(state.figure, t) });
     case "savedTable":
       return t("targetedTableSaved", { name: state.fileName, count: state.rowCount });
     case "failed":
@@ -661,7 +655,15 @@ export function TargetedMs1Report({
   const section = useRef<HTMLElement | null>(null);
   useEffect(() => bringIntoView(section.current), [artifact.id]);
   const result = artifact.targetedMs1?.result ?? null;
-  const availability = artifact.targetedMs1?.availability ?? "payloadMissing";
+  // What a later read found. The project says whether the stored rows were
+  // whole when it last looked; a read, drawing or export that finds them
+  // missing or damaged since is newer, so from then on the rows already on
+  // screen are not shown as the result and nothing more is offered from them.
+  const [found, setFound] = useState<PayloadAvailability | null>(null);
+  const availability = found ?? artifact.targetedMs1?.availability ?? "payloadMissing";
+  const noteRefusal = useCallback((code: string) => {
+    if (code === "payloadMissing" || code === "payloadCorrupt") setFound(code);
+  }, []);
   const [rows, setRows] = useState<{ readonly id: string; readonly page: Loaded<{
     readonly total: number;
     readonly rows: readonly PayloadRow[];
@@ -715,7 +717,10 @@ export function TargetedMs1Report({
         if (live) setRows({ id: artifact.id, page: { status: "ready", value: page } });
       })
       .catch((error: unknown) => {
-        if (live) setRows({ id: artifact.id, page: { status: "refused", code: refusalOf(error) } });
+        if (!live) return;
+        const code = refusalOf(error);
+        setRows({ id: artifact.id, page: { status: "refused", code } });
+        noteRefusal(code);
       });
     return () => {
       live = false;
@@ -739,7 +744,10 @@ export function TargetedMs1Report({
         if (live) setEvidence({ key: evidenceKey, value: { status: "ready", value } });
       })
       .catch((error: unknown) => {
-        if (live) setEvidence({ key: evidenceKey, value: { status: "refused", code: refusalOf(error) } });
+        if (!live) return;
+        const code = refusalOf(error);
+        setEvidence({ key: evidenceKey, value: { status: "refused", code } });
+        noteRefusal(code);
       });
     return () => {
       live = false;
@@ -769,7 +777,9 @@ export function TargetedMs1Report({
       .catch((error: unknown): OutputState => ({ status: "failed", error: toPreviewError(error) }))
       .then((state) => {
         outputBusy.current = false;
-        if (mounted.current) setOutput({ region, state });
+        if (!mounted.current) return;
+        setOutput({ region, state });
+        if (state.status === "failed") noteRefusal(state.error.kind);
       });
   }
 
@@ -782,16 +792,12 @@ export function TargetedMs1Report({
     });
   }
 
-  function exportFigure(targetId: string, operation: "svg" | "png" | "copy") {
+  function exportFigure(targetId: string, operation: "svg" | "png") {
     // PNG is only offered while the typed resolution is one, so `settings`
     // carries it whenever a PNG is asked for.
     if (settings === null) return;
     const asked = settings;
     start("figure", operation, async () => {
-      if (operation === "copy") {
-        const answer = await api.copyTargetedMs1Figure(artifact.id, targetId, asked);
-        return { status: "copied", figure: answer.figure };
-      }
       const answer = await api.exportTargetedMs1Figure(artifact.id, targetId, operation, asked);
       return answer.status === "cancelled"
         ? { status: "cancelled" }
@@ -1009,6 +1015,7 @@ export function TargetedMs1Report({
                     traces={shown.value.traces}
                     settings={settings}
                     errorText={errorText}
+                    onRefused={noteRefusal}
                   />
                   <details className="targeted-export" data-targeted-figure-export="">
                     <summary>{t("targetedFigureExports")}</summary>
@@ -1021,7 +1028,7 @@ export function TargetedMs1Report({
                       onFigureTheme={(theme) => setDraft((current) => ({ ...current, theme }))}
                     />
                     <div className="spectrum-export-actions">
-                      {(["svg", "png", "copy"] as const).map((operation) => (
+                      {(["svg", "png"] as const).map((operation) => (
                         <button
                           key={operation}
                           type="button"
@@ -1034,18 +1041,12 @@ export function TargetedMs1Report({
                           data-targeted-export={operation}
                           onClick={() => exportFigure(selectedRow.targetId, operation)}
                         >
-                          {operation === "copy"
-                            ? t(
-                                output.state.status === "running" && output.state.operation === "copy"
-                                  ? "viewerCopying"
-                                  : "viewerCopy",
-                              )
-                            : t(
-                                output.state.status === "running" && output.state.operation === operation
-                                  ? "viewerExporting"
-                                  : "viewerExportFormat",
-                                { name: operation.toUpperCase() },
-                              )}
+                          {t(
+                            output.state.status === "running" && output.state.operation === operation
+                              ? "viewerExporting"
+                              : "viewerExportFormat",
+                            { name: operation.toUpperCase() },
+                          )}
                         </button>
                       ))}
                     </div>
@@ -1076,6 +1077,7 @@ function EvidenceFigure({
   traces,
   settings,
   errorText,
+  onRefused,
 }: {
   readonly artifactId: string;
   readonly targetId: string;
@@ -1083,6 +1085,8 @@ function EvidenceFigure({
   readonly traces: readonly EvidenceTrace[];
   readonly settings: FigureSettings | null;
   readonly errorText: (error: PreviewError) => string;
+  /** Told a drawing's refusal, so a result found damaged stops being shown. */
+  readonly onRefused: (code: string) => void;
 }) {
   const t = useUiMessages();
   const api = useProjectApi();
@@ -1111,12 +1115,15 @@ function EvidenceFigure({
         if (live) setAnswer({ key, target, value: { status: "ready", figure } });
       })
       .catch((error: unknown) => {
-        if (live) setAnswer({ key, target, value: { status: "failed", error: toPreviewError(error) } });
+        if (!live) return;
+        const failed = toPreviewError(error);
+        setAnswer({ key, target, value: { status: "failed", error: failed } });
+        onRefused(failed.kind);
       });
     return () => {
       live = false;
     };
-  }, [api, artifactId, height, key, target, targetId, theme, width]);
+  }, [api, artifactId, height, key, onRefused, target, targetId, theme, width]);
 
   // While the size being typed is not yet a size, the last drawing of this
   // target stays; the fields say what is wrong.
@@ -1347,6 +1354,8 @@ export function TargetedFacts({ lineage }: { readonly lineage: TargetedLineage }
         <dd className="provenance-digest">{execution.planSha256}</dd>
         {plan === null ? null : (
           <>
+            <dt>{t("targetedTargetListDigest")}</dt>
+            <dd className="provenance-digest">{plan.targetListSha256}</dd>
             <dt>{t("targetedRecipeVersion")}</dt>
             <dd>{plan.recipe.recipeVersion}</dd>
             <dt>{t("targetedEngineProfileDigest")}</dt>

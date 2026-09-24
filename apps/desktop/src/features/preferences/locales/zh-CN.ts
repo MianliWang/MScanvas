@@ -1513,4 +1513,6 @@ export const zhCN = {
   targetedTableExports: "导出结果表",
   targetedTableExportHelp: "按计划顺序列出每个目标，每个一行，表头上方以 # 开头的行记录此结果的来源信息。空单元格表示结果中没有该值，绝不表示零。数值按存储原样写入；电子表格软件可能会重新解释其中部分内容。",
   targetedTableSaved: "已保存 {{name}}，共 {{count, number}} 个目标行。",
+  targetedTargetListDigest: "目标列表 SHA-256",
+  targetedPayloadDigest: "已存储结果清单 SHA-256",
 } as const;

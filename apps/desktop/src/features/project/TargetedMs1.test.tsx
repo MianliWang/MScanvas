@@ -516,7 +516,9 @@ describe("a stored result", () => {
     await screen.findByText(en.projectReferences);
     await press(query(`[data-project-inspect-artifact="${ARTIFACT}"]`));
     const refused = await screen.findByText(en.targetedPayloadCorrupt);
-    expect(refused.getAttribute("data-targeted-rows-refused")).toBe("payloadCorrupt");
+    // A read's finding is newer than the project's, so it is what the report says.
+    expect(refused.getAttribute("data-targeted-unavailable")).toBe("payloadCorrupt");
+    expect(query('[data-targeted-payload="payloadCorrupt"]').textContent).toBe(en.targetedStatePayloadCorrupt);
     expect(document.querySelector("[data-targeted-row]")).toBeNull();
   });
 
@@ -681,6 +683,43 @@ describe("a stored result reused (M9.2)", () => {
     expect(document.querySelector("[data-targeted-row]")).toBeNull();
   });
 
+  it("takes the rows away when a later drawing or export finds the result damaged or gone", async () => {
+    for (const [operation, code] of [
+      ["exportTargetedMs1Table", "payloadCorrupt"],
+      ["previewTargetedMs1Figure", "payloadMissing"],
+      ["readTargetedMs1Evidence", "payloadCorrupt"],
+    ] as const) {
+      const api = await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      expect(document.querySelectorAll("[data-targeted-row]")).toHaveLength(2);
+      api.refuseOnce(operation, code);
+      if (operation === "exportTargetedMs1Table") {
+        await press(button("csv"));
+      } else {
+        await press(query(`[data-targeted-choose="${DETECTED}"]`));
+      }
+      await screen.findByText(en[code === "payloadCorrupt" ? "targetedPayloadCorrupt" : "targetedPayloadMissing"]);
+      expect(query(`[data-targeted-payload="${code}"]`)).toBeTruthy();
+      expect(query(`[data-targeted-report="${ARTIFACT}"]`).getAttribute("data-availability")).toBe(code);
+      expect(document.querySelector("[data-targeted-row]")).toBeNull();
+      expect(document.querySelector("[data-targeted-table-export]")).toBeNull();
+      expect(document.querySelector("[data-targeted-plot]")).toBeNull();
+      expect(screen.queryByText(en.targetedReuseNote)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("names the result's target list and stored manifest by digest in Details", async () => {
+    const state = targetedProject();
+    const manifest = state.artifacts[0].targetedMs1?.result?.payload.manifestSha256 ?? "";
+    await inspectResult(state);
+    expect(manifest).not.toBe("");
+    expect(query("[data-provenance-payload]").textContent).toContain(manifest);
+    expect(query("[data-provenance-payload]").textContent).toContain(en.targetedPayloadDigest);
+    expect(query("[data-targeted-plan-facts]").textContent).toContain(PLAN.targetListSha256);
+    expect(query("[data-targeted-plan-facts]").textContent).toContain(en.targetedTargetListDigest);
+  });
+
   it("writes the table through Rust as CSV or TSV and says what was saved or why not", async () => {
     const api = await inspectResult();
     await screen.findByText(en.targetedRowsCaption);
@@ -714,7 +753,7 @@ describe("a stored result reused (M9.2)", () => {
     const release = api.holdOnce("exportTargetedMs1Table");
     await press(button("csv"));
     expect(status("table").textContent).toBe("Choose where to save the CSV file.");
-    for (const operation of ["csv", "tsv", "svg", "png", "copy"]) {
+    for (const operation of ["csv", "tsv", "svg", "png"]) {
       expect(button(operation).disabled, operation).toBe(true);
     }
     await press(button("svg"));
@@ -726,7 +765,7 @@ describe("a stored result reused (M9.2)", () => {
     expect(button("svg").disabled).toBe(false);
   });
 
-  it("exports and copies the figure at the size typed, the same drawing the page shows", async () => {
+  it("exports the figure at the size typed, the same drawing the page shows", async () => {
     const api = await inspectResult();
     await chooseDetected();
     await type(query(`[data-targeted-figure-export] input[id$="-widthPx"]`), "800");
@@ -745,9 +784,9 @@ describe("a stored result reused (M9.2)", () => {
       "Saved mscanvas-targeted-ms1-eeeeeeee-target-1.png with 800 by 640 pixels, Light theme, 300 DPI.",
     );
 
-    await press(button("copy"));
-    expect(api.copyTargetedMs1Figure).toHaveBeenLastCalledWith(ARTIFACT, DETECTED, settings);
-    expect(status("figure").textContent).toBe("Copied the plot with 800 by 640 pixels, Light theme.");
+    // No clipboard copy is offered for a stored result: M9.2 could not
+    // exercise one natively, so the page does not claim one.
+    expect(document.querySelector('[data-targeted-export="copy"]')).toBeNull();
     for (const call of NEVER) expect(caused(api)).not.toContain(call);
   });
 
@@ -757,11 +796,10 @@ describe("a stored result reused (M9.2)", () => {
     await type(query(`[data-targeted-figure-export] input[id$="-pngDpi"]`), "high");
     expect(button("png").disabled).toBe(true);
     expect(button("svg").disabled).toBe(false);
-    expect(button("copy").disabled).toBe(false);
 
     const drawn = vi.mocked(api.previewTargetedMs1Figure).mock.calls.length;
     await type(query(`[data-targeted-figure-export] input[id$="-heightPx"]`), "");
-    for (const operation of ["svg", "png", "copy"]) {
+    for (const operation of ["svg", "png"]) {
       expect(button(operation).disabled, operation).toBe(true);
     }
     // The last drawing stays while the size is being typed; nothing new is asked.

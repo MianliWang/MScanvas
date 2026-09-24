@@ -366,6 +366,16 @@ export function ProvenanceDetails({
                   {t(AVAILABILITY_KEYS[provenance.artifact.targetedMs1.availability])}
                 </span>
               </p>
+              {/* What the stored rows and evidence are, by the digest of the
+                  manifest that names them: the identity an export carries. */}
+              {provenance.artifact.targetedMs1.result === null ? null : (
+                <dl className="provenance-facts" data-provenance-payload="">
+                  <dt>{t("targetedPayloadDigest")}</dt>
+                  <dd className="provenance-digest">
+                    {provenance.artifact.targetedMs1.result.payload.manifestSha256}
+                  </dd>
+                </dl>
+              )}
             </>
           ) : (
             <p className="provenance-current-row">

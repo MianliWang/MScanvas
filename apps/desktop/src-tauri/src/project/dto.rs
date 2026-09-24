@@ -611,16 +611,6 @@ pub enum TargetedFigureExportDto {
     },
 }
 
-/// A copy of a stored result's figure that reached the clipboard.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(tag = "status", rename_all = "camelCase")]
-pub enum TargetedFigureCopyDto {
-    #[serde(rename_all = "camelCase")]
-    Copied {
-        figure: crate::preview::dto::CopiedFigureDto,
-    },
-}
-
 /// How an export of a stored result's table ended.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase")]

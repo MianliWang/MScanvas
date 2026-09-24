@@ -3,8 +3,9 @@
 //! A stored project result is exported through exactly the machinery a
 //! spectrum or a chromatogram is: the same settings and their refusals, the
 //! same renderer, the same raster budget asked before any pixel is allocated,
-//! the same rasterizer and PNG encoder, the same clipboard write, the same
-//! extension rule and the same no-overwrite local write. What differs is only
+//! the same rasterizer and PNG encoder, the same extension rule and the same
+//! no-overwrite local write. It has no clipboard copy: M9.2 could not exercise
+//! one natively for a stored result, so none is offered. What differs is only
 //! where the figure comes from, which is the caller's business -- this module
 //! is handed a finished [`FigureSpec`] or finished bytes and never sees a
 //! preview token, a snapshot or a lane.
@@ -17,10 +18,10 @@ use mscanvas_proteowizard::write_new_local_file;
 use super::destination::admit_destination_root;
 use super::dialog::SaveDialogFacts;
 use super::dto::{
-    CopiedFigureDto, ExportedFigureDto, FigureSettingsDto, MAX_CANDIDATE_NAME_CHARS,
-    PreviewErrorDto, bounded_text, spectrum_destination_unusable,
+    ExportedFigureDto, FigureSettingsDto, MAX_CANDIDATE_NAME_CHARS, PreviewErrorDto, bounded_text,
+    spectrum_destination_unusable,
 };
-use super::export::{png_of, raster_of};
+use super::export::png_of;
 use super::figure::{FigureRenderSettings, PngDpi};
 use super::service::{PreviewService, spectrum_write_failure};
 
@@ -86,31 +87,6 @@ impl FigureOutput {
     ) -> Result<Vec<u8>, PreviewErrorDto> {
         PreviewService::raster_budget(self.0)?;
         png_of(figure, self.0, resolution.0).map_err(PreviewService::figure_failure)
-    }
-
-    /// Draws the figure and puts it on the system clipboard, from Rust.
-    ///
-    /// The pixels never cross to the webview: it asks for a copy and is told
-    /// whether one happened.
-    ///
-    /// # Errors
-    ///
-    /// `figure_settings_refused` over the raster budget, the raster failures,
-    /// and `figure_clipboard_unavailable`.
-    pub(crate) fn copy(
-        self,
-        app: &tauri::AppHandle,
-        figure: &FigureSpec,
-    ) -> Result<CopiedFigureDto, PreviewErrorDto> {
-        PreviewService::raster_budget(self.0)?;
-        let raster = raster_of(figure, self.0).map_err(PreviewService::figure_failure)?;
-        let (width, height) = (raster.width(), raster.height());
-        let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
-        use tauri_plugin_clipboard_manager::ClipboardExt;
-        app.clipboard()
-            .write_image(&image)
-            .map_err(|_| super::dto::figure_clipboard_unavailable())?;
-        Ok(PreviewService::copied_figure(self.0))
     }
 
     /// What the interface is told an exported figure was rendered as.

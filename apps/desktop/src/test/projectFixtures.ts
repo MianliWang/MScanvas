@@ -617,12 +617,6 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
           },
         })),
     ),
-    copyTargetedMs1Figure: vi.fn((_artifactId: string, _targetId: string, settings: FigureSettings) =>
-      read("copyTargetedMs1Figure", () => ({
-        status: "copied" as const,
-        figure: { width: settings.widthPx, height: settings.heightPx, theme: settings.theme },
-      })),
-    ),
     exportTargetedMs1Table: vi.fn((artifactId: string, format: "csv" | "tsv") =>
       dialog("exportTargetedMs1Table", () => ({
         status: "saved" as const,

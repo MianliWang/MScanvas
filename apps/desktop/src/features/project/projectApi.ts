@@ -17,7 +17,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { createContext, useContext } from "react";
 
 import type {
-  CopiedFigure,
   ExportedFigure,
   FigureSettings,
   WorkspaceAddResult,
@@ -365,11 +364,6 @@ export type TargetedFigureExport =
       readonly figure: ExportedFigure;
     };
 
-export interface TargetedFigureCopy {
-  readonly status: "copied";
-  readonly figure: CopiedFigure;
-}
-
 export type TargetedTableExport =
   | { readonly status: "cancelled" }
   | {
@@ -658,12 +652,6 @@ export interface ProjectApi {
     format: TargetedFigureFormat,
     settings: FigureSettings,
   ): Promise<TargetedFigureExport>;
-  /** Draws the figure in Rust and puts it on the system clipboard. */
-  copyTargetedMs1Figure(
-    artifactId: string,
-    targetId: string,
-    settings: FigureSettings,
-  ): Promise<TargetedFigureCopy>;
   /** Writes the whole stored result as one table, through a native dialog. */
   exportTargetedMs1Table(
     artifactId: string,
@@ -758,12 +746,6 @@ export const tauriProjectApi: ProjectApi = {
       { artifactId, targetId, format, settings },
       documentAuthorityHeaders(),
     ),
-  copyTargetedMs1Figure: (artifactId, targetId, settings) =>
-    invoke<TargetedFigureCopy>(
-      "copy_targeted_ms1_figure",
-      { artifactId, targetId, settings },
-      documentAuthorityHeaders(),
-    ),
   exportTargetedMs1Table: (artifactId, format) =>
     invoke<TargetedTableExport>(
       "export_targeted_ms1_table",
@@ -813,7 +795,6 @@ export const unavailableProjectApi: ProjectApi = {
   readTargetedMs1Evidence: () => Promise.reject(new Error("noProjectStore")),
   previewTargetedMs1Figure: () => Promise.reject(new Error("noProjectStore")),
   exportTargetedMs1Figure: () => Promise.reject(new Error("noProjectStore")),
-  copyTargetedMs1Figure: () => Promise.reject(new Error("noProjectStore")),
   exportTargetedMs1Table: () => Promise.reject(new Error("noProjectStore")),
   getTargetedMs1Runtime: () => Promise.reject(new Error("noProjectStore")),
 };
