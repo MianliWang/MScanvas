@@ -6,8 +6,32 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
-- **MSCanvas is packaged as an ordinary Windows installer.** One installer, for
-  the current user only, so it needs no administrator and does not touch anyone
+- **Targeted MS1 lookup — experimental, and development-only for now.** In a
+  saved project, type a list of small-molecule targets, review a plan over one
+  mzML acquisition (or one plan each over 2–16 of them), and run it in a
+  supervised pyOpenMS worker. The result is stored beside the project, and can
+  be read, drawn and exported as SVG, PNG and CSV/TSV later without the runtime
+  or the source file. Positive-mode centroided MS1 and `[M+H]+` only. It is not
+  identification, not a validated assay, and a target reported as not detected
+  is not proof of absence.
+
+  The Python and pyOpenMS runtime it needs exists only in a development
+  checkout. It is not bundled, a release build answers every plan review with
+  `recipeUnavailable`, and stored results still open. See the
+  [M9 closure](docs/product/M9_CLOSURE.md) for the whole contract and its
+  limits.
+
+- **Projects that record what was done.** A private local `.mscanvas` document
+  records the files you referenced, each with its length and SHA-256, the runs
+  made over them, the layers drawn from them and a descriptive QC summary copied
+  from a preview already on screen, with history that is only ever added to.
+  Saving is explicit. Opening a project reads and checks it, puts nothing in the
+  Workbench and restores no session; a checked file is added to the Workbench
+  only when you ask. See the
+  [M8 record](docs/product/M8_1_FIRST_CLOSED_LOOP.md).
+
+- **MSCanvas can be built as an ordinary Windows installer — an unqualified
+  candidate, not a release.** One installer, for the current user only, so it needs no administrator and does not touch anyone
   else's machine account. It offers English and Simplified Chinese. The licence
   and the third-party notices for everything compiled into it are configured as
   installed resources. ProteoWizard is still yours to install and is never
@@ -18,13 +42,15 @@ All notable changes will be documented here once versioned releases begin.
   transcribed — is absent from it, and the check that says so first proves it
   can find each of those strings in a QA build.
 
-  The first beta is **unsigned**, so Windows will warn about it. There is no
-  advice here for getting around that, and none for overriding a policy your
-  organisation set.
+  A first beta, when there is one, is planned **unsigned**, so Windows will warn
+  about it. There is no advice here for getting around that, and none for
+  overriding a policy your organisation set.
 
   Nothing here has been installed or removed on a real machine yet. Installation,
   launch, uninstall and what the installer actually places on disk are all
-  unverified until the qualification campaign runs.
+  unverified until the qualification campaign runs. That campaign is deferred:
+  it will run against a later candidate that contains the project and targeted
+  MS1 work above. No installer has been published and no public beta exists.
 
 - **The interface remembers how you set it up, and nothing else.** Language,
   the roster's row spacing and which of the two workspace panels you asked for

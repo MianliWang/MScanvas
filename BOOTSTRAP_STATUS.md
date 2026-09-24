@@ -10,13 +10,20 @@ M7.0 changed no repository visibility.
 **Default branch:** `main`
 
 **Current route, 2026-09-24:** published `main` carries M7.1–M7.5 (PR #125 and
-its follow-up #126). Locally and unpublished, one linear stack sits on top of
-it: a partial M7.6 (an NSIS candidate, notices and scripts; installed
-qualification not started, release qualification deferred / incomplete), M8
-(project records, lineage, layers and the QC snapshot; complete locally) and M9
-(one bounded, experimental targeted-MS1 recipe; complete locally, see the
-[M9 closure](docs/product/M9_CLOSURE.md)). Source integration of that stack is
-a separate, not yet taken decision. The first Windows x64 beta's scope and
+its follow-up #126). One linear stack follows it in source: a partial M7.6 (an
+NSIS candidate configuration, notices and scripts; installed qualification not
+started, release qualification deferred / incomplete), M8 (project records,
+lineage, layers and the QC snapshot; implementation complete) and M9 (one
+bounded, experimental targeted-MS1 recipe whose pyOpenMS runtime is
+development-only and not bundled; implementation complete, see the
+[M9 closure](docs/product/M9_CLOSURE.md)). That stack was prepared as one
+source-integration candidate, recorded in the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md);
+the merge on `main`, not this paragraph, is the evidence that it was published.
+None of it is in an installer or a release. Named test debt travels with it: the
+repository-wide browser suite fails 174 of the 317 tests shared with published
+`main`, identically on both (legacy M4–M7 and viewer-r1 specs; the M8/M9 specs
+pass), and one App-level Vitest case can exceed its 5 s limit under load. The first Windows x64 beta's scope and
 route remain
 [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)'s;
 no public beta is built or released, and M10 is not started. The dated entries below retain their original milestone and

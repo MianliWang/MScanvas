@@ -709,7 +709,7 @@ and runtime filters. No XIC follow-up is a prerequisite for M7.
 
 ## M7 — UI/UX and public product hardening
 
-**M7.1–M7.5 PUBLISHED; M7.6 PARTIAL, LOCAL AND DEFERRED — RELEASE QUALIFICATION INCOMPLETE.** The separately authorized
+**M7.1–M7.5 PUBLISHED; M7.6 PARTIAL AND DEFERRED — RELEASE QUALIFICATION INCOMPLETE.** The separately authorized
 M7.0 first-beta route is accepted in
 [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md),
 the single owner of scope, implementation order and release exits. M7 delivers
@@ -764,13 +764,15 @@ exported document unchanged. Its protected publication, natural-main CI and
 local closeout identities belong to PR #125. The first
 beta's support target is decided: **Windows 11 25H2 x64**, with other Windows
 versions and ARM64 not promised supported. M7.6 is **partially implemented
-locally and unpublished** — an NSIS per-user candidate build, shipped notices
+and not qualified** — an NSIS per-user candidate configuration, shipped notices
 and inspection scripts, with installed qualification not started
 ([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)) — and its
-release qualification is **deferred / incomplete**: it resumes against the
-M8/M9 product candidate, not the M7.6 one (see the
-[M9 closure](docs/product/M9_CLOSURE.md#15-after-m9)). M8 and M9 are complete
-locally and unpublished; M10 is not started. External support/signing/distribution/sample/release
+release qualification is **deferred / incomplete**: it resumes against a later
+product candidate that contains M8/M9, not the M7.6 one (see the
+[M9 closure](docs/product/M9_CLOSURE.md#15-after-m9)). M8 and M9 are implemented
+and in no installer or release; their source integration is recorded in the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md).
+M10 is not started. External support/signing/distribution/sample/release
 decisions have explicit owner deadlines in ADR 0047; they are not waived.
 
 M5 hands it the interaction principles it proved rather than asserted:
@@ -806,24 +808,25 @@ cache are deferred here, the second only on a measurement showing a need.
 
 ## M8 — Artifact, run and QC foundation
 
-**M8 LOCAL IMPLEMENTATION COMPLETE — SOURCE UNPUBLISHED.** M8.1–M8.5 are
-complete as local commits. They descend from the local M7.6 candidate, whose
-installed-candidate release qualification is deferred and incomplete, so
-publishing M8 is a separate integration step; nothing here is merged or
-released. What each item became is PRJ-001 to PRJ-006 in the
+**M8 IMPLEMENTATION COMPLETE — NOT RELEASED.** M8.1–M8.5 are complete in
+source. They descend from the partial M7.6 commits, whose installed-candidate
+release qualification is deferred and incomplete; their source integration is
+recorded in the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md),
+and nothing here is in an installer or a release. What each item became is PRJ-001 to PRJ-006 in the
 [feature catalog](docs/product/FEATURE_CATALOG.md), and the
 [M8 record](docs/product/M8_1_FIRST_CLOSED_LOOP.md) holds the design, the
 closure and the M9 handoff.
 
-- Project/artifact/run persistence and lineage. **Done locally** (M8.1, M8.2):
+- Project/artifact/run persistence and lineage. **Done** (M8.1, M8.2):
   one versioned project document, file-facts capture, and lineage derived from
   the one record that states each edge.
-- First reusable QC summaries and report surfaces. **Done locally** (M8.5) as a
+- First reusable QC summaries and report surfaces. **Done** (M8.5) as a
   descriptive QC summary snapshot and report, not the ANA-002 recipe.
 - **Layer identity and provenance**, which multi-layer comparison needs and
   which no current contract provides: `FigureSpec` carries semantic style roles
   for quantities, not identities for sources, and `SeriesSpec` deliberately
-  carries no part of a path, handle or display name. **Done locally** (M8.4) in
+  carries no part of a path, handle or display name. **Done** (M8.4) in
   the project model; nothing enters `FigureSpec`.
 - Recorded history is append-only; pruning it is a later capability. Workspace
   restoration (WSP-010) is not part of M8: a project is reopened and each
@@ -831,9 +834,10 @@ closure and the M9 handoff.
 
 ## M9 — First analysis recipes
 
-**M9 LOCAL IMPLEMENTATION COMPLETE — TARGETED-MS1 ANALYSIS PHASE CLOSED
-LOCALLY; SOURCE UNPUBLISHED.** M9 delivered one **bounded, experimental
-targeted-MS1 recipe, implemented locally**: M9.0 measured the route and ended
+**M9 IMPLEMENTATION COMPLETE — TARGETED-MS1 ANALYSIS PHASE CLOSED; NOT
+RELEASED.** M9 delivered one **bounded, experimental targeted-MS1 recipe**, in
+source and in no installer or release (source integration: the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md)): M9.0 measured the route and ended
 with a conditional recommendation; M9.1 built the recipe (a reviewed,
 digest-named plan over one mzML layer, a supervised worker in a fixed,
 verified, development-only CPython 3.13.15 + pyOpenMS 3.5.0 runtime, typed
@@ -884,10 +888,14 @@ authorized nor executed.
 
 ### After M9
 
-Not started and not promised: an explicit source-integration decision; a
-concentrated real-workflow UI/UX cleanup; a frozen new product candidate;
-M7.6-style installed, native, provider and release qualification against that
-candidate; then a decision between a public beta and M10. See the
+Source integration of the M7.6-partial, M8 and M9 stack was prepared as one
+candidate; the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md)
+names it, and the merge on `main`, not this text, is the evidence that it was
+published. Not started and not promised after that: a concentrated
+real-workflow UI/UX cleanup; a frozen new product candidate; M7.6-style
+installed, native, provider and release qualification against that candidate;
+then a decision between a public beta and M10. See the
 [M9 closure](docs/product/M9_CLOSURE.md#15-after-m9).
 
 ## M10 — Automation

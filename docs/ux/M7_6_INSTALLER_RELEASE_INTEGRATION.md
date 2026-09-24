@@ -1,7 +1,11 @@
 # M7.6 — Installer and release integration
 
-Status: **implementation and preparation in progress; installed qualification
-NOT started; no release-ready claim; nothing published as a binary.**
+Status: **partial and deferred; installed qualification NOT started; release
+qualification deferred / incomplete; no release-ready claim; nothing published
+as a binary.** Release qualification resumes against a later product candidate
+that contains M8/M9, not against the candidate this record describes (see the
+[M9 closure](../product/M9_CLOSURE.md#15-after-m9)). The sections below are
+this slice's record as it stopped.
 
 This slice does not add a user-visible feature. It turns the application M7.1 to
 M7.5 built into something a person can install, run and remove on a machine that

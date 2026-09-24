@@ -366,7 +366,7 @@ Checked in code and by a scan of a real run's saved documents and stores
 | Layer | M9 state |
 | --- | --- |
 | 1. Implemented locally | **Yes** — this closure |
-| 2. Source-integrated / published | No: the whole stack is local and unpublished (§14) |
+| 2. Source-integrated / published | No, at this closure: the whole stack is local and unpublished (§14). Its later preparation as one source-integration candidate is recorded in the [M8/M9 source-integration record](../development/M8_M9_SOURCE_INTEGRATION.md) |
 | 3. Installed-product qualified | No: the runtime is not packaged; M7.6-style qualification has not run on any M8/M9 build |
 | 4. Public-beta released | No |
 
@@ -419,7 +419,9 @@ undelivered item out of M9 rather than leaving it implied:
 ## 14. Source-integration handoff
 
 **Not performed.** Nothing was pushed, merged, rebased, squashed or
-cherry-picked.
+cherry-picked. The integration candidate prepared after this closure, its
+answers to the questions below and the proposed publication procedure are in
+the [M8/M9 source-integration record](../development/M8_M9_SOURCE_INTEGRATION.md).
 
 ### Commit graph
 

@@ -10,11 +10,14 @@ MSCanvas aims to be a Windows-first, local-first desktop application for importi
 > Thermo Scientific RAW, Shimadzu LabSolutions LCD and SCIEX WIFF, alone or
 > mixed — for serial conversion to mzML, each family on the exact ProteoWizard
 > build evidenced for it. It is not yet the batch workspace described under
-> [Product scope](#product-scope).
+> [Product scope](#product-scope). This source tree also carries saved projects
+> (M8) and one bounded, **experimental** targeted-MS1 recipe (M9) whose runtime
+> exists only in a development checkout; none of that is in an installer or a
+> release. See [Beyond the published M7.5 product](#beyond-the-published-m75-product).
 
 Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (public; visibility verified 2026-09-12).
 
-The **M7.5 working candidate** keeps the UI preferences you set across a
+**M7.5**, the newest published slice, keeps the UI preferences you set across a
 restart — language, roster density and which workspace panels you asked for —
 recovers from a stored record it cannot read or cannot write, explains offline
 what ProteoWizard is yours to install and how long a folder you choose lasts,
@@ -31,8 +34,53 @@ quick PNG/Copy plot and data actions
 
 The first beta's support target is **Windows 11 25H2 x64**; other Windows
 versions and ARM64 are not promised supported. That is a support target, not a
-compatibility claim, and installed-candidate qualification belongs to M7.6.
-No public beta is built or released by either slice.
+compatibility claim, and installed-candidate qualification belongs to M7.6,
+which is partial and deferred (below). No public beta is built or released.
+
+## Beyond the published M7.5 product
+
+This source tree carries three things the published M7.5 product does not. They
+were prepared for source integration as one candidate; see the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md).
+None of them is in an installer or a release.
+
+- **Projects (M8).** A private local `.mscanvas` document records the files you
+  referenced, each member with its length and SHA-256, the runs made over them,
+  their lineage, layers with a durable identity and a descriptive QC summary
+  copied from a preview already on screen. History is only ever added to.
+  Opening a project restores no Workbench session; a checked reference is put in
+  the Workbench only when you ask. See the
+  [M8 record](docs/product/M8_1_FIRST_CLOSED_LOOP.md) and PRJ-001 to PRJ-006 in
+  the [feature catalog](docs/product/FEATURE_CATALOG.md).
+- **Targeted MS1 lookup (M9) — bounded and experimental.** In a saved project, a
+  typed list of up to 200 small-molecule targets is reviewed as a digest-named
+  plan over one positive-mode, centroided mzML acquisition, or one plan each over
+  2–16 of them, and run in a supervised pyOpenMS 3.5.0 worker. Each result is
+  stored beside the project and is read, drawn and exported as SVG, PNG and
+  CSV/TSV from the stored result alone. `[M+H]+` only. It is not identification,
+  not a validated assay and not a general XIC, it compares nothing across
+  acquisitions, and `NOT_DETECTED` is not proof of absence.
+  **Its runtime is development-only:** CPython 3.13.15 with pyOpenMS under
+  `.tmp/m91-runtime/`, provisioned by `scripts/provision_targeted_ms1_runtime.py`
+  from material the [M9.0 experiment](experiments/m9_0/README.md) verified, on an
+  ASCII repository path. It is not bundled, not a package-manager dependency and
+  not qualified for redistribution; a release build answers every plan review
+  with `recipeUnavailable` and still opens stored results. The
+  [M9 closure](docs/product/M9_CLOSURE.md) states the whole contract and its
+  limits.
+- **A partial M7.6.** An NSIS per-user installer configuration, generated
+  third-party notices, and candidate build and inspection scripts
+  ([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)). No installer
+  from it has been installed, qualified or published. M7.6 release qualification
+  is deferred and incomplete, and resumes against a later candidate that
+  contains M8 and M9.
+
+No public beta exists, and no installer containing M8 or M9 has been qualified.
+ProteoWizard is still yours to install; MSCanvas never downloads or bundles it.
+Known test debt travels with this source: the repository-wide browser suite
+fails 174 legacy M4–M7 and viewer tests exactly as it does on published `main`
+(the M8 and M9 browser specs pass), and one App-level Vitest case can exceed its
+5-second limit under load. The integration record gives the evidence.
 
 ## What works today
 
@@ -143,7 +191,8 @@ Not implemented yet: vendor RAW preview; XIC — refused on measured evidence fo
 the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
-session, which includes remembering a search, a sort, a selection, a range or
+session -- a saved project records references and history, but reopening one
+restores no Workbench session -- which includes remembering a search, a sort, a selection, a range or
 the folder you chose for ProteoWizard -- the preferences that do survive a
 restart are the five listed above and nothing else; a dark theme, or any
 appearance setting beyond language and row spacing; a remembered panel *size*,
@@ -153,7 +202,8 @@ already running; a conversion queue that survives closing the application;
 diagnostics for anything but the latest attempt of each item, a diagnostics
 history, complete raw converter logs, and sending a diagnostics file anywhere;
 and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV,
-the chromatogram's, and the linked two-panel figure of the two -- there is no
+the chromatogram's, the linked two-panel figure of the two, and one target of a
+stored targeted-MS1 result -- there is no
 saved figure specification, no figure composer, and figure settings are not
 remembered across a restart. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
@@ -331,12 +381,20 @@ yet. See [What works today](#what-works-today).
   chooses, and the two of them as one linked two-panel figure (shipped); a saved
   figure specification and a figure composer still to come.
 
-Analysis is deferred rather than prohibited. MSCanvas should reuse mature algorithms from OpenMS/pyOpenMS, matchms and other reviewed packages instead of reimplementing them.
+Analysis beyond the one bounded, experimental targeted-MS1 recipe described
+above is deferred rather than prohibited. MSCanvas should reuse mature algorithms from OpenMS/pyOpenMS, matchms and other reviewed packages instead of reimplementing them.
 
 ## What is next
 
-**M6 — Conversion Completion.** M5 finished the viewing workflow; M6 widens
-conversion, and M7 consolidates and redesigns the surfaces both of them leave.
+The order the repository's plans are consistent with, none of it promised:
+source integration of the stack
+[described above](#beyond-the-published-m75-product); a concentrated
+real-workflow UI/UX cleanup; a frozen new product candidate, and M7.6-style
+installed, native, provider and release qualification against it; then a
+decision between a public beta and M10 -- a headless CLI, then skills, then a
+narrow local MCP. See [`ROADMAP.md`](ROADMAP.md) and the
+[M9 closure](docs/product/M9_CLOSURE.md#15-after-m9). What follows is how the
+viewer reached its current shape.
 
 **What M5 delivered.** The selected spectrum has a committed m/z viewport that
 zooms, pans and resets, and exports over the full source or over that range — in
@@ -385,6 +443,9 @@ The repository contains:
 - Rust domain, ProteoWizard-adapter and plot-spec crates, where the adapter owns
   discovery, typed argv planning, process supervision, preview parsing and mzML
   conversion-integrity checking;
+- in the desktop crate, the project store (M8) and the targeted-MS1 recipe, its
+  worker supervisor and its pinned adapter (M9); the M9.0 route experiment under
+  `experiments/m9_0/`; and the development-runtime provisioning script;
 - product, UX and architecture source documents;
 - repo-local Codex guidance and skills;
 - frontend, Rust and repository-quality CI workflows.
@@ -403,7 +464,10 @@ the remaining runtime/backend work.
 - Rust 1.97.1 through rustup;
 - Windows 10/11 for the supported desktop target;
 - ProteoWizard installed separately. MSCanvas never bundles, downloads or installs
-  it, and the mzML preview path does not work without it.
+  it, and the mzML preview path does not work without it;
+- optionally, only to run the experimental targeted-MS1 recipe: the
+  development runtime [described above](#beyond-the-published-m75-product),
+  on an ASCII repository path. Nothing else needs it.
 
 ## Getting started
 
@@ -445,6 +509,8 @@ python -B scripts/check_repo.py
 - [`docs/ux/UX_PROCESS.md`](docs/ux/UX_PROCESS.md) — task analysis, concepts and usability validation.
 - [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) — boundaries and ownership.
 - [`ROADMAP.md`](ROADMAP.md) — milestone sequence.
+- [`docs/product/M9_CLOSURE.md`](docs/product/M9_CLOSURE.md) — the current targeted-MS1 contract and its limits.
+- [`docs/development/M8_M9_SOURCE_INTEGRATION.md`](docs/development/M8_M9_SOURCE_INTEGRATION.md) — the M8/M9 source-integration candidate, its evidence and the publication procedure.
 - [`BOOTSTRAP_STATUS.md`](BOOTSTRAP_STATUS.md) — verified and pending setup work.
 - [`docs/development/PUBLISHING.md`](docs/development/PUBLISHING.md) — repository, branch-protection and future release workflow.
 - [`docs/development/DEPENDENCY_POLICY.md`](docs/development/DEPENDENCY_POLICY.md) — routine update grouping, deliberate majors and visible security updates.
