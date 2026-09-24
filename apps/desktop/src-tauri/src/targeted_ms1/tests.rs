@@ -3700,6 +3700,80 @@ fn a_failed_or_absent_value_is_an_empty_cell_never_a_zero() {
 }
 
 #[test]
+fn a_window_that_held_no_spectrum_writes_no_signal_values() {
+    let scratch = Scratch::new("m92-no-spectrum-cells");
+    let (_store, mut stored) = stored_three(&scratch);
+    let target = stored.plan.targets[1].target_id;
+    let mut empty = extracted_row(target, RowOutcome::Failed);
+    empty.failure_reason = Some(payload::RowFailure::WindowWithoutMs1Peaks);
+    // What the adapter stores for a window no spectrum fell into: zero
+    // points, and sums and maxima that are its empty defaults.
+    empty.signal = Some(RowSignal {
+        points: 0,
+        sum: vec![0.0, 0.0],
+        max: vec![0.0, 0.0],
+        any_nonzero_point: false,
+    });
+    empty.feature = None;
+    empty.candidates = Vec::new();
+    assert!(empty.is_consistent(), "the shape M9.1 publishes for it");
+    stored.rows[1] = empty;
+
+    let (tsv, _) = result_table(&stored, TableFormat::Tsv).expect("a table");
+    let column = |name: &str| {
+        TABLE_COLUMNS
+            .iter()
+            .position(|column| *column == name)
+            .expect("a column")
+    };
+    let lines: Vec<&str> = tsv.lines().filter(|line| !line.starts_with('#')).collect();
+    let row: Vec<&str> = lines[2].split('\t').collect();
+    assert_eq!(row[column("failure_reason")], "WINDOW_WITHOUT_MS1_PEAKS");
+    assert_eq!(row[column("extracted_points")], "0", "a count, and zero");
+    for name in [
+        "signal_sum_m",
+        "signal_sum_m1",
+        "signal_max_m",
+        "signal_max_m1",
+    ] {
+        assert_eq!(
+            row[column(name)],
+            "",
+            "{name} of a window that held nothing"
+        );
+    }
+    // The first target's window held spectra, so its values are written.
+    let first: Vec<&str> = lines[1].split('\t').collect();
+    assert_ne!(first[column("signal_max_m")], "");
+}
+
+#[test]
+fn rows_that_no_longer_fit_their_plan_are_not_its_result() {
+    let scratch = Scratch::new("m92-rows-fit");
+    let (_store, stored) = stored_three(&scratch);
+    let plan = &stored.plan;
+    let rows = stored.rows.clone();
+    assert!(output::rows_fit_plan(plan, rows.len(), &rows));
+
+    let mut reordered = rows.clone();
+    reordered.swap(0, 1);
+    assert!(!output::rows_fit_plan(plan, reordered.len(), &reordered));
+    assert!(!output::rows_fit_plan(plan, 2, &rows[..2]), "a row missing");
+    assert!(
+        !output::rows_fit_plan(plan, 3, &rows[..2]),
+        "fewer read than reported"
+    );
+    let mut extra = rows.clone();
+    extra.push(rows[0].clone());
+    assert!(!output::rows_fit_plan(plan, extra.len(), &extra));
+    let mut broken = rows.clone();
+    broken[2].outcome = RowOutcome::Detected;
+    broken[2].feature = None;
+    assert!(!broken[2].is_consistent(), "a detection with no feature");
+    assert!(!output::rows_fit_plan(plan, broken.len(), &broken));
+}
+
+#[test]
 fn a_tsv_refuses_a_field_it_cannot_carry_and_a_csv_quotes_it() {
     let scratch = Scratch::new("m92-tsv");
     let (_store, mut stored) = stored_three(&scratch);

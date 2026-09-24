@@ -742,6 +742,7 @@ export function ProjectPanel({
               errorText={(error: PreviewError) =>
                 error.kind in REFUSALS ? t(refusalKey(error.kind)) : ownedErrorMessage(error, t)
               }
+              runsRecorded={state.runs.length}
             />
           )}
 

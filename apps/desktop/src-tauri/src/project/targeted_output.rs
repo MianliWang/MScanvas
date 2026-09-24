@@ -26,6 +26,22 @@ use super::record::{
     RunId, TargetDefinition, TargetId, TargetedMs1Execution, TargetedMs1Plan, TargetedMs1ResultV1,
 };
 
+/// Whether stored rows are still the plan's result: every row, in plan order,
+/// each one holding what its outcome requires.
+///
+/// The rule publication held the result to, asked again of what is on disk
+/// now, because a document can outlive the bytes it names. `total` is the
+/// row count the payload reports, which must be the rows read.
+#[must_use]
+pub fn rows_fit_plan(plan: &TargetedMs1Plan, total: usize, rows: &[PayloadRow]) -> bool {
+    total == rows.len()
+        && rows.len() == plan.targets.len()
+        && rows
+            .iter()
+            .zip(&plan.targets)
+            .all(|(row, target)| row.target_id == target.target_id && row.is_consistent())
+}
+
 /// The table format this build writes, named in every table's preamble.
 pub const TABLE_FORMAT_ID: &str = "mscanvas_targeted_ms1_results";
 
@@ -688,13 +704,24 @@ fn row_fields(
         Some(signal) => {
             let [sum_m, sum_m1] = pair(&signal.sum)?;
             let [max_m, max_m1] = pair(&signal.max)?;
+            // A window that held no spectrum measured nothing. The sums and
+            // maxima stored for it are the adapter's empty defaults, not
+            // values, so they are written as absent; the count of zero points
+            // is a count and stays.
+            let measured = |value: String| {
+                if signal.points == 0 {
+                    String::new()
+                } else {
+                    value
+                }
+            };
             [
                 signal.points.to_string(),
                 signal.any_nonzero_point.to_string(),
-                sum_m,
-                sum_m1,
-                max_m,
-                max_m1,
+                measured(sum_m),
+                measured(sum_m1),
+                measured(max_m),
+                measured(max_m1),
             ]
         }
         None => Default::default(),

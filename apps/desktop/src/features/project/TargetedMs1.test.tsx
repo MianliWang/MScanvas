@@ -463,7 +463,14 @@ describe("a stored result", () => {
       pngDpi: 300,
       theme: "light",
     });
-    expect(plot.getAttribute("alt")).toBe(en.targetedFigureAlt.replace("{{name}}", "Caffeine"));
+    // The text alternative names the outcome and says what is drawn: this
+    // row's one candidate is its feature, so no other candidate is outlined.
+    expect(plot.getAttribute("alt")).toBe(
+      en.targetedFigureAlt
+        .replace("{{name}}", "Caffeine")
+        .replace("{{outcome}}", en.targetedOutcomeDetected)
+        .replace("{{drawn}}", en.targetedFigureDrawnFeature),
+    );
     expect(plot.getAttribute("data-targeted-figure")).toBe(`spec-${DETECTED}-1200x640-light`);
     expect(plot.getAttribute("src")).toMatch(/^blob:/u);
     expect(document.querySelector("[data-targeted-plot] svg")).toBeNull();
@@ -720,6 +727,114 @@ describe("a stored result reused (M9.2)", () => {
     expect(query("[data-targeted-plan-facts]").textContent).toContain(en.targetedTargetListDigest);
   });
 
+  it("says in the image's text what this target's figure holds, and never a feature it has not", async () => {
+    const api = await inspectResult();
+    api.setTargeted({
+      evidence: {
+        [ABSENT]: {
+          targetId: ABSENT,
+          traces: [{ targetId: ABSENT, trace: 0, mzTheoretical: 196.0604, points: [[1, 280, 0], [2, 300, 0]] }],
+        },
+      },
+    });
+    await screen.findByText(en.targetedRowsCaption);
+    await press(query(`[data-targeted-choose="${ABSENT}"]`));
+    const image = await screen.findByRole("img");
+    const alt = image.getAttribute("alt") ?? "";
+    expect(alt).toContain(en.targetedOutcomeNotDetected);
+    expect(alt).toContain(en.targetedFigureDrawnPoints);
+    expect(alt).not.toContain(en.targetedFigureDrawnFeature);
+  });
+
+  it("keeps drawing at the last size while one is typed, across targets, with the settings left open", async () => {
+    const api = await inspectResult();
+    api.setTargeted({
+      evidence: {
+        [DETECTED]: { targetId: DETECTED, traces: [{ targetId: DETECTED, trace: 0, mzTheoretical: 195.0877, points: [[1, 120, 5]] }] },
+        [ABSENT]: { targetId: ABSENT, traces: [{ targetId: ABSENT, trace: 0, mzTheoretical: 196.0604, points: [[1, 280, 0]] }] },
+      },
+    });
+    await chooseDetected();
+    const disclosure = query<HTMLDetailsElement>("[data-targeted-figure-export]");
+    await act(async () => {
+      disclosure.open = true;
+      disclosure.dispatchEvent(new Event("toggle"));
+    });
+    await type(query(`[data-targeted-figure-export] input[id$="-heightPx"]`), "");
+    await press(query(`[data-targeted-choose="${ABSENT}"]`));
+    // Drawn at the last size that was one, not left waiting on the text.
+    const image = await screen.findByRole("img");
+    expect(image.getAttribute("data-targeted-figure")).toBe(`spec-${ABSENT}-1200x640-light`);
+    expect(document.querySelector("[data-targeted-figure-loading]")).toBeNull();
+    expect(query<HTMLDetailsElement>("[data-targeted-figure-export]").open).toBe(true);
+    expect(button("svg").disabled).toBe(true);
+  });
+
+  it("says a figure output only under the target it was for", async () => {
+    const api = await inspectResult();
+    api.setTargeted({
+      evidence: {
+        [DETECTED]: { targetId: DETECTED, traces: [{ targetId: DETECTED, trace: 0, mzTheoretical: 195.0877, points: [[1, 120, 5]] }] },
+        [ABSENT]: { targetId: ABSENT, traces: [{ targetId: ABSENT, trace: 0, mzTheoretical: 196.0604, points: [[1, 280, 0]] }] },
+      },
+    });
+    await chooseDetected();
+    await press(button("svg"));
+    expect(status("figure").getAttribute("data-targeted-output")).toBe("savedFigure");
+    await press(query(`[data-targeted-choose="${ABSENT}"]`));
+    await screen.findByRole("img");
+    expect(status("figure").getAttribute("data-targeted-output")).toBe("idle");
+    expect(status("figure").textContent).toBe("");
+    await press(query(`[data-targeted-choose="${DETECTED}"]`));
+    await screen.findByRole("img");
+    expect(status("figure").getAttribute("data-targeted-output")).toBe("savedFigure");
+    expect(api.exportTargetedMs1Figure).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a refused resolution and an oversized drawing in this surface's own words", async () => {
+    const api = await inspectResult();
+    await chooseDetected();
+    vi.mocked(api.exportTargetedMs1Figure).mockRejectedValueOnce({
+      kind: "figure_settings_refused",
+      summary: "",
+      detail: null,
+      retryable: false,
+      context: { kind: "pngDpi", min: 72, max: 1200 },
+    });
+    await type(query(`[data-targeted-figure-export] input[id$="-pngDpi"]`), "5000");
+    await press(button("png"));
+    expect(status("figure").textContent).toBe("PNG DPI must be 72–1200. SVG remains available.");
+    expect(status("figure").textContent).not.toContain("Copy");
+    cleanup();
+
+    await inspectResult(targetedProject(), (fake) =>
+      fake.refuseOnce("previewTargetedMs1Figure", "figure_preview_too_large"),
+    );
+    await screen.findByText(en.targetedRowsCaption);
+    await press(query(`[data-targeted-choose="${DETECTED}"]`));
+    await screen.findByText(en.m92ErrorPreviewSize);
+    // Too large to show is not too large to write: the exports stay.
+    expect(button("svg").disabled).toBe(false);
+  });
+
+  it("moves focus to the report and announces a result an export found gone", async () => {
+    const api = await inspectResult();
+    await screen.findByText(en.targetedRowsCaption);
+    api.refuseOnce("exportTargetedMs1Table", "payloadMissing");
+    button("csv").focus();
+    await press(button("csv"));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(en.targetedPayloadMissing);
+    expect(document.activeElement?.tagName).toBe("H3");
+    expect(document.activeElement?.textContent).toBe(en.targetedReportTitle);
+  });
+
+  it("announces nothing for a result the project already recorded as missing", async () => {
+    await inspectResult(targetedProject("payloadMissing"));
+    expect(query('[data-targeted-unavailable="payloadMissing"]').getAttribute("role")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("writes the table through Rust as CSV or TSV and says what was saved or why not", async () => {
     const api = await inspectResult();
     await screen.findByText(en.targetedRowsCaption);
@@ -753,9 +868,17 @@ describe("a stored result reused (M9.2)", () => {
     const release = api.holdOnce("exportTargetedMs1Table");
     await press(button("csv"));
     expect(status("table").textContent).toBe("Choose where to save the CSV file.");
+    // The pressed control keeps focus across the native picker: marked, not
+    // disabled. Every other output is disabled.
+    expect(button("csv").disabled).toBe(false);
     for (const operation of ["csv", "tsv", "svg", "png"]) {
+      expect(button(operation).getAttribute("aria-disabled"), operation).toBe("true");
+    }
+    for (const operation of ["tsv", "svg", "png"]) {
       expect(button(operation).disabled, operation).toBe(true);
     }
+    await press(button("csv"));
+    expect(api.exportTargetedMs1Table).toHaveBeenCalledTimes(1);
     await press(button("svg"));
     expect(api.exportTargetedMs1Figure).not.toHaveBeenCalled();
     await act(async () => {
@@ -825,7 +948,12 @@ describe("a stored result reused (M9.2)", () => {
     await press(button("svg"));
     expect(status("figure").textContent).toBe(zh.m74ErrorExists);
     expect(query('[data-targeted-source="unavailable"]').textContent).toBe(zh.projectStateMissing);
-    expect(query("img").getAttribute("alt")).toBe(zh.targetedFigureAlt.replace("{{name}}", "Caffeine"));
+    expect(query("img").getAttribute("alt")).toBe(
+      zh.targetedFigureAlt
+        .replace("{{name}}", "Caffeine")
+        .replace("{{outcome}}", zh.targetedOutcomeDetected)
+        .replace("{{drawn}}", zh.targetedFigureDrawnFeature),
+    );
   });
 });
 

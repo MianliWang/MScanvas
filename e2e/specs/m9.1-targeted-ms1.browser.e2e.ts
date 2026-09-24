@@ -794,7 +794,12 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
     expect(opened.state).toContain(en.targetedNewRunsRuntimeUnavailable);
     expect(opened.report?.text).toContain(en.targetedReuseNote);
     expect(opened.figure?.naturalWidth).toBe(1200);
-    expect(opened.figure?.alt).toBe(en.targetedFigureAlt.replace("{{name}}", "Caffeine"));
+    expect(opened.figure?.alt).toBe(
+      en.targetedFigureAlt
+        .replace("{{name}}", "Caffeine")
+        .replace("{{outcome}}", en.targetedOutcomeDetected)
+        .replace("{{drawn}}", en.targetedFigureDrawnFeature),
+    );
     // No SVG markup is placed in the page: the drawing is an image.
     expect(await browser.execute(() => document.querySelector("[data-targeted-plot] svg") === null)).toBe(true);
     const preview = (await ipcCalls()).find((call) => call.command === "preview_targeted_ms1_figure");
@@ -950,7 +955,12 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
       expect(narrow.report?.text).toContain(zh[key]);
       expect(narrow.report?.text).not.toContain(en[key]);
     }
-    expect(narrow.figure?.alt).toBe(zh.targetedFigureAlt.replace("{{name}}", "Caffeine"));
+    expect(narrow.figure?.alt).toBe(
+      zh.targetedFigureAlt
+        .replace("{{name}}", "Caffeine")
+        .replace("{{outcome}}", zh.targetedOutcomeDetected)
+        .replace("{{drawn}}", zh.targetedFigureDrawnFeature),
+    );
     expect(await unexpectedConsole()).toEqual([]);
   });
 });

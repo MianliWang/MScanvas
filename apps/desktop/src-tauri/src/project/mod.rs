@@ -2506,19 +2506,8 @@ impl ProjectStore {
             (plan, run.id, execution, result)
         };
         let page = self.read_targeted_ms1_rows(artifact, 0)?;
-        let corrupt = ProjectError::PayloadUnavailable(Availability::Corrupt);
-        // Every row, in plan order, each one saying what its outcome requires:
-        // the rule publication held the result to, asked again of what is on
-        // disk now, because a document can outlive the bytes it names.
-        if page.total != page.rows.len()
-            || page.rows.len() != plan.targets.len()
-            || page
-                .rows
-                .iter()
-                .zip(&plan.targets)
-                .any(|(row, target)| row.target_id != target.target_id || !row.is_consistent())
-        {
-            return Err(corrupt);
+        if !targeted_output::rows_fit_plan(&plan, page.total, &page.rows) {
+            return Err(ProjectError::PayloadUnavailable(Availability::Corrupt));
         }
         Ok(targeted_output::StoredResult {
             artifact,

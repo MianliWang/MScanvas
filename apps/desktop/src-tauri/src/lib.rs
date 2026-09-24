@@ -891,8 +891,14 @@ async fn preview_targeted_ms1_figure(
         let output = preview::scientific_output::FigureOutput::from_wire(&settings)?;
         let (figure, _) = targeted_figure(&projects, artifact, target, output)?;
         let svg = mscanvas_plot_spec::svg::render(&figure);
+        // Too large to show is not too large to write: the exports draw the
+        // same figure without this bound, as every other preview here does.
         if svg.len() > MAX_TARGETED_FIGURE_BYTES {
-            return Err(targeted_figure_not_drawable());
+            return Err(PreviewErrorDto::new(
+                "figure_preview_too_large",
+                "This figure exceeds the preview display limit.",
+                false,
+            ));
         }
         let spec_id = mscanvas_proteowizard::Sha256Digest::calculate(svg.as_bytes())
             .map_err(|_| targeted_figure_not_drawable())?
