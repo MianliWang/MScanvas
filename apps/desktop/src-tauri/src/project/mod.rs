@@ -169,9 +169,10 @@ pub enum ProjectError {
     RecipeUnavailable,
     /// The layer's source is not one file named as mzML. Nothing is converted.
     RecipeSourceUnsupported,
-    /// The source is on a different volume from the work area, where the
-    /// engine can only be given it through a copy, and no copy is made.
-    SourceOnAnotherVolume,
+    /// The source is on another volume than the work area, so the attempt
+    /// would copy it there, and the work area's volume has less free space
+    /// than the source's length.
+    InsufficientWorkAreaSpace,
     /// The plan named is not the one resolved for review and not one this
     /// project recorded, or its layer, reference or recipe is not what it was.
     PlanNotCurrent,
@@ -222,7 +223,7 @@ impl ProjectError {
             Self::ExportInProgress => "exportInProgress",
             Self::RecipeUnavailable => "recipeUnavailable",
             Self::RecipeSourceUnsupported => "recipeSourceUnsupported",
-            Self::SourceOnAnotherVolume => "sourceOnAnotherVolume",
+            Self::InsufficientWorkAreaSpace => "insufficientWorkAreaSpace",
             Self::PlanNotCurrent => "planNotCurrent",
             Self::PayloadStoreUnusable => "payloadStoreUnusable",
             Self::DestinationStoreExists => "destinationStoreExists",
@@ -242,6 +243,7 @@ impl ProjectError {
                 | Self::AlreadyRunning
                 | Self::AnalysisRunning
                 | Self::ExportInProgress
+                | Self::InsufficientWorkAreaSpace
         )
     }
 }
@@ -1969,7 +1971,8 @@ impl ProjectStore {
     /// history only when a run does. Problems with the request come back as
     /// data, row by row, rather than as a refusal, and so does anything that
     /// would stop the plan running now -- an unsaved project, a runtime that
-    /// is not there, a source on another volume -- so the review can say why.
+    /// is not there, a work area with no room for the source's copy -- so the
+    /// review can say why.
     ///
     /// # Errors
     ///
@@ -2050,8 +2053,8 @@ impl ProjectStore {
     ///
     /// Anything refused before the attempt starts records nothing: no saved
     /// document, a plan that is not current, a source this recipe does not
-    /// read, a runtime that is not there, a source on another volume, a store
-    /// that is not this project's. Once the attempt starts, the run is
+    /// read, a runtime that is not there, a work area with no room for the
+    /// source's copy, a store that is not this project's. Once the attempt starts, the run is
     /// recorded however it ends. A completed attempt's result is published
     /// beside the document first and referenced second; a failed or cancelled
     /// one publishes nothing and keeps its run, with its code and stage.

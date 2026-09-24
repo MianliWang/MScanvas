@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use mscanvas_core::ArtifactId;
 
-use super::{Supervisor, Unavailable, validate_payload, verify_runtime};
+use super::{LINK_NAME, SNAPSHOT_NAME, Supervisor, Unavailable, validate_payload, verify_runtime};
 use crate::project::observe::Cancellation;
 use crate::project::payload::{self, Availability, RowOutcome};
 use crate::project::recipe::{
@@ -1744,6 +1744,129 @@ fn unknown_kinds_codes_and_fields_in_targeted_records_are_refused() {
     }
 }
 
+/// M9.3 adds two words to schema 4 without advancing it: a copied view and a
+/// work area that had no room for the copy. Both read; a view this build does
+/// not know is refused like every other unknown word.
+#[test]
+fn a_copied_view_and_a_full_work_area_are_schema_four_words_and_no_other_view_is() {
+    assert_eq!(
+        reread_after(|value| {
+            value["runs"][0]["targetedMs1"]["attempt"]["sourceView"] =
+                "verifiedSnapshotInWorkArea".into();
+        }),
+        Ok(())
+    );
+    assert_eq!(
+        reread_after(|value| {
+            value["runs"][0]["targetedMs1"]["attempt"]["sourceView"] = "copiedToTemp".into();
+        }),
+        Err(record::DocumentProblem::Malformed)
+    );
+    assert_eq!(
+        reread_after(|value| {
+            value["runs"][0]["outcome"] = "failed".into();
+            value["runs"][0]["outputArtifactIds"] = serde_json::json!([]);
+            value["artifacts"] = serde_json::json!([]);
+            value["runs"][0]["targetedMs1"]["attempt"] = serde_json::Value::Null;
+            value["runs"][0]["targetedMs1"]["consumedContent"] = serde_json::json!([]);
+            value["runs"][0]["targetedMs1"]["failure"] =
+                serde_json::json!({"code": "insufficientWorkAreaSpace", "stage": "source"});
+        }),
+        Ok(())
+    );
+}
+
+#[test]
+fn a_run_given_a_verified_copy_says_so_after_a_save_and_reopen() {
+    let scratch = Scratch::new("m93-roundtrip");
+    let (store, layer, document) = fake_project(&scratch);
+    let copied = Fake::new(|order| match completed(order) {
+        AttemptEnd::Completed {
+            consumed,
+            mut attempt,
+            result,
+        } => {
+            attempt.source_view = SourceView::VerifiedSnapshotInWorkArea;
+            AttemptEnd::Completed {
+                consumed,
+                attempt,
+                result,
+            }
+        }
+        other => other,
+    });
+    let plan = plan(&store, layer, one_target(), &copied);
+    run(&store, &plan, &copied).expect("completed");
+    store.save().expect("save");
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    assert_eq!(
+        execution_of(&reopened)
+            .attempt
+            .map(|attempt| attempt.source_view),
+        Some(SourceView::VerifiedSnapshotInWorkArea)
+    );
+}
+
+/// An executor whose preflight finds no room for the copy.
+struct NoRoom;
+
+impl RecipeExecutor for NoRoom {
+    fn preflight(&self, _plan: &TargetedMs1Plan, _source: &Path) -> Result<(), ProjectError> {
+        Err(ProjectError::InsufficientWorkAreaSpace)
+    }
+
+    fn attempt(
+        &self,
+        _order: &AttemptOrder<'_>,
+        _cancellation: &Cancellation,
+        _progress: &(dyn Fn(RunPhase) + Sync),
+    ) -> AttemptEnd {
+        panic!("a refused run has no attempt")
+    }
+}
+
+#[test]
+fn a_work_area_without_room_for_the_copy_is_said_at_review_and_the_run_records_nothing() {
+    let scratch = Scratch::new("m93-no-room");
+    let (store, layer, _) = fake_project(&scratch);
+    let resolution = store
+        .resolve_targeted_ms1_plan(layer, &draft(one_target()), &NoRoom)
+        .expect("resolved");
+    assert_eq!(
+        resolution.blocked,
+        Some(ProjectError::InsufficientWorkAreaSpace)
+    );
+    let plan = resolution.plan.expect("a plan to review");
+    assert_eq!(
+        run(&store, &plan, &NoRoom).err(),
+        Some(ProjectError::InsufficientWorkAreaSpace)
+    );
+    assert!(store.describe().runs.is_empty());
+    assert!(ProjectError::InsufficientWorkAreaSpace.retryable());
+    assert!(store.accept_job().is_ok(), "nothing is left running");
+}
+
+#[test]
+fn a_copy_needs_room_for_exactly_the_bytes_the_plan_reads() {
+    let scratch = Scratch::new("m93-room");
+    let plan = plan_over(
+        &scratch.write("plain.mzML", b"<mzML/>"),
+        recipe::ADAPTER_SOURCE,
+    );
+    let length = plan.expected_content[0].byte_length;
+    assert!(super::room_for_snapshot(length, &plan));
+    assert!(super::room_for_snapshot(u64::MAX, &plan));
+    assert!(!super::room_for_snapshot(length - 1, &plan));
+    assert!(!super::room_for_snapshot(0, &plan));
+    let mut overflowing = plan;
+    overflowing.expected_content[0].byte_length = u64::MAX;
+    overflowing
+        .expected_content
+        .push(overflowing.expected_content[0].clone());
+    assert!(!super::room_for_snapshot(u64::MAX, &overflowing));
+}
+
 #[test]
 fn a_plan_that_no_longer_matches_its_name_or_its_run_is_refused() {
     use record::DocumentProblem::{DanglingReference, InconsistentRecord};
@@ -2504,6 +2627,13 @@ fn a_source_under_a_non_ascii_path_is_read_through_its_ascii_link() {
         rows_of(&store, end.artifact.expect("result"))[0].outcome,
         RowOutcome::Detected
     );
+    // On the work area's volume the source is linked, never copied.
+    assert_eq!(
+        execution_of(&store)
+            .attempt
+            .map(|attempt| attempt.source_view),
+        Some(SourceView::HardLinkInWorkArea)
+    );
     // The link is gone and the source is where it was.
     assert!(source.is_file());
 }
@@ -2572,42 +2702,681 @@ fn a_project_under_a_non_ascii_path_stores_reopens_and_copies_its_result() {
     );
 }
 
-#[test]
-#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
-fn a_source_on_another_volume_is_refused_before_a_run_exists() {
-    let area = WorkArea::new("cross-volume");
-    let elsewhere = Scratch::new("m91-cross-volume");
-    let source = elsewhere.write("plain.mzML", &mzml(&plain(), ""));
+// ---------------------------------------------------------------------------
+// M9.3: a source on another volume, through a verified copy
+//
+// The system temporary directory is on another volume than this repository on
+// the machine these ran on, and each test asserts that rather than assuming
+// it: the copies below are real copies between two physical NTFS volumes.
+// ---------------------------------------------------------------------------
+
+/// Fails the test unless `source` is on another volume than the work area.
+fn assert_another_volume(area: &WorkArea, source: &Path) {
     let work_volume = crate::local_document::directory_volume(&area.join(""));
-    let source_volume = crate::local_document::object_identity(&source).map(|(volume, _)| volume);
+    let source_volume = crate::local_document::object_identity(source).map(|(volume, _)| volume);
     assert!(
         work_volume.is_some() && source_volume.is_some() && work_volume != source_volume,
         "this test needs the system temporary directory on another volume than the repository"
     );
-    let document = area.join("study.mscanvas");
-    let (store, _, layer) = project_over(&document, &source);
+}
+
+/// A saved project in the work area over a source in `elsewhere`.
+fn cross_volume_project(
+    area: &WorkArea,
+    elsewhere: &Scratch,
+    name: &str,
+    bytes: &[u8],
+) -> (ProjectStore, LayerId, PathBuf) {
+    let source = elsewhere.write(name, bytes);
+    assert_another_volume(area, &source);
+    let (store, _, layer) = project_over(&area.join("study.mscanvas"), &source);
+    (store, layer, source)
+}
+
+/// Every name below the attempts root, to show an attempt left none behind.
+fn attempt_entries(supervisor: &Supervisor) -> std::collections::BTreeSet<std::ffi::OsString> {
+    fs::read_dir(&supervisor.attempts)
+        .map(|entries| entries.flatten().map(|entry| entry.file_name()).collect())
+        .unwrap_or_default()
+}
+
+fn execution_of(store: &ProjectStore) -> record::TargetedMs1Execution {
+    store
+        .describe()
+        .runs
+        .last()
+        .expect("a run")
+        .targeted_ms1
+        .clone()
+        .expect("a targeted run")
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_source_on_another_volume_runs_through_a_verified_copy_that_does_not_outlive_it() {
+    let area = WorkArea::new("cross-volume");
+    let elsewhere = Scratch::new("m93-cross-volume");
+    let bytes = mzml(&plain(), "");
+    let (store, layer, source) = cross_volume_project(&area, &elsewhere, "plain.mzML", &bytes);
     let supervisor = real();
+    let before = attempt_entries(&supervisor);
+    let targets = vec![
+        target("caffeine", CAFFEINE, "60", "20"),
+        target("adenine", ADENINE, "40", "10"),
+    ];
     let resolution = store
-        .resolve_targeted_ms1_plan(
-            layer,
-            &draft(vec![target("caffeine", CAFFEINE, "60", "20")]),
-            &supervisor,
-        )
+        .resolve_targeted_ms1_plan(layer, &draft(targets), &supervisor)
         .expect("resolved");
+    assert_eq!(resolution.blocked, None, "another volume no longer blocks");
+    let plan = resolution.plan.expect("a plan");
+    let end = run(&store, &plan, &supervisor).expect("recorded");
     assert_eq!(
-        resolution.blocked,
-        Some(ProjectError::SourceOnAnotherVolume)
+        end.outcome,
+        TerminalOutcome::Completed,
+        "{:?}",
+        failure_of(&store)
     );
-    let plan = resolution.plan.expect("a plan to review");
+    let artifact = end.artifact.expect("result");
+    assert_eq!(rows_of(&store, artifact)[0].outcome, RowOutcome::Detected);
+    let execution = execution_of(&store);
+    assert_eq!(execution.consumed_content, plan.expected_content);
     assert_eq!(
-        run(&store, &plan, &supervisor).err(),
-        Some(ProjectError::SourceOnAnotherVolume)
+        execution
+            .attempt
+            .as_ref()
+            .map(|attempt| attempt.source_view),
+        Some(SourceView::VerifiedSnapshotInWorkArea)
+    );
+    assert_eq!(fs::read(&source).expect("source"), bytes, "untouched");
+    assert_eq!(
+        attempt_entries(&supervisor),
+        before,
+        "the copy and its attempt directory are gone"
+    );
+
+    // The document says how the engine was given the source, never where.
+    store.save().expect("save");
+    let document = area.join("study.mscanvas");
+    let text = fs::read_to_string(&document).expect("document");
+    assert!(text.contains("\"verifiedSnapshotInWorkArea\""));
+    for private in ["m91-jobs", "attempts", SNAPSHOT_NAME, LINK_NAME, ".tmp"] {
+        assert!(!text.contains(private), "the document names {private:?}");
+    }
+
+    // M9.2 still holds with every trace of the execution gone: the result is
+    // read, drawn and tabulated from the store alone, with the source away.
+    let before_read = everything(&store, artifact, &plan);
+    drop(store);
+    let _aside = Aside::new(&source);
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    assert_eq!(
+        reopened.describe().artifacts[0]
+            .targeted_ms1
+            .as_ref()
+            .expect("result")
+            .availability,
+        "available"
+    );
+    assert_eq!(everything(&reopened, artifact, &plan), before_read);
+    let (figure, _) = reopened
+        .targeted_evidence_figure(
+            artifact,
+            plan.targets[0].target_id,
+            size(),
+            FigureTheme::Light,
+        )
+        .expect("drawn");
+    assert!(mscanvas_plot_spec::svg::render(&figure).contains("Targeted MS1 lookup"));
+    let stored = reopened.stored_targeted_result(artifact).expect("stored");
+    assert_eq!(
+        result_table(&stored, TableFormat::Csv).expect("a table").1,
+        plan.targets.len()
+    );
+    assert!(!reopened.describe().dirty, "reading recorded nothing");
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_source_under_a_non_ascii_path_on_another_volume_is_read_through_its_ascii_copy() {
+    let area = WorkArea::new("cross-volume-non-ascii");
+    let elsewhere = Scratch::new("m93-非ascii");
+    let (store, layer, source) = cross_volume_project(
+        &area,
+        &elsewhere,
+        "数据 目录/样品 plain.mzML",
+        &mzml(&plain(), ""),
+    );
+    assert!(!source.to_str().expect("utf-8").is_ascii());
+    let supervisor = real();
+    let plan = plan(
+        &store,
+        layer,
+        vec![target("caffeine", CAFFEINE, "60", "20")],
+        &supervisor,
+    );
+    let end = run(&store, &plan, &supervisor).expect("recorded");
+    assert_eq!(
+        end.outcome,
+        TerminalOutcome::Completed,
+        "{:?}",
+        failure_of(&store)
+    );
+    assert_eq!(
+        rows_of(&store, end.artifact.expect("result"))[0].outcome,
+        RowOutcome::Detected
+    );
+    assert_eq!(
+        execution_of(&store)
+            .attempt
+            .map(|attempt| attempt.source_view),
+        Some(SourceView::VerifiedSnapshotInWorkArea)
+    );
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_source_on_another_volume_changed_since_the_plan_is_not_copied_into_a_run() {
+    let area = WorkArea::new("cross-volume-changed");
+    let elsewhere = Scratch::new("m93-changed");
+    let bytes = mzml(&plain(), "");
+    let (store, layer, source) = cross_volume_project(&area, &elsewhere, "plain.mzML", &bytes);
+    let supervisor = real();
+    let plan = plan(
+        &store,
+        layer,
+        vec![target("caffeine", CAFFEINE, "60", "20")],
+        &supervisor,
+    );
+    let before = attempt_entries(&supervisor);
+    let mut changed = bytes;
+    let at = changed.len() / 2;
+    changed[at] = if changed[at] == b'A' { b'B' } else { b'A' };
+    fs::write(&source, &changed).expect("rewrite in place");
+    let end = run(&store, &plan, &supervisor).expect("recorded");
+    assert_eq!(end.outcome, TerminalOutcome::Failed);
+    let execution = execution_of(&store);
+    assert_eq!(
+        execution.failure,
+        Some(RunFailure {
+            code: FailureCode::SourceChanged,
+            stage: FailureStage::Source,
+        })
+    );
+    // What the copy read is recorded, and it is not what the plan expected.
+    assert_eq!(execution.consumed_content.len(), 1);
+    assert_ne!(execution.consumed_content, plan.expected_content);
+    assert!(execution.attempt.is_none(), "no worker was prepared");
+    assert!(store.describe().artifacts.is_empty());
+    assert_eq!(attempt_entries(&supervisor), before, "no copy left behind");
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_source_on_another_volume_that_is_gone_fails_unavailable_and_copies_nothing() {
+    let area = WorkArea::new("cross-volume-gone");
+    let elsewhere = Scratch::new("m93-gone");
+    let (store, layer, source) =
+        cross_volume_project(&area, &elsewhere, "plain.mzML", &mzml(&plain(), ""));
+    let supervisor = real();
+    let plan = plan(
+        &store,
+        layer,
+        vec![target("caffeine", CAFFEINE, "60", "20")],
+        &supervisor,
+    );
+    let before = attempt_entries(&supervisor);
+    fs::remove_file(&source).expect("the source goes");
+    let end = run(&store, &plan, &supervisor).expect("recorded");
+    assert_eq!(end.outcome, TerminalOutcome::Failed);
+    let execution = execution_of(&store);
+    assert_eq!(
+        execution.failure,
+        Some(RunFailure {
+            code: FailureCode::SourceUnavailable,
+            stage: FailureStage::Source,
+        })
+    );
+    assert!(execution.consumed_content.is_empty());
+    assert_eq!(attempt_entries(&supervisor), before);
+}
+
+/// An order over a source in `elsewhere`, for a supervisor bound to `adapter`.
+fn cross_volume_order_parts(
+    area: &WorkArea,
+    elsewhere: &Scratch,
+    scans: &[Scan],
+    adapter: &'static [u8],
+) -> (TargetedMs1Plan, PathBuf, PathBuf) {
+    let source = elsewhere.write("data/plain.mzML", &mzml(scans, ""));
+    assert_another_volume(area, &source);
+    let store = area.join("results");
+    fs::create_dir_all(&store).expect("store");
+    (plan_over(&source, adapter), source, store)
+}
+
+/// A cancellation that requests itself as the `at`th chunk is about to be read.
+fn cancelling_at(
+    at: usize,
+) -> (
+    Cancellation,
+    std::sync::Arc<std::sync::Mutex<Option<Cancellation>>>,
+) {
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None::<Cancellation>));
+    let seen = std::sync::Arc::new(AtomicU64::new(0));
+    let cancellation = {
+        let slot = std::sync::Arc::clone(&slot);
+        Cancellation::with_gate(std::sync::Arc::new(move || {
+            if seen.fetch_add(1, Ordering::SeqCst) + 1 == at as u64
+                && let Some(own) = slot.lock().expect("slot").as_ref()
+            {
+                own.request();
+            }
+        }))
+    };
+    *slot.lock().expect("slot") = Some(cancellation.clone());
+    (cancellation, slot)
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_cancel_while_the_copy_is_made_stops_before_any_worker_and_leaves_nothing() {
+    let area = WorkArea::new("cancel-copy");
+    let elsewhere = Scratch::new("m93-cancel-copy");
+    let (plan, source, store) =
+        cross_volume_order_parts(&area, &elsewhere, &plain(), recipe::ADAPTER_SOURCE);
+    assert!(
+        fs::metadata(&source).expect("source").len() > 3 * 64 * 1024,
+        "the fixture spans more chunks than the cancel waits for"
+    );
+    let supervisor = real();
+    let before = attempt_entries(&supervisor);
+    let (cancellation, slot) = cancelling_at(3);
+    let phases = std::sync::Mutex::new(Vec::new());
+    let order = AttemptOrder {
+        plan: &plan,
+        source: &source,
+        store: &store,
+        artifact: ArtifactId::new(),
+    };
+    let end = supervisor.attempt(&order, &cancellation, &|phase| {
+        phases.lock().expect("phases").push(phase);
+    });
+    slot.lock().expect("slot").take();
+    assert_eq!(
+        end,
+        AttemptEnd::Cancelled {
+            consumed: Vec::new(),
+            attempt: None,
+            stop: StopFacts {
+                reason: StopReason::CancelRequested,
+                worker_terminated: false,
+                exit_observed: false,
+            },
+        }
+    );
+    let phases = phases.into_inner().expect("phases");
+    assert!(phases.contains(&RunPhase::PreparingInput), "{phases:?}");
+    assert!(
+        !phases.contains(&RunPhase::LoadingSource),
+        "no worker ran: {phases:?}"
+    );
+    assert_eq!(
+        attempt_entries(&supervisor),
+        before,
+        "the partial copy is gone"
+    );
+    assert!(!store.join(".staging").exists());
+    assert_eq!(fs::read(&source).expect("source"), mzml(&plain(), ""));
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_worker_that_fails_after_the_copy_records_its_view_and_leaves_no_copy() {
+    let area = WorkArea::new("copy-then-fail");
+    let elsewhere = Scratch::new("m93-copy-then-fail");
+    let (plan, source, store) = cross_volume_order_parts(&area, &elsewhere, &plain(), EXIT_SEVEN);
+    let scratch = super::development_scratch().expect("a development build");
+    let supervisor =
+        Supervisor::at(&scratch, EXIT_SEVEN, Duration::from_secs(60)).expect("a supervisor");
+    let before = attempt_entries(&supervisor);
+    let order = AttemptOrder {
+        plan: &plan,
+        source: &source,
+        store: &store,
+        artifact: ArtifactId::new(),
+    };
+    match supervisor.attempt(&order, &Cancellation::default(), &|_| {}) {
+        AttemptEnd::Failed {
+            consumed,
+            attempt,
+            failure,
+            ..
+        } => {
+            assert_eq!(failure.code, FailureCode::WorkerExitedAbnormally);
+            assert_eq!(consumed, plan.expected_content);
+            assert_eq!(
+                attempt.map(|attempt| attempt.source_view),
+                Some(SourceView::VerifiedSnapshotInWorkArea)
+            );
+        }
+        other => panic!("not a failure: {other:?}"),
+    }
+    assert_eq!(attempt_entries(&supervisor), before);
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_result_that_cannot_be_staged_after_the_copy_publishes_nothing_and_leaves_no_copy() {
+    let area = WorkArea::new("copy-then-unpublished");
+    let elsewhere = Scratch::new("m93-copy-then-unpublished");
+    let (plan, source, store) =
+        cross_volume_order_parts(&area, &elsewhere, &plain(), recipe::ADAPTER_SOURCE);
+    // Something that is not a directory where the staging area goes.
+    fs::write(store.join(".staging"), b"in the way").expect("blocker");
+    let supervisor = real();
+    let before = attempt_entries(&supervisor);
+    let artifact = ArtifactId::new();
+    let order = AttemptOrder {
+        plan: &plan,
+        source: &source,
+        store: &store,
+        artifact,
+    };
+    match supervisor.attempt(&order, &Cancellation::default(), &|_| {}) {
+        AttemptEnd::Failed {
+            consumed,
+            attempt,
+            failure,
+            ..
+        } => {
+            assert_eq!(
+                failure,
+                RunFailure {
+                    code: FailureCode::PayloadNotPublished,
+                    stage: FailureStage::Publish,
+                }
+            );
+            assert_eq!(consumed, plan.expected_content);
+            assert_eq!(
+                attempt.map(|attempt| attempt.source_view),
+                Some(SourceView::VerifiedSnapshotInWorkArea),
+                "the worker ran over the copy and completed"
+            );
+        }
+        other => panic!("not a failure: {other:?}"),
+    }
+    assert!(!store.join(artifact.to_string()).exists());
+    assert_eq!(
+        fs::read(store.join(".staging")).expect("kept"),
+        b"in the way"
+    );
+    assert_eq!(attempt_entries(&supervisor), before);
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_copy_the_work_area_cannot_hold_is_refused_before_a_run_exists() {
+    let area = WorkArea::new("copy-too-large");
+    let elsewhere = Scratch::new("m93-too-large");
+    let (plan, source, _) =
+        cross_volume_order_parts(&area, &elsewhere, &plain(), recipe::ADAPTER_SOURCE);
+    let supervisor = real();
+    assert_eq!(supervisor.preflight(&plan, &source), Ok(()));
+    // The same plan, expecting more bytes than any volume here has free.
+    let mut larger = plan.clone();
+    larger.expected_content[0].byte_length = u64::MAX / 2;
+    assert_eq!(
+        supervisor.preflight(&larger, &source),
+        Err(ProjectError::InsufficientWorkAreaSpace)
+    );
+    // On the work area's own volume nothing is copied, so nothing is asked.
+    let (same_plan, same_source, _) = order_parts(&area, recipe::ADAPTER_SOURCE);
+    let mut same_larger = same_plan;
+    same_larger.expected_content[0].byte_length = u64::MAX / 2;
+    assert_eq!(supervisor.preflight(&same_larger, &same_source), Ok(()));
+}
+
+/// This process's peak working set and peak private commit, in bytes.
+#[cfg(windows)]
+fn peak_memory() -> (usize, usize) {
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        size: u32,
+        page_faults: u32,
+        peak_working_set: usize,
+        working_set: usize,
+        quota_peak_paged_pool: usize,
+        quota_paged_pool: usize,
+        quota_peak_non_paged_pool: usize,
+        quota_non_paged_pool: usize,
+        pagefile: usize,
+        peak_pagefile: usize,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetCurrentProcess"]
+        fn current_process() -> *mut std::ffi::c_void;
+        #[link_name = "K32GetProcessMemoryInfo"]
+        fn process_memory_info(
+            process: *mut std::ffi::c_void,
+            counters: *mut Counters,
+            size: u32,
+        ) -> i32;
+    }
+    let mut counters = Counters {
+        size: u32::try_from(std::mem::size_of::<Counters>()).expect("fits"),
+        ..Counters::default()
+    };
+    // SAFETY: a pseudo handle for this process and a correctly sized,
+    // initialized PROCESS_MEMORY_COUNTERS.
+    let answered =
+        unsafe { process_memory_info(current_process(), &raw mut counters, counters.size) };
+    assert_ne!(answered, 0, "memory counters");
+    (counters.peak_working_set, counters.peak_pagefile)
+}
+
+/// Measures the verified copy of a large fixture between two volumes, whole
+/// and cancelled halfway. Opt-in: `MSCANVAS_M93_MEASURE` names the fixture,
+/// which is only read, to make this test's own copy on the other volume.
+/// Writes what it saw to `test-results/m9.3/measure/`.
+#[cfg(windows)]
+#[test]
+#[ignore = "measures a copy of the large owned fixture MSCANVAS_M93_MEASURE names"]
+fn measure_a_verified_copy_between_volumes() {
+    use std::time::Instant;
+
+    let Some(fixture) = std::env::var_os("MSCANVAS_M93_MEASURE").map(PathBuf::from) else {
+        eprintln!("MSCANVAS_M93_MEASURE is not set; nothing measured");
+        return;
+    };
+    let area = WorkArea::new("m93-measure");
+    let elsewhere = Scratch::new("m93-measure");
+    let source = elsewhere.join("large.mzML");
+    fs::copy(&fixture, &source).expect("this test's own copy on the other volume");
+    assert_another_volume(&area, &source);
+    let plan = plan_over(&source, recipe::ADAPTER_SOURCE);
+    let byte_length = plan.expected_content[0].byte_length;
+    let store = area.join("results");
+    fs::create_dir_all(&store).expect("store");
+    let order = AttemptOrder {
+        plan: &plan,
+        source: &source,
+        store: &store,
+        artifact: ArtifactId::new(),
+    };
+    let before = peak_memory();
+
+    let whole = area.join("whole");
+    fs::create_dir_all(&whole).expect("directory");
+    let started = Instant::now();
+    let view = super::snapshot(
+        &order,
+        crate::project::observe::open_member(&source).expect("opened"),
+        &whole,
+        &Cancellation::default(),
+        &|_| {},
+    )
+    .map_err(|end| format!("{end:?}"))
+    .expect("a verified copy");
+    let prepared = started.elapsed();
+    assert_eq!(view.consumed, plan.expected_content);
+    let copy_bytes = fs::metadata(&view.path).expect("copy").len();
+    drop(view);
+    let after = peak_memory();
+
+    // Cancelled as the middle chunk is about to be read.
+    let halfway = byte_length.div_ceil(64 * 1024) / 2;
+    let requested = std::sync::Arc::new(std::sync::Mutex::new(None::<Instant>));
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None::<Cancellation>));
+    let seen = std::sync::Arc::new(AtomicU64::new(0));
+    let cancellation = {
+        let (requested, slot, seen) = (
+            std::sync::Arc::clone(&requested),
+            std::sync::Arc::clone(&slot),
+            std::sync::Arc::clone(&seen),
+        );
+        Cancellation::with_gate(std::sync::Arc::new(move || {
+            if seen.fetch_add(1, Ordering::SeqCst) + 1 == halfway
+                && let Some(own) = slot.lock().expect("slot").as_ref()
+            {
+                *requested.lock().expect("requested") = Some(Instant::now());
+                own.request();
+            }
+        }))
+    };
+    *slot.lock().expect("slot") = Some(cancellation.clone());
+    let cancelled_at = area.join("cancelled");
+    fs::create_dir_all(&cancelled_at).expect("directory");
+    let end = super::snapshot(
+        &order,
+        crate::project::observe::open_member(&source).expect("opened"),
+        &cancelled_at,
+        &cancellation,
+        &|_| {},
+    );
+    let returned = Instant::now();
+    slot.lock().expect("slot").take();
+    assert!(matches!(
+        end.as_ref().map_err(|end| end.as_ref()),
+        Err(AttemptEnd::Cancelled { .. })
+    ));
+    drop(end);
+    let partial = fs::metadata(cancelled_at.join(SNAPSHOT_NAME))
+        .expect("the partial copy, for its directory to remove")
+        .len();
+    let latency = returned.duration_since(requested.lock().expect("requested").expect("requested"));
+
+    let record = serde_json::json!({
+        "sourceBytes": byte_length,
+        "copyBytes": copy_bytes,
+        "preparedSeconds": prepared.as_secs_f64(),
+        "peakWorkingSetBytesBefore": before.0,
+        "peakWorkingSetBytesAfter": after.0,
+        "peakPrivateBytesBefore": before.1,
+        "peakPrivateBytesAfter": after.1,
+        "cancelledAtChunk": halfway,
+        "partialCopyBytes": partial,
+        "cancelToReturnSeconds": latency.as_secs_f64(),
+    });
+    eprintln!("{record}");
+    let evidence = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("the repository root")
+        .join("test-results")
+        .join("m9.3")
+        .join("measure");
+    fs::create_dir_all(&evidence).expect("evidence folder");
+    let name = fixture
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("fixture")
+        .to_owned();
+    fs::write(
+        evidence.join(format!("{name}.json")),
+        serde_json::to_vec_pretty(&record).expect("json"),
+    )
+    .expect("record");
+    assert_eq!(copy_bytes, byte_length);
+    assert!(partial < byte_length);
+}
+
+/// A crash-left attempt directory, as a session that died mid-attempt leaves
+/// it: marked, its owner long gone, holding a copy.
+fn crash_left(root: &Path, owner_process_id: u32) -> PathBuf {
+    let name = uuid::Uuid::new_v4().to_string();
+    let directory = root.join(&name);
+    fs::create_dir_all(directory.join("out")).expect("directory");
+    fs::write(
+        directory.join("owner.json"),
+        format!(
+            "{{\"schema\":\"mscanvas.targetedMs1.attemptScratch/1\",\"attemptId\":\"{name}\",\
+\"ownerProcessId\":{owner_process_id},\"ownerProcessCreated\":1}}"
+        ),
+    )
+    .expect("marker");
+    fs::write(directory.join(SNAPSHOT_NAME), vec![b'x'; 1024 * 1024]).expect("copy");
+    fs::write(directory.join("out").join("events.jsonl"), b"{}\n").expect("output");
+    directory
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn an_attempt_removes_crash_left_scratch_and_nothing_it_cannot_prove_is_its_own() {
+    let area = WorkArea::new("crash-left");
+    let (store, layer, _) = real_project(&area, "plain.mzML", &mzml(&plain(), ""));
+    let supervisor = real();
+    fs::create_dir_all(&supervisor.attempts).expect("attempts root");
+    // Process ids are multiples of four; no process has this one.
+    let crashed = crash_left(&supervisor.attempts, 0xFFFF_FFFD);
+    // Beside it, what looks like an attempt and is not provably one.
+    let unmarked = supervisor.attempts.join(uuid::Uuid::new_v4().to_string());
+    fs::create_dir_all(&unmarked).expect("unmarked");
+    fs::write(unmarked.join(SNAPSHOT_NAME), b"not ours to remove").expect("file");
+    // This process's id with another creation time: a reused id, owner gone.
+    let reused = crash_left(&supervisor.attempts, std::process::id());
+
+    let plan = plan(
+        &store,
+        layer,
+        vec![target("caffeine", CAFFEINE, "60", "20")],
+        &supervisor,
+    );
+    let end = run(&store, &plan, &supervisor).expect("recorded");
+    assert_eq!(
+        end.outcome,
+        TerminalOutcome::Completed,
+        "{:?}",
+        failure_of(&store)
+    );
+    assert_eq!(
+        execution_of(&store)
+            .attempt
+            .map(|attempt| attempt.source_view),
+        Some(SourceView::HardLinkInWorkArea),
+        "a source on the work area's volume is still linked, not copied"
     );
     assert!(
-        store.describe().runs.is_empty(),
-        "nothing recorded, nothing copied"
+        !crashed.exists(),
+        "crash-left scratch whose owner is gone is removed"
     );
-    assert_eq!(fs::read(&source).expect("source"), mzml(&plain(), ""));
+    assert!(!reused.exists(), "and so is one whose id was reused");
+    assert_eq!(
+        fs::read(unmarked.join(SNAPSHOT_NAME)).expect("kept"),
+        b"not ours to remove"
+    );
+    fs::remove_dir_all(&unmarked).expect("the test's own fixture");
+    // The published result is outside the work area and untouched by it.
+    assert_eq!(
+        store.describe().artifacts[0]
+            .targeted_ms1
+            .as_ref()
+            .expect("result")
+            .availability,
+        "available"
+    );
 }
 
 #[test]
@@ -2719,21 +3488,30 @@ fn a_cancel_during_a_real_run_terminates_the_worker_and_publishes_nothing() {
 /// A plan over a real fixture, bound to `adapter`, and an order for it.
 fn order_parts(area: &WorkArea, adapter: &'static [u8]) -> (TargetedMs1Plan, PathBuf, PathBuf) {
     let source = area.write("data/plain.mzML", &mzml(&plain(), ""));
-    let bytes = fs::read(&source).expect("source");
-    let digest = mscanvas_proteowizard::Sha256Digest::calculate(&bytes)
+    let store = area.join("results");
+    fs::create_dir_all(&store).expect("store");
+    (plan_over(&source, adapter), source, store)
+}
+
+/// A plan over the file at `source` as it is now, bound to `adapter`.
+fn plan_over(source: &Path, adapter: &'static [u8]) -> TargetedMs1Plan {
+    // Streamed, so a measurement over a large fixture is not a measurement of
+    // this helper reading it whole.
+    let digest = mscanvas_proteowizard::Sha256Digest::calculate_file(source)
         .expect("digest")
         .to_string();
+    let byte_length = fs::metadata(source).expect("source").len();
     let input = record::InputRecord {
         id: InputId::new(),
         label: "plain.mzML".to_owned(),
         locator: record::Locator::LocalAbsolute {
-            path: source.clone(),
+            path: source.to_path_buf(),
         },
         members: vec![record::MemberRecord {
             role: MemberRole::Primary,
             relative_name: String::new(),
             baseline: record::ContentBaseline {
-                byte_length: bytes.len() as u64,
+                byte_length,
                 sha256: digest,
             },
         }],
@@ -2746,16 +3524,13 @@ fn order_parts(area: &WorkArea, adapter: &'static [u8]) -> (TargetedMs1Plan, Pat
     binding.adapter_sha256 = mscanvas_proteowizard::Sha256Digest::calculate(adapter)
         .expect("digest")
         .to_string();
-    let plan = recipe::resolve(
+    recipe::resolve(
         &layer,
         &input,
         &draft(vec![target("caffeine", CAFFEINE, "60", "20")]),
         binding,
     )
-    .expect("a plan");
-    let store = area.join("results");
-    fs::create_dir_all(&store).expect("store");
-    (plan, source, store)
+    .expect("a plan")
 }
 
 fn attempt_with(adapter: &'static [u8], budget: Duration) -> (AttemptEnd, bool) {

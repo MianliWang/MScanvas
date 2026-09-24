@@ -10,20 +10,34 @@
 //! ## What one attempt does
 //!
 //! 1. Checks every file of the runtime against the manifest this build pins.
-//! 2. Makes a fresh attempt directory in the ASCII work area.
-//! 3. Opens the source for reading, sharing reads only, and keeps it open for
-//!    the whole attempt; hashes it through that handle and refuses bytes that
-//!    are not the ones the plan expects.
-//! 4. Makes a hard link to it in the attempt directory and shows the link is
-//!    the pinned object. The engine is given that ASCII name; the source's own
-//!    name, whatever characters it has, is never handed to it.
+//! 2. Removes what earlier sessions' attempts left in the work area, where
+//!    their owner is provably gone (see [`scratch`]), and makes a fresh,
+//!    marked attempt directory.
+//! 3. Opens the source for reading, sharing reads only, so it cannot be
+//!    written, renamed or deleted while it is held.
+//! 4. Gives it to the engine under an ASCII name in the attempt directory --
+//!    the source's own name, whatever characters it has, is never handed over
+//!    -- in one of two ways, decided by the held handle's volume:
+//!    - **on the work area's volume**, it hashes the source through the held
+//!      handle, refuses bytes that are not the ones the plan expects, makes a
+//!      hard link and shows the link is the held object. The source stays held
+//!      until the worker has exited;
+//!    - **anywhere else** (or where no link can be made), it copies the source
+//!      through the held handle into the attempt directory, hashing each chunk
+//!      as it is written, and refuses a copy whose bytes are not the plan's.
+//!      The source is then released, and the copy is held read-only and hashed
+//!      again through that hold; only a copy that is the plan's bytes is given
+//!      to the worker.
 //! 5. Writes the typed request and the adapter this build ships, and checks the
 //!    adapter's digest as written.
 //! 6. Starts the pinned interpreter through the process supervisor, with a
 //!    fixed argv, an allow-listed environment, a Job that allows one process
 //!    and caps its memory, and a wall-clock budget.
-//! 7. Releases the source after the worker has exited, removes the link, and
-//!    validates everything the worker wrote before any of it is staged.
+//! 7. After the worker has exited, removes the link's name while the source is
+//!    still held -- so the link is never the last name of the source's bytes
+//!    -- releases what it held, and validates everything the worker wrote
+//!    before any of it is staged. The attempt directory goes when the attempt
+//!    ends.
 //!
 //! ## What it is not
 //!
@@ -40,10 +54,10 @@
 //! reports the recipe unavailable: bundling and redistributing the runtime is a
 //! decision this milestone does not make.
 
+mod scratch;
 #[cfg(test)]
 mod tests;
 
-use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
@@ -60,7 +74,7 @@ use serde_json::Value;
 
 use crate::local_document;
 use crate::project::ProjectError;
-use crate::project::observe::{self, Cancellation};
+use crate::project::observe::{self, Cancellation, CopyFailure};
 use crate::project::payload::{self, EvidenceLine, PayloadRow, RowFailure, RowOutcome};
 use crate::project::recipe::{
     self, AttemptEnd, AttemptOrder, RUNTIME_MANIFEST_SHA256, RecipeExecutor, RunPhase,
@@ -84,6 +98,12 @@ const MANIFEST_SCHEMA: &str = "mscanvas.analysisRuntimeManifest/1";
 const MAX_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
 /// The largest `result.json` or `outcome.json` this build reads.
 const MAX_REPORT_BYTES: u64 = 1024 * 1024;
+/// The hard link's name in an attempt directory.
+const LINK_NAME: &str = "source.mzML";
+/// The verified copy's name in an attempt directory. Not the link's: a sweep
+/// tells a copy, which is only ever the attempt's, from a link, which may be
+/// the last name of a user's bytes, by it.
+const SNAPSHOT_NAME: &str = "snapshot.mzML";
 /// The modules whose files must be among those the worker reports loaded.
 const REQUIRED_MODULES: [&str; 4] = [
     "python313.dll",
@@ -194,15 +214,19 @@ impl RecipeExecutor for Supervisor {
             return Err(ProjectError::RecipeUnavailable);
         }
         fs::create_dir_all(&self.attempts).map_err(|_| ProjectError::RecipeUnavailable)?;
-        // Refused only on a proven difference. Where either volume cannot be
-        // established -- the source is missing, busy or unreadable -- the
-        // attempt goes ahead and its pinned read records the real reason.
-        if let (Some(work), Some((volume, _))) = (
+        // A source on another volume is copied into the work area for the
+        // attempt. Refused only where that copy provably cannot fit: where
+        // either volume or the free space cannot be established -- the source
+        // is missing, busy or unreadable -- the attempt goes ahead, and its
+        // pinned read or its own write records the real reason.
+        if let (Some(work), Some((volume, _)), Some(available)) = (
             local_document::directory_volume(&self.attempts),
             local_document::object_identity(source),
+            local_document::available_bytes(&self.attempts),
         ) && work != volume
+            && !room_for_snapshot(available, plan)
         {
-            return Err(ProjectError::SourceOnAnotherVolume);
+            return Err(ProjectError::InsufficientWorkAreaSpace);
         }
         Ok(())
     }
@@ -226,7 +250,8 @@ impl RecipeExecutor for Supervisor {
         if cancellation.requested() {
             return cancelled_before_launch(Vec::new(), None);
         }
-        let Some(directory) = AttemptDirectory::create(&self.attempts) else {
+        scratch::sweep(&self.attempts);
+        let Some(directory) = scratch::AttemptDirectory::create(&self.attempts) else {
             return failed(
                 Vec::new(),
                 None,
@@ -245,50 +270,25 @@ impl Supervisor {
         cancellation: &Cancellation,
         progress: &(dyn Fn(RunPhase) + Sync),
         manifest: &BTreeMap<String, String>,
-        directory: &AttemptDirectory,
+        directory: &scratch::AttemptDirectory,
     ) -> AttemptEnd {
         progress(RunPhase::PinningSource);
-        // Held until the worker has exited: while it is, the source cannot be
-        // opened for writing, renamed or deleted by its name, so the bytes the
-        // worker reads are the bytes hashed here.
-        let held = match observe::hold_member(order.source, cancellation) {
-            Ok(held) => held,
-            Err(_) if cancellation.requested() => return cancelled_before_launch(Vec::new(), None),
-            Err(_) => {
-                return failed(
-                    Vec::new(),
-                    None,
-                    FailureCode::SourceUnavailable,
-                    FailureStage::Source,
-                );
-            }
+        let Ok(source) = observe::open_member(order.source) else {
+            return failed(
+                Vec::new(),
+                None,
+                FailureCode::SourceUnavailable,
+                FailureStage::Source,
+            );
         };
-        let consumed = vec![ObservedMember {
-            role: MemberRole::Primary,
-            relative_name: String::new(),
-            byte_length: held.byte_length,
-            sha256: held.digest.to_string(),
-        }];
-        if consumed != order.plan.expected_content {
-            return failed(
-                consumed,
-                None,
-                FailureCode::SourceChanged,
-                FailureStage::Source,
-            );
-        }
-        let link = directory.path.join("source.mzML");
-        if fs::hard_link(order.source, &link).is_err()
-            || held.identity.is_none()
-            || local_document::object_identity(&link) != held.identity
-        {
-            return failed(
-                consumed,
-                None,
-                FailureCode::ExecutionViewUnavailable,
-                FailureStage::Source,
-            );
-        }
+        // Held until the worker has exited: while it is, what the view names
+        // cannot be opened for writing, renamed or deleted by its name, so the
+        // bytes the worker reads are the bytes hashed here.
+        let view = match execution_view(order, source, &directory.path, cancellation, progress) {
+            Ok(view) => view,
+            Err(end) => return *end,
+        };
+        let consumed = view.consumed.clone();
         let Some(interpreter) = manifest
             .get("python.exe")
             .and_then(|digest| digest.parse::<Sha256Digest>().ok())
@@ -304,7 +304,7 @@ impl Supervisor {
             adapter_sha256: self.adapter_sha256.clone(),
             runtime_manifest_sha256: RUNTIME_MANIFEST_SHA256.to_owned(),
             interpreter_sha256: interpreter.to_string(),
-            source_view: SourceView::HardLinkInWorkArea,
+            source_view: view.kind,
             engine_report: None,
             loaded_modules: Vec::new(),
         };
@@ -312,7 +312,7 @@ impl Supervisor {
         let request = directory.path.join("request.json");
         let out = directory.path.join("out");
         let prepared = write_new(&adapter, self.adapter)
-            .and_then(|()| write_new(&request, &request_bytes(order, &link, &held)?))
+            .and_then(|()| write_new(&request, &request_bytes(order, &view.path, &view.held)?))
             .and_then(|()| fs::create_dir(&out))
             .and_then(|()| fs::create_dir(directory.path.join("home")))
             .and_then(|()| fs::create_dir(directory.path.join("tmp")));
@@ -406,9 +406,9 @@ impl Supervisor {
             finished.store(true, Ordering::Release);
             output
         });
-        // A worker whose end was not observed may still be reading. The source
-        // stays held and the link and the work area stay where they are until
-        // this process exits, and the store refuses another run meanwhile.
+        // A worker whose end was not observed may still be reading. What the
+        // view holds stays held and the work area stays where it is until this
+        // process exits, and the store refuses another run meanwhile.
         let unaccounted = match &output {
             Err(error) => error.leaves_an_owned_process_unaccounted(),
             Ok(output) => {
@@ -416,7 +416,7 @@ impl Supervisor {
             }
         };
         if unaccounted {
-            std::mem::forget(held);
+            std::mem::forget(view);
             directory.keep();
             return failed(
                 consumed,
@@ -425,9 +425,8 @@ impl Supervisor {
                 FailureStage::Runtime,
             );
         }
-        // Every process of the attempt is gone: the source may go now.
-        drop(held);
-        let _ = fs::remove_file(&link);
+        // Every process of the attempt is gone: the view may go now.
+        drop(view);
         let timed_out = timed_out.load(Ordering::Acquire);
 
         let output = match output {
@@ -571,46 +570,193 @@ impl Supervisor {
 }
 
 // ---------------------------------------------------------------------------
-// The attempt directory
+// The execution view
 // ---------------------------------------------------------------------------
 
-/// One attempt's own directory in the work area, removed when the attempt
-/// ends however it ends.
-///
-/// Created fresh under a new identifier, so what is removed is only ever what
-/// this attempt made: the link to the source (a name, not the data), the
-/// request, the adapter and whatever the worker wrote.
-struct AttemptDirectory {
+/// The bytes the worker is given under an ASCII name, and the read-only hold
+/// that keeps them so until it has exited.
+struct ExecutionView {
+    /// The source itself for a link; the copy for a snapshot.
+    held: observe::HeldMember,
     path: PathBuf,
-    /// Left in place: a worker whose end was not observed may still use it.
-    kept: Cell<bool>,
+    kind: SourceView,
+    /// What the source held when the view was made: the plan's content.
+    consumed: Vec<ObservedMember>,
 }
 
-impl AttemptDirectory {
-    fn create(root: &Path) -> Option<Self> {
-        let path = root.join(uuid::Uuid::new_v4().to_string());
-        fs::create_dir(&path).ok()?;
-        Some(Self {
-            path,
-            kept: Cell::new(false),
-        })
-    }
-
-    fn keep(&self) {
-        self.kept.set(true);
-    }
-}
-
-impl Drop for AttemptDirectory {
+impl Drop for ExecutionView {
     fn drop(&mut self) {
-        if self.kept.get() {
-            return;
+        // A link's name goes before the source is released -- `held` is
+        // dropped after this body -- so it is never the last name of the
+        // source's bytes. A copy is the attempt's own and goes with its
+        // directory.
+        if self.kind == SourceView::HardLinkInWorkArea {
+            let _ = fs::remove_file(&self.path);
         }
-        // The link first and by name: removing it removes a name, never the
-        // source's bytes.
-        let _ = fs::remove_file(self.path.join("source.mzML"));
-        let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+/// Whether `available` bytes hold a copy of what the plan reads: its length,
+/// and nothing added for what the worker writes, which is not the copy's.
+fn room_for_snapshot(available: u64, plan: &TargetedMs1Plan) -> bool {
+    plan.expected_content
+        .iter()
+        .try_fold(0_u64, |needed, member| {
+            needed.checked_add(member.byte_length)
+        })
+        .is_some_and(|needed| needed <= available)
+}
+
+fn consumed_of(byte_length: u64, digest: Sha256Digest) -> Vec<ObservedMember> {
+    vec![ObservedMember {
+        role: MemberRole::Primary,
+        relative_name: String::new(),
+        byte_length,
+        sha256: digest.to_string(),
+    }]
+}
+
+/// Gives the held source to the worker under an ASCII name in `directory`: a
+/// hard link where the held object is on the work area's volume, a verified
+/// copy of its bytes where it is not or no link can be made there.
+///
+/// Decided from the held handle, not from the name: which object is read is
+/// the one this attempt holds.
+fn execution_view(
+    order: &AttemptOrder<'_>,
+    source: observe::OpenedMember,
+    directory: &Path,
+    cancellation: &Cancellation,
+    progress: &(dyn Fn(RunPhase) + Sync),
+) -> Result<ExecutionView, Box<AttemptEnd>> {
+    let same_volume = source
+        .identity()
+        .zip(local_document::directory_volume(directory))
+        .is_some_and(|((volume, _), work)| volume == work);
+    if !same_volume {
+        return snapshot(order, source, directory, cancellation, progress);
+    }
+    let held = match source.measure(cancellation) {
+        Ok(held) => held,
+        Err(_) if cancellation.requested() => {
+            return Err(Box::new(cancelled_before_launch(Vec::new(), None)));
+        }
+        Err(_) => {
+            return Err(Box::new(failed(
+                Vec::new(),
+                None,
+                FailureCode::SourceUnavailable,
+                FailureStage::Source,
+            )));
+        }
+    };
+    let consumed = consumed_of(held.byte_length, held.digest);
+    if consumed != order.plan.expected_content {
+        return Err(Box::new(failed(
+            consumed,
+            None,
+            FailureCode::SourceChanged,
+            FailureStage::Source,
+        )));
+    }
+    let link = directory.join(LINK_NAME);
+    if fs::hard_link(order.source, &link).is_err() {
+        // No link on this volume -- a filesystem without them, or a volume
+        // serial two volumes happen to share. The bytes are copied instead,
+        // read again through the same held handle.
+        return snapshot(order, held.into_opened(), directory, cancellation, progress);
+    }
+    let identity = held.identity;
+    let view = ExecutionView {
+        held,
+        path: link,
+        kind: SourceView::HardLinkInWorkArea,
+        consumed,
+    };
+    // A link that is not the held object is refused, and never replaced by a
+    // copy: something other than this attempt put it there.
+    if identity.is_none() || local_document::object_identity(&view.path) != identity {
+        return Err(Box::new(failed(
+            view.consumed.clone(),
+            None,
+            FailureCode::ExecutionViewUnavailable,
+            FailureStage::Source,
+        )));
+    }
+    Ok(view)
+}
+
+/// Copies the held source into `directory` and holds the copy, refusing any
+/// copy that is not the plan's bytes.
+///
+/// The source is read once, through the handle this attempt already holds,
+/// and each chunk is hashed as it is written: the digest compared with the
+/// plan is of exactly the bytes the copy was given, and they came out of the
+/// held object. Only then is the source released, and the copy -- its write
+/// handle closed, since the engine's reader shares reads only -- is held
+/// read-only and hashed again through that hold, so what the worker reads is
+/// shown to be the plan's bytes and cannot be changed while it reads them.
+fn snapshot(
+    order: &AttemptOrder<'_>,
+    source: observe::OpenedMember,
+    directory: &Path,
+    cancellation: &Cancellation,
+    progress: &(dyn Fn(RunPhase) + Sync),
+) -> Result<ExecutionView, Box<AttemptEnd>> {
+    let unavailable =
+        |consumed, code| Err(Box::new(failed(consumed, None, code, FailureStage::Source)));
+    progress(RunPhase::PreparingInput);
+    let path = directory.join(SNAPSHOT_NAME);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    // Shared with nobody while it is written: no other program can write,
+    // rename or remove the copy under the bytes being hashed into it.
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
+    let Ok(mut file) = options.open(&path) else {
+        return unavailable(Vec::new(), FailureCode::ExecutionViewUnavailable);
+    };
+    let copied = source.copy_into(&mut file, cancellation);
+    drop(file);
+    let copied = match copied {
+        Ok(copied) => copied,
+        Err(CopyFailure::Cancelled) => {
+            return Err(Box::new(cancelled_before_launch(Vec::new(), None)));
+        }
+        Err(CopyFailure::SourceUnstable) => {
+            return unavailable(Vec::new(), FailureCode::SourceUnavailable);
+        }
+        Err(CopyFailure::DestinationFull) => {
+            return unavailable(Vec::new(), FailureCode::InsufficientWorkAreaSpace);
+        }
+        Err(CopyFailure::DestinationUnwritable) => {
+            return unavailable(Vec::new(), FailureCode::ExecutionViewUnavailable);
+        }
+    };
+    let consumed = consumed_of(copied.byte_length, copied.digest);
+    if consumed != order.plan.expected_content {
+        return unavailable(consumed, FailureCode::SourceChanged);
+    }
+    // The source's part is over. What the worker reads is this copy, so the
+    // source may be moved or removed from here on without changing what this
+    // attempt consumed.
+    drop(source);
+    let held = match observe::hold_member(&path, cancellation) {
+        Ok(held) => held,
+        Err(_) if cancellation.requested() => {
+            return Err(Box::new(cancelled_before_launch(consumed, None)));
+        }
+        Err(_) => return unavailable(consumed, FailureCode::ExecutionViewUnavailable),
+    };
+    if (held.byte_length, held.digest) != (copied.byte_length, copied.digest) {
+        return unavailable(consumed, FailureCode::ExecutionViewUnavailable);
+    }
+    Ok(ExecutionView {
+        held,
+        path,
+        kind: SourceView::VerifiedSnapshotInWorkArea,
+        consumed,
+    })
 }
 
 fn write_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {

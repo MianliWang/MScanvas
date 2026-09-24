@@ -182,6 +182,7 @@ export type FailureCode =
   | "sourceUnsortedMz"
   | "sourceNonfinite"
   | "executionViewUnavailable"
+  | "insufficientWorkAreaSpace"
   | "runtimeUnverified"
   | "runtimeModuleMismatch"
   | "workerLaunchFailed"
@@ -202,7 +203,8 @@ export interface AttemptFacts {
   readonly adapterSha256: string;
   readonly runtimeManifestSha256: string;
   readonly interpreterSha256: string;
-  readonly sourceView: "hardLinkInWorkArea";
+  /** How the engine was given the source; never where. */
+  readonly sourceView: "hardLinkInWorkArea" | "verifiedSnapshotInWorkArea";
   readonly engineReport: {
     readonly python: string;
     readonly pyopenms: string;

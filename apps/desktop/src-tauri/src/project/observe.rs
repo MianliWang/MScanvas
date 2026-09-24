@@ -322,12 +322,22 @@ pub fn observe_member(path: &Path, cancellation: &Cancellation) -> MemberObserva
 /// than the measurement: while this is held, the file cannot be opened for
 /// writing, renamed or deleted by its name. It is released by dropping it.
 pub(crate) struct HeldMember {
-    /// Held, not read: this open handle is what keeps the bytes fixed.
-    #[allow(dead_code)]
+    /// This open handle is what keeps the bytes fixed.
     pub(crate) file: std::fs::File,
     pub(crate) byte_length: u64,
     pub(crate) digest: Sha256Digest,
     pub(crate) identity: Option<ObjectIdentity>,
+}
+
+impl HeldMember {
+    /// The same open handle, for a caller that has to read the object again
+    /// -- to copy it -- without letting go of it in between.
+    pub(crate) fn into_opened(self) -> OpenedMember {
+        OpenedMember {
+            file: self.file,
+            byte_length: self.byte_length,
+        }
+    }
 }
 
 /// [`observe_member`], answering the open handle as well as what it measured.
@@ -340,6 +350,50 @@ pub(crate) fn hold_member(
     path: &Path,
     cancellation: &Cancellation,
 ) -> Result<HeldMember, UnavailableReason> {
+    open_member(path)?.measure(cancellation)
+}
+
+/// One member opened for a stable read, with nothing read from it yet.
+///
+/// The first half of [`hold_member`], for an operation that has to decide
+/// what to do with the object -- measure it where it is, or copy it while
+/// measuring it -- before any of its bytes are read. Holding it already
+/// refuses every other program a write, a rename or a delete of the object.
+pub(crate) struct OpenedMember {
+    file: std::fs::File,
+    byte_length: u64,
+}
+
+/// What [`OpenedMember::copy_into`] read and wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopiedMember {
+    pub(crate) byte_length: u64,
+    /// The digest of exactly the bytes handed to the destination.
+    pub(crate) digest: Sha256Digest,
+}
+
+/// Why a copy did not produce a digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CopyFailure {
+    /// The operation was cancelled between two chunks.
+    Cancelled,
+    /// The source could not be read to its end through the held handle, or
+    /// its end was not where its length at the open said.
+    SourceUnstable,
+    /// The destination refused a chunk because its volume is full.
+    DestinationFull,
+    /// The destination refused a chunk for any other reason.
+    DestinationUnwritable,
+}
+
+/// Opens one member for a stable read and classifies what is at the name,
+/// reading none of its bytes.
+///
+/// # Errors
+///
+/// The reason the member cannot be read, exactly as [`observe_member`]
+/// reports it.
+pub(crate) fn open_member(path: &Path) -> Result<OpenedMember, UnavailableReason> {
     let file = match open_for_stable_read(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -364,34 +418,131 @@ pub(crate) fn hold_member(
     if !local_document::is_ordinary_file(&metadata) {
         return Err(UnavailableReason::UnsafeReference);
     }
-    let byte_length = metadata.len();
-    let mut handle = &file;
-    if io::Seek::rewind(&mut handle).is_err() {
-        return Err(UnavailableReason::UnstableRead);
-    }
-    let reader = Cooperative {
-        inner: &file,
-        cancellation,
-    };
-    let digest = match Sha256Digest::calculate_reader(reader) {
-        Ok(digest) => digest,
-        // The handle was open and the read did not finish. That is not a fact
-        // about the content, so it must not be reported as one.
-        Err(_) => return Err(UnavailableReason::UnstableRead),
-    };
-    // Taken from the object the bytes came out of, while `file` is still open,
-    // and deliberately not from the path afterwards. The whole point of the
-    // share mode above is that this object cannot be replaced or deleted while
-    // it is held; asking the *name* once the handle is gone would answer about
-    // whatever the name means then, and two such answers agreeing proves only
-    // that they were taken after the same replacement.
-    let identity = local_document::object_identity_of(&file);
-    Ok(HeldMember {
+    Ok(OpenedMember {
         file,
-        byte_length,
-        digest,
-        identity,
+        byte_length: metadata.len(),
     })
+}
+
+impl OpenedMember {
+    /// The object this handle holds, asked of the handle.
+    pub(crate) fn identity(&self) -> Option<ObjectIdentity> {
+        local_document::object_identity_of(&self.file)
+    }
+
+    /// Hashes the object through this handle and keeps the handle.
+    ///
+    /// # Errors
+    ///
+    /// [`UnavailableReason::UnstableRead`] where the read did not finish,
+    /// cancelled or not.
+    pub(crate) fn measure(
+        self,
+        cancellation: &Cancellation,
+    ) -> Result<HeldMember, UnavailableReason> {
+        let Self { file, byte_length } = self;
+        let mut handle = &file;
+        if io::Seek::rewind(&mut handle).is_err() {
+            return Err(UnavailableReason::UnstableRead);
+        }
+        let reader = Cooperative {
+            inner: &file,
+            cancellation,
+        };
+        let digest = match Sha256Digest::calculate_reader(reader) {
+            Ok(digest) => digest,
+            // The handle was open and the read did not finish. That is not a
+            // fact about the content, so it must not be reported as one.
+            Err(_) => return Err(UnavailableReason::UnstableRead),
+        };
+        // Taken from the object the bytes came out of, while `file` is still
+        // open, and deliberately not from the path afterwards. The whole point
+        // of the share mode is that this object cannot be replaced or deleted
+        // while it is held; asking the *name* once the handle is gone would
+        // answer about whatever the name means then, and two such answers
+        // agreeing proves only that they were taken after the same replacement.
+        let identity = local_document::object_identity_of(&file);
+        Ok(HeldMember {
+            file,
+            byte_length,
+            digest,
+            identity,
+        })
+    }
+
+    /// Copies the object's bytes into `destination` in one read through this
+    /// handle, hashing them on the way.
+    ///
+    /// One pass, not a hash followed by a copy: each chunk read from the held
+    /// object is written to the destination and then given to the digest, so
+    /// the digest is of exactly the bytes the destination was handed, and they
+    /// are bytes of this object. A copy whose length is not the length the
+    /// object had at the open is refused, which the share mode makes a read
+    /// failure rather than a content change.
+    ///
+    /// Nothing is flushed to the device here. The destination holds the bytes
+    /// as far as a reader of it is concerned, which is the one claim made; a
+    /// caller that relies on them re-reads them.
+    ///
+    /// # Errors
+    ///
+    /// A [`CopyFailure`]; the destination then holds a prefix of the bytes at
+    /// most, and no digest was established.
+    pub(crate) fn copy_into(
+        &self,
+        destination: &mut dyn io::Write,
+        cancellation: &Cancellation,
+    ) -> Result<CopiedMember, CopyFailure> {
+        let mut handle = &self.file;
+        if io::Seek::rewind(&mut handle).is_err() {
+            return Err(CopyFailure::SourceUnstable);
+        }
+        let mut tee = Tee {
+            source: Cooperative {
+                inner: &self.file,
+                cancellation,
+            },
+            destination,
+            copied: 0,
+            refused: None,
+        };
+        let digest = Sha256Digest::calculate_reader(&mut tee);
+        // What happened, in the order it can be known: a destination that
+        // refused a chunk said so itself, and a cancel is the flag's answer.
+        match (digest, tee.refused) {
+            (_, Some(io::ErrorKind::StorageFull)) => Err(CopyFailure::DestinationFull),
+            (_, Some(_)) => Err(CopyFailure::DestinationUnwritable),
+            (Err(_), None) if cancellation.requested() => Err(CopyFailure::Cancelled),
+            (Ok(digest), None) if tee.copied == self.byte_length => Ok(CopiedMember {
+                byte_length: tee.copied,
+                digest,
+            }),
+            _ => Err(CopyFailure::SourceUnstable),
+        }
+    }
+}
+
+/// A reader that hands every chunk it reads to a destination before the
+/// digest sees it.
+struct Tee<'a> {
+    source: Cooperative<'a>,
+    destination: &'a mut dyn io::Write,
+    copied: u64,
+    /// Why the destination refused a chunk, kept because the digest reports
+    /// only that its read failed.
+    refused: Option<io::ErrorKind>,
+}
+
+impl io::Read for Tee<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = self.source.read(buffer)?;
+        if let Err(error) = self.destination.write_all(&buffer[..count]) {
+            self.refused = Some(error.kind());
+            return Err(error);
+        }
+        self.copied += count as u64;
+        Ok(count)
+    }
 }
 
 /// Why a name that exists could not be opened.

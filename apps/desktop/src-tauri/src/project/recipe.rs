@@ -399,6 +399,8 @@ pub enum RunPhase {
     Preparing,
     VerifyingRuntime,
     PinningSource,
+    /// Copying the pinned source into the work area for the engine.
+    PreparingInput,
     LoadingSource,
     CheckingSource,
     RunningEngine,
@@ -414,6 +416,7 @@ impl RunPhase {
             Self::Preparing => "preparing",
             Self::VerifyingRuntime => "verifyingRuntime",
             Self::PinningSource => "pinningSource",
+            Self::PreparingInput => "preparingInput",
             Self::LoadingSource => "loadingSource",
             Self::CheckingSource => "checkingSource",
             Self::RunningEngine => "runningEngine",

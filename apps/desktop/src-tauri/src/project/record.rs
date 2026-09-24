@@ -847,6 +847,9 @@ pub enum FailureCode {
     SourceNonfinite,
     /// No execution view of the source could be made in the work area.
     ExecutionViewUnavailable,
+    /// The work area's volume had no room left for the copy of the source
+    /// the attempt was making. Nothing was run.
+    InsufficientWorkAreaSpace,
     /// The runtime, adapter or interpreter was not the one this build pins.
     RuntimeUnverified,
     /// A module the worker loaded was not the file the runtime pins.
@@ -911,13 +914,18 @@ pub struct StopFacts {
     pub exit_observed: bool,
 }
 
-/// How the engine was given the source.
+/// How the engine was given the source. Where it was given is never recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SourceView {
     /// A hard link to the pinned source, made in the ASCII work area and shown
     /// to be the pinned object before the worker started.
     HardLinkInWorkArea,
+    /// A copy of the pinned source's bytes, made in the ASCII work area in
+    /// one read through the pinned handle, whose length and SHA-256 were the
+    /// plan's as written and again as held for the worker. Added to schema 4
+    /// in M9.3; a build before it refuses a document that records one.
+    VerifiedSnapshotInWorkArea,
 }
 
 /// What the loaded engine said about itself. Self-reported, not measured.

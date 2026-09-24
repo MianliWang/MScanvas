@@ -126,7 +126,7 @@ const REFUSALS = {
   analysisQuarantined: "projectRefusedAnalysisQuarantined",
   recipeUnavailable: "projectRefusedRecipeUnavailable",
   recipeSourceUnsupported: "projectRefusedRecipeSourceUnsupported",
-  sourceOnAnotherVolume: "projectRefusedSourceOnAnotherVolume",
+  insufficientWorkAreaSpace: "projectRefusedInsufficientWorkAreaSpace",
   planNotCurrent: "projectRefusedPlanNotCurrent",
   payloadStoreUnusable: "projectRefusedPayloadStoreUnusable",
   destinationStoreExists: "projectRefusedDestinationStoreExists",

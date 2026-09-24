@@ -446,6 +446,252 @@ fn a_file_held_writable_elsewhere_reports_an_unstable_read() {
     assert_eq!(verification(&store, id), "matchingRecordedContent");
 }
 
+// ---------------------------------------------------------------------------
+// Copying a held member (M9.3): one read through the held handle, hashed on
+// the way into the destination
+// ---------------------------------------------------------------------------
+
+/// Bytes that are not a repetition, so a chunk written twice or out of order
+/// cannot hash the same as the file.
+fn varied(length: usize) -> Vec<u8> {
+    let mut state = 0x9E37_79B9_u32;
+    (0..length)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state.to_le_bytes()[0]
+        })
+        .collect()
+}
+
+/// A destination that remembers every chunk it was handed and can be told to
+/// refuse from a byte onwards.
+struct Recorder {
+    bytes: Vec<u8>,
+    largest_write: usize,
+    writes: usize,
+    refuse_after: Option<(usize, std::io::ErrorKind)>,
+}
+
+impl Recorder {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            largest_write: 0,
+            writes: 0,
+            refuse_after: None,
+        }
+    }
+
+    fn refusing_after(bytes: usize, kind: std::io::ErrorKind) -> Self {
+        Self {
+            refuse_after: Some((bytes, kind)),
+            ..Self::new()
+        }
+    }
+}
+
+impl std::io::Write for Recorder {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if let Some((limit, kind)) = self.refuse_after
+            && self.bytes.len() + buffer.len() > limit
+        {
+            return Err(std::io::Error::from(kind));
+        }
+        self.bytes.extend_from_slice(buffer);
+        self.largest_write = self.largest_write.max(buffer.len());
+        self.writes += 1;
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_copy_through_the_held_handle_is_the_objects_bytes_and_their_digest() {
+    let scratch = Scratch::new("copy");
+    let bytes = varied(300 * 1024 + 17);
+    let path = scratch.write("source.bin", &bytes);
+
+    let opened = observe::open_member(&path).expect("opened");
+    let mut destination = Recorder::new();
+    let copied = opened
+        .copy_into(&mut destination, &Cancellation::default())
+        .expect("copied");
+
+    assert_eq!(
+        destination.bytes, bytes,
+        "the destination holds the object's bytes"
+    );
+    assert_eq!(copied.byte_length, bytes.len() as u64);
+    assert_eq!(
+        copied.digest,
+        mscanvas_proteowizard::Sha256Digest::calculate(&bytes).expect("digest"),
+        "the digest is of the bytes the destination was handed"
+    );
+    // Streamed, never whole: no chunk larger than the digest's own buffer.
+    assert!(destination.writes > 1);
+    assert!(
+        destination.largest_write <= 64 * 1024,
+        "{}",
+        destination.largest_write
+    );
+
+    // And the same handle, measured where it is, agrees with its own copy.
+    let held = opened.measure(&Cancellation::default()).expect("measured");
+    assert_eq!(
+        (held.byte_length, held.digest),
+        (copied.byte_length, copied.digest)
+    );
+}
+
+/// Windows-specific: what the held handle protects while a copy is in
+/// progress, asserted mid-copy rather than assumed. The source cannot be
+/// deleted, renamed or opened for writing, and the copy that finishes is the
+/// original's bytes.
+#[cfg(windows)]
+#[test]
+fn a_held_member_cannot_be_changed_deleted_or_renamed_while_it_is_copied() {
+    let scratch = Scratch::new("copy-held");
+    let bytes = varied(256 * 1024);
+    let path = scratch.write("source.bin", &bytes);
+    let reached = Arc::new(Barrier::new(2));
+    let proceed = Arc::new(Barrier::new(2));
+    let (cancellation, _) = gated(Arc::clone(&reached), Arc::clone(&proceed));
+
+    let copied = std::thread::scope(|scope| {
+        let copying = scope.spawn(|| {
+            let opened = observe::open_member(&path).expect("opened");
+            let mut destination = Recorder::new();
+            let copied = opened.copy_into(&mut destination, &cancellation);
+            (copied, destination.bytes)
+        });
+        reached.wait();
+        assert!(fs::remove_file(&path).is_err(), "delete refused while held");
+        assert!(
+            fs::rename(&path, scratch.join("moved.bin")).is_err(),
+            "rename refused while held"
+        );
+        assert!(
+            fs::OpenOptions::new().write(true).open(&path).is_err(),
+            "a writer refused while held"
+        );
+        proceed.wait();
+        copying.join().expect("the copy thread")
+    });
+    let (copied, written) = copied;
+    let copied = copied.expect("copied");
+    assert_eq!(written, bytes);
+    assert_eq!(copied.byte_length, bytes.len() as u64);
+    assert_eq!(
+        fs::read(&path).expect("the source"),
+        bytes,
+        "and it is untouched"
+    );
+}
+
+#[test]
+fn a_cancel_during_a_copy_stops_it_between_chunks_with_no_digest() {
+    let scratch = Scratch::new("copy-cancel");
+    let bytes = varied(512 * 1024);
+    let path = scratch.write("source.bin", &bytes);
+    let slot = Arc::new(std::sync::Mutex::new(None::<Cancellation>));
+    let seen = Arc::new(AtomicUsize::new(0));
+    let cancellation = {
+        let slot = Arc::clone(&slot);
+        let seen = Arc::clone(&seen);
+        Cancellation::with_gate(Arc::new(move || {
+            // Cancel as the third chunk is about to be read.
+            if seen.fetch_add(1, Ordering::SeqCst) == 2
+                && let Some(own) = slot.lock().expect("slot").as_ref()
+            {
+                own.request();
+            }
+        }))
+    };
+    *slot.lock().expect("slot") = Some(cancellation.clone());
+
+    let opened = observe::open_member(&path).expect("opened");
+    let mut destination = Recorder::new();
+    let copied = opened.copy_into(&mut destination, &cancellation);
+    // The gate held a clone of its own cancellation; let both go.
+    slot.lock().expect("slot").take();
+    assert_eq!(copied, Err(observe::CopyFailure::Cancelled));
+    // Two chunks went through and nothing after them did.
+    assert_eq!(destination.bytes.len(), 2 * 64 * 1024);
+    assert_eq!(seen.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn a_destination_that_refuses_a_chunk_is_named_by_why() {
+    let scratch = Scratch::new("copy-refused");
+    let bytes = varied(200 * 1024);
+    let path = scratch.write("source.bin", &bytes);
+    let opened = observe::open_member(&path).expect("opened");
+
+    let mut full = Recorder::refusing_after(100 * 1024, std::io::ErrorKind::StorageFull);
+    assert_eq!(
+        opened.copy_into(&mut full, &Cancellation::default()),
+        Err(observe::CopyFailure::DestinationFull)
+    );
+    assert!(full.bytes.len() <= 100 * 1024, "a prefix at most");
+
+    let mut refused = Recorder::refusing_after(0, std::io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        opened.copy_into(&mut refused, &Cancellation::default()),
+        Err(observe::CopyFailure::DestinationUnwritable)
+    );
+    assert!(refused.bytes.is_empty());
+
+    // The same handle copies whole afterwards: a refusal does not spend it.
+    let mut whole = Recorder::new();
+    opened
+        .copy_into(&mut whole, &Cancellation::default())
+        .expect("copied");
+    assert_eq!(whole.bytes, bytes);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_volume_says_what_this_process_may_write_and_an_object_how_many_names_it_has() {
+    let scratch = Scratch::new("names");
+    assert!(
+        crate::local_document::available_bytes(scratch.directory()).is_some_and(|free| free > 0)
+    );
+    assert_eq!(
+        crate::local_document::available_bytes(&scratch.join("not-there")),
+        None,
+        "a directory that is not there answers nothing, not zero"
+    );
+    let path = scratch.write("one.bin", b"named once");
+    let count =
+        |path: &Path| crate::local_document::link_count_of(&fs::File::open(path).expect("open"));
+    assert_eq!(count(&path), Some(1));
+    fs::hard_link(&path, scratch.join("two.bin")).expect("a second name");
+    assert_eq!(count(&path), Some(2));
+    fs::remove_file(&path).expect("the first name goes");
+    assert_eq!(count(&scratch.join("two.bin")), Some(1));
+}
+
+#[test]
+fn an_empty_member_copies_as_empty_with_the_empty_digest() {
+    let scratch = Scratch::new("copy-empty");
+    let path = scratch.write("empty.bin", b"");
+    let opened = observe::open_member(&path).expect("opened");
+    let mut destination = Recorder::new();
+    let copied = opened
+        .copy_into(&mut destination, &Cancellation::default())
+        .expect("copied");
+    assert_eq!(copied.byte_length, 0);
+    assert_eq!(
+        copied.digest,
+        mscanvas_proteowizard::Sha256Digest::calculate(b"").expect("digest")
+    );
+}
+
 #[test]
 fn an_incomplete_required_member_set_is_its_own_outcome() {
     let scratch = Scratch::new("incomplete");

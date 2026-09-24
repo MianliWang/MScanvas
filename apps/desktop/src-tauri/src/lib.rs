@@ -155,8 +155,8 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::RecipeSourceUnsupported => {
             "The targeted MS1 recipe reads one mzML file, and this layer's source is not one."
         }
-        Refusal::SourceOnAnotherVolume => {
-            "The source is on a different drive from the MSCanvas work area. Move it to that drive to run this recipe."
+        Refusal::InsufficientWorkAreaSpace => {
+            "The MSCanvas work area's drive has less free space than this source needs for its temporary copy. Free space there, then run again."
         }
         Refusal::PlanNotCurrent => "That plan is no longer the one reviewed. Review it again.",
         Refusal::PayloadStoreUnusable => {

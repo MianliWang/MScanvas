@@ -400,13 +400,42 @@ describe("a run", () => {
   it("reports a refusal before a run existed as a refusal, with nothing recorded", async () => {
     const api = mount(layered());
     await reviewed(api);
-    api.refuseOnce("runTargetedMs1", "sourceOnAnotherVolume");
+    api.refuseOnce("runTargetedMs1", "insufficientWorkAreaSpace");
     await press(query("[data-targeted-run]"));
 
-    expect(query('[data-project-problem="sourceOnAnotherVolume"]').textContent).toContain(
-      en.projectRefusedSourceOnAnotherVolume,
+    expect(query('[data-project-problem="insufficientWorkAreaSpace"]').textContent).toContain(
+      en.projectRefusedInsufficientWorkAreaSpace,
     );
     expect(document.querySelector("[data-targeted-last]")).toBeNull();
+  });
+
+  it("says the input is being prepared while a source from another drive is copied", async () => {
+    const api = mount(layered());
+    api.setTargeted({ progress: { operationId: "project-job-1", phase: "preparingInput" } });
+    await reviewed(api);
+    const release = api.holdOnce("runTargetedMs1");
+    await press(query("[data-targeted-run]"));
+
+    await screen.findAllByText(en.targetedPhasePreparingInput);
+    // No work-area path reaches the page.
+    expect(document.body.textContent).not.toMatch(/\.tmp|m91-jobs|snapshot\.mzML/i);
+    await act(async () => release());
+  });
+
+  it("names a work area that ran out of room as the failure, not as a finding", async () => {
+    const api = mount(withRun({ outcome: "failed" }, {
+      attempt: null,
+      consumedContent: [],
+      failure: { code: "insufficientWorkAreaSpace", stage: "source" },
+    }));
+    await screen.findByText(en.projectReferences);
+    await press(query(`[data-project-inspect-run="${RUN}"]`));
+
+    expect(query('[data-targeted-failure="insufficientWorkAreaSpace"]').textContent).toBe(
+      en.targetedFailureInsufficientWorkAreaSpace,
+    );
+    expect(document.body.textContent).not.toContain(en.targetedOutcomeNotDetected);
+    expect(caused(api)).not.toContain("readTargetedMs1Rows");
   });
 });
 
@@ -537,7 +566,29 @@ describe("a stored result", () => {
     expect(query("[data-targeted-plan-facts]").textContent).toContain(PLAN.planSha256);
     expect(query("[data-targeted-attempt]").textContent).toContain("pyOpenMS 3.5.0");
     expect(query("[data-targeted-consumed]").textContent).toContain("1,024");
+    expect(query("[data-targeted-source-view]").textContent).toBe(en.targetedSourceViewLink);
     expect(caused(api).length).toBe(before);
+  });
+
+  it("says a run read a verified copy, and never where the copy was", async () => {
+    const base = targetedProject();
+    const run = base.runs[0];
+    const execution = run.targetedMs1!;
+    await inspectResult({
+      ...base,
+      runs: [
+        {
+          ...run,
+          targetedMs1: {
+            ...execution,
+            attempt: { ...execution.attempt!, sourceView: "verifiedSnapshotInWorkArea" },
+          },
+        },
+      ],
+    });
+    const view = query('[data-targeted-source-view="verifiedSnapshotInWorkArea"]');
+    expect(view.textContent).toBe(en.targetedSourceViewSnapshot);
+    expect(details().textContent).not.toMatch(/\.tmp|m91-jobs|attempts|snapshot\.mzML/);
   });
 
   it("renders the setup, the report and Details with no English prose left over", async () => {

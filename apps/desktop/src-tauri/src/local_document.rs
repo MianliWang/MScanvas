@@ -350,6 +350,116 @@ pub fn directory_volume(path: &Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|metadata| metadata.dev())
 }
 
+/// How many bytes this process could write below `directory` now, quotas
+/// included.
+///
+/// An observation, not a reservation: another writer can take the space the
+/// next moment, so a caller still handles a write that fails for want of it.
+/// `None` where the volume cannot say, which is "not established", never
+/// "none free".
+#[cfg(windows)]
+#[must_use]
+pub fn available_bytes(directory: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetDiskFreeSpaceExW"]
+        fn get_disk_free_space_ex_w(
+            directory: *const u16,
+            available_to_caller: *mut u64,
+            total: *mut u64,
+            total_free: *mut u64,
+        ) -> i32;
+    }
+
+    let mut name: Vec<u16> = directory.as_os_str().encode_wide().collect();
+    if name.contains(&0) {
+        return None;
+    }
+    name.push(0);
+    let mut available = 0_u64;
+    // SAFETY: `name` is a terminated wide string that outlives the call, the
+    // one out parameter asked for is a valid `u64`, and the two not asked for
+    // are null, which the function documents as allowed.
+    let answered = unsafe {
+        get_disk_free_space_ex_w(
+            name.as_ptr(),
+            &raw mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (answered != 0).then_some(available)
+}
+
+/// Not established off Windows.
+#[cfg(not(windows))]
+#[must_use]
+pub fn available_bytes(_directory: &Path) -> Option<u64> {
+    None
+}
+
+/// How many names the open object has on its volume.
+///
+/// Asked of the handle, so it is about the object the caller holds. `None`
+/// where the filesystem cannot say.
+#[cfg(windows)]
+#[must_use]
+pub fn link_count_of(file: &std::fs::File) -> Option<u32> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle as _;
+
+    /// `FileStandardInfo`.
+    const FILE_STANDARD_INFO_CLASS: i32 = 0x01;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileStandardInformation {
+        allocation_size: i64,
+        end_of_file: i64,
+        number_of_links: u32,
+        delete_pending: u8,
+        directory: u8,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetFileInformationByHandleEx"]
+        fn get_file_information_by_handle_ex(
+            file: *mut c_void,
+            information_class: i32,
+            information: *mut c_void,
+            information_size: u32,
+        ) -> i32;
+    }
+
+    let mut information = FileStandardInformation::default();
+    // SAFETY: the file outlives the call, so its handle stays valid, and the
+    // out parameter is a fully initialized value of the FILE_STANDARD_INFO
+    // layout the class requires, whose size is passed with it.
+    let answered = unsafe {
+        get_file_information_by_handle_ex(
+            file.as_raw_handle().cast(),
+            FILE_STANDARD_INFO_CLASS,
+            (&raw mut information).cast(),
+            u32::try_from(std::mem::size_of::<FileStandardInformation>())
+                .expect("FILE_STANDARD_INFO fits in a DWORD"),
+        )
+    };
+    (answered != 0).then_some(information.number_of_links)
+}
+
+/// The number of names the open object has.
+#[cfg(not(windows))]
+#[must_use]
+pub fn link_count_of(file: &std::fs::File) -> Option<u32> {
+    use std::os::unix::fs::MetadataExt as _;
+    file.metadata()
+        .ok()
+        .and_then(|metadata| u32::try_from(metadata.nlink()).ok())
+}
+
 /// Why a name that exists could not be opened.
 fn unopenable_name(target: &Path) -> ReadRefusal {
     match std::fs::symlink_metadata(target) {

@@ -103,6 +103,7 @@ export const FAILURE_KEYS = {
   sourceUnsortedMz: "targetedFailureSourceUnsortedMz",
   sourceNonfinite: "targetedFailureSourceNonfinite",
   executionViewUnavailable: "targetedFailureExecutionView",
+  insufficientWorkAreaSpace: "targetedFailureInsufficientWorkAreaSpace",
   runtimeUnverified: "targetedFailureRuntimeUnverified",
   runtimeModuleMismatch: "targetedFailureRuntimeModuleMismatch",
   workerLaunchFailed: "targetedFailureWorkerLaunch",
@@ -132,6 +133,7 @@ const PHASE_KEYS = {
   preparing: "targetedPhasePreparing",
   verifyingRuntime: "targetedPhaseVerifyingRuntime",
   pinningSource: "targetedPhasePinningSource",
+  preparingInput: "targetedPhasePreparingInput",
   loadingSource: "targetedPhaseLoadingSource",
   checkingSource: "targetedPhaseCheckingSource",
   runningEngine: "targetedPhaseRunningEngine",
@@ -1497,7 +1499,13 @@ export function TargetedFacts({ lineage }: { readonly lineage: TargetedLineage }
                 : `pyOpenMS ${report.pyopenms} · OpenMS ${report.openms} (${report.openmsRevision}, ${report.openmsBuildTime}) · Python ${report.python}`}
             </dd>
             <dt>{t("targetedSourceView")}</dt>
-            <dd>{t("targetedSourceViewLink")}</dd>
+            <dd data-targeted-source-view={attempt.sourceView}>
+              {t(
+                attempt.sourceView === "verifiedSnapshotInWorkArea"
+                  ? "targetedSourceViewSnapshot"
+                  : "targetedSourceViewLink",
+              )}
+            </dd>
             <dt>{t("targetedAdapterDigest")}</dt>
             <dd className="provenance-digest">{attempt.adapterSha256}</dd>
             <dt>{t("targetedRuntimeDigest")}</dt>
