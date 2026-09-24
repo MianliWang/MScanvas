@@ -174,9 +174,10 @@ shows two members' results together.
   is refused `oversized` and no later member starts.
 
 > **Measured at the M9 closure (2026-09-24).** The estimate above is low. With
-> this build's serializer, which writes the document pretty-printed, a member
-> over 200 targets adds about 54.8 kB (48.9 kB of plan, 4.7 kB of run, 1.2 kB of
-> result record), so a 16 × 200 batch adds about 0.84 MiB and four such batches
-> fit. The member that meets the bound has already run its worker. See the
+> this build's serializer, which writes the document pretty-printed, and short
+> ASCII labels and formulas, a member over 200 targets adds about 54.8 kB
+> (48.9 kB of plan, 4.7 kB of run, 1.2 kB of result record), so a 16 × 200
+> batch adds about 0.84 MiB and four such batches fit; longer or non-ASCII
+> labels cost more, down to one such batch with 200-character CJK labels. The member that meets the bound has already run its worker. See the
 > [M9 closure](../../product/M9_CLOSURE.md#8-document-growth). The decision is
 > unchanged.

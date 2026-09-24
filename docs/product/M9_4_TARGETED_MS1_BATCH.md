@@ -16,9 +16,10 @@ PROTEOWIZARD HOLD UNCHANGED · ROUTE B NOT AUTHORIZED / NOT EXECUTED · PUBLIC
 BETA NOT RELEASED; M10 NOT STARTED
 
 Update: the [M9 closure](M9_CLOSURE.md) has since closed M9 locally and states
-the current contract. It measured a 16-member batch of 200 targets at about
-0.84 MiB of document, not the 0.5–0.65 MB estimated under *Known limits*
-below: four such batches fit in one project.
+the current contract. With short ASCII labels it measured a 16-member batch
+of 200 targets at about 0.84 MiB of document, not the 0.5–0.65 MB estimated
+under *Known limits* below: four such batches fit in one project, and fewer
+with long or non-ASCII labels (§8 of the closure).
 
 ## Scope
 

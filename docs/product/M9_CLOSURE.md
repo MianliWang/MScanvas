@@ -47,7 +47,7 @@ qualified or released (§11).
 | M9.2 | `d1d9f586bef73715fc4bddf39795498059c0fada`, tree `c437b3bc05d01cfa612b4bb0c9f3d6df06c6e95f` | `4e4e00ca22526a42a9b070226b126f990aae404b`, tree `a9cceec7537a42df2d611abbfccbbf62c1ce1e93` |
 | M9.3 with M9.3.C1 | `3d6300f1bae8766c6708c0fabf3bd1cdb7a23fa3`, tree `e4a94c868a31a9a5ce415b179bd4e5e4afe8dfdc` | `c69889ba840a67072ebbaed5a32e1d2ede20a1b3`, tree `15070fb747e964a067ade58c6111a5d79e721b01` (M9.3 before C1: `23ba012d7024611891080537db35bd73a4b86e32`, tree `03a082a6e6dcbcb1e09a60b0da1562b83c7d627c`) |
 | M9.4 | `13a3560c1ad6f14878dfb659a7f014b79c422488`, tree `574630fe3c668471c386ed48c8c9658e981988c5` | Rust gates `5e3f127fb92181a329ead1037b6f5919f1ecc21e`, tree `6f3a867e9e9a374b951b6644c9b0dc89e60f27f6`; frontend and browser gates `35def0d319092308cb22cdf4fba2d012b679d8e1`, tree `cf77c5f472791de5ef8d69e6a0bd067f6949b221`, which differs only in `preview/tests.rs` |
-| **M9 closure** | this document's commit; see the evidence | `d8310cecd021f9f29413776aba0945311ce01c05`, tree `ec7f63e4f5a74ecbf4da95c36c3ab7c88e944924`. The repository-wide browser suite ran on its parent `59cbf1c62ac27614308840cc0902e5068c03e61c` (tree `6998915642af06ab502d194a756271d6cff21012`), which differs only in two Rust files the browser suite does not build; every other gate ran on `d8310ce` |
+| **M9 closure** | this document's commit; see the evidence | `fa7f213b181e9e5ecb7e164f3b128b2da631c7a9`, tree `56e85d1bcfe4999eeda53290e81f292e1196eb05`: every gate but the repository-wide browser suite ran on it. That suite ran on `59cbf1c62ac27614308840cc0902e5068c03e61c` (tree `6998915642af06ab502d194a756271d6cff21012`), from which the final code differs in Rust files and a Rust test fixture, which the browser suite does not build or load, and in four e2e files: a helper appended to the harness and the three M8.5/M9 specs that use it, each run again on the final code |
 
 Every head above was verified as an ancestor of the closure; every
 "documentation" successor was checked with `git diff --name-only`.
@@ -65,7 +65,7 @@ were not moved; no branch head was moved.
 | Spectra | MS1, declared centroided, positive polarity only, one polarity, strictly increasing MS1 retention times, sorted finite m/z, no ion mobility or FAIMS | the adapter; a failed run at the `source` stage (`sourceNotCentroid`, `sourcePolarityUnsupported`, `sourceMixedPolarity`, `sourceRtNotStrictlyIncreasing`, `sourceRtUndeclaredOrNonmonotonic`, `sourceUnsortedMz`, `sourceNonfinite`, `sourceIonMobilityUnsupported`, `sourceNoMs1`). Nothing is converted to fit |
 | Ion | `[M+H]+`, charge 1, M and M+1 traces | no field exists for anything else |
 | Targets per plan | 1–200 (`MAX_TARGETS`), in the order the engine receives them | `recipe::resolve`, `record::validate_plan` |
-| One target | unique label (≤ 200 characters, no control characters); plain neutral sum formula (element symbols, counts of at most four digits, ≤ 100 characters); optional neutral monoisotopic mass (0, 5000] Da; RT [0, 86400] s; RT half-width (0, 3600] s | `record::target_is_valid` |
+| One target | a label (≤ 200 characters, no control characters), unique within the request; plain neutral sum formula (element symbols, counts of at most four digits, ≤ 100 characters); optional neutral monoisotopic mass (0, 5000] Da; RT [0, 86400] s; RT half-width (0, 3600] s | label uniqueness: `recipe::resolve` at review; every other value: `record::target_is_valid`, at review and on every open. The document itself requires unique target identifiers, not unique labels (§5) |
 | Parameters | m/z half-width [0.5, 50] ppm for an **open** m/z interval; expected peak width (0, 600] s; the RT window is **closed** | `record::parameters_are_valid` |
 | Engine | `FeatureFinderAlgorithmMetaboIdent`, pyOpenMS 3.5.0, OpenMS revision `c1370fb`, labelled experimental; the fixed 18-key engine profile, SHA-256 `ACA2C008B7FA312C42B59DE88F872EFC45BBB65545281B57163C0B181A958AF4` | `recipe::FIXED_ENGINE_PROFILE`; the supervisor refuses a result whose reported profile differs |
 | Acquisitions per plan | exactly one | a plan has one `layerId` and one `inputId` |
@@ -83,8 +83,8 @@ failure.
 | --- | --- | --- |
 | `DETECTED` | one candidate, and it became this target's feature | extracted from at least one spectrum; a feature; exactly one candidate; no relation |
 | `DETECTED_AMBIGUOUS` | a feature chosen among two or more candidates | as above, with two or more candidates |
-| `SHARED` | this target's feature is also another target's | a feature; at least one partner named in `sharedWith`; not suppressed |
-| `SUPPRESSED_BY_OVERLAP` | another target's feature won the overlap; this target has none | no feature; the suppressing target named |
+| `SHARED` | this target's feature is also another target's | extracted from at least one spectrum; a feature; at least one partner named in `sharedWith`; not suppressed |
+| `SUPPRESSED_BY_OVERLAP` | another target's feature won the overlap; this target has none | extracted from at least one spectrum; no feature; the suppressing target named; no `sharedWith` partner |
 | `NOT_DETECTED` | the engine extracted this target's windows from at least one MS1 spectrum with peaks and reported no candidate and no feature. Not proof of absence | a real extraction; no feature, no candidate, no relation, no overlap removal |
 | `FAILED` + reason | the recipe could not decide; never an absence | no feature; exactly one reason |
 
@@ -110,7 +110,7 @@ failure.
 | Runtime identity | every manifest entry's length and SHA-256, and nothing extra, missing or linked, before every launch (`runtimeUnverified`); after load, the worker's report of the modules it loaded is checked against the manifest (`runtimeModuleMismatch`) — the worker's report, not a supervisor measurement |
 | Adapter | `adapter_v1.py`, embedded in the build, SHA-256 `ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC`, written into the attempt directory and hashed again there |
 | Supervision | fixed argv `python.exe -I -B -X utf8 adapter_v1.py request.json out`, an allow-listed environment, a Job object (kill-on-close, one process, 4 GiB, below-normal priority), a 600 s budget, and an observed exit before a run ends |
-| Stop and time | a user's cancel is a `cancelled` run with its stop facts; the budget is a `failed` run `workerTimeout` with a `timeBudgetExceeded` stop; a cancel reaching the commit before it stops publication; a worker whose end was not observed is `workerNotAccountedFor` and quarantines the session (`analysisQuarantined`) until MSCanvas exits |
+| Stop and time | a user's cancel is a `cancelled` run with its stop facts; the budget is a `failed` run `workerTimeout` with a `timeBudgetExceeded` stop; a cancel reaching the commit before it stops publication; a worker whose end was not observed is `workerNotAccountedFor` and quarantines the session (`analysisQuarantined`) until MSCanvas exits — also after a cancel, which is then a failed run with no stop facts, because the worker's end is what was not established |
 | Input-content binding | the source is opened once, read-only with write and delete sharing withheld, before any byte is read; its bytes must be the plan's expected length and SHA-256 (`sourceChanged`); the adapter hashes what it read again (`sourceChangedDuringRead`) |
 | Same-volume view | a hard link in the attempt directory, shown to be the held object; a link that is not is refused (`executionViewUnavailable`) and never replaced by a copy |
 | Cross-volume view | a copy made in one read through the held handle, each chunk hashed as written, compared with the plan, then held read-only and hashed again before the worker is given it; also used where no link can be made |
@@ -196,10 +196,13 @@ compatibility promise begins only if and when this source line is published.**
 
 - The one current meaning is the canonical document
   [`schema_4_canonical.json`](../../apps/desktop/src-tauri/src/project/schema_4_canonical.json),
-  read and written back unchanged by
+  read and written back to the same JSON value by
   `project::tests::the_canonical_schema_four_document_reads_and_writes_back_unchanged`.
-  Reading it recomputes both plan digests and the target-list digest, so a
-  change to a plan's canonical form fails there.
+  It holds every word listed below. Reading it recomputes both plan digests
+  and the target-list digest, so a change to a plan's canonical form fails
+  there, as does renaming or removing any stored word. A word *added* to a
+  vocabulary cannot fail there; adding one is a schema decision (as M9.3's
+  two were).
 - Top level: `schemaVersion` (4), `projectId`, `revision`, `name`, `inputs`,
   `artifacts`, `runs`, `layers`, `plans`, each required. Record kinds
   `fileFactsV1`, `acquisitionQcSnapshotV1`, `targetedMs1ResultV1`;
@@ -207,7 +210,9 @@ compatibility promise begins only if and when this source line is published.**
   `targetedMs1V1`; `sourceView` `hardLinkInWorkArea` and
   `verifiedSnapshotInWorkArea`; stop reasons `cancelRequested` and
   `timeBudgetExceeded`; stages `source`, `runtime`, `request`, `engine`,
-  `result`, `publish`; the 30 failure codes of `record::FailureCode`.
+  `result`, `publish`; the 30 failure codes of `record::FailureCode`; member roles `primary` and
+  `requiredCompanion`; QC counts and retention times `reported` and
+  `notReported`.
 - Validation is owned by `record::parse` and `record::validate` alone, applied
   on open and before every write. Every object refuses unknown fields; every
   closed vocabulary refuses an unknown word (`malformed`); every optional
@@ -231,9 +236,9 @@ execution attempt → `Run` → `Artifact` → managed payload → row and evide
 
 - Durable identities are UUIDs (`ProjectId`, `InputId`, `LayerId`, `RunId`,
   `ArtifactId`, `TargetId`) or digests (`planSha256`, `targetListSha256`,
-  content, payload). `DatasetId`, `FileIdentity`, paths, process identifiers,
-  operation identifiers and scratch names are session-only and not
-  representable in the document.
+  content, payload). `DatasetId`, `FileIdentity`, process identifiers,
+  operation identifiers, scratch names and every path other than an input's
+  own locator are session-only and not representable in the document.
 - The plan binds the layer, its reference and the bytes that reference
   recorded; `validate_plan` refuses a plan whose expected content is not its
   reference's baseline, and a completed run whose consumed content is not its
@@ -245,7 +250,9 @@ execution attempt → `Run` → `Artifact` → managed payload → row and evide
   every identifier and rebases only locators.
 - Accepted asymmetries, recorded rather than changed: target identifiers are
   shared by every member plan of one batch (unique within a plan, never across
-  plans); a run's attempt facts are what the supervisor measured and the
+  plans); label uniqueness is a review rule, so a hand-edited plan with two
+  equal labels (and recomputed digests) opens, its targets still told apart by
+  identifier; a run's attempt facts are what the supervisor measured and the
   worker reported at the time, and a later runtime or source state does not
   touch them; the payload's `manifest.json` names its artifact and plan, and
   the document names the payload only by digest.
@@ -278,26 +285,37 @@ Unchanged from M9.3.C1 and confirmed in the assembled code:
 - Points and boundaries are the persisted evidence only; nothing is smoothed,
   fitted or interpolated; an absent value is empty, not zero; a window that
   held no spectrum writes `extracted_points` 0 and empty sums and maxima.
-- Where each output carries provenance: SVG carries a title, a description and
-  a caption naming the formula, the outcome in words and the result and plan
-  identifiers; CSV/TSV carry the `#` preamble; **PNG carries pixels and its
-  DPI only** and is not self-describing.
+- Where each output carries provenance: the drawn figure shows its title — the
+  target's label and its outcome in words — and its axes; the SVG's `<desc>`
+  also carries the caption (the formula, the recipe named as experimental,
+  what the outcome means, and the result and plan identifiers), which is not
+  drawn; CSV/TSV carry the `#` preamble; **PNG carries pixels and its DPI
+  only** and is not self-describing. No drawn text says *experimental* or *not
+  proof of absence* (§13).
 - **Spreadsheet formula interpretation is a pre-release decision, not a closure
   repair.** The repository has no policy for spreadsheet-safe text export;
-  values are written as stored (ADR 0048 §5), and a label beginning with `=`
-  may be interpreted by a spreadsheet as a formula. Neutralizing it would alter
+  values are written as stored (ADR 0048 §5), and a label beginning with `=`,
+  `+`, `-` or `@` may be interpreted by a spreadsheet as a formula. Neutralizing it would alter
   scientific data, so it was not done silently; the decision belongs to the
   release security review (§13).
 
 ## 8. Document growth
 
-Measured with this build's own serializer (evidence §4): one member of a
-16-acquisition batch over 200 targets adds **about 54.8 kB** to the document —
-48.9 kB of plan (the whole target list, pretty-printed, about 245 bytes a
-target), 4.7 kB of run (with a real run's engine report and module digests)
-and 1.2 kB of result record. A whole 16 × 200 batch adds **about 0.84 MiB**,
-not the 0.5–0.65 MB M9.4 estimated. **Four such batches fit** in the 4 MiB
-document; in the fifth, the thirteenth member meets the bound.
+Measured with this build's own serializer (evidence §4), with short ASCII
+text — 12-character labels, a 9-character formula, no neutral mass: one member
+of a 16-acquisition batch over 200 targets adds **about 54.8 kB** to the
+document — 48.9 kB of plan (the whole target list, pretty-printed, about 245
+bytes a target), 4.7 kB of run (with a real run's engine report and module
+digests) and 1.2 kB of result record. A whole 16 × 200 batch then adds **about
+0.84 MiB**, not the 0.5–0.65 MB M9.4 estimated, and **four such batches fit**
+in the 4 MiB document; in the fifth, the thirteenth member meets the bound.
+
+The plan's share grows with the text the user types. A target costs about
+225 bytes plus its label's and formula's UTF-8 bytes (and a neutral mass's
+digits), so, by that arithmetic and not measured: 200-character ASCII labels
+with 100-character formulas make a 16 × 200 batch about 1.8 MB, two of which
+fit; 200-character labels in CJK script (three bytes a character) make one
+about 3.1 MB, and one fits.
 
 At the bound: that member's worker has already run; the run is refused
 `oversized` after it, its staged result is discarded and nothing is recorded;
@@ -380,21 +398,22 @@ undelivered item out of M9 rather than leaving it implied:
 | Filesystem and network confinement of the worker not enforced | the fixed adapter makes no network call; nothing prevents one | no by code review; not enforced | an enforced sandbox, if required | release security review |
 | Retained hard-link scratch has no user cleanup | a retained link keeps a file's clusters allocated if the user deletes their own name | no (resource leakage) | an explicit recovery UX or tool | UI/UX cleanup or later |
 | M9.1-era unmarked attempt directories are never swept | they stay | no | a person, or a future tool | same |
-| Payload `.staging/` and Save As pending stores left by a crash are not collected | disk space beside the document | no | payload GC design | later |
+| Payload `.staging/` and Save As pending stores left by a crash are not collected; a Save As whose document publish fails leaves its whole store published beside a destination with no document, and a retry to that name is refused `destinationStoreExists` | disk space beside the document; the user chooses another name or removes the folder | no (reported, never undone silently) | payload GC and store-recovery design | later |
 | Unreferenced results (published, never saved) are counted and not shown | invisible disk use | no | UI decision | UI/UX cleanup |
 | No clipboard copy of a stored result | use SVG/PNG export | no | a native harness with a stored-result project | UI/UX cleanup or release |
 | Native save dialogs for stored-result exports not natively qualified | write path tested in Rust; dialog mocked in the browser | no known defect | native harness run | installed qualification |
 | PNG is not self-describing | provenance travels with SVG/CSV only | no | a decision on PNG metadata | release |
+| No drawn figure text says *experimental* or *not proof of absence*; the title is the label and the outcome word | an exported figure shown alone can read more certain than the result is | no (the qualifiers are in the SVG `<desc>`, the report and the table's help) | a figure-caption design decision | UI/UX cleanup or release |
 | Spreadsheet formula interpretation of exported text | a spreadsheet may evaluate a label such as `=…` | **security/interoperability decision open** | release security review: keep raw, add a separate spreadsheet-safe export, or document | before public release |
 | History is append-only | nothing can be pruned; a full project stays full | no | history pruning design | later |
-| Every plan stores its whole target list | ≈ 0.84 MiB per 16 × 200 batch; four fit | no | shared target-list storage | future storage-model revision |
+| Every plan stores its whole target list | ≈ 0.84 MiB per 16 × 200 batch with short labels (four fit), up to ≈ 3.1 MB with 200-character CJK labels (one fits) | no | shared target-list storage | future storage-model revision |
 | The 4 MiB bound is met after the member's worker ran | up to 10 minutes of work discarded; the sentence says the project is too large, not what to do | no (nothing corrupted) | a size check before the attempt; clearer wording | UI/UX cleanup |
 | Batch state is session-only | after restart, which members a batch never started is unknown; the history shows only runs | no | only if users need batch history | later |
 | A failed member's reason appears only once the batch ends | mid-batch it reads *Failed* | no | UI | UI/UX cleanup |
 | Source availability is known only after **Check links** | a reopened result reads *Not checked* | no | UI | UI/UX cleanup |
 | Near-edge apex can be `NOT_DETECTED`; engine scores not surfaced | the report says `NOT_DETECTED` is not absence | scientific limit, stated | engine change or measured workaround | a later recipe version |
 | The repository-wide browser suite is red | 20 spec files (174 tests) fail — M4–M7 and viewer-r1 specs; every one fails identically, test for test, on published `main` (evidence §8); the 7 M8/M9 specs pass | no M8/M9 regression; the suite cannot gate UI work until repaired | repair or retire the legacy specs against the M7.2+ shell and roster | decide before source integration (publish as named debt?) and repair before release |
-| One App-level Vitest case (`M73Viewer.test.tsx`, the committed-range export) can exceed its 5 s limit under load | `pnpm test` can fail once and pass alone or on a rerun; seen in M8.4, M8.5 and this closure's first campaign | no | a test-infrastructure repair (a longer limit or a lighter case) | with the legacy browser work |
+| One App-level Vitest case (`M73Viewer.test.tsx`, the committed-range export) can exceed its 5 s limit under load | `pnpm test` can fail on it while the file passes alone; seen in M8.4 and M8.5, and in two of this closure's four whole-suite runs, including the final one | no | a test-infrastructure repair (a longer limit or a lighter case) | with the legacy browser work |
 | The browser harness can fail to open a WebDriver session for a spec (`Failed to fetch [POST] …/session`; 3 of 28 spec files in one run) | those specs report no test result in that run | no | test-infrastructure repair | same |
 
 ## 14. Source-integration handoff
@@ -418,7 +437,7 @@ behind `main`, and every commit below is ahead of it.
 | `a1c56f5` … `d1d9f58` | 7 | M9.2 (with plot-spec schema 3 in `crates/plot-spec`) |
 | `9c09395` … `3d6300f` | 12 | M9.3 and M9.3.C1 |
 | `6983840` … `13a3560` | 11 | M9.4 |
-| `59cbf1c` … closure head | this closure | tests, the locator repair (`d8310ce`) and documentation |
+| `59cbf1c` … closure head | this closure | tests, the locator repair (`d8310ce`), the full canonical fixture (`68f8c4d`), a browser-test timing repair (`fa7f213`) and documentation |
 
 Local branch heads, all ancestors of the closure and unmoved:
 `feat/m7.6-installer-release-integration` `aa3fc83`,
@@ -444,9 +463,10 @@ their record must then say plainly that it describes an unqualified candidate.
   commits; the UI and release work then starts from published source. Needs
   README's current-state sections refreshed (they still describe the published
   M7.5 product) and the legacy browser debt acknowledged as named, not hidden.
-- **Or another explicitly justified boundary**, chosen by the owner; any
-  boundary below `fe3d202` would still require publishing ancestors, and none
-  may be made by rewriting history.
+- **Or another explicitly justified boundary**, chosen by the owner. Any
+  boundary that includes an M8 or M9 commit publishes every commit beneath it,
+  including the 13 partial-M7.6 commits and `aa3fc83`; no boundary may be made
+  by rewriting history.
 - Either way the partial M7.6 state is published as partial, and M7.6-style
   qualification later runs against the new product, not the M7.6 candidate.
 

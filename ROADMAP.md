@@ -709,7 +709,7 @@ and runtime filters. No XIC follow-up is a prerequisite for M7.
 
 ## M7 — UI/UX and public product hardening
 
-**M7 IN PROGRESS; M7.1 implementation and required native acceptance verified.** The separately authorized
+**M7.1–M7.5 PUBLISHED; M7.6 PARTIAL, LOCAL AND DEFERRED — RELEASE QUALIFICATION INCOMPLETE.** The separately authorized
 M7.0 first-beta route is accepted in
 [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md),
 the single owner of scope, implementation order and release exits. M7 delivers
