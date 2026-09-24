@@ -4314,16 +4314,19 @@ fn the_size_measure_keeps_room_for_the_widest_revision() {
 /// Schema 4 as this build writes it, frozen at the M9 closure.
 ///
 /// Every other document test builds its document from these types and so moves
-/// with them. This one is a file: every record kind, operation, locator form,
-/// source view, stop reason and run outcome schema 4 can hold -- a file-facts
-/// and a QC capture, a linked and a copied completed targeted run (one of them
-/// all-negative through the no-candidate recovery), a work area without room,
-/// a source changed since review, a timeout and a cancel -- with the digests
-/// this build computed for its two plans, which share one target list as a
-/// batch's members do. Reading it recomputes both plan digests and the target
-/// list digest, so a change to a plan's canonical form fails here, and that is
-/// the property a recorded plan's name depends on. Writing it back must give
-/// the same document.
+/// with them. This one is a file holding every word schema 4 can store: each
+/// record kind, operation, locator form, member role, reported and unreported
+/// QC value, source view, stop reason, run outcome, failure stage and all 30
+/// failure codes -- a file-facts capture over a reference with a companion, two
+/// QC captures, a linked and a copied completed targeted run (one of them
+/// all-negative through the no-candidate recovery), a timeout, a cancel and one
+/// failed run per failure code at the stage this build records it -- with the
+/// digests this build computed for its two plans, which share one target list
+/// as a batch's members do. Reading it recomputes both plan digests and the
+/// target-list digest, so a change to a plan's canonical form fails here, and
+/// so does renaming or removing any stored word. Writing it back must give the
+/// same JSON value (key order aside). A word added to a vocabulary cannot fail
+/// here; adding one is a schema decision, recorded with the schema.
 ///
 /// Schema 4 is unpublished: this pins the current meaning, and no promise to
 /// documents written by earlier M9 development builds. Change it only with the

@@ -23,6 +23,32 @@
       ]
     },
     {
+      "id": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a03",
+      "label": "vendor.wiff",
+      "locator": {
+        "kind": "projectRelative",
+        "path": "vendor/vendor.wiff"
+      },
+      "members": [
+        {
+          "role": "primary",
+          "relativeName": "",
+          "baseline": {
+            "byteLength": 20480,
+            "sha256": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+          }
+        },
+        {
+          "role": "requiredCompanion",
+          "relativeName": "vendor.wiff.scan",
+          "baseline": {
+            "byteLength": 1048576,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        }
+      ]
+    },
+    {
       "id": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a02",
       "label": "matrix only.mzML",
       "locator": {
@@ -56,6 +82,23 @@
                 "relativeName": "",
                 "byteLength": 455961,
                 "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+              }
+            ]
+          },
+          {
+            "inputId": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a03",
+            "members": [
+              {
+                "role": "primary",
+                "relativeName": "",
+                "byteLength": 20480,
+                "sha256": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+              },
+              {
+                "role": "requiredCompanion",
+                "relativeName": "vendor.wiff.scan",
+                "byteLength": 1048576,
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
               }
             ]
           }
@@ -110,6 +153,34 @@
           "tool": "msaccess",
           "executableSha256": "9999999999999999999999999999999999999999999999999999999999999999",
           "release": "3.0.25100",
+          "buildDate": null,
+          "sourceRevision": null
+        }
+      }
+    },
+    {
+      "id": "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f05",
+      "label": "QC summary: plain.mzML",
+      "payload": {
+        "kind": "acquisitionQcSnapshotV1",
+        "totalSpectrumCount": 121,
+        "msLevelCounts": [
+          {
+            "kind": "level",
+            "msLevel": 1,
+            "spectrumCount": 121
+          }
+        ],
+        "chromatogramCount": {
+          "kind": "notReported"
+        },
+        "retentionTime": {
+          "kind": "notReported"
+        },
+        "producer": {
+          "tool": "msaccess",
+          "executableSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+          "release": null,
           "buildDate": null,
           "sourceRevision": null
         }
@@ -198,6 +269,10 @@
         {
           "kind": "input",
           "inputId": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a01"
+        },
+        {
+          "kind": "input",
+          "inputId": "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1a03"
         }
       ],
       "outputArtifactIds": [
@@ -220,6 +295,24 @@
       ],
       "outputArtifactIds": [
         "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f02"
+      ],
+      "outcome": "completed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": null
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-0e2d9b7f5a09",
+      "operation": "captureAcquisitionQcSnapshotV1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [
+        "c2a8e5f0-4b1d-4e6a-9f7c-8d3b2a1e0f05"
       ],
       "outcome": "completed",
       "applicationVersion": "0.1.0",
@@ -487,6 +580,1017 @@
           "workerTerminated": true,
           "exitObserved": true
         }
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000100",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [],
+        "attempt": null,
+        "failure": {
+          "code": "sourceUnavailable",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000101",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceChangedDuringRead",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000102",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceUnreadable",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000103",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceReadIncomplete",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000104",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceNoMs1",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000105",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceNotCentroid",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000106",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceMixedPolarity",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000107",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourcePolarityUnsupported",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000108",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceRtUndeclaredOrNonmonotonic",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000109",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceRtNotStrictlyIncreasing",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-00000000010a",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceIonMobilityUnsupported",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-00000000010b",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceUnsortedMz",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-00000000010c",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "sourceNonfinite",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-00000000010d",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [],
+        "attempt": null,
+        "failure": {
+          "code": "executionViewUnavailable",
+          "stage": "source"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-00000000010e",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [],
+        "attempt": null,
+        "failure": {
+          "code": "runtimeUnverified",
+          "stage": "runtime"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-00000000010f",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "workerLaunchFailed",
+          "stage": "runtime"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000110",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "workerNotAccountedFor",
+          "stage": "runtime"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000111",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "runtimeModuleMismatch",
+          "stage": "result"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000112",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "resultInvalid",
+          "stage": "result"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000113",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "requestRefused",
+          "stage": "request"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000114",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "targetInvalid",
+          "stage": "request"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000115",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "engineError",
+          "stage": "engine"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000116",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "engineNoCandidates",
+          "stage": "engine"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000117",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "evidenceMappingMismatch",
+          "stage": "engine"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000118",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "workerExitedAbnormally",
+          "stage": "engine"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-000000000119",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "workerInternal",
+          "stage": "engine"
+        },
+        "stop": null
+      }
+    },
+    {
+      "id": "9a4c7e21-3b5d-4f8a-a1c6-00000000011a",
+      "operation": "targetedMs1V1",
+      "inputs": [
+        {
+          "kind": "layer",
+          "layerId": "1b9d4e63-2c8f-4a7d-b5e0-6f3a8c2d7e01"
+        }
+      ],
+      "outputArtifactIds": [],
+      "outcome": "failed",
+      "applicationVersion": "0.1.0",
+      "startedAt": "2026-09-24T08:00:00Z",
+      "finishedAt": "2026-09-24T08:00:10Z",
+      "targetedMs1": {
+        "planSha256": "40CE274B5DEA8459B26C2DC2FC5DAD1BF6B5CFD08DE32904F960EEB1561F630A",
+        "consumedContent": [
+          {
+            "role": "primary",
+            "relativeName": "",
+            "byteLength": 455961,
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        ],
+        "attempt": {
+          "adapterSha256": "ED3F7FBD772DE9489A4AFFF86CF3AC0A0D598690C16BB2C6CB87716021AFB0AC",
+          "runtimeManifestSha256": "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295",
+          "interpreterSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sourceView": "hardLinkInWorkArea",
+          "engineReport": null,
+          "loadedModules": []
+        },
+        "failure": {
+          "code": "payloadNotPublished",
+          "stage": "publish"
+        },
+        "stop": null
       }
     }
   ],
