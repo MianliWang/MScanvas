@@ -937,8 +937,10 @@ struct Watched<'a> {
     most: AtomicUsize,
     clean_at_start: Mutex<Vec<bool>>,
     copied_bytes: Mutex<Vec<u64>>,
-    on_phase: Box<dyn Fn(&AttemptOrder<'_>, RunPhase) + Sync + 'a>,
+    on_phase: Box<OnPhase<'a>>,
 }
+
+type OnPhase<'a> = dyn Fn(&AttemptOrder<'_>, RunPhase) + Sync + 'a;
 
 impl<'a> Watched<'a> {
     fn new(on_phase: impl Fn(&AttemptOrder<'_>, RunPhase) + Sync + 'a) -> Self {
