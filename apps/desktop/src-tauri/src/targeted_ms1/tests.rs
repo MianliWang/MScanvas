@@ -37,6 +37,9 @@ use crate::project::record::{
 use crate::project::tests::Scratch;
 use crate::project::{ProjectError, ProjectStore, SaveAsSeams};
 
+/// A batch of independent plans (M9.4).
+mod batch;
+
 // ---------------------------------------------------------------------------
 // mzML fixtures
 // ---------------------------------------------------------------------------

@@ -155,9 +155,74 @@ pub struct RunDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisRunDto {
-    /// The accepted operation a cancel names.
+    /// The accepted operation a cancel names. For a batch, it names the whole
+    /// batch: a cancel stops the member running and every member after it.
     pub operation_id: String,
+    /// Where the run -- for a batch, the member running -- is.
     pub phase: &'static str,
+    /// Every member of the batch in progress, in order, or `null` for one run.
+    pub batch: Option<Vec<BatchMemberDto>>,
+}
+
+/// One member of a batch, as the batch left it or as it now is. Session-only:
+/// what a batch leaves in the project is its members' ordinary runs.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchMemberDto {
+    pub layer_id: String,
+    pub plan_sha256: String,
+    /// `queued`, `running`, `completed`, `failed`, `cancelled`, `refused` or
+    /// `notStarted`. How far the member's execution got, never what its
+    /// targets were found to be.
+    pub state: &'static str,
+    /// The member's recorded run, once it has one.
+    pub run_id: Option<String>,
+    /// The member's result, where its run completed.
+    pub artifact_id: Option<String>,
+    /// For `refused`, why; for `notStarted`, what kept it out, or `null`
+    /// where the batch was stopped before it.
+    pub reason: Option<&'static str>,
+}
+
+/// One batch member on the wire.
+#[must_use]
+pub fn batch_member(member: &super::BatchMember) -> BatchMemberDto {
+    use super::MemberState;
+    let (state, run, reason) = match member.state {
+        MemberState::Queued => ("queued", None, None),
+        MemberState::Running => ("running", None, None),
+        MemberState::Ended(end) => (outcome_id(end.outcome), Some(end), None),
+        MemberState::Refused(error) => ("refused", None, Some(error.stable_id())),
+        MemberState::NotStarted(reason) => (
+            "notStarted",
+            None,
+            reason.map(super::ProjectError::stable_id),
+        ),
+    };
+    BatchMemberDto {
+        layer_id: member.layer_id.to_string(),
+        plan_sha256: member.plan_sha256.clone(),
+        state,
+        run_id: run.map(|end| end.run.to_string()),
+        artifact_id: run
+            .and_then(|end| end.artifact)
+            .map(|artifact| artifact.to_string()),
+        reason,
+    }
+}
+
+/// The run in progress on the wire.
+#[must_use]
+pub fn analysis_run(
+    id: ProjectJobId,
+    phase: RunPhase,
+    batch: Option<&[super::BatchMember]>,
+) -> AnalysisRunDto {
+    AnalysisRunDto {
+        operation_id: id.handle(),
+        phase: phase.stable_id(),
+        batch: batch.map(|members| members.iter().map(batch_member).collect()),
+    }
 }
 
 /// What the last look at the result store beside the document found.
@@ -339,18 +404,126 @@ pub fn engine() -> EngineDto {
 pub fn plan_resolution(resolution: super::PlanResolution) -> PlanResolutionDto {
     PlanResolutionDto {
         plan: resolution.plan,
-        problems: resolution
-            .problems
-            .iter()
-            .map(|problem| PlanProblemDto {
-                row: problem.row,
-                field: problem.field.stable_id(),
-                problem: problem.problem.stable_id(),
-            })
-            .collect(),
+        problems: resolution.problems.iter().map(problem).collect(),
         blocked: resolution.blocked.map(super::ProjectError::stable_id),
         engine: engine(),
     }
+}
+
+fn problem(problem: &super::recipe::PlanProblem) -> PlanProblemDto {
+    PlanProblemDto {
+        row: problem.row,
+        field: problem.field.stable_id(),
+        problem: problem.problem.stable_id(),
+    }
+}
+
+/// What a batch review sends: the layers, in the order they run, and the text
+/// the user typed once for all of them.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BatchRequestDto {
+    pub layer_ids: Vec<String>,
+    pub mz_half_width_ppm: String,
+    pub expected_peak_width_s: String,
+    pub targets: Vec<TargetRequestDto>,
+}
+
+impl BatchRequestDto {
+    /// The layers named, and the request as the recipe reads it.
+    #[must_use]
+    pub fn draft(self) -> (Vec<String>, super::recipe::PlanDraft) {
+        let request = PlanRequestDto {
+            layer_id: String::new(),
+            mz_half_width_ppm: self.mz_half_width_ppm,
+            expected_peak_width_s: self.expected_peak_width_s,
+            targets: self.targets,
+        };
+        (self.layer_ids, request.draft())
+    }
+}
+
+/// What every member's plan of a batch shares: the recipe, the parameters and
+/// the ordered target list, with its digest.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchCommonDto {
+    pub recipe: super::record::RecipeBinding,
+    pub parameters: super::record::TargetedMs1Parameters,
+    pub target_list_sha256: String,
+    pub targets: Vec<super::record::TargetDefinition>,
+}
+
+/// One member of a batch review.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchMemberPlanDto {
+    pub layer_id: String,
+    pub input_id: String,
+    /// Its own plan's digest, where it has a plan.
+    pub plan_sha256: Option<String>,
+    /// The bytes its plan expects the source to hold.
+    pub expected_content: Vec<super::record::ObservedMember>,
+    /// Why it has no plan, as a refusal identifier.
+    pub refused: Option<&'static str>,
+    /// Why its plan cannot run now, as a refusal identifier.
+    pub blocked: Option<&'static str>,
+}
+
+/// What resolving a batch request answered.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchResolutionDto {
+    pub problems: Vec<PlanProblemDto>,
+    /// `null` where the request has problems or no member has a plan.
+    pub common: Option<BatchCommonDto>,
+    pub members: Vec<BatchMemberPlanDto>,
+    pub engine: EngineDto,
+}
+
+/// What one batch resolution becomes on the wire.
+#[must_use]
+pub fn batch_resolution(resolution: super::BatchResolution) -> BatchResolutionDto {
+    let common = resolution
+        .members
+        .iter()
+        .find_map(|member| member.plan.as_ref())
+        .map(|plan| BatchCommonDto {
+            recipe: plan.recipe.clone(),
+            parameters: plan.parameters.clone(),
+            target_list_sha256: plan.target_list_sha256.clone(),
+            targets: plan.targets.clone(),
+        });
+    BatchResolutionDto {
+        problems: resolution.problems.iter().map(problem).collect(),
+        common,
+        members: resolution
+            .members
+            .into_iter()
+            .map(|member| BatchMemberPlanDto {
+                layer_id: member.layer_id.to_string(),
+                input_id: member.input_id.to_string(),
+                expected_content: member
+                    .plan
+                    .as_ref()
+                    .map(|plan| plan.expected_content.clone())
+                    .unwrap_or_default(),
+                plan_sha256: member.plan.map(|plan| plan.plan_sha256),
+                refused: member.refused.map(super::ProjectError::stable_id),
+                blocked: member.blocked.map(super::ProjectError::stable_id),
+            })
+            .collect(),
+        engine: engine(),
+    }
+}
+
+/// What a batch answers with once its last member has ended: the project as
+/// it now is, and every member, in order.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetedMs1BatchDto {
+    pub project: ProjectStateDto,
+    pub members: Vec<BatchMemberDto>,
 }
 
 /// What one recorded run answers with: the project as it now is, and the run.
@@ -417,7 +590,7 @@ const fn locator_kind(locator: &Locator) -> LocatorKind {
 /// Describes the open project, or the absence of one.
 pub(super) fn describe(
     open: Option<&OpenProject>,
-    run: Option<(ProjectJobId, RunPhase)>,
+    analysis_run: Option<AnalysisRunDto>,
 ) -> ProjectStateDto {
     let Some(project) = open else {
         return ProjectStateDto::default();
@@ -567,10 +740,7 @@ pub(super) fn describe(
         runs,
         layers,
         plans: document.plans.clone(),
-        analysis_run: run.map(|(id, phase)| AnalysisRunDto {
-            operation_id: id.handle(),
-            phase: phase.stable_id(),
-        }),
+        analysis_run,
         result_store: ResultStoreDto {
             store_found: project.payloads.store_found,
             unreferenced_results: project.payloads.unreferenced,

@@ -382,6 +382,35 @@ pub fn resolve(
     Ok(plan)
 }
 
+/// The fewest acquisitions a batch request names; one is a single run.
+pub const MIN_BATCH_MEMBERS: usize = 2;
+/// The most acquisitions one batch request names. A product guard for the
+/// first batch build, not a scientific limit.
+pub const MAX_BATCH_MEMBERS: usize = 16;
+
+/// `plan` bound to another layer and its reference: the same recipe,
+/// parameters and ordered targets under the same identifiers, over the bytes
+/// that reference recorded, and named by its own digest.
+///
+/// How a batch gives each member its own plan from one request. Only the
+/// binding changes, so no member's plan says anything about another's source.
+#[must_use]
+pub fn bind(
+    plan: &TargetedMs1Plan,
+    layer: &LayerRecord,
+    input: &InputRecord,
+) -> Option<TargetedMs1Plan> {
+    let mut bound = TargetedMs1Plan {
+        plan_sha256: String::new(),
+        layer_id: layer.id,
+        input_id: input.id,
+        expected_content: record::expected_content_of(input),
+        ..plan.clone()
+    };
+    bound.plan_sha256 = record::plan_digest(&bound)?;
+    Some(bound)
+}
+
 // ---------------------------------------------------------------------------
 // The execution boundary
 //

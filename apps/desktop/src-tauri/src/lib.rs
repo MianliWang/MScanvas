@@ -171,6 +171,8 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::PayloadUnavailable(_) => {
             "This stored result is missing or damaged, so it cannot be shown."
         }
+        Refusal::BatchSizeOutOfRange => "A batch holds 2 to 16 acquisitions.",
+        Refusal::BatchDuplicateInput => "An acquisition appears twice in this batch.",
     };
     PreviewErrorDto::new(error.stable_id(), message, error.retryable())
 }
@@ -669,6 +671,82 @@ async fn run_targeted_ms1(
     .await?
 }
 
+/// Resolves one targeted MS1 request over several layers into one plan per
+/// layer, for review as a batch.
+///
+/// Sends the layers, in the order they will run, and the text the user typed
+/// once; Rust resolves it once, binds a plan to each layer and holds the batch
+/// for this session. Reads no source's content and starts nothing, as a single
+/// review does, and says per member what would stop it running now.
+#[tauri::command]
+async fn resolve_targeted_ms1_batch(
+    request: project::dto::BatchRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::BatchResolutionDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let (layer_ids, draft) = request.draft();
+    if layer_ids.len() > project::recipe::MAX_BATCH_MEMBERS {
+        return Err(project_error(project::ProjectError::BatchSizeOutOfRange));
+    }
+    let layers = layer_ids
+        .iter()
+        .map(|id| parsed_layer_id(id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let projects = Arc::clone(&projects);
+    // Off the async runtime: each placement question opens a source by name.
+    off_the_async_runtime(move || {
+        let executor = targeted_ms1::executor();
+        projects
+            .resolve_targeted_ms1_batch(&layers, &draft, executor.as_ref())
+            .map(project::dto::batch_resolution)
+            .map_err(project_error)
+    })
+    .await?
+}
+
+/// Runs the batch last reviewed as the operation `begin_project_job`
+/// accepted: each member's plan in turn, one at a time, through exactly the
+/// path one plan takes alone.
+///
+/// Names the plans by their digests, in order, and they must be exactly the
+/// batch reviewed. Cancelling the operation stops the batch: the member
+/// running ends as a cancelled run, and no later member starts.
+#[tauri::command]
+async fn run_targeted_ms1_batch(
+    operation_id: String,
+    plan_sha256s: Vec<String>,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedMs1BatchDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let job = parsed_job_id(&operation_id)?;
+    let well_formed = plan_sha256s.len() <= project::recipe::MAX_BATCH_MEMBERS
+        && plan_sha256s.iter().all(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        });
+    if !well_formed {
+        return Err(project_error(project::ProjectError::PlanNotCurrent));
+    }
+    let projects = Arc::clone(&projects);
+    // Off the async runtime for every member's attempt.
+    off_the_async_runtime(move || {
+        let executor = targeted_ms1::executor();
+        let members = projects
+            .run_targeted_ms1_batch(job, &plan_sha256s, executor.as_ref())
+            .map_err(project_error)?;
+        Ok(project::dto::TargetedMs1BatchDto {
+            project: projects.describe(),
+            members: members.iter().map(project::dto::batch_member).collect(),
+        })
+    })
+    .await?
+}
+
 /// Where the targeted run in progress is, or `null` when none is.
 ///
 /// Read-only and cheap, so a page can ask while its run is pending without
@@ -681,12 +759,7 @@ async fn get_targeted_ms1_progress(
     projects: State<'_, SharedProjects>,
 ) -> Result<Option<project::dto::AnalysisRunDto>, PreviewErrorDto> {
     verified_document_epoch(&ipc_request, &webview, &service).await?;
-    Ok(projects
-        .analysis_run()
-        .map(|(id, phase)| project::dto::AnalysisRunDto {
-            operation_id: id.handle(),
-            phase: phase.stable_id(),
-        }))
+    Ok(projects.analysis_progress())
 }
 
 /// One page of a stored targeted result's rows, checked against its record.
@@ -2486,6 +2559,8 @@ pub fn run() {
             capture_project_qc_summary,
             resolve_targeted_ms1_plan,
             run_targeted_ms1,
+            resolve_targeted_ms1_batch,
+            run_targeted_ms1_batch,
             get_targeted_ms1_progress,
             read_targeted_ms1_rows,
             read_targeted_ms1_evidence,

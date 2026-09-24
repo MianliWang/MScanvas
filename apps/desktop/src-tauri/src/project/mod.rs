@@ -185,6 +185,12 @@ pub enum ProjectError {
     PayloadNotCopied,
     /// A stored result is not whole, so it cannot be read.
     PayloadUnavailable(Availability),
+    /// A batch request names fewer or more acquisitions than a batch holds.
+    BatchSizeOutOfRange,
+    /// A batch request names one reference twice. It is refused, never
+    /// deduplicated: which of the two the user meant is not this build's to
+    /// guess.
+    BatchDuplicateInput,
 }
 
 impl ProjectError {
@@ -229,6 +235,8 @@ impl ProjectError {
             Self::DestinationStoreExists => "destinationStoreExists",
             Self::PayloadNotCopied => "payloadNotCopied",
             Self::PayloadUnavailable(availability) => availability.stable_id(),
+            Self::BatchSizeOutOfRange => "batchSizeOutOfRange",
+            Self::BatchDuplicateInput => "batchDuplicateInput",
         }
     }
 
@@ -339,6 +347,35 @@ struct AcceptedJob {
     exclusive: bool,
     /// Where an exclusive run is, for the interface.
     phase: Option<RunPhase>,
+    /// Where each member of a batch is, when this job runs one. Session-only:
+    /// what a batch leaves in the project is its members' ordinary runs.
+    batch: Option<Vec<BatchMember>>,
+}
+
+/// One acquisition of a batch: the plan it executes and how far it got.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchMember {
+    pub layer_id: LayerId,
+    pub plan_sha256: String,
+    pub state: MemberState,
+}
+
+/// Where one batch member is. An orchestration state, never a scientific
+/// one: a member whose targets were all absent completed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberState {
+    /// Not reached yet.
+    Queued,
+    /// Its plan is being run now; the job's phase says where.
+    Running,
+    /// Its run is recorded, however it ended.
+    Ended(TargetedMs1RunEnd),
+    /// Refused before its attempt, as a single run would be, or refused
+    /// recording afterwards. Nothing is recorded for it.
+    Refused(ProjectError),
+    /// Never started: the batch was stopped before it (`None`), or a fact
+    /// about the whole session or project kept every later member out.
+    NotStarted(Option<ProjectError>),
 }
 
 /// Where this session last published the open project, and at which revision.
@@ -389,10 +426,10 @@ struct OpenProject {
     /// rows exist, and the interface resolves a remembered handle against it
     /// rather than trusting this list to be current.
     admitted: Vec<(InputId, String)>,
-    /// The plan last resolved for review, which a run may execute. Session-
-    /// only: a plan becomes history when a run executes it, not when it is
-    /// reviewed.
-    pending_plan: Option<TargetedMs1Plan>,
+    /// The plans last resolved for review, which a run may execute: one for a
+    /// single review, every member's in order for a batch. Session-only: a
+    /// plan becomes history when a run executes it, not when it is reviewed.
+    pending_plans: Vec<TargetedMs1Plan>,
     /// What the last look at the result store found. Session-only, like
     /// `verification`: whether a result is whole is observed, never stored.
     payloads: PayloadState,
@@ -422,7 +459,7 @@ impl OpenProject {
             verification,
             proposal: None,
             admitted: Vec::new(),
-            pending_plan: None,
+            pending_plans: Vec::new(),
             payloads: PayloadState::default(),
         }
     }
@@ -541,6 +578,19 @@ impl Session {
             _ => Ok(()),
         }
     }
+
+    fn analysis_progress(&self) -> Option<dto::AnalysisRunDto> {
+        self.job
+            .as_ref()
+            .filter(|job| job.started && job.exclusive)
+            .map(|job| {
+                dto::analysis_run(
+                    job.id,
+                    job.phase.unwrap_or(RunPhase::Preparing),
+                    job.batch.as_deref(),
+                )
+            })
+    }
 }
 
 /// The session's one project.
@@ -604,15 +654,17 @@ impl ProjectStore {
     #[must_use]
     pub fn describe(&self) -> dto::ProjectStateDto {
         let session = self.locked();
-        let run = session
-            .job
-            .as_ref()
-            .filter(|job| job.started && job.exclusive)
-            .map(|job| (job.id, job.phase.unwrap_or(RunPhase::Preparing)));
-        dto::describe(session.project.as_ref(), run)
+        dto::describe(session.project.as_ref(), session.analysis_progress())
+    }
+
+    /// The targeted run or batch in progress, as the interface is told it.
+    #[must_use]
+    pub fn analysis_progress(&self) -> Option<dto::AnalysisRunDto> {
+        self.locked().analysis_progress()
     }
 
     /// The targeted run in progress, and where it is.
+    #[cfg(test)]
     #[must_use]
     pub fn analysis_run(&self) -> Option<(ProjectJobId, RunPhase)> {
         let session = self.locked();
@@ -1137,6 +1189,7 @@ impl ProjectStore {
             started: false,
             exclusive: false,
             phase: None,
+            batch: None,
         });
         Ok(id)
     }
@@ -2038,7 +2091,7 @@ impl ProjectStore {
         } else {
             blocked
         };
-        session.open_mut()?.pending_plan = Some(plan.clone());
+        session.open_mut()?.pending_plans = vec![plan.clone()];
         Ok(PlanResolution {
             plan: Some(plan),
             problems: Vec::new(),
@@ -2073,59 +2126,295 @@ impl ProjectStore {
         executor: &dyn RecipeExecutor,
     ) -> Result<TargetedMs1RunEnd, ProjectError> {
         let (mut guard, cancellation, generation) = self.start_job(job, true)?;
-        let (plan, input, binding_path, project_id, plan_recorded) = {
+        let (end, mut session) =
+            self.run_plan(job, &cancellation, generation, plan_sha256, executor);
+        // Under the lock the run was recorded under, so no cancel can find an
+        // operation that has already committed.
+        guard.release(&mut session);
+        end
+    }
+
+    /// Resolves one targeted MS1 request over several layers into one plan
+    /// per layer, for review as a batch.
+    ///
+    /// The request -- the parameters and the ordered target list -- is
+    /// resolved once, so every member's plan carries the same targets under
+    /// the same identifiers and the same list digest. Each plan then binds its
+    /// own layer, its own reference and the bytes that reference recorded, and
+    /// is named by its own digest: a batch is several independent plans, never
+    /// one plan over several sources. Like a single review it reads no
+    /// source's content and starts nothing, and it says per member what would
+    /// stop that member running now.
+    ///
+    /// Only a batch whose every member has a plan can run. Where a member's
+    /// source is not one this recipe reads, that member is refused and nothing
+    /// of this review is held for a run: no member is silently left out.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::BatchSizeOutOfRange`] and
+    /// [`ProjectError::BatchDuplicateInput`] for the request itself,
+    /// [`ProjectError::UnknownRecord`] for a layer this project has no record
+    /// of, or [`ProjectError::StaleDocument`] where the project moved while the
+    /// plans were resolved.
+    pub fn resolve_targeted_ms1_batch(
+        &self,
+        layers: &[LayerId],
+        draft: &PlanDraft,
+        executor: &dyn RecipeExecutor,
+    ) -> Result<BatchResolution, ProjectError> {
+        if !(recipe::MIN_BATCH_MEMBERS..=recipe::MAX_BATCH_MEMBERS).contains(&layers.len()) {
+            return Err(ProjectError::BatchSizeOutOfRange);
+        }
+        let (generation, members, base) = {
             let session = self.locked();
-            if session.analysis_quarantined {
-                return Err(ProjectError::AnalysisQuarantined);
-            }
             let project = session.open()?;
-            let recorded = project.document.plan(plan_sha256).cloned();
-            let plan = project
-                .pending_plan
-                .as_ref()
-                .filter(|pending| pending.plan_sha256.eq_ignore_ascii_case(plan_sha256))
-                .cloned()
-                .or_else(|| recorded.clone())
-                .ok_or(ProjectError::PlanNotCurrent)?;
-            let layer = project
-                .document
-                .layer(plan.layer_id)
-                .ok_or(ProjectError::PlanNotCurrent)?;
-            let input = project
-                .document
-                .input(plan.input_id)
-                .ok_or(ProjectError::PlanNotCurrent)?
-                .clone();
-            // A plan is executed only by the recipe it was reviewed against,
-            // over the reference and the bytes it expects.
-            if layer.source.input_id() != plan.input_id
-                || record::expected_content_of(&input) != plan.expected_content
-                || plan.recipe != recipe::this_build()
-            {
-                return Err(ProjectError::PlanNotCurrent);
+            let mut members: Vec<(LayerRecord, InputRecord)> = Vec::with_capacity(layers.len());
+            for id in layers {
+                let layer = project
+                    .document
+                    .layer(*id)
+                    .ok_or(ProjectError::UnknownRecord)?;
+                let input = project
+                    .document
+                    .input(layer.source.input_id())
+                    .ok_or(ProjectError::UnknownRecord)?;
+                if members.iter().any(|(_, seen)| seen.id == input.id) {
+                    return Err(ProjectError::BatchDuplicateInput);
+                }
+                members.push((layer.clone(), input.clone()));
             }
-            let binding = project
-                .binding
-                .clone()
-                .ok_or(ProjectError::NotYetPublished)?;
-            refuse_full_history(&project.document)?;
             (
-                plan,
-                input,
-                binding.path,
-                project.document.project_id,
-                recorded.is_some(),
+                session.generation,
+                members,
+                project.base_directory().map(Path::to_path_buf),
             )
         };
-        if !recipe::source_is_supported(&input) {
-            return Err(ProjectError::RecipeSourceUnsupported);
+        // The request is the same for every member, so it is judged once.
+        let (first_layer, first_input) = &members[0];
+        let template = match recipe::resolve(first_layer, first_input, draft, recipe::this_build())
+        {
+            Ok(plan) => plan,
+            Err(problems) => {
+                return Ok(BatchResolution {
+                    problems,
+                    members: Vec::new(),
+                });
+            }
+        };
+        // Outside the lock: each placement question opens a source by name.
+        let mut resolved = Vec::with_capacity(members.len());
+        for (layer, input) in &members {
+            if !recipe::source_is_supported(input) {
+                resolved.push(MemberResolution {
+                    layer_id: layer.id,
+                    input_id: input.id,
+                    plan: None,
+                    refused: Some(ProjectError::RecipeSourceUnsupported),
+                    blocked: None,
+                });
+                continue;
+            }
+            let Some(plan) = recipe::bind(&template, layer, input) else {
+                // Only the platform digest can fail here, as in a single
+                // review, which reports it against the list.
+                return Ok(BatchResolution {
+                    problems: vec![PlanProblem {
+                        row: None,
+                        field: recipe::PlanField::Targets,
+                        problem: recipe::ProblemKind::Invalid,
+                    }],
+                    members: Vec::new(),
+                });
+            };
+            let blocked = match &base {
+                None => Some(ProjectError::NotYetPublished),
+                Some(base) => match record::resolve(&input.locator, base) {
+                    Ok(source) => executor.preflight(&plan, &source).err(),
+                    Err(problem) => Some(ProjectError::Document(problem)),
+                },
+            };
+            resolved.push(MemberResolution {
+                layer_id: layer.id,
+                input_id: input.id,
+                plan: Some(plan),
+                refused: None,
+                blocked,
+            });
         }
-        let base = binding_path.parent().unwrap_or_else(|| Path::new(""));
-        let source = record::resolve(&input.locator, base).map_err(ProjectError::Document)?;
-        executor.preflight(&plan, &source)?;
-        let store = payload::store_of(&binding_path).ok_or(ProjectError::NotYetPublished)?;
-        payload::ensure_store(&store, project_id)
-            .map_err(|_| ProjectError::PayloadStoreUnusable)?;
+        let mut session = self.locked();
+        if session.generation != generation {
+            return Err(ProjectError::StaleDocument);
+        }
+        if session.analysis_quarantined {
+            for member in resolved.iter_mut().filter(|member| member.plan.is_some()) {
+                member.blocked = Some(ProjectError::AnalysisQuarantined);
+            }
+        }
+        let plans: Option<Vec<TargetedMs1Plan>> =
+            resolved.iter().map(|member| member.plan.clone()).collect();
+        session.open_mut()?.pending_plans = plans.unwrap_or_default();
+        Ok(BatchResolution {
+            problems: Vec::new(),
+            members: resolved,
+        })
+    }
+
+    /// Runs the batch last reviewed, as the accepted operation `job`: each
+    /// member's plan in turn, through exactly the path one plan takes alone.
+    ///
+    /// Strictly one member at a time. This loop is the only scheduler, and a
+    /// member's attempt has ended -- its worker observed gone, or the session
+    /// quarantined -- before the next member is looked at. The project is held
+    /// still from the first member to the last, as it is for one run.
+    ///
+    /// A member's end is its own. One that is refused, fails or is cancelled
+    /// leaves every other member's run and result as they are, and the next
+    /// member runs; each member that reaches its attempt is recorded, and
+    /// publishes its own result, exactly as a single run would be. What keeps
+    /// the members not yet started from starting is the user stopping the
+    /// batch -- the member running then ends as any cancelled run does -- or a
+    /// fact that would refuse every one of them alike: a session quarantined
+    /// by a worker it could not account for, or a project that moved or whose
+    /// history is full. Those members get no run, because nothing was started
+    /// for them.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::PlanNotCurrent`] unless `plan_sha256s` is exactly the
+    /// batch last reviewed, in its order, and the refusals of starting a job.
+    /// Once the first member is reached, every member's end is in the answer.
+    pub fn run_targeted_ms1_batch(
+        &self,
+        job: ProjectJobId,
+        plan_sha256s: &[String],
+        executor: &dyn RecipeExecutor,
+    ) -> Result<Vec<BatchMember>, ProjectError> {
+        let (mut guard, cancellation, generation) = self.start_job(job, true)?;
+        let mut members = {
+            let mut session = self.locked();
+            let reviewed = session.open().map(|project| {
+                let pending = &project.pending_plans;
+                let same = plan_sha256s.len() >= recipe::MIN_BATCH_MEMBERS
+                    && pending.len() == plan_sha256s.len()
+                    && pending
+                        .iter()
+                        .zip(plan_sha256s)
+                        .all(|(plan, asked)| plan.plan_sha256.eq_ignore_ascii_case(asked));
+                same.then(|| {
+                    pending
+                        .iter()
+                        .map(|plan| BatchMember {
+                            layer_id: plan.layer_id,
+                            plan_sha256: plan.plan_sha256.clone(),
+                            state: MemberState::Queued,
+                        })
+                        .collect::<Vec<_>>()
+                })
+            });
+            let members = match reviewed {
+                Ok(Some(members)) => members,
+                Ok(None) => {
+                    guard.release(&mut session);
+                    return Err(ProjectError::PlanNotCurrent);
+                }
+                Err(error) => {
+                    guard.release(&mut session);
+                    return Err(error);
+                }
+            };
+            if let Some(accepted) = session.job.as_mut().filter(|accepted| accepted.id == job) {
+                accepted.batch = Some(members.clone());
+            }
+            members
+        };
+        let mut index = 0;
+        loop {
+            {
+                // The stop is looked at under the lock that marks the member
+                // running: a member never marked is never started, and one
+                // marked meets a later stop as any run in progress does.
+                let mut session = self.locked();
+                if cancellation.requested() {
+                    for member in &mut members[index..] {
+                        member.state = MemberState::NotStarted(None);
+                    }
+                    guard.release(&mut session);
+                    return Ok(members);
+                }
+                members[index].state = MemberState::Running;
+                if let Some(accepted) = session.job.as_mut().filter(|accepted| accepted.id == job) {
+                    accepted.phase = Some(RunPhase::Preparing);
+                    accepted.batch = Some(members.clone());
+                }
+            }
+            let plan_sha256 = members[index].plan_sha256.clone();
+            let (end, mut session) =
+                self.run_plan(job, &cancellation, generation, &plan_sha256, executor);
+            // A fact about the whole session or project, which would refuse
+            // every later member alike: none of them is started.
+            let halt = if session.analysis_quarantined {
+                Some(ProjectError::AnalysisQuarantined)
+            } else {
+                match end {
+                    Err(
+                        error @ (ProjectError::StaleDocument
+                        | ProjectError::NoOpenProject
+                        | ProjectError::Oversized),
+                    ) => Some(error),
+                    _ => None,
+                }
+            };
+            members[index].state = match end {
+                Ok(end) => MemberState::Ended(end),
+                Err(error) => MemberState::Refused(error),
+            };
+            index += 1;
+            if let Some(reason) = halt {
+                for member in &mut members[index..] {
+                    member.state = MemberState::NotStarted(Some(reason));
+                }
+            }
+            if halt.is_some() || index == members.len() {
+                // Under the last member's own commit, as one run releases.
+                guard.release(&mut session);
+                return Ok(members);
+            }
+            if let Some(accepted) = session.job.as_mut().filter(|accepted| accepted.id == job) {
+                accepted.batch = Some(members.clone());
+            }
+        }
+    }
+
+    /// Runs one plan inside the exclusive job `job`, which the caller started
+    /// and releases: [`Self::run_targeted_ms1`] for one plan, and
+    /// [`Self::run_targeted_ms1_batch`] once for each member.
+    ///
+    /// Answers with the session lock held -- the lock the run was recorded
+    /// under, or one taken for a refusal before the attempt -- so the caller
+    /// releases the job, or notes the member's end, before anything else can
+    /// see the project.
+    fn run_plan(
+        &self,
+        job: ProjectJobId,
+        cancellation: &Cancellation,
+        generation: u64,
+        plan_sha256: &str,
+        executor: &dyn RecipeExecutor,
+    ) -> (
+        Result<TargetedMs1RunEnd, ProjectError>,
+        std::sync::MutexGuard<'_, Session>,
+    ) {
+        let PreparedRun {
+            plan,
+            source,
+            store,
+            binding_path,
+            plan_recorded,
+        } = match self.prepare_run(plan_sha256, executor) {
+            Ok(prepared) => prepared,
+            Err(error) => return (Err(error), self.locked()),
+        };
 
         let artifact = ArtifactId::new();
         let started_at = now_rfc3339();
@@ -2135,7 +2424,7 @@ impl ProjectStore {
             store: &store,
             artifact,
         };
-        let end = executor.attempt(&order, &cancellation, &|phase| self.set_phase(job, phase));
+        let end = executor.attempt(&order, cancellation, &|phase| self.set_phase(job, phase));
         let finished_at = now_rfc3339();
 
         let mut session = self.locked();
@@ -2159,13 +2448,11 @@ impl ProjectStore {
         // not run for would be history nobody made.
         if session.generation != generation {
             discard();
-            guard.release(&mut session);
-            return Err(ProjectError::StaleDocument);
+            return (Err(ProjectError::StaleDocument), session);
         }
         let Some(project) = session.project.as_mut() else {
             discard();
-            guard.release(&mut session);
-            return Err(ProjectError::NoOpenProject);
+            return (Err(ProjectError::NoOpenProject), session);
         };
         let still_there = project
             .document
@@ -2174,13 +2461,11 @@ impl ProjectStore {
             && project.binding.as_ref().map(|binding| &binding.path) == Some(&binding_path);
         if !still_there {
             discard();
-            guard.release(&mut session);
-            return Err(ProjectError::StaleDocument);
+            return (Err(ProjectError::StaleDocument), session);
         }
         if refuse_full_history(&project.document).is_err() {
             discard();
-            guard.release(&mut session);
-            return Err(ProjectError::Oversized);
+            return (Err(ProjectError::Oversized), session);
         }
         // A cancel that reached the commit before it is still a cancel that
         // won: what it stops is the publication of the result.
@@ -2297,8 +2582,7 @@ impl ProjectStore {
                 project.document.plans.pop();
             }
             discard();
-            guard.release(&mut session);
-            return Err(ProjectError::Oversized);
+            return (Err(ProjectError::Oversized), session);
         }
         let mut outcome = outcome;
         if completed {
@@ -2339,11 +2623,82 @@ impl ProjectStore {
         if let Some(project) = session.project.as_mut() {
             project.dirty = true;
         }
-        guard.release(&mut session);
-        Ok(TargetedMs1RunEnd {
-            run: run_id,
-            outcome,
-            artifact: (outcome == TerminalOutcome::Completed).then_some(artifact),
+        (
+            Ok(TargetedMs1RunEnd {
+                run: run_id,
+                outcome,
+                artifact: (outcome == TerminalOutcome::Completed).then_some(artifact),
+            }),
+            session,
+        )
+    }
+
+    /// The checks a run passes before its attempt starts, and what they
+    /// established. A refusal here records nothing.
+    fn prepare_run(
+        &self,
+        plan_sha256: &str,
+        executor: &dyn RecipeExecutor,
+    ) -> Result<PreparedRun, ProjectError> {
+        let (plan, input, binding_path, project_id, plan_recorded) = {
+            let session = self.locked();
+            if session.analysis_quarantined {
+                return Err(ProjectError::AnalysisQuarantined);
+            }
+            let project = session.open()?;
+            let recorded = project.document.plan(plan_sha256).cloned();
+            let plan = project
+                .pending_plans
+                .iter()
+                .find(|pending| pending.plan_sha256.eq_ignore_ascii_case(plan_sha256))
+                .cloned()
+                .or_else(|| recorded.clone())
+                .ok_or(ProjectError::PlanNotCurrent)?;
+            let layer = project
+                .document
+                .layer(plan.layer_id)
+                .ok_or(ProjectError::PlanNotCurrent)?;
+            let input = project
+                .document
+                .input(plan.input_id)
+                .ok_or(ProjectError::PlanNotCurrent)?
+                .clone();
+            // A plan is executed only by the recipe it was reviewed against,
+            // over the reference and the bytes it expects.
+            if layer.source.input_id() != plan.input_id
+                || record::expected_content_of(&input) != plan.expected_content
+                || plan.recipe != recipe::this_build()
+            {
+                return Err(ProjectError::PlanNotCurrent);
+            }
+            let binding = project
+                .binding
+                .clone()
+                .ok_or(ProjectError::NotYetPublished)?;
+            refuse_full_history(&project.document)?;
+            (
+                plan,
+                input,
+                binding.path,
+                project.document.project_id,
+                recorded.is_some(),
+            )
+        };
+        if !recipe::source_is_supported(&input) {
+            return Err(ProjectError::RecipeSourceUnsupported);
+        }
+        let base = binding_path.parent().unwrap_or_else(|| Path::new(""));
+        let source = record::resolve(&input.locator, base).map_err(ProjectError::Document)?;
+        executor.preflight(&plan, &source)?;
+        let store = payload::store_of(&binding_path).ok_or(ProjectError::NotYetPublished)?;
+        payload::ensure_store(&store, project_id)
+            .map_err(|_| ProjectError::PayloadStoreUnusable)?;
+        Ok(PreparedRun {
+            plan,
+            source,
+            store,
+            binding_path,
+            plan_recorded,
         })
     }
 
@@ -2546,6 +2901,43 @@ pub struct PlanResolution {
     pub problems: Vec<PlanProblem>,
     /// What would stop this plan running now, if anything.
     pub blocked: Option<ProjectError>,
+}
+
+/// What resolving a batch request produced.
+#[derive(Debug)]
+pub struct BatchResolution {
+    /// Every problem with the request, row by row. The request is every
+    /// member's, so where it has any there are no members.
+    pub problems: Vec<PlanProblem>,
+    /// Every member, in the order the request named them.
+    pub members: Vec<MemberResolution>,
+}
+
+/// One member of a batch, as resolved for review.
+#[derive(Debug)]
+pub struct MemberResolution {
+    pub layer_id: LayerId,
+    pub input_id: InputId,
+    /// Its own plan, where its source is one this recipe reads.
+    pub plan: Option<TargetedMs1Plan>,
+    /// Why it has no plan.
+    pub refused: Option<ProjectError>,
+    /// What would stop its plan running now, if anything.
+    pub blocked: Option<ProjectError>,
+}
+
+/// What a run established before its attempt started.
+struct PreparedRun {
+    plan: TargetedMs1Plan,
+    /// The source's primary member, resolved from the project's locator.
+    source: PathBuf,
+    /// The result store beside the document, which exists and is this
+    /// project's.
+    store: PathBuf,
+    /// The document the run is recorded for.
+    binding_path: PathBuf,
+    /// Whether the project already recorded the plan.
+    plan_recorded: bool,
 }
 
 /// How one recorded targeted run ended.
