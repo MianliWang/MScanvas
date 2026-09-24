@@ -12,6 +12,10 @@ NOT STARTED · M7.6 RELEASE QUALIFICATION DEFERRED / INCOMPLETE · PROTEOWIZARD
 HOLD UNCHANGED · ROUTE B NOT AUTHORIZED / NOT EXECUTED · PUBLIC BETA NOT
 RELEASED; M10 NOT STARTED
 
+Update: M9.2 has since made a stored result durable and exportable; the
+status line above is M9.1's own. See the
+[M9.2 record](M9_2_TARGETED_MS1_RESULT_REUSE.md).
+
 The first section records what M9.1 built. Everything after it is the M9.0
 decision and the handoff M9.1 was built against, kept as written; where the
 build differs from the handoff, the first section says so.
