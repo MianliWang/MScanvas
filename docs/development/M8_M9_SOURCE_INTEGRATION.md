@@ -12,6 +12,7 @@ it there — not this text — is the evidence that the stack was published.
 
 Status when written:
 
+- `SOURCE INTEGRATION QUALIFICATION PREPARED — VALIDATION DEFERRED FOR HOST MEMORY PRESSURE` (§8)
 - `SOURCE UNPUBLISHED`
 - `M8 LOCAL IMPLEMENTATION COMPLETE`
 - `M9 LOCAL IMPLEMENTATION COMPLETE`
@@ -27,10 +28,14 @@ Status when written:
 | Published base: `main` = `origin/main` (and `git ls-remote origin refs/heads/main`) | `1daf802f06d0149b5de3dbd12e8b01e7e86862ec` | — |
 | M9 closure, final tested code | `fa7f213b181e9e5ecb7e164f3b128b2da631c7a9` | `56e85d1bcfe4999eeda53290e81f292e1196eb05` |
 | M9 closure head (documentation-only successor of the above) — this branch's start | `46ef9cc441b3c014aa4964976db917ecb68008c4` | `3f40009c72fd8c8d14712db4502f6d41d1b97a33` |
-| Integration candidate: the commit that adds this record | see §8 | see §8 |
+| First candidate: the commit that added this record | `896e0121b0ba533781e5039585cfe30eef5be426` | `2d8f3770ebf9877b09fd50fdbc35d04b471f233c` |
+| **Integration candidate**: the review's fixes (§9) | `d8192d5178e81b8cf220578d105393c0f87fb8ea` | `8e738463b770f4429a1e94466d72cdb514ea01ba` |
 
-The candidate cannot name itself. §8 names it, with the gates that ran on it,
-in a documentation-only successor that changes this file alone.
+A candidate cannot name itself. §8 and §9 are written by a
+documentation-only successor that changes this file alone. Both candidates
+change only Markdown: `git diff --name-only fa7f213 d8192d5` lists no file
+that is not `.md`, so every non-documentation byte of the candidate is the M9
+closure's final tested code.
 
 ## 2. The stack
 
@@ -197,12 +202,89 @@ None is changed here; each is for the owner and the publication run.
 
 ## 8. Validation
 
-Pending when the candidate was committed; recorded here by a
-documentation-only successor.
+**Heavy validation is deferred for host memory pressure. It is not a failure,
+and the candidate is not yet qualified.** Heavy campaigns start only when free
+physical memory is at least 8 GiB and use is at most 80%, measured from
+`Win32_OperatingSystem` immediately before each group; nothing on the host was
+stopped or reconfigured to make room.
+
+| Measured (local time) | Total visible | Free | In use | Gate |
+| --- | ---: | ---: | ---: | --- |
+| 2026-09-24T18:11:26-04:00, before Group A on `896e012` | 33,211,120 KiB (31.67 GiB) | 3,669,460 KiB (3.50 GiB) | 89.0% | deferred |
+| 2026-09-24T18:25:03-04:00, before Group A on `d8192d5` | 33,211,120 KiB (31.67 GiB) | 4,719,296 KiB (4.50 GiB) | 85.8% | deferred |
+
+**Ran** (light; logs under `.tmp/m8-m9-integration-evidence/`, git-ignored):
+
+| Command | On | Exit |
+| --- | --- | ---: |
+| `python -B scripts/check_repo.py` | `46ef9cc` (baseline) | 0 |
+| `python -B scripts/check_repo.py` | the content of `896e012`, before it was committed | 0 |
+| `python -B scripts/check_repo.py` | the content of `d8192d5`, before it was committed | 0 |
+| `git diff --stat 1daf802 896e012 --` every tracked manifest and lock | `896e012` | 0 — as §5 |
+| `git diff --quiet 97392e9 896e012 --` and `git diff --quiet 46ef9cc 896e012 --` the same files | `896e012` | 0, 0 |
+| `cargo fmt --all --check` | `896e012` | 0 |
+| `python -B scripts/generate_notices.py --check` | `896e012` | 0 |
+
+`d8192d5` differs from `896e012` in Markdown only, which none of the last four
+reads.
+
+**Deferred**, to run serially on `d8192d5`, one group at a time, each behind
+the memory gate:
+
+- Group A, Rust, with CI's exact flags where CI has them:
+  `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`;
+  `cargo test --locked --workspace --all-targets`;
+  `cargo test --locked -p mscanvas-desktop --lib targeted_ms1`;
+  `cargo test --locked -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1 --nocapture`
+  (the real-runtime suite); `cargo check --locked --release --workspace`.
+- Group B, frontend: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
+  `pnpm e2e:typecheck`.
+- Group C, the seven M8/M9 browser specs, one invocation each:
+  `pnpm exec wdio run ./e2e/wdio.browser.conf.ts --spec ./e2e/specs/<spec>`.
+  The repository-wide suite is not rerun (§6).
+- Group D, `python -B scripts/check_repo.py` on the committed successor.
+
+Until those run, the code gates that stand are the M9 closure's on
+`fa7f213` ([evidence §7](../spikes/M9_CLOSURE_EVIDENCE.md#7-validation-on-the-tested-tree)),
+whose code the candidate carries byte for byte. The closure never ran CI's
+`--locked --all-targets` forms; Group A does.
 
 ## 9. Review
 
-Pending; recorded with §8.
+One isolated, read-only review of `896e012`, after the light gates and while
+no suite ran. It was forbidden to write files, build, test or use the network,
+and did none of them. Scope: source-state truthfulness, the partial-M7.6
+ancestry, README and current documents, release claims, dependencies,
+validation attribution, test-debt wording, the publication procedure and
+history preservation; the scientific M9 review was not reopened.
+
+**Verdict: no blocker to source-integration candidacy.** It verified the
+stack shape, every range and count in §2, every branch head, the partial-M7.6
+file list, the dependency claims, the browser-debt and timeout numbers, the
+static runtime reading in §7, the tree-equality claim in §10 and that no
+current document materially contradicts the M9 closure. It could not check the
+`git ls-remote` reading, having no network.
+
+| Finding | Class | Disposition in `d8192d5` |
+| --- | --- | --- |
+| Publishing starts schema 4's compatibility promise, and §7 did not say so | should-fix | added to §7 |
+| M9 closure §1: *Nothing here is source-integrated…* would read false on `main` | should-fix | *at this closure* and a pointer here |
+| README called M7.5 *the newest published slice* | should-fix | *the last slice published before the M8/M9 stack* |
+| README's next steps listed source integration, which is false after the merge | should-fix | the list now starts once the stack is integrated |
+| README and `BOOTSTRAP_STATUS.md` compared the debt with *published `main`*, which is the stack itself after the merge | should-fix | compared with `1daf802` |
+| §3 said the bundle section is never constructed in CI; the Rust job's `tauri-build` copies `bundle.resources` and embeds `publisher` and `copyright` | should-fix | §3 says exactly what CI does; the notices check was run and added |
+| The CHANGELOG's QA-string check read as true of the current packaged build | should-fix | scoped to the M7.6 candidate build, and says no later build was packaged |
+| §10 did not bind the merge to the reviewed head, and a repository setting could delete the branch at merge | should-fix | step 4 binds the head; step 1 rebinds the setting |
+| The timeout was credited to the M8.4 record; only M8.5 names the case | nit | corrected |
+| `59cbf1c` stood for the closure side, where m4.1/m4.3/m4.4 came from `d8310ce` | nit | corrected |
+| `THIRD_PARTY_NOTICES.md` also speaks of *the installer* in the present tense | nit | acknowledged in §3; the generated file is unchanged |
+| README undersold the stored-result exports; omitted `experiments/m9_1/`; *shipped notices* in `ROADMAP.md` and `PROJECT_PROPOSAL.md` | nit | corrected |
+
+The review also noted that `check_repo.py` checks no anchor fragment and does
+not read the edited status paragraphs, so a passing run proves little about
+them. The reviewer resolved every anchor the first candidate added, and the
+two added since (§7, §8) were resolved the same way. No second review ran: every fix
+applies a finding's own correction and changes only Markdown.
 
 ## 10. Proposed publication procedure — not authorized, not executed
 
@@ -213,9 +295,11 @@ candidate:
    `1daf802f06d0149b5de3dbd12e8b01e7e86862ec`; the effective `main` ruleset read
    from the rulesets API ([PUBLISHING.md](PUBLISHING.md)); the repository's
    *automatically delete head branches* setting, which would delete the remote
-   branch at merge without step 8's consent; the local branch head equals the
-   candidate's documentation successor named in §8, whose diff from the
-   candidate is this file alone.
+   branch at merge without step 8's consent; and the branch head is the
+   integration candidate named in §1 or a documentation-only successor of it
+   whose diff from it (`git diff --name-only`) is this file alone. If the
+   deferred groups in §8 have not all run on that candidate by then, it is not
+   qualified and is not published.
 2. **Push the branch as it is**, without force, and open one pull request:
    base `main`, head this branch. Its body names the candidate commit and
    tree, the evidence in §8, the debt in §6 and the risks in §7, and states that
