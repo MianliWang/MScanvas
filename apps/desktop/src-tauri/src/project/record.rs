@@ -212,8 +212,12 @@ pub enum MemberRole {
 /// absolute reference it is and the interface says so. There is no URL, no UNC
 /// form, no device form and no environment-variable form: not because they are
 /// filtered out on read, but because there is no variant that could hold one.
+///
+/// A field beside `path` is refused, as on every other object here: a locator
+/// is where a handle or an identity would be smuggled in, and a reader that
+/// dropped it on read would lose it on the next save.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
 pub enum Locator {
     /// A path below the project document's own directory, stored with forward
     /// slashes so that it is one string on every reader.

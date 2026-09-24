@@ -1055,6 +1055,29 @@ fn unc_and_device_references_are_refused_by_shape() {
 }
 
 #[test]
+fn a_locator_carrying_a_field_it_does_not_hold_is_malformed() {
+    // A locator is where a handle, a file identity or a second path would be
+    // smuggled in. Refused, not dropped on read and lost on the next save.
+    let document = valid_document();
+    for locator in [
+        serde_json::json!({ "kind": "projectRelative", "path": "sample.txt" }),
+        serde_json::json!({ "kind": "localAbsolute", "path": "C:\\data\\sample.txt" }),
+    ] {
+        let mut value = serde_json::to_value(&document).expect("serializable");
+        value["inputs"][0]["locator"] = locator.clone();
+        let bytes = serde_json::to_vec(&value).expect("serialize");
+        record::parse(&bytes).expect("the locator alone is accepted");
+
+        value["inputs"][0]["locator"]["fileIdentity"] = serde_json::Value::from("0x1234");
+        assert_eq!(
+            refused_value(&value),
+            DocumentProblem::Malformed,
+            "{locator}"
+        );
+    }
+}
+
+#[test]
 fn a_refused_document_leaves_the_open_project_exactly_as_it_was() {
     let scratch = Scratch::new("refusal-preserves");
     let (store, id) = store_with_reference(&scratch, "sample.txt", b"bytes");
