@@ -16,7 +16,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createContext, useContext } from "react";
 
-import type { WorkspaceAddResult } from "../mzml-preview/contracts";
+import type {
+  CopiedFigure,
+  ExportedFigure,
+  FigureSettings,
+  WorkspaceAddResult,
+} from "../mzml-preview/contracts";
 import { documentAuthorityHeaders } from "../ipc/documentAuthority";
 
 /** Whether a reference travels with the project or points outside it. */
@@ -335,6 +340,48 @@ export interface TargetEvidence {
   readonly traces: readonly EvidenceTrace[];
 }
 
+/**
+ * One target's stored evidence drawn by the shared figure renderer.
+ *
+ * The SVG is the same document an SVG export writes for these settings; the
+ * page shows it as an inert image and never parses it.
+ */
+export interface TargetedFigure {
+  readonly svg: string;
+  readonly specId: string;
+  readonly width: number;
+  readonly height: number;
+}
+
+export type TargetedFigureFormat = "svg" | "png";
+export type TargetedTableFormat = "csv" | "tsv";
+
+export type TargetedFigureExport =
+  | { readonly status: "cancelled" }
+  | {
+      readonly status: "saved";
+      readonly format: TargetedFigureFormat;
+      readonly fileName: string;
+      readonly figure: ExportedFigure;
+    };
+
+export interface TargetedFigureCopy {
+  readonly status: "copied";
+  readonly figure: CopiedFigure;
+}
+
+export type TargetedTableExport =
+  | { readonly status: "cancelled" }
+  | {
+      readonly status: "saved";
+      readonly format: TargetedTableFormat;
+      readonly fileName: string;
+      readonly rowCount: number;
+    };
+
+/** Whether this session could start a new targeted run. Stored results need none of it. */
+export type TargetedNewRuns = "available" | "runtimeUnavailable" | "quarantined";
+
 /** What a plan review sends: the layer and the text the user typed. */
 export interface PlanRequest {
   readonly layerId: string;
@@ -595,6 +642,35 @@ export interface ProjectApi {
   readTargetedMs1Rows(artifactId: string, offset: number): Promise<RowsPage>;
   /** One target's evidence from a stored result. */
   readTargetedMs1Evidence(artifactId: string, targetId: string): Promise<TargetEvidence>;
+  /**
+   * Draws one target's stored evidence. Reads the stored result and nothing
+   * else: no source, no runtime, no worker.
+   */
+  previewTargetedMs1Figure(
+    artifactId: string,
+    targetId: string,
+    settings: FigureSettings,
+  ): Promise<TargetedFigure>;
+  /** Asks for a destination in a native dialog and writes the figure there, never over a file. */
+  exportTargetedMs1Figure(
+    artifactId: string,
+    targetId: string,
+    format: TargetedFigureFormat,
+    settings: FigureSettings,
+  ): Promise<TargetedFigureExport>;
+  /** Draws the figure in Rust and puts it on the system clipboard. */
+  copyTargetedMs1Figure(
+    artifactId: string,
+    targetId: string,
+    settings: FigureSettings,
+  ): Promise<TargetedFigureCopy>;
+  /** Writes the whole stored result as one table, through a native dialog. */
+  exportTargetedMs1Table(
+    artifactId: string,
+    format: TargetedTableFormat,
+  ): Promise<TargetedTableExport>;
+  /** Whether a new targeted run could start in this session. */
+  getTargetedMs1Runtime(): Promise<{ readonly newRuns: TargetedNewRuns }>;
 }
 
 export const tauriProjectApi: ProjectApi = {
@@ -670,6 +746,36 @@ export const tauriProjectApi: ProjectApi = {
       { artifactId, targetId },
       documentAuthorityHeaders(),
     ),
+  previewTargetedMs1Figure: (artifactId, targetId, settings) =>
+    invoke<TargetedFigure>(
+      "preview_targeted_ms1_figure",
+      { artifactId, targetId, settings },
+      documentAuthorityHeaders(),
+    ),
+  exportTargetedMs1Figure: (artifactId, targetId, format, settings) =>
+    invoke<TargetedFigureExport>(
+      "export_targeted_ms1_figure",
+      { artifactId, targetId, format, settings },
+      documentAuthorityHeaders(),
+    ),
+  copyTargetedMs1Figure: (artifactId, targetId, settings) =>
+    invoke<TargetedFigureCopy>(
+      "copy_targeted_ms1_figure",
+      { artifactId, targetId, settings },
+      documentAuthorityHeaders(),
+    ),
+  exportTargetedMs1Table: (artifactId, format) =>
+    invoke<TargetedTableExport>(
+      "export_targeted_ms1_table",
+      { artifactId, format },
+      documentAuthorityHeaders(),
+    ),
+  getTargetedMs1Runtime: () =>
+    invoke<{ readonly newRuns: TargetedNewRuns }>(
+      "get_targeted_ms1_runtime",
+      {},
+      documentAuthorityHeaders(),
+    ),
 };
 
 /**
@@ -705,6 +811,11 @@ export const unavailableProjectApi: ProjectApi = {
   getTargetedMs1Progress: () => Promise.resolve(null),
   readTargetedMs1Rows: () => Promise.reject(new Error("noProjectStore")),
   readTargetedMs1Evidence: () => Promise.reject(new Error("noProjectStore")),
+  previewTargetedMs1Figure: () => Promise.reject(new Error("noProjectStore")),
+  exportTargetedMs1Figure: () => Promise.reject(new Error("noProjectStore")),
+  copyTargetedMs1Figure: () => Promise.reject(new Error("noProjectStore")),
+  exportTargetedMs1Table: () => Promise.reject(new Error("noProjectStore")),
+  getTargetedMs1Runtime: () => Promise.reject(new Error("noProjectStore")),
 };
 
 /**

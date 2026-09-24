@@ -764,6 +764,28 @@ def validate_every_raster_entry_point_asks_the_budget(errors: list[str]) -> None
                 "the refusal has to happen before the pixmap is allocated"
             )
 
+    # The stored-result exports (M9.2) reach the rasterizer through their own
+    # facade, and are held to the same rule by name.
+    output = ROOT / "apps" / "desktop" / "src-tauri" / "src" / "preview" / "scientific_output.rs"
+    if not output.is_file():
+        return
+    content = output.read_text(encoding="utf-8")
+    for method in ("png", "copy"):
+        start = content.find(f"pub(crate) fn {method}(")
+        if start < 0:
+            errors.append(
+                f"preview/scientific_output.rs no longer defines {method}; the raster "
+                "budget guard cannot see whether its pixels are still bounded"
+            )
+            continue
+        end = content.find("\n    pub(crate) fn ", start + 1)
+        body = content[start : end if end > 0 else len(content)]
+        if "PreviewService::raster_budget(" not in body:
+            errors.append(
+                f"preview/scientific_output.rs::{method} does not call "
+                "PreviewService::raster_budget before rasterizing"
+            )
+
 
 # One column-zero Rust function definition, for the free-function scan below.
 FREE_FN_RE = re.compile(r"(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?fn (\w+)")

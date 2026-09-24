@@ -148,6 +148,7 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::AnalysisQuarantined => {
             "An earlier targeted MS1 worker could not be confirmed to have ended. Restart MSCanvas before running another."
         }
+        Refusal::ExportInProgress => "Another export of a stored result is in progress.",
         Refusal::RecipeUnavailable => {
             "This build cannot run the targeted MS1 recipe: its runtime is not available."
         }
@@ -739,6 +740,344 @@ async fn read_targeted_ms1_evidence(
         })
     })
     .await?
+}
+
+// ---------------------------------------------------------------------------
+// A stored targeted result as scientific output (M9.2)
+//
+// Every command below reads the stored result -- its validated managed
+// payload and the plan the document recorded -- and nothing else. None of them
+// builds an executor, reads the source, starts a process or records anything,
+// so a result stays readable and exportable in a build with no runtime and
+// with its source gone.
+// ---------------------------------------------------------------------------
+
+/// The largest figure the screen is sent, as the preview dialog's bound.
+const MAX_TARGETED_FIGURE_BYTES: usize = 8 * 1024 * 1024;
+
+const TARGETED_FIGURE_SVG: preview::dialog::SaveDialogFacts = preview::dialog::SaveDialogFacts {
+    title: "Export targeted MS1 figure",
+    filter_label: "SVG figure (*.svg)",
+    filter_pattern: "*.svg",
+    default_extension: "svg",
+};
+const TARGETED_FIGURE_PNG: preview::dialog::SaveDialogFacts = preview::dialog::SaveDialogFacts {
+    title: "Export targeted MS1 figure",
+    filter_label: "PNG image (*.png)",
+    filter_pattern: "*.png",
+    default_extension: "png",
+};
+const TARGETED_TABLE_CSV: preview::dialog::SaveDialogFacts = preview::dialog::SaveDialogFacts {
+    title: "Export targeted MS1 results",
+    filter_label: "Comma-separated values (*.csv)",
+    filter_pattern: "*.csv",
+    default_extension: "csv",
+};
+const TARGETED_TABLE_TSV: preview::dialog::SaveDialogFacts = preview::dialog::SaveDialogFacts {
+    title: "Export targeted MS1 results",
+    filter_label: "Tab-separated values (*.tsv)",
+    filter_pattern: "*.tsv",
+    default_extension: "tsv",
+};
+
+fn targeted_evidence_absent() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "targeted_evidence_absent",
+        "This target never reached extraction, so it has no evidence to draw.",
+        false,
+    )
+}
+
+fn targeted_figure_not_drawable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "targeted_figure_not_drawable",
+        "This target's stored evidence could not be drawn as a figure.",
+        false,
+    )
+}
+
+fn targeted_export_format_unknown() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "targeted_export_format_unknown",
+        "That is not a format this result can be exported in.",
+        false,
+    )
+}
+
+fn targeted_table_refusal(refusal: project::targeted_output::TableRefusal) -> PreviewErrorDto {
+    use project::targeted_output::TableRefusal;
+    match refusal {
+        TableRefusal::FieldNotRepresentable => PreviewErrorDto::new(
+            "targeted_table_field_not_representable",
+            "A value in this result holds a tab or a line break, which a TSV file cannot carry. \
+             Export it as CSV.",
+            false,
+        ),
+        TableRefusal::UnexpectedTraceCount => PreviewErrorDto::new(
+            "targeted_table_not_exportable",
+            "This result holds a row this table has no columns for, so nothing was written.",
+            false,
+        ),
+    }
+}
+
+fn parsed_target_id(value: &str) -> Result<project::record::TargetId, PreviewErrorDto> {
+    value
+        .parse()
+        .map_err(|()| project_error(project::ProjectError::UnknownRecord))
+}
+
+/// The first eight characters of a result's identifier, for a suggested name:
+/// enough to tell two results' exports apart, and nothing about the source.
+fn short_id(artifact: mscanvas_core::ArtifactId) -> String {
+    artifact.to_string().chars().take(8).collect()
+}
+
+/// One target's evidence as its canonical figure, and the target's position
+/// in the plan, in this boundary's vocabulary.
+fn targeted_figure(
+    projects: &project::ProjectStore,
+    artifact: mscanvas_core::ArtifactId,
+    target: project::record::TargetId,
+    output: preview::scientific_output::FigureOutput,
+) -> Result<(mscanvas_plot_spec::FigureSpec, usize), PreviewErrorDto> {
+    use project::TargetedFigureRefusal;
+    projects
+        .targeted_evidence_figure(artifact, target, output.size(), output.theme())
+        .map_err(|refusal| match refusal {
+            TargetedFigureRefusal::Project(error) => project_error(error),
+            TargetedFigureRefusal::NotExtracted => targeted_evidence_absent(),
+            TargetedFigureRefusal::NotDrawable => targeted_figure_not_drawable(),
+        })
+}
+
+/// Shows the native save dialog on the main thread and hands back where its
+/// answer will arrive. The answer is waited for off the async runtime.
+fn targeted_destination(
+    app: &tauri::AppHandle,
+    facts: preview::dialog::SaveDialogFacts,
+    suggested: String,
+) -> Result<mpsc::Receiver<Result<Option<std::path::PathBuf>, PreviewErrorDto>>, PreviewErrorDto> {
+    let owner = main_window_handle(app);
+    let (sender, receiver) = mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(preview::dialog::choose_save_destination(
+            owner, facts, &suggested,
+        ));
+    })
+    .map_err(|_| spectrum_picker_unavailable())?;
+    Ok(receiver)
+}
+
+/// One target's stored evidence as its canonical figure, for the screen.
+///
+/// The same renderer and the same figure an export writes, at the settings
+/// asked for, so what is on screen is what a file would hold.
+#[tauri::command]
+async fn preview_targeted_ms1_figure(
+    artifact_id: String,
+    target_id: String,
+    settings: preview::dto::FigureSettingsDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedFigureDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let target = parsed_target_id(&target_id)?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || {
+        let output = preview::scientific_output::FigureOutput::from_wire(&settings)?;
+        let (figure, _) = targeted_figure(&projects, artifact, target, output)?;
+        let svg = mscanvas_plot_spec::svg::render(&figure);
+        if svg.len() > MAX_TARGETED_FIGURE_BYTES {
+            return Err(targeted_figure_not_drawable());
+        }
+        let spec_id = mscanvas_proteowizard::Sha256Digest::calculate(svg.as_bytes())
+            .map_err(|_| targeted_figure_not_drawable())?
+            .to_string();
+        Ok(project::dto::TargetedFigureDto {
+            svg,
+            spec_id,
+            width: output.width(),
+            height: output.height(),
+        })
+    })
+    .await?
+}
+
+/// Exports one target's stored evidence as an SVG or PNG figure.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn export_targeted_ms1_figure(
+    artifact_id: String,
+    target_id: String,
+    format: String,
+    settings: preview::dto::FigureSettingsDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedFigureExportDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let target = parsed_target_id(&target_id)?;
+    let facts = match format.as_str() {
+        "svg" => TARGETED_FIGURE_SVG,
+        "png" => TARGETED_FIGURE_PNG,
+        _ => return Err(targeted_export_format_unknown()),
+    };
+    // Everything that can refuse is asked before the dialog opens: a user is
+    // not asked where to put a file that will not be written.
+    let output = preview::scientific_output::FigureOutput::from_wire(&settings)?;
+    let dpi = if format == "png" {
+        Some(output.png_resolution(&settings)?)
+    } else {
+        None
+    };
+    let lane = projects.begin_output().map_err(project_error)?;
+    let projects = Arc::clone(&projects);
+    let (figure, position) =
+        off_the_async_runtime(move || targeted_figure(&projects, artifact, target, output))
+            .await??;
+    let suggested = format!(
+        "mscanvas-targeted-ms1-{}-target-{}.{}",
+        short_id(artifact),
+        position + 1,
+        facts.default_extension
+    );
+    let receiver = targeted_destination(&app, facts, suggested)?;
+    off_the_async_runtime(move || {
+        let _lane = lane;
+        let Some(destination) = receiver
+            .recv()
+            .map_err(|_| spectrum_picker_unavailable())??
+        else {
+            return Ok(project::dto::TargetedFigureExportDto::Cancelled);
+        };
+        let bytes = match dpi {
+            None => mscanvas_plot_spec::svg::render(&figure).into_bytes(),
+            Some(dpi) => output.png(&figure, dpi)?,
+        };
+        let file_name = preview::scientific_output::write_named(&destination, facts, &bytes)?;
+        Ok(project::dto::TargetedFigureExportDto::Saved {
+            format,
+            file_name,
+            figure: output.exported(dpi),
+        })
+    })
+    .await?
+}
+
+/// Puts one target's stored evidence figure on the clipboard, from Rust.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn copy_targeted_ms1_figure(
+    artifact_id: String,
+    target_id: String,
+    settings: preview::dto::FigureSettingsDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedFigureCopyDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let target = parsed_target_id(&target_id)?;
+    let output = preview::scientific_output::FigureOutput::from_wire(&settings)?;
+    let lane = projects.begin_output().map_err(project_error)?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || {
+        let _lane = lane;
+        let (figure, _) = targeted_figure(&projects, artifact, target, output)?;
+        Ok(project::dto::TargetedFigureCopyDto::Copied {
+            figure: output.copy(&app, &figure)?,
+        })
+    })
+    .await?
+}
+
+/// Exports every target's stored row as one CSV or TSV table.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn export_targeted_ms1_table(
+    artifact_id: String,
+    format: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
+    use project::targeted_output::{TableFormat, result_table};
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let table_format =
+        TableFormat::from_wire(&format).ok_or_else(targeted_export_format_unknown)?;
+    let facts = match table_format {
+        TableFormat::Csv => TARGETED_TABLE_CSV,
+        TableFormat::Tsv => TARGETED_TABLE_TSV,
+    };
+    let lane = projects.begin_output().map_err(project_error)?;
+    let projects = Arc::clone(&projects);
+    // The whole table before the dialog, so a result that cannot be written
+    // refuses without asking where to put it.
+    let (text, row_count) = off_the_async_runtime(move || {
+        let stored = projects
+            .stored_targeted_result(artifact)
+            .map_err(project_error)?;
+        result_table(&stored, table_format).map_err(targeted_table_refusal)
+    })
+    .await??;
+    let suggested = format!(
+        "mscanvas-targeted-ms1-{}-results.{}",
+        short_id(artifact),
+        facts.default_extension
+    );
+    let receiver = targeted_destination(&app, facts, suggested)?;
+    off_the_async_runtime(move || {
+        let _lane = lane;
+        let Some(destination) = receiver
+            .recv()
+            .map_err(|_| spectrum_picker_unavailable())??
+        else {
+            return Ok(project::dto::TargetedTableExportDto::Cancelled);
+        };
+        let file_name =
+            preview::scientific_output::write_named(&destination, facts, text.as_bytes())?;
+        Ok(project::dto::TargetedTableExportDto::Saved {
+            format: table_format.stable_id().to_owned(),
+            file_name,
+            row_count,
+        })
+    })
+    .await?
+}
+
+/// Whether this session could start a new targeted run. Read-only: it
+/// creates nothing and reads no source.
+#[tauri::command]
+async fn get_targeted_ms1_runtime(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedRuntimeDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || project::dto::TargetedRuntimeDto {
+        new_runs: if projects.analysis_quarantined() {
+            "quarantined"
+        } else if targeted_ms1::runtime_present() {
+            "available"
+        } else {
+            "runtimeUnavailable"
+        },
+    })
+    .await
 }
 
 /// Abandons an outstanding relink proposal.
@@ -2172,6 +2511,11 @@ pub fn run() {
             get_targeted_ms1_progress,
             read_targeted_ms1_rows,
             read_targeted_ms1_evidence,
+            preview_targeted_ms1_figure,
+            export_targeted_ms1_figure,
+            copy_targeted_ms1_figure,
+            export_targeted_ms1_table,
+            get_targeted_ms1_runtime,
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,

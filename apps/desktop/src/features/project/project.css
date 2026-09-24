@@ -641,70 +641,35 @@
   max-width: 720px;
 }
 
-.targeted-plot svg {
+/* The figure is Rust's drawing, shown as an image at its own aspect ratio and
+   never wider than the section. */
+.targeted-plot img {
   display: block;
-  width: 100%;
+  max-width: 100%;
   height: auto;
-  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
 }
 
-.targeted-grid {
-  stroke: var(--color-chart-grid);
+.targeted-export {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 720px;
+  font-size: 12px;
 }
 
-.targeted-axis {
-  stroke: var(--color-border-strong);
+.targeted-export summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-primary);
 }
 
-.targeted-window {
-  stroke: var(--color-text-tertiary);
-  stroke-dasharray: 4 3;
-}
-
-.targeted-candidate {
-  fill: none;
-  stroke: var(--color-text-tertiary);
-  stroke-dasharray: 2 2;
-}
-
-.targeted-feature {
-  fill: var(--color-accent-soft);
-  opacity: 0.7;
-}
-
-.targeted-apex {
-  stroke: var(--color-accent);
-}
-
-.targeted-trace polyline {
-  fill: none;
-  stroke-width: 1.5;
-}
-
-.targeted-trace.is-m0 polyline,
-.targeted-trace.is-m0 circle {
-  stroke: var(--color-chart-line);
-}
-
-.targeted-trace.is-m0 circle {
-  fill: var(--color-chart-line);
-}
-
-.targeted-trace.is-m1 polyline {
-  stroke: var(--color-chart-secondary);
-  stroke-dasharray: 5 3;
-}
-
-.targeted-trace.is-m1 circle {
-  fill: var(--color-surface);
-  stroke: var(--color-chart-secondary);
-}
-
-.targeted-tick {
-  font-size: 11px;
-  fill: var(--color-text-secondary);
+.targeted-export[open] {
+  padding-bottom: 4px;
 }
 
 .targeted-points,

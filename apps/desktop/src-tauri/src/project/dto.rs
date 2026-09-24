@@ -577,3 +577,71 @@ pub(super) fn describe(
         },
     }
 }
+
+// ---------------------------------------------------------------------------
+// A stored targeted result as output (M9.2)
+// ---------------------------------------------------------------------------
+
+/// One target's evidence figure, rendered for the screen by the same renderer
+/// every export uses. The SVG text is shown as an inert image, never parsed
+/// into the page.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetedFigureDto {
+    pub svg: String,
+    /// SHA-256 of the SVG bytes, so a reader can tell two renderings apart.
+    pub spec_id: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// How an export of a stored result's figure ended.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TargetedFigureExportDto {
+    #[serde(rename_all = "camelCase")]
+    Cancelled,
+    #[serde(rename_all = "camelCase")]
+    Saved {
+        /// `svg` or `png`.
+        format: String,
+        /// The name the file was given, and nothing about where it went.
+        file_name: String,
+        figure: crate::preview::dto::ExportedFigureDto,
+    },
+}
+
+/// A copy of a stored result's figure that reached the clipboard.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TargetedFigureCopyDto {
+    #[serde(rename_all = "camelCase")]
+    Copied {
+        figure: crate::preview::dto::CopiedFigureDto,
+    },
+}
+
+/// How an export of a stored result's table ended.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TargetedTableExportDto {
+    #[serde(rename_all = "camelCase")]
+    Cancelled,
+    #[serde(rename_all = "camelCase")]
+    Saved {
+        /// `csv` or `tsv`.
+        format: String,
+        file_name: String,
+        /// How many target rows the table holds.
+        row_count: usize,
+    },
+}
+
+/// Whether this session could start a new targeted run: `available`,
+/// `runtimeUnavailable` or `quarantined`. About new runs only; a stored
+/// result never needs any of it.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetedRuntimeDto {
+    pub new_runs: &'static str,
+}

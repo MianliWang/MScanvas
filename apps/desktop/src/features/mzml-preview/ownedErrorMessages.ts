@@ -111,6 +111,12 @@ const MESSAGE = {
   incomplete_preview_result: "errIncompletePreviewResult",
   unexpected_preview_result: "errUnexpectedPreviewResult",
   non_finite_value: "errNonFiniteValue",
+  // A stored targeted MS1 result's figure and table (M9.2).
+  targeted_evidence_absent: "m92ErrorEvidenceAbsent",
+  targeted_figure_not_drawable: "m92ErrorFigureNotDrawable",
+  targeted_export_format_unknown: "m92ErrorFormatUnknown",
+  targeted_table_field_not_representable: "m92ErrorTsvField",
+  targeted_table_not_exportable: "m92ErrorTableNotExportable",
 } as const;
 
 /** Parameters come from the Rust decision; no translated-string parsing. */

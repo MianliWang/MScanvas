@@ -3250,7 +3250,7 @@ impl PreviewService {
     // retained or allocated. It deliberately does *not* read the DPI. An SVG
     // stopped over a resolution it does not record would be stopped over a
     /// number that could not have changed it.
-    fn render_settings(
+    pub(super) fn render_settings(
         settings: &FigureSettingsDto,
     ) -> Result<FigureRenderSettings, PreviewErrorDto> {
         FigureRenderSettings::from_wire(settings.width_px, settings.height_px, &settings.theme)
@@ -3258,7 +3258,7 @@ impl PreviewService {
     }
 
     /// Reads the physical resolution, for the one output that records one.
-    fn png_dpi(settings: &FigureSettingsDto) -> Result<PngDpi, PreviewErrorDto> {
+    pub(super) fn png_dpi(settings: &FigureSettingsDto) -> Result<PngDpi, PreviewErrorDto> {
         PngDpi::from_wire(settings.png_dpi).map_err(Self::settings_refusal)
     }
 
@@ -3267,7 +3267,7 @@ impl PreviewService {
     // Asked by every operation that allocates a pixmap -- the PNG export and
     // the clipboard copy -- through one check, so the two cannot drift apart
     /// again.
-    fn raster_budget(settings: FigureRenderSettings) -> Result<(), PreviewErrorDto> {
+    pub(super) fn raster_budget(settings: FigureRenderSettings) -> Result<(), PreviewErrorDto> {
         validate_raster_budget(settings).map_err(Self::settings_refusal)
     }
 
@@ -3282,7 +3282,7 @@ impl PreviewService {
     // with an existing `trace.csv` they never asked to be near -- a
     // no-overwrite refusal about a file they did not name. So the answer is to
     /// say what would be right and write nothing.
-    fn require_named_document(
+    pub(super) fn require_named_document(
         destination: &Path,
         facts: SaveDialogFacts,
     ) -> Result<(), PreviewErrorDto> {
@@ -3348,7 +3348,7 @@ impl PreviewService {
     // not have. Its own constructor rather than the export one with a `None`
     // threaded through, because that is what stopped a PNG's semantics being
     /// borrowed for an artifact that is not one.
-    fn copied_figure(settings: FigureRenderSettings) -> CopiedFigureDto {
+    pub(super) fn copied_figure(settings: FigureRenderSettings) -> CopiedFigureDto {
         CopiedFigureDto {
             width: settings.width(),
             height: settings.height(),
@@ -3356,7 +3356,7 @@ impl PreviewService {
         }
     }
 
-    fn theme_name(settings: FigureRenderSettings) -> String {
+    pub(super) fn theme_name(settings: FigureRenderSettings) -> String {
         match settings.theme() {
             FigureTheme::Light => "light".to_owned(),
             FigureTheme::Dark => "dark".to_owned(),
@@ -3364,7 +3364,7 @@ impl PreviewService {
     }
 
     /// Turns a figure refusal into this boundary's vocabulary.
-    fn figure_failure(failure: FigureFailure) -> PreviewErrorDto {
+    pub(super) fn figure_failure(failure: FigureFailure) -> PreviewErrorDto {
         match failure {
             FigureFailure::Unspecifiable => spectrum_export_refused(),
             FigureFailure::Raster(RasterFailure::NoUsableFont) => figure_font_unavailable(),
@@ -8148,7 +8148,7 @@ fn viewport_domain_dto(domain: projection::ViewportDomain) -> SpectrumViewportDo
 // Total over the writer's own enumeration with no wildcard arm, for the reason
 // the diagnostics reading beside it has none: a failure added there has to be
 /// answered here rather than falling into a default that happens to compile.
-fn spectrum_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto {
+pub(super) fn spectrum_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto {
     let residue = failure.temporary_left_behind();
     match failure.error() {
         LocalFileWriteError::UnsafeName | LocalFileWriteError::ParentNotUsable { .. } => {

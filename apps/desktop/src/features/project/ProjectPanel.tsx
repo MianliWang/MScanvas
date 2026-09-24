@@ -25,6 +25,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import type { PreviewError } from "../mzml-preview/contracts";
+import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { attachedRow, qcUnavailable, type ViewedPreview } from "./lineage";
 import type {
@@ -131,6 +133,7 @@ const REFUSALS = {
   payloadNotCopied: "projectRefusedPayloadNotCopied",
   payloadMissing: "targetedPayloadMissing",
   payloadCorrupt: "targetedPayloadCorrupt",
+  exportInProgress: "projectRefusedExportInProgress",
 } as const;
 
 export function refusalKey(code: string) {
@@ -470,6 +473,7 @@ export function ProjectPanel({
           artifact: provenance.artifact,
           plan: provenance.targeted?.plan ?? null,
           sourceName: provenance.layerSources[0]?.record?.label ?? null,
+          source: provenance.layerSources[0]?.record ?? null,
           recordedAt: provenance.producedBy?.record?.finishedAt ?? null,
         }
       : null;
@@ -715,15 +719,29 @@ export function ProjectPanel({
 
           {targetedReport === null ? null : (
             <TargetedMs1Report
+              key={targetedReport.artifact.id}
               artifact={targetedReport.artifact}
               plan={targetedReport.plan}
               sourceName={targetedReport.sourceName}
+              sourceState={
+                targetedReport.source === null
+                  ? null
+                  : {
+                      id: targetedReport.source.verification,
+                      text: t(verificationKey(targetedReport.source)),
+                    }
+              }
               recordedWhen={
                 targetedReport.recordedAt === null
                   ? null
                   : recordedAt(targetedReport.recordedAt, locale)
               }
               refusalText={(code) => t(refusalKey(code))}
+              // An output refusal is the project's own or the shared figure
+              // boundary's; each has its own sentences.
+              errorText={(error: PreviewError) =>
+                error.kind in REFUSALS ? t(refusalKey(error.kind)) : ownedErrorMessage(error, t)
+              }
             />
           )}
 

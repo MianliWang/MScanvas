@@ -648,6 +648,21 @@ struct ManifestFile {
 
 /// Whether the manifest this build pins is at its place, without checking the
 /// files it lists. The quick question a plan review asks.
+/// Whether this build could start a new run: its runtime is where it pins
+/// it, with the manifest it pins. Read-only -- it creates nothing, launches
+/// nothing and reads no source -- so the interface may ask it whenever it
+/// shows a stored result beside the question of running a new one.
+///
+/// Not a verification of the runtime's files, which every attempt still does
+/// in full before it launches anything.
+#[must_use]
+pub fn runtime_present() -> bool {
+    Supervisor::development().is_some_and(|supervisor| {
+        pinned_manifest_is_present(&supervisor.manifest)
+            && supervisor.runtime.join("python.exe").is_file()
+    })
+}
+
 fn pinned_manifest_is_present(manifest: &Path) -> bool {
     local_document::read_bounded(manifest, MAX_MANIFEST_BYTES)
         .ok()

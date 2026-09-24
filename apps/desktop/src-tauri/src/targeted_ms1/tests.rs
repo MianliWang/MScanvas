@@ -3056,4 +3056,775 @@ fn a_real_result_is_read_after_reopen_and_save_as_with_neither_the_runtime_nor_t
     let described = copied.describe();
     assert_eq!((described.runs.len(), described.artifacts.len()), (1, 1));
     assert_eq!(described.runs[0].targeted_ms1, execution_before);
+
+    // M9.2: the copy is drawn and tabulated with the source still away and no
+    // runtime asked for, through the same settings, renderer, rasterizer and
+    // table builder the commands use. Each output is written under
+    // `test-results/m92-real/` for inspection; none names a path.
+    let settings = crate::preview::dto::FigureSettingsDto {
+        width_px: 1_200,
+        height_px: 640,
+        png_dpi: 300,
+        theme: "light".to_owned(),
+    };
+    let figure_output =
+        crate::preview::scientific_output::FigureOutput::from_wire(&settings).expect("settings");
+    let resolution = figure_output
+        .png_resolution(&settings)
+        .expect("a PNG resolution");
+    let evidence_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("the repository root")
+        .join("test-results")
+        .join("m92-real");
+    fs::create_dir_all(&evidence_dir).expect("the evidence folder");
+    let private = [
+        document
+            .parent()
+            .expect("the work area")
+            .to_string_lossy()
+            .into_owned(),
+        source.to_string_lossy().into_owned(),
+        ".tmp".to_owned(),
+        "m91-".to_owned(),
+    ];
+    let leaks = |text: &str| {
+        private
+            .iter()
+            .any(|fragment| text.contains(fragment.as_str()))
+    };
+    let (rows, _) = &before;
+    let mut drawn = 0;
+    for (position, (target, row)) in plan.targets.iter().zip(rows).enumerate() {
+        let answer = copied.targeted_evidence_figure(
+            artifact,
+            target.target_id,
+            figure_output.size(),
+            figure_output.theme(),
+        );
+        if row.ion.is_none() {
+            assert!(matches!(
+                answer,
+                Err(crate::project::TargetedFigureRefusal::NotExtracted)
+            ));
+            continue;
+        }
+        let (figure, index) = answer.expect("a stored target draws");
+        assert_eq!(index, position);
+        let svg = mscanvas_plot_spec::svg::render(&figure);
+        let (again, _) = copied
+            .targeted_evidence_figure(
+                artifact,
+                target.target_id,
+                figure_output.size(),
+                figure_output.theme(),
+            )
+            .expect("drawn again");
+        assert_eq!(
+            mscanvas_plot_spec::svg::render(&again),
+            svg,
+            "deterministic"
+        );
+        assert!(svg.contains("Targeted MS1 lookup (experimental)"));
+        assert!(!leaks(&svg), "the figure names no private path");
+        let png = figure_output.png(&figure, resolution).expect("a PNG");
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        fs::write(
+            evidence_dir.join(format!("target-{}.svg", position + 1)),
+            &svg,
+        )
+        .expect("svg");
+        fs::write(
+            evidence_dir.join(format!("target-{}.png", position + 1)),
+            &png,
+        )
+        .expect("png");
+        drawn += 1;
+    }
+    assert!(drawn > 0, "at least one real target reached extraction");
+    let stored = copied.stored_targeted_result(artifact).expect("stored");
+    for format in [TableFormat::Csv, TableFormat::Tsv] {
+        let (table, count) = result_table(&stored, format).expect("a table");
+        assert_eq!(count, plan.targets.len());
+        assert_eq!(result_table(&stored, format).expect("again").0, table);
+        assert!(!leaks(&table), "the table names no private path");
+        assert!(table.contains(&format!("{artifact}")));
+        let name = match format {
+            TableFormat::Csv => "results.csv",
+            TableFormat::Tsv => "results.tsv",
+        };
+        fs::write(evidence_dir.join(name), &table).expect("table");
+    }
+    // Reading, drawing and tabulating recorded nothing and changed nothing.
+    let after = copied.describe();
+    assert_eq!((after.runs.len(), after.artifacts.len()), (1, 1));
+    assert_eq!(after.runs[0].targeted_ms1, execution_before);
+    assert!(!after.dirty);
+    assert_eq!(everything(&copied, artifact, &plan), before);
+}
+
+// ---------------------------------------------------------------------------
+// M9.2: a stored result as a figure and as a table
+//
+// The builders are pure functions of the stored result, so each outcome's
+// figure and row is checked against a row this file writes: what the payload
+// holds is exactly what comes out, and nothing else does.
+// ---------------------------------------------------------------------------
+
+use crate::project::payload::{
+    IntensitySource, RowCandidate, RowFeature, RowIon, RowRelations, RowSignal, RowWindows,
+};
+use crate::project::record::TargetId;
+use crate::project::targeted_output::{
+    self as output, EvidenceRefusal, StoredResult, TABLE_COLUMNS, TableFormat, TableRefusal,
+    evidence_figure, figure_text, result_table,
+};
+use mscanvas_plot_spec::spec::{FigureSize, FigureTheme, IntervalRole};
+
+/// A saved result of three targets, as a fresh store reads it back.
+fn stored_three(scratch: &Scratch) -> (ProjectStore, StoredResult) {
+    let (store, layer, _) = fake_project(scratch);
+    let executor = Fake::new(completed);
+    let plan = plan(
+        &store,
+        layer,
+        vec![
+            target("Caffeine, the \"one\"", CAFFEINE, "60", "20"),
+            target("咖啡因 · 标准品", ADENINE, "40.5", "10"),
+            target("#hash first", TYROSINE, "80", "10"),
+        ],
+        &executor,
+    );
+    let end = run(&store, &plan, &executor).expect("run");
+    store.save().expect("save");
+    let stored = store
+        .stored_targeted_result(end.artifact.expect("result"))
+        .expect("stored");
+    (store, stored)
+}
+
+fn size() -> FigureSize {
+    FigureSize::new(1_200.0, 640.0).expect("a size")
+}
+
+const RTS: [f64; 5] = [100.0, 110.0, 120.0, 130.0, 140.0];
+const M0: [f64; 5] = [0.0, 500.0, 2_000.0, 400.0, 0.0];
+
+fn extracted_row(target: TargetId, outcome: RowOutcome) -> payload::PayloadRow {
+    payload::PayloadRow {
+        target_id: target,
+        outcome,
+        failure_reason: None,
+        edge_trace_count: 0,
+        ion: Some(RowIon {
+            adduct: "[M+H]+".to_owned(),
+            charge: 1,
+            mz_theoretical: vec![195.087_7, 196.091_1],
+            isotope_probability: vec![0.9, 0.1],
+        }),
+        windows: Some(RowWindows {
+            rt_closed_s: [90.0, 150.0],
+            mz_open: vec![[195.086_7, 195.088_7], [196.090_1, 196.092_1]],
+        }),
+        signal: Some(RowSignal {
+            points: 5,
+            sum: vec![2_900.0, 290.0],
+            max: vec![2_000.0, 200.0],
+            any_nonzero_point: true,
+        }),
+        feature: None,
+        candidates: Vec::new(),
+        overlap_winner: false,
+        relations: RowRelations {
+            shared_with: Vec::new(),
+            suppressed_by: None,
+            overlap_removed: Vec::new(),
+        },
+        recovered_from_empty_selection: false,
+    }
+}
+
+fn feature(left: f64, right: f64, source: IntensitySource) -> RowFeature {
+    RowFeature {
+        apex_rt_s: 120.0,
+        left_s: left,
+        right_s: right,
+        raw_area: 21_000.5,
+        model_status: "0 (converged)".to_owned(),
+        model_area: Some(20_500.25),
+        model_fwhm_s: None,
+        engine_intensity: Some(20_500.25),
+        engine_intensity_source: source,
+    }
+}
+
+fn candidate(left: f64, right: f64) -> RowCandidate {
+    RowCandidate {
+        apex_rt_s: f64::midpoint(left, right),
+        left_s: left,
+        right_s: right,
+        raw_area: 10.0,
+    }
+}
+
+fn evidence_of(target: TargetId) -> Vec<payload::EvidenceLine> {
+    [(0_u8, 195.087_7, 1.0), (1, 196.091_1, 0.1)]
+        .into_iter()
+        .map(|(trace, mz, scale)| payload::EvidenceLine {
+            target_id: target,
+            trace,
+            mz_theoretical: mz,
+            points: RTS
+                .iter()
+                .zip(M0)
+                .enumerate()
+                .map(|(index, (rt, value))| (10 + index as u32, *rt, value * scale))
+                .collect(),
+        })
+        .collect()
+}
+
+#[test]
+fn the_figure_draws_exactly_the_stored_points_window_feature_and_candidates() {
+    let scratch = Scratch::new("m92-figure");
+    let (_store, mut stored) = stored_three(&scratch);
+    let target = stored.plan.targets[0].target_id;
+    let mut row = extracted_row(target, RowOutcome::DetectedAmbiguous);
+    row.feature = Some(feature(114.0, 126.0, IntensitySource::ModelArea));
+    row.candidates = vec![candidate(114.0, 126.0), candidate(95.0, 99.0)];
+    stored.rows[0] = row;
+
+    let figure = evidence_figure(
+        &stored,
+        target,
+        &evidence_of(target),
+        size(),
+        FigureTheme::Light,
+    )
+    .expect("a figure");
+    let panel = &figure.panels()[0];
+    let m = &panel.series()[0];
+    let m1 = &panel.series()[1];
+    assert_eq!(m.x(), RTS.as_slice());
+    assert_eq!(m.y(), M0.as_slice());
+    assert_eq!(m1.y(), M0.map(|value| value * 0.1).as_slice());
+    assert!(m.marks_samples() && m1.marks_samples());
+    assert_eq!(m.id().as_str(), "M (m/z 195.0877)");
+    let intervals: Vec<(IntervalRole, f64, f64)> = panel
+        .intervals()
+        .iter()
+        .map(|interval| (interval.role(), interval.low(), interval.high()))
+        .collect();
+    // The window, the selected feature, and only the candidate that is not it.
+    assert_eq!(
+        intervals,
+        vec![
+            (IntervalRole::Window, 90.0, 150.0),
+            (IntervalRole::Selected, 114.0, 126.0),
+            (IntervalRole::Considered, 95.0, 99.0),
+        ]
+    );
+    assert_eq!(panel.markers()[0].at(), 120.0);
+    // The domain is the hull of everything drawn, the window included.
+    assert_eq!(
+        (panel.full_domain().low(), panel.full_domain().high()),
+        (90.0, 150.0)
+    );
+    assert_eq!(
+        figure.title().expect("a title").as_str(),
+        "Caffeine, the \"one\" \u{2014} Detected (ambiguous)"
+    );
+    let caption = figure.caption().expect("a caption").as_str().to_owned();
+    assert!(caption.contains("from 2 candidates"));
+    assert!(caption.contains(&stored.artifact.to_string()));
+    assert!(caption.contains(&stored.plan.plan_sha256));
+    assert!(caption.contains("nothing was re-extracted"));
+    // And it renders, the same bytes twice.
+    let document = mscanvas_plot_spec::svg::render(&figure);
+    assert_eq!(document, mscanvas_plot_spec::svg::render(&figure));
+    assert!(document.contains(">Retention time (s)</text>"));
+}
+
+#[test]
+fn each_outcome_keeps_its_meaning_in_the_figure() {
+    let scratch = Scratch::new("m92-outcomes");
+    let (_store, mut stored) = stored_three(&scratch);
+    let target = stored.plan.targets[0].target_id;
+    let partner = stored.plan.targets[1].target_id;
+    let draw = |stored: &StoredResult| {
+        evidence_figure(
+            stored,
+            target,
+            &evidence_of(target),
+            size(),
+            FigureTheme::Light,
+        )
+        .expect("a figure")
+    };
+    let roles = |figure: &mscanvas_plot_spec::spec::FigureSpec| {
+        figure.panels()[0]
+            .intervals()
+            .iter()
+            .map(|interval| interval.role())
+            .collect::<Vec<_>>()
+    };
+
+    // Not detected: the window only, and the words say it is not an absence.
+    stored.rows[0] = extracted_row(target, RowOutcome::NotDetected);
+    let figure = draw(&stored);
+    assert_eq!(roles(&figure), vec![IntervalRole::Window]);
+    assert!(figure.panels()[0].markers().is_empty());
+    assert!(
+        figure
+            .caption()
+            .expect("a caption")
+            .as_str()
+            .contains("not proof of absence")
+    );
+
+    // Failed with candidates: considered intervals, no selection, no outcome.
+    let mut failed = extracted_row(target, RowOutcome::Failed);
+    failed.failure_reason = Some(payload::RowFailure::EngineDiscardedNoValidFit);
+    failed.candidates = vec![candidate(114.0, 126.0)];
+    stored.rows[0] = failed;
+    let figure = draw(&stored);
+    assert_eq!(
+        roles(&figure),
+        vec![IntervalRole::Window, IntervalRole::Considered]
+    );
+    assert!(
+        figure
+            .title()
+            .expect("a title")
+            .as_str()
+            .ends_with("Failed")
+    );
+    let caption = figure.caption().expect("a caption").as_str().to_owned();
+    assert!(caption.contains("no valid fit"));
+    assert!(caption.contains("claims no outcome"));
+
+    // Suppressed: no feature of its own, so nothing is selected.
+    let mut suppressed = extracted_row(target, RowOutcome::SuppressedByOverlap);
+    suppressed.relations.suppressed_by = Some(partner);
+    stored.rows[0] = suppressed;
+    let figure = draw(&stored);
+    assert_eq!(roles(&figure), vec![IntervalRole::Window]);
+    assert!(
+        figure
+            .title()
+            .expect("a title")
+            .as_str()
+            .ends_with("Suppressed by overlap")
+    );
+
+    // Shared: the shared feature is drawn and named as shared.
+    let mut shared = extracted_row(target, RowOutcome::Shared);
+    shared.feature = Some(feature(
+        114.0,
+        126.0,
+        IntensitySource::ImputedFromRunRegression,
+    ));
+    shared.candidates = vec![candidate(114.0, 126.0)];
+    shared.relations.shared_with = vec![partner];
+    stored.rows[0] = shared;
+    let figure = draw(&stored);
+    assert_eq!(
+        roles(&figure),
+        vec![IntervalRole::Window, IntervalRole::Selected]
+    );
+    assert_eq!(
+        figure.panels()[0].intervals()[1]
+            .label()
+            .expect("a label")
+            .as_str(),
+        "Shared feature"
+    );
+    assert!(
+        figure
+            .caption()
+            .expect("a caption")
+            .as_str()
+            .contains("1 other target of this plan")
+    );
+}
+
+#[test]
+fn a_target_with_nothing_extracted_or_evidence_that_disagrees_is_refused() {
+    let scratch = Scratch::new("m92-refused");
+    let (_store, mut stored) = stored_three(&scratch);
+    let target = stored.plan.targets[0].target_id;
+    let mut absent = extracted_row(target, RowOutcome::Failed);
+    absent.failure_reason = Some(payload::RowFailure::TargetAbsentFromEngineLibrary);
+    absent.ion = None;
+    absent.windows = None;
+    absent.signal = None;
+    stored.rows[0] = absent;
+    assert_eq!(
+        evidence_figure(&stored, target, &[], size(), FigureTheme::Light).unwrap_err(),
+        EvidenceRefusal::NotExtracted
+    );
+
+    stored.rows[0] = extracted_row(target, RowOutcome::NotDetected);
+    let mut short = evidence_of(target);
+    short[1].points.pop();
+    assert_eq!(
+        evidence_figure(&stored, target, &short, size(), FigureTheme::Light).unwrap_err(),
+        EvidenceRefusal::Mismatch
+    );
+    assert_eq!(
+        evidence_figure(
+            &stored,
+            target,
+            &evidence_of(target)[..1],
+            size(),
+            FigureTheme::Light
+        )
+        .unwrap_err(),
+        EvidenceRefusal::Mismatch
+    );
+}
+
+#[test]
+fn a_window_that_held_no_spectrum_is_drawn_empty_and_said_to_be() {
+    let scratch = Scratch::new("m92-empty-window");
+    let (_store, mut stored) = stored_three(&scratch);
+    let target = stored.plan.targets[0].target_id;
+    let mut empty = extracted_row(target, RowOutcome::Failed);
+    empty.failure_reason = Some(payload::RowFailure::WindowWithoutMs1Peaks);
+    empty.signal = Some(RowSignal {
+        points: 0,
+        sum: vec![0.0, 0.0],
+        max: vec![0.0, 0.0],
+        any_nonzero_point: false,
+    });
+    stored.rows[0] = empty;
+    let lines: Vec<payload::EvidenceLine> = evidence_of(target)
+        .into_iter()
+        .map(|mut line| {
+            line.points.clear();
+            line
+        })
+        .collect();
+    let figure =
+        evidence_figure(&stored, target, &lines, size(), FigureTheme::Light).expect("a figure");
+    let document = mscanvas_plot_spec::svg::render(&figure);
+    assert!(document.contains("carries no points, so nothing is drawn for it"));
+    assert!(document.contains("no MS1 spectrum with peaks lies in the window"));
+}
+
+#[test]
+fn user_text_reaches_a_figure_bounded_and_carryable() {
+    let scratch = Scratch::new("m92-text");
+    let (_store, mut stored) = stored_three(&scratch);
+    let target = stored.plan.targets[0].target_id;
+    // The longest label a plan stores, with a character XML cannot carry.
+    stored.plan.targets[0].label = format!("{}\u{FFFE}{}", "a".repeat(100), "b".repeat(99));
+    stored.plan.targets[0].formula = "C".repeat(100);
+    let mut failed = extracted_row(target, RowOutcome::Failed);
+    failed.failure_reason = Some(payload::RowFailure::TargetUnaccounted);
+    stored.rows[0] = failed;
+    let figure = evidence_figure(
+        &stored,
+        target,
+        &evidence_of(target),
+        size(),
+        FigureTheme::Light,
+    )
+    .expect("a long label still draws");
+    let title = figure.title().expect("a title").as_str();
+    assert!(title.chars().count() <= mscanvas_plot_spec::spec::MAX_LABEL_CHARS);
+    assert!(title.contains('\u{FFFD}') && title.contains('\u{2026}'));
+    assert!(title.ends_with("Failed"));
+    let caption = figure.caption().expect("a caption").as_str();
+    assert!(caption.chars().count() <= mscanvas_plot_spec::spec::MAX_CAPTION_CHARS);
+    assert!(caption.contains(&stored.plan.plan_sha256));
+    assert_eq!(figure_text("  x\u{7}y ", 10), "x\u{FFFD}y");
+}
+
+/// The rows of a table, split on the delimiter, preamble dropped.
+fn records(table: &str, delimiter: char) -> Vec<Vec<String>> {
+    table
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| line.split(delimiter).map(str::to_owned).collect())
+        .collect()
+}
+
+#[test]
+fn the_table_keeps_its_column_contract_provenance_and_plan_order() {
+    let scratch = Scratch::new("m92-table");
+    let (_store, stored) = stored_three(&scratch);
+    let (tsv, count) = result_table(&stored, TableFormat::Tsv).expect("a table");
+    assert_eq!(count, 3);
+    assert!(tsv.ends_with('\n') && !tsv.contains('\r') && !tsv.starts_with('\u{FEFF}'));
+    let preamble: Vec<&str> = tsv
+        .lines()
+        .take_while(|line| line.starts_with('#'))
+        .collect();
+    let keys: Vec<&str> = preamble
+        .iter()
+        .map(|line| line[1..].split('\t').next().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "format",
+            "schema_version",
+            "recipe",
+            "recipe_version",
+            "artifact_id",
+            "run_id",
+            "plan_sha256",
+            "target_list_sha256",
+            "mz_half_width_ppm",
+            "expected_peak_width_s",
+            "source_byte_length",
+            "source_sha256",
+            "adapter_sha256",
+            "engine_profile_sha256",
+            "runtime_manifest_sha256",
+            "engine_pyopenms",
+            "engine_openms",
+            "engine_openms_revision",
+            "payload_manifest_sha256",
+            "target_count",
+            "row_order",
+            "retention_time_unit",
+            "intensity_unit",
+        ]
+    );
+    assert!(preamble.contains(&"#format\tmscanvas_targeted_ms1_results"));
+    assert!(preamble.contains(&"#schema_version\t1"));
+    assert!(preamble.contains(&format!("#artifact_id\t{}", stored.artifact).as_str()));
+    assert!(preamble.contains(&format!("#plan_sha256\t{}", stored.plan.plan_sha256).as_str()));
+    // The plan's text exactly as recorded, not a number printed again.
+    assert!(preamble.contains(&"#mz_half_width_ppm\t5"));
+    // No location of anything: no drive, no separator, no project name.
+    assert!(!tsv.contains(":\\") && !tsv.contains("study"));
+
+    let rows = records(&tsv, '\t');
+    assert_eq!(rows[0], TABLE_COLUMNS.map(str::to_owned).to_vec());
+    for (index, (row, target)) in rows[1..].iter().zip(&stored.plan.targets).enumerate() {
+        assert_eq!(row.len(), TABLE_COLUMNS.len());
+        assert_eq!(row[0], target.target_id.to_string());
+        assert_eq!(row[1], (index + 1).to_string());
+        assert_eq!(row[2], target.label);
+    }
+    // The leading-# label is not a comment: its line starts with an identifier.
+    assert_eq!(rows[3][2], "#hash first");
+    assert_eq!(rows[2][2], "咖啡因 · 标准品");
+    assert_eq!(rows[2][5], "40.5");
+}
+
+#[test]
+fn a_failed_or_absent_value_is_an_empty_cell_never_a_zero() {
+    let scratch = Scratch::new("m92-empty-cells");
+    let (_store, mut stored) = stored_three(&scratch);
+    let first = stored.plan.targets[0].target_id;
+    let second = stored.plan.targets[1].target_id;
+    let third = stored.plan.targets[2].target_id;
+    let mut detected = extracted_row(first, RowOutcome::Detected);
+    detected.feature = Some(feature(
+        114.0,
+        126.0,
+        IntensitySource::ImputedFromRunRegression,
+    ));
+    detected.candidates = vec![candidate(114.0, 126.0)];
+    stored.rows[0] = detected;
+    let mut absent = extracted_row(second, RowOutcome::Failed);
+    absent.failure_reason = Some(payload::RowFailure::TargetAbsentFromEngineLibrary);
+    absent.ion = None;
+    absent.windows = None;
+    absent.signal = None;
+    stored.rows[1] = absent;
+    let mut failed = extracted_row(third, RowOutcome::Failed);
+    failed.failure_reason = Some(payload::RowFailure::EngineDiscardedNoValidFit);
+    failed.candidates = vec![candidate(100.0, 104.0)];
+    stored.rows[2] = failed;
+
+    let (csv, _) = result_table(&stored, TableFormat::Csv).expect("a table");
+    let column = |name: &str| {
+        TABLE_COLUMNS
+            .iter()
+            .position(|column| *column == name)
+            .expect("a column")
+    };
+    let lines: Vec<&str> = csv.lines().filter(|line| !line.starts_with('#')).collect();
+    // The first label holds a comma and quotes, so its line is quoted; split
+    // the other two, which hold neither.
+    assert!(lines[1].contains("\"Caffeine, the \"\"one\"\"\""));
+    let second_row: Vec<&str> = lines[2].split(',').collect();
+    let third_row: Vec<&str> = lines[3].split(',').collect();
+    for name in [
+        "extracted_points",
+        "candidate_count",
+        "edge_trace_count",
+        "mz_theoretical_m",
+        "rt_window_low_s",
+        "raw_area",
+        "engine_intensity",
+    ] {
+        assert_eq!(
+            second_row[column(name)],
+            "",
+            "{name} of a target never extracted"
+        );
+    }
+    assert_eq!(second_row[column("outcome")], "FAILED");
+    assert_eq!(
+        second_row[column("failure_reason")],
+        "TARGET_ABSENT_FROM_ENGINE_LIBRARY"
+    );
+    for name in [
+        "raw_area",
+        "engine_intensity",
+        "feature_apex_rt_s",
+        "model_status",
+    ] {
+        assert_eq!(third_row[column(name)], "", "{name} of a failed target");
+    }
+    assert_eq!(third_row[column("candidate_count")], "1");
+    assert_eq!(third_row[column("extracted_points")], "5");
+    // The first row, once its quoted label is past: imputed stays imputed.
+    let after_label = lines[1].split("\"\"\",").nth(1).expect("the rest");
+    let first_row: Vec<&str> = after_label.split(',').collect();
+    let offset = column("label") + 1;
+    assert_eq!(
+        first_row[column("engine_intensity_source") - offset],
+        "imputedFromRunRegression"
+    );
+    assert_eq!(first_row[column("raw_area") - offset], "21000.5");
+    assert_eq!(first_row[column("model_fwhm_s") - offset], "");
+    assert_eq!(first_row[column("outcome") - offset], "DETECTED");
+}
+
+#[test]
+fn a_tsv_refuses_a_field_it_cannot_carry_and_a_csv_quotes_it() {
+    let scratch = Scratch::new("m92-tsv");
+    let (_store, mut stored) = stored_three(&scratch);
+    let target = stored.plan.targets[0].target_id;
+    let mut odd = extracted_row(target, RowOutcome::Detected);
+    let mut kept = feature(114.0, 126.0, IntensitySource::ModelArea);
+    kept.model_status = "4 (right side\tout of bounds)".to_owned();
+    odd.feature = Some(kept);
+    odd.candidates = vec![candidate(114.0, 126.0)];
+    stored.rows[0] = odd;
+    assert_eq!(
+        result_table(&stored, TableFormat::Tsv).unwrap_err(),
+        TableRefusal::FieldNotRepresentable
+    );
+    assert!(result_table(&stored, TableFormat::Csv).is_ok());
+
+    let mut three = extracted_row(target, RowOutcome::NotDetected);
+    if let Some(ion) = three.ion.as_mut() {
+        ion.mz_theoretical.push(197.0);
+    }
+    stored.rows[0] = three;
+    assert_eq!(
+        result_table(&stored, TableFormat::Csv).unwrap_err(),
+        TableRefusal::UnexpectedTraceCount
+    );
+}
+
+#[test]
+fn the_tables_outcome_words_are_the_payloads_own() {
+    let scratch = Scratch::new("m92-words");
+    let (_store, mut stored) = stored_three(&scratch);
+    let target = stored.plan.targets[0].target_id;
+    for outcome in [
+        RowOutcome::Detected,
+        RowOutcome::DetectedAmbiguous,
+        RowOutcome::Shared,
+        RowOutcome::SuppressedByOverlap,
+        RowOutcome::NotDetected,
+        RowOutcome::Failed,
+    ] {
+        let mut row = extracted_row(target, outcome);
+        if outcome == RowOutcome::Failed {
+            row.failure_reason = Some(payload::RowFailure::TargetUnaccounted);
+        }
+        stored.rows[0] = row;
+        let (tsv, _) = result_table(&stored, TableFormat::Tsv).expect("a table");
+        let word = serde_json::to_string(&outcome).expect("a word");
+        assert!(
+            tsv.contains(&format!("\t{}\t", word.trim_matches('"'))),
+            "{word}"
+        );
+    }
+    // And the failure words, likewise.
+    let reason = serde_json::to_string(&payload::RowFailure::TargetUnaccounted).expect("a word");
+    let (tsv, _) = result_table(&stored, TableFormat::Tsv).expect("a table");
+    assert!(tsv.contains(reason.trim_matches('"')));
+    let _ = output::outcome_words(RowOutcome::Shared);
+}
+
+#[test]
+fn a_stored_result_whose_rows_no_longer_match_its_plan_is_corrupt() {
+    let scratch = Scratch::new("m92-tampered");
+    let (store, stored) = stored_three(&scratch);
+    let rows = payload::store_of(&scratch.join("study.mscanvas"))
+        .expect("store")
+        .join(stored.artifact.to_string())
+        .join("rows.jsonl");
+    let bytes = fs::read(&rows).expect("rows");
+    fs::write(&rows, &bytes[..bytes.len() - 2]).expect("tamper");
+    assert!(matches!(
+        store.stored_targeted_result(stored.artifact),
+        Err(ProjectError::PayloadUnavailable(Availability::Corrupt))
+    ));
+    let target = stored.plan.targets[0].target_id;
+    assert!(matches!(
+        store.targeted_evidence_figure(stored.artifact, target, size(), FigureTheme::Light),
+        Err(crate::project::TargetedFigureRefusal::Project(
+            ProjectError::PayloadUnavailable(Availability::Corrupt)
+        ))
+    ));
+    // Nothing regenerated anything, and nothing was recorded.
+    assert_eq!(store.describe().runs.len(), 1);
+}
+
+#[test]
+fn the_figure_a_screen_shows_is_the_figure_an_export_writes() {
+    let scratch = Scratch::new("m92-same-figure");
+    let (store, stored) = stored_three(&scratch);
+    let target = stored.plan.targets[0].target_id;
+    let draw = || {
+        store
+            .targeted_evidence_figure(stored.artifact, target, size(), FigureTheme::Light)
+            .expect("a figure")
+    };
+    let (screen, position) = draw();
+    let (export, _) = draw();
+    assert_eq!(position, 0);
+    assert_eq!(
+        mscanvas_plot_spec::svg::render(&screen),
+        mscanvas_plot_spec::svg::render(&export)
+    );
+    assert!(!store.describe().dirty);
+}
+
+#[test]
+fn a_chosen_destination_is_written_new_named_as_its_format_and_never_over_a_file() {
+    use crate::preview::dialog::SaveDialogFacts;
+    use crate::preview::scientific_output::write_named;
+    let scratch = Scratch::new("m92-write");
+    let facts = SaveDialogFacts {
+        title: "Export targeted MS1 results",
+        filter_label: "Comma-separated values (*.csv)",
+        filter_pattern: "*.csv",
+        default_extension: "csv",
+    };
+    let destination = scratch.join("results.csv");
+    assert_eq!(
+        write_named(&destination, facts, b"a,b\n").expect("written"),
+        "results.csv"
+    );
+    assert_eq!(fs::read(&destination).expect("bytes"), b"a,b\n");
+    let taken = write_named(&destination, facts, b"other\n").unwrap_err();
+    assert_eq!(taken.kind, "spectrum_destination_exists");
+    assert_eq!(fs::read(&destination).expect("bytes"), b"a,b\n");
+    let misnamed = write_named(&scratch.join("results.txt"), facts, b"x\n").unwrap_err();
+    assert_eq!(misnamed.kind, "spectrum_destination_misnamed");
+    assert!(!scratch.join("results.txt").exists());
 }

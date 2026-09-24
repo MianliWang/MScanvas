@@ -12,7 +12,7 @@
 
 import { vi } from "vitest";
 
-import type { WorkspaceAddResult } from "../features/mzml-preview/contracts";
+import type { FigureSettings, WorkspaceAddResult } from "../features/mzml-preview/contracts";
 import {
   NO_PROJECT,
   type AnalysisRun,
@@ -27,6 +27,7 @@ import {
   type ProjectState,
   type TargetEvidence,
   type TargetedMs1Plan,
+  type TargetedNewRuns,
 } from "../features/project/projectApi";
 
 export interface FakeProjectApi extends ProjectApi {
@@ -71,6 +72,19 @@ export interface FakeTargeted {
   readonly rows: readonly PayloadRow[];
   readonly evidence: Readonly<Record<string, TargetEvidence>>;
   readonly progress: AnalysisRun | null;
+  /** What the runtime read answers: whether a new run could start. */
+  readonly newRuns: TargetedNewRuns;
+}
+
+/**
+ * A figure the fake draws: a fixed, inert SVG naming the target and size.
+ *
+ * Not the renderer's output. That the stored evidence is drawn exactly, and
+ * that a preview and an export of the same settings are the same document, is
+ * proved in `apps/desktop/src-tauri/src/targeted_ms1/tests.rs`.
+ */
+export function fakeTargetedSvg(targetId: string, width: number, height: number, theme: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" data-target="${targetId}" data-theme="${theme}"><rect width="${width}" height="${height}" fill="${theme === "dark" ? "#111" : "#fff"}"/></svg>`;
 }
 
 export function projectInput(overrides: Partial<ProjectInput> = {}): ProjectInput {
@@ -420,7 +434,18 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     rows: [detectedRow(), absentRow()],
     evidence: { [detectedEvidence().targetId]: detectedEvidence() },
     progress: null,
+    newRuns: "available",
   };
+
+  /** A dialog output's answer: cancelled when staged so, otherwise what was saved. */
+  function dialog<T>(operation: keyof ProjectApi, saved: () => T): Promise<T | { readonly status: "cancelled" }> {
+    if (cancellations.has(operation)) {
+      calls.push(operation);
+      cancellations.delete(operation);
+      return Promise.resolve({ status: "cancelled" });
+    }
+    return read(operation, saved);
+  }
 
   /** A read's answer, after recording the call and honouring a staged refusal. */
   function read<T>(operation: keyof ProjectApi, value: () => T): Promise<T> {
@@ -570,6 +595,45 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
     readTargetedMs1Evidence: vi.fn((_artifactId: string, targetId: string) =>
       read("readTargetedMs1Evidence", () => targeted.evidence[targetId] ?? { targetId, traces: [] }),
     ),
+    previewTargetedMs1Figure: vi.fn((_artifactId: string, targetId: string, settings: FigureSettings) =>
+      read("previewTargetedMs1Figure", () => ({
+        svg: fakeTargetedSvg(targetId, settings.widthPx, settings.heightPx, settings.theme),
+        specId: `spec-${targetId}-${settings.widthPx}x${settings.heightPx}-${settings.theme}`,
+        width: settings.widthPx,
+        height: settings.heightPx,
+      })),
+    ),
+    exportTargetedMs1Figure: vi.fn(
+      (artifactId: string, _targetId: string, format: "svg" | "png", settings: FigureSettings) =>
+        dialog("exportTargetedMs1Figure", () => ({
+          status: "saved" as const,
+          format,
+          fileName: `mscanvas-targeted-ms1-${artifactId.slice(0, 8)}-target-1.${format}`,
+          figure: {
+            width: settings.widthPx,
+            height: settings.heightPx,
+            dpi: format === "png" ? settings.pngDpi : null,
+            theme: settings.theme,
+          },
+        })),
+    ),
+    copyTargetedMs1Figure: vi.fn((_artifactId: string, _targetId: string, settings: FigureSettings) =>
+      read("copyTargetedMs1Figure", () => ({
+        status: "copied" as const,
+        figure: { width: settings.widthPx, height: settings.heightPx, theme: settings.theme },
+      })),
+    ),
+    exportTargetedMs1Table: vi.fn((artifactId: string, format: "csv" | "tsv") =>
+      dialog("exportTargetedMs1Table", () => ({
+        status: "saved" as const,
+        format,
+        fileName: `mscanvas-targeted-ms1-${artifactId.slice(0, 8)}-results.${format}`,
+        rowCount: targeted.rows.length,
+      })),
+    ),
+    // Not recorded in `calls`, like the progress poll: every report asks it
+    // once on mount, and it is about new runs, not about anything the user did.
+    getTargetedMs1Runtime: vi.fn(() => Promise.resolve({ newRuns: targeted.newRuns })),
   };
   return api;
 }

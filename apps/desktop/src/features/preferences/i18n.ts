@@ -44,6 +44,8 @@ export interface MessageParameters {
   readonly targetedRowsBounded: { readonly count: number; readonly total: number };
   readonly targetedShowEvidenceNamed: { readonly name: string };
   readonly targetedPlotCaption: { readonly traces: string };
+  readonly targetedFigureAlt: { readonly name: string };
+  readonly targetedTableSaved: { readonly name: string; readonly count: number };
   readonly targetedSignalSome: { readonly count: number };
   readonly targetedSignalNone: { readonly count: number };
   readonly targetedFailureStage: { readonly stage: string };

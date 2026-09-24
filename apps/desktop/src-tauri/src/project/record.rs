@@ -665,6 +665,13 @@ impl DecimalValue {
         let parsed: f64 = self.0.parse().ok()?;
         (parsed.is_finite() && parsed.to_string() == self.0).then_some(parsed)
     }
+
+    /// The text exactly as recorded, which is what an export of the plan
+    /// writes: a value reprinted from the parsed number could differ from it.
+    #[must_use]
+    pub fn as_text(&self) -> &str {
+        &self.0
+    }
 }
 
 /// The recipes this schema can have planned. One.

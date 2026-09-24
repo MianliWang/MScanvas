@@ -35,6 +35,7 @@ pub mod observe;
 pub mod payload;
 pub mod recipe;
 pub mod record;
+pub mod targeted_output;
 
 /// This module's own suite. Reachable from the crate's other test modules so
 /// that its temporary-directory fixture is written once rather than per suite.
@@ -161,6 +162,8 @@ pub enum ProjectError {
     /// hold its source and its work area. No other run starts until MSCanvas
     /// restarts.
     AnalysisQuarantined,
+    /// Another export of a stored result is in progress.
+    ExportInProgress,
     /// This build cannot run the recipe now: its pinned runtime is not there
     /// or is not the runtime it pins, or this is not a development build.
     RecipeUnavailable,
@@ -216,6 +219,7 @@ impl ProjectError {
             Self::SummaryTooLarge => "summaryTooLarge",
             Self::AnalysisRunning => "analysisRunning",
             Self::AnalysisQuarantined => "analysisQuarantined",
+            Self::ExportInProgress => "exportInProgress",
             Self::RecipeUnavailable => "recipeUnavailable",
             Self::RecipeSourceUnsupported => "recipeSourceUnsupported",
             Self::SourceOnAnotherVolume => "sourceOnAnotherVolume",
@@ -237,6 +241,7 @@ impl ProjectError {
                 | Self::Unavailable(_)
                 | Self::AlreadyRunning
                 | Self::AnalysisRunning
+                | Self::ExportInProgress
         )
     }
 }
@@ -550,6 +555,20 @@ impl Session {
 /// interleaving between the check and the write.
 pub struct ProjectStore {
     session: Mutex<Session>,
+    /// One export of a stored result at a time. Apart from the session lock,
+    /// because an export holds it across a modal dialog and a write, and
+    /// nothing else about the project waits on either.
+    output_lane: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// The one export of a stored result in progress. Released when dropped.
+#[derive(Debug)]
+pub struct OutputLane(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for OutputLane {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 impl Default for ProjectStore {
@@ -569,6 +588,7 @@ impl ProjectStore {
                 last_job: 0,
                 analysis_quarantined: false,
             }),
+            output_lane: std::sync::Arc::default(),
         }
     }
 
@@ -2382,6 +2402,145 @@ impl ProjectStore {
         let (store, reference) = self.result_location(artifact)?;
         payload::read_evidence(&store, artifact, &reference, target).map_err(read_refusal)
     }
+
+    /// One target's stored evidence as its canonical figure, and the target's
+    /// position in the plan.
+    ///
+    /// Read from the stored result alone, as [`Self::stored_targeted_result`]
+    /// is. The screen and every export draw this same figure.
+    ///
+    /// # Errors
+    ///
+    /// [`TargetedFigureRefusal`].
+    pub fn targeted_evidence_figure(
+        &self,
+        artifact: ArtifactId,
+        target: TargetId,
+        size: mscanvas_plot_spec::spec::FigureSize,
+        theme: mscanvas_plot_spec::spec::FigureTheme,
+    ) -> Result<(mscanvas_plot_spec::spec::FigureSpec, usize), TargetedFigureRefusal> {
+        use targeted_output::EvidenceRefusal;
+        let stored = self
+            .stored_targeted_result(artifact)
+            .map_err(TargetedFigureRefusal::Project)?;
+        let (position, _, row) = stored
+            .target(target)
+            .ok_or(TargetedFigureRefusal::Project(ProjectError::UnknownRecord))?;
+        if row.ion.is_none() {
+            return Err(TargetedFigureRefusal::NotExtracted);
+        }
+        let evidence = self
+            .read_targeted_ms1_evidence(artifact, target)
+            .map_err(TargetedFigureRefusal::Project)?;
+        let figure = targeted_output::evidence_figure(&stored, target, &evidence, size, theme)
+            .map_err(|refusal| match refusal {
+                EvidenceRefusal::NotExtracted => TargetedFigureRefusal::NotExtracted,
+                EvidenceRefusal::Mismatch => TargetedFigureRefusal::Project(
+                    ProjectError::PayloadUnavailable(Availability::Corrupt),
+                ),
+                EvidenceRefusal::NotDrawable => TargetedFigureRefusal::NotDrawable,
+            })?;
+        Ok((figure, position))
+    }
+
+    /// Takes the one export lane for stored results.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::ExportInProgress`] while another holds it.
+    pub fn begin_output(&self) -> Result<OutputLane, ProjectError> {
+        self.output_lane
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .map_err(|_| ProjectError::ExportInProgress)?;
+        Ok(OutputLane(std::sync::Arc::clone(&self.output_lane)))
+    }
+
+    /// Whether a worker's unobserved end keeps new runs out of this session.
+    #[must_use]
+    pub fn analysis_quarantined(&self) -> bool {
+        self.locked().analysis_quarantined
+    }
+
+    /// One stored result, whole: its plan, its run's block and every row,
+    /// checked the way they were checked before the result was published.
+    ///
+    /// What a figure or a table of the result is made from. It reads the
+    /// managed payload and the document, and nothing else: no source, no
+    /// runtime, no executor. Reading it records nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectError::UnknownRecord`] for a record that is not a targeted
+    /// result of this project, and [`ProjectError::PayloadUnavailable`] where
+    /// the stored rows are missing, damaged, or not the rows the plan names.
+    pub fn stored_targeted_result(
+        &self,
+        artifact: ArtifactId,
+    ) -> Result<targeted_output::StoredResult, ProjectError> {
+        let (plan, run, execution, result) = {
+            let session = self.locked();
+            let project = session.open()?;
+            let document = &project.document;
+            let result = document
+                .artifact(artifact)
+                .and_then(|record| record.payload.targeted_ms1())
+                .ok_or(ProjectError::UnknownRecord)?
+                .clone();
+            let run = lineage::producing_run(document, artifact)
+                .and_then(|id| document.runs.iter().find(|run| run.id == id))
+                .ok_or(ProjectError::UnknownRecord)?;
+            let execution = run
+                .targeted_ms1
+                .as_deref()
+                .ok_or(ProjectError::UnknownRecord)?
+                .clone();
+            let plan = document
+                .plan(&execution.plan_sha256)
+                .ok_or(ProjectError::UnknownRecord)?
+                .clone();
+            (plan, run.id, execution, result)
+        };
+        let page = self.read_targeted_ms1_rows(artifact, 0)?;
+        let corrupt = ProjectError::PayloadUnavailable(Availability::Corrupt);
+        // Every row, in plan order, each one saying what its outcome requires:
+        // the rule publication held the result to, asked again of what is on
+        // disk now, because a document can outlive the bytes it names.
+        if page.total != page.rows.len()
+            || page.rows.len() != plan.targets.len()
+            || page
+                .rows
+                .iter()
+                .zip(&plan.targets)
+                .any(|(row, target)| row.target_id != target.target_id || !row.is_consistent())
+        {
+            return Err(corrupt);
+        }
+        Ok(targeted_output::StoredResult {
+            artifact,
+            run,
+            plan,
+            execution,
+            result,
+            rows: page.rows,
+        })
+    }
+}
+
+/// Why one target's stored evidence could not be drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetedFigureRefusal {
+    /// The project refused: the record is not this project's, or the stored
+    /// result is missing or damaged.
+    Project(ProjectError),
+    /// The target never reached extraction, so it has no evidence.
+    NotExtracted,
+    /// The plot contract refused the figure.
+    NotDrawable,
 }
 
 /// What resolving a request produced.

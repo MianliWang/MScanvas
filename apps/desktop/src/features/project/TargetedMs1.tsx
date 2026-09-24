@@ -24,7 +24,19 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 
+import {
+  toPreviewError,
+  type CopiedFigure,
+  type ExportedFigure,
+  type FigureSettings,
+  type PreviewError,
+} from "../mzml-preview/contracts";
+import { FigureSettingsFields } from "../mzml-preview/FigureSettingsFields";
+import { validateFigureDraft, wholeCount } from "../mzml-preview/figureSettingsValidation";
 import { formatCount, formatIntensity, formatMz } from "../mzml-preview/format";
+import { ownedErrorDetail } from "../mzml-preview/ownedErrorMessages";
+import type { FigureSettingsDraft } from "../mzml-preview/usePreviewWorkspace";
+import type { UiMessage } from "../preferences/i18n";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import {
   useProjectApi,
@@ -39,7 +51,10 @@ import {
   type RowFailure,
   type RowOutcome,
   type TargetEvidence,
+  type TargetedFigure,
   type TargetedMs1Plan,
+  type TargetedNewRuns,
+  type TargetedTableFormat,
 } from "./projectApi";
 import type { TargetedLineage } from "./lineage";
 import type { ProjectSession } from "./useProject";
@@ -528,8 +543,16 @@ export interface TargetedMs1ReportProps {
   readonly artifact: ProjectArtifact;
   readonly plan: TargetedMs1Plan | null;
   readonly sourceName: string | null;
+  /**
+   * The original source's state as the last check left it, or `null` where the
+   * project no longer references it. Said, never needed: nothing on this
+   * surface reads the source.
+   */
+  readonly sourceState: { readonly id: string; readonly text: string } | null;
   readonly recordedWhen: string | null;
   readonly refusalText: (code: string) => string;
+  /** The sentence for an output refusal: the project's own, or the shared figure boundary's. */
+  readonly errorText: (error: PreviewError) => string;
 }
 
 type Loaded<T> =
@@ -545,12 +568,92 @@ function refusalOf(error: unknown): string {
   return "projectOperationFailed";
 }
 
+type NewRuns = TargetedNewRuns | "checking" | "unknown";
+
+const NEW_RUNS_KEYS = {
+  checking: "targetedNewRunsChecking",
+  available: "targetedNewRunsAvailable",
+  runtimeUnavailable: "targetedNewRunsRuntimeUnavailable",
+  quarantined: "targetedNewRunsQuarantined",
+  unknown: "targetedNewRunsUnknown",
+} as const satisfies Record<NewRuns, string>;
+
+const PAYLOAD_STATE_KEYS = {
+  available: "targetedStatePayloadWhole",
+  payloadMissing: "targetedStatePayloadMissing",
+  payloadCorrupt: "targetedStatePayloadCorrupt",
+} as const satisfies Record<PayloadAvailability, string>;
+
+/** A figure a reader can drop into a document as it is. */
+const DEFAULT_FIGURE: FigureSettingsDraft = {
+  widthPx: "1200",
+  heightPx: "640",
+  pngDpi: "300",
+  theme: "light",
+};
+
+type Operation = "svg" | "png" | "copy" | "csv" | "tsv";
+
+/** How the last output this report asked for ended, described when shown. */
+type OutputState =
+  | { readonly status: "idle" }
+  | { readonly status: "running"; readonly operation: Operation }
+  | { readonly status: "cancelled" }
+  | { readonly status: "savedFigure"; readonly fileName: string; readonly figure: ExportedFigure }
+  | { readonly status: "copied"; readonly figure: CopiedFigure }
+  | { readonly status: "savedTable"; readonly fileName: string; readonly rowCount: number }
+  | { readonly status: "failed"; readonly error: PreviewError };
+
+function describeFigure(figure: ExportedFigure | CopiedFigure, t: UiMessage): string {
+  return (
+    t("viewerFigureSize", {
+      width: formatCount(figure.width),
+      height: formatCount(figure.height),
+      theme: t(figure.theme),
+    }) + ("dpi" in figure && figure.dpi !== null ? `, ${formatCount(figure.dpi)} DPI` : "")
+  );
+}
+
+function describeOutput(state: OutputState, t: UiMessage, errorText: (error: PreviewError) => string) {
+  switch (state.status) {
+    case "idle":
+      return "";
+    case "running":
+      return state.operation === "copy"
+        ? t("viewerExportClipboard")
+        : t("viewerExportChoose", { name: state.operation.toUpperCase() });
+    case "cancelled":
+      return t("viewerExportCancelled");
+    case "savedFigure":
+      return t("viewerExportSaved", { name: state.fileName, details: describeFigure(state.figure, t) });
+    case "copied":
+      return t("viewerExportCopied", { details: describeFigure(state.figure, t) });
+    case "savedTable":
+      return t("targetedTableSaved", { name: state.fileName, count: state.rowCount });
+    case "failed":
+      return errorText(state.error);
+  }
+}
+
+/** The settings a figure is drawn with, or `null` while the size is not a whole count. */
+function figureSettings(draft: FigureSettingsDraft): FigureSettings | null {
+  const widthPx = wholeCount(draft.widthPx);
+  const heightPx = wholeCount(draft.heightPx);
+  if (widthPx === null || heightPx === null) return null;
+  // A drawing records no resolution, so an unfinished DPI does not hold the
+  // figure back; only a PNG export needs a valid one, and asks with it.
+  const pngDpi = wholeCount(draft.pngDpi) ?? Number(DEFAULT_FIGURE.pngDpi);
+  return { widthPx, heightPx, pngDpi, theme: draft.theme };
+}
+
 export function TargetedMs1Report({
   artifact,
   plan,
   sourceName,
+  sourceState,
   recordedWhen,
   refusalText,
+  errorText,
 }: TargetedMs1ReportProps) {
   const t = useUiMessages();
   const api = useProjectApi();
@@ -568,6 +671,37 @@ export function TargetedMs1Report({
     readonly key: string;
     readonly value: Loaded<TargetEvidence>;
   } | null>(null);
+  const [newRuns, setNewRuns] = useState<NewRuns>("checking");
+  const [draft, setDraft] = useState<FigureSettingsDraft>(DEFAULT_FIGURE);
+  const [output, setOutput] = useState<{
+    readonly region: "figure" | "table";
+    readonly state: OutputState;
+  }>({ region: "table", state: { status: "idle" } });
+  const outputBusy = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  // Whether a *new* run could start. Asked once and only said: nothing below
+  // depends on it, because a stored result needs no runtime to be read.
+  useEffect(() => {
+    let live = true;
+    api
+      .getTargetedMs1Runtime()
+      .then((answer) => {
+        if (live) setNewRuns(answer.newRuns);
+      })
+      .catch(() => {
+        if (live) setNewRuns("unknown");
+      });
+    return () => {
+      live = false;
+    };
+  }, [api]);
 
   // One bounded page, read once per result. Where the result was not whole
   // when last looked at, nothing is read: Rust would refuse, and the reason is
@@ -622,6 +756,59 @@ export function TargetedMs1Report({
     page.status === "ready" ? page.value.rows.find((row) => row.targetId === chosen) ?? null : null;
   const shown: Loaded<TargetEvidence> =
     evidence !== null && evidence.key === evidenceKey ? evidence.value : { status: "loading" };
+  const settings = figureSettings(draft);
+  const validation = validateFigureDraft(draft);
+  const running = output.state.status === "running";
+
+  /** One output at a time from this report, as Rust's own lane allows. */
+  function start(region: "figure" | "table", operation: Operation, request: () => Promise<OutputState>) {
+    if (outputBusy.current) return;
+    outputBusy.current = true;
+    setOutput({ region, state: { status: "running", operation } });
+    request()
+      .catch((error: unknown): OutputState => ({ status: "failed", error: toPreviewError(error) }))
+      .then((state) => {
+        outputBusy.current = false;
+        if (mounted.current) setOutput({ region, state });
+      });
+  }
+
+  function exportTable(format: TargetedTableFormat) {
+    start("table", format, async () => {
+      const answer = await api.exportTargetedMs1Table(artifact.id, format);
+      return answer.status === "cancelled"
+        ? { status: "cancelled" }
+        : { status: "savedTable", fileName: answer.fileName, rowCount: answer.rowCount };
+    });
+  }
+
+  function exportFigure(targetId: string, operation: "svg" | "png" | "copy") {
+    // PNG is only offered while the typed resolution is one, so `settings`
+    // carries it whenever a PNG is asked for.
+    if (settings === null) return;
+    const asked = settings;
+    start("figure", operation, async () => {
+      if (operation === "copy") {
+        const answer = await api.copyTargetedMs1Figure(artifact.id, targetId, asked);
+        return { status: "copied", figure: answer.figure };
+      }
+      const answer = await api.exportTargetedMs1Figure(artifact.id, targetId, operation, asked);
+      return answer.status === "cancelled"
+        ? { status: "cancelled" }
+        : { status: "savedFigure", fileName: answer.fileName, figure: answer.figure };
+    });
+  }
+
+  const status = (region: "figure" | "table") => {
+    const state = output.region === region ? output.state : ({ status: "idle" } as const);
+    const detail = state.status === "failed" ? ownedErrorDetail(state.error, t) : null;
+    return (
+      <p className="spectrum-export-status" role="status" data-targeted-output={state.status}>
+        {describeOutput(state, t, errorText)}
+        {detail === null ? null : <span className="notice-detail">{detail}</span>}
+      </p>
+    );
+  };
 
   return (
     <section
@@ -641,6 +828,24 @@ export function TargetedMs1Report({
         )}
       </p>
       <p className="targeted-experimental">{t("targetedExperimental")}</p>
+
+      <dl
+        className="provenance-facts targeted-state"
+        aria-label={t("targetedStateLabel")}
+        data-targeted-state=""
+      >
+        <dt>{t("targetedStatePayload")}</dt>
+        <dd data-targeted-payload={availability}>{t(PAYLOAD_STATE_KEYS[availability])}</dd>
+        <dt>{t("targetedStateSource")}</dt>
+        <dd data-targeted-source={sourceState?.id ?? "gone"}>
+          {sourceState?.text ?? t("targetedStateSourceGone")}
+        </dd>
+        <dt>{t("targetedStateNewRuns")}</dt>
+        <dd data-targeted-runtime={newRuns}>{t(NEW_RUNS_KEYS[newRuns])}</dd>
+      </dl>
+      {/* Only where there is something to show: a result that is not whole
+          offers no reading and no output, so the sentence would be false. */}
+      {availability === "available" ? <p className="project-note">{t("targetedReuseNote")}</p> : null}
 
       {result === null ? null : (
         <table className="qc-report-table" data-targeted-summary="">
@@ -746,6 +951,31 @@ export function TargetedMs1Report({
           ) : null}
           <p className="project-note">{t("targetedMeaning")}</p>
 
+          <details className="targeted-export" data-targeted-table-export="">
+            <summary>{t("targetedTableExports")}</summary>
+            <p className="project-note">{t("targetedTableExportHelp")}</p>
+            <div className="spectrum-export-actions">
+              {(["csv", "tsv"] as const).map((format) => (
+                <button
+                  key={format}
+                  type="button"
+                  className="secondary-button"
+                  disabled={running}
+                  data-targeted-export={format}
+                  onClick={() => exportTable(format)}
+                >
+                  {t(
+                    running && output.state.status === "running" && output.state.operation === format
+                      ? "viewerExporting"
+                      : "viewerExportFormat",
+                    { name: format.toUpperCase() },
+                  )}
+                </button>
+              ))}
+            </div>
+            {status("table")}
+          </details>
+
           {selectedRow === null ? (
             <p className="project-empty" data-targeted-no-selection="">
               {t("targetedChooseRow")}
@@ -771,7 +1001,57 @@ export function TargetedMs1Report({
                     : refusalText(shown.code)}
                 </p>
               ) : (
-                <EvidencePlot row={selectedRow} traces={shown.value.traces} />
+                <>
+                  <EvidenceFigure
+                    artifactId={artifact.id}
+                    targetId={selectedRow.targetId}
+                    name={nameOf(selectedRow.targetId)}
+                    traces={shown.value.traces}
+                    settings={settings}
+                    errorText={errorText}
+                  />
+                  <details className="targeted-export" data-targeted-figure-export="">
+                    <summary>{t("targetedFigureExports")}</summary>
+                    <p className="project-note">{t("targetedFigureExportHelp")}</p>
+                    <FigureSettingsFields
+                      idPrefix={`targeted-${ids}`}
+                      settings={draft}
+                      validation={validation}
+                      onFigureSetting={(field, value) => setDraft((current) => ({ ...current, [field]: value }))}
+                      onFigureTheme={(theme) => setDraft((current) => ({ ...current, theme }))}
+                    />
+                    <div className="spectrum-export-actions">
+                      {(["svg", "png", "copy"] as const).map((operation) => (
+                        <button
+                          key={operation}
+                          type="button"
+                          className="secondary-button"
+                          disabled={
+                            running ||
+                            validation.render !== null ||
+                            (operation === "png" && validation.dpi !== null)
+                          }
+                          data-targeted-export={operation}
+                          onClick={() => exportFigure(selectedRow.targetId, operation)}
+                        >
+                          {operation === "copy"
+                            ? t(
+                                output.state.status === "running" && output.state.operation === "copy"
+                                  ? "viewerCopying"
+                                  : "viewerCopy",
+                              )
+                            : t(
+                                output.state.status === "running" && output.state.operation === operation
+                                  ? "viewerExporting"
+                                  : "viewerExportFormat",
+                                { name: operation.toUpperCase() },
+                              )}
+                        </button>
+                      ))}
+                    </div>
+                    {status("figure")}
+                  </details>
+                </>
               )}
               <RowFacts row={selectedRow} nameOf={nameOf} />
             </div>
@@ -782,123 +1062,107 @@ export function TargetedMs1Report({
   );
 }
 
-const PLOT = { width: 640, height: 240, left: 64, right: 16, top: 12, bottom: 40 } as const;
-
 /**
- * One target's extracted points, and the bounds the engine reported over them.
+ * One target's stored evidence, drawn by the shared figure renderer in Rust.
  *
- * Points are drawn where they are and joined only to their neighbours in the
- * order the engine extracted them. The retention-time window is the plan's;
- * the shaded span is the feature's reported bounds and the solid line its
- * apex; dashed spans are other candidates. The table beneath carries every
- * value for a reader who cannot see the plot.
+ * The image is the SVG an export writes for these settings, shown in an inert
+ * image context -- never parsed, never placed in the DOM as markup. Every
+ * point is also in the table beneath it, for a reader who cannot see it.
  */
-function EvidencePlot({
-  row,
+function EvidenceFigure({
+  artifactId,
+  targetId,
+  name,
   traces,
+  settings,
+  errorText,
 }: {
-  readonly row: PayloadRow;
+  readonly artifactId: string;
+  readonly targetId: string;
+  readonly name: string;
   readonly traces: readonly EvidenceTrace[];
+  readonly settings: FigureSettings | null;
+  readonly errorText: (error: PreviewError) => string;
 }) {
   const t = useUiMessages();
+  const api = useProjectApi();
   const ids = useId();
-  const points = traces.flatMap((trace) => trace.points);
-  if (points.length === 0) {
-    return (
-      <p className="project-note" data-targeted-no-points="">
-        {t("targetedNoPoints")}
-      </p>
-    );
-  }
-  const window = row.windows?.rtClosedS ?? null;
-  const rts = points.map((point) => point[1]).concat(window === null ? [] : [...window]);
-  let x0 = Math.min(...rts);
-  let x1 = Math.max(...rts);
-  if (x1 === x0) {
-    x0 -= 1;
-    x1 += 1;
-  }
-  const top = Math.max(...points.map((point) => point[2]));
-  const y1 = top > 0 ? top : 1;
-  const plotW = PLOT.width - PLOT.left - PLOT.right;
-  const plotH = PLOT.height - PLOT.top - PLOT.bottom;
-  const x = (rt: number) => PLOT.left + ((rt - x0) / (x1 - x0)) * plotW;
-  const y = (intensity: number) => PLOT.top + plotH - (intensity / y1) * plotH;
-  const traceName = (trace: number) => (trace === 0 ? "M" : `M+${trace}`);
-  const feature = row.feature;
-  const others = row.candidates.filter(
-    (candidate) =>
-      feature === null || candidate.leftS !== feature.leftS || candidate.rightS !== feature.rightS,
-  );
+  const width = settings?.widthPx ?? null;
+  const height = settings?.heightPx ?? null;
+  const theme = settings?.theme ?? null;
+  const target = `${artifactId}/${targetId}`;
+  const key = width === null || height === null || theme === null ? null : `${target}/${width}x${height}/${theme}`;
+  const [answer, setAnswer] = useState<{
+    readonly key: string;
+    readonly target: string;
+    readonly value:
+      | { readonly status: "ready"; readonly figure: TargetedFigure }
+      | { readonly status: "failed"; readonly error: PreviewError };
+  } | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (key === null || width === null || height === null || theme === null) return;
+    let live = true;
+    api
+      // A drawing records no resolution; the value only fills the shared shape.
+      .previewTargetedMs1Figure(artifactId, targetId, { widthPx: width, heightPx: height, pngDpi: 300, theme })
+      .then((figure) => {
+        if (live) setAnswer({ key, target, value: { status: "ready", figure } });
+      })
+      .catch((error: unknown) => {
+        if (live) setAnswer({ key, target, value: { status: "failed", error: toPreviewError(error) } });
+      });
+    return () => {
+      live = false;
+    };
+  }, [api, artifactId, height, key, target, targetId, theme, width]);
+
+  // While the size being typed is not yet a size, the last drawing of this
+  // target stays; the fields say what is wrong.
+  const current =
+    answer !== null && (answer.key === key || (key === null && answer.target === target))
+      ? answer.value
+      : null;
+  const figure = current?.status === "ready" ? current.figure : null;
+  useEffect(() => {
+    if (figure === null) {
+      setImageUrl(null);
+      return;
+    }
+    // Image context is inert: no innerHTML, object/embed, script, or DOM SVG.
+    const url = URL.createObjectURL(new Blob([figure.svg], { type: "image/svg+xml" }));
+    setImageUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [figure]);
+
+  const points = traces.reduce((count, trace) => count + trace.points.length, 0);
+  const traceName = (trace: number) => (trace === 0 ? "M" : `M+${trace}`);
   return (
-    <figure className="targeted-plot" data-targeted-plot="">
-      <svg
-        viewBox={`0 0 ${PLOT.width} ${PLOT.height}`}
-        role="img"
-        aria-labelledby={`${ids}-caption`}
-        preserveAspectRatio="xMidYMid meet"
-      >
-        <line className="targeted-grid" x1={PLOT.left} x2={PLOT.width - PLOT.right} y1={y(0)} y2={y(0)} />
-        <line className="targeted-grid" x1={PLOT.left} x2={PLOT.width - PLOT.right} y1={y(y1)} y2={y(y1)} />
-        <line className="targeted-axis" x1={PLOT.left} x2={PLOT.left} y1={PLOT.top} y2={y(0)} />
-        {window === null ? null : (
-          <g data-targeted-window="">
-            <line className="targeted-window" x1={x(window[0])} x2={x(window[0])} y1={PLOT.top} y2={y(0)} />
-            <line className="targeted-window" x1={x(window[1])} x2={x(window[1])} y1={PLOT.top} y2={y(0)} />
-          </g>
-        )}
-        {others.map((candidate, index) => (
-          <rect
-            key={index}
-            className="targeted-candidate"
-            data-targeted-candidate=""
-            x={x(candidate.leftS)}
-            y={PLOT.top}
-            width={Math.max(1, x(candidate.rightS) - x(candidate.leftS))}
-            height={plotH}
-          />
-        ))}
-        {feature === null ? null : (
-          <g data-targeted-feature="">
-            <rect
-              className="targeted-feature"
-              x={x(feature.leftS)}
-              y={PLOT.top}
-              width={Math.max(1, x(feature.rightS) - x(feature.leftS))}
-              height={plotH}
-            />
-            <line className="targeted-apex" x1={x(feature.apexRtS)} x2={x(feature.apexRtS)} y1={PLOT.top} y2={y(0)} />
-          </g>
-        )}
-        {traces.map((trace) => (
-          <g
-            key={trace.trace}
-            className={trace.trace === 0 ? "targeted-trace is-m0" : "targeted-trace is-m1"}
-            data-targeted-trace={trace.trace}
-          >
-            <polyline points={trace.points.map((point) => `${x(point[1])},${y(point[2])}`).join(" ")} />
-            {trace.points.map((point) => (
-              <circle key={point[0]} cx={x(point[1])} cy={y(point[2])} r={2} />
-            ))}
-          </g>
-        ))}
-        <text className="targeted-tick" x={PLOT.left - 6} y={y(0)} textAnchor="end" dominantBaseline="middle">
-          0
-        </text>
-        <text className="targeted-tick" x={PLOT.left - 6} y={y(y1)} textAnchor="end" dominantBaseline="middle">
-          {formatIntensity(y1)}
-        </text>
-        <text className="targeted-tick" x={x(x0)} y={y(0) + 14} textAnchor="start">
-          {seconds(x0)}
-        </text>
-        <text className="targeted-tick" x={x(x1)} y={y(0) + 14} textAnchor="end">
-          {seconds(x1)}
-        </text>
-        <text className="targeted-tick" x={PLOT.left + plotW / 2} y={PLOT.height - 6} textAnchor="middle">
-          {t("targetedAxisRt")}
-        </text>
-      </svg>
+    <figure className="targeted-plot" data-targeted-plot="" aria-busy={current === null}>
+      {figure !== null && imageUrl !== null ? (
+        <img
+          src={imageUrl}
+          alt={t("targetedFigureAlt", { name })}
+          width={figure.width}
+          height={figure.height}
+          data-targeted-figure={figure.specId}
+          aria-describedby={`${ids}-caption`}
+        />
+      ) : current?.status === "failed" ? (
+        <p className="project-problem" data-targeted-figure-refused={current.error.kind}>
+          {errorText(current.error)}
+        </p>
+      ) : (
+        <p className="project-note" data-targeted-figure-loading="">
+          {t("targetedFigureLoading")}
+        </p>
+      )}
+      {points === 0 ? (
+        <p className="project-note" data-targeted-no-points="">
+          {t("targetedFigureNoPoints")}
+        </p>
+      ) : null}
       <figcaption id={`${ids}-caption`} className="project-note">
         {t("targetedPlotCaption", {
           traces: traces

@@ -17,6 +17,15 @@
  * fixed runtime, fails closed and stores a validated result beside the project
  * is proved against the pinned runtime in
  * `apps/desktop/src-tauri/src/targeted_ms1/tests.rs`.
+ *
+ * M9.2 replaced the report's own SVG plot with the shared figure renderer's
+ * drawing, shown as an inert image, so the plot is found as that image here.
+ * The M9.2 scenarios below reopen a stored result with its source missing and
+ * the runtime unavailable, and export its figure and table. The figure they
+ * show is a labelled stand-in SVG from the answer table, not the renderer's
+ * output; that the renderer draws the stored evidence exactly, and that a real
+ * result is drawn and tabulated with neither the runtime nor the source, is
+ * proved in the same Rust test module.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -29,6 +38,7 @@ import {
   installIpcBoundary,
   ipcCalls,
   releaseInvokeHold,
+  setInvokeRejection,
   setInvokeResult,
 } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
@@ -91,8 +101,10 @@ const TYPED = "Caffeine, C8H10N4O2, 120, 30\nAbsent, C9H9NO4, 300, 30";
 /** A saved project with one layer, before and after one targeted run. */
 function project(options: {
   readonly run?: "completed" | "cancelled";
-  readonly availability?: "available" | "payloadMissing";
+  readonly availability?: "available" | "payloadMissing" | "payloadCorrupt";
   readonly label?: string;
+  /** Where a check last found the source: at its recorded location, or not. */
+  readonly source?: "matching" | "missing";
 }) {
   const ran = options.run !== undefined;
   const completed = options.run === "completed";
@@ -108,8 +120,8 @@ function project(options: {
         label: options.label ?? MZML_ROW.fileName,
         locatorKind: "insideProject",
         members: [{ role: "primary", name: "", recordedByteLength: 2048 }],
-        verification: "matchingRecordedContent",
-        unavailableReason: null,
+        verification: options.source === "missing" ? "unavailable" : "matchingRecordedContent",
+        unavailableReason: options.source === "missing" ? "missingAtCheckedLocation" : null,
         relinkProposed: false,
         relinkCandidateMatches: false,
         consumedByRunIds: [],
@@ -260,6 +272,20 @@ const EVIDENCE = {
   ],
 };
 
+/**
+ * A stand-in for the renderer's SVG, and labelled one. The page shows whatever
+ * SVG Rust answers as an inert image; this only has to be a well-formed one of
+ * the answered size.
+ */
+const FIXTURE_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640">' +
+  '<rect width="1200" height="640" fill="#ffffff"/>' +
+  '<text x="40" y="60" font-family="sans-serif" font-size="28" fill="#1f2328">' +
+  "Fixture figure (browser suite stand-in, not the renderer&apos;s output)</text>" +
+  '<polyline fill="none" stroke="#1f4e9c" stroke-width="3" ' +
+  'points="80,560 200,540 320,400 440,160 560,80 680,190 800,500 920,555 1040,560"/></svg>';
+const FIGURE = { width: 1200, height: 640, theme: "light" };
+
 function table(state: unknown, locale: "en" | "zh-CN" = "en") {
   const answers: Record<string, unknown> = ipcTable();
   answers.get_project_state = state;
@@ -275,6 +301,26 @@ function table(state: unknown, locale: "en" | "zh-CN" = "en") {
   };
   answers.read_targeted_ms1_rows = ROWS;
   answers.read_targeted_ms1_evidence = EVIDENCE;
+  answers.get_targeted_ms1_runtime = { newRuns: "available" };
+  answers.preview_targeted_ms1_figure = {
+    svg: FIXTURE_SVG,
+    specId: "fixture-spec",
+    width: 1200,
+    height: 640,
+  };
+  answers.export_targeted_ms1_figure = {
+    status: "saved",
+    format: "svg",
+    fileName: "mscanvas-targeted-ms1-eeeeeeee-target-1.svg",
+    figure: { ...FIGURE, dpi: null },
+  };
+  answers.copy_targeted_ms1_figure = { status: "copied", figure: FIGURE };
+  answers.export_targeted_ms1_table = {
+    status: "saved",
+    format: "csv",
+    fileName: "mscanvas-targeted-ms1-eeeeeeee-results.csv",
+    rowCount: 2,
+  };
   const preferences = {
     schemaVersion: 1,
     appearance: { locale, density: "comfortable" },
@@ -346,7 +392,7 @@ async function capture(label: string) {
     const setup = document.querySelector("[data-targeted-setup]");
     const report = document.querySelector("[data-targeted-report]");
     const rows = document.querySelector<HTMLElement>(".targeted-rows");
-    const plot = document.querySelector("[data-targeted-plot] svg");
+    const plot = document.querySelector<HTMLImageElement>("[data-targeted-plot] img");
     const active = document.activeElement;
     return {
       css: { width: innerWidth, height: innerHeight },
@@ -370,7 +416,13 @@ async function capture(label: string) {
             },
       rowsOverflow: rows === null ? 0 : rows.scrollWidth - rows.clientWidth,
       plot: plot === null ? null : rect(plot),
-      traces: document.querySelectorAll("[data-targeted-trace]").length,
+      // Whether the image decoded: an SVG that failed to load has no natural size.
+      figure: plot === null ? null : { naturalWidth: plot.naturalWidth, alt: plot.alt },
+      state: (document.querySelector("[data-targeted-state]") as HTMLElement | null)?.innerText ?? null,
+      outputs: [...document.querySelectorAll("[data-targeted-output]")].map((element) => [
+        element.getAttribute("data-targeted-output"),
+        (element as HTMLElement).innerText,
+      ]),
       details:
         inspector === null || inspector.hidden
           ? null
@@ -414,8 +466,9 @@ async function capture(label: string) {
     label,
     kind:
       "React/mock-IPC layout and interaction evidence. The plan, the run's phase and ending, " +
-      "the stored rows and the evidence points are a controlled answer table; no worker ran, " +
-      "no source was read and no result was stored.",
+      "the stored rows, the evidence points, the figure SVG and every export answer are a " +
+      "controlled answer table; no worker ran, no source was read, no result was stored and " +
+      "no file was written.",
     ...measured,
   });
 
@@ -527,11 +580,11 @@ describe("M9.1 targeted MS1 setup, run and report, rendered", () => {
     await releaseInvokeHold("run_targeted_ms1");
     await browser.$(`[data-targeted-report="${ARTIFACT}"] [data-targeted-row]`).waitForDisplayed();
     await browser.$(`[data-targeted-choose="${CAFFEINE}"]`).click();
-    await browser.$("[data-targeted-plot] svg").waitForDisplayed();
+    await browser.$("[data-targeted-plot] img").waitForDisplayed();
     const reported = await capture("m91-03-report");
     expect(reported.report?.availability).toBe("available");
     expect(reported.report?.rows.map(([outcome]) => outcome)).toEqual(["DETECTED", "NOT_DETECTED"]);
-    expect(reported.traces).toBe(2);
+    expect(reported.figure?.naturalWidth).toBe(1200);
     expect(reported.details?.describing).toBe("artifact");
     expect(reported.details?.text).toContain(en.provenanceTargetedStored);
     expect(reported.details?.text).toContain(PLAN_SHA);
@@ -600,7 +653,7 @@ describe("M9.1 targeted MS1 setup, run and report, rendered", () => {
       await browser.$(`[data-project-inspect-artifact="${ARTIFACT}"]`).click();
       await browser.$("[data-targeted-row]").waitForDisplayed();
       await browser.$(`[data-targeted-choose="${CAFFEINE}"]`).click();
-      await browser.$("[data-targeted-plot] svg").waitForDisplayed();
+      await browser.$("[data-targeted-plot] img").waitForDisplayed();
       const shown = await capture(label);
       expect(shown.report?.text).toContain(long);
       expect(shown.report?.x ?? -1).toBeGreaterThanOrEqual(0);
@@ -636,7 +689,7 @@ describe("M9.1 targeted MS1 setup, run and report, rendered", () => {
     await browser.$(`[data-project-inspect-artifact="${ARTIFACT}"]`).click();
     await browser.$("[data-targeted-row]").waitForDisplayed();
     await browser.$(`[data-targeted-choose="${CAFFEINE}"]`).click();
-    await browser.$("[data-targeted-plot] svg").waitForDisplayed();
+    await browser.$("[data-targeted-plot] img").waitForDisplayed();
     await browser.$(`[data-project-targeted="${LAYER}"]`).click();
     await browser.$("[data-targeted-setup]").waitForDisplayed();
     const chinese = await capture("m91-08-zh-CN");
@@ -656,6 +709,246 @@ ${chinese.details?.text ?? ""}`;
     expect(chinese.setup?.text).toContain(zh.targetedSetupTitle);
     expect(chinese.report?.text).toContain(zh.targetedMeaning);
     expect(chinese.details?.text).toContain(zh.provenanceTargetedStored);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+});
+
+/** Nothing reading or exporting a stored result may ask for. */
+const NEVER_ON_REUSE = [
+  "resolve_targeted_ms1_plan",
+  "run_targeted_ms1",
+  "begin_project_job",
+  "check_project_links",
+  "capture_project_file_facts",
+  "add_project_input_to_workspace",
+];
+
+async function reuseCommands() {
+  return (await ipcCalls()).map((call) => call.command);
+}
+
+/** Opens the stored result from the history and chooses its detected target. */
+async function openStoredResult() {
+  await toProject();
+  await browser.$(`[data-project-inspect-artifact="${ARTIFACT}"]`).click();
+  await browser.$("[data-targeted-row]").waitForDisplayed();
+  await browser.$(`[data-targeted-choose="${CAFFEINE}"]`).click();
+  await browser.$("[data-targeted-plot] img").waitForDisplayed();
+  await browser.waitUntil(() =>
+    browser.execute(
+      () => (document.querySelector<HTMLImageElement>("[data-targeted-plot] img")?.naturalWidth ?? 0) > 0,
+    ),
+  );
+}
+
+/** Opens one export disclosure by keyboard, as a reader without a pointer would. */
+async function openDisclosure(selector: string) {
+  await browser.execute((target: string) => {
+    document.querySelector<HTMLElement>(`${target} > summary`)?.focus();
+  }, selector);
+  await browser.keys("Enter");
+  await browser.waitUntil(() =>
+    browser.execute((target: string) => document.querySelector<HTMLDetailsElement>(target)?.open === true, selector),
+  );
+}
+
+describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
+  before(() => {
+    const root = process.env["MSCANVAS_M92_OUTPUT_ROOT"] ?? resolve("test-results/m9.2");
+    mkdirSync(root, { recursive: true });
+    output = mkdtempSync(join(root, "browser-"));
+    evidence.length = 0;
+    console.log(`M9.2 browser evidence: ${output}`);
+  });
+
+  after(async () => {
+    evidence.push({ console: await consoleEntries() });
+    writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2));
+  });
+
+  afterEach(async function () {
+    evidence.push({
+      test: this.currentTest?.title,
+      state: this.currentTest?.state,
+      console: await consoleEntries(),
+    });
+    if (this.currentTest?.state === "failed") {
+      await browser.saveScreenshot(join(output, `failure-${evidence.length}.png`));
+      evidence.push({
+        failedDocument: await browser.execute(() => document.body.innerText.slice(0, 8000)),
+      });
+    }
+    writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2));
+  });
+
+  it("reopens a result whose source is gone with no runtime, draws it and exports it by keyboard", async () => {
+    await metrics(1366, 768);
+    const answers = table(project({ run: "completed", source: "missing" }));
+    answers.get_targeted_ms1_runtime = { newRuns: "runtimeUnavailable" };
+    await installIpcBoundary(answers);
+    await browser.url("/");
+    await openStoredResult();
+
+    const opened = await capture("m92-01-reopened-source-gone-no-runtime-1366");
+    expect(opened.state).toContain(en.targetedStatePayloadWhole);
+    expect(opened.state).toContain(en.projectStateMissing);
+    expect(opened.state).toContain(en.targetedNewRunsRuntimeUnavailable);
+    expect(opened.report?.text).toContain(en.targetedReuseNote);
+    expect(opened.figure?.naturalWidth).toBe(1200);
+    expect(opened.figure?.alt).toBe(en.targetedFigureAlt.replace("{{name}}", "Caffeine"));
+    // No SVG markup is placed in the page: the drawing is an image.
+    expect(await browser.execute(() => document.querySelector("[data-targeted-plot] svg") === null)).toBe(true);
+    const preview = (await ipcCalls()).find((call) => call.command === "preview_targeted_ms1_figure");
+    expect(preview?.args).toEqual({
+      artifactId: ARTIFACT,
+      targetId: CAFFEINE,
+      settings: { widthPx: 1200, heightPx: 640, pngDpi: 300, theme: "light" },
+    });
+
+    // The table, by keyboard: open the disclosure, move to CSV, press it.
+    await openDisclosure("[data-targeted-table-export]");
+    await browser.keys("Tab");
+    expect(
+      await browser.execute(() => document.activeElement?.getAttribute("data-targeted-export") ?? null),
+    ).toBe("csv");
+    const ring = await focusedTreatment();
+    evidence.push({ label: "m92-02-csv-focus-treatment", ...ring });
+    await browser.keys("Enter");
+    await browser.$('[data-targeted-table-export] [data-targeted-output="savedTable"]').waitForDisplayed();
+    const table1 = (await ipcCalls()).filter((call) => call.command === "export_targeted_ms1_table");
+    expect(table1).toEqual([
+      { command: "export_targeted_ms1_table", args: { artifactId: ARTIFACT, format: "csv" } },
+    ]);
+    const saved = await capture("m92-02-table-saved-1366");
+    expect(saved.outputs).toContainEqual([
+      "savedTable",
+      "Saved mscanvas-targeted-ms1-eeeeeeee-results.csv with 2 target rows.",
+    ]);
+
+    // The figure: open its disclosure and save an SVG, then copy.
+    await openDisclosure("[data-targeted-figure-export]");
+    await browser.$('[data-targeted-export="svg"]').click();
+    await browser.$('[data-targeted-figure-export] [data-targeted-output="savedFigure"]').waitForDisplayed();
+    await browser.$('[data-targeted-export="copy"]').click();
+    await browser.$('[data-targeted-figure-export] [data-targeted-output="copied"]').waitForDisplayed();
+    // One output is said at a time, in the region that asked for it: the
+    // copy's sentence replaces the table's.
+    const exported = await capture("m92-03-figure-copied-1366");
+    expect(exported.outputs).toContainEqual(["copied", "Copied the plot with 1,200 by 640 pixels, Light theme."]);
+    expect(exported.outputs.filter(([state]) => state !== "idle")).toHaveLength(1);
+    const figureCall = (await ipcCalls()).find((call) => call.command === "export_targeted_ms1_figure");
+    expect(figureCall?.args).toEqual({
+      artifactId: ARTIFACT,
+      targetId: CAFFEINE,
+      format: "svg",
+      settings: { widthPx: 1200, heightPx: 640, pngDpi: 300, theme: "light" },
+    });
+
+    const commands = await reuseCommands();
+    for (const command of NEVER_ON_REUSE) expect(commands).not.toContain(command);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("says a damaged result is damaged, reads nothing and offers no export", async () => {
+    await metrics(1366, 768);
+    await installIpcBoundary(table(project({ run: "completed", availability: "payloadCorrupt" })));
+    await browser.url("/");
+    await toProject();
+    await browser.$(`[data-project-inspect-artifact="${ARTIFACT}"]`).click();
+    await browser.$('[data-targeted-unavailable="payloadCorrupt"]').waitForDisplayed();
+    const damaged = await capture("m92-04-payload-corrupt");
+    expect(damaged.report?.availability).toBe("payloadCorrupt");
+    expect(damaged.state).toContain(en.targetedStatePayloadCorrupt);
+    expect(damaged.report?.text).toContain(en.targetedPayloadCorrupt);
+    expect(damaged.report?.text).not.toContain(en.targetedReuseNote);
+    expect(damaged.plot).toBeNull();
+    expect(
+      await browser.execute(
+        () =>
+          document.querySelector("[data-targeted-table-export], [data-targeted-figure-export]") === null,
+      ),
+    ).toBe(true);
+    const commands = await reuseCommands();
+    for (const command of [
+      "read_targeted_ms1_rows",
+      "preview_targeted_ms1_figure",
+      "export_targeted_ms1_table",
+      ...NEVER_ON_REUSE,
+    ]) {
+      expect(commands).not.toContain(command);
+    }
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("says a figure Rust refused and a TSV it cannot write, in the boundary's own words", async () => {
+    await metrics(1920, 1080);
+    await installIpcBoundary(table(project({ run: "completed" })));
+    await browser.url("/");
+    await toProject();
+    // Answers staged on the loaded page; a navigation reinstalls the table.
+    await setInvokeRejection("preview_targeted_ms1_figure", {
+      kind: "targeted_figure_not_drawable",
+      summary: "This target's stored evidence could not be drawn as a figure.",
+      detail: null,
+      retryable: false,
+    });
+    await setInvokeRejection("export_targeted_ms1_table", {
+      kind: "targeted_table_field_not_representable",
+      summary: "A value in this result holds a tab or a line break.",
+      detail: null,
+      retryable: false,
+    });
+    await browser.$(`[data-project-inspect-artifact="${ARTIFACT}"]`).click();
+    await browser.$("[data-targeted-row]").waitForDisplayed();
+    await browser.$(`[data-targeted-choose="${CAFFEINE}"]`).click();
+    await browser.$('[data-targeted-figure-refused="targeted_figure_not_drawable"]').waitForDisplayed();
+    await openDisclosure("[data-targeted-table-export]");
+    await browser.$('[data-targeted-export="tsv"]').click();
+    await browser.$('[data-targeted-table-export] [data-targeted-output="failed"]').waitForDisplayed();
+    const refused = await capture("m92-05-refusals-1920");
+    expect(refused.report?.text).toContain(en.m92ErrorFigureNotDrawable);
+    expect(refused.outputs.map(([, text]) => text)).toContain(en.m92ErrorTsvField);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("keeps the state, the figure and both exports inside a narrow window, in Simplified Chinese", async () => {
+    await metrics(960, 640);
+    const answers = table(project({ run: "completed", source: "missing" }), "zh-CN");
+    answers.get_targeted_ms1_runtime = { newRuns: "runtimeUnavailable" };
+    answers.export_targeted_ms1_figure = {
+      status: "saved",
+      format: "png",
+      fileName: "mscanvas-targeted-ms1-eeeeeeee-target-1.png",
+      figure: { ...FIGURE, dpi: 300 },
+    };
+    await installIpcBoundary(answers);
+    await browser.url("/");
+    await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
+    await openStoredResult();
+    await openDisclosure("[data-targeted-table-export]");
+    await openDisclosure("[data-targeted-figure-export]");
+    await browser.$('[data-targeted-export="png"]').click();
+    await browser.$('[data-targeted-figure-export] [data-targeted-output="savedFigure"]').waitForDisplayed();
+    await browser.execute(() => {
+      document.querySelector("[data-targeted-figure-export]")?.scrollIntoView({ block: "start" });
+    });
+    const narrow = await capture("m92-06-narrow-zh-CN");
+    expect(narrow.lang).toBe("zh-CN");
+    expect(narrow.state).toContain(zh.targetedStatePayloadWhole);
+    expect(narrow.state).toContain(zh.projectStateMissing);
+    expect(narrow.state).toContain(zh.targetedNewRunsRuntimeUnavailable);
+    for (const key of [
+      "targetedReuseNote",
+      "targetedTableExports",
+      "targetedTableExportHelp",
+      "targetedFigureExports",
+      "targetedFigureExportHelp",
+      "targetedStateSource",
+    ] as const) {
+      expect(narrow.report?.text).toContain(zh[key]);
+      expect(narrow.report?.text).not.toContain(en[key]);
+    }
+    expect(narrow.figure?.alt).toBe(zh.targetedFigureAlt.replace("{{name}}", "Caffeine"));
     expect(await unexpectedConsole()).toEqual([]);
   });
 });
