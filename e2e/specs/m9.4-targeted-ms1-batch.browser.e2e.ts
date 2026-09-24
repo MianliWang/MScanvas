@@ -541,6 +541,9 @@ describe("M9.4 targeted MS1 batch: choose, review, run, stop and follow, rendere
       en.projectBusyBatch.replace("{{position}}", "2").replace("{{total}}", "3"),
     );
     expect(running.cancel).toBe(en.targetedBatchStop);
+    // No member's result or run is offered until the batch has ended.
+    expect(await browser.$("[data-targeted-batch-open]").isExisting()).toBe(false);
+    expect(await browser.$("[data-targeted-batch-run]").isExisting()).toBe(false);
     const commands = (await ipcCalls())
       .slice(beforeRun.length)
       .filter((call) => call.command !== "get_targeted_ms1_progress");
