@@ -13,7 +13,7 @@ it there — not this text — is the evidence that the stack was published.
 
 Status when written:
 
-- `SOURCE INTEGRATION CANDIDATE UPDATED — HEAVY VALIDATION DEFERRED FOR HOST MEMORY PRESSURE` (§8, §11)
+- `SOURCE INTEGRATION CANDIDATE QUALIFIED LOCALLY — PUBLICATION NOT AUTHORIZED` (§8)
 - `SOURCE UNPUBLISHED`
 - `M8 LOCAL IMPLEMENTATION COMPLETE`
 - `M9 LOCAL IMPLEMENTATION COMPLETE`
@@ -188,7 +188,9 @@ green. The owner decides at publication.
   (5,065 and 5,103 ms) and in the M8.5 record (5,023 ms; M8.4 recorded two
   unnamed timeouts in the same file), and passed alone every time it was run
   alone. Neither that test nor the viewer code it exercises is changed by this
-  candidate. It is the only intermittent Vitest case this record names: the
+  candidate, and it passed in the whole-suite run that qualified it (§8); it
+  stays named because it has failed under load before. It is the only
+  intermittent Vitest case this record names: the
   `ProjectLayers.test.tsx` failure seen during this qualification was a
   production focus race, repaired, not debt (§11).
 - **The browser harness can fail to open a WebDriver session** for a spec (no
@@ -217,52 +219,83 @@ None is changed here; each is for the owner and the publication run.
 
 ## 8. Validation
 
-**Heavy validation of the integration candidate is deferred for host memory
-pressure. That is not a failure, and the candidate is not yet qualified.** A
-heavy command starts only when free physical memory is at least 8 GiB
-(8,388,608 KiB) and use is at most 80%, measured from `Win32_OperatingSystem`
-immediately before it; nothing on the host was stopped or reconfigured to make
-room. Logs are under `.tmp/m8-m9-integration-evidence/` (git-ignored); every
-exit below is the command's own.
+**Qualification of the integration candidate is complete: Groups B, C and D
+ran on it with every exit 0, and Group A is inherited.** Groups B and C ran on
+`4b6cf29` (tree `9a5260a…`), whose only difference from the integration
+candidate `7cbc7f0` is two Markdown files (`git diff --name-only 7cbc7f0
+4b6cf29`); Group D ran there too. Logs are under
+`.tmp/m8-m9-integration-evidence/` (git-ignored); every exit below is the
+command's own.
+
+**Memory policy.** Measured from `Win32_OperatingSystem`. A heavy group is
+admitted only when free physical memory is at least 8 GiB (8,388,608 KiB) and
+use is at most 80%. Once admitted it is not stopped for crossing that line;
+before each later command or spec memory is recorded, and the next one is not
+started if free memory is below 4 GiB or use is 90% or more. Before each
+browser spec the previous spec's WDIO, Vite, ChromeDriver and headless Chrome
+must have exited; the runner waits for them and never ends a process. Nothing
+on the host was stopped or reconfigured to make room. These are scheduling
+thresholds, not product requirements.
 
 | Measured (local time, -04:00) | Free of 31.67 GiB | In use | Gate | Before |
 | --- | ---: | ---: | --- | --- |
-| 18:11:26 | 3.50 GiB | 89.0% | deferred | Group A on `896e012` |
-| 18:25:03 | 4.50 GiB | 85.8% | deferred | Group A on `d8192d5` |
-| 18:43:56 | 9.99 GiB | 68.5% | passed | Group A on `a278f57`; every later command of Groups A and B passed its own reading (9.60–9.92 GiB) |
-| 18:54:36 | 9.33 GiB | 70.5% | passed | Group C, m8.1 |
-| 18:54:53 | 7.24 GiB | 77.1% | deferred | Group C, m8.2 |
-| 18:55:19, 18:58:33 | 7.87, 7.27 GiB | 75.2%, 77.0% | deferred | Group C, m8.2 |
-| 20:43:57 to 21:57:26 (four readings) | 5.29–6.54 GiB | 79.4–83.3% | deferred | only single-file and serial project-folder tests ran (§11) |
+| 2026-09-24 18:11:26 | 3.50 GiB | 89.0% | deferred | Group A on `896e012` |
+| 2026-09-24 18:25:03 | 4.50 GiB | 85.8% | deferred | Group A on `d8192d5` |
+| 2026-09-24 18:43:56 | 9.99 GiB | 68.5% | admitted | Group A on `a278f57`; every later command of Groups A and B there read 9.60–9.92 GiB |
+| 2026-09-24 18:54:36 | 9.33 GiB | 70.5% | admitted | Group C on `a278f57`, m8.1 |
+| 2026-09-24 18:54:53, 18:55:19, 18:58:33 | 7.24, 7.87, 7.27 GiB | 75.2–77.1% | deferred | m8.2 on `a278f57` (then gated per command) |
+| 2026-09-24 20:43:57 to 21:57:26 (four readings) | 5.29–6.54 GiB | 79.4–83.3% | deferred | only single-file and serial project-folder tests ran (§11) |
+| 2026-09-24 22:13:52, 22:27:53, 23:19:50 | 6.58, 5.78, 6.64 GiB | 79.2%, 81.8%, 79.0% | deferred | Group B on the integration candidate |
+| 2026-09-25 02:21:31 | 12.76 GiB | 59.7% | admitted | Group B; later commands read 12.80–12.92 GiB |
+| 2026-09-25 02:23:14 | 12.84 GiB | 59.4% | admitted | Group C; later specs read 12.80–12.84 GiB |
 
-**On `a278f57`** (tree `52c93ab…`; its code is `d8192d5`'s, which is
-`fa7f213`'s):
+**On the integration candidate's code** (`4b6cf29`):
 
-| Group | Command | Exit | Result | Standing for the integration candidate |
-| --- | --- | ---: | --- | --- |
-| A | `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 | | **inherited** |
-| A | `cargo test --locked --workspace --all-targets` | 0 | desktop 1233 passed, 47 ignored; plot-spec 135; proteowizard 513 passed, 9 ignored, plus 1 in its second test binary; core 2; examples and tests pass | **inherited** |
-| A | `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 | 86 passed, 33 ignored | **inherited** |
-| A | `cargo test --locked -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1 --nocapture` | 0 | 33 passed, 102.8 s: the real-runtime suite | **inherited** |
-| A | `cargo check --locked --release --workspace` | 0 | | **inherited** |
-| B | `pnpm lint`, `pnpm typecheck` | 0, 0 | | superseded |
-| B | `pnpm test` | **1** | 2167 of 2168; the one failure was the production focus race of §11, not the M7.3 case (which passed) | superseded |
-| B | `pnpm build`, `pnpm e2e:typecheck` | 0, 0 | | superseded |
-| C | m8.1 browser spec | 0 | 8 passing | superseded |
-| D | `python -B scripts/check_repo.py`; the manifest and lock diffs of §5 | 0; as §5 | | superseded by the run on `f393a7b` |
+| Group | Command | Exit | Result |
+| --- | --- | ---: | --- |
+| B | `pnpm lint` | 0 | |
+| B | `pnpm typecheck` | 0 | |
+| B | `pnpm test` | 0 | 106 files, 2170 of 2170 (the 2168 of the M9 closure and the two window tests of §11), 65.4 s; the M7.3 case of §6 passed in this run |
+| B | `pnpm build` | 0 | the chunk-size warning only |
+| B | `pnpm e2e:typecheck` | 0 | |
+| C | `pnpm exec wdio run ./e2e/wdio.browser.conf.ts --spec ./e2e/specs/m8.1-project-records.browser.e2e.ts` | 0 | 8 passing |
+| C | the same, `m8.2-provenance` | 0 | 4 passing |
+| C | the same, `m8.3-reattachment` | 0 | 2 passing |
+| C | the same, `m8.4-layers` | 0 | 2 passing |
+| C | the same, `m8.5-qc-summary` | 0 | 3 passing |
+| C | the same, `m9.1-targeted-ms1` | 0 | 12 passing |
+| C | the same, `m9.4-targeted-ms1-batch` | 0 | 5 passing |
+| D | `git diff --stat 1daf802 7cbc7f0 --` every tracked manifest and lock | 0 | exactly §5's three files |
+| D | `git diff --quiet 97392e9 7cbc7f0 --` the production manifests and locks | 0 | no change in M9 or after |
+| D | `git diff --quiet a278f57 7cbc7f0 --` every tracked manifest and lock | 0 | the two focus repairs changed none |
+| D | `python -B scripts/check_repo.py` | 0 | |
 
-Group A is inherited because `git diff --name-only a278f57 7cbc7f0` changes no
-Rust, runtime, manifest, lock or Rust fixture (§1). The first invocation of
-Group A ran only its first two commands: the runner fed its command list on the
-same standard input the commands inherited, and `cargo test` consumed the
-rest. The last three ran in a second invocation with their own readings; the
-first two were not run again.
+No browser spec lost its WebDriver session, and none waited for a previous
+spec's processes. The repository-wide browser suite was not run (§6).
 
-**On `f393a7b`**: Group D. `python -B scripts/check_repo.py` exit 0; over every
-tracked manifest and lock, `1daf802..f393a7b` is exactly §5's three files and
-`d8192d5..f393a7b` changes none of them; `97392e9..f393a7b` over the production
-manifests and locks is `--quiet` exit 0. `7cbc7f0` differs from `f393a7b` in
-one comment.
+**Group A, inherited from `a278f57`** (tree `52c93ab…`; its code is
+`d8192d5`'s, which is `fa7f213`'s). `git diff --name-only a278f57 7cbc7f0`
+changes no Rust, runtime, manifest, lock or Rust fixture (§1), so these stand
+for the integration candidate:
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --locked --workspace --all-targets` | 0 | desktop 1233 passed, 47 ignored; plot-spec 135; proteowizard 513 passed, 9 ignored, plus 1 in its second test binary; core 2; examples and tests pass |
+| `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 | 86 passed, 33 ignored |
+| `cargo test --locked -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1 --nocapture` | 0 | 33 passed, 102.8 s: the real-runtime suite |
+| `cargo check --locked --release --workspace` | 0 | |
+
+The first invocation of Group A ran only its first two commands: the runner fed
+its command list on the same standard input the commands inherited, and `cargo
+test` consumed the rest. The last three ran in a second invocation with their
+own readings; the first two were not run again.
+
+**Superseded runs on `a278f57`**, kept as they happened: Group B there exited
+0 for lint, typecheck, build and `e2e:typecheck` and **1** for `pnpm test`
+(2167 of 2168; the one failure was the focus race of §11, not the M7.3 case,
+which passed); Group C ran m8.1 only (exit 0, 8 passing) before its memory gate
+deferred the rest; Group D (exit 0) ran there and again on `f393a7b`.
 
 **Earlier light gates** (before any heavy group):
 
@@ -275,18 +308,6 @@ one comment.
 | `git diff --quiet 97392e9 896e012 --` and `git diff --quiet 46ef9cc 896e012 --` the same files | `896e012` | 0, 0 |
 | `cargo fmt --all --check` | `896e012` | 0 |
 | `python -B scripts/generate_notices.py --check` | `896e012` | 0 |
-
-**Deferred on the integration candidate**, serially, each behind the memory
-gate:
-
-- Group B, all five: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
-  `pnpm e2e:typecheck`.
-- Group C, the seven M8/M9 browser specs, one invocation each:
-  `pnpm exec wdio run ./e2e/wdio.browser.conf.ts --spec ./e2e/specs/<spec>`.
-  They all pass through the Project surface. The repository-wide suite is not
-  rerun (§6).
-- Group D, `python -B scripts/check_repo.py` and the manifest and lock diffs, on
-  the documentation successor that records the results.
 
 ## 9. Review
 
@@ -337,9 +358,9 @@ candidate:
    *automatically delete head branches* setting, which would delete the remote
    branch at merge without step 8's consent; and the branch head is the
    integration candidate named in §1 or a documentation-only successor of it
-   whose diff from it (`git diff --name-only`) is Markdown alone. If the
-   deferred groups in §8 have not all run on that candidate by then, it is not
-   qualified and is not published.
+   whose diff from it (`git diff --name-only`) is Markdown alone. A head with
+   any other change is a new candidate that §8 does not qualify, and it is not
+   published until its affected groups have run.
 2. **Push the branch as it is**, without force, and open one pull request:
    base `main`, head this branch. Its body names the candidate commit and
    tree, the evidence in §8, the debt in §6 and the risks in §7, and states that
@@ -449,7 +470,8 @@ flush as the cause; on the layout effect it passes.
 | `pnpm typecheck` | `f393a7b`'s content | 0 |
 | the two window tests again | `f393a7b`'s content | 0 (2 of 2) |
 
-No whole `pnpm test` ran after either repair; that is Group B (§8).
+The whole `pnpm test` then ran as Group B on the integration candidate: 2170
+of 2170, both window tests included (§8).
 
 **Reviews.** Each repair had a read-only adversarial review that ran no test.
 The first confirmed the QC-capture sibling (four of four skeptics could not
