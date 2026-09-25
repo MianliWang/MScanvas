@@ -145,6 +145,29 @@ async function ready(label: string = en.projectReferences) {
   await screen.findByText(label);
 }
 
+/**
+ * Resolves in the MutationObserver delivery that first shows `selector`.
+ *
+ * `ready()` returns only after Testing Library's zero-delay timer, which
+ * usually, but not always, lets React run the arrival commit's passive
+ * effects first. Nothing runs between this delivery and the caller, so a press
+ * made here is the press the instant the rows appear that `ready()` promises
+ * is kept -- deterministically, whatever the host's timing.
+ */
+function appears(selector: string): Promise<void> {
+  if (document.querySelector(selector) !== null) {
+    return Promise.reject(new Error(`${selector} was already on screen; this case needs its arrival`));
+  }
+  return new Promise((resolve) => {
+    const observer = new MutationObserver(() => {
+      if (document.querySelector(selector) === null) return;
+      observer.disconnect();
+      resolve();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+}
+
 function describing(): string | null {
   return document.querySelector("[data-provenance]")?.getAttribute("data-provenance") ?? null;
 }
@@ -477,6 +500,25 @@ describe("the layer list", () => {
     );
     expect(screen.getAllByText(en.projectRefusedLayerDependsOnInput).length).toBeGreaterThan(0);
     expect(screen.queryByText(en.projectRefusedUnknown)).toBeNull();
+  });
+
+  it("restores focus after a removal pressed the instant the project arrives", async () => {
+    // The press lands after the commit that first shows the project and before
+    // React has run that commit's effects, as a click can in the application.
+    // Work the surface did before the press must not spend what the press
+    // asked for: the answer still hands the keyboard to the Create control.
+    const { api } = mount(layered());
+    const arrived = appears(`[data-project-layer="${LAYER}"]`);
+    api.set(attached());
+    await arrived;
+
+    const remove = within(layerRow(LAYER)).getByRole("button", { name: `Remove layer: ${LABEL}` });
+    remove.focus();
+    await press(remove);
+    await waitFor(() => expect(document.querySelector("[data-project-layer]")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("data-project-create-layer")).toBe(INPUT),
+    );
   });
 
   it("renders a layer whose source is gone rather than failing", async () => {

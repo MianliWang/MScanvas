@@ -23,7 +23,7 @@
  * is running rather than leaving silence to stand for it.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { PreviewError } from "../mzml-preview/contracts";
 import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
@@ -370,13 +370,19 @@ export function ProjectPanel({
    * the user pressed, exactly where they were. And it recovers only focus the
    * removal actually dropped: a reader who moved on while the request was out
    * keeps the place they moved to.
+   *
+   * A layout effect, so it runs in the commit it belongs to. As a passive
+   * effect, one left over from a commit made before the press -- the one that
+   * first showed the project, or any that settled an earlier operation -- could
+   * still run after the press armed it, see that commit's idle state with the
+   * layer still listed, and spend the arm the answer needed.
    */
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const layersHeading = useRef<HTMLHeadingElement | null>(null);
   const removing = useRef<{ readonly layerId: string; readonly sourceInputId: string } | null>(
     null,
   );
-  useEffect(() => {
+  useLayoutEffect(() => {
     const armed = removing.current;
     if (armed === null || busy !== "idle") return;
     removing.current = null;
