@@ -798,7 +798,7 @@ impl ProjectStore {
         // anything about the destination is decided. This is the list the
         // aliasing check needs and the list the rebase needs, and taking it
         // once means both see the same thing.
-        let (generation, resolved, project_id, binding, managed) = {
+        let (generation, resolved, inputs, project_id, binding, managed) = {
             let session = self.locked();
             session.refuse_during_analysis()?;
             let project = session.open()?;
@@ -816,6 +816,7 @@ impl ProjectStore {
             (
                 session.generation,
                 resolved,
+                input_ids(&project.document),
                 project.document.project_id,
                 project.binding.clone(),
                 managed_results(&project.document),
@@ -887,6 +888,12 @@ impl ProjectStore {
         // A result recorded after the copy was taken is not in the store being
         // assembled, and a document naming it there would name nothing.
         if managed_results(&project.document) != managed {
+            abandon(&pending);
+            return Err(ProjectError::StaleDocument);
+        }
+        // Nor is a reference added since then among those resolved, and a
+        // rebase would publish it with a locator meant for the old directory.
+        if input_ids(&project.document) != inputs {
             abandon(&pending);
             return Err(ProjectError::StaleDocument);
         }
@@ -3163,6 +3170,11 @@ fn next_revision(revision: u64) -> Result<u64, ProjectError> {
 
 /// The document a Save As into `directory` would publish, with every
 /// reference rebased there, or why it cannot be published.
+/// The references in document order, which is the order `resolved` follows.
+fn input_ids(document: &ProjectDocument) -> Vec<InputId> {
+    document.inputs.iter().map(|input| input.id).collect()
+}
+
 fn rebased_for(
     document: &ProjectDocument,
     resolved: &[PathBuf],

@@ -1571,6 +1571,65 @@ fn a_document_publish_that_fails_after_the_store_leaves_a_whole_store_and_no_doc
 }
 
 #[test]
+fn a_reference_added_while_save_as_copies_results_is_refused_as_stale_and_then_placed() {
+    let scratch = Scratch::new("m91-save-as-late-reference");
+    let (store, document, _) = saved_with_result(&scratch);
+    let late = scratch.write("data/late.mzML", b"<mzML/>");
+    let original = fs::read(&document).expect("document");
+    let copy = scratch.join("copy/study-copy.mscanvas");
+    let beside = copy.parent().expect("parent").to_path_buf();
+    fs::create_dir_all(&beside).expect("dir");
+    // Registered while Save As is outside the session lock, after it resolved
+    // the references it will rebase: this one is not among them.
+    let added = std::sync::Mutex::new(None);
+    let copy_and_add = |from: &Path, to: &Path| -> std::io::Result<()> {
+        let mut added = added.lock().expect("added");
+        if added.is_none() {
+            *added = Some(store.register_input(&late));
+        }
+        payload::plain_copy(from, to)
+    };
+    let seams = SaveAsSeams {
+        copy_file: &copy_and_add,
+        before_document: &|| Ok(()),
+    };
+
+    assert_eq!(
+        store.save_as_with(&copy, &seams),
+        Err(ProjectError::StaleDocument)
+    );
+    assert!(
+        added
+            .into_inner()
+            .expect("added")
+            .expect("the copy ran")
+            .is_ok(),
+        "the reference was added"
+    );
+    assert_eq!(
+        fs::read_dir(&beside).expect("dir").count(),
+        0,
+        "no document, store or pending directory"
+    );
+    // The session keeps the reference and its binding; the original is as it was.
+    let described = store.describe();
+    assert_eq!(described.inputs.len(), 2);
+    assert!(described.dirty);
+    assert_eq!(fs::read(&document).expect("document"), original);
+
+    // Asked again, the reference is among those resolved, and it is placed
+    // where it is rather than below the new document's directory.
+    store.save_as(&copy).expect("save as");
+    let locator: crate::project::record::Locator =
+        serde_json::from_value(document_json(&copy)["inputs"][1]["locator"].clone())
+            .expect("a locator");
+    assert_eq!(
+        crate::project::record::resolve(&locator, &beside).expect("resolves"),
+        late
+    );
+}
+
+#[test]
 fn an_existing_store_at_the_destination_is_refused_and_kept() {
     let scratch = Scratch::new("m91-save-as-existing-store");
     let (store, _, _) = saved_with_result(&scratch);
