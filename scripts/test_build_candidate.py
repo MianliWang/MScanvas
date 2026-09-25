@@ -131,9 +131,12 @@ class BuildCandidate(unittest.TestCase):
             )
         system = Path(os.environ.get("SystemRoot", r"C:\Windows"))
         cls.path = os.pathsep.join([str(stubs), str(Path(GIT).parent), str(system / "System32"), str(system)])
-        # Nothing may reach a real tool: the stub is the only pnpm on the child's PATH.
-        assert Path(shutil.which("pnpm", path=cls.path) or "").parent == stubs, "pnpm would escape the stubs"
-        assert shutil.which("cargo", path=cls.path) and Path(shutil.which("cargo", path=cls.path)).parent == stubs
+        cls.bare_path = os.pathsep.join([str(Path(GIT).parent), str(system / "System32"), str(system)])
+        # Nothing may reach a real tool: each stub is the only one of its name on
+        # the child's PATH, and without the stubs there is none at all.
+        for tool in ("pnpm", "node", "cargo", "rustc"):
+            assert Path(shutil.which(tool, path=cls.path) or "").parent == stubs, f"{tool} would escape the stubs"
+            assert shutil.which(tool, path=cls.bare_path) is None, f"{tool} is reachable without the stubs"
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -161,10 +164,12 @@ class BuildCandidate(unittest.TestCase):
             subprocess.run([GIT, *command], cwd=root, check=True, capture_output=True)
         return root
 
-    def run_script(self, root: Path, *args: str, build: str = "frontend", tag: str = "new") -> tuple[int, str]:
+    def run_script(
+        self, root: Path, *args: str, build: str = "frontend", tag: str = "new", stubs: bool = True
+    ) -> tuple[int, str]:
         env = {key: value for key, value in os.environ.items() if not key.upper().startswith(("MSCANVAS_", "TAURI_"))}
         env.update(
-            PATH=self.path,
+            PATH=self.path if stubs else self.bare_path,
             FIXTURE_ROOT=str(root),
             STUB_BUILD=build,
             STUB_TAG=tag,
@@ -244,6 +249,15 @@ class BuildCandidate(unittest.TestCase):
                 self.assertNotEqual(code, 0, output)
                 self.assertIn("No compiled frontend under apps/desktop/dist", output)
                 self.assertFalse((root / MANIFEST).exists())
+        with self.subTest("a manifest retained from before"):
+            root = self.fixture("d-no-frontend-retained")
+            retained = root / MANIFEST
+            retained.parent.mkdir(parents=True)
+            retained.write_bytes(b"RETAINED-SENTINEL")
+            code, output = self.run_script(root, build="no-frontend")
+            self.assertNotEqual(code, 0, output)
+            self.assertIn("No compiled frontend under apps/desktop/dist", output)
+            self.assertEqual(retained.read_bytes(), b"RETAINED-SENTINEL")
 
     # -- a re-derivation needs the provenance it re-derives -------------------
 
@@ -259,11 +273,18 @@ class BuildCandidate(unittest.TestCase):
             self.assertEqual(sha256(root / relative), digest, relative)
 
     def test_e_manifest_only_without_a_retained_manifest_is_refused(self) -> None:
-        for extra in ((), ("-AllowDirtyTree",)):
-            with self.subTest(extra=extra):
-                root, artifacts = self.built(f"e-missing{''.join(extra)}")
+        cases = {
+            "clean tree": ((), True, False),
+            "dirty tree allowed": (("-AllowDirtyTree",), True, True),
+            "no tools on PATH": ((), False, False),
+        }
+        for name, (extra, stubs, dirty) in cases.items():
+            with self.subTest(name):
+                root, artifacts = self.built("e-" + name.replace(" ", "-"))
                 (root / MANIFEST).unlink()
-                code, output = self.run_script(root, "-ManifestOnly", *extra)
+                if dirty:
+                    (root / "uncommitted.txt").write_text("not in any commit", encoding="utf-8")
+                code, output = self.run_script(root, "-ManifestOnly", *extra, stubs=stubs)
                 self.assertNotEqual(code, 0, output)
                 self.assertIn("ManifestOnly needs the retained candidate manifest", output)
                 self.assertFalse((root / MANIFEST).exists())
@@ -278,7 +299,7 @@ class BuildCandidate(unittest.TestCase):
                 record = self.manifest(root)
                 for key, value in changes.items():
                     if value is None:
-                        record.pop(key)
+                        record.pop(key, None)
                     else:
                         record[key] = value
                 (root / MANIFEST).write_text(json.dumps(record), encoding="utf-8")
@@ -287,13 +308,25 @@ class BuildCandidate(unittest.TestCase):
         def other_installer(root: Path) -> None:
             (root / INSTALLER).write_bytes(b"installer-from-another-build")
 
+        def other_executable(root: Path) -> None:
+            (root / EXECUTABLE).write_bytes(b"exe-from-another-build")
+
         cases = {
             "malformed": (malformed, "cannot be read"),
             "other head": (edited(head="0" * 40), "The retained manifest was built at"),
             "no head": (edited(head=None), "does not record a valid head"),
+            "head not a commit id": (edited(head="not-a-commit"), "does not record a valid head"),
             "other tree": (edited(tree="1" * 40), "The retained manifest was built from tree"),
+            "dirty build": (edited(workingTreeClean=False), "does not record a clean working tree"),
+            "unchecked re-derivation": (
+                edited(command="(manifest re-derived; not rebuilt)", frontendMeasured=None),
+                "does not record a build, or a re-derivation that checked one",
+            ),
+            "no command": (edited(command=None), "does not record a build, or a re-derivation that checked one"),
             "no installer identity": (edited(installer=None), "does not record the installer"),
+            "no executable identity": (edited(executable=None), "does not record the executable"),
             "installer on disk differs": (other_installer, "does not match the retained manifest"),
+            "executable on disk differs": (other_executable, "does not match the retained manifest"),
         }
         for name, (spoil, reason) in cases.items():
             with self.subTest(name):
@@ -320,6 +353,12 @@ class BuildCandidate(unittest.TestCase):
         self.assertEqual(record["installer"]["sha256"], artifacts[INSTALLER])
         self.assertIn("not established", record["frontendMeasured"])
         self.assert_artifacts(root, artifacts)
+
+        # A re-derivation this script made after checking the build can stand
+        # in for it the next time.
+        code, output = self.run_script(root, "-ManifestOnly")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.manifest(root)["installer"]["sha256"], artifacts[INSTALLER])
 
 
 if __name__ == "__main__":

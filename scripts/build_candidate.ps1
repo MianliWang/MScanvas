@@ -65,6 +65,62 @@ try {
     $tree = (& git rev-parse "HEAD^{tree}").Trim()
     Assert-NativeSuccess -Step "Read HEAD tree" -ExitCode $LASTEXITCODE
 
+    if ($ManifestOnly) {
+        # Every identity field of a re-derived manifest is read now, while the
+        # installer was built earlier. Refuse when they cannot belong together,
+        # so a re-derivation cannot confidently attribute yesterday's installer
+        # to today's HEAD. The manifest retained from that build is what links
+        # them, so it is required, and checked before anything else is read:
+        # HEAD and whatever is left in target/release are not evidence that one
+        # was built from the other. Nothing is written, and the retained file is
+        # left as it is, on any refusal.
+        $manifestPathExisting = Join-Path $EvidenceRoot "candidate-manifest.json"
+        if (-not (Test-Path -LiteralPath $manifestPathExisting -PathType Leaf)) {
+            throw ("ManifestOnly needs the retained candidate manifest at $manifestPathExisting, and there is none. " +
+                "Without it nothing ties the artifacts on disk to this source; rebuild instead.")
+        }
+        try {
+            $previous = Get-Content -LiteralPath $manifestPathExisting -Raw | ConvertFrom-Json
+        }
+        catch {
+            throw "The retained candidate manifest at $manifestPathExisting cannot be read: $($_.Exception.Message)"
+        }
+        foreach ($field in "head", "tree") {
+            if ((Get-RetainedField $previous $field) -notmatch '^[0-9a-f]{40}$') {
+                throw "The retained candidate manifest does not record a valid $field; it cannot establish what the artifacts were built from."
+            }
+        }
+        if ($previous.head -ne $head) {
+            throw ("The retained manifest was built at $($previous.head) but HEAD is now $head. " +
+                "Re-deriving would attribute an installer to source it was not built from; rebuild instead.")
+        }
+        if ($previous.tree -ne $tree) {
+            throw "The retained manifest was built from tree $($previous.tree) but HEAD's tree is $tree; rebuild instead."
+        }
+        $clean = Get-RetainedField $previous "workingTreeClean"
+        if (-not ($clean -is [bool] -and $clean)) {
+            throw ("The retained candidate manifest does not record a clean working tree, so the artifacts it " +
+                "describes may hold uncommitted bytes that no commit can reproduce; rebuild instead.")
+        }
+        # A real build, or a re-derivation this script made after checking one.
+        # An older re-derivation checked nothing and cannot vouch for anything.
+        $origin = Get-RetainedField $previous "command"
+        $checkedRederivation = $origin -eq "(manifest re-derived; not rebuilt)" -and
+            $null -ne (Get-RetainedField $previous "frontendMeasured")
+        if ($origin -ne "pnpm tauri build" -and -not $checkedRederivation) {
+            throw ("The retained candidate manifest does not record a build, or a re-derivation that checked one " +
+                "(its command is '$origin'); it cannot establish what the artifacts were built from; rebuild instead.")
+        }
+        $retainedArtifacts = [ordered]@{}
+        foreach ($field in "installer", "executable") {
+            $digest = Get-RetainedField $previous @($field, "sha256")
+            if ($digest -notmatch '^[0-9a-f]{64}$') {
+                throw "The retained candidate manifest does not record the $field's SHA-256; it cannot establish which artifacts it describes."
+            }
+            $retainedArtifacts[$field] = $digest
+        }
+    }
+
     $configuration = Get-Content -LiteralPath "apps/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
 
     # Configuration, lockfiles and toolchain pins: change any and the output
@@ -120,44 +176,6 @@ try {
     # bundle lands here rather than under src-tauri.
     $bundleDirectory = "target/release/bundle"
     if ($ManifestOnly) {
-        # Every identity field below is read now, while the installer was built
-        # earlier. Refuse when they cannot belong together, so a re-derivation
-        # cannot confidently attribute yesterday's installer to today's HEAD.
-        # The manifest retained from that build is what links them, so it is
-        # required: HEAD and whatever is left in target/release are not
-        # evidence that one was built from the other. Nothing is written, and
-        # the retained file is left as it is, on any refusal.
-        $manifestPathExisting = Join-Path $EvidenceRoot "candidate-manifest.json"
-        if (-not (Test-Path -LiteralPath $manifestPathExisting -PathType Leaf)) {
-            throw ("ManifestOnly needs the retained candidate manifest at $manifestPathExisting, and there is none. " +
-                "Without it nothing ties the artifacts on disk to this source; rebuild instead.")
-        }
-        try {
-            $previous = Get-Content -LiteralPath $manifestPathExisting -Raw | ConvertFrom-Json
-        }
-        catch {
-            throw "The retained candidate manifest at $manifestPathExisting cannot be read: $($_.Exception.Message)"
-        }
-        foreach ($field in "head", "tree") {
-            if ((Get-RetainedField $previous $field) -notmatch '^[0-9a-f]{40}$') {
-                throw "The retained candidate manifest does not record a valid $field; it cannot establish what the artifacts were built from."
-            }
-        }
-        if ($previous.head -ne $head) {
-            throw ("The retained manifest was built at $($previous.head) but HEAD is now $head. " +
-                "Re-deriving would attribute an installer to source it was not built from; rebuild instead.")
-        }
-        if ($previous.tree -ne $tree) {
-            throw "The retained manifest was built from tree $($previous.tree) but HEAD's tree is $tree; rebuild instead."
-        }
-        $retainedArtifacts = [ordered]@{}
-        foreach ($field in "installer", "executable") {
-            $digest = Get-RetainedField $previous @($field, "sha256")
-            if ($digest -notmatch '^[0-9a-f]{64}$') {
-                throw "The retained candidate manifest does not record the $field's SHA-256; it cannot establish which artifacts it describes."
-            }
-            $retainedArtifacts[$field] = $digest
-        }
         $command = "(manifest re-derived; not rebuilt)"
         $buildExit = 0
         $startedUtc = $null
