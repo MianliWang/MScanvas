@@ -427,7 +427,8 @@ export function ProjectPanel({
    * pushed down by its whole height -- at 1366x768, out of view -- and leaving
    * the keyboard there would leave it somewhere nobody can see. It goes to the
    * report's heading instead, which is the thing the press made and which the
-   * report has already brought into view.
+   * report brings into view once it has rendered (the focus itself does not
+   * scroll).
    *
    * Armed only by the press and spent on the first settled answer, and it acts
    * only on a report that this answer made current and only if the keyboard is
