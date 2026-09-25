@@ -1056,7 +1056,7 @@ fn a_result_moved_onto_another_members_run_is_refused_rather_than_attributed_to_
                 FigureTheme::Light,
             ),
             Err(crate::project::TargetedFigureRefusal::Project(
-                ProjectError::PayloadUnavailable(Availability::Corrupt)
+                ProjectError::PayloadUnavailable(payload::Availability::Corrupt)
             ))
         ));
     }
