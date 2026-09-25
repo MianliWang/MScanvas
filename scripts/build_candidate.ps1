@@ -41,6 +41,19 @@ try {
         }
     }
 
+    # One field of the retained manifest, or $null where it is absent: under
+    # strict mode a missing property is an error, and a refusal should say
+    # which field is missing rather than fail on reading it.
+    function Get-RetainedField {
+        param($Record, [string[]]$Path)
+        foreach ($name in $Path) {
+            if ($null -eq $Record -or $Record -isnot [pscustomobject] -or
+                -not ($Record.PSObject.Properties.Name -contains $name)) { return $null }
+            $Record = $Record.$name
+        }
+        $Record
+    }
+
     $status = (& git status --porcelain=v1 --untracked-files=all) -join "`n"
     Assert-NativeSuccess -Step "Read working tree status" -ExitCode $LASTEXITCODE
     if ($status -and -not $AllowDirtyTree) {
@@ -86,12 +99,6 @@ try {
     $buildInputs = @($configuredInputs | ForEach-Object { Get-FileIdentity -Path $_ }) +
         @($shippedResources | ForEach-Object { Get-FileIdentity -Path $_ })
 
-    # The compiled frontend is the largest thing the installer carries and
-    # `beforeBuildCommand` regenerates it every build, so without it the
-    # manifest cannot answer which frontend this installer was built from.
-    $frontendInputs = @(Get-ChildItem -LiteralPath "apps/desktop/dist" -Recurse -File -ErrorAction SilentlyContinue |
-        ForEach-Object { Get-FileIdentity -Path $_.FullName })
-
     $iconInputs = Get-ChildItem -LiteralPath "apps/desktop/src-tauri/icons" -File |
         ForEach-Object { Get-FileIdentity -Path $_.FullName }
 
@@ -116,13 +123,40 @@ try {
         # Every identity field below is read now, while the installer was built
         # earlier. Refuse when they cannot belong together, so a re-derivation
         # cannot confidently attribute yesterday's installer to today's HEAD.
+        # The manifest retained from that build is what links them, so it is
+        # required: HEAD and whatever is left in target/release are not
+        # evidence that one was built from the other. Nothing is written, and
+        # the retained file is left as it is, on any refusal.
         $manifestPathExisting = Join-Path $EvidenceRoot "candidate-manifest.json"
-        if (Test-Path -LiteralPath $manifestPathExisting) {
+        if (-not (Test-Path -LiteralPath $manifestPathExisting -PathType Leaf)) {
+            throw ("ManifestOnly needs the retained candidate manifest at $manifestPathExisting, and there is none. " +
+                "Without it nothing ties the artifacts on disk to this source; rebuild instead.")
+        }
+        try {
             $previous = Get-Content -LiteralPath $manifestPathExisting -Raw | ConvertFrom-Json
-            if ($previous.head -ne $head) {
-                throw ("The retained manifest was built at $($previous.head) but HEAD is now $head. " +
-                    "Re-deriving would attribute an installer to source it was not built from; rebuild instead.")
+        }
+        catch {
+            throw "The retained candidate manifest at $manifestPathExisting cannot be read: $($_.Exception.Message)"
+        }
+        foreach ($field in "head", "tree") {
+            if ((Get-RetainedField $previous $field) -notmatch '^[0-9a-f]{40}$') {
+                throw "The retained candidate manifest does not record a valid $field; it cannot establish what the artifacts were built from."
             }
+        }
+        if ($previous.head -ne $head) {
+            throw ("The retained manifest was built at $($previous.head) but HEAD is now $head. " +
+                "Re-deriving would attribute an installer to source it was not built from; rebuild instead.")
+        }
+        if ($previous.tree -ne $tree) {
+            throw "The retained manifest was built from tree $($previous.tree) but HEAD's tree is $tree; rebuild instead."
+        }
+        $retainedArtifacts = [ordered]@{}
+        foreach ($field in "installer", "executable") {
+            $digest = Get-RetainedField $previous @($field, "sha256")
+            if ($digest -notmatch '^[0-9a-f]{64}$') {
+                throw "The retained candidate manifest does not record the $field's SHA-256; it cannot establish which artifacts it describes."
+            }
+            $retainedArtifacts[$field] = $digest
         }
         $command = "(manifest re-derived; not rebuilt)"
         $buildExit = 0
@@ -142,6 +176,26 @@ try {
         $buildExit = $LASTEXITCODE
         $finishedUtc = [DateTime]::UtcNow.ToString("o")
         Assert-NativeSuccess -Step $command -ExitCode $buildExit
+    }
+
+    # The compiled frontend is the largest thing the installer carries, and
+    # `beforeBuildCommand` regenerates it on every build, so it is read only now
+    # -- after the build succeeded -- and never from what was on disk before it.
+    # This is the build's output directory, hashed; it is not extracted from the
+    # installer. Missing or empty output is refused rather than recorded as none.
+    $frontendDirectory = "apps/desktop/dist"
+    if (-not (Test-Path -LiteralPath $frontendDirectory -PathType Container)) {
+        throw "No compiled frontend under $frontendDirectory`: the directory does not exist."
+    }
+    $frontendInputs = @(Get-ChildItem -LiteralPath $frontendDirectory -Recurse -File |
+        ForEach-Object { Get-FileIdentity -Path $_.FullName })
+    if ($frontendInputs.Count -eq 0) {
+        throw "No compiled frontend under $frontendDirectory`: the directory holds no file."
+    }
+    $frontendMeasured = if ($ManifestOnly) {
+        "re-measured from $frontendDirectory at re-derivation; not established as the frontend the installer embeds"
+    } else {
+        "measured from $frontendDirectory after the build succeeded; the build's output, not extracted from the installer"
     }
 
     # Cargo's own record of what this binary was built with, rather than a
@@ -172,6 +226,17 @@ try {
         ForEach-Object { Get-FileIdentity -Path $_.FullName })
     if ($installers.Count -ne 1) {
         throw "Expected exactly one NSIS installer; found $($installers.Count)."
+    }
+    $executable = Get-FileIdentity -Path "target/release/mscanvas-desktop.exe"
+    if ($ManifestOnly) {
+        # The artifacts must be the ones the retained manifest recorded, byte for
+        # byte; anything else left in target/release is not this candidate.
+        foreach ($pair in @(@("installer", $installers[0]), @("executable", $executable))) {
+            if ($pair[1].sha256 -ne $retainedArtifacts[$pair[0]]) {
+                throw ("The $($pair[0]) on disk ($($pair[1].path), SHA-256 $($pair[1].sha256)) does not match the retained " +
+                    "manifest ($($retainedArtifacts[$pair[0]])); rebuild instead.")
+            }
+        }
     }
 
     # The bundler fetches these and checks them against its own pinned hashes.
@@ -217,8 +282,9 @@ try {
         buildInputs      = @($buildInputs)
         shippedResources = @($shippedResources | ForEach-Object { [IO.Path]::GetRelativePath($RepositoryRoot, $_) -replace '\\', '/' })
         frontendInputs   = @($frontendInputs)
+        frontendMeasured = $frontendMeasured
         iconInputs       = @($iconInputs)
-        executable       = Get-FileIdentity -Path "target/release/mscanvas-desktop.exe"
+        executable       = $executable
         installer        = $installers[0]
         tooling          = $tooling
         signed           = $false
