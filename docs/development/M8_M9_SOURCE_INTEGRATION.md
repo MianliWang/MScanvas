@@ -682,9 +682,11 @@ Logs are under `.tmp/pr127-rust-repair/` (git-ignored).
 | `ProjectPanel.test.tsx`, `localizationCoverage.test.ts` | the repair | 0 — 31 of 31 |
 | the batch regression alone | `cf4af12`'s content | 0 |
 
-**Validation on `cf4af12`**, serially under the two-level host-memory policy
-(every reading at 12.3 GiB free or more and 61% used or less; no stop), with
-a clean working tree. Because the repair changes Rust and frontend code, every
+**Validation on `cf4af12`**, one group at a time under the two-level
+host-memory policy (every reading at 12.3 GiB free or more and 61% used or
+less; no stop), with a clean working tree. The Rust rows before the release
+check ran while another run's real-runtime step was still going, as described
+below the table; the real-runtime row is the step run again alone. Because the repair changes Rust and frontend code, every
 group of §8 that builds or tests them ran again; nothing is inherited from §8
 for this head.
 
