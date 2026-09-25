@@ -1266,6 +1266,179 @@ fn a_repeated_save_advances_the_revision_and_stays_bound() {
     assert!(!store.describe().dirty);
 }
 
+/// Rewrites a published document's revision and nothing else, as a document
+/// that had reached that revision would carry it.
+fn republish_at_revision(document: &Path, revision: u64) {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&fs::read(document).expect("read")).expect("a JSON document");
+    value["revision"] = serde_json::Value::from(revision);
+    fs::write(
+        document,
+        serde_json::to_vec_pretty(&value).expect("serializable"),
+    )
+    .expect("write");
+}
+
+#[test]
+fn the_revision_advances_to_its_last_value_once_and_then_refuses_without_writing() {
+    let scratch = Scratch::new("revision-last");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    republish_at_revision(&document, u64::MAX - 1);
+
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    reopened
+        .save()
+        .expect("the last revision can still be reached");
+    let at_last = fs::read(&document).expect("read");
+    assert_eq!(record::parse(&at_last).expect("parse").revision, u64::MAX);
+
+    assert_eq!(reopened.save(), Err(ProjectError::RevisionExhausted));
+    assert_eq!(
+        fs::read(&document).expect("read"),
+        at_last,
+        "nothing written"
+    );
+    assert_eq!(document_of(&reopened).revision, u64::MAX);
+    assert!(!reopened.describe().dirty);
+}
+
+#[test]
+fn a_document_at_the_last_revision_opens_but_neither_save_nor_save_as_writes() {
+    let scratch = Scratch::new("revision-exhausted");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    republish_at_revision(&document, u64::MAX);
+    let bytes = fs::read(&document).expect("read");
+
+    // Still a history anyone can inspect.
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("it opens");
+    assert_eq!(reopened.describe().inputs.len(), 1);
+
+    assert_eq!(reopened.save(), Err(ProjectError::RevisionExhausted));
+    let elsewhere = scratch.join("elsewhere/project.mscanvas");
+    fs::create_dir_all(elsewhere.parent().expect("parent")).expect("dir");
+    assert_eq!(
+        reopened.save_as(&elsewhere),
+        Err(ProjectError::RevisionExhausted)
+    );
+
+    assert_eq!(fs::read(&document).expect("read"), bytes, "nothing written");
+    assert!(!elsewhere.exists(), "no new document");
+    assert_eq!(
+        fs::read_dir(elsewhere.parent().expect("parent"))
+            .expect("list")
+            .count(),
+        0,
+        "nothing beside it either"
+    );
+    // Still bound where it was, at the revision it was: a later Save is
+    // refused for the same reason, not as unpublished or stale.
+    assert_eq!(document_of(&reopened).revision, u64::MAX);
+    assert_eq!(reopened.save(), Err(ProjectError::RevisionExhausted));
+}
+
+#[test]
+fn a_stale_session_still_cannot_overwrite_once_the_last_revision_is_reached() {
+    let scratch = Scratch::new("revision-stale");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    republish_at_revision(&document, u64::MAX - 1);
+
+    let first = ProjectStore::new();
+    first.open_document(&document, false).expect("open");
+    let second = ProjectStore::new();
+    second.open_document(&document, false).expect("open");
+
+    first
+        .save()
+        .expect("the first session reaches the last revision");
+    let published = fs::read(&document).expect("read");
+
+    assert_eq!(second.save(), Err(ProjectError::StaleDocument));
+    assert_eq!(fs::read(&document).expect("read"), published);
+    assert_eq!(first.save(), Err(ProjectError::RevisionExhausted));
+    assert_eq!(fs::read(&document).expect("read"), published);
+}
+
+#[test]
+fn a_save_as_with_no_stored_result_refuses_whatever_occupies_the_result_store_name() {
+    for occupant in ["a directory", "a file"] {
+        let scratch = Scratch::new("store-name-occupied");
+        let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+        let destination = scratch.join("project.mscanvas");
+        let occupied = scratch.join("project.mscanvas.payloads");
+        if occupant == "a directory" {
+            fs::create_dir(&occupied).expect("dir");
+            fs::write(occupied.join("keep.txt"), b"someone's").expect("write");
+        } else {
+            fs::write(&occupied, b"someone's").expect("write");
+        }
+
+        assert_eq!(
+            store.save_as(&destination),
+            Err(ProjectError::DestinationStoreExists),
+            "{occupant}"
+        );
+
+        assert!(!destination.exists(), "{occupant}: no document");
+        let kept = if occupant == "a directory" {
+            occupied.join("keep.txt")
+        } else {
+            occupied.clone()
+        };
+        assert_eq!(fs::read(&kept).expect("kept"), b"someone's", "{occupant}");
+        // Nothing changed in the session: still unsaved, still unpublished.
+        assert!(store.describe().dirty, "{occupant}");
+        assert_eq!(
+            store.save(),
+            Err(ProjectError::NotYetPublished),
+            "{occupant}"
+        );
+        assert_eq!(document_of(&store).revision, 0, "{occupant}");
+    }
+}
+
+#[test]
+fn a_save_as_with_no_stored_result_to_a_free_name_publishes_and_makes_no_store() {
+    let scratch = Scratch::new("store-name-free");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let destination = scratch.join("project.mscanvas");
+
+    store.save_as(&destination).expect("save as");
+
+    assert!(destination.exists());
+    assert!(!scratch.join("project.mscanvas.payloads").exists());
+    assert!(!store.describe().dirty);
+    store.save().expect("and it saves again where it was bound");
+}
+
+#[test]
+fn a_save_as_over_the_bound_document_is_not_refused_for_the_store_beside_it() {
+    let scratch = Scratch::new("store-name-own");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let document = scratch.join("project.mscanvas");
+    store.save_as(&document).expect("save as");
+    // The store beside the bound document is its own, whatever it holds.
+    fs::create_dir(scratch.join("project.mscanvas.payloads")).expect("dir");
+
+    store
+        .save_as(&document)
+        .expect("the same document, chosen again");
+    store.save().expect("and saved again");
+    assert_eq!(
+        record::parse(&fs::read(&document).expect("read"))
+            .expect("parse")
+            .revision,
+        3
+    );
+}
+
 #[test]
 fn unsaved_changes_block_a_replacement_until_the_caller_says_to_discard() {
     let scratch = Scratch::new("unsaved");

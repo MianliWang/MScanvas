@@ -191,6 +191,11 @@ pub enum ProjectError {
     /// deduplicated: which of the two the user meant is not this build's to
     /// guess.
     BatchDuplicateInput,
+    /// The project's revision is already the largest the document can
+    /// record, so a later save could not be told apart from this one. Nothing
+    /// is written, and the document, its results and this session's binding
+    /// stay as they are.
+    RevisionExhausted,
 }
 
 impl ProjectError {
@@ -237,6 +242,7 @@ impl ProjectError {
             Self::PayloadUnavailable(availability) => availability.stable_id(),
             Self::BatchSizeOutOfRange => "batchSizeOutOfRange",
             Self::BatchDuplicateInput => "batchDuplicateInput",
+            Self::RevisionExhausted => "revisionExhausted",
         }
     }
 
@@ -832,17 +838,27 @@ impl ProjectStore {
         let same_document = binding
             .as_ref()
             .is_some_and(|binding| same_published_document(&binding.path, destination));
-        let pending = if managed.is_empty() || same_document {
+        let pending = if same_document {
             None
         } else {
-            Some(assemble_store(
-                destination,
-                directory,
-                project_id,
-                binding.as_ref().map(|binding| binding.path.as_path()),
-                &managed,
-                seams,
-            )?)
+            // Whether or not there is a result to copy: a project with none
+            // yet would otherwise be published beside a store it does not
+            // own, and its first run would find that store instead of making
+            // its own. What is observed here is refused now; it is not a
+            // reservation of the name.
+            let store = unoccupied_store(destination)?;
+            if managed.is_empty() {
+                None
+            } else {
+                Some(assemble_store(
+                    store,
+                    directory,
+                    project_id,
+                    binding.as_ref().map(|binding| binding.path.as_path()),
+                    &managed,
+                    seams,
+                )?)
+            }
         };
         let abandon = |pending: &Option<PendingStore>| {
             if let Some(pending) = pending {
@@ -918,13 +934,13 @@ impl ProjectStore {
                 store_found: pending.is_some(),
                 availability: managed
                     .iter()
-                    .map(|(id, _)| {
-                        let availability = if copied.contains(id) {
+                    .map(|result| {
+                        let availability = if copied.contains(&result.id) {
                             Availability::Available
                         } else {
                             Availability::Missing
                         };
-                        (*id, availability)
+                        (result.id, availability)
                     })
                     .collect(),
                 unreferenced: 0,
@@ -987,7 +1003,7 @@ impl ProjectStore {
         }
 
         let mut candidate = project.document.clone();
-        candidate.revision = candidate.revision.saturating_add(1);
+        candidate.revision = next_revision(candidate.revision)?;
         record::validate(&candidate).map_err(ProjectError::Document)?;
         publish(binding.directory(), &binding.path, &candidate)?;
 
@@ -2730,11 +2746,16 @@ impl ProjectStore {
         }
     }
 
-    /// Where one stored result is, and what its record says it holds.
+    /// Where one stored result is, and what the document says it is: its
+    /// record's reference and the plan its producing run executed.
+    ///
+    /// Every read of a stored result goes through here, so every read is
+    /// bound to the producing plan; a result whose producing plan the
+    /// document does not establish reads as damaged.
     fn result_location(
         &self,
         artifact: ArtifactId,
-    ) -> Result<(std::path::PathBuf, PayloadReference), ProjectError> {
+    ) -> Result<(std::path::PathBuf, ManagedResult), ProjectError> {
         let session = self.locked();
         let project = session.open()?;
         let reference = project
@@ -2749,7 +2770,12 @@ impl ProjectStore {
             .as_ref()
             .and_then(|binding| payload::store_of(&binding.path))
             .ok_or(ProjectError::PayloadUnavailable(Availability::Missing))?;
-        Ok((store, reference))
+        let result = ManagedResult {
+            id: artifact,
+            reference,
+            plan_sha256: producing_plan(&project.document, artifact),
+        };
+        Ok((store, result))
     }
 
     /// One page of a stored result's rows, checked against its record.
@@ -2763,8 +2789,11 @@ impl ProjectStore {
         artifact: ArtifactId,
         offset: usize,
     ) -> Result<payload::RowsPage, ProjectError> {
-        let (store, reference) = self.result_location(artifact)?;
-        payload::read_rows(&store, artifact, &reference, offset, payload::MAX_PAGE_ROWS)
+        let (store, result) = self.result_location(artifact)?;
+        let expected = result
+            .expected()
+            .ok_or(ProjectError::PayloadUnavailable(Availability::Corrupt))?;
+        payload::read_rows(&store, artifact, expected, offset, payload::MAX_PAGE_ROWS)
             .map_err(read_refusal)
     }
 
@@ -2779,8 +2808,11 @@ impl ProjectStore {
         artifact: ArtifactId,
         target: TargetId,
     ) -> Result<Vec<payload::EvidenceLine>, ProjectError> {
-        let (store, reference) = self.result_location(artifact)?;
-        payload::read_evidence(&store, artifact, &reference, target).map_err(read_refusal)
+        let (store, result) = self.result_location(artifact)?;
+        let expected = result
+            .expected()
+            .ok_or(ProjectError::PayloadUnavailable(Availability::Corrupt))?;
+        payload::read_evidence(&store, artifact, expected, target).map_err(read_refusal)
     }
 
     /// One target's stored evidence as its canonical figure, and the target's
@@ -2987,16 +3019,62 @@ fn read_refusal(refusal: payload::ReadRefusal) -> ProjectError {
     }
 }
 
+/// One stored result a document references, as the document alone says it
+/// is: its record's reference, and the plan its producing run executed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ManagedResult {
+    id: ArtifactId,
+    reference: PayloadReference,
+    /// `None` where the lineage does not establish exactly one plan. Such a
+    /// result cannot be checked, and every reader treats it as damaged.
+    plan_sha256: Option<String>,
+}
+
+impl ManagedResult {
+    /// What a stored result has to be to be this one, where that is known.
+    fn expected(&self) -> Option<payload::Expected<'_>> {
+        self.plan_sha256
+            .as_deref()
+            .map(|plan_sha256| payload::Expected {
+                reference: &self.reference,
+                plan_sha256,
+            })
+    }
+}
+
+/// The plan that produced `artifact`, from the document's lineage alone: the
+/// one run that lists it, and the recorded plan that run executed.
+///
+/// Never from the payload being checked, the acquisition on screen or a
+/// matching target list. `None` where no run, or more than one, lists the
+/// result, or where its run names no recorded plan -- which a valid document
+/// cannot hold, and which is then no plan rather than a guessed one.
+fn producing_plan(document: &ProjectDocument, artifact: ArtifactId) -> Option<String> {
+    let mut claimants = document
+        .runs
+        .iter()
+        .filter(|run| run.output_artifact_ids.contains(&artifact));
+    let run = claimants.next()?;
+    if claimants.next().is_some() {
+        return None;
+    }
+    let execution = run.targeted_ms1.as_deref()?;
+    document
+        .plan(&execution.plan_sha256)
+        .map(|plan| plan.plan_sha256.clone())
+}
+
 /// Every stored result a document references, in document order.
-fn managed_results(document: &ProjectDocument) -> Vec<(ArtifactId, PayloadReference)> {
+fn managed_results(document: &ProjectDocument) -> Vec<ManagedResult> {
     document
         .artifacts
         .iter()
         .filter_map(|artifact| {
-            artifact
-                .payload
-                .targeted_ms1()
-                .map(|result| (artifact.id, result.payload.clone()))
+            artifact.payload.targeted_ms1().map(|result| ManagedResult {
+                id: artifact.id,
+                reference: result.payload.clone(),
+                plan_sha256: producing_plan(document, artifact.id),
+            })
         })
         .collect()
 }
@@ -3009,7 +3087,7 @@ fn observe_payloads(document: &ProjectDocument, published_at: &Path) -> PayloadS
             store_found: false,
             availability: managed
                 .iter()
-                .map(|(id, _)| (*id, Availability::Missing))
+                .map(|result| (result.id, Availability::Missing))
                 .collect(),
             unreferenced: 0,
         };
@@ -3017,16 +3095,18 @@ fn observe_payloads(document: &ProjectDocument, published_at: &Path) -> PayloadS
     let store_found = payload::is_plain_directory(&store);
     let availability = managed
         .iter()
-        .map(|(id, reference)| {
+        .map(|result| {
             let availability = if store_found {
-                payload::observe(&store, *id, reference)
+                result.expected().map_or(Availability::Corrupt, |expected| {
+                    payload::observe(&store, result.id, expected)
+                })
             } else {
                 Availability::Missing
             };
-            (*id, availability)
+            (result.id, availability)
         })
         .collect();
-    let ids: Vec<ArtifactId> = managed.iter().map(|(id, _)| *id).collect();
+    let ids: Vec<ArtifactId> = managed.iter().map(|result| result.id).collect();
     PayloadState {
         store_found,
         availability,
@@ -3068,6 +3148,19 @@ fn same_published_document(bound: &Path, destination: &Path) -> bool {
     same_object && same_directory && same_name
 }
 
+/// The revision the next publish of a document at `revision` carries.
+///
+/// Every publish advances it, and a Save refuses a bound name whose revision
+/// is not the one this session last published; a revision that could no
+/// longer advance would let two sessions overwrite each other unnoticed. So
+/// the last value is refused rather than repeated, wrapped or reset, and
+/// before anything is written or copied.
+fn next_revision(revision: u64) -> Result<u64, ProjectError> {
+    revision
+        .checked_add(1)
+        .ok_or(ProjectError::RevisionExhausted)
+}
+
 /// The document a Save As into `directory` would publish, with every
 /// reference rebased there, or why it cannot be published.
 fn rebased_for(
@@ -3079,7 +3172,7 @@ fn rebased_for(
     for (input, path) in candidate.inputs.iter_mut().zip(resolved) {
         input.locator = record::locator_for(path, directory);
     }
-    candidate.revision = candidate.revision.saturating_add(1);
+    candidate.revision = next_revision(candidate.revision)?;
     record::validate(&candidate).map_err(ProjectError::Document)?;
     if record::serialize(&candidate).is_none_or(|bytes| bytes.len() as u64 > MAX_DOCUMENT_BYTES) {
         return Err(ProjectError::Oversized);
@@ -3113,23 +3206,36 @@ struct PendingStore {
     copied: Vec<ArtifactId>,
 }
 
-/// Copies every whole result into a new store beside the destination.
+/// The result store name a Save As to `destination` would use, once nothing
+/// is there.
 ///
-/// Refuses an existing store at the destination's store name before anything
-/// is written. The pending directory is this operation's own; on any failure
-/// it is removed and nothing else is touched.
+/// Anything at that name -- a directory, a file, a link, another project's
+/// store -- is refused rather than adopted, and a name that cannot be looked
+/// at is refused too: failing to look is not finding nothing.
+fn unoccupied_store(destination: &Path) -> Result<PathBuf, ProjectError> {
+    let store = payload::store_of(destination).ok_or(ProjectError::DestinationNotNamed)?;
+    match std::fs::symlink_metadata(&store) {
+        Ok(_) => Err(ProjectError::DestinationStoreExists),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(store),
+        Err(_) => Err(ProjectError::NotPublished),
+    }
+}
+
+/// Copies every whole result into a new store published as `store`, a name
+/// [`unoccupied_store`] found free.
+///
+/// The pending directory is this operation's own; on any failure it is
+/// removed and nothing else is touched. The name is claimed only when the
+/// pending directory is renamed onto it, which refuses a name that was taken
+/// in between.
 fn assemble_store(
-    destination: &Path,
+    store: PathBuf,
     directory: &Path,
     project: record::ProjectId,
     bound: Option<&Path>,
-    managed: &[(ArtifactId, PayloadReference)],
+    managed: &[ManagedResult],
     seams: &SaveAsSeams<'_>,
 ) -> Result<PendingStore, ProjectError> {
-    let store = payload::store_of(destination).ok_or(ProjectError::DestinationNotNamed)?;
-    if std::fs::symlink_metadata(&store).is_ok() {
-        return Err(ProjectError::DestinationStoreExists);
-    }
     let name = store
         .file_name()
         .and_then(|name| name.to_str())
@@ -3138,11 +3244,16 @@ fn assemble_store(
     std::fs::create_dir(&path).map_err(|_| ProjectError::NotPublished)?;
     let source_store = bound.and_then(payload::store_of);
     let mut copied = Vec::new();
-    for (id, reference) in managed {
+    for result in managed {
+        // A result whose producing plan the document does not establish
+        // cannot be checked, so it is not copied as whole.
+        let Some(expected) = result.expected() else {
+            continue;
+        };
         // Asked of the source now, not taken from the last open: only a result
         // that is whole at the moment of copying is copied.
         let whole = source_store.as_deref().is_some_and(|source| {
-            payload::observe(source, *id, reference) == Availability::Available
+            payload::observe(source, result.id, expected) == Availability::Available
         });
         if !whole {
             continue;
@@ -3150,11 +3261,11 @@ fn assemble_store(
         let source = source_store
             .as_deref()
             .expect("a whole result was observed in the source store");
-        if payload::copy_result(source, &path, *id, reference, seams.copy_file).is_err() {
+        if payload::copy_result(source, &path, result.id, expected, seams.copy_file).is_err() {
             let _ = std::fs::remove_dir_all(&path);
             return Err(ProjectError::PayloadNotCopied);
         }
-        copied.push(*id);
+        copied.push(result.id);
     }
     if payload::write_owner(&path, project).is_err() {
         let _ = std::fs::remove_dir_all(&path);

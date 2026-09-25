@@ -1544,8 +1544,20 @@ fn a_document_publish_that_fails_after_the_store_leaves_a_whole_store_and_no_doc
         .expect("result")
         .result
         .payload;
+    let plan_sha256 = store
+        .stored_targeted_result(artifact)
+        .expect("the result where it was")
+        .plan
+        .plan_sha256;
     assert_eq!(
-        payload::observe(&copied_store, artifact, &reference),
+        payload::observe(
+            &copied_store,
+            artifact,
+            payload::Expected {
+                reference: &reference,
+                plan_sha256: &plan_sha256,
+            },
+        ),
         Availability::Available
     );
     // The session is still bound to the original, which is untouched.
@@ -1590,6 +1602,42 @@ fn save_as_over_the_bound_document_keeps_its_own_store() {
         1
     );
     assert_eq!(availability_on_open(&document), ("available", true, 0));
+}
+
+#[test]
+fn a_save_as_at_the_last_revision_copies_no_result_and_writes_nothing() {
+    let scratch = Scratch::new("m91-save-as-exhausted");
+    let (_, document, artifact) = saved_with_result(&scratch);
+    let mut value = document_json(&document);
+    value["revision"] = serde_json::Value::from(u64::MAX);
+    fs::write(
+        &document,
+        serde_json::to_vec_pretty(&value).expect("serializable"),
+    )
+    .expect("write");
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    let copy = scratch.join("copy/study-copy.mscanvas");
+    let beside = copy.parent().expect("parent").to_path_buf();
+    fs::create_dir_all(&beside).expect("dir");
+
+    assert_eq!(
+        reopened.save_as(&copy),
+        Err(ProjectError::RevisionExhausted)
+    );
+
+    assert_eq!(
+        fs::read_dir(&beside).expect("list").count(),
+        0,
+        "no document, no store and no pending copy"
+    );
+    assert_eq!(
+        reopened
+            .read_targeted_ms1_rows(artifact, 0)
+            .expect("the result where it was")
+            .total,
+        1
+    );
 }
 
 // ---------------------------------------------------------------------------

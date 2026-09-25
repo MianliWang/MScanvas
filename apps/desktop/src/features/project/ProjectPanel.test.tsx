@@ -353,6 +353,20 @@ describe("the project surface", () => {
     ).toBe("staleDocument");
   });
 
+  it("names an exhausted revision in its own words rather than as an unknown refusal", async () => {
+    const input = projectInput();
+    const api = mount(openProject({ inputs: [input], published: true }));
+    await waitFor(() => expect(screen.getByText(input.label)).toBeTruthy());
+
+    api.refuseOnce("saveProject", "revisionExhausted");
+    await press(screen.getByRole("button", { name: en.projectSave }));
+
+    await waitFor(() => expect(announced()).toBe(en.projectRefusedRevisionExhausted));
+    expect(en.projectRefusedRevisionExhausted).not.toEqual(en.projectRefusedUnknown);
+    expect(zh.projectRefusedRevisionExhausted).not.toEqual(en.projectRefusedRevisionExhausted);
+    expect(screen.getByText(input.label)).toBeTruthy();
+  });
+
   it("treats a cancellation as a decision rather than a refusal", async () => {
     const input = projectInput();
     const api = mount(openProject({ inputs: [input] }));

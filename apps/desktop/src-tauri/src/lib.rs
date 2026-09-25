@@ -173,6 +173,9 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         }
         Refusal::BatchSizeOutOfRange => "A batch holds 2 to 16 acquisitions.",
         Refusal::BatchDuplicateInput => "An acquisition appears twice in this batch.",
+        Refusal::RevisionExhausted => {
+            "This project's revision counter is at its limit, so it cannot be saved again. Nothing was written."
+        }
     };
     PreviewErrorDto::new(error.stable_id(), message, error.retryable())
 }

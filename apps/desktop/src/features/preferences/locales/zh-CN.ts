@@ -1138,6 +1138,7 @@ export const zhCN = {
   projectRefusedStaleDocument: "该项目文件自打开后已更改，MSCanvas 未替换它。可使用“另存为”以其他名称保留当前副本。",
   projectRefusedNotPublished: "项目未能写入。上次保存的副本保持不变。",
   projectRefusedOversized: "该项目超出 MSCanvas 可保存的大小。",
+  projectRefusedRevisionExhausted: "该项目的保存次数已达可记录的上限，MSCanvas 未保存它。未写入任何内容。",
   projectRefusedStaleOperation: "该操作已不是正在运行的操作，因此未做任何更改。",
   projectRefusedConversionBusy: "转换正在运行，因此工作台未发生更改。请在其完成后重试。",
   projectRefusedNotChecked: "请先检查此文件，然后再将其添加到工作台。",

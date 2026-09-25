@@ -950,6 +950,131 @@ fn every_result_of_a_batch_survives_save_reopen_and_save_as_and_reads_without_it
     assert!(!later.describe().dirty, "reading recorded nothing");
 }
 
+#[test]
+fn a_result_moved_onto_another_members_run_is_refused_rather_than_attributed_to_it() {
+    let scratch = Scratch::new("m94-swapped-producers");
+    // Two acquisitions with different bytes, so two plans, under one request:
+    // the same target identifiers, the same count, the same fake rows.
+    let (store, layers, _) = project_of(&scratch, 2);
+    let executor = Members::new(completes);
+    let plans = review(&store, &layers, &executor);
+    assert_ne!(plans[0].plan_sha256, plans[1].plan_sha256);
+    assert_eq!(plans[0].targets, plans[1].targets);
+    let members = run_batch(&store, &plans, &executor).expect("ran");
+    let artifacts: Vec<ArtifactId> = members
+        .iter()
+        .map(|member| match member.state {
+            MemberState::Ended(end) => end.artifact.expect("a result"),
+            other => panic!("completed, got {other:?}"),
+        })
+        .collect();
+    store.save().expect("save");
+    let document = scratch.join("study.mscanvas");
+    let results = payload::store_of(&document).expect("store");
+    let bytes_of = |artifact: &ArtifactId| -> Vec<(OsString, Vec<u8>)> {
+        let mut files: Vec<(OsString, Vec<u8>)> =
+            std::fs::read_dir(results.join(artifact.to_string()))
+                .expect("list")
+                .map(|entry| {
+                    let entry = entry.expect("entry");
+                    (
+                        entry.file_name(),
+                        std::fs::read(entry.path()).expect("read"),
+                    )
+                })
+                .collect();
+        files.sort();
+        files
+    };
+    let before: Vec<_> = artifacts.iter().map(bytes_of).collect();
+
+    // The document now says each member's run produced the other's result.
+    // It is otherwise whole and parses: nothing in it is out of range, and
+    // each result still names its own payload by digest.
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&document).expect("read")).expect("json");
+    let runs = value["runs"].as_array_mut().expect("runs");
+    let claims: Vec<usize> = artifacts
+        .iter()
+        .map(|artifact| {
+            runs.iter()
+                .position(|run| {
+                    run["outputArtifactIds"] == serde_json::json!([artifact.to_string()])
+                })
+                .expect("its run")
+        })
+        .collect();
+    runs[claims[0]]["outputArtifactIds"] = serde_json::json!([artifacts[1].to_string()]);
+    runs[claims[1]]["outputArtifactIds"] = serde_json::json!([artifacts[0].to_string()]);
+    std::fs::write(
+        &document,
+        serde_json::to_vec_pretty(&value).expect("serializable"),
+    )
+    .expect("write");
+
+    let reopened = ProjectStore::new();
+    reopened
+        .open_document(&document, false)
+        .expect("the document opens");
+    let described = reopened.describe();
+    let corrupt = ProjectError::PayloadUnavailable(payload::Availability::Corrupt);
+    for artifact in &artifacts {
+        let record = described
+            .artifacts
+            .iter()
+            .find(|record| record.id == artifact.to_string())
+            .expect("its record");
+        assert_eq!(
+            record
+                .targeted_ms1
+                .as_ref()
+                .map(|result| result.availability),
+            Some("payloadCorrupt"),
+            "a result is not read as another member's"
+        );
+        assert_eq!(
+            reopened
+                .read_targeted_ms1_rows(*artifact, 0)
+                .map(|page| page.total),
+            Err(corrupt)
+        );
+        assert_eq!(
+            reopened
+                .read_targeted_ms1_evidence(*artifact, plans[0].targets[0].target_id)
+                .map(|lines| lines.len()),
+            Err(corrupt)
+        );
+        assert_eq!(
+            reopened.stored_targeted_result(*artifact).map(|_| ()),
+            Err(corrupt)
+        );
+        assert!(matches!(
+            reopened.targeted_evidence_figure(
+                *artifact,
+                plans[0].targets[0].target_id,
+                FigureSize::new(1_200.0, 640.0).expect("a size"),
+                FigureTheme::Light,
+            ),
+            Err(crate::project::TargetedFigureRefusal::Project(
+                ProjectError::PayloadUnavailable(Availability::Corrupt)
+            ))
+        ));
+    }
+
+    // Save As copies neither as whole.
+    let copy = scratch.join("copy/study-copy.mscanvas");
+    std::fs::create_dir_all(copy.parent().expect("parent")).expect("dir");
+    reopened.save_as(&copy).expect("save as");
+    let copied = payload::store_of(&copy).expect("store");
+    for artifact in &artifacts {
+        assert!(!copied.join(artifact.to_string()).exists());
+    }
+
+    // The payloads themselves were never touched.
+    let after: Vec<_> = artifacts.iter().map(bytes_of).collect();
+    assert_eq!(before, after);
+}
+
 /// The attempt facts of a real completed run: the engine's report and every
 /// module the adapter hashes, which is the most one run records.
 fn real_sized_facts(order: &AttemptOrder<'_>) -> AttemptEnd {

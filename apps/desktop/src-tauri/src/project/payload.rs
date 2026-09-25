@@ -401,6 +401,20 @@ pub fn rename_without_replacing(from: &Path, to: &Path) -> io::Result<()> {
     fs::rename(from, to)
 }
 
+/// What the project document says one stored result is.
+///
+/// Both halves come from the document: the reference from the result's own
+/// record, and the plan from the one run that produced it. A stored copy that
+/// names another plan is not this result, however whole its files are -- two
+/// members of one batch can hold byte-identical rows. This is a consistency
+/// check between the document and its store, not an authentication against
+/// someone who rewrites both.
+#[derive(Debug, Clone, Copy)]
+pub struct Expected<'a> {
+    pub reference: &'a PayloadReference,
+    pub plan_sha256: &'a str,
+}
+
 /// Whether one referenced result is whole, as it is on disk now.
 ///
 /// Missing before corrupt: an absent file is reported as missing even where
@@ -408,7 +422,7 @@ pub fn rename_without_replacing(from: &Path, to: &Path) -> io::Result<()> {
 /// missing store -- find it, or move the document back beside it -- is the one
 /// to offer first.
 #[must_use]
-pub fn observe(store: &Path, artifact: ArtifactId, reference: &PayloadReference) -> Availability {
+pub fn observe(store: &Path, artifact: ArtifactId, expected: Expected<'_>) -> Availability {
     let directory = result_directory(store, artifact);
     match fs::symlink_metadata(&directory) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Availability::Missing,
@@ -416,7 +430,7 @@ pub fn observe(store: &Path, artifact: ArtifactId, reference: &PayloadReference)
         Ok(_) if !is_plain_directory(&directory) => return Availability::Corrupt,
         Ok(_) => {}
     }
-    let manifest = match read_manifest(&directory, artifact, reference) {
+    let manifest = match read_manifest(&directory, artifact, expected) {
         Ok(manifest) => manifest,
         Err(availability) => return availability,
     };
@@ -435,12 +449,14 @@ pub fn observe(store: &Path, artifact: ArtifactId, reference: &PayloadReference)
     worst
 }
 
-/// Reads and checks a result's manifest against the record's reference.
+/// Reads and checks a result's manifest against what the document says the
+/// result is: the record's reference, and the producing run's plan.
 fn read_manifest(
     directory: &Path,
     artifact: ArtifactId,
-    reference: &PayloadReference,
+    expected: Expected<'_>,
 ) -> Result<PayloadManifest, Availability> {
+    let reference = expected.reference;
     let path = directory.join(MANIFEST);
     let bytes = match local_document::read_bounded(&path, MAX_SMALL_RECORD_BYTES) {
         Ok(Some(bytes)) => bytes,
@@ -463,7 +479,13 @@ fn read_manifest(
                     && stated.byte_length == recorded.byte_length
                     && stated.sha256.eq_ignore_ascii_case(&recorded.sha256)
             });
-    if manifest.schema != MANIFEST_SCHEMA || manifest.artifact_id != artifact || !same_files {
+    if manifest.schema != MANIFEST_SCHEMA
+        || manifest.artifact_id != artifact
+        || !manifest
+            .plan_sha256
+            .eq_ignore_ascii_case(expected.plan_sha256)
+        || !same_files
+    {
         return Err(Availability::Corrupt);
     }
     Ok(manifest)
@@ -498,7 +520,7 @@ pub fn copy_result(
     from_store: &Path,
     into: &Path,
     artifact: ArtifactId,
-    reference: &PayloadReference,
+    expected: Expected<'_>,
     copy_file: &dyn Fn(&Path, &Path) -> io::Result<()>,
 ) -> io::Result<()> {
     let source = result_directory(from_store, artifact);
@@ -511,7 +533,7 @@ pub fn copy_result(
     {
         copy_file(&source.join(name), &target.join(name))?;
     }
-    match observe(into, artifact, reference) {
+    match observe(into, artifact, expected) {
         Availability::Available => Ok(()),
         _ => Err(io::Error::other(
             "a copied result does not match its record",
@@ -947,7 +969,7 @@ fn read_checked(
 fn checked_directory(
     store: &Path,
     artifact: ArtifactId,
-    reference: &PayloadReference,
+    expected: Expected<'_>,
 ) -> Result<PathBuf, ReadRefusal> {
     let directory = result_directory(store, artifact);
     if !is_plain_directory(&directory) {
@@ -959,12 +981,12 @@ fn checked_directory(
             },
         ));
     }
-    read_manifest(&directory, artifact, reference).map_err(ReadRefusal::Unavailable)?;
+    read_manifest(&directory, artifact, expected).map_err(ReadRefusal::Unavailable)?;
     Ok(directory)
 }
 
-/// One page of a result's rows, checked against the record before any row is
-/// returned.
+/// One page of a result's rows, checked against the record and the producing
+/// plan before any row is returned.
 ///
 /// # Errors
 ///
@@ -972,12 +994,12 @@ fn checked_directory(
 pub fn read_rows(
     store: &Path,
     artifact: ArtifactId,
-    reference: &PayloadReference,
+    expected: Expected<'_>,
     offset: usize,
     limit: usize,
 ) -> Result<RowsPage, ReadRefusal> {
-    let directory = checked_directory(store, artifact, reference)?;
-    let bytes = read_checked(&directory, reference, PayloadFileName::Rows)?;
+    let directory = checked_directory(store, artifact, expected)?;
+    let bytes = read_checked(&directory, expected.reference, PayloadFileName::Rows)?;
     let text =
         std::str::from_utf8(&bytes).map_err(|_| ReadRefusal::Unavailable(Availability::Corrupt))?;
     let lines: Vec<&str> = text.lines().collect();
@@ -1008,11 +1030,12 @@ pub fn read_rows(
 pub fn read_evidence(
     store: &Path,
     artifact: ArtifactId,
-    reference: &PayloadReference,
+    expected: Expected<'_>,
     target: TargetId,
 ) -> Result<Vec<EvidenceLine>, ReadRefusal> {
     let corrupt = ReadRefusal::Unavailable(Availability::Corrupt);
-    let directory = checked_directory(store, artifact, reference)?;
+    let reference = expected.reference;
+    let directory = checked_directory(store, artifact, expected)?;
     let index_bytes = read_checked(&directory, reference, PayloadFileName::EvidenceIndex)?;
     let index: EvidenceIndex = serde_json::from_slice(&index_bytes).map_err(|_| corrupt)?;
     if index.schema != INDEX_SCHEMA {

@@ -1165,6 +1165,7 @@ export const en = {
   projectRefusedStaleDocument: "That project file changed since it was opened, so MSCanvas did not replace it. Save As under another name to keep this copy.",
   projectRefusedNotPublished: "The project could not be written. The last saved copy is unchanged.",
   projectRefusedOversized: "This project is larger than MSCanvas saves.",
+  projectRefusedRevisionExhausted: "This project has been saved as many times as it can record, so MSCanvas did not save it. Nothing was written.",
   projectRefusedStaleOperation: "That operation is no longer the one running, so nothing was changed.",
   projectRefusedConversionBusy: "A conversion is running, so the Workbench did not change. Try again once it has finished.",
   projectRefusedNotChecked: "Check this file before adding it to the Workbench.",

@@ -88,6 +88,7 @@ const REFUSALS = {
   staleDocument: "projectRefusedStaleDocument",
   notPublished: "projectRefusedNotPublished",
   oversized: "projectRefusedOversized",
+  revisionExhausted: "projectRefusedRevisionExhausted",
   notChecked: "projectRefusedNotChecked",
   contentChanged: "projectRefusedContentChanged",
   objectNotIdentified: "projectRefusedObjectNotIdentified",
