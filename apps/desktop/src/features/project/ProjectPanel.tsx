@@ -434,12 +434,16 @@ export function ProjectPanel({
    * still on the control that was pressed: a refusal, an answer that arrived
    * after the reader moved on, and a reader who moved focus all leave it where
    * it is.
+   *
+   * A layout effect for the removal effect's reason: a passive run left over
+   * from a commit before the press -- one that settled an earlier operation --
+   * would see that commit's idle state and spend the arm.
    */
   const capturing = useRef<{ readonly layerId: string; readonly shown: string | null } | null>(
     null,
   );
   const shownReport = report?.artifact.id ?? null;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const armed = capturing.current;
     if (armed === null) return;
     // While the request is out, a report the reader opens is theirs, not the

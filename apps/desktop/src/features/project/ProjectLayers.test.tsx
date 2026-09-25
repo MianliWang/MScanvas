@@ -22,6 +22,7 @@ import { PreferencesApiProvider } from "../preferences/preferencesApi";
 import { UI_RESOURCES } from "../preferences/i18n";
 import { createFakePreferencesApi, storedRecord } from "../../test/preferenceFixtures";
 import {
+  appears,
   capturedProject,
   createFakeProjectApi,
   openProject,
@@ -143,29 +144,6 @@ function details(): HTMLElement {
  */
 async function ready(label: string = en.projectReferences) {
   await screen.findByText(label);
-}
-
-/**
- * Resolves in the MutationObserver delivery that first shows `selector`.
- *
- * `ready()` returns only after Testing Library's zero-delay timer, which
- * usually, but not always, lets React run the arrival commit's passive
- * effects first. Nothing runs between this delivery and the caller, so a press
- * made here is the press the instant the rows appear that `ready()` promises
- * is kept -- deterministically, whatever the host's timing.
- */
-function appears(selector: string): Promise<void> {
-  if (document.querySelector(selector) !== null) {
-    return Promise.reject(new Error(`${selector} was already on screen; this case needs its arrival`));
-  }
-  return new Promise((resolve) => {
-    const observer = new MutationObserver(() => {
-      if (document.querySelector(selector) === null) return;
-      observer.disconnect();
-      resolve();
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-  });
 }
 
 function describing(): string | null {

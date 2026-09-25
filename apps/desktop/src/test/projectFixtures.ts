@@ -93,6 +93,29 @@ export function fakeTargetedSvg(targetId: string, width: number, height: number,
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" data-target="${targetId}" data-theme="${theme}"><rect width="${width}" height="${height}" fill="${theme === "dark" ? "#111" : "#fff"}"/></svg>`;
 }
 
+/**
+ * Resolves in the MutationObserver delivery that first shows `selector`.
+ *
+ * `findBy*` returns only after Testing Library's zero-delay timer, which
+ * usually, but not always, lets React run the effects of the commit that showed
+ * the element first. Nothing runs between this delivery and the caller, so a
+ * press made here is a press the instant the element appears, before those
+ * effects -- deterministically, whatever the host's timing.
+ */
+export function appears(selector: string): Promise<void> {
+  if (document.querySelector(selector) !== null) {
+    return Promise.reject(new Error(`${selector} was already on screen; this case needs its arrival`));
+  }
+  return new Promise((resolve) => {
+    const observer = new MutationObserver(() => {
+      if (document.querySelector(selector) === null) return;
+      observer.disconnect();
+      resolve();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+}
+
 export function projectInput(overrides: Partial<ProjectInput> = {}): ProjectInput {
   return {
     id: "11111111-1111-4111-8111-111111111111",

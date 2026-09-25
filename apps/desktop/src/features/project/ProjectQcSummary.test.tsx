@@ -15,7 +15,7 @@
  * and `apps/desktop/src-tauri/src/project/tests.rs`.
  */
 
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import projectStyles from "./project.css?raw";
@@ -24,6 +24,7 @@ import { PreferencesApiProvider } from "../preferences/preferencesApi";
 import { UI_RESOURCES } from "../preferences/i18n";
 import { createFakePreferencesApi, storedRecord } from "../../test/preferenceFixtures";
 import {
+  appears,
   createFakeProjectApi,
   openProject,
   projectArtifact,
@@ -454,6 +455,27 @@ describe("the recorded report", () => {
     );
     expect(report().getAttribute("data-qc-report")).toBe(QC_ARTIFACT);
     expect(document.activeElement).toBe(captureControl());
+  });
+
+  it("takes the keyboard to the report of a capture pressed the instant its layer appears", async () => {
+    // Create layer settles, and the reader presses the new row's Capture QC
+    // before React has run the effects of the commit that showed it, as a
+    // click can in the application. Work the surface finished before the press
+    // must not spend what the press asked for.
+    const { api } = mount(openProject({ inputs: layered().inputs }));
+    await ready();
+    const release = api.holdOnce("createProjectLayer");
+    await press(query(`[data-project-create-layer="${INPUT}"]`));
+    api.set(layered());
+    const arrived = appears(`[data-project-layer="${LAYER}"]`);
+    // Outside act, so the answer commits as the application's would.
+    release();
+    await arrived;
+
+    api.set(captured());
+    captureControl().focus();
+    await press(captureControl());
+    await waitFor(() => expect(document.activeElement).toBe(query("#qc-report-title")));
   });
 
   it("walks from the report to its run, its layer and its reference without sending anything", async () => {
