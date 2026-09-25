@@ -3168,13 +3168,13 @@ fn next_revision(revision: u64) -> Result<u64, ProjectError> {
         .ok_or(ProjectError::RevisionExhausted)
 }
 
-/// The document a Save As into `directory` would publish, with every
-/// reference rebased there, or why it cannot be published.
 /// The references in document order, which is the order `resolved` follows.
 fn input_ids(document: &ProjectDocument) -> Vec<InputId> {
     document.inputs.iter().map(|input| input.id).collect()
 }
 
+/// The document a Save As into `directory` would publish, with every
+/// reference rebased there, or why it cannot be published.
 fn rebased_for(
     document: &ProjectDocument,
     resolved: &[PathBuf],
