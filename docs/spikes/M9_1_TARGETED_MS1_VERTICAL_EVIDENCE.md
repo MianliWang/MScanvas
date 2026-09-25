@@ -275,3 +275,10 @@ Vitest process ran alongside it failed
 one-second focus wait; the same file passed three times alone, and the full run
 above, made alone, passed. That failure is attributed to the contention, which
 is a basis and not a proof.
+
+*Correction, added during the M8/M9 source integration (2026-09-24); the
+paragraph above is left as written.* The wait was the suite's 4 s
+`asyncUtilTimeout`, not one second, and the cause was not contention: it was a
+focus-restoration race in `ProjectPanel.tsx`, now repaired and pinned by a
+deterministic test. See the
+[M8/M9 source-integration record](../development/M8_M9_SOURCE_INTEGRATION.md#11-found-during-qualification-two-focus-races-on-the-project-surface).

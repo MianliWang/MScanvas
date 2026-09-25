@@ -4,15 +4,16 @@ Date: 2026-09-24. Branch `feat/m8-m9-source-integration-qualification`, from
 the M9 closure head `46ef9cc441b3c014aa4964976db917ecb68008c4`.
 
 This record prepares **one** source-integration candidate for the linear stack
-that follows published `main`: a partial M7.6, M8 and M9. It changes no
-product code. It does not publish anything: no push, pull request, merge, tag
+that follows published `main`: a partial M7.6, M8 and M9. The only product
+code it changes is two focus-restoration repairs on the Project surface, found
+while qualifying it (§11). It does not publish anything: no push, pull request, merge, tag
 or release was made under it, and publication needs its own explicit
 authorization. When this text is read on `main`, the merge commit that brought
 it there — not this text — is the evidence that the stack was published.
 
 Status when written:
 
-- `SOURCE INTEGRATION QUALIFICATION PREPARED — VALIDATION DEFERRED FOR HOST MEMORY PRESSURE` (§8)
+- `SOURCE INTEGRATION CANDIDATE UPDATED — HEAVY VALIDATION DEFERRED FOR HOST MEMORY PRESSURE` (§8, §11)
 - `SOURCE UNPUBLISHED`
 - `M8 LOCAL IMPLEMENTATION COMPLETE`
 - `M9 LOCAL IMPLEMENTATION COMPLETE`
@@ -29,13 +30,21 @@ Status when written:
 | M9 closure, final tested code | `fa7f213b181e9e5ecb7e164f3b128b2da631c7a9` | `56e85d1bcfe4999eeda53290e81f292e1196eb05` |
 | M9 closure head (documentation-only successor of the above) — this branch's start | `46ef9cc441b3c014aa4964976db917ecb68008c4` | `3f40009c72fd8c8d14712db4502f6d41d1b97a33` |
 | First candidate: the commit that added this record | `896e0121b0ba533781e5039585cfe30eef5be426` | `2d8f3770ebf9877b09fd50fdbc35d04b471f233c` |
-| **Integration candidate**: the review's fixes (§9) | `d8192d5178e81b8cf220578d105393c0f87fb8ea` | `8e738463b770f4429a1e94466d72cdb514ea01ba` |
+| Second candidate: the review's fixes (§9); superseded | `d8192d5178e81b8cf220578d105393c0f87fb8ea` | `8e738463b770f4429a1e94466d72cdb514ea01ba` |
+| Documentation successor of the second (§8, §9) | `a278f5748941e34c7da08d8d341dad99a84e0d53` | `52c93ab562ec6fc53bde4346a0e782a98f30b233` |
+| Removal-focus repair (§11); superseded | `7b9400ec178912855ddb381b09aa22bf78cdcc4a` | `531a56c3ee625a23f9deda537e1a1daa47177559` |
+| QC-capture focus repair (§11); superseded by a comment | `f393a7bb98c70499e91781cecbbee02efea66757` | `7561307ad27e1d2a83a24480cb92daa02316776d` |
+| **Integration candidate**: the same, one comment corrected (§11) | `7cbc7f01f0836eab3d8919825832efb6a3ad6aff` | `5827cb0e210c7844314e967d2c4e26387346d84b` |
 
-A candidate cannot name itself. §8 and §9 are written by a
-documentation-only successor that changes this file alone. Both candidates
-change only Markdown: `git diff --name-only fa7f213 d8192d5` lists no file
-that is not `.md`, so every non-documentation byte of the candidate is the M9
-closure's final tested code.
+A candidate cannot name itself; documentation-only successors, which change
+Markdown alone, record what ran on it. The first two candidates change only
+Markdown: `git diff --name-only fa7f213 d8192d5` lists no file that is not
+`.md`. The integration candidate adds exactly four frontend files to that:
+`git diff --name-only a278f57 7cbc7f0` is `ProjectPanel.tsx`,
+`ProjectLayers.test.tsx` and `ProjectQcSummary.test.tsx` under
+`apps/desktop/src/features/project/`, and `apps/desktop/src/test/projectFixtures.ts`.
+No Rust, runtime, manifest, lock or Rust fixture changes, so every such byte is
+still the M9 closure's final tested code.
 
 ## 2. The stack
 
@@ -130,7 +139,8 @@ left to this record.
 
 `docs/product/PRIMARY_WORKFLOWS.md` and `docs/product/SCREEN_MODEL.md` were
 checked and needed nothing. Slice records, ADRs and evidence documents are
-history and were not changed.
+history and were not rewritten; the one addition is a marked correction after
+the M9.1 evidence's paragraph on earlier runs, pointing to §11.
 
 ## 5. Dependencies and locks
 
@@ -167,15 +177,20 @@ green. The owner decides at publication.
   legacy M4–M7 and viewer-r1 specs; two families are obsolete selectors
   confirmed statically. The final closure code differs from `59cbf1c` only in
   Rust files, a Rust fixture and four e2e files whose specs were run again on it.
-  This candidate changes no code, so the comparison still describes it. The
-  whole suite was not run again for this record.
+  This candidate's only code change is two focus effects on the Project surface
+  and their tests (§11), and no failing legacy spec is a Project-surface test
+  (evidence §8), so the comparison still describes the legacy debt. The whole
+  suite was not run again for this record.
 - **One App-level Vitest case can time out under load**:
   `M73Viewer.test.tsx > … exports only committed axis ranges while drawing or
   pending, then the newly confirmed range from retained tokens`, 5,000 ms limit;
   it failed the whole `pnpm test` in two of the M9 closure's four campaigns
   (5,065 and 5,103 ms) and in the M8.5 record (5,023 ms; M8.4 recorded two
   unnamed timeouts in the same file), and passed alone every time it was run
-  alone. The frontend source is unchanged since M9.4.
+  alone. Neither that test nor the viewer code it exercises is changed by this
+  candidate. It is the only intermittent Vitest case this record names: the
+  `ProjectLayers.test.tsx` failure seen during this qualification was a
+  production focus race, repaired, not debt (§11).
 - **The browser harness can fail to open a WebDriver session** for a spec (no
   test result in that run).
 
@@ -202,18 +217,54 @@ None is changed here; each is for the owner and the publication run.
 
 ## 8. Validation
 
-**Heavy validation is deferred for host memory pressure. It is not a failure,
-and the candidate is not yet qualified.** Heavy campaigns start only when free
-physical memory is at least 8 GiB and use is at most 80%, measured from
-`Win32_OperatingSystem` immediately before each group; nothing on the host was
-stopped or reconfigured to make room.
+**Heavy validation of the integration candidate is deferred for host memory
+pressure. That is not a failure, and the candidate is not yet qualified.** A
+heavy command starts only when free physical memory is at least 8 GiB
+(8,388,608 KiB) and use is at most 80%, measured from `Win32_OperatingSystem`
+immediately before it; nothing on the host was stopped or reconfigured to make
+room. Logs are under `.tmp/m8-m9-integration-evidence/` (git-ignored); every
+exit below is the command's own.
 
-| Measured (local time) | Total visible | Free | In use | Gate |
-| --- | ---: | ---: | ---: | --- |
-| 2026-09-24T18:11:26-04:00, before Group A on `896e012` | 33,211,120 KiB (31.67 GiB) | 3,669,460 KiB (3.50 GiB) | 89.0% | deferred |
-| 2026-09-24T18:25:03-04:00, before Group A on `d8192d5` | 33,211,120 KiB (31.67 GiB) | 4,719,296 KiB (4.50 GiB) | 85.8% | deferred |
+| Measured (local time, -04:00) | Free of 31.67 GiB | In use | Gate | Before |
+| --- | ---: | ---: | --- | --- |
+| 18:11:26 | 3.50 GiB | 89.0% | deferred | Group A on `896e012` |
+| 18:25:03 | 4.50 GiB | 85.8% | deferred | Group A on `d8192d5` |
+| 18:43:56 | 9.99 GiB | 68.5% | passed | Group A on `a278f57`; every later command of Groups A and B passed its own reading (9.60–9.92 GiB) |
+| 18:54:36 | 9.33 GiB | 70.5% | passed | Group C, m8.1 |
+| 18:54:53 | 7.24 GiB | 77.1% | deferred | Group C, m8.2 |
+| 18:55:19, 18:58:33 | 7.87, 7.27 GiB | 75.2%, 77.0% | deferred | Group C, m8.2 |
+| 20:43:57 to 21:57:26 (four readings) | 5.29–6.54 GiB | 79.4–83.3% | deferred | only single-file and serial project-folder tests ran (§11) |
 
-**Ran** (light; logs under `.tmp/m8-m9-integration-evidence/`, git-ignored):
+**On `a278f57`** (tree `52c93ab…`; its code is `d8192d5`'s, which is
+`fa7f213`'s):
+
+| Group | Command | Exit | Result | Standing for the integration candidate |
+| --- | --- | ---: | --- | --- |
+| A | `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 | | **inherited** |
+| A | `cargo test --locked --workspace --all-targets` | 0 | desktop 1233 passed, 47 ignored; plot-spec 135; proteowizard 513 passed, 9 ignored, plus 1 in its second test binary; core 2; examples and tests pass | **inherited** |
+| A | `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 | 86 passed, 33 ignored | **inherited** |
+| A | `cargo test --locked -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1 --nocapture` | 0 | 33 passed, 102.8 s: the real-runtime suite | **inherited** |
+| A | `cargo check --locked --release --workspace` | 0 | | **inherited** |
+| B | `pnpm lint`, `pnpm typecheck` | 0, 0 | | superseded |
+| B | `pnpm test` | **1** | 2167 of 2168; the one failure was the production focus race of §11, not the M7.3 case (which passed) | superseded |
+| B | `pnpm build`, `pnpm e2e:typecheck` | 0, 0 | | superseded |
+| C | m8.1 browser spec | 0 | 8 passing | superseded |
+| D | `python -B scripts/check_repo.py`; the manifest and lock diffs of §5 | 0; as §5 | | superseded by the run on `f393a7b` |
+
+Group A is inherited because `git diff --name-only a278f57 7cbc7f0` changes no
+Rust, runtime, manifest, lock or Rust fixture (§1). The first invocation of
+Group A ran only its first two commands: the runner fed its command list on the
+same standard input the commands inherited, and `cargo test` consumed the
+rest. The last three ran in a second invocation with their own readings; the
+first two were not run again.
+
+**On `f393a7b`**: Group D. `python -B scripts/check_repo.py` exit 0; over every
+tracked manifest and lock, `1daf802..f393a7b` is exactly §5's three files and
+`d8192d5..f393a7b` changes none of them; `97392e9..f393a7b` over the production
+manifests and locks is `--quiet` exit 0. `7cbc7f0` differs from `f393a7b` in
+one comment.
+
+**Earlier light gates** (before any heavy group):
 
 | Command | On | Exit |
 | --- | --- | ---: |
@@ -225,29 +276,17 @@ stopped or reconfigured to make room.
 | `cargo fmt --all --check` | `896e012` | 0 |
 | `python -B scripts/generate_notices.py --check` | `896e012` | 0 |
 
-`d8192d5` differs from `896e012` in Markdown only, which none of the last four
-reads.
+**Deferred on the integration candidate**, serially, each behind the memory
+gate:
 
-**Deferred**, to run serially on `d8192d5`, one group at a time, each behind
-the memory gate:
-
-- Group A, Rust, with CI's exact flags where CI has them:
-  `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`;
-  `cargo test --locked --workspace --all-targets`;
-  `cargo test --locked -p mscanvas-desktop --lib targeted_ms1`;
-  `cargo test --locked -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1 --nocapture`
-  (the real-runtime suite); `cargo check --locked --release --workspace`.
-- Group B, frontend: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
+- Group B, all five: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
   `pnpm e2e:typecheck`.
 - Group C, the seven M8/M9 browser specs, one invocation each:
   `pnpm exec wdio run ./e2e/wdio.browser.conf.ts --spec ./e2e/specs/<spec>`.
-  The repository-wide suite is not rerun (§6).
-- Group D, `python -B scripts/check_repo.py` on the committed successor.
-
-Until those run, the code gates that stand are the M9 closure's on
-`fa7f213` ([evidence §7](../spikes/M9_CLOSURE_EVIDENCE.md#7-validation-on-the-tested-tree)),
-whose code the candidate carries byte for byte. The closure never ran CI's
-`--locked --all-targets` forms; Group A does.
+  They all pass through the Project surface. The repository-wide suite is not
+  rerun (§6).
+- Group D, `python -B scripts/check_repo.py` and the manifest and lock diffs, on
+  the documentation successor that records the results.
 
 ## 9. Review
 
@@ -284,7 +323,8 @@ The review also noted that `check_repo.py` checks no anchor fragment and does
 not read the edited status paragraphs, so a passing run proves little about
 them. The reviewer resolved every anchor the first candidate added, and the
 two added since (§7, §8) were resolved the same way. No second review ran: every fix
-applies a finding's own correction and changes only Markdown.
+applies a finding's own correction and changes only Markdown. The two code
+repairs found later had reviews of their own (§11).
 
 ## 10. Proposed publication procedure — not authorized, not executed
 
@@ -297,7 +337,7 @@ candidate:
    *automatically delete head branches* setting, which would delete the remote
    branch at merge without step 8's consent; and the branch head is the
    integration candidate named in §1 or a documentation-only successor of it
-   whose diff from it (`git diff --name-only`) is this file alone. If the
+   whose diff from it (`git diff --name-only`) is Markdown alone. If the
    deferred groups in §8 have not all run on that candidate by then, it is not
    qualified and is not published.
 2. **Push the branch as it is**, without force, and open one pull request:
@@ -327,3 +367,93 @@ candidate:
 
 After a successful publication the first status above becomes the Git fact
 that the merge records; the other six are unchanged by it.
+
+## 11. Found during qualification: two focus races on the Project surface
+
+**What was seen.** Group B's `pnpm test` on `a278f57` exited 1, 2167 of 2168:
+`ProjectLayers.test.tsx > the layer list > removes a layer through its own
+control, and names the refusal a reference with one gets`, 4,137 ms,
+`AssertionError: expected null to be '11111111-2222-4111-8111-111111111111'`
+at the wait for focus to reach the reference's Create layer control after a
+removal. The file then passed 23 of 23 three times alone (that case 110, 127
+and 112 ms).
+
+**Corrections to what was said about it.** The wait is not about one second:
+`apps/desktop/src/test/setup.ts` sets `asyncUtilTimeout` to 4,000 ms (since
+`73eec7e`, already on published `main`). So the case spent about 137 ms
+reaching the wait at normal speed, and focus then never arrived in 4 s; it was
+not slowness. The first qualification report called the wait one second and
+the failure load-dependent debt; both were wrong. The M9.1 evidence's earlier
+occurrence ([M9.1 evidence](../spikes/M9_1_TARGETED_MS1_VERTICAL_EVIDENCE.md),
+the paragraph on earlier runs) says "one-second focus wait" and attributes the
+failure to a second Vitest process; the wait was the same 4 s, and the cause is
+the one below. That record is left as written, with a pointer here.
+
+**Cause.** A production race, not debt. The Remove control arms focus
+restoration in its click handler (`ProjectPanel.tsx`, the `removing` ref), and
+a passive effect spent the arm on its first run that saw an idle surface. React
+19 runs the passive effects of a commit made outside an event (every answer
+that settles an operation, and the first arrival of a project) in a later
+Scheduler task. A press that lands before that task arms the ref; React then
+flushes the pending effects before rendering the press, so the earlier
+commit's run sees its own idle state with the layer still listed, spends the
+arm and returns. The answer finds nothing armed and focus stays on the body.
+In the test, `ready()` is `findByText`, which returns after a zero-delay timer
+that usually, not always, runs after that Scheduler task; `ee229cf` removed an
+empty `act` from `ready()` that had ordered the flush first.
+
+**Evidence.** A read-only trace from four independent lenses converged on this
+one mechanism, which three adversarial reviewers could not refute; every
+alternative was excluded by the code or by the failure's DOM dump. A temporary
+diagnostic test, deleted afterwards, then measured it,
+recording when the arrival commit's passive effects ran against the press:
+
+| Case | On the old effect | On the repaired effect |
+| --- | --- | --- |
+| The original path | effects before the press; focus restored | focus restored |
+| Press in the MutationObserver delivery of the arrival commit | effects after the press; focus lost to the body | focus restored |
+| The original path with the zero-delay timer landing after a millisecond boundary | effects after the press; focus lost to the body | focus restored |
+| The same plus one `setImmediate` before the press | effects before the press; focus restored | focus restored |
+
+The dump of the recorded failure holds no `activeElement`, so that this exact
+run took this path is inferred; the new test reproduces its assertion exactly.
+
+**Repair 1, `7b9400e`.** The removal effect is a layout effect, so it runs in
+the commit it belongs to and no earlier commit can spend a later press's arm.
+New test, `ProjectLayers.test.tsx`: *restores focus after a removal pressed the
+instant the project arrives*, which presses in the MutationObserver delivery of
+the arrival commit (`appears()`, now in `src/test/projectFixtures.ts`). On the
+old effect it failed with the recorded assertion (`expected null to be
+'11111111-…'`, 4,227 ms); on the new one it passes.
+
+**Repair 2, `f393a7b` (comment corrected in `7cbc7f0`).** The review of repair
+1 named the QC-capture focus effect as the same shape. It was established on
+its own before it was changed: *takes the keyboard to the report of a capture
+pressed the instant its layer appears* (`ProjectQcSummary.test.tsx`) presses
+Capture QC in the MutationObserver delivery of the commit that settles Create
+layer. On the old effect focus stayed on the Capture QC control for the full
+4 s with the report on screen (4,149 ms); on the old effect with one
+`setImmediate` before the press it passed, which names the pending passive
+flush as the cause; on the layout effect it passes.
+
+**Focused validation, bounded, with host memory below the heavy gate**
+(`--no-file-parallelism` wherever more than one file ran):
+
+| Command | On | Exit |
+| --- | --- | ---: |
+| `ProjectLayers.test.tsx`, verbose | `7b9400e`'s content | 0 (24 of 24) |
+| `src/features/project` | `7b9400e`'s content | 0 (9 files, 174) |
+| `pnpm typecheck`; `ProjectLayers.test.tsx` twice more | `7b9400e`'s content | 0; 0, 0 |
+| `ProjectQcSummary.test.tsx` and `ProjectLayers.test.tsx` | `f393a7b`'s content | 0 (39 of 39) |
+| `src/features/project` | `f393a7b`'s content | 0 (9 files, 175) |
+| `pnpm typecheck` | `f393a7b`'s content | 0 |
+| the two window tests again | `f393a7b`'s content | 0 (2 of 2) |
+
+No whole `pnpm test` ran after either repair; that is Group B (§8).
+
+**Reviews.** Each repair had a read-only adversarial review that ran no test.
+The first confirmed the QC-capture sibling (four of four skeptics could not
+refute it) and raised a coverage note that both skeptics refuted as describing
+no reachable defect. The second found no problem; its one observation, that
+focus now moves before the report scrolls itself into view, is the comment
+`7cbc7f0` corrects. No other focus effect was changed or reviewed here.
