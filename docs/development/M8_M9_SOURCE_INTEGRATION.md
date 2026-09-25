@@ -6,15 +6,18 @@ the M9 closure head `46ef9cc441b3c014aa4964976db917ecb68008c4`.
 This record prepares **one** source-integration candidate for the linear stack
 that follows published `main`: a partial M7.6, M8 and M9. The only product
 code it changes is two focus-restoration repairs on the Project surface, found
-while qualifying it (§11). It does not publish anything: no push, pull request, merge, tag
-or release was made under it, and publication needs its own explicit
-authorization. When this text is read on `main`, the merge commit that brought
-it there — not this text — is the evidence that the stack was published.
+while qualifying it (§11); the only other code is two build-provenance repairs
+to the partial M7.6 candidate script, found by the review of the pull request
+that publishes it (§12). Publication goes through pull request #127 under the
+owner's explicit authorization, and no tag, release, installer or public beta
+follows from it. When this text is read on `main`, the merge commit that
+brought it there — not this text — is the evidence that the stack was
+published.
 
 Status when written:
 
-- `SOURCE INTEGRATION CANDIDATE QUALIFIED LOCALLY — PUBLICATION NOT AUTHORIZED` (§8)
-- `SOURCE UNPUBLISHED`
+- `SOURCE INTEGRATION CANDIDATE QUALIFIED LOCALLY` (§8), with the build-provenance repair checked on its own (§12)
+- `SOURCE PUSHED — PR #127 OPEN / NOT MERGED`
 - `M8 LOCAL IMPLEMENTATION COMPLETE`
 - `M9 LOCAL IMPLEMENTATION COMPLETE`
 - `M7.6 RELEASE QUALIFICATION DEFERRED / INCOMPLETE`
@@ -35,6 +38,9 @@ Status when written:
 | Removal-focus repair (§11); superseded | `7b9400ec178912855ddb381b09aa22bf78cdcc4a` | `531a56c3ee625a23f9deda537e1a1daa47177559` |
 | QC-capture focus repair (§11); superseded by a comment | `f393a7bb98c70499e91781cecbbee02efea66757` | `7561307ad27e1d2a83a24480cb92daa02316776d` |
 | **Integration candidate**: the same, one comment corrected (§11) | `7cbc7f01f0836eab3d8919825832efb6a3ad6aff` | `5827cb0e210c7844314e967d2c4e26387346d84b` |
+| Documentation successor that recorded §8's runs; first head of PR #127, superseded | `8be2cac586acc74e711ef2c27dbb34d20f8488b7` | `76e1c1cd926b4f75f2d345c6a41377c4132641f1` |
+| Build-provenance repair (§12), as first written; superseded | `b1e125fc510340e04542b686b3b9b6e618d357b1` | `d47220e8f3177a2637f6dca66fbd2c8e9a92a860` |
+| **Build-provenance repair** after its review (§12): the script and its test | `5a2b1887c307493c71d1c9c7a64b6318e63afe6a` | `c15f4b703890e83e1e0eff3d921e8c0121a31568` |
 
 A candidate cannot name itself; documentation-only successors, which change
 Markdown alone, record what ran on it. The first two candidates change only
@@ -44,7 +50,11 @@ Markdown: `git diff --name-only fa7f213 d8192d5` lists no file that is not
 `ProjectLayers.test.tsx` and `ProjectQcSummary.test.tsx` under
 `apps/desktop/src/features/project/`, and `apps/desktop/src/test/projectFixtures.ts`.
 No Rust, runtime, manifest, lock or Rust fixture changes, so every such byte is
-still the M9 closure's final tested code.
+still the M9 closure's final tested code. The build-provenance repair then
+changes exactly `scripts/build_candidate.ps1` and adds
+`scripts/test_build_candidate.py` (`git diff --name-only 8be2cac 5a2b188`);
+nothing §8's groups build, test or read changes (§12). The publication head is
+a Markdown-only successor of `5a2b188`.
 
 ## 2. The stack
 
@@ -225,7 +235,9 @@ ran on it with every exit 0, and Group A is inherited.** Groups B and C ran on
 candidate `7cbc7f0` is two Markdown files (`git diff --name-only 7cbc7f0
 4b6cf29`); Group D ran there too. Logs are under
 `.tmp/m8-m9-integration-evidence/` (git-ignored); every exit below is the
-command's own.
+command's own. The build-provenance repair of §12 changes none of these groups'
+inputs, so their results stand for it; none was run again for it, and its own
+checks are in §12.
 
 **Memory policy.** Measured from `Win32_OperatingSystem`. A heavy group is
 admitted only when free physical memory is at least 8 GiB (8,388,608 KiB) and
@@ -347,10 +359,12 @@ two added since (§7, §8) were resolved the same way. No second review ran: eve
 applies a finding's own correction and changes only Markdown. The two code
 repairs found later had reviews of their own (§11).
 
-## 10. Proposed publication procedure — not authorized, not executed
+## 10. Publication procedure
 
-To be carried out only under a separate, explicit authorization for this exact
-candidate:
+Carried out through pull request #127 under the owner's explicit
+authorization — first for the head that recorded §8's runs, and then, on a
+second authorization, for the build-provenance repair of §12 and its
+documentation successor:
 
 1. **Rebind live state.** `git ls-remote origin refs/heads/main` still
    `1daf802f06d0149b5de3dbd12e8b01e7e86862ec`; the effective `main` ruleset read
@@ -358,9 +372,11 @@ candidate:
    *automatically delete head branches* setting, which would delete the remote
    branch at merge without step 8's consent; and the branch head is the
    integration candidate named in §1 or a documentation-only successor of it
-   whose diff from it (`git diff --name-only`) is Markdown alone. A head with
-   any other change is a new candidate that §8 does not qualify, and it is not
-   published until its affected groups have run.
+   whose diff from it (`git diff --name-only`) is Markdown alone — or, for the
+   second authorization, the build-provenance repair of §12 and a Markdown-only
+   successor of it. A head with any other change is a new candidate that §8
+   does not qualify, and it is not published until its affected groups have
+   run.
 2. **Push the branch as it is**, without force, and open one pull request:
    base `main`, head this branch. Its body names the candidate commit and
    tree, the evidence in §8, the debt in §6 and the risks in §7, and states that
@@ -386,8 +402,8 @@ candidate:
    be deleted, remote or local, and only with the owner's consent. Until then
    every task branch stays.
 
-After a successful publication the first status above becomes the Git fact
-that the merge records; the other six are unchanged by it.
+After a successful publication the second status above is superseded by the
+Git fact the merge records; the others are unchanged by it.
 
 ## 11. Found during qualification: two focus races on the Project surface
 
@@ -479,3 +495,101 @@ refute it) and raised a coverage note that both skeptics refuted as describing
 no reachable defect. The second found no problem; its one observation, that
 focus now moves before the report scrolls itself into view, is the comment
 `7cbc7f0` corrects. No other focus effect was changed or reviewed here.
+
+## 12. Found at publication: two build-provenance repairs (PR #127)
+
+**What was found.** After the required checks had passed on `8be2cac`, the
+repository's automated review left two findings on PR #127, both on
+`scripts/build_candidate.ps1`, the partial M7.6 candidate build script, and
+both confirmed by reading it:
+
+- A normal build read `apps/desktop/dist` before `pnpm tauri build` ran, but
+  that command's `beforeBuildCommand` (`pnpm build`) regenerates the directory,
+  so the manifest's `frontendInputs` was empty on a clean checkout and stale
+  otherwise — never the frontend the build produced.
+- `-ManifestOnly` compared the retained manifest's `head` with HEAD only when a
+  retained manifest existed. Without one it wrote a new manifest that
+  attributed whatever was in `target/release` to HEAD.
+
+Neither path is reached by CI or by any test of §8; both apply only when an
+installer candidate is built.
+
+**Repair.** `b1e125f`, then `5a2b188` after the review below:
+
+- A normal build reads the frontend only after `pnpm tauri build` has
+  succeeded, and refuses a missing or empty `apps/desktop/dist` instead of
+  recording an empty list. A failed build still publishes nothing. The
+  manifest's new `frontendMeasured` field says what the list is: the build's
+  output directory hashed after the build, not something extracted from the
+  installer.
+- `-ManifestOnly` requires a readable retained `candidate-manifest.json`. Its
+  `head` and `tree` must be commit identifiers equal to HEAD's; it must record
+  a clean working tree; it must record a real build, or a re-derivation this
+  script made after checking one; and its installer and executable SHA-256
+  values must be present and equal the files on disk. Any other case is refused
+  before anything is written, the retained file is left as it is, and
+  `-AllowDirtyTree` does not relax it. These checks run right after HEAD is
+  read, before any build tool is probed. The existing refusal for a different
+  HEAD keeps its wording. A re-derived manifest's `frontendMeasured` says the
+  frontend was re-measured and is not established as what the installer
+  embeds.
+
+**What it does not claim.** No installer was built, rebuilt, installed or
+inspected for this repair, and no earlier M7.6 candidate is re-attributed or
+qualified by it. It closes these two paths; it is not a redesign or a
+qualification of installer provenance, which stays M7.6 release work.
+
+**Regression.** `scripts/test_build_candidate.py` (stdlib `unittest`; Windows
+with PowerShell 7 and git) copies the script under test into a committed
+fixture repository and runs it there. The child's PATH holds only stub `pnpm`,
+`node`, `cargo` and `rustc`, git and the Windows system directories, and the
+harness asserts that no real tool is reachable. The stub `pnpm tauri build`
+writes a fixed frontend, executable and installer, fails, or leaves no
+frontend. The cases are:
+
+- an old frontend on disk before the build;
+- no frontend before the build;
+- a failed build, fresh and beside a retained manifest;
+- a missing or empty frontend after the build, also beside a retained
+  manifest;
+- `-ManifestOnly` without a retained manifest: on a clean tree, on a dirty
+  tree with `-AllowDirtyTree`, and with no tool on PATH;
+- `-ManifestOnly` with a retained manifest that is malformed, names another
+  head or tree, lacks a head or has a non-identifier one, records a dirty
+  build, is an unchecked re-derivation, lacks a command or either artifact
+  digest, or whose installer or executable on disk differs;
+- matching provenance, which re-derives, and a checked re-derivation, which can
+  itself be re-derived.
+
+Every refusal case asserts its reason, that no manifest was written or
+replaced, and that the retained evidence and the artifacts are byte-identical
+afterwards. Fixtures and logs are under `.tmp/pr127-provenance-repair/`
+(git-ignored).
+
+| Command | Script under test | Exit |
+| --- | --- | ---: |
+| harness as first written | `8be2cac`'s script, before any repair | 1 — 11 failures, 1 error; the failed-build case and the other-HEAD refusal passed, as the old script already did both |
+| harness as first written | `b1e125f`'s script, before and after it was committed | 0, 0 — 7 of 7 |
+| PowerShell parser | `5a2b188`'s script | 0 |
+| harness from `5a2b188` | `5a2b188`'s script | 0 — 7 of 7, every subcase |
+| harness from `5a2b188` | `8be2cac`'s script | 1 — 19 failures, 1 error |
+| harness from `5a2b188` | `b1e125f`'s script | 1 — exactly the four subcases the review added: no tool on PATH, a dirty build, an unchecked re-derivation, no command |
+
+`git diff --quiet 7cbc7f0 5a2b188 --` the application, test, e2e, experiment,
+workflow, manifest, lock and toolchain paths exits 0, and so does the same over
+`scripts/` excluding the two files, so §8's results stand for this head
+without being run again. The harness is not wired into CI: it needs Windows,
+and changing the workflows was outside this repair.
+
+**Review.** One narrow read-only review of `b1e125f` and its harness found:
+
+| Finding | Class | Disposition |
+| --- | --- | --- |
+| `-ManifestOnly` did not check the retained `workingTreeClean`, so a `-AllowDirtyTree` build re-derived on a clean tree became a clean-HEAD build | blocker | fixed in `5a2b188`, with a test |
+| A manifest the old `-ManifestOnly` synthesized without provenance was accepted as retained provenance | should-fix | fixed in `5a2b188`: only a real build, or a re-derivation that checked one, is accepted |
+| Build tools were probed before the provenance check, so a missing manifest could be reported as a missing tool | note | fixed in `5a2b188`: the checks moved ahead of every probe, with a test |
+| The `-AllowDirtyTree` case ran on a clean tree; executable, non-identifier head and working-tree cases were missing; the frontend-less case had no retained sentinel | note | added to the harness |
+| A re-derivation replaces a post-build frontend list with a re-measured one | note | not changed: re-derivation keeps re-measuring everything, and `frontendMeasured` says so |
+| `Remove-Item` of the bundle directory before a build | note | no change: it precedes the build and deletes no evidence |
+
+The review's fixes were checked by the runs above; no second review ran.
