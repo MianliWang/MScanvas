@@ -29,6 +29,7 @@ page replaces wholesale.
 | Viewed acquisition and preview | `usePreviewWorkspace` `activeDataset`, `preview` (late reads superseded) | Rust | Evidence, `PreviewSummary`, QC capture, context line | 2, 3 |
 | Selected spectrum, committed ranges | `usePreviewWorkspace` `spectrum`, `spectrumCommittedDomain`, `chromatogramCommittedDomain`; `viewer/*` interaction state | Rust reads, Session gestures | Viewer panels, figure dialog, context line | 3 |
 | Conversion scope | `workspace.conversionScope` + `resolveConversionScope` | Session over the roster | `ConversionPanel`, context line | 2, 4 |
+| Conversion settings draft | `useConversionConfiguration` (Rust-authored configuration kept as it arrived; `selectedIntentId`) and the destination and conflict choices in `useConversionOperation` (`setDestinationPolicy`, `setConflictPolicy`, `readPlanOptions`) | Rust configuration, Session choices | `ConversionPanel`; a change withdraws the review in `useConversionPlan` | 4 |
 | Conversion plan and review | `useConversionPlan`, `conversionPlanAuthority` | Rust-bound plan identity | `ConversionPanel` | 4 |
 | Conversion lane | `useConversionOperation` `state` (as Rust last reported), `busy`, `stopping`, `adopting` | Rust | `ConversionPanel`, roster pins, conversion dot, context line | 4 |
 | Viewer figures and exports | `usePreviewWorkspace` figure settings and export states; `ExportFigureDialog`, `ChromatogramExportPanel` | Rust export authority | Viewer | 3 |

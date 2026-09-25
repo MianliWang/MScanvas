@@ -36,7 +36,7 @@ what any of them means scientifically.
   find file names and status sentences by exact text; a shell that repeated
   those strings as separate elements would break them.
 
-## Draft implemented (commit `317481edf9270fac49af07dcc0d2a63866a0a30a`)
+## Draft implemented (commits `317481edf9270fac49af07dcc0d2a63866a0a30a` and `9786809fcfe3f6933bf7c1ec8d1f011ae5310970`)
 
 - `features/workbench/shellContext.ts` (new): a pure projection from the
   owners' facts to context items. Each item is one sentence and names the
@@ -52,7 +52,9 @@ what any of them means scientifically.
 - `features/preferences/locales/en.ts`, `zh-CN.ts`, `i18n.ts`: fifteen new
   resources and their parameter types.
 - `features/workbench/workbench.css`: the context line's layout, with existing
-  tokens.
+  tokens; items at the 32 px compact-control minimum, and a focus ring drawn
+  inside each item because the line clips its overflow for the ellipsis
+  (`9786809`).
 
 Intended effect, **not rendered or verified**: a one-line strip under the
 navigation reading, for example, "Project: Pooled QC study · unsaved changes",
@@ -83,8 +85,11 @@ result", each taking the reader to its surface.
 
 ## Risks to check when validation opens
 
-- The header's height grows by the context line; the measured panel floors at
-  960×640 and the M8/M9 specs that read header geometry must be rechecked.
+- The header's height grows by the context line (32 px items where the drop hint
+  was one 12 px line); the measured panel floors at 960×640 and the M8/M9 specs
+  that read header geometry must be rechecked.
+- Focus: the ring is drawn inside each item; its visibility against the item's
+  background is unverified until rendered (the gap assessment's A4 area).
 - Existing Vitest suites that query exact text or button names: the draft keeps
   every context sentence distinct from them, but only a run confirms it.
 - The legacy m7.2 and m7.5 specs cover this surface and are red for recorded
