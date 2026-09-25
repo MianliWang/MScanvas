@@ -251,6 +251,13 @@ export interface MessageParameters {
   readonly measureRowDetail: { readonly index: string };
   readonly measureTableDetail: { readonly rows: string };
   readonly unknownFigureProblem: { readonly code: string };
+  readonly shellContextProject: { readonly name: string };
+  readonly shellContextProjectUnsaved: { readonly name: string };
+  readonly shellContextViewing: { readonly name: string };
+  readonly shellContextViewingSpectrum: { readonly name: string; readonly index: string };
+  readonly shellContextScope: { readonly scope: string; readonly eligible: string };
+  readonly shellContextActivity: { readonly activity: string };
+  readonly shellContextInspecting: { readonly name: string };
 }
 export type MessageArguments<K extends MessageKey> = K extends keyof MessageParameters
   ? [parameters: MessageParameters[K]] : [];

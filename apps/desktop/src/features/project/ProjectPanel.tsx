@@ -220,7 +220,8 @@ function outcomeCounts(summary: OutcomeSummary): [RowOutcome, number][] {
   return counts.filter(([, count]) => count > 0);
 }
 
-function busyKey(busy: ProjectBusy) {
+/** The sentence this surface uses for what the project is doing, or `null`. */
+export function busyKey(busy: ProjectBusy) {
   return busy === "idle" ? null : BUSY[busy];
 }
 

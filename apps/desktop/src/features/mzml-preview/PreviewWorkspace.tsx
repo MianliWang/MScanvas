@@ -2,10 +2,11 @@ import { announceConversion } from "./conversionMessages";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
-import { ProjectPanel } from "../project/ProjectPanel";
+import { ProjectPanel, busyKey } from "../project/ProjectPanel";
 import { ProvenanceDetails } from "../project/ProvenanceDetails";
 import { useProject } from "../project/useProject";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
+import type { ShellContextFacts } from "../workbench/shellContext";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 import { ActiveClearDialog } from "./ActiveClearDialog";
@@ -391,6 +392,32 @@ export function PreviewWorkspace() {
     describeConversion(resolvedScope.handles, resolvedScope.scope);
   }, [describeConversion, describeKey]);
 
+  /**
+   * What the header's context line describes.
+   *
+   * Every field is read from the owner that already holds it -- the project
+   * session, the viewer, the scope the Conversion surface resolves and the
+   * conversion lane -- so the line cannot come to disagree with the surface it
+   * points at. A stop that was asked for reads as stopping, as the Conversion
+   * surface reads it, before the lane itself says so.
+   */
+  const shellContext: ShellContextFacts = {
+    project: project.state.open ? { name: project.state.name, unsaved: project.state.dirty } : null,
+    projectActivity: busyKey(project.busy),
+    viewing: previewFile === null ? null : {
+      name: previewFile.fileName,
+      context: previewFile.relativeContext,
+      spectrumIndex: spectrum.status === "loaded" ? spectrum.spectrum.index : null,
+    },
+    conversionScope: roster.datasets.length === 0
+      ? null
+      : { scope: resolvedScope.scope, eligible: resolvedScope.handles.length },
+    conversionStatus: workspace.conversion.state.status === "running" && workspace.conversion.stopping
+      ? "stopping"
+      : workspace.conversion.state.status,
+    inspecting: project.provenance,
+  };
+
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
       recordMeasurement(
@@ -409,7 +436,8 @@ export function PreviewWorkspace() {
       <WorkbenchHeader surface={surface} onNavigate={setSurface}
         detailsAvailable={detailsAvailable} rowCount={roster.datasets.length}
         busy={workspace.conversion.busy}
-        retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus} />
+        retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus}
+        projectBusy={project.busy !== "idle"} context={shellContext} />
 
       {workspace.dropPresentation.status === "idle" ? null : (
         <div
