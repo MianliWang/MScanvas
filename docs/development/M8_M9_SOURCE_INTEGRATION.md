@@ -6,9 +6,10 @@ the M9 closure head `46ef9cc441b3c014aa4964976db917ecb68008c4`.
 This record prepares **one** source-integration candidate for the linear stack
 that follows published `main`: a partial M7.6, M8 and M9. The only product
 code it changes is two focus-restoration repairs on the Project surface, found
-while qualifying it (§11); the only other code is two build-provenance repairs
-to the partial M7.6 candidate script, found by the review of the pull request
-that publishes it (§12). Publication goes through pull request #127 under the
+while qualifying it (§11), and three project-integrity repairs in the Rust
+project store, found by the review of the pull request that publishes it
+(§13); the only other code is two build-provenance repairs to the partial M7.6
+candidate script, found by the same review (§12). Publication goes through pull request #127 under the
 owner's explicit authorization, and no tag, release, installer or public beta
 follows from it. When this text is read on `main`, the merge commit that
 brought it there — not this text — is the evidence that the stack was
@@ -16,7 +17,7 @@ published.
 
 Status when written:
 
-- `SOURCE INTEGRATION CANDIDATE QUALIFIED LOCALLY` (§8), with the build-provenance repair checked on its own (§12)
+- `SOURCE INTEGRATION CANDIDATE QUALIFIED LOCALLY` (§8), with the build-provenance repair checked on its own (§12) and the project-integrity repair requalified (§13)
 - `SOURCE PUSHED — PR #127 OPEN / NOT MERGED`
 - `M8 LOCAL IMPLEMENTATION COMPLETE`
 - `M9 LOCAL IMPLEMENTATION COMPLETE`
@@ -41,6 +42,9 @@ Status when written:
 | Documentation successor that recorded §8's runs; first head of PR #127, superseded | `8be2cac586acc74e711ef2c27dbb34d20f8488b7` | `76e1c1cd926b4f75f2d345c6a41377c4132641f1` |
 | Build-provenance repair (§12), as first written; superseded | `b1e125fc510340e04542b686b3b9b6e618d357b1` | `d47220e8f3177a2637f6dca66fbd2c8e9a92a860` |
 | **Build-provenance repair** after its review (§12): the script and its test | `5a2b1887c307493c71d1c9c7a64b6318e63afe6a` | `c15f4b703890e83e1e0eff3d921e8c0121a31568` |
+| Documentation successor that recorded §12; head of PR #127, superseded | `cd7ec23e10cb04560bfb3e90550a24197fc247ef` | `682ac7077aa1b5d3b4b95270dfcfad96e21d4799` |
+| Project-integrity repair (§13) as first committed; its tests did not compile, superseded | `532c6921766a32e173aaa1f9527d00b0f70f74a2` | `2b08fc6850ad9526f5bdcdec5ee8413a408e5710` |
+| **Project-integrity repair** (§13): the same, one test assertion corrected | `cf4af12c5619d17dffa6e31b4debf9b4990a75ca` | `a41381350a2d947f72e665c61b905829aeaaf78c` |
 
 A candidate cannot name itself; documentation-only successors, which change
 Markdown alone, record what ran on it. The first two candidates change only
@@ -53,8 +57,10 @@ No Rust, runtime, manifest, lock or Rust fixture changes, so every such byte is
 still the M9 closure's final tested code. The build-provenance repair then
 changes exactly `scripts/build_candidate.ps1` and adds
 `scripts/test_build_candidate.py` (`git diff --name-only 8be2cac 5a2b188`);
-nothing §8's groups build, test or read changes (§12). The publication head is
-a Markdown-only successor of `5a2b188`.
+nothing §8's groups build, test or read changes (§12). The project-integrity
+repair changes Rust and frontend code (`git diff --name-only cd7ec23 cf4af12`,
+§13), so §13's groups ran again on it. The publication head is a Markdown-only
+successor of `cf4af12`.
 
 ## 2. The stack
 
@@ -364,7 +370,8 @@ repairs found later had reviews of their own (§11).
 Carried out through pull request #127 under the owner's explicit
 authorization — first for the head that recorded §8's runs, and then, on a
 second authorization, for the build-provenance repair of §12 and its
-documentation successor:
+documentation successor, and then, on a third, for the project-integrity repair
+of §13 and its documentation successor:
 
 1. **Rebind live state.** `git ls-remote origin refs/heads/main` still
    `1daf802f06d0149b5de3dbd12e8b01e7e86862ec`; the effective `main` ruleset read
@@ -374,7 +381,8 @@ documentation successor:
    integration candidate named in §1 or a documentation-only successor of it
    whose diff from it (`git diff --name-only`) is Markdown alone — or, for the
    second authorization, the build-provenance repair of §12 and a Markdown-only
-   successor of it. A head with any other change is a new candidate that §8
+   successor of it — or, for the third, the project-integrity repair of §13,
+   requalified there, and a Markdown-only successor of it. A head with any other change is a new candidate that §8
    does not qualify, and it is not published until its affected groups have
    run.
 2. **Push the branch as it is**, without force, and open one pull request:
@@ -593,3 +601,136 @@ and changing the workflows was outside this repair.
 | `Remove-Item` of the bundle directory before a build | note | no change: it precedes the build and deletes no evidence |
 
 The review's fixes were checked by the runs above; no second review ran.
+
+## 13. Found at publication: three project-integrity repairs (PR #127)
+
+**What was found.** After the required checks had passed on `cd7ec23`, the
+repository's automated review left three findings on the Rust project store
+(`apps/desktop/src-tauri/src/project/`). Each was confirmed by reading the code
+and then by a test that failed on it:
+
+- **Save As beside an occupied result store.** Save As to another document
+  checked that the result-store name beside the destination was free only when
+  the project had stored targeted results. A project with none was published
+  beside a folder it did not make, and its first run would have used that
+  folder as its own store.
+- **A stored result not bound to its producing Plan.** Every payload manifest
+  records the digest of the Plan that produced it, but no read compared it with
+  the Plan of the Run that the document says produced the Artifact. A result
+  whose record was moved onto another Run of the same targets — a damaged or
+  hand-edited document — read as available and was reported, exported and
+  copied under the other Run's Plan.
+- **Revision advancement that could not fail.** Save and Save As advanced the
+  project revision with `saturating_add`. At `u64::MAX` a save republished the
+  same revision, so a later save could not be told apart from an earlier one.
+
+**Repair.** `532c692`, then `cf4af12` after the review below:
+
+- Save As to any document other than the one this session is bound to refuses
+  an occupied result-store name (`destinationStoreExists`) whether or not there
+  is a result to copy, before anything is written; a name that cannot be
+  inspected is refused `notPublished`. Save As to the bound document itself is
+  unchanged. With no result to copy, nothing reserves the name between the
+  check and the publish; the comment at the check says so.
+- A stored result is read only when its manifest's plan digest equals the Plan
+  resolved through the Artifact's single producing Run. The binding is carried
+  through availability observation on open, row and evidence reads, the stored
+  result, figures and exports, and the source and copy checks of Save As. A
+  mismatch, or a producing Plan that cannot be resolved, reads
+  `payloadCorrupt`; nothing is regenerated or rewritten.
+- Save and Save As advance the revision with `checked_add` and refuse the new
+  `revisionExhausted` before any publication; Save As refuses before copying
+  any result. A document at the last revision still opens.
+
+**Error contract.** One new refusal, `revisionExhausted`, not retryable, with
+an `en` and a `zh-CN` sentence; without them the panel would have shown the
+generic refusal. Two existing identifiers are reached in new cases: a Save As
+with no stored result to an occupied store name (`destinationStoreExists`, or
+`notPublished` if the name cannot be inspected), and a stored result whose
+manifest names another Plan (`payloadCorrupt`). No persisted format changes:
+the document and the manifest are as they were, and a result written by its
+own run carries its producing Plan's digest, so it reads as before.
+
+**Regression.** New tests, all in the desktop application:
+
+- `project::tests`: *a save as with no stored result refuses whatever occupies
+  the result store name* (a folder and a file, each kept; no document
+  published; the session stays unpublished and dirty); two controls, *a save as
+  with no stored result to a free name publishes and makes no store* and *a
+  save as over the bound document is not refused for the store beside it*; *the
+  revision advances to its last value once and then refuses without writing*;
+  *a document at the last revision opens but neither save nor save as writes*;
+  *a stale session still cannot overwrite once the last revision is reached*.
+- `targeted_ms1::tests`: *a save as at the last revision copies no result and
+  writes nothing*.
+- `targeted_ms1::tests::batch`: *a result moved onto another member's run is
+  refused rather than attributed to it* — two members with different sources
+  and Plans and the same targets have their `outputArtifactIds` swapped in the
+  saved document; availability, rows, evidence, the stored result and the
+  figure are refused `payloadCorrupt`, Save As copies neither, and the payload
+  bytes are unchanged.
+- `ProjectPanel.test.tsx`: *names an exhausted revision in its own words rather
+  than as an unknown refusal*.
+
+Logs are under `.tmp/pr127-rust-repair/` (git-ignored).
+
+| Command | On | Exit |
+| --- | --- | ---: |
+| the eight new Rust tests | `cd7ec23`'s implementation | 101 — 6 failed, exactly the three gaps; the two controls passed |
+| the eight new Rust tests | the repair, before it was committed | 0 — 8 of 8 |
+| the new panel test | the repair with the `revisionExhausted` mapping removed | 1 — announced `That action was refused and nothing was changed.` |
+| `ProjectPanel.test.tsx`, `localizationCoverage.test.ts` | the repair | 0 — 31 of 31 |
+| the batch regression alone | `cf4af12`'s content | 0 |
+
+**Validation on `cf4af12`**, serially under the two-level host-memory policy
+(every reading at 12.3 GiB free or more and 61% used or less; no stop), with
+a clean working tree. Because the repair changes Rust and frontend code, every
+group of §8 that builds or tests them ran again; nothing is inherited from §8
+for this head.
+
+| Group | Command | Exit |
+| --- | --- | ---: |
+| Rust | `cargo fmt --all --check` | 0 |
+| Rust | `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 |
+| Rust | `cargo test --locked --workspace --all-targets` | 0 — 1913 passed, 56 ignored |
+| Rust | `cargo test --locked -p mscanvas-desktop --lib project::` | 0 — 138 passed |
+| Rust | `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 — 88 passed, 33 ignored |
+| Rust | the same with `-- --ignored --test-threads=1 --nocapture` (the pinned real runtime), alone | 0 — 33 of 33; the attempts root empty afterwards |
+| Rust | `cargo check --locked --release --workspace` | 0 |
+| Frontend | `pnpm lint`; `pnpm typecheck` | 0; 0 |
+| Frontend | `pnpm test` | 0 — 106 files, 2171 tests |
+| Frontend | `pnpm build`; `pnpm e2e:typecheck` | 0; 0 |
+| Browser | the seven M8/M9 specs of §8 (`m8.1`–`m8.5`, `m9.1`, `m9.4`), one at a time | 0 each |
+| Repository | `python scripts/check_repo.py`; `git diff --check cd7ec23 cf4af12` | 0; 0 |
+
+`git diff --name-only cd7ec23 cf4af12` lists no manifest, lock, toolchain,
+workflow, script, e2e, experiment, Tauri configuration or capability file.
+
+**A run that did not count.** The first Rust group, on `532c692`, failed at
+clippy on the uncompilable assertion and was stopped, but stopping it ended
+only its shell. Its runner went on; once the assertion was corrected in the
+working tree, its real-runtime step ran from 11:30:54 to 11:33:00, alongside
+the first Rust group on `cf4af12`, whose real-runtime step began at 11:32:30. Both used the same
+attempts root, `.tmp/m91-jobs/attempts`, and each saw the other's attempt
+directories come and go: that step failed 1 of 33 there and 3 of 33 here, every
+failure an assertion that the attempts root was as it had been before.
+A sweep removes only a directory whose owning process has exited, so a
+directory of the test's own process could not have gone that way. No other
+process was then running, the attempts root was empty, and the step alone
+passed 33 of 33 (the row above). Neither overlapping step is evidence for
+either commit; the other rows of that first `cf4af12` group passed and are the
+ones above.
+
+**Review.** One narrow read-only review of the uncommitted repair, which ran
+no build or test, traced every caller of the changed functions and found no
+blocker:
+
+| Finding | Class | Disposition |
+| --- | --- | --- |
+| The batch regression accepted any error from the figure | test strength | fixed: it names the refusal. As first committed (`532c692`) the new assertion did not compile, which the first group run on `532c692` found at clippy (`E0433`); `cf4af12` corrected it |
+| A spelling of the bound document not recognised as the same one (a non-ASCII case difference, an 8.3 short name, a bound document removed outside the app), whose store a failed run left behind, is now refused `destinationStoreExists` with no stored result | note | not changed: `cd7ec23` already refused it when there was a result, and nothing is written |
+| A store name that cannot be inspected is refused `notPublished`, which is retryable, where `cd7ec23` treated it as free | note | not changed: it follows the existing refusal for an unsafe published name |
+| At the last revision a Save As reports `revisionExhausted` where it would otherwise report the destination's `staleDocument` | note | not changed: neither writes anything |
+| A producing Plan that cannot be resolved, read as `payloadCorrupt`, has no test | note | not changed: record validation refuses such a document before it is opened |
+
+No second review ran.
