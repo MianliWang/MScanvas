@@ -1,10 +1,14 @@
 # PM9.3 — evidence-first viewer: chromatogram, scans, spectrum, inspection and export
 
 PM9 | Acceptance: U3, U8 (viewer), U9, U10 | Depends on: PM9.2 | Serial, one writer
-Status: **STATIC PREPARATION COMPLETE — PRODUCTION IMPLEMENTATION NOT STARTED /
-SPECS NOT RUN.** Production code is frozen at `9786809` (tree `da9ae8e`), and
-everything here was read from source and recorded evidence. The midpoint check
-([slices.md](slices.md)) follows this slice.
+Status: **STATIC PREPARATION COMPLETE — PRODUCTION IMPLEMENTATION NOT
+STARTED.** §1–§3 and §5 were read at `9786809` (tree `da9ae8e`) from source and
+recorded evidence. The viewer's code is unchanged since then; the one later
+production change is the shell repair `a0783bb`
+([baseline §7](baseline.md#7-validation-window-2026-09-25)). In the 2026-09-25
+window the viewer contract spec ran 11 of 11 PASS on `a0783bb` (§4). That
+shows the authored harness executes against the unchanged viewer; it is not
+PM9.3 work. The midpoint check ([slices.md](slices.md)) follows this slice.
 
 ## Goal
 
@@ -37,9 +41,11 @@ processing, clipboard capability or exporter.
 
 ## Entry conditions
 
-- The branch is the provisional PM9 branch. The PM9.1 rendered baseline and the
-  PM9.2 draft are unvalidated, so a later validation window judges the
-  cumulative candidate.
+- The branch is the provisional PM9 branch. After the 2026-09-25 window, the
+  PM9.1 browser baseline is established and PM9.2 has passed browser
+  functional acceptance; PM9.2's visual and product acceptance is pending
+  ([baseline §7.7](baseline.md#77-status-after-the-window)). PM9.3
+  implementation starts only once PM9.2 closes.
 - Test execution stays paused until the owner opens a window.
 - The v5.11 HTML was re-hashed for this preparation: 490,253 bytes, SHA-256
   `d09b60e0…3896337`, the same as §3 of the baseline. It was read, not
@@ -151,10 +157,10 @@ No row is a verdict of visual quality or parity.
 | Chromatogram / spectrum / scans | Chromatogram full width; below it, the scan list **left** and the spectrum **right** (stacks at ≤1320 px); tabs for scans, RT×m/z map, metadata | Three stacked panels: chromatogram, spectrum, scans; no tabs | INTENTIONAL CONTRACT ([DESIGN_SYSTEM](../../ux/DESIGN_SYSTEM.md#durable-v511-reference-baseline), M7.3 "the composition is chromatogram, selected spectrum, then bounded scans"). Side-by-side vs stacked: VERIFIED STRUCTURAL. The RT×m/z map has no production capability (not applicable). `app/app.css` comments near the `.viewer-stack` rules still describe a chromatogram → scans → spectrum grid with floors; `workbench.css:92` makes the shell's stack a flex column, so those floors are probably inert (static cascade reading; confirm with a render) |
 | Plot-adjacent controls | No persistent zoom; a hover or focus-revealed corner (expand, ··· menu); a context menu with view history, bounds, auto peak height, interval selection, SVG | Persistent zoom in/out/reset groups; TIC/BPC checkboxes; quick figure actions in each panel header; range editor and help as `<details>`; no context menu, focus mode or view history | VERIFIED STRUCTURAL. DESIGN_SYSTEM's "no permanent mode strip" and keyboard/non-gesture equivalents cover plain buttons. View history and auto peak height have no production owner, and adding them is new behaviour, not presentation |
 | Committed / pending feedback | Drag, then a pending dashed band and a strip ("selected a–b", zoom to selection, cancel, and "use for RT filter" on RT), guidance only while pending; confirming zooms; numeric "select interval" creates a pending band; no chromatogram marker, and a chromatogram click does nothing | The same pending → confirm/cancel grammar (`.plot-range-band`, "Pending …" line, "Zoom to selection" / "Cancel range"); the line is always shown ("Committed …" otherwise); numeric Apply commits directly; chromatogram marker and click-to-select | Pending/confirm grammar: INTENTIONAL CONTRACT (M7.3). Always-visible committed line, direct numeric commit, and chromatogram-to-scan linking: VERIFIED STRUCTURAL. "Use for RT filter" has no production counterpart and is out of scope. Band salience: NEEDS RENDER |
-| Inspector / Details | Always a right column (240/1fr/245), stacked below at ≤1320 and ≤960; sample-level facts; scan facts in the main column | A right column of 245 px only when Details is toggled or the window is ≥1700 px wide (`panelPresentation.ts:31`, `:73-75`); run-level summary; scan facts in the spectrum panel's "details and identifiers" disclosure | Column width: INTENTIONAL CONTRACT (DESIGN_SYSTEM). Hidden by default below 1700 px, and its content scope: VERIFIED STRUCTURAL (the default is recorded only in a code comment). Rendered Details state is unobserved (gap assessment) |
+| Inspector / Details | Always a right column (285/1fr/245 at 1920×1080 and 240/1fr/245 at 1366×768, measured in baseline §3.1), stacked below at ≤1320 and ≤960; sample-level facts; scan facts in the main column | A right column of 245 px only when Details is toggled or the window is ≥1700 px wide (`panelPresentation.ts:31`, `:73-75`); run-level summary; scan facts in the spectrum panel's "details and identifiers" disclosure | Column width: INTENTIONAL CONTRACT (DESIGN_SYSTEM). Hidden by default below 1700 px, and its content scope: VERIFIED STRUCTURAL (the default is recorded only in a code comment). Rendered Details state: observed only where it opens by default at 1920×1080 (baseline §3.1, L3 and L12); the toggled-open state below 1700 px was not captured |
 | Export discoverability | Viewer: SVG of the current view only, from the hover-revealed menu; a separate export-and-records page | Visible "Export figure", "Quick PNG", "Copy plot" in each plot header; a chromatogram "Export" toggle and an "Export spectrum" disclosure with Full/Current, settings, SVG/PNG/Copy, CSV/TSV and the linked figure | Placement: INTENTIONAL CONTRACT (DESIGN_SYSTEM, M7.3 "reachable disclosures"); formats are production capabilities the reference does not model. Prominence: NEEDS RENDER |
 | Responsive folding | ≤1320: two columns, inspector below, scans over spectrum; ≤960: one column, collapsible roster, inspector stacked; ≤620: hints hidden | ≤1050 (JS and CSS): one region at a time, and the evidence is hidden while the roster or Details is open; ≥1700: Details automatic; `app.css` rules at ≤1120 probably inert; the range editor narrows at ≤600 | Fold at 1050 into header actions: INTENTIONAL CONTRACT (DESIGN_SYSTEM). Swap rather than stack, with no middle stage: VERIFIED STRUCTURAL. Heights, scroll and what is visible without scrolling: NEEDS RENDER (PM9.1 G and PM9.3 G record them) |
-| Explanatory copy / disclosure | Header gesture strip; plot-foot disclaimers; guidance only while pending; screen-reader-only hint; help modal (`?`, menu); no `<details>` | Unit and range captions, readouts, counts and export notes always visible; per-plot "Plot gestures" help and several other `<details>`; header drop hint (and, in the PM9.2 draft, the context line) | Header hint: recorded draft deviation (baseline §3). Disclosures: INTENTIONAL CONTRACT (DESIGN_SYSTEM, M7.3). Against the modal/menu model: VERIFIED STRUCTURAL. Copy density: NEEDS RENDER |
+| Explanatory copy / disclosure | Header gesture strip; plot-foot disclaimers; guidance only while pending; screen-reader-only hint; help modal (`?`, menu); no `<details>` | Unit and range captions, readouts, counts and export notes always visible; per-plot "Plot gestures" help and several other `<details>`; header drop hint (and, in the PM9.2 draft, the context line) | Header hint and context line: a PM9.2 action (baseline §3 and §3.1, L14–L16). Disclosures: INTENTIONAL CONTRACT (DESIGN_SYSTEM, M7.3). Against the modal/menu model: VERIFIED STRUCTURAL. Copy density: NEEDS RENDER |
 
 Before PM9.3 changes presentation, a render must settle:
 
@@ -167,7 +173,25 @@ Before PM9.3 changes presentation, a render must settle:
 
 The comparison with the reference is Chinese-only, as recorded in baseline §3.
 
-## 4. PM9.3 browser acceptance spec (authored, NOT RUN)
+The 2026-09-25 render ([baseline §3.1](baseline.md#31-rendered-comparison-and-dispositions-2026-09-25))
+answered part of the first question by position: the chromatogram panel starts
+at y 189 and is fully on screen in every idle (Workbench) frame, while at
+960×640 the spectrum panel shows only its title and actions (L4). Its
+dominance over the panel chrome is still PM9.3's to judge. PM9.3's own G
+frames (`test-results/pm9.3/browser-l7oU7m/`) recorded a pending m/z band's
+actions and range lines, and the export entries, at all three viewports as DOM
+readings. On screen, the band, its actions and the pending line appear only
+at 1920×1080: the spectrum plot is 220, 43 and 0 px on screen at 1920×1080,
+1366×768 and 960×640. Neither the band's salience nor the export entries'
+prominence has been judged or compared with the reference. The empty entry state and the
+roster-open and Details-open states of the swap were not captured. The render
+also confirmed one PM9.3 defect, **L13**: in
+English at 960×640 the chromatogram toolbar wraps to two rows, contrary to the
+design-system rule that toolbars must not grow into wrapping ribbons. It
+predates PM9.2 and is not fixed yet. It is **the first implementation item of
+PM9.3**, after PM9.2 closes.
+
+## 4. PM9.3 browser acceptance spec
 
 `e2e/specs/pm9.3-viewer.browser.e2e.ts`.
 
@@ -178,9 +202,15 @@ The comparison with the reference is Chinese-only, as recorded in baseline §3.
   projection for what was asked. Nothing in the application is patched, and
   there is no production mock mode.
 - **Not used:** `openTheViewer` and the DPR-waiting `metrics()` helpers.
-- **Backing:** every case is mock-backed and **NOT RUN**.
+- **Backing:** every case is mock-backed.
+- **Result:** 11 of 11 PASS on `a0783bb`, one invocation inside the 2026-09-25
+  campaign ([baseline §7.5](baseline.md#75-full-browser-campaign)), against the
+  unchanged viewer (PM9.2 only reads its state for the context line). It shows
+  that the harness and the contracts below execute; it is not PM9.3
+  implementation.
 - **Evidence:** written under `MSCANVAS_PM9_OUTPUT_ROOT`, default
-  `test-results/pm9.3/`.
+  `test-results/pm9.3/` (git-ignored; the window's run is
+  `test-results/pm9.3/browser-l7oU7m/`).
 - **Command (in an owner-opened window, after `pnpm e2e:typecheck`):**
 
 ```text
@@ -189,16 +219,16 @@ pnpm e2e:browser --spec ./e2e/specs/pm9.3-viewer.browser.e2e.ts
 
 | Case | Contract (owner) | Expected | Status |
 | --- | --- | --- | --- |
-| V1 | One source index behind table, Previous/Next and chromatogram (ADR 0032 D; `selectSpectrum`) | Table row 3, Next, Previous, then a chromatogram click at scan 6 send `load_selected_spectrum` indices `[3, 4, 3, 6]`. After each, the selected row, the marker and "Spectrum N," agree. One preview read | NOT RUN |
-| V2 | Search, filter and sort never replace a hidden selection (ADR 0032 M7.3 amendment; `SpectrumTable`) | With a descending sort and a search, a hidden scan 3 keeps its spectrum and shows the outside-results sentence. Previous and Next are disabled, and no read happens. "Clear filters and reveal" restores it with the sort kept, and Next then selects 2 | NOT RUN |
-| V3 | A pending RT band is not Current authority (ADR 0034; M7.3) | A released band stays "Pending". Exporting CSV over Current sends `{scope: current, low: null, high: null}` | NOT RUN |
-| V4 | A committed range is the Current path (ADR 0034) | "Zoom to selection" commits. The panel note is exactly the committed-range sentence, and CSV sends those bounds. With a new band pending over it, CSV still sends the committed bounds. Full then sends `{scope: full, null, null}` | NOT RUN |
-| V5 | Viewport moves are not source reads (ADR 0038, `lib.rs` projection doc) | RT zoom, zoom out, reset and wheel, a band and its cancel, and m/z zoom and reset issue no `open_mzml_preview` or `load_selected_spectrum`. The only request is `project_selected_spectrum` | NOT RUN |
-| V6 | m/z context follows the spectrum (ADR 0038, 0040) | The zoomed caption and a Current scope survive Conversion → Project → Workbench with no source read. The next scan opens at "(full range)", with the scope back at Full | NOT RUN |
-| V7 | A refused viewport is honest and keeps data export (ADR 0040) | The caption says there is no range and the status gives the refusal. The m/z controls are disabled, with no Current radio and the no-viewport note. CSV still sends `{scope: full, null, null}` | NOT RUN |
-| V8 | Exports stay format-specific (ADR 0029/0030/0036) | Spectrum figure `[SVG, PNG, Copy]` and data `[CSV, TSV]` are separate groups, and the linked section has no CSV or TSV. Chromatogram TSV, spectrum PNG and linked SVG each send their own command and format | NOT RUN |
-| V9 | Shell navigation keeps viewer context; a new preview resets only what the owners reset (ADR 0032 `preview-loaded`) | Selection, committed RT range, m/z caption, search, scope and the figure-width draft survive a shell trip with no source read. Opening the second acquisition clears the selection, the marker and the committed range. The run scope, search and draft after it are recorded, not asserted | NOT RUN |
-| G (×2) | Observation (U9) | en and zh-CN (reduced motion in zh-CN): one state (selected scan, committed RT range, pending m/z band) at 1920×1080 → 1366×768 → 960×640. Records panel boxes, on-screen plot heights, the evidence scroll, range lines and export entries. Asserts only overflow ≤ 1 px and no off-origin request | NOT RUN (observation) |
+| V1 | One source index behind table, Previous/Next and chromatogram (ADR 0032 D; `selectSpectrum`) | Table row 3, Next, Previous, then a chromatogram click at scan 6 send `load_selected_spectrum` indices `[3, 4, 3, 6]`. After each, the selected row, the marker and "Spectrum N," agree. One preview read | PASS |
+| V2 | Search, filter and sort never replace a hidden selection (ADR 0032 M7.3 amendment; `SpectrumTable`) | With a descending sort and a search, a hidden scan 3 keeps its spectrum and shows the outside-results sentence. Previous and Next are disabled, and no read happens. "Clear filters and reveal" restores it with the sort kept, and Next then selects 2 | PASS |
+| V3 | A pending RT band is not Current authority (ADR 0034; M7.3) | A released band stays "Pending". Exporting CSV over Current sends `{scope: current, low: null, high: null}` | PASS |
+| V4 | A committed range is the Current path (ADR 0034) | "Zoom to selection" commits. The panel note is exactly the committed-range sentence, and CSV sends those bounds. With a new band pending over it, CSV still sends the committed bounds. Full then sends `{scope: full, null, null}` | PASS |
+| V5 | Viewport moves are not source reads (ADR 0038, `lib.rs` projection doc) | RT zoom, zoom out, reset and wheel, a band and its cancel, and m/z zoom and reset issue no `open_mzml_preview` or `load_selected_spectrum`. The only request is `project_selected_spectrum` | PASS |
+| V6 | m/z context follows the spectrum (ADR 0038, 0040) | The zoomed caption and a Current scope survive Conversion → Project → Workbench with no source read. The next scan opens at "(full range)", with the scope back at Full | PASS |
+| V7 | A refused viewport is honest and keeps data export (ADR 0040) | The caption says there is no range and the status gives the refusal. The m/z controls are disabled, with no Current radio and the no-viewport note. CSV still sends `{scope: full, null, null}` | PASS |
+| V8 | Exports stay format-specific (ADR 0029/0030/0036) | Spectrum figure `[SVG, PNG, Copy]` and data `[CSV, TSV]` are separate groups, and the linked section has no CSV or TSV. Chromatogram TSV, spectrum PNG and linked SVG each send their own command and format | PASS |
+| V9 | Shell navigation keeps viewer context; a new preview resets only what the owners reset (ADR 0032 `preview-loaded`) | Selection, committed RT range, m/z caption, search, scope and the figure-width draft survive a shell trip with no source read. Opening the second acquisition clears the selection, the marker and the committed range. The run scope, search and draft after it are recorded, not asserted | PASS |
+| G (×2) | Observation (U9) | en and zh-CN (reduced motion in zh-CN): one state (selected scan, committed RT range, pending m/z band) at 1920×1080 → 1366×768 → 960×640. Records panel boxes, on-screen plot heights, the evidence scroll, range lines and export entries. Asserts only the page language, overflow ≤ 1 px, no off-origin request, and no console entry other than motion's reduced-motion notice in zh-CN | PASS (observation) |
 
 Nothing in this spec re-proves what Vitest already covers at component or hook
 level (§5). Its value is the rendered layer: real pointer gestures, real
@@ -267,16 +297,22 @@ The budget and unfreeze condition in [slices.md](slices.md) still apply.
 ## 6. Pending (needs a validation window)
 
 1. Run `pm9.3-viewer.browser.e2e.ts` and the corrected PM9.1 spec on the
-   cumulative candidate; record exits.
+   cumulative candidate; record exits. **Done** on `a0783bb`: 11 of 11 and 14
+   of 14 ([baseline §7](baseline.md#7-validation-window-2026-09-25)).
 2. Render the current viewer at 1920×1080, 1366×768 and 960×640 in en and
    zh-CN, then render the reference at the same viewports. Settle the
    NEEDS RENDER rows in §3 and fill baseline §3's production column.
+   **Partly done:** the reference and PM9.1's observation states are rendered
+   and baseline §3 is filled (§3.1). PM9.3's own G frames were recorded later,
+   in the campaign (baseline §7.5; `test-results/pm9.3/browser-l7oU7m/`). The
+   §3 questions the render did not answer are listed at the end of §3.
 3. Measure J1 (curate and inspect) and J5's viewer exports before any
    presentation change.
 4. Repair, then rerun, the legacy specs in §5 in the stated order.
 5. Only then decide and implement the presentation changes the evidence
    supports, within the owners in §1, and update the product and design
-   records.
+   records. The first implementation item, once PM9.2 closes, is the confirmed
+   defect L13 (§3).
 
 ## Not in this slice
 
@@ -300,4 +336,7 @@ The budget and unfreeze condition in [slices.md](slices.md) still apply.
   languages, with keyboard and reduced-motion samples.
 
 Until then U3, U8 and U9 for the viewer are **PLANNED**, with static
-preparation only.
+preparation only. None is met yet: the §4 spec passes 11 of 11 on `a0783bb`,
+which carries no PM9.3 change, so it shows only that the authored harness
+executes against the unchanged viewer; the first criterion applies to the
+candidate that carries PM9.3's changes.

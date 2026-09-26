@@ -4,8 +4,11 @@ Stage: after M9, the concentrated real-workflow UI/UX cleanup that precedes a
 new product candidate ([ROADMAP](../../../ROADMAP.md), [M9 closure §15](../../product/M9_CLOSURE.md#15-after-m9)).
 Budget: seven slices, including the opening baseline (PM9.1) and the closing
 acceptance (PM9.7). No uncounted planning or cleanup slice.
-Status: **PLANNED**. PM9.1 and PM9.2 have local, unvalidated work on a
-provisional base, and PM9.3 has static preparation only; see
+Status: **PLANNED**. The 2026-09-25 validation window established PM9.1's
+browser rendered baseline, which is not complete, and passed PM9.2's browser
+functional acceptance on the production-code candidate `a0783bb`; PM9.2's
+visual and product acceptance is pending. PM9.3 has static preparation and a
+passing contract spec only. All of it sits on a provisional base; see
 [slices.md](slices.md). Nothing here is accepted.
 
 ## Mission
@@ -63,9 +66,9 @@ and late-request protection; conversion order, stop and output ownership;
 Project/Plan/Run/Artifact lineage; atomic Save and Save As refusals, destination
 store occupancy, payload–plan binding and revision bounds (validated on
 `cf4af12`); the two focus-race regressions; snapshot and scratch boundaries;
-stored results never re-executed. The stale-reference repair (`8ad3912`) is
-implemented and **not validated**; its evidence is established by the later
-qualification, not by PM9.
+stored results never re-executed. The stale-reference repair (`8ad3912`) was
+run in the 2026-09-25 window on its documentation successor `d56b17b`, every
+exit 0; its qualification belongs to the integration record, not to PM9.
 
 ## Locked decisions (from the owner)
 

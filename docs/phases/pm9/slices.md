@@ -43,30 +43,36 @@ eighth slice.
 | # | Result | Rework? | Notes |
 | --- | --- | --- | --- |
 | Gate | Development entry gate amended (2026-09-25) | — | The owner allowed provisional local PM9 development from the verified local checkpoint `d56b17b6eab8dfdc5e15a85959c971121ee7685c` on `feat/pm9-product-convergence`, stopping before PM9.3. This is **not** an accepted integration baseline: its ancestry holds the unvalidated `8ad3912` and the unmerged PR #127 stack. Test execution stays paused; budget, v5.11 direction, schema 4, scientific scope, HOLD and publication rules are unchanged. Reconciliation with the eventually accepted `main` is a separate task. |
-| PM9.1 | **STATIC PREPARATION IMPLEMENTED — RENDERED BASELINE PENDING** | — | [baseline.md](baseline.md): ownership map, legacy-spec map from recorded evidence, reference identity and known deviations, verification entry points. Controlled scenarios in `apps/desktop/src/test/pm9Scenarios.tsx`. Browser baseline spec `e2e/specs/pm9.1-baseline.browser.e2e.ts` authored, **NOT RUN** ([baseline §6](baseline.md#6-browser-baseline-spec-authored-not-run)). Not done: rendered captures at the three viewports and two languages, reference rendering, task-sequence and request/mount measurements. |
-| PM9.2 | **LOCAL IMPLEMENTATION DRAFT — NOT BUILT / NOT RENDERED / NOT TESTED** | — | Code commits `317481edf9270fac49af07dcc0d2a63866a0a30a` (the shell context line, the Project work dot, PM9.1 scenarios and tests) and `9786809fcfe3f6933bf7c1ec8d1f011ae5310970` (tree `da9ae8eb3dcc9eb4412153ad7e3671a7b0770f0b`: focus ring drawn inside the clipped line, 32 px compact items), found by a bounded static read before this record; see [slice-02.md](slice-02.md). Depends provisionally on PM9.1's static facts only. |
-| PM9.3 | **STATIC PREPARATION COMPLETE — PRODUCTION IMPLEMENTATION NOT STARTED / SPECS NOT RUN** | — | [slice-03.md](slice-03.md): viewer ownership map, action classes, static v5.11 mismatch ledger, legacy-spec classification. `e2e/specs/pm9.3-viewer.browser.e2e.ts` authored, NOT RUN. Production frozen at `9786809`. Three PM9.1 spec authoring defects were corrected test-only ([baseline §6.5](baseline.md#65-static-review-corrections-pm93-preparation)). The midpoint check waits for the validation window. |
+| PM9.1 | **BROWSER RENDERED BASELINE ESTABLISHED — NATIVE ACCEPTANCE PENDING; NOT COMPLETE** | — | [baseline.md](baseline.md): ownership map, legacy-spec map from recorded evidence, reference identity and known deviations, verification entry points, rendered comparison ([§3.1](baseline.md#31-rendered-comparison-and-dispositions-2026-09-25)) and validation record ([§7](baseline.md#7-validation-window-2026-09-25)). Controlled scenarios in `apps/desktop/src/test/pm9Scenarios.tsx`. Browser baseline spec `e2e/specs/pm9.1-baseline.browser.e2e.ts`: B1–B7 PASS; the final authored set 14/14 PASS on `a0783bb` ([baseline §6](baseline.md#6-browser-baseline-spec)). Not done: native Windows rendered acceptance at the host's 150 % scaling (PENDING); the provider-positive native route (BLOCKED_PROVIDER_HOLD); J1–J6 step, decision and mount measurements; the shared-helper diagnoses. |
+| PM9.2 | **BROWSER FUNCTIONAL ACCEPTANCE PASSED — VISUAL AND PRODUCT ACCEPTANCE PENDING** | Yes, one repair | Code commits `317481edf9270fac49af07dcc0d2a63866a0a30a` (the shell context line, the Project work dot, PM9.1 scenarios and tests) and `9786809fcfe3f6933bf7c1ec8d1f011ae5310970` (tree `da9ae8eb3dcc9eb4412153ad7e3671a7b0770f0b`: focus ring drawn inside the clipped line, 32 px compact items), found by a bounded static read before this record, and the window's repair `a0783bb7c64b41cd0c2ab3780573bfb679e3464a` (tree `85b5e15e8537d4f41992bd31022447994489029a`: a 960×640 horizontal overflow). `a0783bb` is the tested production-code candidate. Remaining work: the owner's actions L1, L9, L10, L14–L16 and L22, and confirming L20's conditions (the Details affordance obvious, stable and keyboard reachable) ([baseline §3.1](baseline.md#31-rendered-comparison-and-dispositions-2026-09-25)); see [slice-02.md](slice-02.md). |
+| PM9.3 | **STATIC PREPARATION COMPLETE — PRODUCTION IMPLEMENTATION NOT STARTED** | — | [slice-03.md](slice-03.md): viewer ownership map, action classes, static v5.11 mismatch ledger, legacy-spec classification. `e2e/specs/pm9.3-viewer.browser.e2e.ts` ran 11/11 PASS on `a0783bb` against the unchanged viewer, which shows the authored harness executes. Three PM9.1 spec authoring defects were corrected test-only ([baseline §6.5](baseline.md#65-static-review-corrections-pm93-preparation)). First implementation item once PM9.2 closes: the confirmed defect L13. The midpoint check still follows this slice. |
+| Window | **Validation window 2026-09-25** | — | One owner-opened window over PR #127's local candidate (`d56b17b`) and the PM9 cumulative candidate (`a0783bb`); record in [baseline §7](baseline.md#7-validation-window-2026-09-25). Full browser campaign: 378 outcomes — 179 same pass, 174 same known failure, 25 new PM9 tests all passing, 0 new failure / now passing / no result; five parallel shards, not the serial topology first requested. No new browser outcome regression observed. |
 
-### Verification backlog (for the next owner-opened window)
+### Verification backlog
 
-Target the reconciled cumulative candidate, not each intermediate commit.
+The 2026-09-25 window ran the previous backlog except the panel-floor
+confirmation and slice-03 §6's render and legacy-repair order, which carry
+over as items 3 and 5 below. It ran PR #127's Rust checklist on `d56b17b`,
+which PM9 inherits; the front end; the seven M8/M9 browser specs; PM9.1's and
+PM9.3's specs; and the repository checks, all on `a0783bb` except the Rust
+group ([baseline §7](baseline.md#7-validation-window-2026-09-25)). For the next
+owner-opened window, target the cumulative candidate, not each intermediate
+commit:
 
-1. The deferred PR #127 checklist on that candidate (Rust group, real-runtime
-   suite alone, release check).
-2. Front end: `pnpm lint`, `pnpm typecheck`, `pnpm test` — including the new
-   `shellContext.test.ts`, `ContextLineShell.test.tsx` and
-   `app/Pm9Baseline.test.tsx`, none of which has run — and `pnpm build`.
-3. The seven M8/M9 browser specs, which wait on `.workbench-header` and whose
-   layout readings move with the header's second line.
-4. PM9.1's rendered baseline and the PM9.2 context line at 1920×1080,
-   1366×768 and 960×640, en and zh-CN, keyboard and reduced motion — starting
-   with `pnpm e2e:browser --spec ./e2e/specs/pm9.1-baseline.browser.e2e.ts`
-   ([baseline §6](baseline.md#6-browser-baseline-spec-authored-not-run)); confirm
-   the header's height change leaves the measured panel floors intact.
-5. PM9.3's viewer spec,
-   `pnpm e2e:browser --spec ./e2e/specs/pm9.3-viewer.browser.e2e.ts`, and the
-   render and legacy-repair order in [slice-03 §6](slice-03.md#6-pending-needs-a-validation-window).
-6. `python scripts/check_repo.py` and `git diff --check`.
+1. Native Windows rendered acceptance at the host's 150 % scaling, by a route
+   the ProteoWizard HOLD allows; a native window probes the installed backend
+   on mount ([baseline §7.6](baseline.md#76-scaling-and-native-windows)). The
+   provider-positive native route stays BLOCKED_PROVIDER_HOLD.
+2. J1–J6 step, decision and mount measurements ([slice-01](slice-01.md)
+   pending item 4).
+3. The shared `openTheViewer` and m7.2 `metrics()` helper diagnoses (slice-01
+   pending item 5), then the measured panel floors at 960×640.
+4. PM9.2's remaining actions ([baseline §3.1](baseline.md#31-rendered-comparison-and-dispositions-2026-09-25)),
+   each rendered at 1920×1080, 1366×768 and 960×640 in en and zh-CN with
+   keyboard and reduced-motion samples, and the affected specs rerun; and L20's
+   Details affordance confirmed obvious, stable and keyboard reachable.
+5. PM9.3's render and legacy-repair order in
+   [slice-03 §6](slice-03.md#6-pending-needs-a-validation-window).
 
 ## Closing record
 

@@ -2,8 +2,10 @@
 
 PM9 | Acceptance: baseline for U1, U9, U10; repeatable scenarios for U2–U8 |
 Type: experimental / must | Serial, one writer
-Status: **STATIC PREPARATION IMPLEMENTED — RENDERED BASELINE PENDING.** Not
-complete.
+Status: **BROWSER RENDERED BASELINE ESTABLISHED — NATIVE ACCEPTANCE PENDING.**
+Not complete. Established in the browser in the 2026-09-25 window on the
+production-code candidate `a0783bb`
+([baseline §7](baseline.md#7-validation-window-2026-09-25)).
 
 ## Entry conditions
 
@@ -24,41 +26,53 @@ the [v5.11 gap assessment](../../ux/M8_0_V511_GAP_ASSESSMENT.md) (its section C
 is what this slice continues), [screen model](../../product/SCREEN_MODEL.md) and
 [primary workflows](../../product/PRIMARY_WORKFLOWS.md).
 
-## Delivered (static; nothing run)
+## Delivered
 
 - [baseline.md](baseline.md): ownership map, legacy browser-spec map from
   recorded evidence, reference identity and known intentional deviations,
-  controlled scenario list, verification entry points.
+  controlled scenario list, verification entry points, the rendered
+  comparison (§3.1) and the validation record (§7).
 - `apps/desktop/src/test/pm9Scenarios.tsx`: seven controlled, synthetic
   scenarios over the real composition, built from existing fixture builders.
 - `apps/desktop/src/app/Pm9Baseline.test.tsx`: scenario tests — first-run
   context, roster preserved across navigation, conversion running and ended,
-  stored result whole / missing / corrupt — **written, not run**.
+  stored result whole / missing / corrupt — pass (baseline §7.2).
 - `e2e/specs/pm9.1-baseline.browser.e2e.ts`: the browser baseline spec on the
   existing harness — seven functional cases over the context line and four
-  observation runs — **authored, NOT RUN**; ledger and J1–J6 map in
-  [baseline §6](baseline.md#6-browser-baseline-spec-authored-not-run).
+  observation runs. B1–B7 pass, and after the window's repair the final
+  authored set passes 14 of 14 on `a0783bb` (baseline §7.3); ledger and J1–J6
+  map in [baseline §6](baseline.md#6-browser-baseline-spec).
 
-## Pending (needs a validation window)
+## Pending items and their state after the 2026-09-25 window
 
-1. Run the tests above; record exits.
+1. Run the tests above; record exits. **Done** (baseline §7.2).
 2. Run the authored browser baseline spec
-   ([baseline §6](baseline.md#6-browser-baseline-spec-authored-not-run)), and
+   ([baseline §6](baseline.md#6-browser-baseline-spec)), and
    render in the browser harness (`e2e/support/harness.ts`: IPC
    boundary preloaded, hold/reject, console ledger) at 1920×1080, 1366×768 and
    960×640 CSS, en and zh-CN, keyboard traversal and reduced motion (CDP
    `Emulation.setEmulatedMedia`, as the M7.2 spec does). DPR is recorded
-   separately and never read as native scaling.
+   separately and never read as native scaling. **Done in the browser at DPR
+   1.** The host runs at 150 % scaling; native Windows rendered acceptance at
+   that scaling is **PENDING**, and the provider-positive native route is
+   **BLOCKED_PROVIDER_HOLD** (baseline §7.6).
 3. Render the reference at the same viewports (Chinese only) and fill the
    deviation table's production column; classify each difference as recorded
-   intentional / gap for PM9.N / later / not applicable.
-4. Measure journeys J1–J6 before later slices change them — curate and inspect;
+   intentional / gap for PM9.N / later / not applicable. **Partly done:** the
+   reference is rendered and the production column is filled. The owner
+   disposed of L1, L9, L10, L13, L14–L16, L20 and L22; the other rows cite
+   existing records or are routed to PM9.3; L11, L12 and parts of L3, L5 and
+   L21 are open, and L7 at 1920×1080 has no disposition; and the states in the
+   "Not captured" list were not part of the comparison
+   ([baseline §3.1](baseline.md#31-rendered-comparison-and-dispositions-2026-09-25)).
+4. **Not done.** Measure journeys J1–J6 before later slices change them — curate and inspect;
    convert; reopen and check a project; targeted setup, review and run; read QC
    and targeted results and export; Home / Settings / folding — recording
    steps, decisions, context changes, required confirmations, preserved IDs,
    drafts and viewports, IPC calls and mounts. No click-count targets are set
    beforehand; required confirmations stay.
-5. Diagnose the shared `openTheViewer` roster helper and the m7.2 `metrics()`
+   The B cases record the requests of their own paths only.
+5. **Not done.** Diagnose the shared `openTheViewer` roster helper and the m7.2 `metrics()`
    helper before any per-test legacy repair ([baseline §2](baseline.md#2-failing-legacy-browser-specs)).
 
 ## Pitfalls
@@ -90,3 +104,11 @@ and two languages with keyboard and reduced-motion samples; the deviation table
 filled; J1–J6 measured; verification entry points confirmed. U1, U9 and U10 are
 then **baseline established**, not accepted. A missing reference or entry point
 is a named gap and PM9.1 stays incomplete.
+
+After the 2026-09-25 window the tests have run, the rendered scenarios exist in
+the browser and the deviation table's production column is filled, with L11,
+L12 and parts of L3, L5 and L21 still open and L7 at 1920×1080 undisposed.
+J1–J6 are not measured, native rendered acceptance at the host's 150 % scaling
+is PENDING and the provider-positive native route is BLOCKED_PROVIDER_HOLD, so
+**PM9.1 is NOT COMPLETE**. The helper diagnoses (pending item 5) are also not
+done.

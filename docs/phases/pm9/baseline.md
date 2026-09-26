@@ -1,11 +1,13 @@
 # PM9.1 static baseline
 
-Status: **STATIC PREPARATION IMPLEMENTED — RENDERED BASELINE PENDING.**
-Everything here was read from source, recorded evidence and the reference
-material; nothing was built, rendered or run. The rendered comparison,
-task-sequence measurements and reference captures are pending a validation
-window the owner opens. The browser baseline spec is authored and **NOT RUN**
-(§6).
+Status: **BROWSER RENDERED BASELINE ESTABLISHED — NATIVE ACCEPTANCE PENDING;
+PM9.1 NOT COMPLETE.** §1–§5 were read from source, recorded evidence and the
+reference material. The owner-opened validation window of 2026-09-25 ran the
+browser baseline spec (§6), rendered the reference and compared it (§3.1), and
+recorded the campaign (§7). The tested production-code candidate is `a0783bb`
+(tree `85b5e15`); a later documentation-only commit is not a code candidate.
+Native Windows rendered acceptance at the host's 150 % scaling is PENDING, and
+the provider-positive native route is BLOCKED_PROVIDER_HOLD (§7.6).
 
 ## 1. Ownership map
 
@@ -46,7 +48,10 @@ lane already reports.
 ## 2. Failing legacy browser specs
 
 Recorded evidence only: `docs/spikes/M9_CLOSURE_EVIDENCE.md` §8 and the
-retained closure logs. Nothing was rerun. On published `main` and on the M9
+retained closure logs; the table was built without a rerun. The 2026-09-25
+campaign (§7.5) later ran every file on `a0783bb`, and the same 174 tests fail
+by stable test identity (failure text compared only for m7.2 and m7.5). On
+published `main` and on the M9
 closure code, 20 spec files and 174 of 317 shared tests fail identically.
 "Inference" marks what the evidence does not state.
 
@@ -101,16 +106,68 @@ captures are at 1440, 780 and 390 pixels wide, not PM9's viewports; the
 reference has a Chinese interface only. The tracked visual contract remains the
 [durable v5.11 baseline](../../ux/DESIGN_SYSTEM.md#durable-v511-reference-baseline).
 
-Known intentional deviations, to be confirmed by the rendered comparison:
+Known deviations, checked against the rendered comparison (§3.1), with the
+roster width corrected to the measured values. ETA is confirmed absent only on
+the captured Workbench and Project surfaces, row density only visually, and
+the context bar is now a PM9.2 action rather than an intentional deviation:
 
 | Region | Reference | Production | Disposition |
 | --- | --- | --- | --- |
-| Roster width | ≈240 px | 280 px | recorded M7.2 deviation (wrapped names, separate selection controls) |
+| Roster width | 285 px at 1920×1080 and 240 px at 1366×768, measured; a full-width toggle bar at 960×640 | 280 px at 1920×1080 and 1366×768; folded into a header action at 960×640 | recorded M7.2 deviation at 1366×768 (wrapped names, separate selection controls); at 1920×1080 production is 5 px narrower than the measured reference, a case the M7.2 rationale ("wider than the approximate 240px reference", DESIGN_SYSTEM) does not describe |
 | Acquisition row minimum | 61 px | 44/32 px comfortable/compact | recorded M7.1 production density |
 | Navigation | Data workbench, processing workflow, features and annotation, statistics and QC, export and records | Workbench, Conversion & results, Project | only real capabilities enter navigation; the other three are not applicable |
 | ETA | simulated per step and total | none | excluded; no simulated ETA |
 | Demo actions (reset, capability check, sources) | present | absent | not ported |
-| Secondary context bar under the header | demo status left, gesture hints right | PM9.2 draft: context line left, drop hint right | draft; rendered comparison pending |
+| Secondary context bar under the header | demo status left, gesture hints right | PM9.2 context line left, drop hint right | concept kept; redesign as a priority-based summary (§3.1, L14–L16) |
+
+### 3.1 Rendered comparison and dispositions (2026-09-25)
+
+The reference was re-hashed (the identity above) and rendered in the browser
+harness at 1920×1080, 1366×768 and 960×640, Chinese only. Production is the
+PM9.1 observation block (§6.2, PM9-G) at `a0783bb`, with the same block at
+`d56b17b` as the before-change capture (§7.4). Every frame is a controlled-IPC
+browser render at DPR 1 over synthetic data: an observation, not a golden and
+not native evidence. The evidence content itself cannot be compared: the
+reference draws a synthetic multi-peak chromatogram, and the fixture has six
+spectra. `busyInspected` shows the Project surface, which the reference lacks,
+so only its shell is compared. The evidence is git-ignored:
+`test-results/pm9.1/reference-v5.11/`, `test-results/pm9.1/browser-aTNSQY/`
+(after) and `test-results/pm9.1/compare-d56b17b/browser-53Dmo0/` (before).
+
+**Action** and **defect** rows, and L20's intentional responsive difference,
+carry the owner's dispositions. Other **intentional** entries cite the record
+that already states the production arrangement. Routings to PM9.3 and L18's
+link to L1 are this record's reading, not the owner's. **Open** entries have
+no disposition yet.
+
+| Row | Reference | Production (`a0783bb`) | Disposition |
+| --- | --- | --- | --- |
+| L1 Surface title and primary action | A page title ("数据工作台") with a one-line description, and a filled "process selected" action | No surface heading or surface-level primary action; the navigation underline is the only surface label | **Action (PM9.2).** Add a clear surface or task title. Expose a contextual primary action only where an existing owned action is genuinely the next step |
+| L2 Navigation | Five entries | Three | Intentional (table above; [DESIGN_SYSTEM](../../ux/DESIGN_SYSTEM.md#durable-v511-reference-baseline): "Only real beta capabilities enter navigation") |
+| L3 Identity in the evidence column | A sample heading and tabs above the plot | No heading or tabs; the viewed file is named in the context line, the roster row and Details, and Details is open by default only at 1920×1080 | Panel order intentional ([slice-03 §3](slice-03.md#3-static-v511-mismatch-ledger), the M7.3 composition). Stacked rather than side by side, and no heading or tabs, are verified structural there, so open. Dominance and identity placement: PM9.3 |
+| L4 First evidence position | The plot card at y 361 (1920, 1366) and 488 (960) | The chromatogram panel at y 189 in every idle (Workbench) frame and fully on screen; at 960×640 the spectrum panel shows only its title and actions (25 px on screen in en, 76 px in zh-CN) | Observation. Evidence dominance over panel chrome is PM9.3's |
+| L5 Scan table | Beside the spectrum; its first rows visible at 1920 | Below the spectrum; 0 px on screen at every viewport, reached by the evidence column's own scroll | Order intentional (slice-03 §3); below rather than beside is verified structural there, so open; visibility PM9.3 |
+| L6 Plot-adjacent controls | A hover-revealed corner and a context menu; two caption lines | Persistent zoom, trace and figure actions, caption lines and disclosures | Figure and export action placement and the disclosures: intentional (slice-03 §3, its export and explanatory-copy rows). The persistent zoom and TIC/BPC controls are verified structural there, not intentional, so their placement and persistence, and prominence and copy density, are PM9.3's |
+| L7 Roster width | 285 / 240 px; a toggle bar at 960 | 280 / 280 px; folded at 960 | Intentional at 1366 (table above). At 1920 production is 5 px narrower than the reference, which the M7.2 rationale does not describe |
+| L8 Row density | Two-line rows, 61 px minimum | 44 px comfortable rows (row boxes not measured) | Intentional (table above) |
+| L9 Roster action block | Search and grouping above the list; batch actions at its foot | Search, order, a help disclosure, five buttons, "New group" and a counts line, all above the first row | **Action (PM9.2).** Reduce simultaneous toolbar competition: keep high-frequency and current actions visible, and move lower-frequency organization controls into the existing secondary or menu hierarchy. No capability is removed and no authority changes |
+| L10 Backend notices | One phrase in the strip | The ProteoWizard band is always shown, available or not: 89 px in every frame, leaving 640 − 88 − 89 = 463 px at 960×640 | **Action (PM9.2).** Remove the permanent 89 px footprint when there is no actionable state. Persistent actionable errors and recovery states stay visible |
+| L11 Outer spacing | Content inset by 84 / 24 / 16 px | Content inset by 16 px at every viewport; the notices band's box spans the full width, but its padding insets the visible notice by the same 16 px | Open |
+| L12 Details with long values | Short facts | SHA-256 values and long names wrap in the 245 px column | Open |
+| L13 Plot header controls | No persistent plot toolbar | In en at 960×640 the chromatogram header controls wrap to a second row (panel 398 px against 347 px in zh-CN); the same at `d56b17b` | **Defect (PM9.3), confirmed.** Contrary to [DESIGN_SYSTEM](../../ux/DESIGN_SYSTEM.md): "toolbars must not grow into wrapping ribbons". Not fixed here; PM9.3's first implementation item once PM9.2 closes |
+| L14–L16 Context strip | Muted, non-interactive status left and gesture hints right; never truncated | The header's second line: three or four context items (32 px buttons, each a Tab stop) left, the drop hint right; the header is 88 px (75 before). In `busyInspected` every item is truncated at 960×640 in both languages and at 1366×768 in en, and a long project name crowds out the state words | **Action (PM9.2).** Keep the context-line concept, redesigned as a priority-based summary: (1) the active operation or status, whose state word stays readable; (2) the viewed or inspected object; (3) the project's identity; (4) the scope, only when contextually relevant; (5) lower-priority context collapses into Details/context at narrow widths rather than every field becoming an ellipsis. No further wrapped header row merely to fit all context |
+| L17 Global header actions | Demo actions | Roster and Details toggles, reset layout, Settings | Intentional (table above) |
+| L18 Inspector actions | "Process this" and a features link | None | The features link is not applicable; "process this" follows L1 |
+| L19 Disclosure model | Tabs, a segmented trace control, a hover corner and a help modal | `<details>` disclosures | Disclosures intentional (slice-03 §3); XIC excluded ([brief](brief.md#scope)); copy density PM9.3 |
+| L20 Details at 1366 | An inspector column | Hidden by default below 1700 px and opened from the header | **Intentional responsive difference.** Details may stay hidden by default at 1366-class widths because evidence stays primary, provided the Details affordance stays obvious, stable and keyboard reachable |
+| L21 Folding at 960 | The navigation wraps; a roster toggle bar; the inspector stacked below; the page scrolls | One-row navigation; the roster and Details fold into header actions; main scrolls inside | Folding the roster and Details into header actions below 1050 px: intentional ([DESIGN_SYSTEM](../../ux/DESIGN_SYSTEM.md); slice-03 §3). Swap rather than stack (verified structural) and what stays visible (needs render) in slice-03 §3, and the one-row navigation, which slice-03 §3 does not classify: open (scroll ownership also L22). Only the folded-closed state was captured |
+| L22 Document overflow | A scrolling document | `document.scrollHeight − innerHeight` is positive in every frame (idle zh-CN: 64 / 376 / 504 px), while `body` does not scroll (`apps/desktop/src/index.css`); also positive at `d56b17b` | **Action / defect (PM9.2).** Required content must not become unreachable because of outer overflow ownership. Repair while keeping the intentional local roster, table and evidence scroll owners |
+| L23 Horizontal fit | No overflow | 0 in every frame at `a0783bb` and at `d56b17b`; the regression that failed the first run at `daa801c`, reproduced at `292c1d9`, is §7.3's | Meets §6's assertion |
+
+Not captured in this comparison: empty and entry states, a pending range band
+(PM9.3's G frames later hold one, on screen only at 1920×1080; slice-03 §3),
+the Conversion surface, the roster-open and Details-open states at 960×640, a scrolled or
+focus-driven document position, native windows and OS scaling.
 
 ## 4. Controlled scenarios
 
@@ -139,24 +196,25 @@ browser baseline mirrors five of them by name and adds three variants
   960×640, en and zh-CN, with reduced motion; evidence under
   `test-results/pm9.N/`. PM9.1's spec and its exact command are in §6.
 - Repository: `python scripts/check_repo.py`, `git diff --check`.
-- Rust is not affected by PM9.1 or the PM9.2 draft; the deferred PR #127 Rust
+- Rust is not affected by PM9.1 or PM9.2 (§7.1); the PR #127 Rust
   checklist is in the
   [integration record §14](../../development/M8_M9_SOURCE_INTEGRATION.md#14-found-on-the-repaired-head-a-reference-added-during-save-as-and-a-deferred-check-pr-127).
 - Resource rules for any window: admission at ≥ 8 GiB available and ≤ 80 % used;
   defer the next heavy command below 4 GiB or at ≥ 90 %; run in the foreground,
   one command at a time; confirm task-owned descendants have exited.
 
-## 6. Browser baseline spec (authored, NOT RUN)
+## 6. Browser baseline spec
 
 `e2e/specs/pm9.1-baseline.browser.e2e.ts`, written on the provisional PM9
-branch. Every path under `apps/` and `crates/` stays identical to
-`9786809` (tree `da9ae8e`), so the PM9.2 production draft is unchanged. It uses
+branch while every path under `apps/` and `crates/` was identical to `9786809`
+(tree `da9ae8e`). The validation window's one production repair, `a0783bb`,
+came after it (§7.3). It uses
 the existing browser harness (`e2e/support/harness.ts`, the IPC boundary
 preloaded, hold/release, call and console ledgers) and M8.2/M9.1's CDP
 viewport helper with DPR 1. The browser config's `specs/**/*.browser.e2e.ts`
 glob registers it. It adds no framework, backend, production seam or
 production mock switch, and it does not use `openTheViewer` or M7.2's
-`metrics()`. It has not been compiled, discovered or run.
+`metrics()`. It ran in the 2026-09-25 window (§6.2, §7).
 
 ### 6.1 Journeys and IDs
 
@@ -184,8 +242,8 @@ score is added or expected.
 ### 6.2 Case ledger
 
 Every case is mock-backed: real frontend, Vite and Chrome, with only the IPC
-boundary replaced. None is real-backend or native evidence. Each is **NOT
-RUN**. Command (future entry, in an owner-opened window, after
+boundary replaced. None is real-backend or native evidence. The status column
+is the result on `a0783bb` (§7.3). Command (in an owner-opened window, after
 `pnpm e2e:typecheck`):
 
 ```text
@@ -203,14 +261,14 @@ owner promises zero IPC, and the spec does not add that requirement.
 
 | Case | State (§6.3) | Acceptance | Expected | Status |
 | --- | --- | --- | --- | --- |
-| PM9-B1 | `populated`, row viewed, spectrum selected, reference inspected | U1, U10 | Project, viewed acquisition, scope and inspected reference each read from their owner, with no activity item; each item, by pointer and by Tab plus Enter, changes only the surface and the current destination; the focus ring is visible; no request while every owner is idle | NOT RUN |
-| PM9-B2 | `populated` plus one membership toggle, spectrum 0 and one m/z zoom | U1, U2, U3, U7 | Roster order, highlight and membership, the selected scan, the committed m/z caption, and the viewing and scope items are unchanged after Conversion → Project → Workbench; no request | NOT RUN |
-| PM9-B3 | `projectWithResult` with typed targets | U5, U7 | The typed text is unchanged after Home → project item; no review or run request | NOT RUN |
-| PM9-B4 (×4) | `projectWithResult`, `resultPayloadMissing`, `resultPayloadCorrupt`, `resultSourceAndRuntimeUnavailable` | U6, U7 | The report's availability is as recorded. Its state block keeps the payload (whole, missing or damaged), the source (found, or not found where recorded) and new runs (available, or no runtime) apart, as M9.1 reads them. A missing or damaged payload is never read. The inspecting item names the record identically in every state. Details links the producing run and shows the plan SHA-256. Home → inspecting returns to the same report, with no request and no re-read of rows | NOT RUN |
-| PM9-B5 | `qcCapture`, capture held | U6, U10 | A busy item and the Project dot while held, unchanged across navigation, with no request; after release no busy item or dot; the inspected object moves to the new QC record (`useProject` `captureQc`) and routes to its report, which carries no verdict words | NOT RUN |
-| PM9-B6 | `converting`, then settled through the lane's next slot read, held and released | U4 (lane only), U10 | The running item and active dot; navigation asks nothing beyond read-only reads; nothing moves while the settling read is held; once it is released, the retained item and dot remain and no activity item does | NOT RUN |
-| PM9-B7 | `populated` with a held check, then Close and Open | U7, U10 | The busy item and the accepted operation's identifier survive navigation with no request; after release no busy item, and the inspection a check does not change is kept; Close then Open leaves nothing inspected and the viewed row unchanged; only `close_project` and `open_project` are asked | NOT RUN |
-| PM9-G (×4) | `populated` idle and `busyInspected`, en and zh-CN, each at 1920×1080 → 1366×768 → 960×640; reduced motion in zh-CN | U9 (observation) | Geometry recorded (§6.4). Asserted only: no off-origin request, no path on screen, horizontal overflow ≤ 1 px, header controls within the viewport width, context items at the 31.5 px compact minimum, and every context item a Tab stop with a visible focus treatment | NOT RUN (observation) |
+| PM9-B1 | `populated`, row viewed, spectrum selected, reference inspected | U1, U10 | Project, viewed acquisition, scope and inspected reference each read from their owner, with no activity item; each item, by pointer and by Tab plus Enter, changes only the surface and the current destination; the focus ring is visible; no request while every owner is idle | PASS |
+| PM9-B2 | `populated` plus one membership toggle, spectrum 0 and one m/z zoom | U1, U2, U3, U7 | Roster order, highlight and membership, the selected scan, the committed m/z caption, and the viewing and scope items are unchanged after Conversion → Project → Workbench; no request | PASS |
+| PM9-B3 | `projectWithResult` with typed targets | U5, U7 | The typed text is unchanged after Home → project item; no review or run request | PASS |
+| PM9-B4 (×4) | `projectWithResult`, `resultPayloadMissing`, `resultPayloadCorrupt`, `resultSourceAndRuntimeUnavailable` | U6, U7 | The report's availability is as recorded. Its state block keeps the payload (whole, missing or damaged), the source (found, or not found where recorded) and new runs (available, or no runtime) apart, as M9.1 reads them. A missing or damaged payload is never read. The inspecting item names the record identically in every state. Details links the producing run and shows the plan SHA-256. Home → inspecting returns to the same report, with no request and no re-read of rows | PASS |
+| PM9-B5 | `qcCapture`, capture held | U6, U10 | A busy item and the Project dot while held, unchanged across navigation, with no request; after release no busy item or dot; the inspected object moves to the new QC record (`useProject` `captureQc`) and routes to its report, which carries no verdict words | PASS |
+| PM9-B6 | `converting`, then settled through the lane's next slot read, held and released | U4 (lane only), U10 | The running item and active dot; navigation asks nothing beyond read-only reads; nothing moves while the settling read is held; once it is released, the retained item and dot remain and no activity item does | PASS |
+| PM9-B7 | `populated` with a held check, then Close and Open | U7, U10 | The busy item and the accepted operation's identifier survive navigation with no request; after release no busy item, and the inspection a check does not change is kept; Close then Open leaves nothing inspected and the viewed row unchanged; only `close_project` and `open_project` are asked | PASS |
+| PM9-G (×4) | `populated` idle and `busyInspected`, en and zh-CN, each at 1920×1080 → 1366×768 → 960×640; reduced motion in zh-CN | U9 (observation) | Geometry recorded (§6.4). Asserted only: the page language, no off-origin request, no path on screen, horizontal overflow ≤ 1 px, header controls within the viewport width, context items at the 31.5 px compact minimum, every context item a Tab stop with a visible focus treatment, and no console entry other than motion's reduced-motion notice in zh-CN (the filter added in `292c1d9`) | PASS (observation), after the §7.3 repair |
 
 Relation to existing tests: B1 and B7 extend `ContextLineShell.test.tsx`, and
 B4 extends `Pm9Baseline.test.tsx`, into the rendered layer. Both component
@@ -251,12 +309,13 @@ import them: `pm9Scenarios.tsx` mounts `App` through Testing Library, and
   `backendReadingRecovery.test.tsx` already drives this running-to-completed
   pair.
 
-### 6.4 Geometry and reference checks to collect later
+### 6.4 Geometry and reference checks
 
 - Versions. The spec records `candidate` with each frame. The observation block
-  does not require the context line, so a later authorized pre-draft capture of
-  `d56b17b` can use the same block. The functional cases require the line and
-  would fail there. No pre-draft capture exists, and a capture of the new
+  does not require the context line, so a pre-draft capture of `d56b17b` can
+  use the same block; the functional cases require the line and would fail
+  there. The window captured `d56b17b` with a task-owned, untracked copy of the
+  spec that differs only in its import paths (§7.4). A capture of the new
   header is not a before-change baseline.
 - Recorded per frame: header, context bar and each item (text, box, whether
   truncated), the number of rows the items use, the drop hint, the roster,
@@ -270,13 +329,15 @@ import them: `pm9Scenarios.tsx` mounts `App` through Testing Library, and
   too much; wrapping and long-label truncation in both languages; folding at
   960×640; the measured panel floors, which m7.2, m7.3 and viewer-r1 own and
   which are rerun per §2; and the M8/M9 specs' header readings. No pixel
-  threshold is added and no existing limit is relaxed.
+  threshold is added and no existing limit is relaxed. The window's readings
+  and dispositions are in §3.1 and §7.4; the panel floors stay unconfirmed,
+  because their owning specs are red for the recorded reasons of §2.
 - Still open. The representative set discharges no U9 obligation. Still
   pending: other scenario, language and viewport combinations; DPR and OS
-  scaling (native, recorded separately); the reference rendered at PM9's
-  viewports and §3's production column; J1–J6 step, decision, request and
-  mount measurements ([slice-01](slice-01.md) pending item 4); and no
-  screenshot golden.
+  scaling (native, recorded separately, §7.6); J1–J6 step, decision, request
+  and mount measurements ([slice-01](slice-01.md) pending item 4); and no
+  screenshot golden. The reference is rendered and §3's production column is
+  filled (§3.1).
 - Prerequisites: an owner-opened window; the browser config's ChromeDriver and
   a free dev port (5273, or `MSCANVAS_BROWSER_DEV_PORT`); the reference re-hashed
   against §3 before any comparison. No provider, runtime or native session is
@@ -285,8 +346,8 @@ import them: `pm9Scenarios.tsx` mounts `App` through Testing Library, and
 ### 6.5 Static review corrections (PM9.3 preparation)
 
 A bounded static reading of the spec found three test-authoring defects. Each
-was corrected test-only in `e2e/specs/pm9.1-baseline.browser.e2e.ts`, and none
-has been run.
+was corrected test-only in `e2e/specs/pm9.1-baseline.browser.e2e.ts` before
+the spec first ran (§7.3).
 
 1. **Zero-IPC assertions.** B1–B5 and B7 asserted an empty request delta, and
    B6 exempted only the slot poll. No owner guarantees that navigation asks
@@ -321,3 +382,145 @@ has been run.
    It now records the work-area band, the notices band, the main region's
    on-screen height and each evidence panel's on-screen height. These are
    observations, with no threshold (§6.4).
+
+## 7. Validation window (2026-09-25)
+
+The owner opened one validation window for PR #127's local candidate and the
+PM9.1 / PM9.2 cumulative candidate. Logs are under `.tmp/vw-20260925/`, and
+browser evidence is under `test-results/pm9.1/` and `test-results/pm9.3/`; both
+are git-ignored. Every exit below is the command's own.
+
+### 7.1 Candidate and inherited evidence
+
+- Tested production-code candidate: `a0783bb7c64b41cd0c2ab3780573bfb679e3464a`
+  (tree `85b5e15e8537d4f41992bd31022447994489029a`). Against `9786809` it
+  changes one production file, `apps/desktop/src/features/workbench/workbench.css`
+  (§7.3). A later commit that changes only documentation is not a code
+  candidate and is not revalidated.
+- Rust. `git diff --name-only d56b17b a0783bb` touches no Rust source,
+  manifest, lock, `experiments/` or `scripts/` path, and none of the files the
+  desktop tests embed with `include_str!`. PM9 therefore inherits the PR #127
+  Rust group, which ran on `d56b17b` in this window. Its qualification belongs
+  to the integration record (§5).
+
+### 7.2 Frontend and repository checks
+
+| Command | `daa801c` | `a0783bb` |
+| --- | --- | --- |
+| `pnpm typecheck`, `pnpm lint`, `pnpm e2e:typecheck` | 0, 0, 0 | 0, 0, 0 |
+| Vitest over `shellContext.test.ts`, `ContextLineShell.test.tsx` and `app/Pm9Baseline.test.tsx` | 0 — 27 of 27 | in the full suite |
+| `pnpm test` | 0 — 109 files, 2198 tests | 0 — 109 files, 2198 tests |
+| `pnpm build` | 0 | 0 |
+| `python scripts/check_repo.py` | 0 | 0 |
+| `git diff --check` (at `daa801c` also against `d56b17b`; at `a0783bb` against `9786809`) | 0, 0 | 0 |
+
+### 7.3 PM9.1 browser spec and the PM9.2 repair
+
+| Run | Commit | Exit | Result |
+| --- | --- | ---: | --- |
+| First | `daa801c` | 1 | B1–B7 (10 tests) pass; 3 of the 4 PM9-G runs fail |
+| Observation block only, after the test corrections | `292c1d9` | 1 | Both `busyInspected` runs overflow horizontally |
+| Observation block only, before the PM9.2 draft | `d56b17b` | 0 | 4 of 4 |
+| Rerun | `a0783bb` | 0 | 14 of 14 |
+| Again, inside the campaign (§7.5) | `a0783bb` | 0 | 14 of 14 |
+
+The first run's three failures had two causes (1 and 3 below). The run also
+exposed a fixture artefact (2) that failed no assertion:
+
+1. **zh-CN idle.** Motion's development build warns that reduced motion is
+   on, and the spec's console check counted the warning. Test-only fix in
+   `292c1d9`: a filter for that one notice, in zh-CN only, where reduced motion
+   is emulated.
+2. **A fixture artefact.** The spec's table answered the drop subscription with
+   `null`, which put a false "drop unavailable" notice on screen and raised the
+   notices band from 89 to 120 px in the first run's frames. Test-only fix in
+   `292c1d9`: it answers with a reservation, as the M7.2–M7.4 specs do.
+3. **A PM9.2 regression.** In `busyInspected` at 960×640 the document
+   overflowed horizontally by 231 px in en and 88 px in zh-CN, a shell 1191
+   and 1048 px wide. The same observation block passes at `d56b17b`. The shell
+   is one implicit `auto` grid column sized by its items' min-content, and the
+   context line's unwrapped items counted at their full text length. Repaired
+   in `a0783bb` (repair cycle 1 of the window's budget of two; the second was
+   not used) with
+   `contain: inline-size` on `.shell-context`: the items now ellipsize inside
+   the width the header gives them.
+
+B1–B7 pass, and the final authored set passes 14 of 14.
+
+### 7.4 Before and after the PM9.2 draft
+
+The observation block at `d56b17b` (before) and at `a0783bb` (after), twelve
+frames each:
+
+- The header grows from 75 to 88 px in every frame, and the work area loses
+  the same 13 px. The main region's on-screen height loses 13 px in eleven of
+  the twelve frames; the before capture of idle zh-CN 1366×768 is an unsettled
+  reading (its main region recorded 888 px tall at a 768 px viewport), and its
+  en pair shows the 13 px. The notices band stays 89 px.
+- At 960×640 idle, the spectrum panel's on-screen height falls from 38 to 25 px
+  in en and from 89 to 76 px in zh-CN. Panels that were fully visible do not
+  change.
+- Horizontal overflow is 0 in every frame, before and after.
+- The document's vertical overflow is positive in every frame, before and after
+  (§3.1, L22).
+- Keyboard stops rise from 84 to 126 across the frames. Every stop is in the
+  viewport with a visible solid outline.
+- The only console entries are motion's reduced-motion warning: 6 before and
+  26 after, counted per test (10 and 40 with each evidence file's closing
+  reread of the last test's buffer). The counts follow the invocation, not the
+  PM9.2 code: the before capture ran only the observation block, and the
+  observation-block run at `292c1d9`, which carries the context line, also
+  records 6.
+
+### 7.5 Full browser campaign
+
+- **Topology.** All 30 browser spec files, on `a0783bb`, in five parallel
+  shards on dev ports 5273–5277, with m6.4 split into two halves by test
+  title. The owner asked for the speed-up; this is not the serial topology the
+  window first requested.
+- **Comparison.** Each test's pass or fail, by stable test identity, across the
+  whole corpus, against published `main` `1daf802` (317 tests) and, for the
+  M8/M9 specs, the M9 closure run. Failure text was compared, number-normalized,
+  only for m7.2 and m7.5.
+
+| Outcome | Tests |
+| --- | ---: |
+| Same pass | 179 |
+| Same known failure | 174 |
+| New PM9 specs (PM9.1 14, PM9.3 11), all passing | 25 |
+| New failure / now passing / no result | 0 / 0 / 0 |
+| Total | 378 |
+
+The supported conclusion is narrow: **no new browser outcome regression
+observed.** m7.2 fails 10 of 11 tests on the baseline, so the legacy suite
+cannot by itself show that the shell change is free of regressions. §7.3 and
+§7.4 add direct before-and-after observations of the shell: they found and
+repaired one regression and record the 13 px the header takes. They are
+observations, not proof that no regression remains.
+
+### 7.6 Scaling and native Windows
+
+- The host's display scaling was read as 150 % (`AppliedDPI` 144; 3840×2160
+  physical, 2560×1440 logical). Every browser frame used DPR 1, so none of
+  this is native rendered acceptance at 150 %.
+- Native Windows rendered acceptance at 150 %: **PENDING**, not run.
+- The provider-positive native route: **BLOCKED_PROVIDER_HOLD**. A native
+  window checks the backend on mount (the `checkBackend` effect in
+  `usePreviewWorkspace.ts`), and `inspect_backend` probes the installed
+  ProteoWizard with `--help` (`probe_tool` in
+  `crates/proteowizard/src/discovery.rs`), which the ProteoWizard HOLD does
+  not allow in this window.
+
+### 7.7 Status after the window
+
+- **PM9.1: NOT COMPLETE.** B1–B7 pass, the final authored set passes 14 of 14,
+  and the browser rendered baseline is established. Native rendered
+  acceptance at 150 % is PENDING, the provider-positive native route is
+  BLOCKED_PROVIDER_HOLD, and [slice-01](slice-01.md)'s J1–J6 measurements and
+  helper diagnoses are not done.
+- **PM9.2:** browser functional acceptance passes, with one regression found
+  and repaired in `a0783bb`. Visual and product acceptance wait for the §3.1
+  actions and L20's conditions ([slice-02](slice-02.md)).
+- **PM9.3:** the viewer contract spec passes 11 of 11 against the unchanged
+  viewer, which shows that the authored harness executes. Production
+  implementation has not started ([slice-03](slice-03.md)).
