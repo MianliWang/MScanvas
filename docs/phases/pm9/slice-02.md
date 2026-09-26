@@ -196,13 +196,17 @@ assertions could not fail. A misleading comment was corrected.
   hands its place to the banner.
 - Existing suites follow the fold through `test/backendBanner.ts` and read
   `aria-disabled` on Details. B1–B7 in `app/Pm9Baseline.test.tsx` are
-  unchanged and pass.
+  unchanged and pass. One B1 expectation moved in the browser spec only (next
+  item).
 - e2e, authored and NOT RUN: `e2e/support/backendBanner.ts` in m5.7, m6.1,
   m6.4 and m7.5; m7.5 captures judge a folded banner by its toggle; m7.2 reads
   `aria-disabled`; the PM9.1 observation block now asserts the status inside
   the line, one row, no outer vertical scroll, no notices band and the toggle,
-  and adds a refused-Details keyboard sample at 1366×768. B1 expects no scope
-  item on the Project surface.
+  and adds a refused-Details keyboard sample at 1366×768. **B1 changed:** it
+  now expects no scope item on the Project surface, where it expected one. This
+  follows this slice's reading of L14–L16 (4), "the scope only when
+  contextually relevant", against "B1–B7 unchanged"; it needs the owner's
+  confirmation.
 
 No screenshot or pixel golden is a contract. The new banner-focus tests and the
 refused-Details test were each checked to fail with the guarded line removed.
@@ -211,12 +215,16 @@ refused-Details test were each checked to fail with the guarded line removed.
 
 Run on the committed content in this dispatch: `pnpm typecheck` (`pnpm lint`
 is the same `tsc -b`), `pnpm e2e:typecheck`, the full Vitest suite (110 files,
-2212 tests, `--maxWorkers=2`), `python scripts/check_repo.py` and
-`git diff --check`: all exit 0.
+2212 tests, `--maxWorkers=2`), `pnpm build` (`tsc -b && vite build`; the new
+CSS rules survive minification; only the existing chunk-size warning),
+`python scripts/check_repo.py` and `git diff --check`: all exit 0. jsdom
+applies no CSS, so the layout claims (status inside the line, one row, no
+outer scroll, 960×640 reachability) are covered only by the unrun PM9.1
+browser spec.
 
-Not run, by the dispatch's bounds: `pnpm build`; Cargo (no Rust changed); any
-browser or native e2e; real-runtime OpenMS; any provider-positive path, which
-stays BLOCKED_PROVIDER_HOLD.
+Not run, by the dispatch's bounds: Cargo (no Rust changed); any browser or
+native e2e; real-runtime OpenMS; any provider-positive path, which stays
+BLOCKED_PROVIDER_HOLD.
 
 ### Focused rendered validation set, ready for an owner-opened window
 
