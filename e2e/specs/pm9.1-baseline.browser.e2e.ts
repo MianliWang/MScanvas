@@ -824,6 +824,11 @@ async function observe(label: string) {
     // cascade -- font, language, density -- and nothing is re-derived.
     const shape = (item: HTMLElement) => {
       const style = getComputedStyle(item);
+      const content =
+        item.getBoundingClientRect().width -
+        ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"]
+          .map((key) => parseFloat(style[key as "paddingLeft"]) || 0)
+          .reduce((sum, value) => sum + value, 0);
       const copy = item.cloneNode(true) as HTMLElement;
       copy.removeAttribute("data-shell-context");
       copy.style.cssText = "position:absolute;left:0;top:0;visibility:hidden;width:max-content;min-width:0;max-width:none";
@@ -831,13 +836,27 @@ async function observe(label: string) {
       const range = document.createRange();
       range.selectNodeContents(copy);
       const natural = range.getBoundingClientRect().width;
+      const ellipsized = natural > content + 0.01;
+      // What stays readable in front of the ellipsis: the longest prefix that
+      // fits beside one, in the item's own font.
+      const full = item.textContent ?? "";
+      let visible = full;
+      if (ellipsized) {
+        copy.textContent = "…";
+        range.selectNodeContents(copy);
+        const mark = range.getBoundingClientRect().width;
+        copy.textContent = full;
+        const text = copy.firstChild;
+        visible = "";
+        for (let end = 1; text !== null && end <= full.length; end += 1) {
+          range.setStart(text, 0);
+          range.setEnd(text, end);
+          if (range.getBoundingClientRect().width + mark > content + 0.01) break;
+          visible = full.slice(0, end);
+        }
+      }
       copy.remove();
-      const content =
-        item.getBoundingClientRect().width -
-        ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"]
-          .map((key) => parseFloat(style[key as "paddingLeft"]) || 0)
-          .reduce((sum, value) => sum + value, 0);
-      return { natural, content, ellipsized: natural > content + 0.01, floor: parseFloat(style.minWidth) || 0 };
+      return { natural, content, ellipsized, visible, floor: parseFloat(style.minWidth) || 0 };
     };
     const shapes = items.map(shape);
     // What the header leaves for the work: the band below it, the main region's
@@ -1595,6 +1614,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           const measured = await observe(`pm9-2-workbench-long-${locale}-${String(width)}x${String(height)}`);
           expect(measured.surface).toBe("workbench");
           expect(measured.contextItems.map((item) => item.id)).toContain("inspecting");
+          // Given way, the scope still says what it is (PM9.2 L14–L16 (e)):
+          // its distinctive word leads, so what survives the ellipsis is it.
+          const scope = measured.contextItems.find((item) => item.id === "conversionScope");
+          expect(scope?.visible.startsWith(locale === "en" ? "Conv" : "待转")).toBe(true);
         }
         expect(await unexpectedConsole()).toEqual([]);
       });

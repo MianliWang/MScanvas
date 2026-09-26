@@ -88,7 +88,7 @@ describe("the shell's context line", () => {
     expect(texts({ ...NOTHING, conversionScope: { scope: "selected", eligible: 0 } })).toContainEqual([
       "conversionScope",
       "conversion",
-      `For conversion: ${en("m74CnvSelected")} · 0 eligible`,
+      `Conversion: ${en("m74CnvSelected")} · 0 eligible`,
     ]);
     expect(texts({ ...NOTHING, conversionScope: { scope: "all", eligible: 12 } }, zh)).toContainEqual([
       "conversionScope",

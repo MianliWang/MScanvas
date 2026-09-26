@@ -669,7 +669,7 @@ export const en = {
   shellContextViewing: "Viewing: {{name}}",
   shellContextViewingSpectrum: "Viewing: {{name}} · spectrum {{index}}",
   shellContextUnnamed: "unnamed",
-  shellContextScope: "For conversion: {{scope}} · {{eligible}} eligible",
+  shellContextScope: "Conversion: {{scope}} · {{eligible}} eligible",
   shellContextActivity: "In progress: {{activity}}",
   shellConversionAwaiting: "Conversion preparing output locations",
   shellConversionRunning: "Conversion running",

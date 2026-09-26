@@ -93,7 +93,7 @@ describe("PM9.1 populated-state baseline (synthetic, controlled)", () => {
     // At least two rows on screen. Not six: the roster windows its rows by
     // measured height, and a test environment without layout measures none.
     await waitFor(() => expect(rosterState().length).toBeGreaterThan(1));
-    await waitFor(() => expect(contextItem("conversionScope")?.textContent).toMatch(/^For conversion: /));
+    await waitFor(() => expect(contextItem("conversionScope")?.textContent).toMatch(/^Conversion: /));
     const before = rosterState();
 
     await press(contextItem("conversionScope")!);
