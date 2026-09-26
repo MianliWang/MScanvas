@@ -166,6 +166,12 @@ no disposition yet.
 | L22 Document overflow | A scrolling document | `document.scrollHeight − innerHeight` is positive in every frame (idle zh-CN: 64 / 376 / 504 px), while `body` does not scroll (`apps/desktop/src/index.css`); also positive at `d56b17b` | **Action / defect (PM9.2).** Required content must not become unreachable because of outer overflow ownership. Repair while keeping the intentional local roster, table and evidence scroll owners |
 | L23 Horizontal fit | No overflow | 0 in every frame at `a0783bb` and at `d56b17b`; the regression that failed the first run at `daa801c`, reproduced at `292c1d9`, is §7.3's | Meets §6's assertion |
 
+PM9.2 implemented the action rows L1, L9, L10, L14–L16 and L22 and L20's
+conditions on 2026-09-26 (`6b31161`); none of that is rendered yet, so the
+production column above still describes `a0783bb`. How each row was disposed
+of is in [slice-02](slice-02.md#convergence-implemented-2026-09-26-on-c562327).
+L13 stays PM9.3's.
+
 Not captured in this comparison: empty and entry states, a pending range band
 (PM9.3's G frames later hold one, on screen only at 1920×1080; slice-03 §3),
 the Conversion surface, the roster-open and Details-open states at 960×640, a scrolled or
