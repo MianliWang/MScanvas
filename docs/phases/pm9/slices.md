@@ -47,6 +47,7 @@ eighth slice.
 | PM9.2 | **BROWSER FUNCTIONAL ACCEPTANCE PASSED — VISUAL AND PRODUCT ACCEPTANCE PENDING** | Yes, one repair | Code commits `317481edf9270fac49af07dcc0d2a63866a0a30a` (the shell context line, the Project work dot, PM9.1 scenarios and tests) and `9786809fcfe3f6933bf7c1ec8d1f011ae5310970` (tree `da9ae8eb3dcc9eb4412153ad7e3671a7b0770f0b`: focus ring drawn inside the clipped line, 32 px compact items), found by a bounded static read before this record, and the window's repair `a0783bb7c64b41cd0c2ab3780573bfb679e3464a` (tree `85b5e15e8537d4f41992bd31022447994489029a`: a 960×640 horizontal overflow). `a0783bb` is the tested production-code candidate. Remaining work: the owner's actions L1, L9, L10, L14–L16 and L22, and confirming L20's conditions (the Details affordance obvious, stable and keyboard reachable) ([baseline §3.1](baseline.md#31-rendered-comparison-and-dispositions-2026-09-25)); see [slice-02.md](slice-02.md). |
 | PM9.3 | **STATIC PREPARATION COMPLETE — PRODUCTION IMPLEMENTATION NOT STARTED** | — | [slice-03.md](slice-03.md): viewer ownership map, action classes, static v5.11 mismatch ledger, legacy-spec classification. `e2e/specs/pm9.3-viewer.browser.e2e.ts` ran 11/11 PASS on `a0783bb` against the unchanged viewer, which shows the authored harness executes. Three PM9.1 spec authoring defects were corrected test-only ([baseline §6.5](baseline.md#65-static-review-corrections-pm93-preparation)). First implementation item once PM9.2 closes: the confirmed defect L13. The midpoint check still follows this slice. |
 | Window | **Validation window 2026-09-25** | — | One owner-opened window over PR #127's local candidate (`d56b17b`) and the PM9 cumulative candidate (`a0783bb`); record in [baseline §7](baseline.md#7-validation-window-2026-09-25). Full browser campaign: 378 outcomes — 179 same pass, 174 same known failure, 25 new PM9 tests all passing, 0 new failure / now passing / no result; five parallel shards, not the serial topology first requested. No new browser outcome regression observed. |
+| Reconciliation | **PM9 BASE RECONCILED LOCALLY — SOURCE COMPOSITION CHECKED** | — | PR #127 merged into `main` as `57915dea6e5227fd9fe6de6532ca3201c9819c85`, natural-main CI successful. The provisional base is resolved: merge `052db1fdb765ebb09da0bcbb94b0969e70898900` (tree `a43a5130cb7e4fa8171441b3ab4bbc640ee20a8f`), first parent `505f778` (PM9), second parent `57915de` (main), common ancestor `d56b17b`; no path changed on both sides and no conflict. Rust and runtime inputs equal main's, frontend and browser-test inputs equal `a0783bb`'s; the combined tree has had no new runtime, component or browser run (**SOURCE COMPOSITION CHECKED — NO NEW RUNTIME VALIDATION**). `a0783bb` stays the last tested PM9 production code. See [baseline §8](baseline.md#8-reconciliation-with-the-accepted-main-2026-09-26). Not pushed. |
 
 ### Verification backlog
 
@@ -55,9 +56,10 @@ confirmation and slice-03 §6's render and legacy-repair order, which carry
 over as items 3 and 5 below. It ran PR #127's Rust checklist on `d56b17b`,
 which PM9 inherits; the front end; the seven M8/M9 browser specs; PM9.1's and
 PM9.3's specs; and the repository checks, all on `a0783bb` except the Rust
-group ([baseline §7](baseline.md#7-validation-window-2026-09-25)). For the next
-owner-opened window, target the cumulative candidate, not each intermediate
-commit:
+group ([baseline §7](baseline.md#7-validation-window-2026-09-25)). Since then
+the branch has merged the accepted main (baseline §8); that combined tree has
+not been validated. For the next owner-opened window, target the cumulative
+candidate on the reconciled base, not each intermediate commit:
 
 1. Native Windows rendered acceptance at the host's 150 % scaling, by a route
    the ProteoWizard HOLD allows; a native window probes the installed backend

@@ -8,8 +8,11 @@ Status: **PLANNED**. The 2026-09-25 validation window established PM9.1's
 browser rendered baseline, which is not complete, and passed PM9.2's browser
 functional acceptance on the production-code candidate `a0783bb`; PM9.2's
 visual and product acceptance is pending. PM9.3 has static preparation and a
-passing contract spec only. All of it sits on a provisional base; see
-[slices.md](slices.md). Nothing here is accepted.
+passing contract spec only. The provisional base is resolved: on 2026-09-26 the
+branch merged the accepted main `57915de` (merge `052db1f`), with no new
+runtime validation of the combined tree
+([baseline §8](baseline.md#8-reconciliation-with-the-accepted-main-2026-09-26));
+see [slices.md](slices.md). Nothing here is accepted.
 
 ## Mission
 
@@ -66,9 +69,27 @@ and late-request protection; conversion order, stop and output ownership;
 Project/Plan/Run/Artifact lineage; atomic Save and Save As refusals, destination
 store occupancy, payload–plan binding and revision bounds (validated on
 `cf4af12`); the two focus-race regressions; snapshot and scratch boundaries;
-stored results never re-executed. The stale-reference repair (`8ad3912`) was
-run in the 2026-09-25 window on its documentation successor `d56b17b`, every
-exit 0; its qualification belongs to the integration record, not to PM9.
+stored results never re-executed; a reference added during Save As refused as
+stale (`8ad3912`); a targeted-MS1 row's signal summary refused unless it is its
+evidence's (`03effab`). All five review findings of PR #127 behind these are
+fixed and merged in `main` (`57915de`); their qualification belongs to the
+[integration record](../../development/M8_M9_SOURCE_INTEGRATION.md#14-found-on-the-repaired-head-a-reference-added-during-save-as-and-signal-summaries-against-their-evidence-pr-127),
+not to PM9.
+
+Two findings on PR #127's final head were accepted as deferred limitations of
+the merged code. They are not PM9 tasks, and PM9 does not repair them:
+
+- *Save As with no stored result does not reserve the store name* (review
+  comment 4110202614). It fails closed: a store another process creates in that
+  window is refused at the first run as `payloadStoreUnusable`, and nothing is
+  written to it. Owner: the repository owner, as project-store work. Decision
+  point: the next change to Save As or store creation, or before a store can
+  be shared with another writer.
+- *`-ManifestOnly` re-probes the toolchain* (review comment 4110202616): a
+  re-derived candidate manifest can name the current toolchain rather than the
+  one that built the installer. Owner: the repository owner, as M7.6 release
+  qualification. Decision point: before such a manifest is used as release
+  evidence, or when M7.6 resumes.
 
 ## Locked decisions (from the owner)
 

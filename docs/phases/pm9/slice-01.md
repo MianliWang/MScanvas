@@ -12,6 +12,8 @@ production-code candidate `a0783bb`
 - Tracked work: the provisional base allowed by the gate amendment in
   [slices.md](slices.md) — local `d56b17b`, branch
   `feat/pm9-product-convergence`. Not an accepted integration baseline.
+  Resolved on 2026-09-26: the branch merged the accepted main `57915de`
+  ([baseline §8](baseline.md#8-reconciliation-with-the-accepted-main-2026-09-26)).
 - Rendering and tests: only in a validation window the owner opens. More free
   memory does not open one.
 - Reference: the owner-held v5.11 HTML, re-hashed before use against ADR 0047's

@@ -7,7 +7,9 @@ browser baseline spec (§6), rendered the reference and compared it (§3.1), and
 recorded the campaign (§7). The tested production-code candidate is `a0783bb`
 (tree `85b5e15`); a later documentation-only commit is not a code candidate.
 Native Windows rendered acceptance at the host's 150 % scaling is PENDING, and
-the provider-positive native route is BLOCKED_PROVIDER_HOLD (§7.6).
+the provider-positive native route is BLOCKED_PROVIDER_HOLD (§7.6). On
+2026-09-26 the branch was reconciled with the accepted main (§8); the
+reconciled tree has had no new runtime, component or browser run.
 
 ## 1. Ownership map
 
@@ -196,9 +198,9 @@ browser baseline mirrors five of them by name and adds three variants
   960×640, en and zh-CN, with reduced motion; evidence under
   `test-results/pm9.N/`. PM9.1's spec and its exact command are in §6.
 - Repository: `python scripts/check_repo.py`, `git diff --check`.
-- Rust is not affected by PM9.1 or PM9.2 (§7.1); the PR #127 Rust
-  checklist is in the
-  [integration record §14](../../development/M8_M9_SOURCE_INTEGRATION.md#14-found-on-the-repaired-head-a-reference-added-during-save-as-and-a-deferred-check-pr-127).
+- Rust is not affected by PM9.1 or PM9.2 (§7.1); PR #127's Rust
+  qualification, now merged in main (§8), is in the
+  [integration record §14](../../development/M8_M9_SOURCE_INTEGRATION.md#14-found-on-the-repaired-head-a-reference-added-during-save-as-and-signal-summaries-against-their-evidence-pr-127).
 - Resource rules for any window: admission at ≥ 8 GiB available and ≤ 80 % used;
   defer the next heavy command below 4 GiB or at ≥ 90 %; run in the foreground,
   one command at a time; confirm task-owned descendants have exited.
@@ -524,3 +526,70 @@ observations, not proof that no regression remains.
 - **PM9.3:** the viewer contract spec passes 11 of 11 against the unchanged
   viewer, which shows that the authored harness executes. Production
   implementation has not started ([slice-03](slice-03.md)).
+
+## 8. Reconciliation with the accepted main (2026-09-26)
+
+PR #127 was merged into `main`, and its natural-main CI succeeded. The PM9
+branch, which started from the provisional base `d56b17b`, was then reconciled
+with that main by one local true merge. Nothing was pushed. Local records are
+under `.tmp/pm9-reconcile/` (git-ignored).
+
+| Role | Commit | Tree |
+| --- | --- | --- |
+| Accepted main M: the merge of PR #127, parents `1daf802` and `817f692` | `57915dea6e5227fd9fe6de6532ca3201c9819c85` | `a25610b3470fed0168f0d54c1576deb0a7bbdc2a` |
+| PR #127's qualified code; M's tree is its documentation successor `817f692`'s | `03effab38e7101b6dec33f6bb0f9fdda18f0f3e1` | `9f0fab3316ca3fa426390d7801dc6e7f41b63982` |
+| PM9 before the merge, P: the documentation successor of the tested code | `505f778e7a530798ab780cdd3fa6400e89ea54b3` | `3f2a90fd3e462cac09637af846364403e5f8ea47` |
+| PM9's last tested production-code candidate (§7) | `a0783bb7c64b41cd0c2ab3780573bfb679e3464a` | `85b5e15e8537d4f41992bd31022447994489029a` |
+| The only common ancestor of P and M (`git merge-base --all`) | `d56b17b6eab8dfdc5e15a85959c971121ee7685c` | `a0b237ce11d2bb4b8851feb6ea39f1f180c66a99` |
+| **Reconciliation merge N**: first parent P, second parent M | `052db1fdb765ebb09da0bcbb94b0969e70898900` | `a43a5130cb7e4fa8171441b3ab4bbc640ee20a8f` |
+
+N's tree is a composition of both sides and equals neither.
+
+**The two sides since `d56b17b`.** Main changed three paths:
+`apps/desktop/src-tauri/src/targeted_ms1.rs`, its `tests.rs`, and
+`docs/development/M8_M9_SOURCE_INTEGRATION.md`. PM9 changed twenty: the
+frontend sources and tests of PM9.1 and PM9.2 under `apps/desktop/src/`, the
+two specs under `e2e/specs/`, and `docs/phases/pm9/`. No path changed on both
+sides, and there were no renames or deletions. `git merge-tree` and the merge
+itself reported no conflict.
+
+**Source composition, checked with Git alone.**
+
+- N differs from M on exactly PM9's twenty paths, and from P on exactly main's
+  three, so every other path is the same in `d56b17b`, M, P and N.
+- Each of main's three paths has M's blob in N, and each of PM9's twenty has
+  P's blob.
+- `git diff --quiet M N --` `apps/desktop/src-tauri`, `crates`, `experiments`,
+  `scripts`, every workspace and JavaScript manifest and lock, and `.github`
+  exits 0. The five frontend files the desktop tests embed or read
+  (`api.ts`, `contracts.ts` and `dropTransport.ts` under `mzml-preview`,
+  `preferencesApi.ts`, `projectApi.ts`) are M's. `apps/desktop/src-tauri` and
+  `crates` equal `03effab`'s, so N carries the signal-summary check and every
+  earlier project-integrity repair unchanged.
+- `git diff --quiet P N --` `apps/desktop` (without `src-tauri`), `e2e` and the
+  JavaScript manifests and locks exits 0, and `git diff --name-only a0783bb N`
+  lists no path there either: the frontend and browser-test inputs are the
+  ones tested in §7, `a0783bb`'s `contain: inline-size` repair included.
+- `git diff --check` from P to N and from M to N exits 0.
+- The merge introduced no dependency, workflow, runtime, scientific or file
+  format change of its own.
+
+**Evidence, attributed.**
+
+- *Main's code.* The real-runtime suite (34 of 34), the workspace tests (1916
+  passed), clippy, the release check and the repository checks ran on
+  `03effab` (integration record §14). Natural-main CI ran on M, push event,
+  first attempt, all successful: Repository quality 36218745778, Frontend
+  36218745689, Rust 36218745697.
+- *PM9's frontend and browser.* §7's runs on `a0783bb` hold for the same inputs
+  in N.
+- *The combined tree N.* No runtime, component or browser campaign has run on
+  it. Equal inputs and a clean merge do not prove every cross-layer behaviour,
+  so N is **SOURCE COMPOSITION CHECKED — NO NEW RUNTIME VALIDATION**, not a
+  qualified candidate.
+
+The PM9 acceptance status is unchanged by the merge: PM9.1 is not complete
+(§7.7), PM9.2's visual and product acceptance is pending, PM9.3's
+implementation and PM9.4–PM9.7 have not started, and the ProteoWizard HOLD
+still keeps a native launch, which probes the provider on mount, out of reach
+(§7.6).

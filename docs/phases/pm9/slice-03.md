@@ -41,7 +41,10 @@ processing, clipboard capability or exporter.
 
 ## Entry conditions
 
-- The branch is the provisional PM9 branch. After the 2026-09-25 window, the
+- The branch is the PM9 branch, reconciled on 2026-09-26 with the accepted
+  main `57915de` through merge `052db1f`, which no runtime validation has yet
+  covered ([baseline §8](baseline.md#8-reconciliation-with-the-accepted-main-2026-09-26)).
+  After the 2026-09-25 window, the
   PM9.1 browser baseline is established and PM9.2 has passed browser
   functional acceptance; PM9.2's visual and product acceptance is pending
   ([baseline §7.7](baseline.md#77-status-after-the-window)). PM9.3
