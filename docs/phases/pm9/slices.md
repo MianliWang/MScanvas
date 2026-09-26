@@ -38,6 +38,45 @@ eighth slice.
 | PM9.6 | Targeted and descriptive-QC reports, evidence, history, existing exports and explicit continuation after reopen | U6, U7, U8 (stored), U9, U10 | 2, 3, 5 | Must; reuse existing reads, exports and relink |
 | PM9.7 | Integrated journey acceptance, regression, reference-deviation disposition and candidate freeze | U1–U10 | 1–6 | Must; not a place for missing core work |
 
+## Current status (2026-09-26, mid-phase normalization)
+
+One status per slice; the reasons, the residual classification and the
+decisions are in [baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26).
+
+| # | Status | Goal / depends on / acceptance owner |
+| --- | --- | --- |
+| PM9.1 | **PARTIAL — J1–J6 baseline measurement outstanding** | Measure J1–J6 on the pre-PM9 candidate `d56b17b` / an owner-opened window / PM9.1; required before PM9.7, blocks nothing earlier |
+| PM9.2 | **COMPLETE** | — |
+| PM9.3 | **READY** | Evidence-first viewer, starting with the shared-helper repair, the viewer legacy specs, the 960×640 panel floors and L13 / PM9.2 (complete) / PM9.3: U3, U8 (viewer), U9, U10 |
+| PM9.4 | NOT STARTED | Conversion configuration → review → queue → recovery → outputs / after PM9.3 / PM9.4: U4 (its live-provider check with the external qualification), U8 (conversion), U9, U10 |
+| PM9.5 | NOT STARTED | Targeted-MS1 setup → plan review → progress → result entry / after PM9.4 / PM9.5: U5, U7 (drafts), U9, U10 |
+| PM9.6 | NOT STARTED | Reports, evidence, history, exports and explicit continuation, with L12 / PM9.2, PM9.3, PM9.5 / PM9.6: U6, U7, U8 (stored), U9, U10 |
+| PM9.7 | NOT STARTED | Integrated journeys against PM9.1's J1–J6, regression including PM9.2's surface specs (m7.1, m7.2, m7.4's active-Clear cases, m7.5), final reference-deviation disposition, candidate freeze / PM9.1's remainder and PM9.2–PM9.6 / PM9.7: U1–U10 integrated |
+
+Outside the slices: M7.6-style installed, native, provider and release
+qualification of PM9.7's frozen candidate owns native rendering at OS scaling
+and every provider-positive check ([ROADMAP](../../../ROADMAP.md), after M9).
+
+**Scope ledger.**
+
+- Must do in the remaining PM9: PM9.3–PM9.6 as routed; PM9.1's J1–J6.
+- Phase closure (PM9.7): integrated journey acceptance against the J1–J6
+  baseline; regression, with the remaining failures of m7.1, m7.2, m7.4's
+  active-Clear cases and m7.5;
+  the final reference-deviation disposition and the states §3.1 did not
+  capture; the candidate freeze.
+- External or blocked: native acceptance at OS scaling; provider-positive
+  checks under the ProteoWizard HOLD.
+- If time allows: L7 at 1920×1080 and L11; drag and motion details; touch;
+  other non-critical layout adjustments.
+- Out of scope: the brief's list, unchanged (no XIC, multi-layer comparison,
+  normalization, new algorithms, schema or persistence change, runtime or
+  release packaging, M10).
+
+**Cadence.** One end-to-end prompt per slice: rebind (expand the slice from
+the latest facts), implement, review, validate, one bounded repair, docs,
+closure. PM9.1's remainder is one measurement prompt of its own.
+
 ## Log
 
 | # | Result | Rework? | Notes |
@@ -48,6 +87,7 @@ eighth slice.
 | PM9.3 | **STATIC PREPARATION COMPLETE — PRODUCTION IMPLEMENTATION NOT STARTED** | — | [slice-03.md](slice-03.md): viewer ownership map, action classes, static v5.11 mismatch ledger, legacy-spec classification. `e2e/specs/pm9.3-viewer.browser.e2e.ts` ran 11/11 PASS on `a0783bb` against the unchanged viewer, which shows the authored harness executes. Three PM9.1 spec authoring defects were corrected test-only ([baseline §6.5](baseline.md#65-static-review-corrections-pm93-preparation)). First implementation item once PM9.2 closes: the confirmed defect L13. The midpoint check still follows this slice. |
 | Window | **Validation window 2026-09-25** | — | One owner-opened window over PR #127's local candidate (`d56b17b`) and the PM9 cumulative candidate (`a0783bb`); record in [baseline §7](baseline.md#7-validation-window-2026-09-25). Full browser campaign: 378 outcomes — 179 same pass, 174 same known failure, 25 new PM9 tests all passing, 0 new failure / now passing / no result; five parallel shards, not the serial topology first requested. No new browser outcome regression observed. |
 | Reconciliation | **PM9 BASE RECONCILED LOCALLY — SOURCE COMPOSITION CHECKED** | — | PR #127 merged into `main` as `57915dea6e5227fd9fe6de6532ca3201c9819c85`, natural-main CI successful. The provisional base is resolved: merge `052db1fdb765ebb09da0bcbb94b0969e70898900` (tree `a43a5130cb7e4fa8171441b3ab4bbc640ee20a8f`), first parent `505f778` (PM9), second parent `57915de` (main), common ancestor `d56b17b`; no path changed on both sides and no conflict. Rust and runtime inputs equal main's, frontend and browser-test inputs equal `a0783bb`'s; the combined tree has had no new runtime, component or browser run (**SOURCE COMPOSITION CHECKED — NO NEW RUNTIME VALIDATION**). `a0783bb` stays the last tested PM9 production code. See [baseline §8](baseline.md#8-reconciliation-with-the-accepted-main-2026-09-26). Not pushed. |
+| Checkpoint | **Mid-phase normalization (2026-09-26)** | — | Scope, decisions, route and roadmap rerun, then the plan check, on two met unfreeze conditions ([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)). PM9.1: **PARTIAL — J1–J6 baseline measurement outstanding**, the only unmet item of its contract; native rendering at OS scaling and the provider route were never in it and now belong to the M7.6-style qualification after PM9.7. PM9.2: **COMPLETE**, confirmed against its own Completion. PM9.3: **READY**; its expansion is void and is redone when it starts. The `openTheViewer` repair and the 960×640 panel floors go to PM9.3, the m7.2 `metrics()` diagnosis and PM9.2's surface specs' remaining failures to PM9.7; the open deviation rows are classified. |
 
 ### Verification backlog
 
@@ -75,6 +115,12 @@ candidate on the reconciled base, not each intermediate commit:
    Left: PM9.2 in the native window at 150 %, with item 1.
 5. PM9.3's render and legacy-repair order in
    [slice-03 §6](slice-03.md#6-pending-needs-a-validation-window).
+
+Owners since the 2026-09-26 checkpoint ([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)):
+item 1 belongs to the M7.6-style qualification after PM9.7; item 2 to PM9.1,
+on `d56b17b`; item 3's `openTheViewer` diagnosis and panel floors to PM9.3 and
+its m7.2 `metrics()` diagnosis to PM9.7; item 4 is done in the browser and its
+native remainder goes with item 1; item 5 is PM9.3's.
 
 ## Closing record
 

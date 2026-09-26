@@ -9,7 +9,10 @@ recorded the campaign (§7). The tested production-code candidate is `a0783bb`
 Native Windows rendered acceptance at the host's 150 % scaling is PENDING, and
 the provider-positive native route is BLOCKED_PROVIDER_HOLD (§7.6). On
 2026-09-26 the branch was reconciled with the accepted main (§8); the
-reconciled tree has had no new runtime, component or browser run.
+reconciled tree has had no new runtime, component or browser run. Superseded
+in part by the 2026-09-26 mid-phase normalization (§10): PM9.1 is **PARTIAL**
+with only J1–J6 left, and native rendering at OS scaling and the provider
+route belong to the qualification after PM9.7.
 
 ## 1. Ownership map
 
@@ -96,7 +99,8 @@ PM9.3's preparation classifies the viewer-related rows above test group by
 test group, from the retained reporter log, as still valid, superseded (with
 the named replacement), unrelated, or unknown until a first run. See
 [slice-03 §5](slice-03.md#5-legacy-browser-specs-relevant-to-pm93). The
-table above is unchanged.
+table above is unchanged; its slice column for m7.1, m7.2, m7.4's active-Clear
+cases and m7.5 is superseded by §10.
 
 ## 3. v5.11 reference
 
@@ -685,3 +689,132 @@ zh-CN "待转换…"; the status is whole, the order holds, the line is one row,
 the document has no overflow. Status: **PM9.2 PRODUCT CONVERGENCE COMPLETE —
 FOCUSED RENDERED ACCEPTANCE PASS.** PM9.1's residual obligations above are
 unchanged; PM9.3 has not started.
+
+## 10. Mid-phase normalization (2026-09-26)
+
+**Why now.** Two unfreeze conditions in [slices.md](slices.md) had been met.
+The last one: PM9.2 closed without the legacy browser-spec repairs §2 assigns
+to its surfaces. The fourth: the verification backlog had items with no clear
+owner, and the records held PM9.1 open for residuals its own contract does not
+name, which blocked a reliable start of PM9.3. A later coordination note had also proposed calling PM9.1 complete
+and moving its residuals elsewhere without this procedure; that proposal is
+not adopted. Only the scope ledger, decisions, route and roadmap were rerun,
+then the plan check. This does not replace the midpoint check after PM9.3.
+Nothing was run: the evidence is the tracked records, their Git history and
+the retained runs they cite.
+
+**PM9.1's contract.** The tracked [slice-01](slice-01.md) Completion, frozen
+when the plan was materialized (`12444a5`), requires: the tests run and recorded;
+rendered scenarios at three viewports and two languages with keyboard and
+reduced-motion samples; the deviation table filled, each difference classified
+as recorded intentional, a gap for a named slice, later, or not applicable;
+J1–J6 measured before later slices change them; and the verification entry
+points confirmed. The planning original it came from also says OS scaling is
+recorded and that browser evidence infers no native qualification.
+
+**Residual items, each in one class.** A: required by PM9.1's contract.
+B: meaningful only at integrated acceptance. C: native, provider or release
+qualification owned outside the PM9 slices. D: not in the contract; kept only
+for a named consequence.
+
+| Item | Where it was required | Evidence now | What it supports | Class | Owner | If left where it was |
+| --- | --- | --- | --- | --- | --- | --- |
+| J1–J6 step, decision, context, confirmation, preserved-ID, IPC and mount measurement | slice-01 pending item 4 and Completion ("J1–J6 measured") | None beyond B1–B7's own request ledgers. PM9.2's "J1 and J6 show no lost context" rests on B1, B2 and m8.2's Details folding, which show preserved context, not these counts | The before side of U1's and U10's before-and-after comparison | **A** | **PM9.1**, measured on the recorded pre-PM9 candidate `d56b17b` (§7.4's before capture), so later slices cannot move it; required before PM9.7 | — (stays) |
+| Deviation rows without a classification: parts of L3, L5 and L21; L7 at 1920×1080; L11; L12 | slice-01 pending item 3 → Completion ("deviation table filled") | Production column filled (§3.1) | Each slice's presentation decisions and PM9.7's reference-deviation disposition | **A**, satisfied by the classification below | Classification here; work by the named slice; final disposition PM9.7 | PM9.1 short by a classification its own record can make |
+| The shared `openTheViewer` helper diagnosis | slice-01 pending item 5; not in its Completion | Failure family (a) in §2 and slice-03 §5 | Repairs of m4.3, m4.4, m5.2, m5.3, m5.7 and viewer-r1, which call the helper; the same toggle-then-wait is copied into m7.2, m7.3 and m7.4 | **D**, with that consequence | **PM9.3**, as the first repair slice-03 §5 already plans, with the copies in m7.3 and m7.4's viewer cases; m7.2's copy goes with m7.2 to PM9.7 | Two owners for one repair, and PM9.1 held open by work its contract does not name |
+| m7.2's own `metrics()` diagnosis, and the remaining failures of PM9.2's surface specs: m7.1 3 of 3 (last run on `a0783bb`, §7.5); m7.2 10 of 11, two of them its own copy of the toggle-then-wait; m7.4's two active-Clear cases; m7.5 1 of 8 | slice-01 pending item 5; §2's slice-2 rows | m7.2 and m7.5 fail with unchanged text on `0d22fc7` (§9, run 4); m7.1 and m7.4 were not rerun after PM9.2, which records that it repairs only what its own changes touch | Rendered regression coverage of roster organization, focus and Settings (U2 and the regression list) | **D**, with that consequence | **PM9.7**, as regression-gate work: repaired, retired against a named replacement, or recorded with a diagnosis | Owned by a closed slice |
+| The panel floors at 960×640 | Verification backlog item 3; slice-02 risks | Unconfirmed; the owning specs are red. PM9.2 took the quiet notice band to 0 px (§9) | ADR 0006's narrow-window budget | **D**, with that consequence | **PM9.3**, measuring the floors when it re-derives m7.3's and viewer-r1's geometry; m7.2's own geometry assertions go with m7.2 to PM9.7 | No owner |
+| Native Windows rendered acceptance at the host's 150 % scaling | slice-01 pending item 2 as a note; backlog item 1; PM9.2's closure. In no slice's Completion; the brief records OS scaling separately | Scaling recorded (§7.6). A native window probes ProteoWizard on mount, which the HOLD does not allow | Native and installed qualification of the product candidate | **C** | **M7.6-style installed, native, provider and release qualification against PM9.7's frozen candidate** ([ROADMAP](../../../ROADMAP.md), after M9) | PM9.1 could never close while the HOLD stands |
+| States §3.1 did not capture: the pending range band, the empty viewer entry, roster-open and Details-open at 960×640, the Conversion surface, the other empty and entry states, scrolled and focus-driven positions | slice-01 pending item 3 lists them as not part of the comparison; no difference was found to classify | None rendered against the reference | The owning slices' presentation decisions | **D**, with that consequence | Compared by the slice that owns each: the first three by PM9.3, the Conversion surface by PM9.4; the application's other empty and entry states (the `empty` scenario) and scrolled and focus-driven positions in PM9.7's integrated pass; final disposition PM9.7 | No owner for a comparison the owning slice needs |
+| The provider-positive native route; U4's live-provider check | §7.6; backlog item 1; brief U4 ("stays PENDING under the ProteoWizard hold") | BLOCKED_PROVIDER_HOLD | A live conversion by ProteoWizard | **C** | The same qualification; blocked until the HOLD is lifted | As above |
+
+No item is class B: J1–J6's before side is a baseline and belongs to the
+opening slice, while its after side was already PM9.7's (brief U1 and U10).
+
+**Deviation rows classified** (this record's reading, as in §3.1; the owner's
+final disposition is PM9.7's):
+
+- L3, stacked rather than side by side and no heading or tabs over the
+  evidence: gap for PM9.3, with identity placement and dominance.
+- L5, the scan table below rather than beside the spectrum: gap for PM9.3.
+- L21, what stays visible at 960×640 with the roster or Details open, and
+  swap rather than stack: gap for PM9.3. The one-row navigation: recorded
+  intentional, by analogy with the owner's L14–L16 rule against another
+  wrapped header row, as PM9.2 rendered it without overflow in either language
+  (§9); this is the record's reading, which the owner confirms at PM9.7.
+- L12, SHA-256 values and long names wrapping in Details: gap for PM9.6.
+- L7 at 1920×1080 (roster 280 px against 285 px) and L11 (outer inset): later,
+  as the brief's "non-critical layout adjustments" if time allows.
+- The states §3.1 did not capture are compared by their owners, as in the
+  table above; native windows and OS scaling by the qualification above.
+
+**PM9.1: PARTIAL.** Every contract item is met except J1–J6. It stays open for
+that measurement alone. The earlier statement that native acceptance and the
+provider route kept it open is superseded: neither is in its contract.
+
+**PM9.2: COMPLETE, confirmed against its own Completion.** On the final
+candidate `b81fc78` the five Vitest files its last change affects (51 tests)
+and PM9.1's spec (22 of 22) pass; the full Vitest suite last ran on `e533c94`
+(110 files, 2212 tests); and the affected browser suites showed no new
+failure on `0d22fc7` (§9, run 4: m7.2 1 of 11 and m7.5 7 of 8 with unchanged
+failure text, m5.7 7 of 8, the M8/M9 specs and PM9.3's all passing); m7.1 and
+m7.4 were not rerun after PM9.2, and its record limits its legacy repairs to
+what its changes touch. The context line, the owner's actions and L20 are
+rendered at three viewports in both languages with keyboard and
+reduced-motion samples, all twelve PM9-G keyboard walks included; the context
+line was compared with the reference's (§3.1, L14–L16). J1 and J6 show no lost
+context in B1 (every item only changes the surface; Home and keyboard), B2
+(roster, viewed scan and committed m/z view kept across surfaces) and m8.2's
+Details folding. m7.5's one remaining failure stops at a wait for the reset
+control's `disabled` (m7.5:447), which the header refuses with `aria-disabled`
+— the stale assertion §2 recorded — before its keyboard assertion, so it is
+no evidence either way; it is PM9.7's. The English
+scope decision is recorded. The manual review harness
+(`c5a3f7e`) is test infrastructure, not a capability. Its surface specs'
+pre-existing failures are PM9.7's, as above.
+
+**Decisions changed here.**
+
+1. Native rendering at OS scaling and every provider-positive check leave the
+   PM9 slices for the M7.6-style qualification that follows PM9.7's frozen
+   candidate, as the roadmap already orders. PM9.7 records them as PENDING or
+   BLOCKED_PROVIDER_HOLD, never as passed. Latest decision point: PM9.7's
+   candidate freeze, where the owner decides whether PM9 closes with them
+   open, and whether U4 can be accepted with its live-provider check open.
+2. J1–J6 stays PM9.1's, pinned to `d56b17b`. Latest point: before PM9.7
+   starts. It does not block PM9.3–PM9.6, because nothing they change can move
+   that candidate. PM9.3's own before-and-after of its viewer paths, on the
+   PM9.2 final candidate, is a different measurement and does not replace it.
+3. The `openTheViewer` repair, its copies in m7.3 and m7.4's viewer cases
+   and the 960×640 panel floors are PM9.3's. The m7.2 `metrics()` diagnosis
+   and the remaining failures of PM9.2's surface specs (m7.1, m7.2 with its
+   own copy of the toggle-then-wait, m7.4's two active-Clear cases and m7.5)
+   are PM9.7's; m7.4's two conversion-intent cases stay PM9.4's. This
+   supersedes §2's slice column for m7.1, m7.2, m7.4's active-Clear cases and
+   m7.5.
+4. [slice-03](slice-03.md)'s expansion is void under the unfreeze rule.
+   PM9.3 re-expands when it starts, reusing its §1–§5 evidence.
+5. PM9.3 may start while PM9.1's J1–J6 and the external qualification remain
+   open.
+
+**Plan check** (three passes; the second and third by a reader who had not
+written the plan, whose findings are corrected above; nothing is left
+unresolved):
+
+- Coverage: every open item above has one owner, including the backlog, §2's
+  slice column, slice-03 §5 and §6, the open deviation rows and the states
+  §3.1 did not capture; every facet of U1–U10 has a slice in the route, with
+  PM9.7's integrated acceptance over all ten.
+- Conflict: no item is both PM9.1's and another slice's; J1–J6's before and
+  after sides are two measurements with two owners; §2's slice-2 rows are
+  superseded, not duplicated.
+- Size: still seven slices. PM9.7 now carries the PM9.2-surface legacy
+  failures besides its route, bounded by "repaired, retired against a named
+  replacement, or recorded with a diagnosis". PM9.3's and PM9.4's legacy
+  loads are as §2 and slice-03 §5 already recorded, and unchanged here. If a
+  slice cannot fit one session, the unfreeze rule applies and "if time allows"
+  work goes first. No eighth slice.
+- Dependencies: PM9.3 depends on PM9.2, which is complete. PM9.1's remainder
+  is a precondition of PM9.7 only.
+- Completion: PM9.1's and PM9.2's statuses follow from their own Completion
+  text, not from convenience.

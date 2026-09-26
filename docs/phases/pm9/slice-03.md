@@ -10,6 +10,20 @@ window the viewer contract spec ran 11 of 11 PASS on `a0783bb` (§4). That
 shows the authored harness executes against the unchanged viewer; it is not
 PM9.3 work. The midpoint check ([slices.md](slices.md)) follows this slice.
 
+**READY; this expansion is void** under the unfreeze rule after the
+2026-09-26 mid-phase normalization ([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)). PM9.3
+re-expands when it starts, from the code of the PM9.2 final candidate
+`b81fc78`, reusing §1–§5 as evidence. Settled there: the `openTheViewer`
+repair (m4.3, m4.4, m5.2, m5.3, m5.7 and viewer-r1 call it), the same
+toggle-then-wait copied into m7.3 and m7.4's viewer cases, and the 960×640
+panel floors are PM9.3's. The m7.2 rows in §5, m7.2's own copy of that pattern
+included, and m7.4's active-Clear cases are no longer PM9.2's but PM9.7's.
+L3, L5 and L21's open parts (what stays visible with the roster or Details
+open, swap rather than stack) are PM9.3's gaps, and PM9.3 compares the pending
+range band, the empty viewer entry and the roster-open and Details-open states
+at 960×640. §6 item 3 is PM9.3's own before-and-after, not PM9.1's J1–J6
+baseline, which is measured on `d56b17b`.
+
 ## Goal
 
 A reader opening an acquisition sees the evidence first. They can inspect and

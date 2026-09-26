@@ -2,9 +2,10 @@
 
 PM9 | Acceptance: baseline for U1, U9, U10; repeatable scenarios for U2–U8 |
 Type: experimental / must | Serial, one writer
-Status: **BROWSER RENDERED BASELINE ESTABLISHED — NATIVE ACCEPTANCE PENDING.**
-Not complete. Established in the browser in the 2026-09-25 window on the
-production-code candidate `a0783bb`
+Status: **PARTIAL — J1–J6 BASELINE MEASUREMENT OUTSTANDING** (2026-09-26
+mid-phase normalization, [baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)). Every other item of
+the Completion below is met. Established in the browser in the 2026-09-25
+window on the production-code candidate `a0783bb`
 ([baseline §7](baseline.md#7-validation-window-2026-09-25)).
 
 ## Entry conditions
@@ -114,3 +115,13 @@ J1–J6 are not measured, native rendered acceptance at the host's 150 % scaling
 is PENDING and the provider-positive native route is BLOCKED_PROVIDER_HOLD, so
 **PM9.1 is NOT COMPLETE**. The helper diagnoses (pending item 5) are also not
 done.
+
+*Corrected at the 2026-09-26 mid-phase normalization
+([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)).* Of those reasons only J1–J6 is in the
+Completion above, so it alone keeps PM9.1 open: **PARTIAL**. It is measured on
+the pre-PM9 candidate `d56b17b`, which later slices cannot change, and is
+required before PM9.7. The open deviation rows are now classified (item 3).
+Native rendering at OS scaling and the provider route were never in this
+contract; they belong to the M7.6-style qualification after PM9.7's frozen
+candidate. The helper diagnoses (item 5) are not in it either: the
+`openTheViewer` repair is PM9.3's and m7.2's `metrics()` diagnosis PM9.7's.

@@ -4,11 +4,13 @@ Stage: after M9, the concentrated real-workflow UI/UX cleanup that precedes a
 new product candidate ([ROADMAP](../../../ROADMAP.md), [M9 closure §15](../../product/M9_CLOSURE.md#15-after-m9)).
 Budget: seven slices, including the opening baseline (PM9.1) and the closing
 acceptance (PM9.7). No uncounted planning or cleanup slice.
-Status: **PLANNED**. The 2026-09-25 validation window established PM9.1's
-browser rendered baseline, which is not complete, and passed PM9.2's browser
-functional acceptance on the production-code candidate `a0783bb`; PM9.2's
-visual and product acceptance is pending. PM9.3 has static preparation and a
-passing contract spec only. The provisional base is resolved: on 2026-09-26 the
+Status: **IN PROGRESS** since the 2026-09-26 mid-phase normalization
+([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)): PM9.1 is partial, with only J1–J6 left;
+PM9.2 is complete; PM9.3 is ready; PM9.4–PM9.7 have not started. Before that:
+the 2026-09-25 validation window established PM9.1's browser rendered
+baseline, which is not complete, and passed PM9.2's browser functional
+acceptance on the production-code candidate `a0783bb`. PM9.3 has static
+preparation and a passing contract spec only. The provisional base is resolved: on 2026-09-26 the
 branch merged the accepted main `57915de` (merge `052db1f`), with no new
 runtime validation of the combined tree
 ([baseline §8](baseline.md#8-reconciliation-with-the-accepted-main-2026-09-26));
@@ -60,6 +62,16 @@ acceptance.
 | U8 Output | Format-specific capabilities and scopes kept; viewer copy/export unchanged; stored targeted results keep SVG/PNG/CSV/TSV only | Existing viewer and targeted export authority | Ownership, scope, coverage and cancel checks |
 | U9 Experience | A populated production surface reflects the accepted hierarchy, density, disclosure, bilingual controls, focus and responsive behaviour | Existing tokens, shared controls, preferences | 1920×1080, 1366×768 and 960×640 CSS viewports, en and zh-CN, keyboard, reduced motion; OS scaling recorded separately; no-overflow alone is not acceptance |
 | U10 States and resources | Empty, loading, ready, unsupported, failure, stale and missing states have truthful next actions; navigation adds no background work | Minimal projections, existing progress/cancel owners, lifecycle cleanup | Late answers, stop and replacement, unmount/remount; request and mount counts against the baseline |
+
+### Ownership outside the slices (2026-09-26)
+
+Native rendering at the host's OS scaling and every provider-positive check,
+U4's live-provider check included, belong to the M7.6-style installed, native,
+provider and release qualification of PM9.7's frozen candidate, as the
+[roadmap](../../../ROADMAP.md) orders after M9. PM9 records them as `PENDING`
+or `BLOCKED_PROVIDER_HOLD`, never as passed. Whether U4 can be accepted with
+its live-provider check open is the owner's decision at PM9.7's candidate
+freeze.
 
 ## Regression (must still hold at the end)
 

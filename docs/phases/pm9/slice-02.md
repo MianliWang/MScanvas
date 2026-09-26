@@ -10,7 +10,9 @@ rendered evidence and accepted in the browser on `0d22fc7` (see "Focused
 rendered acceptance" below). The one criterion left there, the English scope
 at its floor, was closed by the owner's copy decision on the final code
 candidate `b81fc785d2be703e09ac4183dd1c3a17dea58cb7` (tree `45da59b2f569d862e825b4621d222b9d38e38767`; see "Closure" below). Native
-rendering at 150 % belongs to PM9.1 and stays PENDING.
+rendering at 150 % stays PENDING; since the 2026-09-26 mid-phase normalization
+it belongs to the M7.6-style qualification after PM9.7
+([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)).
 
 ## Goal
 
@@ -415,6 +417,17 @@ eleven viewports and receive a review key without the page seeing it; an
 interactive session stays open and ends one second after its window closes,
 leaving no process; and the production build contains none of its switches,
 keys, answer tables or scenario names.
+
+*Correction (2026-09-26, [baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)).* The zh-CN keyboard
+walks are rendered, not code-evidenced: on `b81fc78` all twelve PM9-G walks,
+six per language, record every header stop with a visible ring
+(`test-results/pm9.1/browser-knQ5aB`). Only Clear list's focus and hover rest
+on code. The remaining failures of PM9.2's surface specs (m7.1, m7.2, m7.4's
+active-Clear cases, m7.5) belong to PM9.7's regression gate; PM9.2's own
+Completion is met. The residual list in "Evidence boundaries" below is
+superseded: only J1–J6 is PM9.1's; native rendering at OS scaling and the
+provider route belong to the M7.6-style qualification; the helper diagnoses
+are PM9.3's (`openTheViewer`) and PM9.7's (m7.2 `metrics()`).
 
 **Evidence boundaries.** The five records above now carry dated notes: their
 measurements and captures stay attributed to the builds they observed, and the
