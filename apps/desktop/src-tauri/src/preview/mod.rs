@@ -54,6 +54,11 @@ mod export;
 /// Figure output settings, and the rasterizer that turns one exported SVG into
 /// pixels for PNG and the clipboard.
 mod figure;
+/// The substituted provider that fails a test which starts a process. Shared
+/// by this module's own suite and the project bridge's, so the claim they both
+/// make rests on one double.
+#[cfg(test)]
+pub(crate) mod idle_provider;
 mod installation;
 mod operation;
 mod output_opening;
@@ -64,14 +69,25 @@ mod output_opening;
 /// the complete spectrum Rust retained -- never the complete arrays, never a
 /// path -- and no scientific export is ever taken from one. See ADR 0037.
 mod projection;
+pub(crate) mod scientific_output;
+/// The bytes a lawful SCIEX acquisition fixture is made of. Shared by this
+/// module's own suite and the project bridge's, so a compound-file header is
+/// written once.
+#[cfg(test)]
+pub(crate) mod sciex_fixture;
 pub mod selection;
 pub mod service;
 
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use authority::PreviewAvailability;
 pub use backend::ProteoWizardProvider;
 pub(crate) use drop_ingestion::normalize_window_drop_event;
+#[cfg(test)]
+pub(crate) use installation::InstallationIdentity;
+pub(crate) use installation::PreviewProducerFacts;
 pub use service::PreviewService;
 
 /// Installs the rendered tests' synthetic spectrum. See `e2e_seed`.

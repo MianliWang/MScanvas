@@ -72,6 +72,7 @@ use super::dto::{
     WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
 };
 use super::dto::{MAX_SPECTRUM_POINTS, SpectrumDomainRefusalDto, SpectrumViewportDomainDto};
+use super::idle_provider::NoProcess;
 use super::installation::InstallationIdentity;
 use super::operation::SettledItemAdoption;
 use super::operation::{
@@ -80,6 +81,9 @@ use super::operation::{
     folded_output_name,
 };
 use super::projection::MAX_PROJECTION_POINTS;
+use super::sciex_fixture::{
+    COMPOUND_FILE_MAGIC, SCIEX_MARKERS, scan_companion_bytes, wiff_container_bytes,
+};
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
 /// its answer exact rather than a guess.
@@ -2441,33 +2445,6 @@ fn choosing_a_file_keeps_the_session_holding_exactly_one_dataset() {
     );
 }
 
-/// Fails the test outright if anything workspace-shaped tries to start a
-/// process or probe an installation.
-///
-/// The whole roster is meant to be free of the machine: reading it, adding to
-/// it, removing from it and emptying it are decisions about what the session
-/// lists, and a user curating twenty rows must not be twenty ProteoWizard
-/// launches.
-struct NoProcess;
-
-impl PreviewProvider for NoProcess {
-    fn use_installation(&self, _home: Option<PathBuf>) {
-        panic!("holding datasets must not reconfigure the backend");
-    }
-
-    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
-        panic!("holding datasets must not probe the backend");
-    }
-
-    fn run(
-        &self,
-        _source: &Path,
-        _operation: &PreviewOperation,
-    ) -> Result<OperationAttempt, PreviewErrorDto> {
-        panic!("holding datasets must not launch a process");
-    }
-}
-
 #[test]
 fn managing_the_workspace_never_reaches_the_backend() {
     let file = TestFile::new("no-process");
@@ -3963,6 +3940,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // the preview API: it holds no scientific state and confers no authority
     // over a backend, a dataset or a conversion.
     let preferences = include_str!("../../../src/features/preferences/preferencesApi.ts");
+    // The project store's own boundary, beside the preference store's.
+    let projects = include_str!("../../../src/features/project/projectApi.ts");
 
     let registered = host
         .split_once("generate_handler![")
@@ -3988,6 +3967,75 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // could reach for on its own.
             "load_ui_preferences",
             "save_ui_preferences",
+            // The M8.1 project store, on its own boundary for the same reason
+            // the preference store has one: a project references files and the
+            // roster admits them, and keeping the two boundaries apart is what
+            // makes "opening a project admits nothing" structural rather than a
+            // convention. Every one of these addresses records by identifier;
+            // none of them can name a path, which the PathBuf assertion below
+            // checks for the whole surface.
+            "get_project_state",
+            "create_project",
+            "close_project",
+            "open_project",
+            "save_project",
+            "save_project_as",
+            "add_project_input",
+            "remove_project_input",
+            // Accepting an operation is separate from running it, for the same
+            // reason the folder import reserves before it picks: invokes are
+            // independent fetches, and a cancel must have something to name
+            // before the work it names has necessarily arrived.
+            "begin_project_job",
+            "check_project_links",
+            "cancel_project_job",
+            "capture_project_file_facts",
+            // Relinking is two commands, and deliberately not one. A proposal
+            // is what the user is shown; the commit is what they confirm. One
+            // command would be a relink that happened because a dialog closed.
+            "propose_project_relink",
+            "commit_project_relink",
+            "abandon_project_relink",
+            // The M8.3 bridge. One command, and on this side of the boundary
+            // rather than the workspace's: it is the project that decides
+            // whether a reference may be handed over, and the workspace's own
+            // admission is what it is handed to.
+            "add_project_input_to_workspace",
+            // The M8.4 layer. Two commands and no third: a layer is created
+            // from a reference and removed by its own identifier, and there is
+            // nothing else to do to one. Neither reads a file or starts a
+            // process; the one question outside the project is whether the
+            // remembered row is still in the roster, answered from memory.
+            "create_project_layer",
+            "remove_project_layer",
+            // The M8.5 QC summary snapshot. One command: it names a layer and
+            // the preview's opaque run-summary token, sends no value, reads no
+            // file and starts no process -- it copies what the preview
+            // already retained, with the build that preview reported.
+            "capture_project_qc_summary",
+            // The M9.1 targeted MS1 recipe. Five commands and no path in any
+            // of them: a review sends the typed text and a layer and gets a
+            // plan back; a run names that plan by its digest under an
+            // accepted operation; a progress read is cheap; and the result is
+            // read back a bounded page or one target's evidence at a time.
+            "resolve_targeted_ms1_plan",
+            "run_targeted_ms1",
+            // M9.4: a batch -- one request over several layers resolved into
+            // one plan per layer, and those plans run one after another under
+            // one accepted operation, whose cancel is the batch's Stop.
+            "resolve_targeted_ms1_batch",
+            "run_targeted_ms1_batch",
+            "get_targeted_ms1_progress",
+            "read_targeted_ms1_rows",
+            "read_targeted_ms1_evidence",
+            // M9.2: a stored result drawn and exported, and its table written,
+            // each naming the result and a target by identifier and nothing
+            // else. None reaches a source, the runtime or a worker; the
+            // runtime read answers only whether a new run could start.
+            "preview_targeted_ms1_figure",
+            "export_targeted_ms1_figure",
+            "export_targeted_ms1_table",
+            "get_targeted_ms1_runtime",
             "inspect_backend",
             "choose_backend_installation",
             "use_automatic_backend_discovery",
@@ -4089,7 +4137,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         assert!(
             api.contains(&format!("\"{name}\""))
                 || drop_transport.contains(&format!("\"{name}\""))
-                || preferences.contains(&format!("\"{name}\"")),
+                || preferences.contains(&format!("\"{name}\""))
+                || projects.contains(&format!("\"{name}\"")),
             "the frontend never calls {name}"
         );
     }
@@ -7090,16 +7139,10 @@ fn mzml_chromatogram_document(chromatograms: u32) -> String {
     format!(r#"<indexedmzML><mzML version="1.1.0">{run}</mzML></indexedmzML>"#)
 }
 
-/// The eight bytes every Microsoft compound file begins with.
-///
-/// Spelled out rather than imported, like the Thermo signature beside it: a
-/// test that read its expectation from the constant it checks would pass
-/// because that constant had been changed to match a mistake. It is also the
-/// point of this family -- these same eight bytes begin a SCIEX `.wiff`, so
-/// they cannot be the recognition.
-const COMPOUND_FILE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
-
-/// The entries a LabSolutions acquisition carries, likewise spelled out.
+/// The entries a LabSolutions acquisition carries, spelled out rather than
+/// imported, like the Thermo signature beside it: a test that read its
+/// expectation from the constant it checks would pass because that constant
+/// had been changed to match a mistake.
 const SHIMADZU_MARKERS: [&str; 3] = ["Method File Property", "GUMM_Information", "LSS Raw Data"];
 
 /// A compound file whose first directory sector holds exactly these entries.
@@ -18760,56 +18803,10 @@ fn a_provider_label_that_names_a_path_is_scrubbed_before_it_is_written() {
 // A workspace dataset that is a bundle, converting to a set. ADR 0023.
 // ---------------------------------------------------------------------------
 
-/// The entries a SCIEX acquisition carries, spelled out for the same reason the
-/// LabSolutions ones are: a test that read its expectation from the constant it
-/// checks would pass because that constant had been changed to match a mistake.
-const SCIEX_MARKERS: [&str; 4] = [
-    "SampleSubtree",
-    "MethodSubtree",
-    "SampleTable",
-    "MassSpecMethod",
-];
-
-/// A compound file under the geometry a real `.wiff` declares.
-///
-/// Version 4 with 4096-byte sectors, because five entries do not fit in the
-/// 512-byte directory sector the LabSolutions fixture uses -- and because that
-/// is what all three lawful fixtures declare.
-fn wiff_container_bytes(entries: &[&str]) -> Vec<u8> {
-    const SECTOR: usize = 4096;
-    let mut bytes = vec![0_u8; SECTOR * 2];
-    bytes[..8].copy_from_slice(&COMPOUND_FILE_MAGIC);
-    bytes[26..28].copy_from_slice(&4_u16.to_le_bytes());
-    bytes[28..30].copy_from_slice(&[0xFE, 0xFF]);
-    bytes[30..32].copy_from_slice(&12_u16.to_le_bytes());
-    bytes[48..52].copy_from_slice(&0_u32.to_le_bytes());
-
-    let named = std::iter::once("Root Entry").chain(entries.iter().copied());
-    for (index, name) in named.enumerate() {
-        let at = SECTOR + index * 128;
-        let units: Vec<u16> = name.encode_utf16().collect();
-        for (unit, slot) in units.iter().zip(bytes[at..].chunks_exact_mut(2)) {
-            slot.copy_from_slice(&unit.to_le_bytes());
-        }
-        let declared = u16::try_from(units.len() * 2 + 2).expect("a short entry name");
-        bytes[at + 64..at + 66].copy_from_slice(&declared.to_le_bytes());
-        bytes[at + 66] = if index == 0 { 5 } else { 2 };
-    }
-    bytes
-}
-
-/// The 32 bytes every measured `.wiff.scan` begins with, then opaque payload.
-///
-/// Spelled out rather than imported, like every other signature here.
-fn scan_companion_bytes(payload: &str) -> Vec<u8> {
-    let mut bytes = vec![
-        0x82, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x11, 0x11, 0x11, 0x82, 0x05, 0x00, 0x00, 0x01, 0x00,
-        0x00, 0x00,
-    ];
-    bytes.extend_from_slice(payload.as_bytes());
-    bytes
-}
+// The entries a SCIEX acquisition carries, the compound-file geometry they sit
+// in and the 32 bytes every measured `.wiff.scan` begins with all live in
+// `preview::sciex_fixture` now, because the project bridge's suite builds the
+// same acquisition and a compound-file header is not a value to spell twice.
 
 impl TestFile {
     /// A whole SCIEX acquisition: the container and the companion beside it.

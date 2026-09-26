@@ -37,6 +37,39 @@ No public plugin ABI yet. A first worker may use:
 - Arrow/Parquet for tables where justified;
 - explicit protocol and module versions.
 
+## The first worker (M9.1)
+
+One worker exists: the targeted MS1 recipe's fixed adapter
+(`apps/desktop/src-tauri/src/targeted_ms1/adapter_v1.py`, embedded in the build)
+in a fixed CPython 3.13.15 + pyOpenMS 3.5.0 runtime. What it settled:
+
+- **Request and result:** one typed JSON request written by the supervisor, one
+  result and one outcome file read back and validated field by field; JSON
+  Lines progress events; rows and evidence as JSON Lines. No Arrow.
+- **Supervision:** the shared process runner in `crates/proteowizard`
+  (`CommandSpec::analysis_worker`), with a suspended spawn into a Job Object
+  (kill-on-close, one active process, a memory cap, below-normal priority), a
+  wall-clock budget, termination of the owned tree and an observed exit.
+- **Identity:** the runtime is verified against a digest-pinned manifest before
+  every launch, and the modules the worker reports loading are checked against
+  it after.
+- **Not enforced:** filesystem read confinement and network confinement.
+- **Execution view (M9.3):** the worker is only ever given an ASCII name in its
+  own attempt directory: a hard link to the held source on the work area's
+  volume, or elsewhere a copy made in one read through the held handle and
+  verified against the plan's bytes before launch. Attempt directories carry
+  an owner marker and are swept only when their owner process is gone
+  ([ADR 0049](adr/0049-content-bound-execution-snapshot.md)).
+- **Batches (M9.4):** several acquisitions reviewed together still run one
+  worker at a time, one acquisition per worker, in one loop inside one
+  exclusive project job; no worker is ever given more than one acquisition
+  ([ADR 0050](adr/0050-sequential-batch-of-independent-targeted-plans.md)).
+
+The runtime is provisioned into a development checkout only; nothing here
+satisfies the packaging gate below. See the
+[M9.1 record](../product/M9_1_TARGETED_MS1_HANDOFF.md#m91-record), and the
+[M9 closure](../product/M9_CLOSURE.md) for the current contract.
+
 ## Packaging gate
 
 Before bundling a Python environment, evaluate download size, Windows installation, security updates, licenses, offline behavior and support cost. A user-managed environment can be an early development route but not an unexplained consumer requirement.

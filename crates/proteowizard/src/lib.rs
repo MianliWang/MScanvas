@@ -50,8 +50,8 @@ pub use capability::{
 };
 pub use command::{
     BackendTool, CommandSpec, InputSpelling, OpenFormat, PlanError, PreviewOperation,
-    SourceIdentity, build_msaccess_command_with_capabilities, build_msconvert_command_for_source,
-    build_msconvert_command_with_capabilities,
+    SourceIdentity, WorkerLimits, build_msaccess_command_with_capabilities,
+    build_msconvert_command_for_source, build_msconvert_command_with_capabilities,
 };
 pub use conversion::{
     AdvisoryObservation, BinaryArrayMismatchKind, ConversionIntegrityOutcome,

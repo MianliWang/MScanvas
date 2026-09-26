@@ -6,6 +6,7 @@ import {
   PreferencesApiProvider,
   tauriPreferencesApi,
 } from "./features/preferences/preferencesApi";
+import { ProjectApiProvider, tauriProjectApi } from "./features/project/projectApi";
 import "./index.css";
 
 const root = document.getElementById("root");
@@ -20,7 +21,12 @@ if (!root) {
 createRoot(root).render(
   <StrictMode>
     <PreferencesApiProvider value={tauriPreferencesApi}>
-      <App />
+      {/* The real project store, installed beside the preference store and for
+          the same reason: the context default claims no store at all, so this
+          is what makes a shipped build able to open and save a project. */}
+      <ProjectApiProvider value={tauriProjectApi}>
+        <App />
+      </ProjectApiProvider>
     </PreferencesApiProvider>
   </StrictMode>,
 );

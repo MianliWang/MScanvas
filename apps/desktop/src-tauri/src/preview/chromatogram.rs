@@ -2060,11 +2060,13 @@ mod tests {
         }
     }
 
-    /// A linked figure is a version 2 document, like every other figure here.
+    /// A linked figure is a document of the contract's current version, like
+    /// every other figure here.
     ///
     /// Two panels needed no contract change: the renderer has carried a
     /// `Vec<PanelSpec>` since ADR 0028, and ordered vertical bands already place
-    /// and describe them.
+    /// and describe them. Version 3 (M9.2) added sample marks and intervals,
+    /// and a linked figure uses neither -- which is why its bytes are unchanged.
     #[test]
     fn a_linked_figure_needs_no_new_schema_version() {
         let source = ordinary();
@@ -2073,7 +2075,11 @@ mod tests {
             figure.schema_version(),
             mscanvas_plot_spec::spec::SCHEMA_VERSION
         );
-        assert_eq!(figure.schema_version(), 2);
+        assert_eq!(figure.schema_version(), 3);
+        assert!(figure.panels().iter().all(|panel| {
+            panel.intervals().is_empty()
+                && panel.series().iter().all(|series| !series.marks_samples())
+        }));
     }
 
     /// A figure too short for two panels is refused by the contract.

@@ -193,6 +193,63 @@ impl InstallationIdentity {
             executable_sha256: self.msconvert.content.map(|digest| digest.to_string()),
         }
     }
+
+    /// What a QC snapshot may record about the build that produced a preview.
+    ///
+    /// The preview runs `msaccess`, so the digest is `msaccess`'s -- the one
+    /// discovery took of that executable around its help probe, in this
+    /// resolution. The release, build date and source revision are the
+    /// installation's reported build identity. None of it is a path.
+    ///
+    /// `None` where no `msaccess` digest was bound, which is every resolution
+    /// whose `msaccess` help did not probe: without it this identity cannot say
+    /// which executable ran, and the caller refuses rather than records less.
+    /// Also `None` where the build reported a label a project document cannot
+    /// state: the build did report it, so recording it as unreported would be
+    /// untrue, and this is the one answer both the page's "can this be
+    /// captured" and the capture itself read.
+    pub(crate) fn producer_facts(&self) -> Option<PreviewProducerFacts> {
+        Some(PreviewProducerFacts {
+            msaccess_sha256: self.msaccess.content?,
+            release: stated(self.release.as_deref())?,
+            build_date: stated(self.build_date.as_deref())?,
+            source_revision: stated(self.source_revision.as_deref())?,
+        })
+    }
+}
+
+/// One build label as a project document may state it.
+///
+/// `Some(None)` where the build reported nothing; `Some(Some(label))` for a
+/// label the document's own rule admits once paths are redacted and it is
+/// bounded; `None` for a reported label it does not.
+fn stated(reported: Option<&str>) -> Option<Option<String>> {
+    match reported {
+        None => Some(None),
+        Some(value) => {
+            let label = safe_label(value);
+            crate::project::record::storable_label(&label).then_some(Some(label))
+        }
+    }
+}
+
+/// The path-free facts about the build that produced one preview.
+///
+/// Read out of the [`InstallationIdentity`] the preview's own batch reported,
+/// so it describes the build that ran and not whichever one is configured by
+/// the time someone asks.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct PreviewProducerFacts {
+    pub(crate) msaccess_sha256: Sha256Digest,
+    pub(crate) release: Option<String>,
+    pub(crate) build_date: Option<String>,
+    pub(crate) source_revision: Option<String>,
+}
+
+impl fmt::Debug for PreviewProducerFacts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<preview-producer-facts>")
+    }
 }
 
 #[cfg(test)]
@@ -222,6 +279,24 @@ impl InstallationIdentity {
             release: Some(release.to_owned()),
             build_date: None,
             source_revision: None,
+        }
+    }
+
+    /// One whose `msaccess` help probed, so it can say which executable ran:
+    /// the position every production resolution that previews is in.
+    pub(crate) fn for_test_probed(
+        home: &Path,
+        release: &str,
+        build_date: Option<&str>,
+        source_revision: Option<&str>,
+        msaccess_sha256: Sha256Digest,
+    ) -> Self {
+        Self {
+            msconvert: ToolIdentity::of(&home.join("msconvert.exe"), None),
+            msaccess: ToolIdentity::of(&home.join("msaccess.exe"), Some(msaccess_sha256)),
+            release: Some(release.to_owned()),
+            build_date: build_date.map(str::to_owned),
+            source_revision: source_revision.map(str::to_owned),
         }
     }
 }
@@ -427,6 +502,37 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn a_producer_is_identified_only_with_a_digest_and_labels_a_document_can_state() {
+        let home = PathBuf::from(r"C:\fake\producer");
+        let digest = Sha256Digest::from_bytes([0xA1; 32]);
+        let probed = |release: &str, revision: Option<&str>| {
+            InstallationIdentity::for_test_probed(&home, release, None, revision, digest)
+        };
+
+        let identified = probed("3.0.26204", Some("a09eea9"))
+            .producer_facts()
+            .expect("a probed build with plain labels is identified");
+        assert_eq!(identified.msaccess_sha256, digest);
+        assert_eq!(identified.release.as_deref(), Some("3.0.26204"));
+        // Unreported is a state, not a failure.
+        assert_eq!(identified.build_date, None);
+        assert_eq!(identified.source_revision.as_deref(), Some("a09eea9"));
+
+        // A reported label with a control character is not one a document can
+        // state, so the producer is not identified -- the same answer the
+        // capture would give, told before anyone presses.
+        assert!(probed("3.0\t26204", None).producer_facts().is_none());
+        assert!(probed("3.0.26204", Some("")).producer_facts().is_none());
+        // And a build whose `msaccess` never probed has no digest to record.
+        let unprobed = InstallationIdentity::for_test(
+            &home.join("msconvert.exe"),
+            &home.join("msaccess.exe"),
+            "3.0.26204",
+        );
+        assert!(unprobed.producer_facts().is_none());
     }
 
     #[test]

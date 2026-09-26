@@ -709,7 +709,7 @@ and runtime filters. No XIC follow-up is a prerequisite for M7.
 
 ## M7 — UI/UX and public product hardening
 
-**M7 IN PROGRESS; M7.1 implementation and required native acceptance verified.** The separately authorized
+**M7.1–M7.5 PUBLISHED; M7.6 PARTIAL AND DEFERRED — RELEASE QUALIFICATION INCOMPLETE.** The separately authorized
 M7.0 first-beta route is accepted in
 [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md),
 the single owner of scope, implementation order and release exits. M7 delivers
@@ -763,10 +763,16 @@ a real ProteoWizard conversion read and exported in Simplified Chinese with the
 exported document unchanged. Its protected publication, natural-main CI and
 local closeout identities belong to PR #125. The first
 beta's support target is decided: **Windows 11 25H2 x64**, with other Windows
-versions and ARM64 not promised supported. M7.6 remains
-**NEXT / NOT STARTED** and owns installed-candidate qualification on that
-target. M8/M9/M10
-remain later owners. External support/signing/distribution/sample/release
+versions and ARM64 not promised supported. M7.6 is **partially implemented
+and not qualified** — an NSIS per-user candidate configuration, generated
+third-party notices and inspection scripts, with installed qualification not started
+([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)) — and its
+release qualification is **deferred / incomplete**: it resumes against a later
+product candidate that contains M8/M9, not the M7.6 one (see the
+[M9 closure](docs/product/M9_CLOSURE.md#15-after-m9)). M8 and M9 are implemented
+and in no installer or release; their source integration is recorded in the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md).
+M10 is not started. External support/signing/distribution/sample/release
 decisions have explicit owner deadlines in ADR 0047; they are not waived.
 
 M5 hands it the interaction principles it proved rather than asserted:
@@ -802,19 +808,58 @@ cache are deferred here, the second only on a measurement showing a need.
 
 ## M8 — Artifact, run and QC foundation
 
-- Project/artifact/run persistence and lineage.
-- First reusable QC summaries and report surfaces.
+**M8 IMPLEMENTATION COMPLETE — NOT RELEASED.** M8.1–M8.5 are complete in
+source. They descend from the partial M7.6 commits, whose installed-candidate
+release qualification is deferred and incomplete; their source integration is
+recorded in the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md),
+and nothing here is in an installer or a release. What each item became is PRJ-001 to PRJ-006 in the
+[feature catalog](docs/product/FEATURE_CATALOG.md), and the
+[M8 record](docs/product/M8_1_FIRST_CLOSED_LOOP.md) holds the design, the
+closure and the M9 handoff.
+
+- Project/artifact/run persistence and lineage. **Done** (M8.1, M8.2):
+  one versioned project document, file-facts capture, and lineage derived from
+  the one record that states each edge.
+- First reusable QC summaries and report surfaces. **Done** (M8.5) as a
+  descriptive QC summary snapshot and report, not the ANA-002 recipe.
 - **Layer identity and provenance**, which multi-layer comparison needs and
   which no current contract provides: `FigureSpec` carries semantic style roles
   for quantities, not identities for sources, and `SeriesSpec` deliberately
-  carries no part of a path, handle or display name.
+  carries no part of a path, handle or display name. **Done** (M8.4) in
+  the project model; nothing enters `FigureSpec`.
+- Recorded history is append-only; pruning it is a later capability. Workspace
+  restoration (WSP-010) is not part of M8: a project is reopened and each
+  reference put in the Workbench explicitly (M8.3).
 
 ## M9 — First analysis recipes
 
+**M9 IMPLEMENTATION COMPLETE — TARGETED-MS1 ANALYSIS PHASE CLOSED; NOT
+RELEASED.** M9 delivered one **bounded, experimental targeted-MS1 recipe**, in
+source and in no installer or release (source integration: the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md)): M9.0 measured the route and ended
+with a conditional recommendation; M9.1 built the recipe (a reviewed,
+digest-named plan over one mzML layer, a supervised worker in a fixed,
+verified, development-only CPython 3.13.15 + pyOpenMS 3.5.0 runtime, typed
+fail-closed outcomes, a result stored beside the project under schema 4); M9.2
+made a stored result reopenable and exportable as SVG, PNG and CSV/TSV without
+the runtime or the source; M9.3 let a source on another volume run through a
+verified copy and made attempt scratch recoverable; M9.4 runs one request over
+2–16 independent acquisitions one after another. The current contract, the
+schema-4 disposition, the remaining limits with their owners and the
+source-integration handoff are in the
+[M9 closure](docs/product/M9_CLOSURE.md), which future work reads first. It is
+not identification, a validated assay, a general XIC or a multi-sample
+comparison; the runtime is not packaged, and Route B (TOPP) is neither
+authorized nor executed.
+
 - Isolated worker contract and one or two reviewed recipes backed by mature
-  packages.
+  packages. **One recipe delivered.** A second recipe is not an M9 obligation
+  and is a separate owner decision after the UI and release work.
 - Recipe mode first; no generic workflow canvas until real needs justify it.
-- **A reusable XIC export**, if an XIC ever exists. M5 measured
+- **A reusable XIC export**, if an XIC ever exists. **Not delivered by M9 and
+  moved out of it at closure**: the conditions below stand, and a targeted-MS1
+  evidence trace is not an admitted XIC. M5 measured
   `XIC_SOURCE_REFUSED` and built neither a trace nor an artifact, so the
   condition this entry was written under — *if M5 admitted one* — can no longer
   be met. It is **not** thereby closed. **Re-entry now has two owners, and they
@@ -830,8 +875,10 @@ cache are deferred here, the second only on a measurement showing a need.
   of M8's artifact identity. See
   [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md) and
   [ADR 0042](docs/architecture/adr/0042-viewer-completion-closure-and-handoff.md).
-- **Multi-layer comparison (VIEW-008)** belongs here for its semantics, on top of
-  M8's layer identity. Deferred from M5 with a recorded dependency audit: the
+- **Multi-layer comparison (VIEW-008)** was placed here for its semantics, on
+  top of M8's layer identity. **Not delivered by M9 and moved out of it at
+  closure** to a future comparison decision gated on an admitted normalization;
+  M9.4's batch deliberately compares nothing. Deferred from M5 with a recorded dependency audit: the
   application holds one preview by contract — Rust's open ticket states that
   there is only one chromatogram the user is looking at and only one that may be
   exported — two runs' intensities are not comparable without a normalization
@@ -839,6 +886,20 @@ cache are deferred here, the second only on a measurement showing a need.
   type from the one selected scan every linked view consumes. See
   [ADR 0037](docs/architecture/adr/0037-viewer-completion-route.md).
 
+### After M9
+
+Source integration of the M7.6-partial, M8 and M9 stack was prepared as one
+candidate; the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md)
+names it, and the merge on `main`, not this text, is the evidence that it was
+published. Not started and not promised after that: a concentrated
+real-workflow UI/UX cleanup; a frozen new product candidate; M7.6-style
+installed, native, provider and release qualification against that candidate;
+then a decision between a public beta and M10. See the
+[M9 closure](docs/product/M9_CLOSURE.md#15-after-m9).
+
 ## M10 — Automation
+
+**NOT STARTED.**
 
 - Stable CLI and schemas, then repo/user skills, then a narrow local MCP adapter.

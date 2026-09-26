@@ -1,0 +1,827 @@
+/*
+ * The project surface.
+ *
+ * Built from the same tokens as every other region: the page background, the
+ * white surface, the 6px/8px radii, the 4/8/12/16 spacing scale, the 36px and
+ * 32px control minimums, and the same 2px focus outline with offset. Nothing
+ * here introduces a colour, a radius or a density of its own.
+ *
+ * The verification tone is a left accent and a coloured word, never colour
+ * alone: each row also carries its outcome in text, and `data-verification`
+ * carries it for anything reading the state rather than looking at it.
+ */
+
+.workbench-project {
+  grid-area: main;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* Every control on this surface, including the link-styled ones inside a
+   notice. A text link is a smaller affordance, not a smaller target: at its
+   natural line height the Dismiss control measured 19.5px, which is under the
+   24px WCAG 2.2 floor and well under the compact 32px this design system sets.
+   One rule rather than three, so a control added later cannot miss it. */
+.project-surface button {
+  min-height: 32px;
+}
+
+.project-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 2px rgb(23 35 55 / 0.03);
+  padding: 16px;
+  min-height: 100%;
+}
+
+.project-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-header h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--color-text-primary);
+}
+
+.project-privacy {
+  margin: 4px 0 0;
+  max-width: 62ch;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+
+.project-busy,
+.project-unsaved,
+.project-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.project-busy {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+}
+
+.project-unsaved {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.project-problem {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.project-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-section h3 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.project-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.project-note,
+.project-empty {
+  margin: 0;
+  max-width: 72ch;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-row,
+.project-run {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  /* Wrapping rather than truncation: a file name is the thing a reader is
+     looking for, and the roster made the same choice for the same reason. */
+  overflow-wrap: anywhere;
+}
+
+.project-row.is-unchecked {
+  border-left-color: var(--color-border-strong);
+}
+
+.project-row.is-matching {
+  border-left-color: var(--color-success);
+}
+
+.project-row.is-different {
+  border-left-color: var(--color-warning);
+}
+
+.project-row.is-unavailable {
+  border-left-color: var(--color-danger);
+}
+
+.project-row-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+.project-row-label {
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.project-row-facts,
+.project-run-head,
+.project-run-relationship {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.project-row.is-matching .project-verification {
+  color: var(--color-success);
+}
+
+.project-row.is-different .project-verification {
+  color: var(--color-warning);
+}
+
+.project-row.is-unavailable .project-verification {
+  color: var(--color-danger);
+}
+
+/* A layer's availability, in the same two-tone pattern as the check outcomes:
+   the word beside it says the same thing, and the row carries
+   `data-layer-availability` for anything reading rather than looking. */
+.project-availability.is-attached,
+.provenance-current.is-attached {
+  color: var(--color-success);
+}
+
+.project-availability.is-detached,
+.provenance-current.is-detached {
+  color: var(--color-text-tertiary);
+}
+
+.project-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+
+.project-proposal {
+  font-size: 12px;
+  color: var(--color-text-primary);
+  background: var(--color-accent-soft);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.project-run[data-outcome="completed"] {
+  border-left-color: var(--color-success);
+}
+
+.project-run[data-outcome="failed"] {
+  border-left-color: var(--color-danger);
+}
+
+.project-run[data-outcome="cancelled"] {
+  border-left-color: var(--color-border-strong);
+}
+
+.project-run-operation {
+  color: var(--color-text-primary);
+}
+
+.project-run-version {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* At the narrow end the action rows stack rather than shrinking their targets:
+   a 32px control that reflows is still reachable, one squeezed to 24px is not. */
+@media (width <= 1050px) {
+  .project-header,
+  .project-section-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/*
+ * The provenance region.
+ *
+ * The same tokens as the project surface beside it, at the contextual region's
+ * own density. Two kinds of fact are kept visually apart: a current file state
+ * carries the check tones the project rows already use, and everything under a
+ * history heading is quiet text. Neither is colour alone -- each row says in
+ * words what it is.
+ */
+.provenance {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  min-height: 100%;
+}
+
+.provenance-kind {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.provenance-name {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.provenance-section-label {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.provenance-current-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+}
+
+.provenance-empty,
+.provenance-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.provenance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.provenance-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+/* Every control on this surface, including the link-styled ones. A text link
+   is a smaller affordance, not a smaller target. */
+.provenance button {
+  min-height: 32px;
+  text-align: left;
+}
+
+.provenance-link.is-gone {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* Current state, in the tones the project rows already use for the same four
+   outcomes. The word beside it says the same thing. */
+.provenance-current,
+.provenance-outcome,
+.provenance-stored {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.provenance-current.is-matching {
+  color: var(--color-success);
+}
+
+.provenance-current.is-different {
+  color: var(--color-warning);
+}
+
+.provenance-current.is-unavailable {
+  color: var(--color-danger);
+}
+
+/* The name of the object being inspected, in the list it was chosen from. */
+.project-row-label[aria-current="true"],
+.project-run-operation[aria-current="true"] {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.project-row-label,
+.project-run-operation {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.project-row-label {
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.project-inspect-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/*
+ * The QC summary report (M8.5).
+ *
+ * Small tables of exact values, in the surface's own quiet tones. No grade and
+ * no status colour: this report defines no threshold, so nothing here is
+ * green or red. Numbers use tabular figures so a column reads down cleanly,
+ * and every cell wraps rather than pushing the surface sideways -- a source
+ * name is whatever an instrument wrote, and a retention time can be long.
+ */
+.qc-report {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  overflow-wrap: anywhere;
+}
+
+.qc-report-of {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.qc-report-when {
+  color: var(--color-text-tertiary);
+}
+
+.qc-report-tables {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 24px;
+}
+
+.qc-report-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  max-width: 100%;
+}
+
+.qc-report-table caption {
+  text-align: left;
+  padding-bottom: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.qc-report-table th,
+.qc-report-table td {
+  padding: 4px 12px 4px 0;
+  text-align: left;
+  vertical-align: top;
+  border-top: 1px solid var(--color-border);
+}
+
+.qc-report-table thead th {
+  border-top: none;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.qc-report-table tbody th {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.qc-report-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Why a layer's QC summary cannot be captured, under its row. */
+.project-qc-reason {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* The build that produced a snapshot's preview, in Details. */
+.provenance-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.provenance-facts dt {
+  color: var(--color-text-secondary);
+}
+
+.provenance-facts dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.provenance-digest {
+  font-family: var(--font-mono);
+}
+
+/*
+ * The targeted MS1 recipe (M9.1): a setup, a report of one stored result, and
+ * one target's extracted points.
+ *
+ * The same quiet report tones as the QC summary. The only colours added are
+ * the chart tokens the viewer already uses for its two series, so M and M+1
+ * read the way two traces read elsewhere. Outcomes carry a word and a shape,
+ * never colour alone; a failure is never drawn in an absence's style.
+ */
+.targeted-setup,
+.targeted-report {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  overflow-wrap: anywhere;
+}
+
+.targeted-experimental {
+  margin: 0;
+  max-width: 72ch;
+  padding: 6px 8px;
+  border-left: 3px solid var(--color-warning);
+  background: var(--color-warning-soft);
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.targeted-parameters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.targeted-parameters label,
+.targeted-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.targeted-parameters input,
+.targeted-targets textarea {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.targeted-parameters input {
+  width: 12ch;
+}
+
+.targeted-targets textarea {
+  width: 100%;
+  max-width: 72ch;
+  box-sizing: border-box;
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.targeted-targets textarea:focus-visible,
+.project-surface summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.targeted-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.targeted-digest {
+  font-family: var(--font-mono);
+}
+
+/* The row table scrolls inside itself, so 200 targets never push the page. */
+.targeted-rows {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  padding: 0 8px;
+}
+
+.targeted-rows .qc-report-table {
+  width: 100%;
+}
+
+.targeted-rows caption {
+  padding-top: 4px;
+}
+
+.targeted-rows tr.is-chosen > * {
+  background: var(--color-surface-selected);
+}
+
+.targeted-rows tr[data-outcome="FAILED"] td:nth-child(2) {
+  color: var(--color-danger);
+}
+
+.targeted-symbol {
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+}
+
+.targeted-reason {
+  color: var(--color-text-secondary);
+}
+
+.targeted-selected {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.targeted-selected h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.targeted-plot {
+  margin: 0;
+  max-width: 720px;
+}
+
+/* The figure is Rust's drawing, shown as an image at its own aspect ratio and
+   never wider than the section. */
+.targeted-plot img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.targeted-export {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 720px;
+  font-size: 12px;
+}
+
+.targeted-export summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.targeted-export[open] {
+  padding-bottom: 4px;
+}
+
+.targeted-points,
+.targeted-modules {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.targeted-points summary,
+.targeted-modules summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+/* A `<div>` grouping a label with its value keeps the two-column grid. */
+.targeted-member {
+  display: contents;
+}
+
+/* A table keeps its label beside its value rather than stretching across the
+   section, and the row table fills its own scroller. */
+.targeted-setup .qc-report-table,
+.targeted-report > .qc-report-table {
+  align-self: flex-start;
+}
+
+/* Run is the one control here whose unavailability decides the next step, so
+   an inert control reads as inert. Scoped to this setup: the rest of the
+   surface keeps its own treatment. */
+.targeted-setup button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+/* The fixed engine profile, as text: it wraps rather than scrolling sideways. */
+.targeted-profile {
+  margin: 4px 0 0;
+  max-width: 72ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-primary);
+}
+
+/*
+ * A batch of independent targeted MS1 analyses (M9.4): which acquisitions,
+ * and each one's execution state as the batch runs and as it ended.
+ *
+ * The same quiet report tones. Execution states carry a word and a shape,
+ * never colour alone, and nothing here is drawn as a finding: a member's
+ * targets are in its own result.
+ */
+.targeted-members {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.targeted-members > legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* A long project's layers scroll inside the group, not the page. */
+.targeted-member-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 168px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.targeted-member-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.targeted-member-list input {
+  flex: none;
+}
+
+/* The independence statement is a scientific boundary, so it reads as body
+   text rather than as a footnote. */
+.targeted-independent {
+  margin: 0;
+  max-width: 72ch;
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.targeted-not-ready {
+  color: var(--color-warning);
+}
+
+.targeted-batch-fact {
+  display: block;
+}
+
+.targeted-batch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.targeted-batch h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+/* Sixteen members scroll inside the section, never sideways across the page. */
+.targeted-batch-scroll {
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* Sized to its content like the review's tables, so a member's state and its
+   action stay beside its name; a narrow window scrolls it inside itself. */
+.targeted-batch .qc-report-table :is(th, td) {
+  vertical-align: middle;
+}
+
+.targeted-batch tr[aria-current="step"] > * {
+  background: var(--color-surface-selected);
+}
+
+.targeted-batch tr[data-state="failed"] td:nth-child(3) {
+  color: var(--color-danger);
+}
+
+/* A member's position never wraps, however long the sentence beside it. */
+:is([data-targeted-batch-members], [data-targeted-batch-progress]) :is(th, td):first-child {
+  white-space: nowrap;
+}

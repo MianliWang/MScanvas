@@ -44,13 +44,36 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "category": "Science",
+    "category": "Productivity",
     "shortDescription": "A modern workspace for mass spectrometry data.",
-    "longDescription": "MSCanvas is a local-first mass spectrometry viewer, converter and scientific figure workspace."
+    "longDescription": "MSCanvas is a local-first mass spectrometry viewer, converter and scientific figure workspace.",
+    "publisher": "MSCanvas contributors",
+    "homepage": "https://github.com/MianliWang/MScanvas",
+    "copyright": "Copyright MSCanvas contributors. Licensed under Apache-2.0.",
+    "licenseFile": "../../../LICENSE",
+    "resources": {
+      "../../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../../../LICENSE": "LICENSE"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "English",
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": true
+      }
+    }
   }
 }

@@ -418,3 +418,22 @@ export async function horizontalOverflow(): Promise<{
     innerWidth: window.innerWidth,
   })) as Promise<{ scrollWidth: number; innerWidth: number }>;
 }
+
+/**
+ * Waits for `selector` in the Project surface's Details region, first bringing
+ * the region back where the layout folded it.
+ *
+ * Whether the region is folded follows the window: a media-query change the
+ * page hears a frame after a resize, and a render after that. Asking at once
+ * whether the fold's hint is there can answer for the previous width -- the
+ * hint not there yet, the region about to fold -- so two frames pass before
+ * the question is asked.
+ */
+export async function revealInDetails(selector: string): Promise<void> {
+  await browser.execute(
+    () => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))),
+  );
+  const hint = browser.$("[data-project-inspect-hint] button");
+  if (await hint.isExisting()) await hint.click();
+  await browser.$(selector).waitForDisplayed();
+}

@@ -1,8 +1,27 @@
+/// Reading and replacing one small local document. Shared by the preference
+/// store and the project store so that the same-directory replacement sequence
+/// exists once.
+mod local_document;
 /// The narrow, Rust-owned UI preference store. Separate from `preview` on
 /// purpose: it holds no scientific state, confers no authority and shares no
 /// lane with the conversion, process or roster locks.
 mod preferences;
 mod preview;
+/// The project record store: what a saved project references, what was run over
+/// it, and the only new write authority in M8.1. Separate from `preview` for
+/// the same reason `preferences` is: a project references files, it does not
+/// admit them, and the two collections stay distinct.
+mod project;
+/// The QC summary snapshot: what one retained preview established, copied into
+/// the project as history. The same kind of named crossing as the one above.
+mod qc_snapshot;
+/// The one explicit bridge between the project document and the live
+/// workspace. Separate from both, so the crossing is a named thing rather than
+/// a dependency either of them grew. See the module for what each side decides.
+mod reattachment;
+/// The targeted MS1 supervisor: the only place the recipe's worker process is
+/// started, behind the executor boundary the project store runs it through.
+mod targeted_ms1;
 
 use preferences::UiPreferenceStore;
 use preferences::dto::{UiPreferenceReadDto, UiPreferenceSaveDto, UiPreferenceWriteDto};
@@ -53,6 +72,1129 @@ async fn save_ui_preferences(
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let preferences = Arc::clone(&preferences);
     off_the_async_runtime(move || preferences.save(&request)).await
+}
+
+// ---------------------------------------------------------------------------
+// Project record commands.
+//
+// The M8.1 slice. Every one of these is bound to the calling document like the
+// preference commands beside them, because a project save is authority over a
+// file the user chose, and a stale document must not be able to exercise it.
+//
+// The webview names no path in either direction. It asks for a dialog, Rust
+// shows it, and what comes back is a description of the project in which every
+// record is addressed by identifier. No absolute path is ever sent to the page.
+// ---------------------------------------------------------------------------
+
+/// The session's project store.
+type SharedProjects = Arc<project::ProjectStore>;
+
+use reattachment::ProjectAdmissionDto;
+
+/// How a project refusal reaches the interface.
+///
+/// The stable identifier is the payload; the sentence is an English fallback
+/// for a surface that has no localized string for it yet. Neither carries a
+/// path, a file name or anything out of the document.
+fn project_error(error: project::ProjectError) -> PreviewErrorDto {
+    use project::ProjectError as Refusal;
+
+    let message = match error {
+        Refusal::UnsavedChanges => "This project has changes that have not been saved.",
+        Refusal::NoOpenProject => "No project is open.",
+        Refusal::NotYetPublished => "This project has not been saved anywhere yet. Use Save As.",
+        Refusal::UnknownRecord => "That record is not part of the open project.",
+        Refusal::Document(_) => "That project file could not be used, and was left unchanged.",
+        Refusal::DestinationNotNamed => "Choose a filename ending in .mscanvas for a project.",
+        Refusal::DestinationNotAProject => {
+            "That file is not an MSCanvas project, so it was not replaced."
+        }
+        Refusal::DestinationAliasesInput => {
+            "That file is one this project references, so it was not replaced."
+        }
+        Refusal::StaleDocument => {
+            "That project file has changed since it was opened, so it was not replaced."
+        }
+        Refusal::NotPublished => "The project could not be saved. The previous file is unchanged.",
+        Refusal::Oversized => "This project is larger than MSCanvas saves.",
+        Refusal::Unavailable(_) => "That file could not be read.",
+        Refusal::NotChecked => "Check this file before adding it to the Workbench.",
+        Refusal::ContentChanged => "That file has changed since the project recorded it.",
+        Refusal::ObjectNotIdentified => {
+            "This drive cannot identify that file, so it cannot be added to the Workbench."
+        }
+        Refusal::Cancelled => "Cancelled.",
+        Refusal::NothingSelected => "Nothing was selected.",
+        Refusal::AlreadyRunning => "Another check is already running.",
+        Refusal::StaleOperation => "That operation is no longer the one running.",
+        Refusal::NotInWorkbench => "Add this reference to the Workbench before creating its layer.",
+        Refusal::LayerDependsOnInput => {
+            "Remove this reference's layer before removing the reference."
+        }
+        Refusal::LayerUsedByRun => "A recorded run used this layer, so it was not removed.",
+        Refusal::InputUsedByRun => "Recorded work used this reference, so it was not removed.",
+        Refusal::PreviewNotCurrent => {
+            "The preview on screen is no longer this layer's source. View the source again."
+        }
+        Refusal::ProducerUnidentified => {
+            "MSCanvas cannot identify the ProteoWizard build that produced this preview."
+        }
+        Refusal::SummaryTooLarge => {
+            "This run summary reports more MS levels than a QC summary snapshot records."
+        }
+        Refusal::AnalysisRunning => {
+            "A targeted MS1 run is in progress. Wait for it to end, or cancel it."
+        }
+        Refusal::AnalysisQuarantined => {
+            "An earlier targeted MS1 worker could not be confirmed to have ended. Restart MSCanvas before running another."
+        }
+        Refusal::ExportInProgress => "Another export of a stored result is in progress.",
+        Refusal::RecipeUnavailable => {
+            "This build cannot run the targeted MS1 recipe: its runtime is not available."
+        }
+        Refusal::RecipeSourceUnsupported => {
+            "The targeted MS1 recipe reads one mzML file, and this layer's source is not one."
+        }
+        Refusal::InsufficientWorkAreaSpace => {
+            "The MSCanvas work area's drive has less free space than this source needs for its temporary copy. Free space there, then run again."
+        }
+        Refusal::PlanNotCurrent => "That plan is no longer the one reviewed. Review it again.",
+        Refusal::PayloadStoreUnusable => {
+            "The results folder beside this project cannot be used, so nothing was run."
+        }
+        Refusal::DestinationStoreExists => {
+            "A results folder already exists beside that destination. Choose another name."
+        }
+        Refusal::PayloadNotCopied => {
+            "A stored result could not be copied whole, so the project was not saved there."
+        }
+        Refusal::PayloadUnavailable(_) => {
+            "This stored result is missing or damaged, so it cannot be shown."
+        }
+        Refusal::BatchSizeOutOfRange => "A batch holds 2 to 16 acquisitions.",
+        Refusal::BatchDuplicateInput => "An acquisition appears twice in this batch.",
+        Refusal::RevisionExhausted => {
+            "This project's revision counter is at its limit, so it cannot be saved again. Nothing was written."
+        }
+    };
+    PreviewErrorDto::new(error.stable_id(), message, error.retryable())
+}
+
+/// Describes the session's project.
+#[tauri::command]
+async fn get_project_state(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    Ok(projects.describe())
+}
+
+/// Starts a new empty project.
+#[tauri::command]
+async fn create_project(
+    name: String,
+    discard_unsaved: bool,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    projects
+        .create(name, discard_unsaved)
+        .map_err(project_error)?;
+    Ok(projects.describe())
+}
+
+/// Closes the open project.
+#[tauri::command]
+async fn close_project(
+    discard_unsaved: bool,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    projects.close(discard_unsaved).map_err(project_error)?;
+    Ok(projects.describe())
+}
+
+/// Shows the picker and opens the chosen project document.
+///
+/// The document is parsed and validated whole before any live state is
+/// replaced, so a refusal leaves the open project exactly as it was. Nothing
+/// inside it is resolved or read: every reference comes back `notChecked`.
+#[tauri::command]
+async fn open_project(
+    discard_unsaved: bool,
+    app: tauri::AppHandle,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<Option<project::dto::ProjectStateDto>, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let projects = Arc::clone(&projects);
+    let Some(chosen) = chosen_file(&app, preview::dialog::PROJECT_OPEN_DIALOG).await? else {
+        return Ok(None);
+    };
+    off_the_async_runtime(move || {
+        projects
+            .open_document(&chosen, discard_unsaved)
+            .map_err(project_error)?;
+        Ok(Some(projects.describe()))
+    })
+    .await?
+}
+
+/// Republishes the open project over the document this session bound.
+#[tauri::command]
+async fn save_project(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || {
+        projects.save().map_err(project_error)?;
+        Ok(projects.describe())
+    })
+    .await?
+}
+
+/// Shows the save dialog and publishes the project where the user chose.
+#[tauri::command]
+async fn save_project_as(
+    app: tauri::AppHandle,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<Option<project::dto::ProjectStateDto>, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let projects = Arc::clone(&projects);
+    let owner = main_window_handle(&app);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(preview::dialog::choose_save_destination(
+            owner,
+            preview::dialog::PROJECT_SAVE_DIALOG,
+            "project.mscanvas",
+        ));
+    })
+    .map_err(|_| picker_unavailable())?;
+
+    off_the_async_runtime(move || {
+        let Some(destination) = receiver.recv().map_err(|_| picker_unavailable())?? else {
+            return Ok(None);
+        };
+        projects.save_as(&destination).map_err(project_error)?;
+        Ok(Some(projects.describe()))
+    })
+    .await?
+}
+
+/// Shows the picker and registers the chosen file as a reference.
+///
+/// Registering a file records where it is and what it currently contains. It
+/// asserts nothing about the file being a supported acquisition, and it admits
+/// nothing to the workspace roster.
+#[tauri::command]
+async fn add_project_input(
+    app: tauri::AppHandle,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<Option<project::dto::ProjectStateDto>, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let projects = Arc::clone(&projects);
+    let Some(chosen) = chosen_file(&app, preview::dialog::PROJECT_INPUT_DIALOG).await? else {
+        return Ok(None);
+    };
+    off_the_async_runtime(move || {
+        projects.register_input(&chosen).map_err(project_error)?;
+        Ok(Some(projects.describe()))
+    })
+    .await?
+}
+
+/// Removes one reference that no recorded history or layer depends on.
+///
+/// Never touches the file it referenced, and never removes history: a
+/// reference something recorded depends on is refused. Removing a row is the
+/// only thing that removes a row.
+#[tauri::command]
+async fn remove_project_input(
+    input_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_input_id(&input_id)?;
+    projects.remove_input(id).map_err(project_error)?;
+    Ok(projects.describe())
+}
+
+/// Accepts one check or capture and answers the identifier it will run under.
+///
+/// Deliberately separate from running it, and deliberately quick: Tauri
+/// dispatches invokes as independent fetches, so a cancel pressed the instant
+/// after a check is started could otherwise reach Rust before the check itself
+/// and find nothing to cancel -- and the check would then run to completion.
+/// Accepting first gives the operation an identity and a cancellation state
+/// that a cancel can find before any file is opened. The identifier is
+/// correlation only; it names no path and confers no authority.
+#[tauri::command]
+async fn begin_project_job(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectJobDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = projects.accept_job().map_err(project_error)?;
+    Ok(project::dto::ProjectJobDto {
+        operation_id: id.handle(),
+    })
+}
+
+/// Checks every reference in the open project against its recorded baseline.
+///
+/// Runs the operation `begin_project_job` accepted. The press is what
+/// authorises reading the displayed reference set. It authorises nothing else:
+/// no other directory is looked at, and nothing is admitted, opened in a viewer
+/// or converted as a result.
+#[tauri::command]
+async fn check_project_links(
+    operation_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_job_id(&operation_id)?;
+    let projects = Arc::clone(&projects);
+    // Hashing is why this is off the async runtime: a check reads every
+    // referenced file whole, and a large acquisition must not hold a worker.
+    off_the_async_runtime(move || {
+        projects.check_linked_files(id).map_err(project_error)?;
+        Ok(projects.describe())
+    })
+    .await?
+}
+
+/// Asks one accepted operation to stop.
+///
+/// Names the operation, so a cancel that arrives late -- after its operation
+/// finished, or after a different one was accepted -- changes nothing and says
+/// so. It is never an error: "nothing to cancel" is an answer, not a failure.
+#[tauri::command]
+async fn cancel_project_job(
+    operation_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::CancelOutcomeDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    // An identifier this build never minted names nothing, which is the same
+    // answer as an identifier whose operation is gone.
+    let outcome = match project::ProjectJobId::parse(&operation_id) {
+        Some(id) => projects.cancel_job(id),
+        None => project::CancelOutcome::NoActiveOperation,
+    };
+    Ok(project::dto::CancelOutcomeDto {
+        outcome: outcome.stable_id(),
+    })
+}
+
+/// Runs `CaptureFileFactsV1` over the selected references.
+///
+/// Records what the selected files actually contain. It is not analysis, not
+/// conversion and not QC, and a run that could not observe every selected
+/// reference records its real outcome and produces no artifact.
+#[tauri::command]
+async fn capture_project_file_facts(
+    operation_id: String,
+    input_ids: Vec<String>,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let job = parsed_job_id(&operation_id)?;
+    let mut selected = Vec::with_capacity(input_ids.len());
+    for id in &input_ids {
+        selected.push(parsed_input_id(id)?);
+    }
+    let projects = Arc::clone(&projects);
+    let (outcome, described) = off_the_async_runtime(move || {
+        let outcome = projects.capture_file_facts(job, &selected);
+        (outcome, projects.describe())
+    })
+    .await?;
+    // The run is recorded whichever way the capture went, so a refusal here is
+    // still a refusal with a recorded run behind it. The interface re-reads the
+    // project to see it.
+    match outcome {
+        Ok(_) => Ok(described),
+        Err(error) => Err(project_error(error)),
+    }
+}
+
+/// Shows the picker and examines one candidate for a reference.
+///
+/// Looks at exactly the file the user pointed at. Nothing is scanned, nothing
+/// is substituted, and nothing is committed until the confirmation below.
+#[tauri::command]
+async fn propose_project_relink(
+    input_id: String,
+    app: tauri::AppHandle,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<Option<project::dto::ProjectStateDto>, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_input_id(&input_id)?;
+    let projects = Arc::clone(&projects);
+    let Some(chosen) = chosen_file(&app, preview::dialog::RELINK_CANDIDATE_DIALOG).await? else {
+        return Ok(None);
+    };
+    off_the_async_runtime(move || {
+        projects
+            .propose_relink(id, &chosen)
+            .map_err(project_error)?;
+        Ok(Some(projects.describe()))
+    })
+    .await?
+}
+
+/// Commits the relink the user was shown.
+#[tauri::command]
+async fn commit_project_relink(
+    input_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_input_id(&input_id)?;
+    projects.commit_relink(id).map_err(project_error)?;
+    Ok(projects.describe())
+}
+
+/// Adds the file one project reference names to the session workspace.
+///
+/// The webview names no path. It names the reference, by the identifier the
+/// project description already gave it, and the operation it accepted; Rust
+/// resolves that reference through the open project, proves the file still
+/// holds the recorded bytes, and hands *that* object to the workspace
+/// admission boundary every other import goes through.
+///
+/// Nothing here starts a preview or a backend process. Admission is filesystem
+/// work, and a reference that becomes a row becomes one the user can then read
+/// by asking, exactly as a row added through the picker does.
+#[tauri::command]
+async fn add_project_input_to_workspace(
+    operation_id: String,
+    input_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<ProjectAdmissionDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let job = parsed_job_id(&operation_id)?;
+    let id = parsed_input_id(&input_id)?;
+    let projects = Arc::clone(&projects);
+    let service = Arc::clone(&service);
+    // Off the async runtime because the proof hashes the whole acquisition,
+    // for the same reason a check is.
+    let (outcome, described) = off_the_async_runtime(move || {
+        let outcome = reattachment::add_project_input_to_workspace(&projects, &service, job, id);
+        (outcome, projects.describe())
+    })
+    .await?;
+    match outcome {
+        Ok(workspace) => Ok(ProjectAdmissionDto {
+            project: described,
+            workspace,
+        }),
+        Err(reattachment::AdmissionRefusal::Project(error)) => Err(project_error(error)),
+        // The workspace's own refusal, unchanged. Translating it into project
+        // vocabulary would invent a project meaning for something that is not
+        // a project fact.
+        Err(reattachment::AdmissionRefusal::Workspace(error)) => Err(error),
+    }
+}
+
+/// Creates the layer of one reference, or answers the one it already has.
+///
+/// Reads no file and starts nothing. The one question asked outside the
+/// project is whether the row the project remembers for this reference is
+/// still in the roster, which is an in-memory lookup; a reference with no live
+/// row is refused rather than re-admitted, because pressing this is not a
+/// request to add anything to the Workbench.
+#[tauri::command]
+async fn create_project_layer(
+    input_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_input_id(&input_id)?;
+    projects
+        .create_layer(id, |handle| {
+            service.dataset_object_identities(handle).is_some()
+        })
+        .map_err(project_error)?;
+    Ok(projects.describe())
+}
+
+/// Removes one layer. The reference it was sourced from stays.
+#[tauri::command]
+async fn remove_project_layer(
+    layer_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_layer_id(&layer_id)?;
+    projects.remove_layer(id).map_err(project_error)?;
+    Ok(projects.describe())
+}
+
+/// Records a QC summary snapshot of one layer's source, from the preview the
+/// page is showing.
+///
+/// Names the layer and the preview's opaque run-summary token, and sends no
+/// value: Rust copies the summary it retained for that preview, with the build
+/// that preview's own batch reported. Reads no file and starts no process --
+/// where no suitable preview is retained the capture is refused, and nothing
+/// here starts one.
+#[tauri::command]
+async fn capture_project_qc_summary(
+    layer_id: String,
+    preview_token: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<qc_snapshot::QcCaptureDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let id = parsed_layer_id(&layer_id)?;
+    let artifact = qc_snapshot::capture_qc_summary(&projects, &service, id, &preview_token)
+        .map_err(project_error)?;
+    Ok(qc_snapshot::QcCaptureDto {
+        project: projects.describe(),
+        artifact_id: artifact.to_string(),
+    })
+}
+
+/// Resolves a targeted MS1 request over one layer into a plan for review.
+///
+/// Sends the text the user typed and the layer; Rust decides what every value
+/// means, mints the target identifiers and holds the plan for this session.
+/// Reads no source's content and starts nothing; where the source's copy would
+/// not fit the work area, it removes crash-left attempt scratch before saying
+/// so. Problems with the request come back as data, row by row, and so does
+/// anything that would stop the plan running now.
+#[tauri::command]
+async fn resolve_targeted_ms1_plan(
+    request: project::dto::PlanRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::PlanResolutionDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let layer = parsed_layer_id(&request.layer_id)?;
+    let draft = request.draft();
+    let projects = Arc::clone(&projects);
+    // Off the async runtime: the placement question opens the source by name
+    // and reads the runtime's manifest.
+    off_the_async_runtime(move || {
+        let executor = targeted_ms1::executor();
+        projects
+            .resolve_targeted_ms1_plan(layer, &draft, executor.as_ref())
+            .map(project::dto::plan_resolution)
+            .map_err(project_error)
+    })
+    .await?
+}
+
+/// Runs one reviewed targeted MS1 plan as the operation `begin_project_job`
+/// accepted.
+///
+/// Names the plan by its digest and nothing else: the runtime, the adapter,
+/// the argv, the work area and the source are all Rust's. A run refused before
+/// its attempt starts records nothing and answers the refusal; a run that
+/// started is recorded however it ends, and answers the project with its run.
+#[tauri::command]
+async fn run_targeted_ms1(
+    operation_id: String,
+    plan_sha256: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedMs1RunDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let job = parsed_job_id(&operation_id)?;
+    if plan_sha256.len() != 64 || !plan_sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(project_error(project::ProjectError::PlanNotCurrent));
+    }
+    let projects = Arc::clone(&projects);
+    // Off the async runtime for the whole attempt: it verifies the runtime,
+    // hashes the source and waits for the worker.
+    off_the_async_runtime(move || {
+        let executor = targeted_ms1::executor();
+        let end = projects
+            .run_targeted_ms1(job, &plan_sha256, executor.as_ref())
+            .map_err(project_error)?;
+        Ok(project::dto::run_end(projects.describe(), end))
+    })
+    .await?
+}
+
+/// Resolves one targeted MS1 request over several layers into one plan per
+/// layer, for review as a batch.
+///
+/// Sends the layers, in the order they will run, and the text the user typed
+/// once; Rust resolves it once, binds a plan to each layer and holds the batch
+/// for this session. Reads no source's content and starts nothing, as a single
+/// review does, and says per member what would stop it running now.
+#[tauri::command]
+async fn resolve_targeted_ms1_batch(
+    request: project::dto::BatchRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::BatchResolutionDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let (layer_ids, draft) = request.draft();
+    if layer_ids.len() > project::recipe::MAX_BATCH_MEMBERS {
+        return Err(project_error(project::ProjectError::BatchSizeOutOfRange));
+    }
+    let layers = layer_ids
+        .iter()
+        .map(|id| parsed_layer_id(id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let projects = Arc::clone(&projects);
+    // Off the async runtime: each placement question opens a source by name.
+    off_the_async_runtime(move || {
+        let executor = targeted_ms1::executor();
+        projects
+            .resolve_targeted_ms1_batch(&layers, &draft, executor.as_ref())
+            .map(project::dto::batch_resolution)
+            .map_err(project_error)
+    })
+    .await?
+}
+
+/// Runs the batch last reviewed as the operation `begin_project_job`
+/// accepted: each member's plan in turn, one at a time, through exactly the
+/// path one plan takes alone.
+///
+/// Names the plans by their digests, in order, and they must be exactly the
+/// batch reviewed. Cancelling the operation stops the batch: the member
+/// running ends as a cancelled run, and no later member starts.
+#[tauri::command]
+async fn run_targeted_ms1_batch(
+    operation_id: String,
+    plan_sha256s: Vec<String>,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedMs1BatchDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let job = parsed_job_id(&operation_id)?;
+    let well_formed = plan_sha256s.len() <= project::recipe::MAX_BATCH_MEMBERS
+        && plan_sha256s.iter().all(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        });
+    if !well_formed {
+        return Err(project_error(project::ProjectError::PlanNotCurrent));
+    }
+    let projects = Arc::clone(&projects);
+    // Off the async runtime for every member's attempt.
+    off_the_async_runtime(move || {
+        let executor = targeted_ms1::executor();
+        let members = projects
+            .run_targeted_ms1_batch(job, &plan_sha256s, executor.as_ref())
+            .map_err(project_error)?;
+        Ok(project::dto::TargetedMs1BatchDto {
+            project: projects.describe(),
+            members: members.iter().map(project::dto::batch_member).collect(),
+        })
+    })
+    .await?
+}
+
+/// Where the targeted run in progress is, or `null` when none is.
+///
+/// Read-only and cheap, so a page can ask while its run is pending without
+/// re-describing the whole project.
+#[tauri::command]
+async fn get_targeted_ms1_progress(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<Option<project::dto::AnalysisRunDto>, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    Ok(projects.analysis_progress())
+}
+
+/// One page of a stored targeted result's rows, checked against its record.
+#[tauri::command]
+async fn read_targeted_ms1_rows(
+    artifact_id: String,
+    offset: u32,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::RowsPageDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || {
+        let page = projects
+            .read_targeted_ms1_rows(artifact, offset as usize)
+            .map_err(project_error)?;
+        Ok(project::dto::RowsPageDto {
+            total: page.total,
+            offset: page.offset,
+            rows: page.rows,
+        })
+    })
+    .await?
+}
+
+/// One target's evidence from a stored targeted result, checked line by line.
+#[tauri::command]
+async fn read_targeted_ms1_evidence(
+    artifact_id: String,
+    target_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::EvidenceDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let target: project::record::TargetId = target_id
+        .parse()
+        .map_err(|()| project_error(project::ProjectError::UnknownRecord))?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || {
+        let traces = projects
+            .read_targeted_ms1_evidence(artifact, target)
+            .map_err(project_error)?;
+        Ok(project::dto::EvidenceDto {
+            target_id: target.to_string(),
+            traces,
+        })
+    })
+    .await?
+}
+
+// ---------------------------------------------------------------------------
+// A stored targeted result as scientific output (M9.2)
+//
+// Every command below reads the stored result -- its validated managed
+// payload and the plan the document recorded -- and nothing else. None of them
+// builds an executor, reads the source, starts a process or records anything,
+// so a result stays readable and exportable in a build with no runtime and
+// with its source gone.
+// ---------------------------------------------------------------------------
+
+/// The largest figure the screen is sent, as the preview dialog's bound.
+const MAX_TARGETED_FIGURE_BYTES: usize = 8 * 1024 * 1024;
+
+const TARGETED_FIGURE_SVG: preview::dialog::SaveDialogFacts = preview::dialog::SaveDialogFacts {
+    title: "Export targeted MS1 figure",
+    filter_label: "SVG figure (*.svg)",
+    filter_pattern: "*.svg",
+    default_extension: "svg",
+};
+const TARGETED_FIGURE_PNG: preview::dialog::SaveDialogFacts = preview::dialog::SaveDialogFacts {
+    title: "Export targeted MS1 figure",
+    filter_label: "PNG image (*.png)",
+    filter_pattern: "*.png",
+    default_extension: "png",
+};
+const TARGETED_TABLE_CSV: preview::dialog::SaveDialogFacts = preview::dialog::SaveDialogFacts {
+    title: "Export targeted MS1 results",
+    filter_label: "Comma-separated values (*.csv)",
+    filter_pattern: "*.csv",
+    default_extension: "csv",
+};
+const TARGETED_TABLE_TSV: preview::dialog::SaveDialogFacts = preview::dialog::SaveDialogFacts {
+    title: "Export targeted MS1 results",
+    filter_label: "Tab-separated values (*.tsv)",
+    filter_pattern: "*.tsv",
+    default_extension: "tsv",
+};
+
+fn targeted_evidence_absent() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "targeted_evidence_absent",
+        "This target never reached extraction, so it has no evidence to draw.",
+        false,
+    )
+}
+
+fn targeted_figure_not_drawable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "targeted_figure_not_drawable",
+        "This target's stored evidence could not be drawn as a figure.",
+        false,
+    )
+}
+
+fn targeted_export_format_unknown() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "targeted_export_format_unknown",
+        "That is not a format this result can be exported in.",
+        false,
+    )
+}
+
+fn targeted_table_refusal(refusal: project::targeted_output::TableRefusal) -> PreviewErrorDto {
+    use project::targeted_output::TableRefusal;
+    match refusal {
+        TableRefusal::FieldNotRepresentable => PreviewErrorDto::new(
+            "targeted_table_field_not_representable",
+            "A value in this result holds a tab or a line break, which a TSV file cannot carry. \
+             Export it as CSV.",
+            false,
+        ),
+        TableRefusal::UnexpectedTraceCount => PreviewErrorDto::new(
+            "targeted_table_not_exportable",
+            "This result holds a row this table has no columns for, so nothing was written.",
+            false,
+        ),
+    }
+}
+
+fn parsed_target_id(value: &str) -> Result<project::record::TargetId, PreviewErrorDto> {
+    value
+        .parse()
+        .map_err(|()| project_error(project::ProjectError::UnknownRecord))
+}
+
+/// The first eight characters of a result's identifier, for a suggested name:
+/// enough to tell two results' exports apart, and nothing about the source.
+fn short_id(artifact: mscanvas_core::ArtifactId) -> String {
+    artifact.to_string().chars().take(8).collect()
+}
+
+/// One target's evidence as its canonical figure, and the target's position
+/// in the plan, in this boundary's vocabulary.
+fn targeted_figure(
+    projects: &project::ProjectStore,
+    artifact: mscanvas_core::ArtifactId,
+    target: project::record::TargetId,
+    output: preview::scientific_output::FigureOutput,
+) -> Result<(mscanvas_plot_spec::FigureSpec, usize), PreviewErrorDto> {
+    use project::TargetedFigureRefusal;
+    projects
+        .targeted_evidence_figure(artifact, target, output.size(), output.theme())
+        .map_err(|refusal| match refusal {
+            TargetedFigureRefusal::Project(error) => project_error(error),
+            TargetedFigureRefusal::NotExtracted => targeted_evidence_absent(),
+            TargetedFigureRefusal::NotDrawable => targeted_figure_not_drawable(),
+        })
+}
+
+/// Shows the native save dialog on the main thread and hands back where its
+/// answer will arrive. The answer is waited for off the async runtime.
+fn targeted_destination(
+    app: &tauri::AppHandle,
+    facts: preview::dialog::SaveDialogFacts,
+    suggested: String,
+) -> Result<mpsc::Receiver<Result<Option<std::path::PathBuf>, PreviewErrorDto>>, PreviewErrorDto> {
+    let owner = main_window_handle(app);
+    let (sender, receiver) = mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(preview::dialog::choose_save_destination(
+            owner, facts, &suggested,
+        ));
+    })
+    .map_err(|_| spectrum_picker_unavailable())?;
+    Ok(receiver)
+}
+
+/// One target's stored evidence as its canonical figure, for the screen.
+///
+/// The same renderer and the same figure an export writes, at the settings
+/// asked for, so what is on screen is what a file would hold.
+#[tauri::command]
+async fn preview_targeted_ms1_figure(
+    artifact_id: String,
+    target_id: String,
+    settings: preview::dto::FigureSettingsDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedFigureDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let target = parsed_target_id(&target_id)?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || {
+        let output = preview::scientific_output::FigureOutput::from_wire(&settings)?;
+        let (figure, _) = targeted_figure(&projects, artifact, target, output)?;
+        let svg = mscanvas_plot_spec::svg::render(&figure);
+        // Too large to show is not too large to write: the exports draw the
+        // same figure without this bound, as every other preview here does.
+        if svg.len() > MAX_TARGETED_FIGURE_BYTES {
+            return Err(PreviewErrorDto::new(
+                "figure_preview_too_large",
+                "This figure exceeds the preview display limit.",
+                false,
+            ));
+        }
+        let spec_id = mscanvas_proteowizard::Sha256Digest::calculate(svg.as_bytes())
+            .map_err(|_| targeted_figure_not_drawable())?
+            .to_string();
+        Ok(project::dto::TargetedFigureDto {
+            svg,
+            spec_id,
+            width: output.width(),
+            height: output.height(),
+        })
+    })
+    .await?
+}
+
+/// Exports one target's stored evidence as an SVG or PNG figure.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn export_targeted_ms1_figure(
+    artifact_id: String,
+    target_id: String,
+    format: String,
+    settings: preview::dto::FigureSettingsDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedFigureExportDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let target = parsed_target_id(&target_id)?;
+    let facts = match format.as_str() {
+        "svg" => TARGETED_FIGURE_SVG,
+        "png" => TARGETED_FIGURE_PNG,
+        _ => return Err(targeted_export_format_unknown()),
+    };
+    // Everything that can refuse is asked before the dialog opens: a user is
+    // not asked where to put a file that will not be written.
+    let output = preview::scientific_output::FigureOutput::from_wire(&settings)?;
+    let dpi = if format == "png" {
+        Some(output.png_resolution(&settings)?)
+    } else {
+        None
+    };
+    let lane = projects.begin_output().map_err(project_error)?;
+    let projects = Arc::clone(&projects);
+    let (figure, position) =
+        off_the_async_runtime(move || targeted_figure(&projects, artifact, target, output))
+            .await??;
+    let suggested = format!(
+        "mscanvas-targeted-ms1-{}-target-{}.{}",
+        short_id(artifact),
+        position + 1,
+        facts.default_extension
+    );
+    let receiver = targeted_destination(&app, facts, suggested)?;
+    off_the_async_runtime(move || {
+        let _lane = lane;
+        let Some(destination) = receiver
+            .recv()
+            .map_err(|_| spectrum_picker_unavailable())??
+        else {
+            return Ok(project::dto::TargetedFigureExportDto::Cancelled);
+        };
+        let bytes = match dpi {
+            None => mscanvas_plot_spec::svg::render(&figure).into_bytes(),
+            Some(dpi) => output.png(&figure, dpi)?,
+        };
+        let file_name = preview::scientific_output::write_named(&destination, facts, &bytes)?;
+        Ok(project::dto::TargetedFigureExportDto::Saved {
+            format,
+            file_name,
+            figure: output.exported(dpi),
+        })
+    })
+    .await?
+}
+
+/// Exports every target's stored row as one CSV or TSV table.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn export_targeted_ms1_table(
+    artifact_id: String,
+    format: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
+    use project::targeted_output::{TableFormat, result_table};
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let table_format =
+        TableFormat::from_wire(&format).ok_or_else(targeted_export_format_unknown)?;
+    let facts = match table_format {
+        TableFormat::Csv => TARGETED_TABLE_CSV,
+        TableFormat::Tsv => TARGETED_TABLE_TSV,
+    };
+    let lane = projects.begin_output().map_err(project_error)?;
+    let projects = Arc::clone(&projects);
+    // The whole table before the dialog, so a result that cannot be written
+    // refuses without asking where to put it.
+    let (text, row_count) = off_the_async_runtime(move || {
+        let stored = projects
+            .stored_targeted_result(artifact)
+            .map_err(project_error)?;
+        result_table(&stored, table_format).map_err(targeted_table_refusal)
+    })
+    .await??;
+    let suggested = format!(
+        "mscanvas-targeted-ms1-{}-results.{}",
+        short_id(artifact),
+        facts.default_extension
+    );
+    let receiver = targeted_destination(&app, facts, suggested)?;
+    off_the_async_runtime(move || {
+        let _lane = lane;
+        let Some(destination) = receiver
+            .recv()
+            .map_err(|_| spectrum_picker_unavailable())??
+        else {
+            return Ok(project::dto::TargetedTableExportDto::Cancelled);
+        };
+        let file_name =
+            preview::scientific_output::write_named(&destination, facts, text.as_bytes())?;
+        Ok(project::dto::TargetedTableExportDto::Saved {
+            format: table_format.stable_id().to_owned(),
+            file_name,
+            row_count,
+        })
+    })
+    .await?
+}
+
+/// Whether this session could start a new targeted run. Read-only: it
+/// creates nothing and reads no source.
+#[tauri::command]
+async fn get_targeted_ms1_runtime(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedRuntimeDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let projects = Arc::clone(&projects);
+    off_the_async_runtime(move || project::dto::TargetedRuntimeDto {
+        new_runs: if projects.analysis_quarantined() {
+            "quarantined"
+        } else if targeted_ms1::runtime_present() {
+            "available"
+        } else {
+            "runtimeUnavailable"
+        },
+    })
+    .await
+}
+
+/// Abandons an outstanding relink proposal.
+#[tauri::command]
+async fn abandon_project_relink(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::ProjectStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    projects.abandon_relink();
+    Ok(projects.describe())
+}
+
+/// Shows one single-file picker on the main thread and waits for the answer.
+///
+/// The wait is blocking and the dialog is modal, so it lasts as long as the
+/// user takes to choose. That is not something to hold an async worker for.
+async fn chosen_file(
+    app: &tauri::AppHandle,
+    facts: preview::dialog::OpenDialogFacts,
+) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
+    let owner = main_window_handle(app);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(preview::dialog::choose_one_file(owner, facts));
+    })
+    .map_err(|_| picker_unavailable())?;
+    off_the_async_runtime(move || receiver.recv().map_err(|_| picker_unavailable())?).await?
+}
+
+/// Reads one operation identifier the webview sent.
+///
+/// An identifier this build never minted is a stale operation: it names
+/// nothing that can run, and the refusal deliberately does not echo it back.
+fn parsed_job_id(value: &str) -> Result<project::ProjectJobId, PreviewErrorDto> {
+    project::ProjectJobId::parse(value)
+        .ok_or_else(|| project_error(project::ProjectError::StaleOperation))
+}
+
+/// Reads one input identifier the webview sent.
+///
+/// Refused rather than looked up loosely. The identifier came from outside, and
+/// the refusal deliberately does not echo it back.
+fn parsed_input_id(value: &str) -> Result<project::record::InputId, PreviewErrorDto> {
+    value
+        .parse()
+        .map_err(|()| project_error(project::ProjectError::UnknownRecord))
+}
+
+/// Reads one layer identifier the webview sent, under the same rule.
+fn parsed_layer_id(value: &str) -> Result<project::record::LayerId, PreviewErrorDto> {
+    value
+        .parse()
+        .map_err(|()| project_error(project::ProjectError::UnknownRecord))
+}
+
+/// Reads one artifact identifier the webview sent, under the same rule.
+fn parsed_artifact_id(value: &str) -> Result<mscanvas_core::ArtifactId, PreviewErrorDto> {
+    value
+        .parse()
+        .map_err(|_| project_error(project::ProjectError::UnknownRecord))
 }
 
 #[tauri::command]
@@ -1350,6 +2492,10 @@ pub fn run() {
             app.manage(SharedPreferences::new(UiPreferenceStore::bind(
                 app.handle(),
             )));
+            // The project store starts with no project open and no path bound.
+            // It resolves nothing, reads nothing and creates nothing until a
+            // user acts, so binding it cannot fail and cannot touch the disk.
+            app.manage(SharedProjects::new(project::ProjectStore::new()));
             // One synthetic spectrum in the ordinary export slot, so a rendered
             // test can reach the real export path on a machine with no
             // ProteoWizard installation and no mzML file. Not a command: there
@@ -1395,6 +2541,36 @@ pub fn run() {
             get_bootstrap_status,
             load_ui_preferences,
             save_ui_preferences,
+            get_project_state,
+            create_project,
+            close_project,
+            open_project,
+            save_project,
+            save_project_as,
+            add_project_input,
+            remove_project_input,
+            begin_project_job,
+            check_project_links,
+            cancel_project_job,
+            capture_project_file_facts,
+            propose_project_relink,
+            commit_project_relink,
+            abandon_project_relink,
+            add_project_input_to_workspace,
+            create_project_layer,
+            remove_project_layer,
+            capture_project_qc_summary,
+            resolve_targeted_ms1_plan,
+            run_targeted_ms1,
+            resolve_targeted_ms1_batch,
+            run_targeted_ms1_batch,
+            get_targeted_ms1_progress,
+            read_targeted_ms1_rows,
+            read_targeted_ms1_evidence,
+            preview_targeted_ms1_figure,
+            export_targeted_ms1_figure,
+            export_targeted_ms1_table,
+            get_targeted_ms1_runtime,
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,

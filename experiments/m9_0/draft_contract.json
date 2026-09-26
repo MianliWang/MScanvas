@@ -1,0 +1,327 @@
+{
+ "status": "M9.0 draft for M9.1. Experiment-area examples only: not a production DTO, and schema 3 is unchanged. Field names are proposals; the logical model is what M9.1 must keep.",
+ "recipe_definition": {
+  "recipeId": "targetedMs1",
+  "recipeVersion": 1,
+  "purpose": "Target-specific MS1 signal and candidate detection for [M+H]+ ions; not identification and not a validated quantitative assay",
+  "engine": {
+   "package": "pyopenms",
+   "version": "3.5.0",
+   "algorithm": "FeatureFinderAlgorithmMetaboIdent",
+   "upstreamMaturity": "experimental"
+  },
+  "adapterDigest": "sha256 of the reviewed worker script shipped with the application",
+  "engineProfileDigest": "sha256 of the canonical fixed engine profile below",
+  "fixedEngineProfile": {
+   "extract:n_isotopes": 2,
+   "extract:isotope_pmin": 0.0,
+   "extract:im_window": 0.0,
+   "detect:min_peak_width": 0.2,
+   "detect:signal_to_noise": 0.8,
+   "model:type": "symmetric",
+   "model:no_imputation": "false",
+   "EMGScoring:max_iteration": 100,
+   "EMGScoring:init_mom": "true",
+   "mappedFromPlan": {
+    "extract:mz_window": "2 * mzHalfWidthPpm",
+    "extract:rt_window": "2 * max(rtHalfWidthS)",
+    "detect:peak_width": "expectedPeakWidthS",
+    "candidates_out": "attempt staging file"
+   }
+  },
+  "parameters": {
+   "mzHalfWidthPpm": {
+    "type": "number",
+    "unit": "ppm",
+    "meaning": "half-width of an open m/z interval",
+    "min": 0.5,
+    "max": 50
+   },
+   "expectedPeakWidthS": {
+    "type": "number",
+    "unit": "s",
+    "minExclusive": 0,
+    "max": 600
+   }
+  },
+  "target": {
+   "targetId": "UUID minted by the application; also the name the engine sees, so no user text reaches it",
+   "label": "user text, kept in the project only",
+   "formula": "plain neutral sum formula, required (isotope model)",
+   "neutralMonoisotopicMass": "optional number > 0; when given, the ion m/z uses it",
+   "charge": "exactly 1; the ion is [M+H]+",
+   "rtS": "expected retention time, seconds",
+   "rtHalfWidthS": "number > 0; the RT window is the closed interval [rtS - h, rtS + h]"
+  },
+  "domain": {
+   "admitted": [
+    "mzML with an unprefixed namespace, read in full (independent spectrum count equals the reader's)",
+    "MS1 spectra declared centroid",
+    "positive polarity only",
+    "MS1 retention times declared, finite, >= 0 and strictly increasing across the file",
+    "no ion mobility, FAIMS or extra arrays",
+    "ASCII-only paths for the source as presented to the reader, the runtime and the work root"
+   ],
+   "refusedBeforeAnyRun": [
+    "request or parameter outside the schema",
+    "duplicate targetId",
+    "charge other than 1",
+    "a zero or negative RT half-width",
+    "an m/z half-width below 0.5 ppm (the engine would read it as Da)"
+   ],
+   "failedRunWithRefusalCode": [
+    "TARGET_INVALID (the engine's formula parser, after import)",
+    "SOURCE_NOT_CENTROID",
+    "SOURCE_MIXED_POLARITY",
+    "SOURCE_POLARITY_UNSUPPORTED",
+    "SOURCE_NO_MS1",
+    "SOURCE_RT_UNDECLARED_OR_NONMONOTONIC",
+    "SOURCE_RT_NOT_STRICTLY_INCREASING",
+    "SOURCE_ION_MOBILITY_UNSUPPORTED",
+    "SOURCE_CHANGED",
+    "SOURCE_CHANGED_DURING_READ"
+   ],
+   "failedRun": [
+    "SOURCE_UNREADABLE",
+    "SOURCE_READ_INCOMPLETE",
+    "ENGINE_NO_CANDIDATES",
+    "ENGINE_ERROR",
+    "EVIDENCE_MAPPING_MISMATCH"
+   ]
+  },
+  "outcomes": [
+   "DETECTED",
+   "DETECTED_AMBIGUOUS",
+   "SHARED",
+   "SUPPRESSED_BY_OVERLAP",
+   "NOT_DETECTED",
+   "FAILED"
+  ],
+  "failedRowReasons": [
+   "EXTRACTION_AT_SPECTRUM_EDGE",
+   "RELATED_TARGET_AT_SPECTRUM_EDGE",
+   "CANDIDATES_WITHOUT_FEATURE",
+   "ENGINE_DISCARDED_NO_VALID_FIT (read from source, not exercised)",
+   "TARGET_ABSENT_FROM_ENGINE_LIBRARY"
+  ],
+  "targetCap": "at most 200 per run in M9.1; the experiment adapter admitted 1..1000"
+ },
+ "approved_plan": {
+  "planDigest": "sha256 of this object in canonical form",
+  "recipe": {
+   "recipeId": "targetedMs1",
+   "recipeVersion": 1,
+   "adapterDigest": "...",
+   "engineProfileDigest": "..."
+  },
+  "input": {
+   "layerId": "UUID",
+   "inputId": "UUID",
+   "consumedContent": [
+    {
+     "role": "primary",
+     "bytes": 1018082,
+     "sha256": "d0b75af72df6a92e085872e9bef7da6e4132f1f587d3e881421ba28037e0da6b"
+    }
+   ]
+  },
+  "parameters": {
+   "mzHalfWidthPpm": 5.0,
+   "expectedPeakWidthS": 6.0
+  },
+  "targets": [
+   {
+    "targetId": "3f6c2d9e-5b1a-4c8e-9f2d-7a1b0c4e5d6f",
+    "label": "caffeine",
+    "formula": "C8H10N4O2",
+    "neutralMonoisotopicMass": null,
+    "charge": 1,
+    "rtS": 72.0,
+    "rtHalfWidthS": 20.0
+   }
+  ]
+ },
+ "run": {
+  "runId": "UUID",
+  "operation": "targetedMs1V1",
+  "planDigest": "...",
+  "status": "completed | failed | cancelled",
+  "consumed": {
+   "kind": "layer",
+   "layerId": "UUID",
+   "observedContent": [
+    {
+     "role": "primary",
+     "bytes": 1018082,
+     "sha256": "measured through the pinned read during the attempt"
+    }
+   ]
+  },
+  "produced": [
+   "ArtifactId of the result record, only when completed"
+  ],
+  "failure": {
+   "code": "SOURCE_READ_INCOMPLETE",
+   "stage": "source",
+   "note": "codes and stages only; messages, paths and logs are session-only"
+  },
+  "applicationVersion": "...",
+  "startedAt": "...",
+  "endedAt": "..."
+ },
+ "attempt_facts": {
+  "adapterDigest": {
+   "value": "sha256",
+   "strength": "measured by the supervisor before launch"
+  },
+  "runtimeBundle": {
+   "value": "bundle id and manifest sha256",
+   "strength": "verified against the bundle manifest"
+  },
+  "engineSelfReport": {
+   "pyopenms": "3.5.0",
+   "openmsRevision": "c1370fb",
+   "strength": "self-reported by the loaded binary"
+  },
+  "keyModules": {
+   "value": "file digests of OpenMS.dll, OpenSwathAlgo.dll, Qt6Core.dll, python313.dll as loaded",
+   "strength": "files at the loaded paths hashed after load, not the memory image"
+  },
+  "notPersisted": [
+   "installation paths",
+   "process ids",
+   "operation identifiers"
+  ]
+ },
+ "result_record": {
+  "artifactId": "UUID",
+  "kind": "targetedMs1ResultV1",
+  "summary": {
+   "targets": 6,
+   "DETECTED": 4,
+   "DETECTED_AMBIGUOUS": 1,
+   "SHARED": 0,
+   "SUPPRESSED_BY_OVERLAP": 0,
+   "NOT_DETECTED": 1,
+   "FAILED": 0
+  },
+  "payload": {
+   "store": "<document>.payloads/<artifactId>/",
+   "manifestSha256": "...",
+   "files": [
+    {
+     "name": "rows.jsonl",
+     "bytes": 5712,
+     "sha256": "..."
+    },
+    {
+     "name": "evidence.jsonl",
+     "bytes": 34622,
+     "sha256": "..."
+    },
+    {
+     "name": "evidence.index.json",
+     "bytes": 900,
+     "sha256": "...",
+     "note": "proposed, not prototyped in M9.0"
+    }
+   ]
+  },
+  "lineage": "the producing run names this artifact; the reverse edge is derived, never stored"
+ },
+ "payload_row_example": {
+  "targetId": "3f6c2d9e-5b1a-4c8e-9f2d-7a1b0c4e5d6f",
+  "outcome": "DETECTED",
+  "ion": {
+   "charge": 1,
+   "adduct": "[M+H]+",
+   "mzTheoretical": [
+    195.087652785771,
+    196.091007623571
+   ]
+  },
+  "windows": {
+   "rtClosedS": [
+    52.0,
+    92.0
+   ],
+   "mzOpen": [
+    [
+     195.086677,
+     195.088628
+    ],
+    [
+     196.090027,
+     196.091988
+    ]
+   ]
+  },
+  "signal": {
+   "points": 80,
+   "sum": [
+    11040000.0,
+    1105000.0
+   ],
+   "max": [
+    800106.6,
+    80010.7
+   ],
+   "precision": "binary64 sums of binary32-rounded spectrum intensities",
+   "anyNonzeroPoint": true
+  },
+  "feature": {
+   "apexRtS": 71.9999,
+   "leftS": 64.4,
+   "rightS": 79.4,
+   "rawArea": {
+    "value": 11006294.0,
+    "precision": "binary32",
+    "meaning": "sum of raw chromatogram points in [leftS, rightS], both traces"
+   },
+   "model": {
+    "status": "valid",
+    "area": 5531771.5,
+    "unit": "intensity x s",
+    "fwhmS": 5.89
+   },
+   "engineIntensity": {
+    "value": 5531771.5,
+    "source": "model_area",
+    "runDependent": true
+   }
+  },
+  "candidates": [
+   {
+    "apexRtS": 71.9999,
+    "leftS": 64.4,
+    "rightS": 79.4,
+    "rawArea": 11006294.0
+   }
+  ],
+  "relations": {},
+  "candidateCount": 1,
+  "overlapWinner": false
+ },
+ "evidence_line_example": {
+  "targetId": "3f6c2d9e-5b1a-4c8e-9f2d-7a1b0c4e5d6f",
+  "trace": 0,
+  "mzTheoretical": 195.087652785771,
+  "points": [
+   [
+    104,
+    52.4,
+    212.6
+   ],
+   [
+    105,
+    52.9,
+    0.0
+   ]
+  ],
+  "pointFormat": [
+   "spectrumIndex (file order)",
+   "rtS",
+   "summed intensity (binary64 sum of binary32-rounded intensities)"
+  ]
+ }
+}

@@ -2,7 +2,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { SettingsDialog } from "../preferences/SettingsDialog";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 
-export type WorkbenchSurface = "workbench" | "conversion";
+export type WorkbenchSurface = "workbench" | "conversion" | "project";
 export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCount, busy, retained, dropStatus }: {
   readonly surface: WorkbenchSurface; readonly onNavigate: (surface: WorkbenchSurface) => void;
   readonly detailsAvailable: boolean;
@@ -38,8 +38,8 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
       <strong>MSCanvas</strong>
     </button>
     <nav className="workbench-navigation" aria-label={t("navigation")}>
-      {(["workbench", "conversion"] as const).map(target => <button type="button" key={target} aria-current={surface === target ? "page" : undefined} onClick={() => { onNavigate(target); panels.navigate(); }}>
-        {t(target === "workbench" ? "workbench" : "conversionTask")}
+      {(["workbench", "conversion", "project"] as const).map(target => <button type="button" key={target} aria-current={surface === target ? "page" : undefined} onClick={() => { onNavigate(target); panels.navigate(); }}>
+        {t(target === "workbench" ? "workbench" : target === "conversion" ? "conversionTask" : "projectSurface")}
         {target === "conversion" && (busy || retained) ? <span className="work-status-dot" aria-label={t(busy ? "workActive" : "workRetained")} /> : null}
         <motion.span className="navigation-underline" aria-hidden="true" animate={{ opacity: surface === target ? 1 : 0 }} transition={{ duration: reduced ? 0 : 0.14 }} />
       </button>)}

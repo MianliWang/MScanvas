@@ -764,6 +764,28 @@ def validate_every_raster_entry_point_asks_the_budget(errors: list[str]) -> None
                 "the refusal has to happen before the pixmap is allocated"
             )
 
+    # The stored-result exports (M9.2) reach the rasterizer through their own
+    # facade, and are held to the same rule by name.
+    output = ROOT / "apps" / "desktop" / "src-tauri" / "src" / "preview" / "scientific_output.rs"
+    if not output.is_file():
+        return
+    content = output.read_text(encoding="utf-8")
+    for method in ("png",):
+        start = content.find(f"pub(crate) fn {method}(")
+        if start < 0:
+            errors.append(
+                f"preview/scientific_output.rs no longer defines {method}; the raster "
+                "budget guard cannot see whether its pixels are still bounded"
+            )
+            continue
+        end = content.find("\n    pub(crate) fn ", start + 1)
+        body = content[start : end if end > 0 else len(content)]
+        if "PreviewService::raster_budget(" not in body:
+            errors.append(
+                f"preview/scientific_output.rs::{method} does not call "
+                "PreviewService::raster_budget before rasterizing"
+            )
+
 
 # One column-zero Rust function definition, for the free-function scan below.
 FREE_FN_RE = re.compile(r"(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?fn (\w+)")
@@ -848,8 +870,16 @@ def validate_the_chromatogram_authority_has_one_installation_path(
     owners = functions_naming(content, "latest_preview_open")
 
     # `default` builds the slot and assigns the field its initial ticket, which
-    # is the one thing that is neither a question nor an answer to one.
-    expected = {"default", "begin_preview_open", "reconcile_preview_chromatogram"}
+    # is the one thing that is neither a question nor an answer to one. The run
+    # summary a QC capture may copy (M8.5) is retained by the same rule as the
+    # chromatogram, in its own function that compares *and* installs under the
+    # one `&mut self` -- the shape this check exists to keep.
+    expected = {
+        "default",
+        "begin_preview_open",
+        "reconcile_preview_chromatogram",
+        "reconcile_preview_run_summary",
+    }
     if owners != expected:
         errors.append(
             "preview/export.rs: the functions naming `latest_preview_open` are "

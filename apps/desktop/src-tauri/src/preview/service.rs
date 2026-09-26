@@ -147,14 +147,15 @@ use super::dto::{
 };
 use super::export::{
     BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
-    ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, ScientificExportSlots,
-    SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest, data_document,
-    exported_point_count, figure_raster, png_document, png_of, raster_of, svg_document,
+    ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, RunSummaryToken,
+    ScientificExportSlots, SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest,
+    data_document, exported_point_count, figure_raster, png_document, png_of, raster_of,
+    svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
 };
-use super::installation::InstallationIdentity;
+use super::installation::{InstallationIdentity, PreviewProducerFacts};
 use super::operation::{
     AdmittedDestination, AttemptFacts, CancellationFacts, ConversionQueue, ConversionSlot,
     ItemOutcome, PendingDisposition, QueueItem, QueueItemAttempt, SettledItemAdoption,
@@ -453,6 +454,18 @@ fn describe_outcomes(
             },
         })
         .collect()
+}
+
+/// Why a retained run summary cannot be handed to a QC capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RetainedSummaryRefusal {
+    /// The token names no summary this session still retains, or the one it
+    /// names is of a different row.
+    NotCurrent,
+    /// The row is no longer in the workspace.
+    RowGone,
+    /// The build that produced the summary cannot be identified.
+    ProducerUnidentified,
 }
 
 /// What one dataset's session state is.
@@ -1358,6 +1371,62 @@ impl PreviewService {
         let roster = roster_of(&self.workspace());
         drop(gate);
         roster
+    }
+
+    /// Every filesystem object one admitted row is bound to, primary first.
+    ///
+    /// Read from the row rather than from the filesystem, which is the whole
+    /// point: the identities come from the objects this session's admission
+    /// opened and leased, so a caller comparing them against something it
+    /// measured itself is comparing two observations of objects rather than two
+    /// observations of a name. `None` where the handle names no live row.
+    ///
+    /// Crate-internal and deliberately the plain pair. Nothing about admission,
+    /// leases or source families leaves this module with it.
+    pub(crate) fn dataset_object_identities(&self, handle: &str) -> Option<Vec<(u64, [u8; 16])>> {
+        let id = DatasetId::parse(handle)?;
+        let workspace = self.workspace();
+        let identities = workspace.registry.get(id)?.object_identities();
+        drop(workspace);
+        Some(identities)
+    }
+
+    /// The run summary the preview on screen established for one row, and
+    /// what is known about the build that produced it.
+    ///
+    /// Memory only. The summary is the one the latest committed open retained,
+    /// named by the token that open answered with; the build is the one that
+    /// open's own batch reported. Nothing here reads the source, stats it,
+    /// hashes it, resolves an installation or starts a process -- and nothing
+    /// asks which backend is configured now, because that is not the question.
+    ///
+    /// Refused when the token is not the retained summary's (a newer open has
+    /// begun, of this row or another), when the summary is not of `handle`'s
+    /// row, when that row has left the workspace, and when the build that
+    /// produced it cannot be identified.
+    pub(crate) fn retained_run_summary(
+        &self,
+        handle: &str,
+        token: &str,
+    ) -> Result<(Arc<RunSummaryResult>, PreviewProducerFacts), RetainedSummaryRefusal> {
+        let row = DatasetId::parse(handle).ok_or(RetainedSummaryRefusal::RowGone)?;
+        // The slot is a leaf: copied out of and let go of before the workspace
+        // is asked anything.
+        let snapshot = self
+            .spectrum_export_slot()
+            .run_summary_for(token)
+            .ok_or(RetainedSummaryRefusal::NotCurrent)?;
+        if snapshot.owner() != row {
+            return Err(RetainedSummaryRefusal::NotCurrent);
+        }
+        if !self.workspace().registry.contains(row) {
+            return Err(RetainedSummaryRefusal::RowGone);
+        }
+        let producer = snapshot
+            .installation()
+            .and_then(InstallationIdentity::producer_facts)
+            .ok_or(RetainedSummaryRefusal::ProducerUnidentified)?;
+        Ok((snapshot.summary(), producer))
     }
 
     /// Adds every chosen path, in picker order, and answers with what each one
@@ -3181,7 +3250,7 @@ impl PreviewService {
     // retained or allocated. It deliberately does *not* read the DPI. An SVG
     // stopped over a resolution it does not record would be stopped over a
     /// number that could not have changed it.
-    fn render_settings(
+    pub(super) fn render_settings(
         settings: &FigureSettingsDto,
     ) -> Result<FigureRenderSettings, PreviewErrorDto> {
         FigureRenderSettings::from_wire(settings.width_px, settings.height_px, &settings.theme)
@@ -3189,7 +3258,7 @@ impl PreviewService {
     }
 
     /// Reads the physical resolution, for the one output that records one.
-    fn png_dpi(settings: &FigureSettingsDto) -> Result<PngDpi, PreviewErrorDto> {
+    pub(super) fn png_dpi(settings: &FigureSettingsDto) -> Result<PngDpi, PreviewErrorDto> {
         PngDpi::from_wire(settings.png_dpi).map_err(Self::settings_refusal)
     }
 
@@ -3198,7 +3267,7 @@ impl PreviewService {
     // Asked by every operation that allocates a pixmap -- the PNG export and
     // the clipboard copy -- through one check, so the two cannot drift apart
     /// again.
-    fn raster_budget(settings: FigureRenderSettings) -> Result<(), PreviewErrorDto> {
+    pub(super) fn raster_budget(settings: FigureRenderSettings) -> Result<(), PreviewErrorDto> {
         validate_raster_budget(settings).map_err(Self::settings_refusal)
     }
 
@@ -3213,7 +3282,7 @@ impl PreviewService {
     // with an existing `trace.csv` they never asked to be near -- a
     // no-overwrite refusal about a file they did not name. So the answer is to
     /// say what would be right and write nothing.
-    fn require_named_document(
+    pub(super) fn require_named_document(
         destination: &Path,
         facts: SaveDialogFacts,
     ) -> Result<(), PreviewErrorDto> {
@@ -3287,7 +3356,7 @@ impl PreviewService {
         }
     }
 
-    fn theme_name(settings: FigureRenderSettings) -> String {
+    pub(super) fn theme_name(settings: FigureRenderSettings) -> String {
         match settings.theme() {
             FigureTheme::Light => "light".to_owned(),
             FigureTheme::Dark => "dark".to_owned(),
@@ -3295,7 +3364,7 @@ impl PreviewService {
     }
 
     /// Turns a figure refusal into this boundary's vocabulary.
-    fn figure_failure(failure: FigureFailure) -> PreviewErrorDto {
+    pub(super) fn figure_failure(failure: FigureFailure) -> PreviewErrorDto {
         match failure {
             FigureFailure::Unspecifiable => spectrum_export_refused(),
             FigureFailure::Raster(RasterFailure::NoUsableFont) => figure_font_unavailable(),
@@ -6978,6 +7047,12 @@ impl PreviewService {
         let mut handled = 0_usize;
         for attempt in attempts {
             handled += 1;
+            // Which build ran *this* operation, kept for the one result a QC
+            // snapshot may copy. The batch shares one resolution in production,
+            // so every attempt names the same build -- but the snapshot's
+            // producer is taken from the attempt that produced its facts, which
+            // is true whatever a provider does.
+            let ran_on = attempt.installation.clone();
             // The identity of this batch was already noted above, so an
             // operation that failed no longer takes it with it.
             match attempt.outcome? {
@@ -6986,7 +7061,12 @@ impl PreviewService {
                         metadata = Some(metadata_dto(&result, &redactor));
                     }
                     PreviewValue::RunSummary(result) => {
-                        run_summary = Some(run_summary_dto(&result)?);
+                        // Both: the bounded projection the page is shown, and
+                        // the whole typed result, which is what a QC snapshot
+                        // copies. The projection drops the three middle
+                        // retention times and caps the buckets, so a snapshot
+                        // built from it would record less than was established.
+                        run_summary = Some((run_summary_dto(&result)?, result, ran_on));
                     }
                     PreviewValue::SpectrumTable(result) => {
                         table_rows = result
@@ -7041,7 +7121,13 @@ impl PreviewService {
         // leave the dataset owning facts the user was never shown -- with rows
         // a later spectrum would silently reconcile against.
         let metadata = metadata.ok_or_else(|| missing("metadata"))?;
-        let run_summary = run_summary.ok_or_else(|| missing("run summary"))?;
+        // The build the run-summary operation reported, kept with the summary it
+        // produced. Not `authority_projection()` and not a fresh
+        // `availability()`: either of those answers which build is configured
+        // *now*, which is a different question from which one produced these
+        // facts.
+        let (run_summary, run_summary_facts, producer_installation) =
+            run_summary.ok_or_else(|| missing("run summary"))?;
         let spectrum_table = spectrum_table.ok_or_else(|| missing("spectrum table"))?;
 
         // One commit, under one lock, of facts that are only true together: the
@@ -7094,6 +7180,21 @@ impl PreviewService {
             &table_rows,
             spectrum_table.truncated,
         );
+        // By the same ordering rule and in the same slot: only the latest open
+        // may retain a summary a QC snapshot can copy.
+        let qc_producer_identified = producer_installation
+            .as_ref()
+            .and_then(InstallationIdentity::producer_facts)
+            .is_some();
+        let qc_snapshot_token = self
+            .spectrum_export_slot()
+            .reconcile_preview_run_summary(
+                preview_open,
+                id,
+                run_summary_facts,
+                producer_installation,
+            )
+            .map(RunSummaryToken::as_wire);
 
         Ok(PreviewDto {
             authority: projection.to_dto(),
@@ -7102,6 +7203,8 @@ impl PreviewService {
             metadata,
             run_summary,
             spectrum_table,
+            qc_snapshot_token,
+            qc_producer_identified,
         })
     }
 
@@ -8045,7 +8148,7 @@ fn viewport_domain_dto(domain: projection::ViewportDomain) -> SpectrumViewportDo
 // Total over the writer's own enumeration with no wildcard arm, for the reason
 // the diagnostics reading beside it has none: a failure added there has to be
 /// answered here rather than falling into a default that happens to compile.
-fn spectrum_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto {
+pub(super) fn spectrum_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto {
     let residue = failure.temporary_left_behind();
     match failure.error() {
         LocalFileWriteError::UnsafeName | LocalFileWriteError::ParentNotUsable { .. } => {

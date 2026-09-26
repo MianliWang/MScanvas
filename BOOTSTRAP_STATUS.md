@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-08-07
+**Updated:** 2026-09-24
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -9,23 +9,25 @@ M7.0 changed no repository visibility.
 
 **Default branch:** `main`
 
-**Current route, 2026-09-16:** M7 IN PROGRESS.
-[ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)
-accepts the first Windows x64 beta scope and implementation sequence. M7.1 and
-M7.2 are published. M7.3 has implemented the bilingual scan browser and explicit
-RT/m/z range confirmation. Browser checks, static product repair review and 3/3
-targeted Build 05 native scenarios pass at measured 150% scaling, including real
-retained CSV content and natural picker return. Final reviewed-head, protected
-publication and natural-main CI identities belong to PR #123 and the retained closeout.
-See the [M7.3 record](docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md).
-M7.4 — Conversion, results and figures — has implemented its scope and passed
-all seven mandatory native scenarios on Build 04. Its
-[implementation record](docs/ux/M7_4_CONVERSION_RESULTS_FIGURES.md) distinguishes
-controlled evidence, actual native outcomes and retained failed attempts.
-Protected publication, natural-main CI and local closeout belong to PR #124.
-M7.5 remains NEXT / NOT STARTED. This slice builds
-or releases no public beta. The dated entries below retain their original
-milestone and validation context.
+**Current route, 2026-09-24:** published `main` carries M7.1–M7.5 (PR #125 and
+its follow-up #126). One linear stack follows it in source: a partial M7.6 (an
+NSIS candidate configuration, notices and scripts; installed qualification not
+started, release qualification deferred / incomplete), M8 (project records,
+lineage, layers and the QC snapshot; implementation complete) and M9 (one
+bounded, experimental targeted-MS1 recipe whose pyOpenMS runtime is
+development-only and not bundled; implementation complete, see the
+[M9 closure](docs/product/M9_CLOSURE.md)). That stack was prepared as one
+source-integration candidate, recorded in the
+[M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md);
+the merge on `main`, not this paragraph, is the evidence that it was published.
+None of it is in an installer or a release. Named test debt travels with it: the
+repository-wide browser suite fails 174 of the 317 tests shared with the M7.5
+`main` it follows (`1daf802`), identically on both (legacy M4–M7 and viewer-r1
+specs; the M8/M9 specs pass), and one App-level Vitest case can exceed its 5 s limit under load. The first Windows x64 beta's scope and
+route remain
+[ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md)'s;
+no public beta is built or released, and M10 is not started. The dated entries below retain their original milestone and
+validation context.
 
 ## Completed
 

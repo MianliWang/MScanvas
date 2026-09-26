@@ -166,14 +166,38 @@ documents as bytes, generated before that refactor and byte-identical after it.
 
 See [ADR 0036](adr/0036-linked-chromatogram-spectrum-figure.md).
 
+## Stored targeted evidence — M9.2, schema 3
+
+The first figure drawn from a stored project result rather than a preview
+snapshot, and the first use of the two schema-3 additions.
+
+| | |
+| --- | --- |
+| Source | one target's stored row and evidence lines from a targeted MS1 result's payload, digest-verified; never the mzML, never the runtime |
+| Panel | one chromatogram panel: x retention time, unit `s` (known); y intensity, unit **unreported** |
+| Series | M and M+1, `Measurement` and `SecondaryMeasurement`, each joined **and marked** at every stored sample |
+| Intervals | the plan's RT window (`Window`, dotted ends), the feature (`Selected`, a band labelled `Feature` or `Shared feature`), every other candidate (`Considered`, a dashed outline) |
+| Marker | the feature's apex |
+| Domains | the hull of every point, the window, the feature and the candidates; the value range includes zero |
+| Text | title `<label> — <Outcome>`; a caption naming the formula, what the outcome means, and the result and plan digests. User text is bounded and XML-safe |
+| Outputs | SVG and PNG. No `Copy plot` for a stored result (not exercised natively in M9.2) |
+
+Schema 3 adds `IntervalSpec` (an interval on a panel's domain axis, refused
+outside the full domain) and `SeriesSpec::with_sample_marks()` (joined series
+only). A figure that uses neither draws exactly what it drew at schema 2; the
+three golden documents are byte-identical. The page shows this SVG as an inert
+image at the settings the export will use, so the screen and the file are one
+drawing. See [ADR 0048](adr/0048-stored-targeted-result-reuse-and-export.md).
+
 ## Still open
 
 FIG-001 through FIG-006 cover the selected spectrum, the chromatogram, and the
 linked two-panel figure of the two — the first two over their full source or the
 range their own viewer has committed to. FIG-007 and FIG-008 are unimplemented.
-There is no XIC, no saved specification and no composer, and the screen renderer
-still does not consume `FigureSpec` — screen and export agree by both being right
-rather than by sharing a type.
+There is no XIC, no saved specification and no composer. The viewer's screen
+renderer still does not consume `FigureSpec` — screen and export agree by both
+being right rather than by sharing a type — except for a stored targeted MS1
+result, whose screen figure *is* the exported SVG (M9.2).
 
 ## Two ranges, on two axes, and they are not one range
 

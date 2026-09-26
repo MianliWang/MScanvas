@@ -1,0 +1,429 @@
+{
+ "purpose": "M9.0 experiment-only provenance. Nothing here is a production dependency; binaries, data and outputs stay in ignored scratch.",
+ "runtime": {
+  "name": "CPython 3.13.15 Windows embeddable package (x64)",
+  "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
+  "bytes": 11009825,
+  "sha256_published": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
+  "sha256_measured": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
+  "release_date": "2026-08-05",
+  "openpgp": "Good signature from key 7ED1 0B65 31D7 C8E1 BC29 6021 FC62 4643 4870 34E5 (Steve Dower, Python Release Signing), the key id python.org lists for Windows binaries; key fetched from keyserver.ubuntu.com into a scratch keyring; web of trust not established",
+  "authenticode": "python.exe, pythonw.exe, python3.dll, python313.dll, libcrypto-3.dll, libssl-3.dll, libffi-8.dll, sqlite3.dll: Valid, Python Software Foundation; vcruntime140.dll, vcruntime140_1.dll: Valid, Microsoft",
+  "modification": "python313._pth gains one line `site-packages`; `import site` stays commented, so no user site and no .pth processing",
+  "installed_bytes_mb": 352,
+  "installed_files": 4987
+ },
+ "packages": {
+  "resolver": "pip 25.0 (C:\\Python312, used only in --isolated download/--target modes; its own installation unchanged)",
+  "index": "https://pypi.org/simple, --only-binary=:all:, platform win_amd64, cp313",
+  "lock": "experiments/m9_0/runtime/requirements-cp313-win_amd64.lock.txt",
+  "install": "--isolated --no-index --find-links <scratch> --require-hashes --no-deps --no-compile --target <runtime>/site-packages",
+  "wheels": [
+   {
+    "file": "contourpy-1.4.0-cp313-cp313-win_amd64.whl",
+    "size": 234084,
+    "upstream_sha256": "6507a016976a75a15aee47809a34605de6244ccc056e6164bf9fb14b27eecad4",
+    "measured_sha256": "6507a016976a75a15aee47809a34605de6244ccc056e6164bf9fb14b27eecad4",
+    "match": true,
+    "license_metadata": [
+     "License-Expression: BSD-3-Clause"
+    ]
+   },
+   {
+    "file": "cycler-0.12.1-py3-none-any.whl",
+    "size": 8321,
+    "upstream_sha256": "85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30",
+    "measured_sha256": "85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30",
+    "match": true,
+    "license_metadata": [
+     "License: Copyright (c) 2015, matplotlib project",
+     "Classifier: License :: OSI Approved :: BSD License"
+    ]
+   },
+   {
+    "file": "fonttools-4.65.0-cp313-cp313-win_amd64.whl",
+    "size": 2481620,
+    "upstream_sha256": "8ae1846b0f192fd485d26a455af19b8f5cf05aff08f9836f533913d8fcea133c",
+    "measured_sha256": "8ae1846b0f192fd485d26a455af19b8f5cf05aff08f9836f533913d8fcea133c",
+    "match": true,
+    "license_metadata": [
+     "License: MIT"
+    ]
+   },
+   {
+    "file": "kiwisolver-1.5.1-cp313-cp313-win_amd64.whl",
+    "size": 70758,
+    "upstream_sha256": "dc23390afe9f4ef9ac3bcc72a03a56eebbde03f4c571a32cb38f859cff9a6524",
+    "measured_sha256": "dc23390afe9f4ef9ac3bcc72a03a56eebbde03f4c571a32cb38f859cff9a6524",
+    "match": true,
+    "license_metadata": [
+     "License: =========================",
+     "Classifier: License :: OSI Approved :: BSD License"
+    ]
+   },
+   {
+    "file": "matplotlib-3.11.2-cp313-cp313-win_amd64.whl",
+    "size": 9349539,
+    "upstream_sha256": "bc067c462a86f0e57bf52fc6e058d90171a5420007dac00c46e90153050c69a7",
+    "measured_sha256": "bc067c462a86f0e57bf52fc6e058d90171a5420007dac00c46e90153050c69a7",
+    "match": true,
+    "license_metadata": [
+     "License: License agreement for matplotlib versions 1.3.0 and later",
+     "Classifier: License :: OSI Approved :: Python Software Foundation License"
+    ]
+   },
+   {
+    "file": "numpy-2.5.3-cp313-cp313-win_amd64.whl",
+    "size": 12560965,
+    "upstream_sha256": "71cad2b2a7451ab79d8f5e71b453485b6775963d5cf794179144a7463fe6e8ec",
+    "measured_sha256": "71cad2b2a7451ab79d8f5e71b453485b6775963d5cf794179144a7463fe6e8ec",
+    "match": true,
+    "license_metadata": [
+     "License-Expression: BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
+    ]
+   },
+   {
+    "file": "packaging-26.3-py3-none-any.whl",
+    "size": 129956,
+    "upstream_sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+    "measured_sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+    "match": true,
+    "license_metadata": [
+     "License-Expression: Apache-2.0 OR BSD-2-Clause"
+    ]
+   },
+   {
+    "file": "pandas-3.0.6-cp313-cp313-win_amd64.whl",
+    "size": 9638092,
+    "upstream_sha256": "f3ce8a6968045481e91a3990e797e348ce13db45ee164a7095bbc824e26c09dd",
+    "measured_sha256": "f3ce8a6968045481e91a3990e797e348ce13db45ee164a7095bbc824e26c09dd",
+    "match": true,
+    "license_metadata": [
+     "License: BSD 3-Clause License",
+     "Classifier: License :: OSI Approved :: BSD License"
+    ]
+   },
+   {
+    "file": "pillow-12.3.0-cp313-cp313-win_amd64.whl",
+    "size": 7239691,
+    "upstream_sha256": "1cca606cd25738df4ed873d5ad46bbdb3d83b5cbca291f6b4ff13a4df6b0bbe8",
+    "measured_sha256": "1cca606cd25738df4ed873d5ad46bbdb3d83b5cbca291f6b4ff13a4df6b0bbe8",
+    "match": true,
+    "license_metadata": [
+     "License-Expression: MIT-CMU"
+    ]
+   },
+   {
+    "file": "pyopenms-3.5.0-cp313-cp313-win_amd64.whl",
+    "size": 32364984,
+    "upstream_sha256": "51c5944366a2efb4a9f393da875f91e390dcd2dba5ccf736421ab322e4345747",
+    "measured_sha256": "51c5944366a2efb4a9f393da875f91e390dcd2dba5ccf736421ab322e4345747",
+    "match": true,
+    "license_metadata": [
+     "License: http://opensource.org/licenses/BSD-3-Clause",
+     "Classifier: License :: OSI Approved :: BSD License"
+    ]
+   },
+   {
+    "file": "pyparsing-3.3.3-py3-none-any.whl",
+    "size": 126420,
+    "upstream_sha256": "ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4",
+    "measured_sha256": "ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4",
+    "match": true,
+    "license_metadata": [
+     "License-Expression: MIT"
+    ]
+   },
+   {
+    "file": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+    "size": 229892,
+    "upstream_sha256": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427",
+    "measured_sha256": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427",
+    "match": true,
+    "license_metadata": [
+     "License: Dual License",
+     "Classifier: License :: OSI Approved :: BSD License",
+     "Classifier: License :: OSI Approved :: Apache Software License"
+    ]
+   },
+   {
+    "file": "six-1.17.0-py2.py3-none-any.whl",
+    "size": 11050,
+    "upstream_sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+    "measured_sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+    "match": true,
+    "license_metadata": [
+     "License: MIT",
+     "Classifier: License :: OSI Approved :: MIT License"
+    ]
+   },
+   {
+    "file": "tzdata-2026.4-py2.py3-none-any.whl",
+    "size": 347494,
+    "upstream_sha256": "c2169a8b0a7a5e9674da5a135ccdfb2b3e671b333ed9fed17b41f73c34476e81",
+    "measured_sha256": "c2169a8b0a7a5e9674da5a135ccdfb2b3e671b333ed9fed17b41f73c34476e81",
+    "match": true,
+    "license_metadata": [
+     "License: Apache-2.0"
+    ]
+   }
+  ],
+  "imported_by_the_engine": [
+   "numpy",
+   "pandas",
+   "python-dateutil"
+  ],
+  "declared_but_not_imported": [
+   "matplotlib",
+   "pillow",
+   "fonttools",
+   "contourpy",
+   "kiwisolver",
+   "cycler",
+   "pyparsing",
+   "packaging"
+  ],
+  "license_gap": "The pyopenms wheel carries no license or notice file, yet bundles OpenMS.dll, OpenSwathAlgo.dll, Qt6Core.dll, Qt6Network.dll, zlib.dll and the MSVC runtime; OpenMS's License.txt says it depends on third-party contrib libraries. Local experiment use only; redistribution terms are unresolved."
+ },
+ "engine": {
+  "pyopenms": "3.5.0",
+  "openms_self_reported": {
+   "version": "3.5.0",
+   "revision": "c1370fb",
+   "build_time": "Dec 11 2025, 12:53:26"
+  },
+  "release_tag": "release/3.5.0",
+  "tag_commit": "c49149d47d6fcc76d1271d87d3a7fad15d2219de",
+  "revision_note": "c1370fb7f7c478574c9f48797e526ebca7736bee is not the tag commit; the two diverge from merge base 8f874ef28c2e36806496f8e757404e71c77eb524 (tag side 19 commits, wheel side 14). Neither side changes a source file read below; the wheel side updates the contrib submodule and MRMAssay.h.",
+  "sources_read_at_tag": [
+   {
+    "path": "src/topp/FeatureFinderMetaboIdent.cpp",
+    "git_blob": "f108e95c932a3d927c789fe08c115cd40f0f83d5"
+   },
+   {
+    "path": "src/openms/include/OpenMS/FEATUREFINDER/FeatureFinderAlgorithmMetaboIdent.h",
+    "git_blob": "2ac40e26db8e831d9c5bd07ec74ed34f2f748294"
+   },
+   {
+    "path": "src/openms/source/FEATUREFINDER/FeatureFinderAlgorithmMetaboIdent.cpp",
+    "git_blob": "e5891b418f028a573a1a9e6e8712a377a6a68455"
+   },
+   {
+    "path": "src/openms/source/ANALYSIS/OPENSWATH/ChromatogramExtractorAlgorithm.cpp",
+    "git_blob": "7b7a0987d9937b2b0722e772c26caf2202276789"
+   },
+   {
+    "path": "src/openms/source/ANALYSIS/OPENSWATH/ChromatogramExtractor.cpp",
+    "git_blob": "25e80ee0e22012558f98e8d6dc097ea20b0c86a1"
+   },
+   {
+    "path": "src/openms/source/FEATUREFINDER/ElutionModelFitter.cpp",
+    "git_blob": "12421282e1241c6e1aa3acc058c217cd5ddad7f0"
+   },
+   {
+    "path": "src/openms/include/OpenMS/ANALYSIS/OPENSWATH/MRMTransitionGroupPicker.h",
+    "git_blob": "080ab98367e93197eaef4fa614c8393fdac0aa52"
+   },
+   {
+    "path": "src/openms/source/ANALYSIS/OPENSWATH/MRMTransitionGroupPicker.cpp",
+    "git_blob": "1727e4647d77822a092bd3130222267085170902"
+   },
+   {
+    "path": "src/openms/include/OpenMS/ANALYSIS/OPENSWATH/PeakIntegrator.h",
+    "git_blob": "0f722827267df11f40dd186b7c9bf3b0366c9bed"
+   },
+   {
+    "path": "src/openms/source/APPLICATIONS/TOPPBase.cpp",
+    "git_blob": "f9f483a845091e0e73a813755600fd488e9f7f99"
+   },
+   {
+    "path": "src/openms/source/SYSTEM/UpdateCheck.cpp",
+    "git_blob": "36bd04907aa91ecfcf2f0aea432c90c8d4185a87"
+   },
+   {
+    "path": "src/openms/source/FORMAT/HANDLERS/MzMLHandler.cpp",
+    "git_blob": "ae76b9586407b1fa8d725b1a4da94b92ebd7fcd9"
+   },
+   {
+    "path": "src/openms/include/OpenMS/CONCEPT/Constants.h",
+    "git_blob": "0ec986d9d36d8940133ad2f946b987ae41ec5937"
+   },
+   {
+    "path": "src/pyOpenMS/pxds/FeatureFinderAlgorithmMetaboIdent.pxd",
+    "git_blob": "ce09cae1acb3d2cc1e5016ef9dc96e6ebaa977da"
+   },
+   {
+    "path": "cmake/Windows/NSIS.template.in",
+    "git_blob": "159dc6775794dd16f8f49b99c2556bb38817ef49"
+   },
+   {
+    "path": "src/tests/topp/CMakeLists.txt",
+    "git_blob": "e7506bb0daa0f0a177d50293e2192cdaab254320"
+   },
+   {
+    "path": "License.txt",
+    "git_blob": "722acba66f6c997f78dd5dd2bf8054a85ce2887c"
+   },
+   {
+    "path": "LICENSE",
+    "git_blob": "713de5ecd2c670fc4d3546f6a88c13b5cbf835ac"
+   }
+  ],
+  "maturity": "src/topp/FeatureFinderMetaboIdent.cpp: '@note This tool is still experimental!'"
+ },
+ "route_b": {
+  "asset": "OpenMS-3.5.0-Win64.exe",
+  "bytes": 200681950,
+  "digest_published": "sha256:ff6f97fab757e29ab2dac13b0e29bfb869c7320baefde6225e9f42990e381bd5",
+  "downloaded": false,
+  "status": "NOT_EXECUTED_DEPLOYMENT_BLOCKED",
+  "reason": "cmake/Windows/NSIS.template.in at the tag installs Section \"Proteowizard\" (THIRDPARTY/pwiz-bin) by default (DEBUG_NO_THIRDPARTY 0), so fetching the installer transfers a ProteoWizard copy under the standing HOLD; the built asset's contents were not inspected because inspecting it requires that transfer. No available extractor was proven for NSIS either."
+ },
+ "reference_data": {
+  "source": "OpenMS repository at the tag commit, src/tests/topp, BSD-3-Clause repository license",
+  "files": [
+   {
+    "path": "src/tests/topp/FeatureFinderMetaboIdent_1_input.mzML",
+    "git_blob": "f9ab32c72d57f122eabc4c829b7d6d625ba0a56c",
+    "bytes": 3010187,
+    "sha256": "6b26a6c69ae98852393bcf22d1c28ad6ac88c35af9df616d5bf27871046a34e3"
+   },
+   {
+    "path": "src/tests/topp/FeatureFinderMetaboIdent_1_input.tsv",
+    "git_blob": "125c49baef088aa24c2f5c2948157dddaf85b52a",
+    "bytes": 405,
+    "sha256": "fbd886ef04bd7d7da738e55e23522f94f9d9f88f3484ed0148ab9d4aa5341a95"
+   },
+   {
+    "path": "src/tests/topp/FeatureFinderMetaboIdent_1_output.featureXML",
+    "git_blob": "daa80fdf6f4a08e82a791fc20b618d0437ca317e",
+    "bytes": 67005,
+    "sha256": "63acac6d3ab2e54a013a2472fde2644d4c3260e04a83455c91c2aeec9cdcbfc2"
+   }
+  ],
+  "status": "Regression record of OpenMS's own tool, not an independent answer; the input declares all 380 spectra as profile (MS:1000128)."
+ },
+ "fixtures": {
+  "round1": {
+   "ctl_large": {
+    "bytes": 156168011,
+    "sha256": "83827106d943f626a06cd47496e571b2cc852c4619c99802a3f6db842956701f"
+   },
+   "dom_missing_rt": {
+    "bytes": 387521,
+    "sha256": "a17ddbd1f7233a63370d716bcb100877ecf94f1bacb3501028370ca4bcffc91b"
+   },
+   "dom_mixed_polarity": {
+    "bytes": 387661,
+    "sha256": "c08d12457cf0d63ef0874213aa693d632465969925de9e8b4ca953fde3df7534"
+   },
+   "dom_no_ms1": {
+    "bytes": 91269,
+    "sha256": "fc61f28f26d99d212e962b140749d58fffb8d7cf06962b242095939b3029813c"
+   },
+   "dom_profile": {
+    "bytes": 387460,
+    "sha256": "ee25233afb70fe01c400f768c2ebb3e7f881828c455358b8ce40c771b1ed46ab"
+   },
+   "dom_unsorted": {
+    "bytes": 387661,
+    "sha256": "72935daaca321f565a2e95ab57cfd830ee7a51ec4baa86da0951442f3b2f5daf"
+   },
+   "fmt_32_none": {
+    "bytes": 332161,
+    "sha256": "adcb692c543514a41ca2017746ccb5abd9cc4616be7b3bbf116ddcbf5890116f"
+   },
+   "fmt_indexed": {
+    "bytes": 395946,
+    "sha256": "bc854bd1906f51061705027bc75dd90d926fd8d629bd9d2b634e25265e8f2861"
+   },
+   "fmt_minutes": {
+    "bytes": 389608,
+    "sha256": "2b69e1772feefcbf4badeb4ac9aab26fe02fb37a64786a24f9f9131ecc35269e"
+   },
+   "fmt_not_mzml": {
+    "bytes": 29,
+    "sha256": "9cbb07f59941db57a0ef0eff9c7a65fcc3f105bb0609194a20254be21d2ef9f7"
+   },
+   "fmt_plain": {
+    "bytes": 387661,
+    "sha256": "2f4489d143f04e639534c25caf403fd30d09e7926989dfb263f45e84d12004bc"
+   },
+   "fmt_prefixed": {
+    "bytes": 404644,
+    "sha256": "4b4e3e6507eef3c8b30ea270b296f78ace9e55e37d2034684867be3885366fc9"
+   },
+   "fmt_truncated": {
+    "bytes": 213213,
+    "sha256": "d06c5bd0685116dfb7e21b226f3f25b0c7caba54cb34a4a94f231868304e741e"
+   },
+   "main": {
+    "bytes": 893155,
+    "sha256": "f428a9897635ae541f35027993226bcb21184808faf35b771e64fba6dc9fb837"
+   }
+  },
+  "round2": {
+   "r2_dup_in_peak": {
+    "bytes": 390218,
+    "sha256": "86c10befc8261d8f956b7748d7604f89644693fc3633d24bfd8d041a5e4691fd"
+   },
+   "r2_dup_outside_peak": {
+    "bytes": 389770,
+    "sha256": "cfa9b6b7ccfcc361a7432b936f37ea5bb0ac391feb16ab30f2c4e7b897b1f0d9"
+   },
+   "r2_plain": {
+    "bytes": 388025,
+    "sha256": "c3a7b3bcd9f995bf13b6d306e3edc7291acc2476d2dde3ae39de3893603e6e55"
+   },
+   "r2_prefixed": {
+    "bytes": 405008,
+    "sha256": "6f40996c47a686c4cd3369474e049fe0fff57ff1db6156aa0c355cebbf2b24d2"
+   },
+   "r2_strict": {
+    "bytes": 1018082,
+    "sha256": "d0b75af72df6a92e085872e9bef7da6e4132f1f587d3e881421ba28037e0da6b"
+   }
+  }
+ },
+ "protocols": {
+  "round1": {
+   "file": "experiments/m9_0/protocol.py",
+   "frozen_commit": "d4165b9dbb1c504339c8d009210b9829ac0c0840",
+   "amended_before_scoring": [
+    "d9a3d0e51350f466cc238a666a6607d81becfaab",
+    "8704abc9b87ff34ac65da94b67c91d40ddafaef5"
+   ],
+   "scored_sha256": "ac8a0be2b32d32fb13ec7bf8c069088f6c824339ff799ea19ab65d51359afc85"
+  },
+  "round2": {
+   "file": "experiments/m9_0/protocol_r2.py",
+   "frozen_commit": "847936cc04fc1416c7f1c8a13537799e1cfea78e",
+   "sha256": "82dbb6dd2acae04606009ffd124a977723eb7ed2d109cd47815f40c47b1a1c3d"
+  }
+ },
+ "tested_trees": {
+  "round1": {
+   "commit": "5030b674c22a09cd27cddd0a8d80a2f7b97843a0",
+   "tree": "fd8fcef28a52fb38b88a591910a927b8eb19c0b9",
+   "worker_sha256": "ce68cfa82ea381d563babbc887ae7a45282a1ce0b88070641394724b64389c7e",
+   "note": "committed after the scored runs; the worker digest recorded in every attempt is the binding"
+  },
+  "round2": {
+   "commit": "847936cc04fc1416c7f1c8a13537799e1cfea78e",
+   "tree": "03c409bc333d418e36f654c5c83c4e1c4d806741",
+   "worker_sha256": "859611e40115c8c2fcf05c414036e1521b352e1e0f527d49c613c87af0ff6aa8"
+  },
+  "post_review": {
+   "commit": "ebc39b06b7dfb8875aec3ce00f2b363d9f774b22",
+   "tree": "e8bc4a22546b996d6de43af7ba9a724bce09f9ba",
+   "worker_sha256": "42b5dbd96b36abd026c05af29bc6e3f961a5e82c7eea97c8a9d66b8ae502ad99",
+   "note": "review-closure checks and the round-two rerun; round one's code was committed after its runs and is bound by the worker digest"
+  },
+  "final": {
+   "commit": "17d6c9495da8dcfa72d3eb6e479b35a9dc5bb350",
+   "tree": "3440df9686276be396f3290d47d37a28dff2b682",
+   "worker_sha256": "55624cfcba22a56ed3ae7c797d2f5aabde1cc88375e95cdedd80ee60398e6cc1",
+   "note": "last executed code: final reruns of both matrices and the final focused checks"
+  }
+ }
+}

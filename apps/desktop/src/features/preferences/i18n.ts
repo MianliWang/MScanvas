@@ -5,9 +5,64 @@ import { zhCN } from "./locales/zh-CN";
 import type { UiLocale } from "./sessionPreferences";
 
 export const UI_RESOURCES = { en, "zh-CN": zhCN } as const;
-type PluralKey = "rosterRetainedAnnouncement" | "rosterRows" | "dragPicked" | "dragCount" | "dropRelease" | "noticeAdded" | "noticeDuplicates" | "noticeUnreadable" | "noticeFull" | "noticeRemoved" | "noticeGone" | "noticeCleared" | "noticeFolderLinked" | "noticeFolderInaccessible" | "noticeDropLinkedRoot" | "noticeDropInaccessibleRoot" | "noticeDropRemoteRoot" | "noticeDropUnsupportedRoot" | "noticeDropLinkedEntry" | "noticeDropInaccessibleEntry";
+type PluralKey = "projectMemberCount" | "projectRunInputs" | "projectArtifactMembers" | "rosterRetainedAnnouncement" | "rosterRows" | "dragPicked" | "dragCount" | "dropRelease" | "noticeAdded" | "noticeDuplicates" | "noticeUnreadable" | "noticeFull" | "noticeRemoved" | "noticeGone" | "noticeCleared" | "noticeFolderLinked" | "noticeFolderInaccessible" | "noticeDropLinkedRoot" | "noticeDropInaccessibleRoot" | "noticeDropRemoteRoot" | "noticeDropUnsupportedRoot" | "noticeDropLinkedEntry" | "noticeDropInaccessibleEntry";
 export type MessageKey = Exclude<keyof typeof en, `${PluralKey}_${string}`> | PluralKey;
 export interface MessageParameters {
+  readonly projectMemberCount: { readonly count: number };
+  readonly projectRunInputs: { readonly count: number };
+  readonly projectArtifactMembers: { readonly count: number };
+  readonly projectRunVersion: { readonly version: string };
+  readonly projectRelinkNamed: { readonly name: string };
+  readonly projectRemoveNamed: { readonly name: string };
+  readonly projectSelectNamed: { readonly name: string };
+  readonly projectAddToWorkbenchNamed: { readonly name: string };
+  readonly projectShowInWorkbenchNamed: { readonly name: string };
+  readonly provenanceInspectInput: { readonly name: string };
+  readonly provenanceInspectRun: { readonly name: string };
+  readonly provenanceInspectArtifact: { readonly name: string };
+  readonly provenanceInspectRunAt: { readonly when: string };
+  readonly provenanceInspectArtifactOf: { readonly when: string };
+  readonly projectCreateLayerNamed: { readonly name: string };
+  readonly projectShowLayerNamed: { readonly name: string };
+  readonly projectRemoveLayerNamed: { readonly name: string };
+  readonly provenanceInspectLayer: { readonly name: string };
+  readonly projectCaptureQcNamed: { readonly name: string };
+  readonly projectRunLayer: { readonly name: string };
+  readonly qcReportRecorded: { readonly when: string };
+  readonly qcReportMsLevel: { readonly level: string };
+  readonly provenanceInspectQcRunAt: { readonly when: string };
+  readonly provenanceInspectQcSnapshotOf: { readonly when: string };
+  readonly projectTargetedNamed: { readonly name: string };
+  readonly projectArtifactTargetedOutcome: { readonly count: number; readonly outcome: string };
+  readonly provenanceInspectTargetedRunAt: { readonly when: string };
+  readonly provenanceInspectTargetedResultOf: { readonly when: string };
+  readonly targetedLineOverfull: { readonly line: string };
+  readonly targetedEngine: { readonly engine: string };
+  readonly targetedWhereLine: { readonly line: string };
+  readonly targetedPlanCaption: { readonly ppm: string; readonly width: string };
+  readonly targetedPlanDigest: { readonly digest: string };
+  readonly targetedRowsBounded: { readonly count: number; readonly total: number };
+  readonly targetedShowEvidenceNamed: { readonly name: string };
+  readonly targetedPlotCaption: { readonly traces: string };
+  readonly targetedFigureAlt: { readonly name: string; readonly outcome: string; readonly drawn: string };
+  readonly m92ErrorDpi: { readonly min: number; readonly max: number };
+  readonly targetedTableSaved: { readonly name: string; readonly count: number };
+  readonly targetedSignalSome: { readonly count: number };
+  readonly targetedSignalNone: { readonly count: number };
+  readonly targetedFailureStage: { readonly stage: string };
+  readonly targetedModules: { readonly count: number };
+  readonly targetedAcquisitionsCount: { readonly count: number; readonly max: number };
+  readonly targetedRunBatch: { readonly count: number };
+  readonly targetedBatchIndependent: { readonly count: number };
+  readonly targetedTargetListDigestLine: { readonly digest: string };
+  readonly targetedBatchOpenResultNamed: { readonly name: string };
+  readonly targetedBatchShowRunNamed: { readonly name: string };
+  readonly targetedBatchCountCompleted: { readonly count: number; readonly total: number };
+  readonly targetedBatchCountFailed: { readonly count: number };
+  readonly targetedBatchCountCancelled: { readonly count: number };
+  readonly targetedBatchCountNotRun: { readonly count: number };
+  readonly targetedBatchEndedAnnouncement: { readonly summary: string };
+  readonly projectBusyBatch: { readonly position: number; readonly total: number };
   readonly m74ErrorFigureSize: { readonly minWidth: number; readonly minHeight: number; readonly max: number };
   readonly m74ErrorDpi: { readonly min: number; readonly max: number };
   readonly m74ErrorRasterBudget: { readonly max: number };
@@ -217,7 +272,7 @@ export class ResourceProblem extends Error {
   }
 }
 
-const pluralKeys: readonly PluralKey[] = ["rosterRetainedAnnouncement", "rosterRows", "dragPicked", "dragCount", "dropRelease", "noticeAdded", "noticeDuplicates", "noticeUnreadable", "noticeFull", "noticeRemoved", "noticeGone", "noticeCleared", "noticeFolderLinked", "noticeFolderInaccessible", "noticeDropLinkedRoot", "noticeDropInaccessibleRoot", "noticeDropRemoteRoot", "noticeDropUnsupportedRoot", "noticeDropLinkedEntry", "noticeDropInaccessibleEntry"];
+const pluralKeys: readonly PluralKey[] = ["projectMemberCount", "projectRunInputs", "projectArtifactMembers", "rosterRetainedAnnouncement", "rosterRows", "dragPicked", "dragCount", "dropRelease", "noticeAdded", "noticeDuplicates", "noticeUnreadable", "noticeFull", "noticeRemoved", "noticeGone", "noticeCleared", "noticeFolderLinked", "noticeFolderInaccessible", "noticeDropLinkedRoot", "noticeDropInaccessibleRoot", "noticeDropRemoteRoot", "noticeDropUnsupportedRoot", "noticeDropLinkedEntry", "noticeDropInaccessibleEntry"];
 const simpleKeys = Object.keys(en).filter((key) => !pluralKeys.some(base => key.startsWith(`${base}_`)));
 const parameters = (message: string): string =>
   [...new Set([...message.matchAll(/\{\{\s*(\w+)(?:,\s*number)?\s*\}\}/gu)].map((match) => match[1]))].sort().join(",");

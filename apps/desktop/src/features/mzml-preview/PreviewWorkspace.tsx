@@ -2,6 +2,9 @@ import { announceConversion } from "./conversionMessages";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
+import { ProjectPanel } from "../project/ProjectPanel";
+import { ProvenanceDetails } from "../project/ProvenanceDetails";
+import { useProject } from "../project/useProject";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 
@@ -24,6 +27,8 @@ import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
+import { reconcileOrganization } from "../workbench/organization";
+import type { WorkspaceAddResult } from "./contracts";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 
 /** The session workspace: a curated roster of mzML files, and one open preview. */
@@ -35,6 +40,9 @@ export function PreviewWorkspace() {
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
+  /** The contextual region, so focus can follow a request to reveal it. */
+  const inspectorRef = useRef<HTMLElement | null>(null);
+  const pendingInspectorFocus = useRef(false);
   // The panels are owned by the preference provider, which is the one place
   // that knows both what the user asked for and what the window can fit. What
   // is left here is the session fact the provider has no business knowing:
@@ -42,8 +50,135 @@ export function PreviewWorkspace() {
   const { panels } = useSessionPreferences();
   const constrained = panels.fit.constrained;
   const rosterOpen = panels.present.roster;
+  /**
+   * The roster row a reveal is waiting to put the keyboard on.
+   *
+   * A token rather than a boolean, because revealing the same row twice is
+   * two reveals: a reader who pressed `Show in Workbench`, wandered off and
+   * pressed it again asked for the same thing a second time.
+   */
+  const [revealRow, setRevealRow] = useState<{ handle: string; token: number } | null>(null);
+  const revealToken = useRef(0);
+  /**
+   * Takes the reader to one roster row.
+   *
+   * Navigation and nothing else. No request is sent, no file is read and no
+   * backend is touched -- everything this needs is already on the page, which
+   * is what keeps showing a row usable on a machine with no converter.
+   *
+   * The roster is opened where it is not on screen, through the same control
+   * the header owns rather than a layout of this function's own. `navigate`
+   * would be the wrong verb here: it folds the side panels away to give a
+   * surface the column, and the row *is* the destination.
+   */
+  const revealInWorkbench = useCallback(
+    (handle: string) => {
+      setSurface("workbench");
+      // A row the list is not showing cannot be revealed, and a reveal that
+      // reveals nothing is worse than no reveal. There are two reasons a row
+      // is not on screen and the reducer treats neither as a press it can
+      // act on, so both are cleared before the row is pressed.
+      //
+      // The search first. Deliberate, and only where it is needed: a row the
+      // query already shows keeps the reader's query exactly as they left it.
+      // A row that has just arrived is never in the projection this render
+      // was drawn from, so an add with a query set always clears it -- which
+      // is the right answer, because the row is the thing they asked to see.
+      if (!rosterProjection(workspace.roster).handles.has(handle)) {
+        workspace.dispatchRoster({ type: "searchCleared" });
+      }
+      // Then the group. A collapsed group drops its rows from the projection
+      // entirely, and the default destination for every new row is a group
+      // that can be collapsed -- so without this, revealing into one is a
+      // navigation that lands on nothing. The handle is named to the
+      // reconciliation as well, because a row that has just arrived is not in
+      // the organization this render was drawn from and belongs to the
+      // ungrouped group until it is.
+      const holding = reconcileOrganization(workspace.roster.organization, [
+        ...workspace.roster.datasets.map((dataset) => dataset.handle),
+        handle,
+      ]).groups.find((group) => group.handles.includes(handle));
+      if (holding?.collapsed === true) {
+        // `disclose` toggles, so this is asked only of a group that is closed.
+        workspace.dispatchRoster({
+          type: "organization",
+          action: { type: "disclose", groupId: holding.id },
+        });
+      }
+      // The same thing pressing the row does: it becomes the focused row and
+      // the highlighted one. It starts no read -- that is the component's
+      // separate response to a press, not the reducer's.
+      workspace.dispatchRoster({
+        type: "rowPressed",
+        handle,
+        modifiers: { ctrl: false, shift: false },
+      });
+      revealToken.current += 1;
+      setRevealRow({ handle, token: revealToken.current });
+      if (!rosterOpen && !panels.busy) panels.toggle("roster");
+    },
+    [panels, rosterOpen, workspace],
+  );
+  // Held at the shell so the project outlives navigating away from its surface.
+  // Rust is authoritative either way; this only keeps the page from re-reading
+  // the whole project every time the user looks at something else.
+  const project = useProject(
+    useCallback(
+      (result: WorkspaceAddResult | null) => {
+        // `null` is an operation that failed *after* Rust may have admitted
+        // the row: the project can decline to claim a row the workspace
+        // legitimately added, and the answer carrying that roster never
+        // arrives. Rust is authoritative about what the session holds, so the
+        // roster is re-read rather than left describing a workspace that has
+        // moved on without this page.
+        if (result === null) {
+          workspace.reconcileAfterFailedWorkspaceMutation();
+          return;
+        }
+        const landed = workspace.admitProjectInput(result);
+        // Nothing was admitted -- an unsupported file, a full workspace. The
+        // notice above the surfaces says which, where the reader already is,
+        // and sending them to a list with nothing new in it would be the
+        // wrong answer to a refusal.
+        if (landed !== null) revealInWorkbench(landed);
+      },
+      [revealInWorkbench, workspace],
+    ),
+  );
+  /** Every row the workspace currently holds, for the Project surface. */
+  const liveDatasetHandles = useMemo(
+    () => new Set(workspace.roster.datasets.map((dataset) => dataset.handle)),
+    [workspace.roster.datasets],
+  );
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
-  const detailsAvailable = preview.status === "loaded";
+  /**
+   * The preview on screen, as a QC capture needs it: which row, its opaque
+   * run-summary token, and whether its build can be identified. Only a loaded
+   * preview counts -- one still opening is not yet a summary anyone has seen.
+   */
+  const viewedPreview = useMemo(
+    () =>
+      preview.status === "loaded"
+        ? {
+            handle: preview.preview.file.handle,
+            token: preview.preview.qcSnapshotToken,
+            producerIdentified: preview.preview.qcProducerIdentified,
+          }
+        : null,
+    [preview],
+  );
+  /**
+   * Whether the contextual region has anything to describe *on this surface*.
+   *
+   * It was a loaded acquisition and nothing else, which left the Details
+   * control disabled on the Project surface -- where the region is exactly
+   * where provenance belongs. Availability is a property of the surface the
+   * user is on, so each surface answers for itself. Deliberately not a
+   * registry: there are two surfaces with contextual detail and this is what
+   * they are.
+   */
+  const detailsAvailable =
+    surface === "project" ? project.inspecting !== null : preview.status === "loaded";
   // The request is the preference; availability is not. A details panel asked
   // for while nothing is loaded stays asked for, and appears the moment a run
   // does -- it never becomes authority to load one.
@@ -159,6 +294,13 @@ export function PreviewWorkspace() {
     !workspace.folderBusy &&
     !workspace.dropBusy &&
     !workspace.workspaceBusy &&
+    // The other half of the rule the Project surface follows. A reattachment
+    // in flight is a workspace change like any other -- it hashes a whole
+    // acquisition and then enters the same admission gate -- and Rust
+    // supersedes whatever reached that gate later. Without this the wait is
+    // one-directional: the project action waits for an import, and an import
+    // started during a project action discards itself.
+    project.busy !== "admitting" &&
     !workspace.conversion.busy;
   // One thing more for the folder action, and only for it. Native page-load
   // start has already superseded work owned by the previous document; the
@@ -615,6 +757,7 @@ export function PreviewWorkspace() {
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
             projection={projection}
+            revealRow={revealRow}
             restoreAddFilesFocusToken={restoreAddFilesFocusToken}
             restoreAddFolderFocusToken={restoreAddFolderFocusToken}
             rosterSettlementToken={workspace.rosterSettlementToken}
@@ -623,6 +766,36 @@ export function PreviewWorkspace() {
 
         </aside>
 
+        {/* The project surface. Deliberately its own region rather than a
+            corner of the workbench: a project references files, the roster
+            admits them, and the two collections are not the same list. It needs
+            no provider, so it is reachable on a machine with no converter
+            installed. */}
+        <section id="workbench-project" className="workbench-project" hidden={surface !== "project" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("projectSurface")}>
+          <ProjectPanel
+            session={project}
+            liveDatasetHandles={liveDatasetHandles}
+            onShowInWorkbench={revealInWorkbench}
+            viewedPreview={viewedPreview}
+            workspaceBusy={
+              workspace.pickerBusy ||
+              workspace.folderBusy ||
+              workspace.dropBusy ||
+              workspace.workspaceBusy
+            }
+            detailsPresent={detailsOpen}
+            onRevealDetails={() => {
+              if (panels.busy) return;
+              // The control that reveals the region is inside the project
+              // surface, and in one column that surface is hidden the moment
+              // the region appears -- so the button that was just pressed
+              // unmounts and the keyboard would be left on the body. Focus
+              // follows to the region it asked for.
+              pendingInspectorFocus.current = true;
+              panels.toggle("details");
+            }}
+          />
+        </section>
         <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("conversionTask")}>
           <ConversionPanel
             configuration={workspace.conversionConfiguration}
@@ -632,8 +805,18 @@ export function PreviewWorkspace() {
             onScopeChange={workspace.setConversionScope}
           />
         </section>
-        <aside id="workbench-inspector" className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}>
-          {preview.status === "loaded" ? (
+        <aside id="workbench-inspector" ref={inspectorRef} tabIndex={-1} className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}>
+          {/* One region, whichever surface is asking. The Project surface puts
+              provenance here rather than adding a navigation target of its own,
+              which is where the accepted direction puts contextual metadata. */}
+          {surface === "project" ? (
+            <ProvenanceDetails
+              provenance={project.provenance}
+              onSelect={project.inspect}
+              liveDatasetHandles={liveDatasetHandles}
+              onShowInWorkbench={revealInWorkbench}
+            />
+          ) : preview.status === "loaded" ? (
             <PreviewSummary
               file={previewFile ?? preview.preview.file}
               measurements={workspace.measurements}

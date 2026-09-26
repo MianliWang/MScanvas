@@ -1,0 +1,1011 @@
+# M8/M9 source integration — the candidate and how it would be published
+
+Date: 2026-09-24. Branch `feat/m8-m9-source-integration-qualification`, from
+the M9 closure head `46ef9cc441b3c014aa4964976db917ecb68008c4`.
+
+This record prepares **one** source-integration candidate for the linear stack
+that follows published `main`: a partial M7.6, M8 and M9. The only product
+code it changes is two focus-restoration repairs on the Project surface, found
+while qualifying it (§11), and project-integrity repairs in the Rust project
+store, found by the review of the pull request that publishes it: three
+requalified (§13) and a fourth qualified after the owner had deferred its
+validation (§14); a check, at targeted-MS1 result publication
+(`targeted_ms1.rs`), that a result's signal summaries are its evidence's,
+found by the same review, first deferred and then reclassified before
+publication (§14); the only other code is two build-provenance repairs to the
+partial M7.6 candidate script, found by the same review (§12). Publication goes
+through pull request #127 under the owner's explicit authorization, and no tag,
+release, installer or public beta follows from it. When this text is read on
+`main`, the merge commit that brought it there — not this text — is the
+evidence that the stack was published.
+
+Status when written:
+
+- `PR #127 FINAL LOCAL SOURCE CANDIDATE QUALIFIED — NOT PUSHED`: `03effab`, the signal-summary repair, on top of the stale-reference repair `8ad3912` (§14); source qualification, not release qualification
+- `SOURCE INTEGRATION CANDIDATE QUALIFIED LOCALLY` (§8) through `cf4af12`, with the build-provenance repair checked on its own (§12) and the project-integrity repairs requalified (§13)
+- `SOURCE PUSHED — PR #127 OPEN / NOT MERGED`, its head `72904b8` as last observed
+- `M8 LOCAL IMPLEMENTATION COMPLETE`
+- `M9 LOCAL IMPLEMENTATION COMPLETE`
+- `M7.6 RELEASE QUALIFICATION DEFERRED / INCOMPLETE`
+- `PROTEOWIZARD HOLD UNCHANGED`
+- `ROUTE B NOT AUTHORIZED / NOT EXECUTED`
+- `PUBLIC BETA NOT RELEASED; M10 NOT STARTED`
+
+## 1. Identities
+
+| Role | Commit | Tree |
+| --- | --- | --- |
+| Published base: `main` = `origin/main` (and `git ls-remote origin refs/heads/main`) | `1daf802f06d0149b5de3dbd12e8b01e7e86862ec` | — |
+| M9 closure, final tested code | `fa7f213b181e9e5ecb7e164f3b128b2da631c7a9` | `56e85d1bcfe4999eeda53290e81f292e1196eb05` |
+| M9 closure head (documentation-only successor of the above) — this branch's start | `46ef9cc441b3c014aa4964976db917ecb68008c4` | `3f40009c72fd8c8d14712db4502f6d41d1b97a33` |
+| First candidate: the commit that added this record | `896e0121b0ba533781e5039585cfe30eef5be426` | `2d8f3770ebf9877b09fd50fdbc35d04b471f233c` |
+| Second candidate: the review's fixes (§9); superseded | `d8192d5178e81b8cf220578d105393c0f87fb8ea` | `8e738463b770f4429a1e94466d72cdb514ea01ba` |
+| Documentation successor of the second (§8, §9) | `a278f5748941e34c7da08d8d341dad99a84e0d53` | `52c93ab562ec6fc53bde4346a0e782a98f30b233` |
+| Removal-focus repair (§11); superseded | `7b9400ec178912855ddb381b09aa22bf78cdcc4a` | `531a56c3ee625a23f9deda537e1a1daa47177559` |
+| QC-capture focus repair (§11); superseded by a comment | `f393a7bb98c70499e91781cecbbee02efea66757` | `7561307ad27e1d2a83a24480cb92daa02316776d` |
+| **Integration candidate**: the same, one comment corrected (§11) | `7cbc7f01f0836eab3d8919825832efb6a3ad6aff` | `5827cb0e210c7844314e967d2c4e26387346d84b` |
+| Documentation successor that recorded §8's runs; first head of PR #127, superseded | `8be2cac586acc74e711ef2c27dbb34d20f8488b7` | `76e1c1cd926b4f75f2d345c6a41377c4132641f1` |
+| Build-provenance repair (§12), as first written; superseded | `b1e125fc510340e04542b686b3b9b6e618d357b1` | `d47220e8f3177a2637f6dca66fbd2c8e9a92a860` |
+| **Build-provenance repair** after its review (§12): the script and its test | `5a2b1887c307493c71d1c9c7a64b6318e63afe6a` | `c15f4b703890e83e1e0eff3d921e8c0121a31568` |
+| Documentation successor that recorded §12; head of PR #127, superseded | `cd7ec23e10cb04560bfb3e90550a24197fc247ef` | `682ac7077aa1b5d3b4b95270dfcfad96e21d4799` |
+| Project-integrity repair (§13) as first committed; its tests did not compile, superseded | `532c6921766a32e173aaa1f9527d00b0f70f74a2` | `2b08fc6850ad9526f5bdcdec5ee8413a408e5710` |
+| **Project-integrity repair** (§13): the same, one test assertion corrected; the last code on which every group, frontend and browser included, ran | `cf4af12c5619d17dffa6e31b4debf9b4990a75ca` | `a41381350a2d947f72e665c61b905829aeaaf78c` |
+| Documentation successor that recorded §13; **the head of PR #127** when validation was deferred (§14) | `72904b81f05264ad4e265be3676e4b7f3a8b8ce1` | `029db871f6b61989a6dc25f0d2ce45e3431d357b` |
+| Stale-reference repair (§14), as first written; superseded | `b000c2623f28844016171d8c0993b403f771c858` | `c716894b925a227e74df7abf8cb9a3ee2c5e6ca9` |
+| Stale-reference repair after its review (§14): qualified locally on its documentation successor; not pushed | `8ad3912788d5dc68df5ea8c307f5e5e2f5665250` | `faf83deda086dbb694db00610d8a1b87a913d32a` |
+| Documentation successor that recorded the deferral (§14); where the stale-reference repair was qualified | `d56b17b6eab8dfdc5e15a85959c971121ee7685c` | `a0b237ce11d2bb4b8851feb6ea39f1f180c66a99` |
+| **Signal-summary repair** (§14): the final code candidate; qualified locally; not pushed | `03effab38e7101b6dec33f6bb0f9fdda18f0f3e1` | `9f0fab3316ca3fa426390d7801dc6e7f41b63982` |
+
+A candidate cannot name itself; documentation-only successors, which change
+Markdown alone, record what ran on it. The first two candidates change only
+Markdown: `git diff --name-only fa7f213 d8192d5` lists no file that is not
+`.md`. The integration candidate adds exactly four frontend files to that:
+`git diff --name-only a278f57 7cbc7f0` is `ProjectPanel.tsx`,
+`ProjectLayers.test.tsx` and `ProjectQcSummary.test.tsx` under
+`apps/desktop/src/features/project/`, and `apps/desktop/src/test/projectFixtures.ts`.
+No Rust, runtime, manifest, lock or Rust fixture changes, so every such byte is
+still the M9 closure's final tested code. The build-provenance repair then
+changes exactly `scripts/build_candidate.ps1` and adds
+`scripts/test_build_candidate.py` (`git diff --name-only 8be2cac 5a2b188`);
+nothing §8's groups build, test or read changes (§12). The project-integrity
+repair changes Rust and frontend code (`git diff --name-only cd7ec23 cf4af12`,
+§13), so §13's groups ran again on it. The stale-reference repair changes Rust
+alone (`git diff --name-only 72904b8 8ad3912` is `project/mod.rs` and
+`targeted_ms1/tests.rs`, §14); its validation, deferred
+by the owner, ran on `d56b17b` (§14). The signal-summary repair changes Rust
+alone too (`git diff --name-only d56b17b 03effab` is
+`apps/desktop/src-tauri/src/targeted_ms1.rs` and its `tests.rs`), and the Rust
+group ran again on it (§14). As last observed, the head of PR #127 is still
+`72904b8`, a Markdown-only successor of `cf4af12`. The head a publication
+pushes is a Markdown-only successor of `03effab`.
+
+## 2. The stack
+
+Derived from Git, not from earlier records: `git rev-list --left-right --count
+main...46ef9cc` is `0 107`, `git rev-list --merges main..46ef9cc` is empty, and
+the merge base is `main` itself. The stack is strictly linear, 107 commits
+ahead and none behind; this record's own commits come on top of it.
+
+| Positions | Range (oldest first) | Commits | Phase |
+| ---: | --- | ---: | --- |
+| 1–13 | `8b9f3b4` … `fe3d202` | 13 | partial M7.6 (§3) |
+| 14 | `aa3fc83` | 1 | M8.0 planning: `docs/ux/M8_0_V511_GAP_ASSESSMENT.md` and the start of `docs/product/M8_1_FIRST_CLOSED_LOOP.md` |
+| 15–48 | `153339f` … `97392e9` | 34 | M8.1–M8.5 and the M8 closure |
+| 49–63 | `d4165b9` … `1652aff` | 15 | M9.0 route study |
+| 64–71 | `a34e2b1` … `96f2d8c` | 8 | M9.1 |
+| 72–78 | `a1c56f5` … `d1d9f58` | 7 | M9.2 |
+| 79–90 | `9c09395` … `3d6300f` | 12 | M9.3 and M9.3.C1 |
+| 91–101 | `6983840` … `13a3560` | 11 | M9.4 |
+| 102–107 | `59cbf1c` … `46ef9cc` | 6 | M9 closure |
+
+Phase boundaries were read from each commit's subject and files, not from
+branch names. The local branch `feat/m7.6-installer-release-integration` points
+at `aa3fc8346baacb7563d5aea87e431da74546596b`, which is M8.0 planning; the last
+M7.6 commit is its parent `fe3d202`. Every local task branch head —
+`feat/m7.6…` `aa3fc83`, `feat/m8.1…` `f751b9e`, `feat/m8.2…` `399a3ef`,
+`feat/m8.3…` `47e20b7`, `feat/m8.4…` `d60d301`, `feat/m8.5…` `3e6b656`,
+`feat/m8-closure` `97392e9`, `feat/m9.0…` `1652aff`, `feat/m9.1…` `96f2d8c`,
+`feat/m9.2…` `d1d9f58`, `feat/m9.3…` `3d6300f`, `feat/m9.4…` `13a3560`,
+`feat/m9-closure` `46ef9cc` — is an ancestor of the candidate and was not
+moved. None has an upstream.
+
+## 3. What the partial M7.6 commits publish
+
+`git diff --name-status 1daf802 fe3d202`:
+
+| Status | File |
+| --- | --- |
+| M | `CHANGELOG.md` |
+| M | `THIRD_PARTY_NOTICES.md` |
+| M | `apps/desktop/src-tauri/tauri.conf.json` — the `bundle` section only: NSIS target, `Productivity` category, publisher, homepage, copyright, licence file, notices and licence as resources, embedded WebView2 bootstrapper, per-user NSIS in English and Simplified Chinese |
+| A | `docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md` |
+| A | `scripts/build_candidate.ps1` |
+| A | `scripts/generate_notices.py` |
+| A | `scripts/inspect_candidate.ps1` |
+| A | `scripts/verify_installed_payload.py` |
+
+No application source, no test, no manifest and no lock file. No CI job runs
+the bundler: the only desktop-build workflow, `windows-smoke.yml`, is manually
+dispatched and passes `--no-bundle`. The Rust job's cargo builds do run
+`tauri-build`, which copies `bundle.resources` (the licence and the notices)
+into the target directory and embeds `bundle.publisher` and `bundle.copyright`
+in the Windows version resource of every binary it builds. On the candidate,
+`python -B scripts/generate_notices.py --check` exits 0: the generated notices
+still match the dependency graph M8 and M9 left.
+
+**Would integrating these commits make `main` read as release-qualified?**
+Before this candidate, in two places:
+
+- `CHANGELOG.md` opened its unreleased section with *MSCanvas is packaged as an
+  ordinary Windows installer* and said *The first beta is unsigned*, as though
+  a beta existed. The body did say nothing had been installed yet.
+- The M7.6 record's status line said *implementation and preparation in
+  progress*, which is no longer what happened: the slice stopped and its
+  qualification was deferred.
+
+Both are corrected (§4); the CHANGELOG entry's present-tense check of the
+packaged build is also scoped to the M7.6 candidate build it ran on.
+`THIRD_PARTY_NOTICES.md` also speaks of *what the installer actually carries*
+in the present tense; that states the inventory's scope, not a release, and
+the file is generated, so it is left as it is. The history is not rewritten:
+the thirteen commits stay as they are, and integrating any M8 or M9 commit
+publishes them.
+
+## 4. Current-state documents reconciled
+
+Checked against the canonical [M9 closure](../product/M9_CLOSURE.md). Wording
+that would expire at the merge — *locally*, *unpublished*, *not yet
+published*, *not source-integrated* — was replaced in current-state text by
+what stays true (implemented; in no installer or release), and the Git state is
+left to this record.
+
+| File | Change |
+| --- | --- |
+| `README.md` | the status block names M8/M9; a new section, *Beyond the published M7.5 product*, states the projects, the bounded experimental targeted-MS1 recipe and its development-only runtime, the partial M7.6 and the named test debt; the *not implemented* list no longer denies the stored-result exports and says what a project does not restore; *Analysis is deferred* is narrowed; *What is next* no longer names M6; repository status, prerequisites and map updated |
+| `CHANGELOG.md` | M8 and M9 entries; the M7.6 entry says an unqualified candidate, not a release, scopes its packaged-build check to the M7.6 candidate build, and says no installer or public beta exists |
+| `ROADMAP.md` | M7, M8 and M9 status lines and *After M9* |
+| `BOOTSTRAP_STATUS.md` | the current-route paragraph, including the named test debt |
+| `PROJECT_PROPOSAL.md` | §18 status sentences for M7.6, M8 and M9 |
+| `docs/product/FEATURE_CATALOG.md` | VIEW-008, the *Projects* introduction and ANA-004 |
+| `docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md` | the status line only: partial and deferred |
+| `docs/product/M9_CLOSURE.md` | *at this closure* and forward pointers to this record in §1, §11 and §14; nothing else |
+
+`docs/product/PRIMARY_WORKFLOWS.md` and `docs/product/SCREEN_MODEL.md` were
+checked and needed nothing. Slice records, ADRs and evidence documents are
+history and were not rewritten; the one addition is a marked correction after
+the M9.1 evidence's paragraph on earlier runs, pointing to §11.
+
+## 5. Dependencies and locks
+
+- `git diff --stat 1daf802 46ef9cc --` every `Cargo.toml`, `Cargo.lock`, every
+  `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`,
+  `rust-toolchain.toml` and `.node-version`: `Cargo.lock` +1 and
+  `apps/desktop/src-tauri/Cargo.toml` +5 — M8.1's direct `uuid` edge on the
+  desktop crate (`57f4214`), already in the locked graph through
+  `mscanvas-core`. No package is added and no version changes.
+- `git diff --quiet 97392e9 46ef9cc --` the same files exits 0: **M9 added,
+  removed or updated no production dependency.**
+- The stack adds `experiments/m9_0/runtime/requirements-cp313-win_amd64.lock.txt`,
+  a hash lock that says of itself *Not a production dependency; never installed
+  into the application*. It is read only by the M9.0 experiment instructions and
+  by `scripts/provision_targeted_ms1_runtime.py`. The Python, pyOpenMS and
+  OpenMS runtime is development-only: not a package-manager dependency of the
+  application, not bundled, not in any release build, and not qualified for
+  redistribution.
+- This candidate installs, upgrades or refreshes nothing.
+
+## 6. Test debt that travels with the candidate
+
+Proposed disposition: **publish it as named debt**, not hidden and not called
+green. The owner decides at publication.
+
+- **The repository-wide browser suite is red, identically to published
+  `main`.** From the M9 closure's test-by-test comparison
+  ([evidence §8](../spikes/M9_CLOSURE_EVIDENCE.md#8-the-repository-wide-browser-suite)):
+  of the 317 tests in the 21 spec files that published `main` (tree of
+  `1daf802`) and the closure code (`59cbf1c`; the m4.1, m4.3 and m4.4 results
+  from `d8310ce`, because their WebDriver sessions failed to open in the
+  `59cbf1c` run) share, **174 fail on each side and
+  0 differ**; the 7 M8/M9 spec files (36 tests) pass. The failing specs are
+  legacy M4–M7 and viewer-r1 specs; two families are obsolete selectors
+  confirmed statically. The final closure code differs from `59cbf1c` only in
+  Rust files, a Rust fixture and four e2e files whose specs were run again on it.
+  This candidate's only code change is two focus effects on the Project surface
+  and their tests (§11), and no failing legacy spec is a Project-surface test
+  (evidence §8), so the comparison still describes the legacy debt. The whole
+  suite was not run again for this record.
+- **One App-level Vitest case can time out under load**:
+  `M73Viewer.test.tsx > … exports only committed axis ranges while drawing or
+  pending, then the newly confirmed range from retained tokens`, 5,000 ms limit;
+  it failed the whole `pnpm test` in two of the M9 closure's four campaigns
+  (5,065 and 5,103 ms) and in the M8.5 record (5,023 ms; M8.4 recorded two
+  unnamed timeouts in the same file), and passed alone every time it was run
+  alone. Neither that test nor the viewer code it exercises is changed by this
+  candidate, and it passed in the whole-suite run that qualified it (§8); it
+  stays named because it has failed under load before. It is the only
+  intermittent Vitest case this record names: the
+  `ProjectLayers.test.tsx` failure seen during this qualification was a
+  production focus race, repaired, not debt (§11).
+- **The browser harness can fail to open a WebDriver session** for a spec (no
+  test result in that run).
+
+## 7. Publication risks to watch
+
+None is changed here; each is for the owner and the publication run.
+
+- **Publishing starts schema 4's compatibility promise.** The project document
+  schema is an unpublished development schema whose promise begins only when
+  this source line is published
+  ([M9 closure §4](../product/M9_CLOSURE.md#4-schema-4--the-canonical-disposition));
+  earlier M9 development builds are not compatible with each other. Authorizing
+  the merge is also that decision.
+- **The Frontend check runs `pnpm test` on `ubuntu-latest`** and is required by
+  the `main` ruleset. The timeout in §6 could fail it. A failed required check
+  is recorded as it happened; whether to re-run a job is the owner's call, and
+  both results are kept.
+- **CI will be the first run of M8/M9 code without the development runtime.**
+  The Rust check runs `cargo test --locked --workspace --all-targets` on
+  `windows-latest`, where `.tmp/m91-runtime/` does not exist. Every test that
+  launches the runtime is `#[ignore]`d, and the only runtime-presence probe
+  (`targeted_ms1::runtime_present`) is called from a Tauri command, not from a
+  test. That is a static reading; no local run hid the runtime.
+
+## 8. Validation
+
+**Qualification of the integration candidate is complete: Groups B, C and D
+ran on it with every exit 0, and Group A is inherited.** Groups B and C ran on
+`4b6cf29` (tree `9a5260a…`), whose only difference from the integration
+candidate `7cbc7f0` is two Markdown files (`git diff --name-only 7cbc7f0
+4b6cf29`); Group D ran there too. Logs are under
+`.tmp/m8-m9-integration-evidence/` (git-ignored); every exit below is the
+command's own. The build-provenance repair of §12 changes none of these groups'
+inputs, so their results stand for it; none was run again for it, and its own
+checks are in §12.
+
+**Memory policy.** Measured from `Win32_OperatingSystem`. A heavy group is
+admitted only when free physical memory is at least 8 GiB (8,388,608 KiB) and
+use is at most 80%. Once admitted it is not stopped for crossing that line;
+before each later command or spec memory is recorded, and the next one is not
+started if free memory is below 4 GiB or use is 90% or more. Before each
+browser spec the previous spec's WDIO, Vite, ChromeDriver and headless Chrome
+must have exited; the runner waits for them and never ends a process. Nothing
+on the host was stopped or reconfigured to make room. These are scheduling
+thresholds, not product requirements.
+
+| Measured (local time, -04:00) | Free of 31.67 GiB | In use | Gate | Before |
+| --- | ---: | ---: | --- | --- |
+| 2026-09-24 18:11:26 | 3.50 GiB | 89.0% | deferred | Group A on `896e012` |
+| 2026-09-24 18:25:03 | 4.50 GiB | 85.8% | deferred | Group A on `d8192d5` |
+| 2026-09-24 18:43:56 | 9.99 GiB | 68.5% | admitted | Group A on `a278f57`; every later command of Groups A and B there read 9.60–9.92 GiB |
+| 2026-09-24 18:54:36 | 9.33 GiB | 70.5% | admitted | Group C on `a278f57`, m8.1 |
+| 2026-09-24 18:54:53, 18:55:19, 18:58:33 | 7.24, 7.87, 7.27 GiB | 75.2–77.1% | deferred | m8.2 on `a278f57` (then gated per command) |
+| 2026-09-24 20:43:57 to 21:57:26 (four readings) | 5.29–6.54 GiB | 79.4–83.3% | deferred | only single-file and serial project-folder tests ran (§11) |
+| 2026-09-24 22:13:52, 22:27:53, 23:19:50 | 6.58, 5.78, 6.64 GiB | 79.2%, 81.8%, 79.0% | deferred | Group B on the integration candidate |
+| 2026-09-25 02:21:31 | 12.76 GiB | 59.7% | admitted | Group B; later commands read 12.80–12.92 GiB |
+| 2026-09-25 02:23:14 | 12.84 GiB | 59.4% | admitted | Group C; later specs read 12.80–12.84 GiB |
+
+**On the integration candidate's code** (`4b6cf29`):
+
+| Group | Command | Exit | Result |
+| --- | --- | ---: | --- |
+| B | `pnpm lint` | 0 | |
+| B | `pnpm typecheck` | 0 | |
+| B | `pnpm test` | 0 | 106 files, 2170 of 2170 (the 2168 of the M9 closure and the two window tests of §11), 65.4 s; the M7.3 case of §6 passed in this run |
+| B | `pnpm build` | 0 | the chunk-size warning only |
+| B | `pnpm e2e:typecheck` | 0 | |
+| C | `pnpm exec wdio run ./e2e/wdio.browser.conf.ts --spec ./e2e/specs/m8.1-project-records.browser.e2e.ts` | 0 | 8 passing |
+| C | the same, `m8.2-provenance` | 0 | 4 passing |
+| C | the same, `m8.3-reattachment` | 0 | 2 passing |
+| C | the same, `m8.4-layers` | 0 | 2 passing |
+| C | the same, `m8.5-qc-summary` | 0 | 3 passing |
+| C | the same, `m9.1-targeted-ms1` | 0 | 12 passing |
+| C | the same, `m9.4-targeted-ms1-batch` | 0 | 5 passing |
+| D | `git diff --stat 1daf802 7cbc7f0 --` every tracked manifest and lock | 0 | exactly §5's three files |
+| D | `git diff --quiet 97392e9 7cbc7f0 --` the production manifests and locks | 0 | no change in M9 or after |
+| D | `git diff --quiet a278f57 7cbc7f0 --` every tracked manifest and lock | 0 | the two focus repairs changed none |
+| D | `python -B scripts/check_repo.py` | 0 | |
+
+No browser spec lost its WebDriver session, and none waited for a previous
+spec's processes. The repository-wide browser suite was not run (§6).
+
+**Group A, inherited from `a278f57`** (tree `52c93ab…`; its code is
+`d8192d5`'s, which is `fa7f213`'s). `git diff --name-only a278f57 7cbc7f0`
+changes no Rust, runtime, manifest, lock or Rust fixture (§1), so these stand
+for the integration candidate:
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --locked --workspace --all-targets` | 0 | desktop 1233 passed, 47 ignored; plot-spec 135; proteowizard 513 passed, 9 ignored, plus 1 in its second test binary; core 2; examples and tests pass |
+| `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 | 86 passed, 33 ignored |
+| `cargo test --locked -p mscanvas-desktop --lib targeted_ms1 -- --ignored --test-threads=1 --nocapture` | 0 | 33 passed, 102.8 s: the real-runtime suite |
+| `cargo check --locked --release --workspace` | 0 | |
+
+The first invocation of Group A ran only its first two commands: the runner fed
+its command list on the same standard input the commands inherited, and `cargo
+test` consumed the rest. The last three ran in a second invocation with their
+own readings; the first two were not run again.
+
+**Superseded runs on `a278f57`**, kept as they happened: Group B there exited
+0 for lint, typecheck, build and `e2e:typecheck` and **1** for `pnpm test`
+(2167 of 2168; the one failure was the focus race of §11, not the M7.3 case,
+which passed); Group C ran m8.1 only (exit 0, 8 passing) before its memory gate
+deferred the rest; Group D (exit 0) ran there and again on `f393a7b`.
+
+**Earlier light gates** (before any heavy group):
+
+| Command | On | Exit |
+| --- | --- | ---: |
+| `python -B scripts/check_repo.py` | `46ef9cc` (baseline) | 0 |
+| `python -B scripts/check_repo.py` | the content of `896e012`, before it was committed | 0 |
+| `python -B scripts/check_repo.py` | the content of `d8192d5`, before it was committed | 0 |
+| `git diff --stat 1daf802 896e012 --` every tracked manifest and lock | `896e012` | 0 — as §5 |
+| `git diff --quiet 97392e9 896e012 --` and `git diff --quiet 46ef9cc 896e012 --` the same files | `896e012` | 0, 0 |
+| `cargo fmt --all --check` | `896e012` | 0 |
+| `python -B scripts/generate_notices.py --check` | `896e012` | 0 |
+
+## 9. Review
+
+One isolated, read-only review of `896e012`, after the light gates and while
+no suite ran. It was forbidden to write files, build, test or use the network,
+and did none of them. Scope: source-state truthfulness, the partial-M7.6
+ancestry, README and current documents, release claims, dependencies,
+validation attribution, test-debt wording, the publication procedure and
+history preservation; the scientific M9 review was not reopened.
+
+**Verdict: no blocker to source-integration candidacy.** It verified the
+stack shape, every range and count in §2, every branch head, the partial-M7.6
+file list, the dependency claims, the browser-debt and timeout numbers, the
+static runtime reading in §7, the tree-equality claim in §10 and that no
+current document materially contradicts the M9 closure. It could not check the
+`git ls-remote` reading, having no network.
+
+| Finding | Class | Disposition in `d8192d5` |
+| --- | --- | --- |
+| Publishing starts schema 4's compatibility promise, and §7 did not say so | should-fix | added to §7 |
+| M9 closure §1: *Nothing here is source-integrated…* would read false on `main` | should-fix | *at this closure* and a pointer here |
+| README called M7.5 *the newest published slice* | should-fix | *the last slice published before the M8/M9 stack* |
+| README's next steps listed source integration, which is false after the merge | should-fix | the list now starts once the stack is integrated |
+| README and `BOOTSTRAP_STATUS.md` compared the debt with *published `main`*, which is the stack itself after the merge | should-fix | compared with `1daf802` |
+| §3 said the bundle section is never constructed in CI; the Rust job's `tauri-build` copies `bundle.resources` and embeds `publisher` and `copyright` | should-fix | §3 says exactly what CI does; the notices check was run and added |
+| The CHANGELOG's QA-string check read as true of the current packaged build | should-fix | scoped to the M7.6 candidate build, and says no later build was packaged |
+| §10 did not bind the merge to the reviewed head, and a repository setting could delete the branch at merge | should-fix | step 4 binds the head; step 1 rebinds the setting |
+| The timeout was credited to the M8.4 record; only M8.5 names the case | nit | corrected |
+| `59cbf1c` stood for the closure side, where m4.1/m4.3/m4.4 came from `d8310ce` | nit | corrected |
+| `THIRD_PARTY_NOTICES.md` also speaks of *the installer* in the present tense | nit | acknowledged in §3; the generated file is unchanged |
+| README undersold the stored-result exports; omitted `experiments/m9_1/`; *shipped notices* in `ROADMAP.md` and `PROJECT_PROPOSAL.md` | nit | corrected |
+
+The review also noted that `check_repo.py` checks no anchor fragment and does
+not read the edited status paragraphs, so a passing run proves little about
+them. The reviewer resolved every anchor the first candidate added, and the
+two added since (§7, §8) were resolved the same way. No second review ran: every fix
+applies a finding's own correction and changes only Markdown. The two code
+repairs found later had reviews of their own (§11).
+
+## 10. Publication procedure
+
+Carried out through pull request #127 under the owner's explicit
+authorization — first for the head that recorded §8's runs, and then, on a
+second authorization, for the build-provenance repair of §12 and its
+documentation successor, and then, on a third, for the project-integrity repair
+of §13 and its documentation successor. The two repairs of §14 have not been
+published. Both are qualified locally on the final candidate `03effab`, and
+publishing them, with the steps below, waits for its own authorization:
+
+1. **Rebind live state.** `git ls-remote origin refs/heads/main` still
+   `1daf802f06d0149b5de3dbd12e8b01e7e86862ec`; the effective `main` ruleset read
+   from the rulesets API ([PUBLISHING.md](PUBLISHING.md)); the repository's
+   *automatically delete head branches* setting, which would delete the remote
+   branch at merge without step 8's consent; and the branch head is the
+   integration candidate named in §1 or a documentation-only successor of it
+   whose diff from it (`git diff --name-only`) is Markdown alone — or, for the
+   second authorization, the build-provenance repair of §12 and a Markdown-only
+   successor of it — or, for the third, the project-integrity repair of §13,
+   requalified there, and a Markdown-only successor of it — or, later, the
+   final candidate `03effab`, which carries both repairs of §14 and is
+   qualified there, and a Markdown-only successor of it. A head with any other
+   change is a new candidate that
+   §8 does not qualify, and it is not published until its affected groups have
+   run.
+2. **Push the branch as it is**, without force, and open one pull request:
+   base `main`, head this branch. Its body names the candidate commit and
+   tree, the evidence in §8, the debt in §6 and the risks in §7, and states that
+   no release, installer or public beta follows from it.
+3. **Let the required checks run on the exact head** and record their results
+   as they are.
+4. **Merge with a merge commit (a true merge), bound to the reviewed head** —
+   for example `gh pr merge <number> --merge --match-head-commit <head sha>`, or
+   the merge API's `sha` parameter — so that a head that moved is refused rather
+   than merged. No squash, no rebase merge, no cherry-pick, no force push, no
+   administrator bypass. Verify afterwards: first
+   parent = the `main` it merged into, second parent = the branch head; while
+   `main` has not moved since `1daf802`, the merge commit's tree equals the
+   branch head's tree.
+5. **If `main` has moved before the merge**, the branch is brought up to date by
+   a true merge of `main` into it — never a rebase — which makes a new candidate
+   identity whose affected gates run again before it is published.
+6. **Natural-main CI** on the merge commit, recorded by identity.
+7. **Local synchronisation**: `git switch main` then `git pull --ff-only`, and
+   check that local `main` equals the merge commit.
+8. **Branch deletion only after inclusion is verified**:
+   `git merge-base --is-ancestor <branch head> origin/main` for each branch to
+   be deleted, remote or local, and only with the owner's consent. Until then
+   every task branch stays.
+
+After a successful publication, the Git fact the merge records supersedes the
+`SOURCE PUSHED — PR #127 OPEN / NOT MERGED` status and the `NOT PUSHED` of the
+`PR #127 FINAL LOCAL SOURCE CANDIDATE QUALIFIED` status; the others are
+unchanged by it.
+
+## 11. Found during qualification: two focus races on the Project surface
+
+**What was seen.** Group B's `pnpm test` on `a278f57` exited 1, 2167 of 2168:
+`ProjectLayers.test.tsx > the layer list > removes a layer through its own
+control, and names the refusal a reference with one gets`, 4,137 ms,
+`AssertionError: expected null to be '11111111-2222-4111-8111-111111111111'`
+at the wait for focus to reach the reference's Create layer control after a
+removal. The file then passed 23 of 23 three times alone (that case 110, 127
+and 112 ms).
+
+**Corrections to what was said about it.** The wait is not about one second:
+`apps/desktop/src/test/setup.ts` sets `asyncUtilTimeout` to 4,000 ms (since
+`73eec7e`, already on published `main`). So the case spent about 137 ms
+reaching the wait at normal speed, and focus then never arrived in 4 s; it was
+not slowness. The first qualification report called the wait one second and
+the failure load-dependent debt; both were wrong. The M9.1 evidence's earlier
+occurrence ([M9.1 evidence](../spikes/M9_1_TARGETED_MS1_VERTICAL_EVIDENCE.md),
+the paragraph on earlier runs) says "one-second focus wait" and attributes the
+failure to a second Vitest process; the wait was the same 4 s, and the cause is
+the one below. That record is left as written, with a pointer here.
+
+**Cause.** A production race, not debt. The Remove control arms focus
+restoration in its click handler (`ProjectPanel.tsx`, the `removing` ref), and
+a passive effect spent the arm on its first run that saw an idle surface. React
+19 runs the passive effects of a commit made outside an event (every answer
+that settles an operation, and the first arrival of a project) in a later
+Scheduler task. A press that lands before that task arms the ref; React then
+flushes the pending effects before rendering the press, so the earlier
+commit's run sees its own idle state with the layer still listed, spends the
+arm and returns. The answer finds nothing armed and focus stays on the body.
+In the test, `ready()` is `findByText`, which returns after a zero-delay timer
+that usually, not always, runs after that Scheduler task; `ee229cf` removed an
+empty `act` from `ready()` that had ordered the flush first.
+
+**Evidence.** A read-only trace from four independent lenses converged on this
+one mechanism, which three adversarial reviewers could not refute; every
+alternative was excluded by the code or by the failure's DOM dump. A temporary
+diagnostic test, deleted afterwards, then measured it,
+recording when the arrival commit's passive effects ran against the press:
+
+| Case | On the old effect | On the repaired effect |
+| --- | --- | --- |
+| The original path | effects before the press; focus restored | focus restored |
+| Press in the MutationObserver delivery of the arrival commit | effects after the press; focus lost to the body | focus restored |
+| The original path with the zero-delay timer landing after a millisecond boundary | effects after the press; focus lost to the body | focus restored |
+| The same plus one `setImmediate` before the press | effects before the press; focus restored | focus restored |
+
+The dump of the recorded failure holds no `activeElement`, so that this exact
+run took this path is inferred; the new test reproduces its assertion exactly.
+
+**Repair 1, `7b9400e`.** The removal effect is a layout effect, so it runs in
+the commit it belongs to and no earlier commit can spend a later press's arm.
+New test, `ProjectLayers.test.tsx`: *restores focus after a removal pressed the
+instant the project arrives*, which presses in the MutationObserver delivery of
+the arrival commit (`appears()`, now in `src/test/projectFixtures.ts`). On the
+old effect it failed with the recorded assertion (`expected null to be
+'11111111-…'`, 4,227 ms); on the new one it passes.
+
+**Repair 2, `f393a7b` (comment corrected in `7cbc7f0`).** The review of repair
+1 named the QC-capture focus effect as the same shape. It was established on
+its own before it was changed: *takes the keyboard to the report of a capture
+pressed the instant its layer appears* (`ProjectQcSummary.test.tsx`) presses
+Capture QC in the MutationObserver delivery of the commit that settles Create
+layer. On the old effect focus stayed on the Capture QC control for the full
+4 s with the report on screen (4,149 ms); on the old effect with one
+`setImmediate` before the press it passed, which names the pending passive
+flush as the cause; on the layout effect it passes.
+
+**Focused validation, bounded, with host memory below the heavy gate**
+(`--no-file-parallelism` wherever more than one file ran):
+
+| Command | On | Exit |
+| --- | --- | ---: |
+| `ProjectLayers.test.tsx`, verbose | `7b9400e`'s content | 0 (24 of 24) |
+| `src/features/project` | `7b9400e`'s content | 0 (9 files, 174) |
+| `pnpm typecheck`; `ProjectLayers.test.tsx` twice more | `7b9400e`'s content | 0; 0, 0 |
+| `ProjectQcSummary.test.tsx` and `ProjectLayers.test.tsx` | `f393a7b`'s content | 0 (39 of 39) |
+| `src/features/project` | `f393a7b`'s content | 0 (9 files, 175) |
+| `pnpm typecheck` | `f393a7b`'s content | 0 |
+| the two window tests again | `f393a7b`'s content | 0 (2 of 2) |
+
+The whole `pnpm test` then ran as Group B on the integration candidate: 2170
+of 2170, both window tests included (§8).
+
+**Reviews.** Each repair had a read-only adversarial review that ran no test.
+The first confirmed the QC-capture sibling (four of four skeptics could not
+refute it) and raised a coverage note that both skeptics refuted as describing
+no reachable defect. The second found no problem; its one observation, that
+focus now moves before the report scrolls itself into view, is the comment
+`7cbc7f0` corrects. No other focus effect was changed or reviewed here.
+
+## 12. Found at publication: two build-provenance repairs (PR #127)
+
+**What was found.** After the required checks had passed on `8be2cac`, the
+repository's automated review left two findings on PR #127, both on
+`scripts/build_candidate.ps1`, the partial M7.6 candidate build script, and
+both confirmed by reading it:
+
+- A normal build read `apps/desktop/dist` before `pnpm tauri build` ran, but
+  that command's `beforeBuildCommand` (`pnpm build`) regenerates the directory,
+  so the manifest's `frontendInputs` was empty on a clean checkout and stale
+  otherwise — never the frontend the build produced.
+- `-ManifestOnly` compared the retained manifest's `head` with HEAD only when a
+  retained manifest existed. Without one it wrote a new manifest that
+  attributed whatever was in `target/release` to HEAD.
+
+Neither path is reached by CI or by any test of §8; both apply only when an
+installer candidate is built.
+
+**Repair.** `b1e125f`, then `5a2b188` after the review below:
+
+- A normal build reads the frontend only after `pnpm tauri build` has
+  succeeded, and refuses a missing or empty `apps/desktop/dist` instead of
+  recording an empty list. A failed build still publishes nothing. The
+  manifest's new `frontendMeasured` field says what the list is: the build's
+  output directory hashed after the build, not something extracted from the
+  installer.
+- `-ManifestOnly` requires a readable retained `candidate-manifest.json`. Its
+  `head` and `tree` must be commit identifiers equal to HEAD's; it must record
+  a clean working tree; it must record a real build, or a re-derivation this
+  script made after checking one; and its installer and executable SHA-256
+  values must be present and equal the files on disk. Any other case is refused
+  before anything is written, the retained file is left as it is, and
+  `-AllowDirtyTree` does not relax it. These checks run right after HEAD is
+  read, before any build tool is probed. The existing refusal for a different
+  HEAD keeps its wording. A re-derived manifest's `frontendMeasured` says the
+  frontend was re-measured and is not established as what the installer
+  embeds.
+
+**What it does not claim.** No installer was built, rebuilt, installed or
+inspected for this repair, and no earlier M7.6 candidate is re-attributed or
+qualified by it. It closes these two paths; it is not a redesign or a
+qualification of installer provenance, which stays M7.6 release work.
+
+**Regression.** `scripts/test_build_candidate.py` (stdlib `unittest`; Windows
+with PowerShell 7 and git) copies the script under test into a committed
+fixture repository and runs it there. The child's PATH holds only stub `pnpm`,
+`node`, `cargo` and `rustc`, git and the Windows system directories, and the
+harness asserts that no real tool is reachable. The stub `pnpm tauri build`
+writes a fixed frontend, executable and installer, fails, or leaves no
+frontend. The cases are:
+
+- an old frontend on disk before the build;
+- no frontend before the build;
+- a failed build, fresh and beside a retained manifest;
+- a missing or empty frontend after the build, also beside a retained
+  manifest;
+- `-ManifestOnly` without a retained manifest: on a clean tree, on a dirty
+  tree with `-AllowDirtyTree`, and with no tool on PATH;
+- `-ManifestOnly` with a retained manifest that is malformed, names another
+  head or tree, lacks a head or has a non-identifier one, records a dirty
+  build, is an unchecked re-derivation, lacks a command or either artifact
+  digest, or whose installer or executable on disk differs;
+- matching provenance, which re-derives, and a checked re-derivation, which can
+  itself be re-derived.
+
+Every refusal case asserts its reason, that no manifest was written or
+replaced, and that the retained evidence and the artifacts are byte-identical
+afterwards. Fixtures and logs are under `.tmp/pr127-provenance-repair/`
+(git-ignored).
+
+| Command | Script under test | Exit |
+| --- | --- | ---: |
+| harness as first written | `8be2cac`'s script, before any repair | 1 — 11 failures, 1 error; the failed-build case and the other-HEAD refusal passed, as the old script already did both |
+| harness as first written | `b1e125f`'s script, before and after it was committed | 0, 0 — 7 of 7 |
+| PowerShell parser | `5a2b188`'s script | 0 |
+| harness from `5a2b188` | `5a2b188`'s script | 0 — 7 of 7, every subcase |
+| harness from `5a2b188` | `8be2cac`'s script | 1 — 19 failures, 1 error |
+| harness from `5a2b188` | `b1e125f`'s script | 1 — exactly the four subcases the review added: no tool on PATH, a dirty build, an unchecked re-derivation, no command |
+
+`git diff --quiet 7cbc7f0 5a2b188 --` the application, test, e2e, experiment,
+workflow, manifest, lock and toolchain paths exits 0, and so does the same over
+`scripts/` excluding the two files, so §8's results stand for this head
+without being run again. The harness is not wired into CI: it needs Windows,
+and changing the workflows was outside this repair.
+
+**Review.** One narrow read-only review of `b1e125f` and its harness found:
+
+| Finding | Class | Disposition |
+| --- | --- | --- |
+| `-ManifestOnly` did not check the retained `workingTreeClean`, so a `-AllowDirtyTree` build re-derived on a clean tree became a clean-HEAD build | blocker | fixed in `5a2b188`, with a test |
+| A manifest the old `-ManifestOnly` synthesized without provenance was accepted as retained provenance | should-fix | fixed in `5a2b188`: only a real build, or a re-derivation that checked one, is accepted |
+| Build tools were probed before the provenance check, so a missing manifest could be reported as a missing tool | note | fixed in `5a2b188`: the checks moved ahead of every probe, with a test |
+| The `-AllowDirtyTree` case ran on a clean tree; executable, non-identifier head and working-tree cases were missing; the frontend-less case had no retained sentinel | note | added to the harness |
+| A re-derivation replaces a post-build frontend list with a re-measured one | note | not changed: re-derivation keeps re-measuring everything, and `frontendMeasured` says so |
+| `Remove-Item` of the bundle directory before a build | note | no change: it precedes the build and deletes no evidence |
+
+The review's fixes were checked by the runs above; no second review ran.
+
+## 13. Found at publication: three project-integrity repairs (PR #127)
+
+**What was found.** After the required checks had passed on `cd7ec23`, the
+repository's automated review left three findings on the Rust project store
+(`apps/desktop/src-tauri/src/project/`). Each was confirmed by reading the code
+and then by a test that failed on it:
+
+- **Save As beside an occupied result store.** Save As to another document
+  checked that the result-store name beside the destination was free only when
+  the project had stored targeted results. A project with none was published
+  beside a folder it did not make, and its first run would have used that
+  folder as its own store.
+- **A stored result not bound to its producing Plan.** Every payload manifest
+  records the digest of the Plan that produced it, but no read compared it with
+  the Plan of the Run that the document says produced the Artifact. A result
+  whose record was moved onto another Run of the same targets — a damaged or
+  hand-edited document — read as available and was reported, exported and
+  copied under the other Run's Plan.
+- **Revision advancement that could not fail.** Save and Save As advanced the
+  project revision with `saturating_add`. At `u64::MAX` a save republished the
+  same revision, so a later save could not be told apart from an earlier one.
+
+**Repair.** `532c692`, then `cf4af12` after the review below:
+
+- Save As to any document other than the one this session is bound to refuses
+  an occupied result-store name (`destinationStoreExists`) whether or not there
+  is a result to copy, before anything is written; a name that cannot be
+  inspected is refused `notPublished`. Save As to the bound document itself is
+  unchanged. With no result to copy, nothing reserves the name between the
+  check and the publish; the comment at the check says so.
+- A stored result is read only when its manifest's plan digest equals the Plan
+  resolved through the Artifact's single producing Run. The binding is carried
+  through availability observation on open, row and evidence reads, the stored
+  result, figures and exports, and the source and copy checks of Save As. A
+  mismatch, or a producing Plan that cannot be resolved, reads
+  `payloadCorrupt`; nothing is regenerated or rewritten.
+- Save and Save As advance the revision with `checked_add` and refuse the new
+  `revisionExhausted` before any publication; Save As refuses before copying
+  any result. A document at the last revision still opens.
+
+**Error contract.** One new refusal, `revisionExhausted`, not retryable, with
+an `en` and a `zh-CN` sentence; without them the panel would have shown the
+generic refusal. Two existing identifiers are reached in new cases: a Save As
+with no stored result to an occupied store name (`destinationStoreExists`, or
+`notPublished` if the name cannot be inspected), and a stored result whose
+manifest names another Plan (`payloadCorrupt`). No persisted format changes:
+the document and the manifest are as they were, and a result written by its
+own run carries its producing Plan's digest, so it reads as before.
+
+**Regression.** New tests, all in the desktop application:
+
+- `project::tests`: *a save as with no stored result refuses whatever occupies
+  the result store name* (a folder and a file, each kept; no document
+  published; the session stays unpublished and dirty); two controls, *a save as
+  with no stored result to a free name publishes and makes no store* and *a
+  save as over the bound document is not refused for the store beside it*; *the
+  revision advances to its last value once and then refuses without writing*;
+  *a document at the last revision opens but neither save nor save as writes*;
+  *a stale session still cannot overwrite once the last revision is reached*.
+- `targeted_ms1::tests`: *a save as at the last revision copies no result and
+  writes nothing*.
+- `targeted_ms1::tests::batch`: *a result moved onto another member's run is
+  refused rather than attributed to it* — two members with different sources
+  and Plans and the same targets have their `outputArtifactIds` swapped in the
+  saved document; availability, rows, evidence, the stored result and the
+  figure are refused `payloadCorrupt`, Save As copies neither, and the payload
+  bytes are unchanged.
+- `ProjectPanel.test.tsx`: *names an exhausted revision in its own words rather
+  than as an unknown refusal*.
+
+Logs are under `.tmp/pr127-rust-repair/` (git-ignored).
+
+| Command | On | Exit |
+| --- | --- | ---: |
+| the eight new Rust tests | `cd7ec23`'s implementation | 101 — 6 failed, exactly the three gaps; the two controls passed |
+| the eight new Rust tests | the repair, before it was committed | 0 — 8 of 8 |
+| the new panel test | the repair with the `revisionExhausted` mapping removed | 1 — announced `That action was refused and nothing was changed.` |
+| `ProjectPanel.test.tsx`, `localizationCoverage.test.ts` | the repair | 0 — 31 of 31 |
+| the batch regression alone | `cf4af12`'s content | 0 |
+
+**Validation on `cf4af12`**, one group at a time under the two-level
+host-memory policy (every reading at 12.3 GiB free or more and 61% used or
+less; no stop), with a clean working tree. The Rust rows before the release
+check ran while another run's real-runtime step was still going, as described
+below the table; the real-runtime row is the step run again alone. Because the repair changes Rust and frontend code, every
+group of §8 that builds or tests them ran again; nothing is inherited from §8
+for this head.
+
+| Group | Command | Exit |
+| --- | --- | ---: |
+| Rust | `cargo fmt --all --check` | 0 |
+| Rust | `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 |
+| Rust | `cargo test --locked --workspace --all-targets` | 0 — 1913 passed, 56 ignored |
+| Rust | `cargo test --locked -p mscanvas-desktop --lib project::` | 0 — 138 passed |
+| Rust | `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 — 88 passed, 33 ignored |
+| Rust | the same with `-- --ignored --test-threads=1 --nocapture` (the pinned real runtime), alone | 0 — 33 of 33; the attempts root empty afterwards |
+| Rust | `cargo check --locked --release --workspace` | 0 |
+| Frontend | `pnpm lint`; `pnpm typecheck` | 0; 0 |
+| Frontend | `pnpm test` | 0 — 106 files, 2171 tests |
+| Frontend | `pnpm build`; `pnpm e2e:typecheck` | 0; 0 |
+| Browser | the seven M8/M9 specs of §8 (`m8.1`–`m8.5`, `m9.1`, `m9.4`), one at a time | 0 each |
+| Repository | `python scripts/check_repo.py`; `git diff --check cd7ec23 cf4af12` | 0; 0 |
+
+`git diff --name-only cd7ec23 cf4af12` lists no manifest, lock, toolchain,
+workflow, script, e2e, experiment, Tauri configuration or capability file.
+
+**A run that did not count.** The first Rust group, on `532c692`, failed at
+clippy on the uncompilable assertion and was stopped, but stopping it ended
+only its shell. Its runner went on; once the assertion was corrected in the
+working tree, its real-runtime step ran from 11:30:54 to 11:33:00, alongside
+the first Rust group on `cf4af12`, whose real-runtime step began at 11:32:30. Both used the same
+attempts root, `.tmp/m91-jobs/attempts`, and each saw the other's attempt
+directories come and go: that step failed 1 of 33 there and 3 of 33 here, every
+failure an assertion that the attempts root was as it had been before.
+A sweep removes only a directory whose owning process has exited, so a
+directory of the test's own process could not have gone that way. No other
+process was then running, the attempts root was empty, and the step alone
+passed 33 of 33 (the row above). Neither overlapping step is evidence for
+either commit; the other rows of that first `cf4af12` group passed and are the
+ones above.
+
+**Review.** One narrow read-only review of the uncommitted repair, which ran
+no build or test, traced every caller of the changed functions and found no
+blocker:
+
+| Finding | Class | Disposition |
+| --- | --- | --- |
+| The batch regression accepted any error from the figure | test strength | fixed: it names the refusal. As first committed (`532c692`) the new assertion did not compile, which the first group run on `532c692` found at clippy (`E0433`); `cf4af12` corrected it |
+| A spelling of the bound document not recognised as the same one (a non-ASCII case difference, an 8.3 short name, a bound document removed outside the app), whose store a failed run left behind, is now refused `destinationStoreExists` with no stored result | note | not changed: `cd7ec23` already refused it when there was a result, and nothing is written |
+| A store name that cannot be inspected is refused `notPublished`, which is retryable, where `cd7ec23` treated it as free | note | not changed: it follows the existing refusal for an unsafe published name |
+| At the last revision a Save As reports `revisionExhausted` where it would otherwise report the destination's `staleDocument` | note | not changed: neither writes anything |
+| A producing Plan that cannot be resolved, read as `payloadCorrupt`, has no test | note | not changed: record validation refuses such a document before it is opened |
+
+No second review ran.
+
+## 14. Found on the repaired head: a reference added during Save As, and signal summaries against their evidence (PR #127)
+
+**What was found.** The automated review of `72904b8` left two further
+findings, both in code older than the repairs of §13. Each was traced
+read-only before anything changed. The owner decided to repair the first and
+defer the second, and before publication reclassified the second as a
+blocker and had it repaired too (the last part of this section).
+
+- **A reference added while Save As ran (comment 4106290979).** Registering a
+  reference does not advance the session generation. Save As resolves the
+  references, leaves the session lock to judge the destination and copy stored
+  results, and on its return checked only the generation and the stored
+  results; it then rebased the references it had resolved, pairing them by
+  position with the document's. A reference registered in between was
+  published with the locator made against the old directory, which names
+  another path below the new one. The Tauri commands run off the async runtime
+  and can overlap; the shipped panel keeps them apart (every project operation
+  sets `busy`, which disables Add reference and Save As), so the panel does not
+  reach it, but the Rust store, which owns this state, did not refuse it.
+- **Worker signal summaries not checked against the evidence points
+  (comment 4106290972).** First recorded here as deferred; reclassified before
+  publication and repaired in `03effab` (below).
+
+**Repair.** `b000c26`, then `8ad3912` after the review below. Save As records
+the references, in document order, when it resolves them; on its return it
+refuses `staleDocument` when they differ, before anything is written, and
+removes its own pending store. Asked again, it resolves the new reference with
+the others and places it. `register_input` still does not advance the
+generation: doing so would also make link checks, QC captures and targeted
+runs in flight at that moment refuse when they commit. The refusal is the
+existing `staleDocument`; nothing in the document, the manifest, the wire
+contract or the interface changes.
+
+**Regression.** `targeted_ms1::tests`: *a reference added while save as copies
+results is refused as stale and then placed* registers a reference from inside
+the copy step, which runs outside the session lock. Save As refuses
+`staleDocument`; nothing is left beside the destination; the session keeps the
+reference and its binding and is still unsaved; the original document is
+byte-identical. Asked again, Save As publishes, and the new reference's
+locator resolves to the file itself from the new document's directory. The
+paths with no stored result, including Save As over the bound document, have no
+copy step to act in and no test; the check is unconditional.
+
+| Command | On | Exit |
+| --- | --- | ---: |
+| the new test | `72904b8`'s implementation | 101 — `Ok(())` where `Err(StaleDocument)` was expected |
+| `cargo test --locked -p mscanvas-desktop --lib save_as` | `b000c26`'s content | 0 — 17 passed, the new test among them |
+
+**Validation deferred by the owner.** When the Rust group was to run on
+`8ad3912`, host memory was below the admission threshold for heavy validation
+(2.39 GiB free, 92.4% used), and the owner then chose to defer the remaining
+validation to a later consolidated qualification campaign, because heavy tests
+interfere with normal use of the host. So, as recorded at `d56b17b`, `8ad3912`
+was **REPAIR IMPLEMENTED LOCALLY — VALIDATION DEFERRED / NOT PUSHED**: nothing
+then qualified it beyond the two runs above, it was not pushed, and PR #127
+kept `72904b8` as its head with its review threads as they were. The deferred
+validation later ran on `d56b17b` (below), and the Rust group ran again on the
+final candidate `03effab`.
+
+The deferred validation, one command at a time under the host-memory policy
+of §8 (it ran on `d56b17b`, recorded below):
+
+1. Rust: `cargo fmt --all --check`;
+   `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`;
+   `cargo test --locked --workspace --all-targets`;
+   `cargo test --locked -p mscanvas-desktop --lib project::`;
+   `cargo test --locked -p mscanvas-desktop --lib targeted_ms1`; the same
+   with `-- --ignored --test-threads=1 --nocapture`, while no other process
+   uses `.tmp/m91-jobs/attempts`; `cargo check --locked --release --workspace`.
+2. Frontend, unless nothing the frontend reads changed since `cf4af12`:
+   `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
+   `pnpm e2e:typecheck`.
+3. Browser, on the same condition: the seven M8/M9 specs of §8, one
+   invocation each.
+4. Repository: `python scripts/check_repo.py`, `git diff --check`, and the
+   manifest, lock and scope comparisons of §5.
+
+Pending review and publication, in order, each under its own authorization:
+
+1. Rebind: `main` = `origin/main` = `1daf802`; the remote branch at
+   `72904b8`; the delta confined to the candidate. A read-only rebind on
+   2026-09-25 (22:29–22:32 -04:00, before `03effab`) found `main` and the
+   remote branch as stated, with the local delta then ending at `d56b17b`. It
+   is repeated, with the delta ending at the final candidate's documentation
+   successor, before any push.
+2. Push the candidate's documentation successor without force, and read back
+   the pull request's head.
+3. The required checks (Frontend, Rust, Repository quality) on that head, and
+   the automated review of that head, under the owner's policy for new
+   comments.
+4. Reply to five threads, naming that head, and resolve them:
+   `PRRT_kwDOTg8rHs6l6zna` (comment 4102459651), `PRRT_kwDOTg8rHs6l6zne`
+   (4102459658) and `PRRT_kwDOTg8rHs6l6zni` (4102459663) with the owner's
+   templates for §13's repairs; `PRRT_kwDOTg8rHs6mERYA` (4106290979) for the
+   stale-reference repair; `PRRT_kwDOTg8rHs6mERX8` (4106290972) for the
+   signal-summary repair below. Then confirm that every thread is resolved.
+5. Append an update to the pull request's description that supersedes its
+   stale statements — Rust inherited, `cd7ec23` as the candidate, 2170
+   frontend tests — and records both repairs of this section.
+6. The true merge bound to that head; its parents and tree; natural-main CI;
+   `git pull --ff-only`; every task branch kept.
+
+`git diff --name-only cf4af12 8ad3912` lists `project/mod.rs`,
+`targeted_ms1/tests.rs` and this record. The frontend groups and the browser
+specs, which run the interface against mocked commands, read none of them, so
+§13's frontend and browser rows stand for `8ad3912`.
+
+**Review.** One narrow read-only review of `b000c26` found no blocker. It
+traced every operation that changes the references or their locators — only
+registration leaves the generation as it was — and the plain Save path, link
+checks and captures, which pair references by identifier rather than by
+position.
+
+| Finding | Class | Disposition |
+| --- | --- | --- |
+| The new helper separated the rebase function from its comment | note | fixed in `8ad3912` |
+| A Save As over the bound document that overlaps a registration, which published correctly before, is now refused | note | not changed: nothing is written, the reference stays, and a retry succeeds |
+| The `staleDocument` sentence speaks of a changed file, not an added reference | note | not changed: every Save As staleness refusal already shares it |
+| The paths with no stored result have no test | note | not changed: they have no step to act in, and the check is unconditional |
+
+No second review ran.
+
+**Qualification on `d56b17b`.** On 2026-09-25 the consolidated campaign ran
+the deferred validation above on `d56b17b` (tree
+`a0b237ce11d2bb4b8851feb6ea39f1f180c66a99`), the commit that recorded the
+deferral; `git diff --name-only 8ad3912 d56b17b` lists only this record, so the
+code under test was `8ad3912`'s. Logs are under `.tmp/vw-20260925/integration/`
+(git-ignored). The Rust group was admitted at 21:09:49 (-04:00) with 14.69 GiB
+free and 53.6% in use, and every command exited 0:
+
+| Command | Result |
+| --- | --- |
+| `git diff --check`; `git diff --check 1daf802 HEAD`; `cargo fmt --all --check` | 0; 0; 0 |
+| the PowerShell parser on `scripts/build_candidate.ps1`; `python -B scripts/test_build_candidate.py`; `python -B scripts/check_repo.py` | 0 — 0 parse errors; 0 — 7 tests; 0 |
+| `git diff --stat 1daf802 HEAD --` §5's files; `git diff --quiet 97392e9 d56b17b --` the same files | 0 — as §5; 0 |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 |
+| `cargo test --locked --workspace --all-targets` | 0 — 1914 passed, 56 ignored |
+| `cargo test --locked -p mscanvas-desktop --lib project::` | 0 — 138 passed |
+| `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 — 89 passed, 33 ignored |
+| the nine regressions of §13 and above, *a stale save does not overwrite another writer's state*, and `save_as` | 0 — 21 passed, 2 ignored |
+| the same `targeted_ms1` filter with `-- --ignored --test-threads=1 --nocapture` | 0 — 33 of 33 |
+| `cargo check --locked --release --workspace` | 0 |
+
+The first real-runtime run did not record that no other process used
+`.tmp/m91-jobs/attempts`, so the owner authorized one recorded rerun: at
+22:26 (-04:00), admitted with 15.35 GiB free and 51.5% in use, 33 of 33, the
+same tests, with no Python, OpenMS, MSCanvas, provider, cargo or harness
+process running and the directory empty before and after
+(`.tmp/vw-20260925/integration/rust-rerun/`). No handle-inspection tool was
+used. `git diff --name-only cf4af12 d56b17b` lists two Rust files and this
+record, which no frontend group or browser spec reads, so §13's frontend and
+browser rows stood for it. So `8ad3912` was qualified locally on `d56b17b`.
+
+**Reclassified before publication and repaired: signal summaries against
+their evidence (comment 4106290972).** This finding was recorded here on
+`d56b17b` as deferred and not blocking, on the grounds that only a defective
+or foreign worker could produce it. Before publication the owner reclassified
+it as a blocker for scientific-result consistency: a stored result's table and
+panel read each row's signal summary, its figure reads the evidence points,
+and nothing made the two agree before the payload became permanent.
+
+- *What the worker writes* (`adapter_v1.py`). Per trace, sorted by m/z, it
+  takes the extracted intensities once and writes them as that trace's
+  evidence points, `[spectrum index, retention time, intensity]`; `sum` is
+  their `math.fsum` (the exact sum, rounded once), and `max` their largest,
+  0.0 over no points. A window in which no MS1 spectrum with peaks lies still
+  has one evidence line per trace, with no points. `anyNonzeroPoint` is whether any trace's
+  maximum is above zero, that is, whether any point is.
+- *The invariant, enforced at publication.* In `validate_payload`, before
+  anything is staged, every row with an ion and a signal has exactly one
+  evidence line per trace, and one `sum` and one `max` per trace. For each
+  trace, `max` equals the largest intensity of that line's points (0.0 when it
+  has none), compared exactly: it is written as the same text as the point it
+  is. `sum` is within a relative 1e-9 of the points' absolute sum from a
+  compensated (Neumaier) sum of the points; evidence of zeros admits only a
+  zero sum. `anyNonzeroPoint` equals whether any point of any of the row's
+  traces is above zero. A mismatch is the existing `resultInvalid` at the
+  result stage, and nothing is staged. Stored payloads are not re-derived when
+  read; they stay bound by their digests.
+- *Why a tolerance for `sum`.* The workspace's `serde_json` parses without
+  `float_roundtrip`, so a value may arrive a unit or two in the last place away
+  from the one the worker wrote, and turning that feature on would change a
+  manifest. This module already compares values that crossed a text boundary
+  to within a relative 1e-9 (`same_value`, and the theoretical m/z just above
+  this check). The compensated sum's error is a few units in the last place of
+  the points' absolute sum, to first order independent of the number of
+  points, far below 1e-9 of it for any count a 64 MiB evidence file can hold.
+- *Unchanged.* The worker, the payload format, the project schema, the
+  dependencies, manifests and locks, the interface, target order and mapping,
+  and every scientific algorithm. No row is rewritten and there is no
+  fallback.
+
+The repair is `03effab38e7101b6dec33f6bb0f9fdda18f0f3e1` (tree
+`9f0fab3316ca3fa426390d7801dc6e7f41b63982`): `targeted_ms1.rs` and
+`targeted_ms1/tests.rs`. Its tests, in `targeted_ms1::tests`:
+
+- *a signal summary that is its evidence summary is accepted*: sums as
+  `math.fsum` writes them; one trace above zero and one of zeros; a window with
+  no points, sums and maxima of 0.0. The same empty window with a sum, or with
+  a maximum and the flag it implies, is refused.
+- *a signal summary that contradicts its evidence is refused*: zero evidence
+  under a nonzero sum and maximum (the review's example) and under a sum alone;
+  a sum off on either trace; a maximum that is a point but not the largest; the
+  flag alone; each trace's summary on the other trace; and a summary with an
+  entry no trace has.
+- *a worker whose signal summary contradicts its evidence publishes nothing*
+  (real runtime, ignored by default): the pinned adapter completes and is
+  staged, and the same adapter altered to write each sum, or each maximum, as
+  `x * 1.001 + 1.0` is refused as `resultInvalid` at the result stage, with
+  nothing staged.
+
+RED on `d56b17b`'s implementation, the tests added
+(`.tmp/pr127-4106290972/`): the unit tests exited 101, with the refused cases
+0–4 and 6 and both empty-window cases accepted; the flag alone (case 5) was
+already refused by the row's own rule, which ties it to the maxima. The
+real-runtime test exited 101: the result of the adapter that raises its sums
+completed. The adapter that raises its maxima, and the summary with an extra
+entry, which the review of the change found, were not run on the old code.
+
+The Rust group on `03effab`, admitted at 23:59:42 (-04:00) with 12.41 GiB free
+and 60.8% in use (12.04–12.52 GiB and 60.5–62.0% before each later command),
+one command at a time; every command exited 0. Logs are under
+`.tmp/pr127-4106290972/final/` (git-ignored).
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all --check` | 0 |
+| `cargo test --locked -p mscanvas-desktop --lib a_signal_summary` | 0 — 2 passed |
+| `cargo test --locked -p mscanvas-desktop --lib a_worker_whose_signal_summary -- --ignored --test-threads=1 --nocapture` | 0 — 1 passed |
+| `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 — 91 passed, 34 ignored |
+| the same with `-- --ignored --test-threads=1 --nocapture` | 0 — 34 of 34: the 33 of `d56b17b` and the new test |
+| `cargo test --locked --workspace --all-targets` | 0 — 1916 passed, 57 ignored |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 |
+| `cargo check --locked --release --workspace` | 0 |
+| `python -B scripts/check_repo.py` | 0 |
+| `git diff --check`; `git diff --check 72904b8 HEAD` | 0; 0 |
+| `git diff --quiet d56b17b HEAD --` §5's files; `git diff --quiet 97392e9 HEAD --` the same | 0; 0 |
+
+Against `d56b17b` the two new unit tests account for the desktop library's
+1242 → 1244 and the workspace's 1914 → 1916, and the new real-runtime test for
+56 → 57 ignored and 33 → 34. Before and after each real-runtime step no
+process of this campaign, and no OpenMS, MSCanvas, provider, cargo or harness
+process, was running. The only Python process was an unrelated editor language
+server (the VS Code isort extension's `lsp_server.py`), which was left alone.
+`.tmp/m91-jobs/attempts` was empty before and after. `03effab` changes two Rust files, which no frontend group or browser
+spec reads, so §13's frontend and browser rows stand for it. It is the
+**PR #127 FINAL LOCAL SOURCE CANDIDATE QUALIFIED — NOT PUSHED**: source
+qualification, not release qualification.

@@ -70,10 +70,70 @@ impl SaveDialogFacts {
     }
 }
 
+/// How one single-file open dialog presents itself.
+///
+/// The open counterpart of [`SaveDialogFacts`], and carried together for the
+/// same reason: a window titled "Open project" over a filter reading `*.mzML`
+/// is a dialog that misstates what it is for.
+///
+/// Every field is `&'static str`. These describe MSCanvas's own formats, so
+/// none is ever built from a path or from anything else that crossed a
+/// boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenDialogFacts {
+    /// The dialog window's title.
+    pub title: &'static str,
+    /// What the filter row reads, including its pattern in the usual form.
+    pub filter_label: &'static str,
+    /// The pattern the filter matches, such as `*.mscanvas`.
+    pub filter_pattern: &'static str,
+}
+
+/// The save dialog for a project document.
+pub const PROJECT_SAVE_DIALOG: SaveDialogFacts = SaveDialogFacts {
+    title: "Save project",
+    filter_label: "MSCanvas project (*.mscanvas)",
+    filter_pattern: "*.mscanvas",
+    default_extension: "mscanvas",
+};
+
+/// The open dialog for a project document.
+pub const PROJECT_OPEN_DIALOG: OpenDialogFacts = OpenDialogFacts {
+    title: "Open project",
+    filter_label: "MSCanvas project (*.mscanvas)",
+    filter_pattern: "*.mscanvas",
+};
+
+/// The open dialog for a project input reference.
+///
+/// Deliberately unfiltered. A project reference is a reference to a local file;
+/// what that file is worth scientifically is decided by admitting it to the
+/// workspace, which is a separate action with its own rules. Filtering here to
+/// the families the roster admits would imply that registering a reference had
+/// already established something about the file, which it has not.
+pub const PROJECT_INPUT_DIALOG: OpenDialogFacts = OpenDialogFacts {
+    title: "Add a reference",
+    filter_label: "All files (*.*)",
+    filter_pattern: "*.*",
+};
+
+/// The open dialog for a relink candidate.
+///
+/// Deliberately unfiltered. A relink points a record at the file the user says
+/// is the one that moved, and narrowing the filter to the families the roster
+/// admits would hide a legitimate candidate whose name a user changed. What the
+/// candidate is worth is decided by reading it and comparing it to the recorded
+/// baseline, not by its extension.
+pub const RELINK_CANDIDATE_DIALOG: OpenDialogFacts = OpenDialogFacts {
+    title: "Locate the referenced file",
+    filter_label: "All files (*.*)",
+    filter_pattern: "*.*",
+};
+
 #[cfg(windows)]
 pub use windows_dialog::{
     choose_conversion_destination, choose_diagnostics_destination, choose_installation_folder,
-    choose_mzml_folder, choose_save_destination, choose_workspace_files,
+    choose_mzml_folder, choose_one_file, choose_save_destination, choose_workspace_files,
 };
 
 /// The save dialog for the one diagnostics document.
@@ -117,6 +177,18 @@ pub fn choose_workspace_files(
 }
 
 #[cfg(not(windows))]
+pub fn choose_one_file(
+    _owner: Option<isize>,
+    _facts: OpenDialogFacts,
+) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
+    Err(PreviewErrorDto::new(
+        "file_picker_unavailable",
+        "The native file picker is available on Windows in this version.",
+        false,
+    ))
+}
+
+#[cfg(not(windows))]
 pub fn choose_installation_folder(
     _owner: Option<isize>,
 ) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
@@ -151,7 +223,7 @@ pub fn choose_conversion_destination(
 
 #[cfg(windows)]
 mod windows_dialog {
-    use super::SaveDialogFacts;
+    use super::{OpenDialogFacts, SaveDialogFacts};
     use std::ffi::OsString;
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStringExt;
@@ -360,6 +432,100 @@ mod windows_dialog {
         default_file_name: &str,
     ) -> Result<Option<PathBuf>, PreviewErrorDto> {
         choose_save_destination(owner, super::DIAGNOSTICS_SAVE_DIALOG, default_file_name)
+    }
+
+    /// Shows one native open dialog for exactly one existing file.
+    ///
+    /// Parametrised by [`OpenDialogFacts`] and built on the same
+    /// `OPENFILENAMEW` the acquisition picker and the save dialog use, so the
+    /// flags below are the only interesting part and there is one place the
+    /// posture can be relaxed in.
+    ///
+    /// Single selection: `OFN_ALLOWMULTISELECT` is absent, so the answer is one
+    /// absolute path and is read as one. The file must exist, because both
+    /// callers are pointing at something that is already there.
+    ///
+    /// Nothing is opened here. This returns a name; what it is worth is decided
+    /// by the store that reads it.
+    ///
+    /// # Errors
+    ///
+    /// A picker that could not be shown, or an answer this boundary will not
+    /// read as one absolute path. Cancelling answers `Ok(None)`.
+    ///
+    /// Must be called from a thread that can run a modal message loop; the
+    /// Tauri command dispatches it onto the main thread.
+    pub fn choose_one_file(
+        owner: Option<isize>,
+        facts: OpenDialogFacts,
+    ) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        let mut filter = Vec::new();
+        filter.extend_from_slice(&wide(facts.filter_label));
+        filter.extend_from_slice(&wide(facts.filter_pattern));
+        filter.push(0);
+        let title = wide(facts.title);
+
+        let mut buffer = vec![0_u16; SELECTION_BUFFER_LENGTH];
+        let mut arguments = OpenFileNameW {
+            struct_size: u32::try_from(std::mem::size_of::<OpenFileNameW>())
+                .expect("OPENFILENAMEW size fits in DWORD"),
+            owner: owner.map_or(std::ptr::null_mut(), |handle| handle as *mut c_void),
+            instance: std::ptr::null_mut(),
+            filter: filter.as_ptr(),
+            custom_filter: std::ptr::null_mut(),
+            max_custom_filter: 0,
+            filter_index: 1,
+            file: buffer.as_mut_ptr(),
+            max_file: u32::try_from(buffer.len()).expect("path buffer fits in DWORD"),
+            file_title: std::ptr::null_mut(),
+            max_file_title: 0,
+            initial_directory: std::ptr::null(),
+            title: title.as_ptr(),
+            // The same guarantees the acquisition picker asks for, without
+            // multi-selection: the file and its folder must exist, the dialog
+            // must not change the process working directory, must not resolve
+            // shortcuts behind the user's back, and must not write to the
+            // recent-documents list.
+            flags: OFN_PATHMUSTEXIST
+                | OFN_FILEMUSTEXIST
+                | OFN_NOCHANGEDIR
+                | OFN_EXPLORER
+                | OFN_NODEREFERENCELINKS
+                | OFN_DONTADDTORECENT,
+            file_offset: 0,
+            file_extension: 0,
+            // No default extension. This opens what is there; it does not
+            // propose a name to create.
+            default_extension: std::ptr::null(),
+            custom_data: 0,
+            hook: std::ptr::null_mut(),
+            template_name: std::ptr::null(),
+            reserved_pointer: std::ptr::null_mut(),
+            reserved_value: 0,
+            flags_ex: 0,
+        };
+
+        // SAFETY: every pointer field references a live buffer that outlives
+        // the call, and `struct_size`/`max_file` describe those buffers exactly.
+        let chosen = unsafe { get_open_file_name_w(&raw mut arguments) };
+        if chosen == 0 {
+            // SAFETY: the documented way to distinguish cancellation from
+            // failure immediately after the call returns zero.
+            let error = unsafe { comm_dlg_extended_error() };
+            if error == 0 {
+                return Ok(None);
+            }
+            if error == FNERR_BUFFERTOOSMALL {
+                return Err(selection_too_large());
+            }
+            return Err(PreviewErrorDto::new(
+                "file_picker_failed",
+                "The file picker could not be opened.",
+                true,
+            ));
+        }
+
+        Ok(Some(read_single_path(&buffer)?))
     }
 
     /// Shows one native save dialog and answers with the name that was chosen.

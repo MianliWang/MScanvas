@@ -43,6 +43,7 @@ import type {
   SpectrumRangeAvailability,
   SpectrumRangeScope,
   SpectrumRow,
+  WorkspaceAddResult,
   WorkspaceDropRejectionReason,
   WorkspaceDropUpdate,
   WorkspaceOutputAdoptionResult,
@@ -707,6 +708,31 @@ export interface PreviewWorkspace {
   readonly dispatchRoster: (action: RosterAction) => void;
   /** Shows the native picker and adds every file chosen. */
   readonly addFiles: () => void;
+  /**
+   * Applies what the project surface's reattachment did to the workspace.
+   *
+   * The same roster bookkeeping an ordinary add does -- the reducer, the
+   * settlement token and the one workspace notice -- and deliberately not the
+   * one thing that follows an ordinary add: no preview is started, for any
+   * row, into any workspace. Adding a reference makes it something the reader
+   * can see and open; opening it is still a thing they ask for.
+   *
+   * Answers the row this ended at, arrived or already there, or `null` where
+   * the workspace admitted nothing.
+   */
+  readonly admitProjectInput: (result: WorkspaceAddResult) => string | null;
+  /**
+   * Recovers the authoritative list after a workspace mutation rejected.
+   *
+   * Exposed for the one mutation the shell issues from outside this hook: a
+   * project reattachment can be refused *after* Rust admitted the row, and
+   * the answer carrying that roster never arrives. Deliberately this rather
+   * than a plain re-read, which waits for an active import by returning and
+   * would therefore recover nothing in exactly the case a long import makes
+   * most likely. This records the debt instead and drains it when whichever
+   * operations are competing have settled.
+   */
+  readonly reconcileAfterFailedWorkspaceMutation: () => void;
   /**
    * Shows the native folder picker and adds every mzML file found beneath the
    * folder chosen. Starts no backend work for any of them.
@@ -2042,6 +2068,24 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       activateDataset(handle);
     }
   }, [activateDataset]);
+
+  const admitProjectInput = useCallback(
+    (result: WorkspaceAddResult) => {
+      dispatchRoster({ type: "filesAdded", result });
+      rosterSettled();
+      // The same sentence an ordinary add produces, in the same region. It is
+      // above the surfaces rather than inside one, so a refused file is read
+      // where the reader is -- on the Project surface -- rather than only
+      // after navigating somewhere they were never sent.
+      showWorkspaceNotice(describeAddResult(result));
+      const landed = result.outcomes.find(
+        (outcome) => outcome.outcome === "added" || outcome.outcome === "duplicate",
+      );
+      if (landed === undefined) return null;
+      return landed.outcome === "added" ? landed.dataset.handle : landed.existing.handle;
+    },
+    [dispatchRoster, rosterSettled, showWorkspaceNotice],
+  );
 
   const addFiles = useCallback(() => {
     // One workspace change at a time. Two in flight together let the older
@@ -4284,6 +4328,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     activeDataset,
     dispatchRoster,
     addFiles,
+    admitProjectInput,
+    reconcileAfterFailedWorkspaceMutation,
     addFolder,
     removeSelected,
     clearList,

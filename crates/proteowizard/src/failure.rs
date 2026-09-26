@@ -115,6 +115,7 @@ pub fn classify_process_failure(
                 } => match tool {
                     BackendTool::MsConvert => FailureKind::MsConvertMissing,
                     BackendTool::MsAccess => FailureKind::MsAccessMissing,
+                    BackendTool::AnalysisWorker => FailureKind::BackendLaunchFailed,
                 },
                 ProcessError::ExecutableIdentityInspectionFailed {
                     kind: std::io::ErrorKind::PermissionDenied,
@@ -129,6 +130,7 @@ pub fn classify_process_failure(
                 ProcessError::Launch { kind, .. } if kind.is_not_found() => match tool {
                     BackendTool::MsConvert => FailureKind::MsConvertMissing,
                     BackendTool::MsAccess => FailureKind::MsAccessMissing,
+                    BackendTool::AnalysisWorker => FailureKind::BackendLaunchFailed,
                 },
                 ProcessError::Launch { kind, .. } if kind.is_permission_denied() => {
                     FailureKind::PermissionDenied

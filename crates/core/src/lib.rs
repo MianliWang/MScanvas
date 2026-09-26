@@ -1,5 +1,8 @@
 //! Core domain types for MSCanvas.
 
+use std::fmt;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -19,6 +22,42 @@ impl Default for ArtifactId {
         Self::new()
     }
 }
+
+impl fmt::Display for ArtifactId {
+    /// The form an interface addresses an artifact by.
+    ///
+    /// A random UUID and nothing derived from the machine it was minted on, so
+    /// putting one on a wire or in a document correlates nothing about the
+    /// user, their files or their hardware.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+impl FromStr for ArtifactId {
+    type Err = ArtifactIdParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(value)
+            .map(Self)
+            .map_err(|_| ArtifactIdParseError)
+    }
+}
+
+/// What a caller gets for a string that is not an artifact identifier.
+///
+/// Carries nothing from the input. A rejected identifier came from outside, and
+/// echoing it back is how untrusted text reaches a log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArtifactIdParseError;
+
+impl fmt::Display for ArtifactIdParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("not an artifact identifier")
+    }
+}
+
+impl std::error::Error for ArtifactIdParseError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
