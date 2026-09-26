@@ -1123,7 +1123,9 @@ button:disabled,
    The body stops filling and keeps the floor the three-panel column was
    measured with -- 6px of padding, the 52px the plot floors at, the axis
    caption's two lines, the readout, and 8px below -- so the plot stays a plot
-   instead of being squeezed out by a taller surface. The surface's own height
+   instead of being squeezed out by a taller surface. The line of plot
+   controls above the drawing (PM9 L13) came later and sits on top of that
+   floor; `flex: none` sizes the body to all of it. The surface's own height
    stays content-driven: a label that wraps, or a settings problem that appears,
    makes it taller and the panel simply has more to scroll through. */
 .chromatogram-panel[data-export-open="true"] {

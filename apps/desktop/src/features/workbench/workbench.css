@@ -168,6 +168,11 @@
 .workbench-shell .spectrum-summary { margin: 0 0 6px; font-size: 13px; }
 .workbench-shell .spectrum-panel > .panel-header { flex-direction: row; align-items: start; flex-wrap: wrap; padding: 8px 12px; }
 .workbench-shell .chromatogram-panel > .panel-header { padding: 8px 12px; }
+/* The figure actions and the export disclosure share one line, as the
+   chromatogram's figure actions and its Export toggle do, rather than the
+   disclosure taking a line of its own under them. Opened, the disclosure
+   takes the whole width below. */
+.spectrum-export-header-actions { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: flex-end; gap: 6px; }
 .spectrum-export-disclosure { margin-left: auto; }
 .spectrum-export-disclosure[open] { width: 100%; }
 .spectrum-export-disclosure > summary { width: fit-content; margin-left: auto; }
