@@ -999,6 +999,9 @@ export const DatasetRoster = memo(function DatasetRoster({
                 .join(" ") || undefined
             }
             className="secondary-button"
+            // Presentation only: the block's list-wide action, kept quieter
+            // than the rest (PM9 L9).
+            data-list-wide=""
             disabled={!canMutate}
             onBlur={(event) => {
               if (event.relatedTarget instanceof Node) {
