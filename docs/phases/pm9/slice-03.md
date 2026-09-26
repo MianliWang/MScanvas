@@ -1,16 +1,20 @@
 # PM9.3 — evidence-first viewer: chromatogram, scans, spectrum, inspection and export
 
 PM9 | Acceptance: U3, U8 (viewer), U9, U10 | Depends on: PM9.2 | Serial, one writer
-Status: **STATIC PREPARATION COMPLETE — PRODUCTION IMPLEMENTATION NOT
-STARTED.** §1–§3 and §5 were read at `9786809` (tree `da9ae8e`) from source and
-recorded evidence. The viewer's code is unchanged since then; the one later
+Status: **IN PROGRESS — re-expanded on 2026-09-26** against the current tree
+(§0 below). §1–§5 are the static preparation, kept as evidence; §0 replaces
+§6 as the plan.
+
+The paragraphs below are the history that led here. §1–§3 and §5 were read at
+`9786809` (tree `da9ae8e`) from source and recorded evidence. The viewer's
+code is unchanged since then; the one later
 production change is the shell repair `a0783bb`
 ([baseline §7](baseline.md#7-validation-window-2026-09-25)). In the 2026-09-25
 window the viewer contract spec ran 11 of 11 PASS on `a0783bb` (§4). That
 shows the authored harness executes against the unchanged viewer; it is not
 PM9.3 work. The midpoint check ([slices.md](slices.md)) follows this slice.
 
-**READY; this expansion is void** under the unfreeze rule after the
+The first expansion was void under the unfreeze rule after the
 2026-09-26 mid-phase normalization ([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)). PM9.3
 re-expands when it starts, from the code of the PM9.2 final candidate
 `b81fc78`, reusing §1–§5 as evidence. Settled there: the `openTheViewer`
@@ -67,6 +71,116 @@ processing, clipboard capability or exporter.
 - The v5.11 HTML was re-hashed for this preparation: 490,253 bytes, SHA-256
   `d09b60e0…3896337`, the same as §3 of the baseline. It was read, not
   rendered.
+
+## 0. Re-expansion on the current tree (2026-09-26)
+
+**Rebound at** `717574426ec20e12ef674774483472e7062a1505` (tree
+`7be7862b60687e7d0019b16ca2a78a2ca9948ff3`), on the PM9 branch, with the
+accepted main `57915de` as an ancestor. Its frontend is the PM9.2 final
+candidate `b81fc78`'s; `c5a3f7e` after it is test-only (the manual harness).
+`git diff 9786809 HEAD` touches no viewer component: `Chromatogram.tsx`,
+`SelectedSpectrumPanel.tsx`, `SpectrumViewport.tsx`, `SpectrumTable.tsx`,
+`QuickFigureActions.tsx`, `PlotRangeActions.tsx`, `ChromatogramExportPanel.tsx`,
+`usePreviewWorkspace.ts` and `viewer/` are unchanged. PM9.2 changed only the
+shell around them (`PreviewWorkspace.tsx`'s surface title and placeholder
+action, `workbench.css`), so §1's line references stand except those into
+`PreviewWorkspace.tsx`. §1–§5 are reused as evidence, not rediscovered.
+
+**What the midpoint gave this slice.** L13; the viewer-height question at
+960×640 (the "panel floors"); the shared `openTheViewer` diagnosis and the
+same toggle-then-wait copied into m7.3 and m7.4's viewer cases; L3, L5 and
+L21's open parts; and a comparison of the pending band, the empty viewer entry
+and the roster-open and Details-open states at 960×640.
+
+### 0.1 Acceptance, in task terms
+
+1. **L13.** At 960×640, in en and zh-CN, the chromatogram's header controls use
+   one row. Every action it offers today stays offered, in a named group, and
+   reachable by keyboard; no overflow menu, no hover-only route. The toolbar
+   sees the evidence column's width, not the window's: the roster is open by
+   default above 1050 px, so 1152×720 gives a narrower column than 960×640.
+   So no viewer toolbar uses more than one row in any default panel
+   arrangement of the eleven-size sweep either. Details opened by the reader
+   at 1152–1536 px is recorded.
+2. **Viewer height at 960×640.** Not a new pixel floor. The historical numbers
+   are ADR 0033's panel floors (186 / 122 / 202 px, measured for a three-row
+   grid) and ADR 0006's 544 px narrow budget (a 342 px stacked sidebar and a
+   178 px viewer row). Both protected the same task:
+   - each panel keeps its own controls whole rather than clipped;
+   - both viewer headers are reachable;
+   - the table keeps its sticky header and one complete row;
+   - one internal scroll owner does the recovery, with no document or body
+     overflow.
+
+   The M7.2 fold removed that sidebar at this width, and M7.3 replaced the
+   grid with a natural-height stack. The `.viewer-stack` grid rows in
+   `app.css` are overridden by `workbench.css`'s flex column. So the
+   requirement is read in those task terms and verified in the render, with
+   a selected scan, in both languages:
+   - the chromatogram plot is fully on screen at the evidence column's top;
+   - the selected spectrum begins inside the viewport (the M7.3 record);
+   - the spectrum's controls and the scan table's sticky header plus one
+     complete row are reached by the evidence column's own scroll, with
+     nothing clipped;
+   - the document has no horizontal or vertical overflow;
+   - no control is shrunk or hidden to fit.
+
+   ADR 0006's numbers are unchanged. That they name a layout that no longer
+   exists is recorded for the owner.
+3. **Authorities unchanged.** §4's V1–V9 pass on the final candidate. No change
+   to selection, viewport, range, projection, availability or export owners,
+   and no new request, read, state, cache or poll.
+4. **Helper.** Each copy of the narrow-window roster reveal is diagnosed by
+   what it waits for and why it fails, with discriminating evidence before any
+   repair. It is then repaired or consolidated narrowly, or the stale
+   assertion is retired against named evidence, or the failure is recorded for
+   its owner. The m7.2 copy is PM9.7's.
+5. **Rendered.** The anchors 960×640, 1366×768 and 1920×1080 and the sweep,
+   in en and zh-CN, with a keyboard sample and reduced motion. Also the entry
+   state and the roster-open and Details-open states at 960×640. All
+   controlled-IPC browser at DPR 1, never called native 150 % evidence.
+6. **Findings.** Each new mismatch is classified A (required), B (optional
+   polish) or C (future capability). Only A is implemented.
+
+### 0.2 Approach
+
+- **Before any production edit**, the PM9.3 spec's observation (G) is extended
+  test-only to walk the sweep and record each viewer toolbar's row count, the
+  entry and swap states, and the table's reachability. Its L13 assertion (one
+  header row at every default arrangement) is expected to fail on the
+  unchanged viewer. That run is PM9.3's before-capture. It is not PM9.1's J1–J6,
+  which stays on `d56b17b`.
+- **Helper**: one instrumented run of a failing 960 case first, recording the
+  roster toggle's state at the click and after it. Repair follows the finding.
+- **L13**: settled by the before-capture. The candidate is the arrangement the
+  selected-spectrum panel already has: the header carries the title and the
+  figure and export actions, and the plot's own controls sit on a row above the
+  plot. For the chromatogram those controls are TIC/BPC, Zoom in, Zoom out and
+  Reset range. Its cost is weighed against the height the wrap costs now.
+  DOM dependencies to keep:
+  - `paintFrame` finds `.chromatogram-range` through the SVG's parent;
+  - `PlotRangeActions` finds the SVG through its root's parent.
+- No pre-selected scan at entry: that would be a source read the reader did
+  not ask for. Any entry change is presentation only.
+- Files expected: `Chromatogram.tsx`, `app/app.css` (and `workbench.css` if the
+  shell rule is the owner), their Vitest tests where they pin structure,
+  `e2e/support/viewer.ts`, the m7.3 and m7.4 specs' reveal, and the PM9.3 spec.
+
+### 0.3 Validation
+
+On the final code candidate:
+
+- `pnpm typecheck`, `pnpm e2e:typecheck`, the affected Vitest files, the full
+  Vitest suite if viewer code changed materially, `pnpm build`,
+  `python -B scripts/check_repo.py` and `git diff --check`;
+- the PM9.3 spec in full;
+- the legacy specs the helper diagnosis names (the `openTheViewer` callers and
+  m7.3, m7.4-conversion-figures), not the whole legacy corpus.
+
+Every browser group is admitted at ≥ 8 GiB available and ≤ 80 % used, and
+stops at < 4 GiB or ≥ 90 %. A group the gate blocks is reported
+RESOURCE_DEFERRED; it is not waited for. There are at most two substantive
+product repair cycles. The first L13 implementation is not one.
 
 ## 1. Viewer ownership map
 
