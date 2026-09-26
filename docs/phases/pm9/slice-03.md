@@ -77,17 +77,25 @@ Every export reads one scientific lane, `scientificExportBusy`
 Observations for implementation, not defects:
 
 - The chromatogram scope is never reset across previews, while the spectrum
-  scope is. The committed RT domain resets with the preview, so a kept
-  `current` then means the whole run. Whether that is the intended contract is
-  undocumented. PM9.3-V9 records it and does not assert it.
+  scope is. `setChromatogramRangeScope` (`usePreviewWorkspace.ts:3394`) is
+  called only from the panel and the dialog (`PreviewWorkspace.tsx:751`,
+  `:908`). The spectrum scope is reset by the effects at
+  `usePreviewWorkspace.ts:3161-3172`. The committed RT domain resets with the
+  preview, so a kept `current` then means the whole run. Whether that is
+  intended is undocumented. PM9.3-V9 records it and does not assert it.
 - A scan selected outside a committed RT range pans the committed domain and
   clears a pending band (`interactionState.ts:399-408`). That moves what a
   Current export covers. This is the reveal rule of ADR 0032, not a new
   behaviour.
 - A failed spectrum load leaves the selection on the new index, while exports
-  and the linked pair use the loaded spectrum.
-- `exportLinkedFigure` substitutes 300 for an invalid DPI inside the hook. The
-  panel and the dialog already refuse PNG in that state.
+  and the linked pair use the loaded spectrum. `selection-committed` is
+  dispatched before the read (`usePreviewWorkspace.ts:2587`). The failure
+  branch (`:2627-2660`) sets the spectrum to `failed` and reverts nothing,
+  unless the backend changed, in which case the derived state is discarded.
+- `exportLinkedFigure` substitutes the default DPI for an unusable one inside
+  the hook: `figureSettingsFor` (`usePreviewWorkspace.ts:456-461`) is called at
+  `:4087-4090`. The panel (`ChromatogramExportPanel.tsx`, `rasterBlocked`) and
+  the dialog already refuse PNG in that state.
 
 ## 2. User actions by class
 
@@ -184,7 +192,7 @@ pnpm e2e:browser --spec ./e2e/specs/pm9.3-viewer.browser.e2e.ts
 | V1 | One source index behind table, Previous/Next and chromatogram (ADR 0032 D; `selectSpectrum`) | Table row 3, Next, Previous, then a chromatogram click at scan 6 send `load_selected_spectrum` indices `[3, 4, 3, 6]`. After each, the selected row, the marker and "Spectrum N," agree. One preview read | NOT RUN |
 | V2 | Search, filter and sort never replace a hidden selection (ADR 0032 M7.3 amendment; `SpectrumTable`) | With a descending sort and a search, a hidden scan 3 keeps its spectrum and shows the outside-results sentence. Previous and Next are disabled, and no read happens. "Clear filters and reveal" restores it with the sort kept, and Next then selects 2 | NOT RUN |
 | V3 | A pending RT band is not Current authority (ADR 0034; M7.3) | A released band stays "Pending". Exporting CSV over Current sends `{scope: current, low: null, high: null}` | NOT RUN |
-| V4 | A committed range is the Current path (ADR 0034) | "Zoom to selection" commits. The panel note is exactly the committed-range sentence, and CSV sends those bounds. Full then sends `{scope: full, null, null}` | NOT RUN |
+| V4 | A committed range is the Current path (ADR 0034) | "Zoom to selection" commits. The panel note is exactly the committed-range sentence, and CSV sends those bounds. With a new band pending over it, CSV still sends the committed bounds. Full then sends `{scope: full, null, null}` | NOT RUN |
 | V5 | Viewport moves are not source reads (ADR 0038, `lib.rs` projection doc) | RT zoom, zoom out, reset and wheel, a band and its cancel, and m/z zoom and reset issue no `open_mzml_preview` or `load_selected_spectrum`. The only request is `project_selected_spectrum` | NOT RUN |
 | V6 | m/z context follows the spectrum (ADR 0038, 0040) | The zoomed caption and a Current scope survive Conversion → Project → Workbench with no source read. The next scan opens at "(full range)", with the scope back at Full | NOT RUN |
 | V7 | A refused viewport is honest and keeps data export (ADR 0040) | The caption says there is no range and the status gives the refusal. The m/z controls are disabled, with no Current radio and the no-viewport note. CSV still sends `{scope: full, null, null}` | NOT RUN |
@@ -228,7 +236,7 @@ Failure families:
 | m5.2 (48 / 12) | controls, keyboard, wheel and host ownership, request frequency, states (36 passing) | STILL_VALID_CONTRACT | Also covered by `SpectrumViewport.test.tsx` and `SpectrumViewportBinding.test.tsx`; requests also by PM9.3-V5 |
 | m5.2 | "pans from where the press began" (primary drag) | SUPERSEDED | M7.3: primary drag proposes a band, and middle/Space drag pans. Replacement: `SpectrumViewport.test.tsx` "pans from where the press began rather than from the previous frame" (middle button) and m7.3 "keeps numeric raw text, IME and host keys separate and supports wheel and pan with reduced motion" |
 | m5.2 | drag-in-flight caption, empty window, cannot be navigated, retained-source note | SUPERSEDED (copy only) | Replacement: `SpectrumViewport.test.tsx` "tells an empty window, a drawing not yet arrived, a failure and a refusal apart" and the "a spectrum with no m/z range to navigate" group; `App.test.tsx` "describes a truncated spectrum by its whole-spectrum peak, not the prefix"; refusal rendered by PM9.3-V7 |
-| m5.2 | "has a column with somewhere to scroll to", and the m/z controls' overflow at 1366 and 1920 | SUPERSEDED (scroll owner) | M7.2/M7.3 moved scrolling to `#workbench-evidence` (`workbench.css:36`). The assertion reads the old column. Replacement: the M7.3 record ("natural outer evidence scrolling") and m7.3's recorded scroll of `#workbench-evidence`; PM9.3 G records it |
+| m5.2 | "has a column with somewhere to scroll to", and the m/z controls' overflow at 1366 and 1920 | STILL_VALID_CONTRACT (stale target) | The contract still holds: a wheel the plot cannot use falls through to page scrolling. M7.2/M7.3 moved the scroll owner to `#workbench-evidence` (`workbench.css:36`), and the assertion still reads the old column; re-point it there. `SpectrumViewport.test.tsx` "leaves a wheel that cannot widen the whole spectrum to the browser" covers only the plot's half. No test yet asserts the rendered fall-through, and PM9.3 G only records scroll |
 | m5.2 | 960 cases | STILL_VALID_CONTRACT | (a) |
 | m5.3 (13 / 13) | Full/Current, committed window, no viewport, failed drawing, range fixed at begin, empty range, new spectrum, linked unaffected | STILL_VALID_CONTRACT | 12 × (b) (disclosure never opened), 1 × (a). Covered at hook level by `SelectedSpectrumExportBinding.test.tsx`; new spectrum at Full also by PM9.3-V6, and no viewport by V7. After a repaired first run, one copy expectation is expected to fail (inference) |
 | m5.7 (8 / 1) | availability sentence, no reads while blocked, live navigation | STILL_VALID_CONTRACT | Only the 960 case fails, on (a). `SelectionAvailability.test.tsx` covers the rest 1:1 |
@@ -242,7 +250,7 @@ Failure families:
 | viewer-r1-linked-viewer | "one path per trace", "back to a line" (circle counts) | SUPERSEDED | The browser counts hidden circles that the product now renders on purpose. Replacement: `Chromatogram.test.tsx` "draws one path per trace rather than one node per scan" (counts visible glyphs) |
 | viewer-r1-linked-viewer | "traces and units" caption; single-scan mark caption | SUPERSEDED (copy moved into a disclosure) | Replacement: `Chromatogram.test.tsx` "says the values come from the loaded table and are not a stored record" |
 | viewer-r1-linked-viewer | "pans on a real drag" | SUPERSEDED | As m5.2: replacement `Chromatogram.test.tsx` "pans on a drag without changing the span, and does not select" (middle button) and the m7.3 wheel-and-pan case |
-| viewer-r1-linked-viewer | column to scroll at 1366 | SUPERSEDED (scroll owner) | As m5.2 |
+| viewer-r1-linked-viewer | column to scroll at 1366 | STILL_VALID_CONTRACT (stale target) | As m5.2. `Chromatogram.test.tsx` "leaves a wheel that cannot widen the run to the browser" covers the plot's half |
 | viewer-r1-linked-viewer | scan steps and panels clear at 1366 and 1920; row below the header not moved | UNKNOWN_NEEDS_FIRST_RUN | Pre-M7.3 geometry, and one (d) |
 | viewer-r1-linked-viewer | vendor-row focus; no chromatogram; 960 cases | STILL_VALID_CONTRACT | (b) and (a) |
 | viewer-r1-scale (3 / 1) | windowing (circle count) | SUPERSEDED | Same hidden-circle drift. Replacement: `app/LinkedViewer.test.tsx` "keeps the table windowed and the trace bounded at acquisition scale" |

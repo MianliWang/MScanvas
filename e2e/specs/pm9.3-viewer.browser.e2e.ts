@@ -689,6 +689,24 @@ describe("PM9.3 viewer contracts, rendered", () => {
       expect(Number(current["high"])).toBeCloseTo(committed.high, 6);
       await laneFree();
 
+      // The discriminating case: a new band drawn over a committed range. The
+      // export still carries the committed range, not the pending one and not
+      // the whole run (ADR 0034, "a gesture in flight is not a decision").
+      await drag(PLOT, 0.3, 0.6);
+      await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForDisplayed();
+      const pending = await rangeLine(RT_PANEL);
+      expect(pending.pending).toBe(true);
+      expect([pending.low, pending.high]).not.toEqual([committed.low, committed.high]);
+      const overPending = countOf(await ipcCalls(), "begin_chromatogram_export");
+      await press(EXPORT_PANEL, fill(en.viewerExportFormat, { name: "CSV" }));
+      const kept = (await lastRequest("begin_chromatogram_export", overPending))["range"] as Record<string, unknown>;
+      expect(kept["scope"]).toBe("current");
+      expect(Number(kept["low"])).toBeCloseTo(committed.low, 6);
+      expect(Number(kept["high"])).toBeCloseTo(committed.high, 6);
+      await laneFree();
+      await browser.$(`${RT_PANEL} .plot-pending-actions button:nth-child(2)`).click();
+      await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForExist({ reverse: true });
+
       await chooseScope("chromatogram-range-scope", "full");
       const full = countOf(await ipcCalls(), "begin_chromatogram_export");
       await press(EXPORT_PANEL, fill(en.viewerExportFormat, { name: "CSV" }));
@@ -901,7 +919,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
         timeoutMsg: "the selection survived a new preview",
       });
       expect((await shownSelection()).marker).toBe(false);
-      await browser.waitUntil(async () => (await browser.$(".chromatogram-range").getText()).includes(en.viewerFullRange.trim()), {
+      await browser.waitUntil(async () => (await textOf(".chromatogram-range")).includes(en.viewerFullRange.trim()), {
         timeout: 15_000,
         timeoutMsg: "the committed range survived a new preview",
       });
