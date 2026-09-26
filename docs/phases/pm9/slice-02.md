@@ -82,6 +82,10 @@ result", each taking the reader to its surface.
   object survives a trip to the Workbench; navigation names are unchanged.
 - `app/Pm9Baseline.test.tsx` (PM9.1) also asserts the context line in each
   scenario.
+- `e2e/specs/pm9.1-baseline.browser.e2e.ts` (PM9.1): the context line in the
+  rendered browser layer — routing, what survives navigation, settling and
+  replacement, and geometry observations — **authored, NOT RUN**; see
+  [baseline §6](baseline.md#6-browser-baseline-spec-authored-not-run).
 
 ## Risks to check when validation opens
 

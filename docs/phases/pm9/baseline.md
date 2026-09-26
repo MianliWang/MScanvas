@@ -143,7 +143,8 @@ browser baseline mirrors five of them by name and adds three variants
 ## 6. Browser baseline spec (authored, NOT RUN)
 
 `e2e/specs/pm9.1-baseline.browser.e2e.ts`, written on the provisional PM9
-branch over the unchanged PM9.2 production draft (tree `da9ae8e`). It uses
+branch. Every path under `apps/` and `crates/` stays identical to
+`9786809` (tree `da9ae8e`), so the PM9.2 production draft is unchanged. It uses
 the existing browser harness (`e2e/support/harness.ts`, the IPC boundary
 preloaded, hold/release, call and console ledgers) and M8.2/M9.1's CDP
 viewport helper with DPR 1. The browser config's `specs/**/*.browser.e2e.ts`
@@ -166,8 +167,11 @@ J IDs follow the order of [slice-01](slice-01.md) pending item 4, in its words.
 
 Not in the new spec and left to the owners above: the Settings round trip
 (m7.1, m7.5), the context line during a targeted run or batch (m9.1, m9.4,
-`shellContext.test.ts`), exports (m8.5, m9.1), and source removal clearing the
-viewer (`App.test.tsx`). The conversion (B6) and the project check (B7) are not
+`shellContext.test.ts`), exports (m8.5, m9.1), source removal clearing the
+viewer (`App.test.tsx`), and the conversion settings draft
+(`useConversionConfiguration`; Vitest `ConversionSettings.test.tsx`,
+`conversionPlanLifecycle.test.tsx`; its browser spec m6.4 is red and is
+PM9.4's). The conversion (B6) and the project check (B7) are not
 evidence of targeted execution. The QC capture (B5) is descriptive only; no
 score is added or expected.
 
@@ -191,7 +195,7 @@ under `MSCANVAS_PM9_OUTPUT_ROOT`, default `test-results/pm9.1/browser-*/`
 | PM9-B1 | `populated`, row viewed, spectrum selected, reference inspected | U1, U10 | Project, viewed acquisition, scope and inspected reference each read from their owner, with no activity item; each item, by pointer and by Tab plus Enter, changes only the surface and the current destination; the focus ring is visible; no request while every owner is idle | NOT RUN |
 | PM9-B2 | `populated` plus one membership toggle, spectrum 0 and one m/z zoom | U1, U2, U3, U7 | Roster order, highlight and membership, the selected scan, the committed m/z caption, and the viewing and scope items are unchanged after Conversion → Project → Workbench; no request | NOT RUN |
 | PM9-B3 | `projectWithResult` with typed targets | U5, U7 | The typed text is unchanged after Home → project item; no review or run request | NOT RUN |
-| PM9-B4 (×4) | `projectWithResult`, `resultPayloadMissing`, `resultPayloadCorrupt`, `resultSourceAndRuntimeUnavailable` | U6, U7 | The report's availability is as recorded; the inspecting item names the record identically in every state; Details links the producing run and shows the plan SHA-256; Home → inspecting returns to the same report; no request, including no re-read of rows | NOT RUN |
+| PM9-B4 (×4) | `projectWithResult`, `resultPayloadMissing`, `resultPayloadCorrupt`, `resultSourceAndRuntimeUnavailable` | U6, U7 | The report's availability is as recorded. Its state block keeps the payload (whole, missing or damaged), the source (found, or not found where recorded) and new runs (available, or no runtime) apart, as M9.1 reads them. A missing or damaged payload is never read. The inspecting item names the record identically in every state. Details links the producing run and shows the plan SHA-256. Home → inspecting returns to the same report, with no request and no re-read of rows | NOT RUN |
 | PM9-B5 | `qcCapture`, capture held | U6, U10 | A busy item and the Project dot while held, unchanged across navigation, with no request; after release no busy item or dot; the inspected object moves to the new QC record (`useProject` `captureQc`) and routes to its report, which carries no verdict words | NOT RUN |
 | PM9-B6 | `converting`, then settled through the next slot poll | U4 (lane only), U10 | The running item and active dot; navigation asks only the lane's slot poll; once settled, the retained item and dot remain and no activity item does | NOT RUN |
 | PM9-B7 | `populated` with a held check, then Close and Open | U7, U10 | The busy item and the accepted operation's identifier survive navigation with no request; after release no busy item, and the inspection a check does not change is kept; Close then Open leaves nothing inspected and the viewed row unchanged; only `close_project` and `open_project` are asked | NOT RUN |
@@ -209,6 +213,11 @@ The spec restates the builders' identifiers, names and labels. It cannot
 import them: `pm9Scenarios.tsx` mounts `App` through Testing Library, and
 `projectFixtures.ts` imports Vitest.
 
+- Checked against the code, not only against §4: none of the seven Vitest
+  scenarios holds a QC snapshot, a targeted run or batch in progress, or an
+  unavailable source or runtime. Their only project states are
+  `capturedProject()` (file facts) and `targetedProject()` (one completed
+  single run). The variants below add only what the shell cases need.
 - Mirrored by name: `populated`, `converting`, `projectWithResult`,
   `resultPayloadMissing`, `resultPayloadCorrupt`.
 - Not mirrored: `empty`, whose no-installation binding would have to be

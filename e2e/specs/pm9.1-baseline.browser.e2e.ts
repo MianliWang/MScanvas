@@ -970,13 +970,30 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    const STORED: readonly [Scenario, Availability][] = [
-      ["projectWithResult", "available"],
-      ["resultPayloadMissing", "payloadMissing"],
-      ["resultPayloadCorrupt", "payloadCorrupt"],
-      ["resultSourceAndRuntimeUnavailable", "available"],
+    /**
+     * Each stored-result state and the words the report's state block (M9.1's
+     * `[data-targeted-state]`) says for it: the payload, whether the source was
+     * found where recorded, and, where the case is about it, whether new runs
+     * are possible. Kept apart so a missing source or runtime never reads as a
+     * damaged payload, or the other way round.
+     */
+    const STORED: readonly {
+      readonly name: Scenario;
+      readonly availability: Availability;
+      readonly payload: string;
+      readonly sourceMissing: boolean;
+      readonly runtime: string | null;
+    }[] = [
+      { name: "projectWithResult", availability: "available", payload: en.targetedStatePayloadWhole, sourceMissing: false, runtime: en.targetedNewRunsAvailable },
+      { name: "resultPayloadMissing", availability: "payloadMissing", payload: en.targetedStatePayloadMissing, sourceMissing: false, runtime: null },
+      { name: "resultPayloadCorrupt", availability: "payloadCorrupt", payload: en.targetedStatePayloadCorrupt, sourceMissing: false, runtime: null },
+      { name: "resultSourceAndRuntimeUnavailable", availability: "available", payload: en.targetedStatePayloadWhole, sourceMissing: true, runtime: en.targetedNewRunsRuntimeUnavailable },
     ];
-    for (const [name, availability] of STORED) {
+    const stateText = () =>
+      browser.execute(
+        () => (document.querySelector("[data-targeted-state]") as HTMLElement | null)?.innerText ?? "",
+      ) as Promise<string>;
+    for (const { name, availability, payload, sourceMissing, runtime } of STORED) {
       it(`PM9-B4 reads the stored result in ${name} from its own record, and routes back to it`, async () => {
         await metrics(1920, 1080);
         await open(name);
@@ -986,6 +1003,23 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         expect(await browser.$(`[data-targeted-report="${RESULT}"]`).getAttribute("data-availability")).toBe(availability);
         if (availability === "available") await browser.$("[data-targeted-row]").waitForDisplayed();
         await frames();
+
+        // The report states each fact separately, as the owners hold it.
+        await browser.waitUntil(async () => (await stateText()).includes(payload), {
+          timeout: 15_000,
+          timeoutMsg: `the state block never said "${payload}"`,
+        });
+        if (runtime !== null) {
+          await browser.waitUntil(async () => (await stateText()).includes(runtime), {
+            timeout: 15_000,
+            timeoutMsg: `the state block never said "${runtime}"`,
+          });
+        }
+        expect((await stateText()).includes(en.projectStateMissing)).toBe(sourceMissing);
+        // A payload that is missing or damaged is not read (M9.1).
+        if (availability !== "available") {
+          expect((await ipcCalls()).some((call) => call.command === "read_targeted_ms1_rows")).toBe(false);
+        }
 
         // The line names the record; how available its payload is stays the
         // report's to say, so the sentence is the same in every state.
