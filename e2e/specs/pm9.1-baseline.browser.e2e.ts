@@ -777,10 +777,34 @@ async function tabTo(id: string, limit = 40): Promise<boolean> {
 // ---------------------------------------------------------------- observation
 
 /**
+ * Waits until the shell fills the emulated viewport, and records how long.
+ *
+ * `metrics()` waits on `innerWidth`/`innerHeight`, yet a read taken right after
+ * can still see the previous height: baseline §7.4 recorded one such reading at
+ * `a0783bb`, and PM9.2's acceptance run another (the main region 964 px tall at
+ * a 768 px viewport, while the screenshot taken just after showed the settled
+ * layout). The shell is `100vh`, so its height matching the viewport's is the
+ * settle. One that never comes is a failure, not something to wait out.
+ */
+async function settled(label: string) {
+  const started = Date.now();
+  await browser.waitUntil(
+    () =>
+      browser.execute(() => {
+        const shell = document.querySelector(".workbench-shell");
+        return shell !== null && Math.abs(shell.getBoundingClientRect().height - innerHeight) <= 1;
+      }),
+    { timeout: 10_000, interval: 50, timeoutMsg: `${label}: the shell never filled the resized viewport` },
+  );
+  evidence.push({ label: `${label}-settle`, waitedMs: Date.now() - started });
+}
+
+/**
  * What one frame is evidence for. Recorded, and judged here only against the
  * limits other specs already hold and the PM9.2 limits named below.
  */
 async function observe(label: string) {
+  await settled(label);
   const measured = await browser.execute(() => {
     const rect = (element: Element | null) => {
       if (element === null || (element as HTMLElement).hidden) return null;
@@ -986,6 +1010,7 @@ async function observe(label: string) {
  * Recorded; the case decides what it asserts.
  */
 async function surfaceFrame(label: string) {
+  await settled(label);
   const measured = await browser.execute(() => {
     const main =
       ["#workbench-evidence", "#workbench-conversion", "#workbench-project"]
