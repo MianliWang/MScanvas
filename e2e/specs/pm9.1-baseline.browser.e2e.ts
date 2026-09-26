@@ -640,7 +640,6 @@ async function home() {
   await browser.$(`button[aria-label="${en.home}"]`).click();
 }
 
-/** Which destination the navigation marks as the current page. */
 /**
  * The scope as the Conversion surface resolves it, in the context line's words:
  * the checked scope and the eligible count from its own summary. `null` where
@@ -678,6 +677,7 @@ function membership(): Promise<unknown> {
   }));
 }
 
+/** Which destination the navigation marks as the current page. */
 function currentDestination(): Promise<string | null> {
   return browser.execute(
     () => document.querySelector(".workbench-navigation > button[aria-current='page']")?.textContent ?? null,
@@ -791,6 +791,27 @@ async function observe(label: string) {
       .map((selector) => document.querySelector<HTMLElement>(selector))
       .find((element) => element !== null && !element.hidden) ?? null;
     const items = [...document.querySelectorAll<HTMLElement>("[data-shell-context]")];
+    // Whether an item shows an ellipsis at all. `scrollWidth` is a whole
+    // number, and a sub-pixel shrink is still an ellipsis on screen, so the
+    // item's text is measured in its own font against its content box.
+    const probe = document.createElement("span");
+    probe.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden;white-space:nowrap";
+    document.body.append(probe);
+    const shape = (item: HTMLElement) => {
+      const style = getComputedStyle(item);
+      probe.style.font = style.font;
+      probe.style.letterSpacing = style.letterSpacing;
+      probe.textContent = item.textContent;
+      const natural = probe.getBoundingClientRect().width;
+      const content =
+        item.getBoundingClientRect().width -
+        ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"]
+          .map((key) => parseFloat(style[key as "paddingLeft"]) || 0)
+          .reduce((sum, value) => sum + value, 0);
+      return { natural, content, ellipsized: natural > content + 0.01, floor: parseFloat(style.minWidth) || 0 };
+    };
+    const shapes = items.map(shape);
+    probe.remove();
     // What the header leaves for the work: the band below it, the main region's
     // share of that band, and how much of each evidence panel is on screen
     // without scrolling. The second header line costs height here, most of all
@@ -831,11 +852,12 @@ async function observe(label: string) {
       header: rect(header),
       contextBar: rect(document.querySelector(".workbench-context-bar")),
       shellContext: rect(document.querySelector(".shell-context")),
-      contextItems: items.map((item) => ({
+      contextItems: items.map((item, index) => ({
         id: item.getAttribute("data-shell-context"),
         priority: item.getAttribute("data-priority"),
         text: item.textContent,
         truncated: item.scrollWidth > item.clientWidth,
+        ...shapes[index]!,
         ...rect(item),
       })),
       contextRows: new Set(items.map((item) => Math.round(item.getBoundingClientRect().top))).size,
@@ -893,10 +915,22 @@ async function observe(label: string) {
     // not ellipsized itself, and not pushed past the line, which clips.
     if (item.priority === "1" && line !== null) {
       expect(item.truncated).toBe(false);
+      expect(item.ellipsized).toBe(false);
       expect(item.x ?? 0).toBeGreaterThanOrEqual(line.x - 1);
       expect((item.x ?? 0) + (item.width ?? 0)).toBeLessThanOrEqual(line.x + line.width + 1);
     }
   }
+  // Rank decides who gives way first (L14–L16): an item shows an ellipsis
+  // only once every lower-ranked item is down to its floor. Reported as the
+  // pairs that break it, so a failure names them.
+  const outOfOrder = measured.contextItems.flatMap((higher) =>
+    higher.priority === "1" || !higher.ellipsized
+      ? []
+      : measured.contextItems
+          .filter((lower) => Number(lower.priority) > Number(higher.priority) && (lower.width ?? 0) > lower.floor + 1)
+          .map((lower) => `${label}: ${higher.id} ellipsized while ${lower.id} is ${String(lower.width)} px over a ${String(lower.floor)} px floor`),
+  );
+  expect(outOfOrder).toEqual([]);
   // The header's second line stays one row (L14–L16): the context, the folded
   // backend reading and the drop hint all fit the bar's height, so nothing
   // has wrapped below them.
@@ -1430,6 +1464,57 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(details).toBeDefined();
       expect(details?.refused).toBe(true);
       expect(details?.treatment.visible).toBe(true);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`PM9.2 L14–L16: the Workbench line with long names while a conversion runs, in ${locale}`, async () => {
+        // PM9-G's busy state is observed on the Project surface. Here the same
+        // long names are on the Workbench, where the inspected result ranks
+        // last and gives way first.
+        await metrics(1920, 1080);
+        await open("busyInspected", locale);
+        await navigate([en.projectSurface, zh.projectSurface]);
+        await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+        await browser.$("[data-targeted-row]").waitForDisplayed();
+        await navigate([en.workbench, zh.workbench]);
+        await browser.waitUntil(async () => (await surface()) === "workbench");
+        for (const [width, height] of [
+          [1920, 1080],
+          [1366, 768],
+          [960, 640],
+        ] as const) {
+          await metrics(width, height);
+          await frames();
+          const measured = await observe(`pm9-2-workbench-long-${locale}-${String(width)}x${String(height)}`);
+          expect(measured.surface).toBe("workbench");
+          expect(measured.contextItems.map((item) => item.id)).toContain("inspecting");
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+
+    it("PM9.2 L10: the folded reading's toggle hands the keyboard to the banner when it has something to say", async () => {
+      await metrics(1366, 768);
+      await open("populated", "en");
+      // Queried afresh each time: the toggle leaves, and a new one returns.
+      const toggle = () => browser.$("[data-backend-toggle]");
+      await toggle().waitForExist();
+      // Opened by a real press, which leaves the keyboard on the toggle.
+      await toggle().click();
+      expect(await browser.execute(() => document.activeElement?.hasAttribute("data-backend-toggle") ?? false)).toBe(true);
+      // A check the reader did not start from the toggle: pressed by script,
+      // so the keyboard stays where it was, and held so the state can be read.
+      await holdInvoke("inspect_backend");
+      await browser.execute(() => document.querySelector<HTMLButtonElement>('[data-backend-action="recheck"]')?.click());
+      await browser.waitUntil(async () => !(await toggle().isExisting()), { timeoutMsg: "the toggle stayed while checking" });
+      expect(await browser.execute(() => document.activeElement?.id ?? null)).toBe("backend-status");
+      await releaseInvokeHold("inspect_backend");
+      await browser.waitUntil(async () => await toggle().isExisting(), { timeoutMsg: "no quiet verdict" });
+      // Engaged: the banner stays open under the reader, and so does the keyboard.
+      expect(await browser.execute(() => document.activeElement?.id ?? null)).toBe("backend-status");
+      expect(await toggle().getAttribute("aria-expanded")).toBe("true");
+      expect(await browser.$("#backend-status").getAttribute("data-backend-collapsed")).toBe(null);
       expect(await unexpectedConsole()).toEqual([]);
     });
   });
