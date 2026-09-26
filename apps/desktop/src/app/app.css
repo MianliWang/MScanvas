@@ -1135,25 +1135,22 @@ button:disabled,
   flex: none;
 }
 
-/* The same treatment the selected-spectrum header needed. The controls beside
-   the title are taller than a title, so a header that does not grow to fit them
-   centres them outside itself; below the width where both fit on one line they
-   take their own row. */
+/* The same treatment the selected-spectrum header needed. The figure actions
+   beside the title are taller than a title, so a header that does not grow to
+   fit them centres them outside itself; below the width where both fit on one
+   line they take their own row. */
 .chromatogram-panel > .panel-header {
   flex: none;
   flex-wrap: wrap;
   align-items: flex-start;
 }
 
-.chromatogram-panel > .panel-header > .chromatogram-controls {
-  flex: 1 1 20rem;
-}
-
+/* The plot's own controls, on the line above the drawing: which traces, and
+   the range. The selected spectrum's m/z controls sit in the same place. */
 .chromatogram-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
 }
 
