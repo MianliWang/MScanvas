@@ -1,7 +1,8 @@
 # PM9.3 — evidence-first viewer: chromatogram, scans, spectrum, inspection and export
 
 PM9 | Acceptance: U3, U8 (viewer), U9, U10 | Depends on: PM9.2 | Serial, one writer
-Status: **IN PROGRESS — re-expanded on 2026-09-26** against the current tree
+Status: **IN PROGRESS — IMPLEMENTED; RENDERED ACCEPTANCE RESOURCE_DEFERRED**
+(2026-09-26, §0.4). Re-expanded on 2026-09-26 against the current tree
 (§0 below). §1–§5 are the static preparation, kept as evidence; §0 replaces
 §6 as the plan.
 
@@ -211,8 +212,75 @@ product repair cycles. The first L13 implementation is not one.
   with the roster open, the narrowest default arrangement. The expected cost is
   that line, about 44 px of chromatogram height, except in English at 960×640,
   where it replaces the second header row. It is weighed in the render.
-- The before-capture is taken by restoring `Chromatogram.tsx` and `app/app.css`
-  from `eae0fc3` for one G run, then verifying the tree against `HEAD`.
+- A static review of both commits (one read-only reviewer) confirmed the
+  diagnosis and found five things. Each is corrected test-only in `eeeb7c6`,
+  except the last, which is a product item:
+  - the row count read a label over its input, beside a 32 px summary, as two
+    rows;
+  - it ignored the heading, so actions dropping below the title as a whole
+    would pass;
+  - `setPanel` relied on an earlier reveal to have installed the read-back
+    store;
+  - the reveal would close a roster already open;
+  - the selected spectrum's header stacks its Export spectrum disclosure on a
+    line of its own under the figure actions at every width. Its wrapper had
+    no rule, so it was a plain block.
+- `696602c` (production, category A). The spectrum header's figure actions
+  and its Export spectrum disclosure now share one wrapping line, as the
+  chromatogram's figure actions and Export toggle do. Opened, the disclosure
+  still takes the whole width below them.
+- Checks run on `696602c`, all exit 0:
+  - `pnpm typecheck`;
+  - `pnpm e2e:typecheck`;
+  - `check_repo.py`;
+  - `git diff --check`;
+  - Vitest, 12 files and 404 tests in four invocations:
+    - `Chromatogram.test.tsx`, 106 tests;
+    - `ChromatogramExport`, `LinkedViewer`, `LinkedFigureExport`,
+      `SelectionAvailability`, `viewerSelectionAuthority`, `narrowLayout`,
+      `QuickFigureActions` and `LinkedFigureBinding`, 156 tests;
+    - `SelectedSpectrumExport`, `narrowLayout`, `cssom` and
+      `src/features/workbench`, 142 tests.
+
+  The first two invocations ran on `47c981b`, before the CSS commit.
+- **RESOURCE_DEFERRED (2026-09-26).** Every browser group was refused at
+  admission. Every reading from the session's first check to 15:45 fell
+  between 2.60 and 7.53 GiB available and 76.2–91.8 % used, against ≥ 8 GiB and ≤ 80 %. Nothing
+  was waited for and no workload was touched. Deferred:
+  - the helper's discriminating run;
+  - the before-capture;
+  - the PM9.3 spec (V1–V9 and both G cases);
+  - the legacy reruns;
+  - the rendered acceptance.
+
+  The full Vitest suite and `pnpm build` are deferred with them.
+- **Next window, in order:**
+  1. The discriminating run. Its temporary spec is not in the tree; it
+     reproduces the reveal twice at 960×640, with the shared table and with
+     `readBackSavedLayout`, recording the toggle's `aria-disabled` and
+     `aria-expanded` and the roster's `hidden`.
+  2. The before-capture: PM9.3-G with `Chromatogram.tsx`, `app/app.css` and
+     `workbench.css` restored from `eae0fc3`, then the tree verified against
+     `HEAD`. It is expected to fail its L13 assertion.
+  3. The PM9.3 spec on the candidate.
+  4. m5.7, m7.3, m7.4-conversion-figures, m4.3, m4.4, m5.2, m5.3,
+     viewer-r1-linked-viewer and viewer-r1-scale, one at a time. Each is
+     compared by stable identity with the 2026-09-25 campaign; a newly reached
+     assertion is classified, not patched.
+  5. The full Vitest suite and `pnpm build`.
+  6. The rendered judgement at the anchors and in the sweep.
+- **Outside the helper repair, recorded:**
+  - m4.1 and m4.2 fail at their own stale setup (family b, `li.dataset-row`
+    and a closed disclosure), not at the helper, and this dispatch does not
+    rerun them. They go to PM9.7's regression gate with the other stale-setup
+    specs.
+  - m7.4's two active-Clear cases and m7.2's copies toggle a panel the same
+    way and stay PM9.7's (baseline §10). Calling `readBackSavedLayout()`
+    before each toggle is the expected repair.
+  - The shared table's fixed save record also reads `locale: "en"` back after
+    Settings applies zh-CN, and the shell adopts what a save confirms. m7.3
+    and m7.4's zh-CN cases, which apply the language through Settings, may
+    therefore render in English. This is unconfirmed until those specs run.
 
 ## 1. Viewer ownership map
 
