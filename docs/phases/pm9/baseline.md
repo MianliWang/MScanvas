@@ -85,6 +85,12 @@ Tauri and native siblings exist for most of these files and were not part of
 this evidence; several still use the obsolete selectors (`e2e/support/tauriPanel.ts`
 among them).
 
+PM9.3's preparation classifies the viewer-related rows above test group by
+test group, from the retained reporter log, as still valid, superseded (with
+the named replacement), unrelated, or unknown until a first run. See
+[slice-03 §5](slice-03.md#5-legacy-browser-specs-relevant-to-pm93). The
+table above is unchanged.
+
 ## 3. v5.11 reference
 
 Owner-held material, not in the repository. The HTML was located on the owner's

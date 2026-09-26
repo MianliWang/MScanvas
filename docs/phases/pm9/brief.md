@@ -5,7 +5,8 @@ new product candidate ([ROADMAP](../../../ROADMAP.md), [M9 closure §15](../../p
 Budget: seven slices, including the opening baseline (PM9.1) and the closing
 acceptance (PM9.7). No uncounted planning or cleanup slice.
 Status: **PLANNED**. PM9.1 and PM9.2 have local, unvalidated work on a
-provisional base; see [slices.md](slices.md). Nothing here is accepted.
+provisional base, and PM9.3 has static preparation only; see
+[slices.md](slices.md). Nothing here is accepted.
 
 ## Mission
 
