@@ -47,6 +47,7 @@ import {
   setInvokeResult,
   type IpcCall,
 } from "../support/harness";
+import { showBackendBanner } from "../support/backendBanner";
 import { MZML_ROW, SETTLED_AUTHORITY, VENDOR_ROW, ipcTable } from "../support/fixtures";
 import {
   SPECTRUM_PLOT,
@@ -56,6 +57,7 @@ import {
 } from "../support/viewer";
 import {
   FAKE_WORKSPACE_CAPACITY,
+  chosenBackend,
   collidingFile,
   finalizedAttemptFacts,
   otherCollidingFile,
@@ -871,6 +873,27 @@ async function observe(label: string) {
             : { id: main.id, ...rect(main), clientHeight: main.clientHeight, scrollHeight: main.scrollHeight },
         inspector: rect(document.querySelector("#workbench-inspector")),
       },
+      // Who owns the vertical overflow (L22): each scroll region's own
+      // overflow and its scroll extent, the roster list included.
+      scrollOwners: [
+        "#workbench-roster",
+        ".dataset-roster-list",
+        "#workbench-evidence",
+        "#workbench-conversion",
+        "#workbench-project",
+        "#workbench-inspector",
+      ].map((selector) => {
+        const element = document.querySelector<HTMLElement>(selector);
+        return element === null || element.hidden || element.getClientRects().length === 0
+          ? { selector, shown: false }
+          : {
+              selector,
+              shown: true,
+              overflowY: getComputedStyle(element).overflowY,
+              clientHeight: element.clientHeight,
+              scrollHeight: element.scrollHeight,
+            };
+      }),
       outerScroll: {
         vertical: document.documentElement.scrollHeight - innerHeight,
         horizontal: document.documentElement.scrollWidth - innerWidth,
@@ -947,6 +970,41 @@ async function observe(label: string) {
   // so the notices track reserves no band (L10).
   expect(measured.workArea.notices?.height ?? 0).toBeLessThanOrEqual(1);
   expect(measured.backendToggle).not.toBe(null);
+  return measured;
+}
+
+/**
+ * A frame for a surface-level judgement (L1): its screenshot, the shown
+ * surface's title and region name, and the primary actions on screen in it.
+ * Recorded; the case decides what it asserts.
+ */
+async function surfaceFrame(label: string) {
+  const measured = await browser.execute(() => {
+    const main =
+      ["#workbench-evidence", "#workbench-conversion", "#workbench-project"]
+        .map((selector) => document.querySelector<HTMLElement>(selector))
+        .find((element) => element !== null && !element.hidden) ?? null;
+    const box = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    };
+    const title = main?.querySelector("h1.surface-title") ?? null;
+    return {
+      css: { width: innerWidth, height: innerHeight },
+      surface: document.querySelector(".workbench-shell")?.getAttribute("data-surface") ?? null,
+      region: main?.id ?? null,
+      regionName:
+        main === null ? null : (document.getElementById(main.getAttribute("aria-labelledby") ?? "")?.textContent ?? null),
+      title: title === null ? null : { text: title.textContent, ...box(title) },
+      primaries: [...(main?.querySelectorAll<HTMLButtonElement>(".primary-button") ?? [])]
+        .filter((button) => button.getClientRects().length > 0)
+        .map((button) => ({ text: button.textContent, disabled: button.disabled, ...box(button) })),
+    };
+  });
+  const screenshot = await cdp("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
+  if (typeof screenshot.data !== "string") throw Error("Screenshot bytes missing");
+  writeFileSync(join(output, `${label}.png`), Buffer.from(screenshot.data, "base64"));
+  evidence.push({ label, kind: "Observation only.", candidate: process.env["MSCANVAS_PM9_CANDIDATE"] ?? "unlabelled", ...measured });
   return measured;
 }
 
@@ -1493,6 +1551,53 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
+
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`PM9.2 L1: each surface's title, and a primary action only where one is owned, in ${locale}`, async () => {
+        const words = locale === "en" ? en : zh;
+        await metrics(1366, 768);
+        await open("populated", locale);
+        await browser.$("[data-backend-toggle]").waitForExist();
+        for (const [target, name] of [
+          ["workbench", words.workbench],
+          ["conversion", words.conversionTask],
+          ["project", words.projectSurface],
+        ] as const) {
+          await navigate([name]);
+          await browser.waitUntil(async () => (await surface()) === target);
+          await frames();
+          const seen = await surfaceFrame(`pm9-2-l1-${target}-${locale}-1366x768`);
+          // The surface says what it is, in the navigation's words, on screen.
+          expect(seen.title?.text).toBe(name);
+          expect(seen.regionName).toBe(name);
+          expect(seen.title?.y ?? -1).toBeGreaterThanOrEqual(0);
+          expect((seen.title?.y ?? 0) + (seen.title?.height ?? 0)).toBeLessThanOrEqual(seen.css.height);
+          // Nothing read and nothing retained: the evidence surface invents none.
+          if (target === "workbench") expect(seen.primaries).toEqual([]);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+
+    it("PM9.2 L1: the retained acquisition's reopen is the evidence surface's one primary action", async () => {
+      await metrics(1366, 768);
+      await open("populated", "en");
+      await viewTheRow();
+      // A different installation, chosen: its readings replace the old one's,
+      // and the acquisition stays one press from being read again (WF-001).
+      await setInvokeResult("choose_backend_installation", chosenBackend);
+      await showBackendBanner();
+      await browser.$('[data-backend-action="choose"]').click();
+      const reopen = browser.$("#workbench-evidence .primary-button");
+      await reopen.waitForDisplayed({ timeoutMsg: "no reopen action after the installation changed" });
+      await frames();
+      const seen = await surfaceFrame("pm9-2-l1-retained-en-1366x768");
+      expect(seen.primaries.map((primary) => primary.text)).toEqual([
+        expect.stringMatching(new RegExp(`^${prefix(en.previewRetained)}QC_pool_01\\.mzML`, "u")),
+      ]);
+      expect(seen.primaries[0]?.disabled).toBe(false);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
 
     it("PM9.2 L10: the folded reading's toggle hands the keyboard to the banner when it has something to say", async () => {
       await metrics(1366, 768);
