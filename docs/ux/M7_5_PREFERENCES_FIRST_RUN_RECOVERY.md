@@ -245,6 +245,18 @@ without a usable backend can still add, group and organise acquisitions. It is
 not a wizard, it gates nothing, and there is no stored "setup complete"
 authority.
 
+*Changed by PM9.2 (2026-09-26, L10; final candidate `b81fc78`,
+[slice-02](../phases/pm9/slice-02.md#focused-rendered-acceptance-2026-09-26)).*
+While a usable, current reading leaves nothing to act on, the banner folds to a
+`ProteoWizard ready` control in the header's context bar and takes no height;
+its reading stays the one live region, and the help and the actions are one
+press away through that control. Every other state -- checking, missing,
+unsupported, failed, superseded, held back by the conversion lane -- keeps the
+banner, its actions and this help on screen. Focus inside the banner keeps it
+open, and a focused control that leaves hands its place to the banner. The
+paragraphs above and M7.5's captures describe M7.5's build, where the banner
+was always shown.
+
 ## Localization and accessibility coverage
 
 Every surface M7.5 delivers or touches is localized in `en` and `zh-CN`, bundled

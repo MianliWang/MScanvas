@@ -300,6 +300,13 @@ findings; both were confirmed and repaired on the same task branch:
   The main evidence states and existing retry remain reachable at constrained
   widths. The previous panel request remains a presentation preference.
 
+  *Changed by PM9.2 (2026-09-26, L20; final candidate `b81fc78`,
+  [slice-02](../phases/pm9/slice-02.md#focused-rendered-acceptance-2026-09-26)).*
+  The gate is unchanged -- nothing to show still means the Inspector stays closed -- but the
+  control is no longer `disabled`. It is refused with `aria-disabled`, stays in
+  the tab order with its focus ring, and says why in the terms of its surface.
+  The record above describes the PR 121 build.
+
 Only six production paths changed: PreviewWorkspace, WorkbenchHeader,
 GroupedRosterList, the i18n boundary and its en/zh-CN resource values. Build 03
 records all 166 production inputs before and after compilation, unchanged

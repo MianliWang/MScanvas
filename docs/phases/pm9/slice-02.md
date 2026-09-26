@@ -2,15 +2,15 @@
 
 PM9 | Acceptance: U1, U2, U7 (same session), U9, U10 | Depends on: PM9.1 |
 Serial, one writer
-Status: **PM9.2 PRODUCT CONVERGENCE — FOCUSED RENDERED ACCEPTANCE PASSED EXCEPT ONE OWNER DECISION.** The owner's dispositions in
+Status: **PM9.2 PRODUCT CONVERGENCE COMPLETE — FOCUSED RENDERED ACCEPTANCE
+PASS.** The owner's dispositions in
 [baseline §3.1](baseline.md#31-rendered-comparison-and-dispositions-2026-09-25)
 were implemented on the reconciled base (`6b31161`), repaired once from the
-rendered evidence and accepted in the browser on the final candidate
-`0d22fc7843c0ec9583ca44bc4fa91e0a94803eb0` (see "Focused rendered acceptance"
-below). Every obligation passes except one criterion of L14–L16: at its narrow
-floor the English conversion-scope item reads "For co…", which does not say
-what it is. Fixing it changes the English wording that the frozen PM9.1 B2 test
-pins, so it waits for the owner. Native rendering at 150 % stays PENDING.
+rendered evidence and accepted in the browser on `0d22fc7` (see "Focused
+rendered acceptance" below). The one criterion left there, the English scope
+at its floor, was closed by the owner's copy decision on the final code
+candidate `b81fc785d2be703e09ac4183dd1c3a17dea58cb7` (tree `45da59b2f569d862e825b4621d222b9d38e38767`; see "Closure" below). Native
+rendering at 150 % belongs to PM9.1 and stays PENDING.
 
 ## Goal
 
@@ -245,8 +245,9 @@ BLOCKED_PROVIDER_HOLD.
 ### Records this supersedes, to amend after acceptance
 
 Not edited before the rendered acceptance; each is superseded by the rows
-above once accepted. The acceptance below ends with one owner decision, so
-they are still unamended; the amendments are drafted and wait for it:
+above once accepted. They were amended when PM9.2 closed (see "Closure"
+below), each with a dated note that leaves its own evidence attributed to its
+own build:
 
 - [M7.2 record](../../ux/M7_2_WORKBENCH_SHELL_ROSTER_ORGANIZATION.md): Details
   "disabled until a preview is loaded" (L20).
@@ -333,6 +334,71 @@ at full accent: `aria-disabled` is not dimmed for `.primary-button`, which PM9.2
 did not touch. Clear list's focus and hover, and every zh-CN keyboard walk, are
 code-evidenced only. Native Windows at 150 % is PENDING and the
 provider-positive route BLOCKED_PROVIDER_HOLD.
+
+### Closure (2026-09-26): the owner's decision and the final candidate
+
+**The decision.** The owner chose option (a) for L14–L16 (e). The English
+`shellContextScope` value changes from "For conversion: {{scope}} ·
+{{eligible}} eligible" to "Conversion: {{scope}} · {{eligible}} eligible", so
+the word that identifies the item leads and survives the floor. zh-CN is
+unchanged: its floored form "待转换…" already identifies it. This is a
+product-contract update, not a weaker test: the frozen PM9.1 B2 check in
+`app/Pm9Baseline.test.tsx` and the exact copy in
+`features/workbench/shellContext.test.ts` expect the new prefix, and the
+browser spec's B1 compares the line with the Conversion surface through the
+resource itself. Membership, the scope's owner and counts, navigation, where
+the scope appears (B1's page-sensitive rule), which element carries the name
+and scientific state are unchanged; the accessible name follows the new text.
+
+**The final candidate.** `b81fc785d2be703e09ac4183dd1c3a17dea58cb7`, tree `45da59b2f569d862e825b4621d222b9d38e38767`. Against
+`0d22fc7`, its only production change is that one value in
+`features/preferences/locales/en.ts`; the rest of the commit is the two test
+expectations and the browser spec's visible-prefix measure. The text is
+shorter than before, so no layout, behaviour or other row is affected, and the
+rendered evidence for L1, L9, L10, L20 and L22 on `0d22fc7` stands.
+
+**Validation on it.** `pnpm typecheck` and `pnpm e2e:typecheck` exit 0.
+Vitest over `shellContext.test.ts`, `ContextLineShell.test.tsx`,
+`Pm9Baseline.test.tsx` (B1–B7), `Pm92Convergence.test.tsx` and `i18n.test.ts`:
+5 files, 51 tests pass. PM9.1's browser spec: 22 of 22
+(`.tmp/pm92-accept/run5`, evidence `test-results/pm9.1/browser-knQ5aB`),
+including B1–B7, the PM9-G states at three viewports in both languages, and the
+Workbench long-name case, which now asserts that a given-way scope still leads
+with "Conv" or "待转". At 960×640 in en with long names the line reads "In
+progress: Conversion running · Inspect… · Project: Plasma_QC_…Plasm… ·
+Conver…": the status whole, ranks 5 and 4 at their floor before the project
+gives way, the drop hint at 0, one 32 px row, no outer overflow either way.
+zh-CN reads "待转换…" and "正在检…", as before. B1 finds the line's scope equal
+to the Conversion surface's own at every route step.
+
+**Final dispositions.**
+
+| Row | Disposition |
+| --- | --- |
+| L1 | **Pass** (rendered on `0d22fc7`) |
+| L9 | **Pass** on the owner's criterion (rendered on `0d22fc7`) |
+| L10 | **Pass** (rendered on `0d22fc7`) |
+| L14–L16 | **Pass** (rendered on `b81fc78`): (a) to (d) as on `0d22fc7`, and (e) now identifiable in both languages |
+| L20 | **Pass**: closed by default below 1700 px as an intentional constrained-width behaviour, with an obvious, stable, keyboard-reachable entry |
+| L22 | **Pass** (rendered on `0d22fc7`) |
+
+**Limits kept.** Each is recorded above and none breaks an accepted
+criterion: the drop hint can show less than an ellipsis when squeezed to a
+sliver; two simultaneous statuses, an unsaved very long project at its floor,
+the rank-2 shrink after rank 3 is floored, the superseded reading and zh-CN's
+organizing row with the Undo link are not rendered; the English count can wrap
+between "0" and "checked"; the give-way order rests on Blink's rounding, the
+engine of the WebView2 this product targets; two filled accents share the
+retained state; the refused `Capture file facts` keeps its pre-PM9.2 primary
+styling; Clear list's focus and hover and the zh-CN keyboard walks are
+code-evidenced only.
+
+**Evidence boundaries.** The five records above now carry dated notes: their
+measurements and captures stay attributed to the builds they observed, and the
+current behaviour to `b81fc785d2be703e09ac4183dd1c3a17dea58cb7`. PM9.1's residual obligations are not
+closed by any of this: J1–J6 measurements and the shared-helper diagnoses are
+not done, native Windows at 150 % is PENDING, and the provider-positive route is
+BLOCKED_PROVIDER_HOLD.
 
 ## Not in this slice
 

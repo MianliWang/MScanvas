@@ -13,7 +13,10 @@ Each workflow is a testable product contract, not a screen description.
    ProteoWizard there meant it to be found; a folder chosen through the picker
    is narrower than that, not wider, because it applies to one session only.
 2. If available, it reports the ProteoWizard release and build and enters the
-   workspace. The report states which installation it describes.
+   workspace. The report states which installation it describes. Since PM9.2
+   (L10, `b81fc78`) the available report takes no band of its own while
+   nothing needs acting on: it folds to a `ProteoWizard ready` control in the header, which
+   opens the full report, and the report is still announced as it arrives.
 3. If unavailable, it offers installation guidance, retry, and `Choose folder…`
    for an installation somewhere it does not search. That choice lasts for the
    session only and names a folder, never an executable: naming one binary

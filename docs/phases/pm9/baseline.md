@@ -168,8 +168,8 @@ no disposition yet.
 
 PM9.2 implemented the action rows L1, L9, L10, L14–L16 and L22 and L20's
 conditions on 2026-09-26 (`6b31161`) and they were rendered and accepted in
-the browser on `0d22fc7` (§9), except L14–L16's English scope at its floor,
-which waits for the owner. The production column above still describes
+the browser on `0d22fc7` (§9); L14–L16's English scope at its floor was
+closed on `b81fc78` by the owner's copy decision (§9, Closure). The production column above still describes
 `a0783bb`. How each row was disposed of is in
 [slice-02](slice-02.md#focused-rendered-acceptance-2026-09-26). L13 stays
 PM9.3's.
@@ -663,8 +663,19 @@ second reader; the dispositions and limits are in
 
 The header stays 88 px; the L1 title takes 29 px of the 89 px the fold returns.
 
-**Status.** PM9.2: every obligation passes in the browser except L14–L16 (e) in
-en, which waits for the owner's decision on the scope wording. PM9.1 is
+**Status at `0d22fc7`.** PM9.2: every obligation passes in the browser except
+L14–L16 (e) in en, which waited for the owner's decision on the scope wording. PM9.1 is
 unchanged by this run: J1–J6 measurements and the helper diagnoses are not
 done, native rendering at 150 % is PENDING, and the provider-positive route is
 BLOCKED_PROVIDER_HOLD. PM9.3 has not started; L13 is its first item.
+
+**Closure (2026-09-26).** The owner chose the English scope wording
+"Conversion: {{scope}} · {{eligible}} eligible" (zh-CN unchanged). The final
+code candidate is `b81fc785d2be703e09ac4183dd1c3a17dea58cb7`, tree `45da59b2f569d862e825b4621d222b9d38e38767`; against `0d22fc7`
+its only production change is that value. Run 5 (`.tmp/pm92-accept/run5`,
+memory 9.63 GiB available, 69.6 % used) ran PM9.1's spec on it: 22 of 22, B1–B7
+included. At 960×640 in en with long names the scope keeps "Conver…", and in
+zh-CN "待转换…"; the status is whole, the order holds, the line is one row, and
+the document has no overflow. Status: **PM9.2 PRODUCT CONVERGENCE COMPLETE —
+FOCUSED RENDERED ACCEPTANCE PASS.** PM9.1's residual obligations above are
+unchanged; PM9.3 has not started.

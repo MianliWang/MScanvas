@@ -9,6 +9,14 @@
   bundle. Duplicate identity is correspondingly the whole acquisition's
   identity rather than a single object's; for every family described here that
   is the same value it always was.
+- Amended: 2026-09-26 (PM9.2, final candidate `b81fc78`) — the backend notice
+  is persistent only while it has something to act on. With a usable, current
+  reading it folds into the header and takes no height, so the 960x640 budget
+  below is no longer shortened by it in that state; see *Path and diagnostic
+  privacy* below and
+  [PM9.2](../../phases/pm9/slice-02.md#focused-rendered-acceptance-2026-09-26).
+  The contract that a shown notice never moves or collapses to fit is
+  unchanged.
 - Amended: 2026-07-30 (M1.1.5) — identity lifetime. Every registered dataset now
   holds a live handle on its file, so a filesystem identity cannot be recycled
   while a row still names it. See *Identity lifetime* below; the paragraphs this
@@ -529,6 +537,12 @@ alone owns the bounded vertical overflow, so one internal scroll reaches the
 complete Selected spectrum header while the table header and one complete data
 row remain available. Shrinking the viewer row to fit instead is not recovery:
 it recreates the clipped evidence this contract refuses.
+
+Since PM9.2 (see the amendment above) the backend notice is on screen only
+while it has something to act on; a usable, current reading folds into the
+header. The budget and the rule for a notice that is shown are as stated.
+Measured in the browser at 960x640: the quiet state's notices band was 89 px
+at `a0783bb` and is 0 px on `b81fc78`.
 
 The registry's own origin record stays private and stays out of identity: two
 names for one acquisition are one row whichever route each arrived by, and a
