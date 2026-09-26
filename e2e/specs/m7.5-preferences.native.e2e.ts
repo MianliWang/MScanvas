@@ -48,6 +48,7 @@ import {
 } from "../support/m75PreferenceRoot";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
+import { showBackendBanner } from "../support/backendBanner";
 
 const HERE = dirname(fileURLToPath(import.meta.url)), REPO = resolve(HERE, "../..");
 const DIALOG = "[data-settings-dialog]", ENTRY = "[data-settings-entry]";
@@ -175,6 +176,7 @@ async function capture(label: string, validate = true) {
       detailsOpen: shell?.getAttribute("data-details-open") ?? null,
       backendStatus: document.querySelector("[data-backend-status]")?.getAttribute("data-backend-status") ?? null,
       backendReading: box(document.querySelector(".backend-status-reading")),
+      backendCollapsed: document.querySelector("[data-backend-collapsed]") !== null,
       backendActions: [...document.querySelectorAll("[data-backend-action]")].map(node => node.getAttribute("data-backend-action")),
       help: box(document.querySelector("[data-backend-help]")),
       helpOpen: document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open ?? null,
@@ -216,8 +218,9 @@ async function capture(label: string, validate = true) {
     expect(state.horizontalOverflow).toBeLessThanOrEqual(1); expect(resources.externalResources).toEqual([]);
     // Real commands, not a table the page answered for itself.
     expect(state.mockKeys).toEqual([]); expect(state.invokeWritable).toBe(false); expect(state.console).toEqual([]);
-    // Nothing on screen is ever clipped out of reach.
-    for (const region of [state.backendReading, state.storageNote, state.storedRecordAlert, state.saveFailure, state.saveRefused, state.layoutUnsaved]) {
+    // Nothing on screen is ever clipped out of reach. A folded banner's reading
+    // is not on screen (PM9 L10): it is kept only as the live region.
+    for (const region of [...(state.backendCollapsed ? [] : [state.backendReading]), state.storageNote, state.storedRecordAlert, state.saveFailure, state.saveRefused, state.layoutUnsaved]) {
       if (region !== null) expect(region.clipped).toBe(false);
     }
     if (state.dialog !== null) {
@@ -632,7 +635,10 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(initial.backendStatus).toBe("available");
     expect(initial.backendActions).toEqual(["recheck", "choose"]);
 
-    // The help, with no data loaded and no backend configured.
+    // The help, with no data loaded and no backend configured. Where this
+    // host's installation is usable the banner is folded, and its help and
+    // actions are one press away (PM9.2 L10); it stays open from here on.
+    await showBackendBanner();
     await browser.$(`${HELP} summary`).click();
     await browser.waitUntil(() => browser.execute(help => document.querySelector<HTMLDetailsElement>(help)?.open === true, HELP));
     const english = await capture("18-offline-help-en");

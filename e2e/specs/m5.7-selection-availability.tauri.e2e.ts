@@ -19,6 +19,7 @@ import {
   availableBackend,
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
+import { showBackendBanner } from "../support/backendBanner";
 
 const PLOT = "svg.chromatogram-svg";
 const GRID = "div.spectrum-table";
@@ -66,6 +67,7 @@ async function recheckTheBackend(verdict: unknown): Promise<void> {
       table["inspect_backend"] = { kind: "resolve", value: answer };
     }
   }, verdict);
+  await showBackendBanner();
   const recheck = await browser.$('[data-backend-action="recheck"]');
   if (!(await recheck.isExisting())) {
     throw new Error("the backend banner offers no recheck action");

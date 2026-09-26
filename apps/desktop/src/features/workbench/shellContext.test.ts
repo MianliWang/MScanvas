@@ -17,7 +17,7 @@ import {
   projectLayer,
   targetedProject,
 } from "../../test/projectFixtures";
-import { shellContextItems, type ShellContextFacts } from "./shellContext";
+import { prioritizeShellContext, shellContextItems, type ShellContextFacts } from "./shellContext";
 
 const runtime = createUiRuntime();
 const en = bindUiMessages(runtime.instance.getFixedT("en", "ui"));
@@ -44,8 +44,13 @@ describe("the shell's context line", () => {
 
   it("names the open project, and says so when it has unsaved changes", () => {
     const state = openProject({ name: "Pooled QC study", dirty: true });
+    // The state comes before the name, so a long name cannot push the word
+    // that says the project is unsaved out of sight (PM9 L14–L16).
     expect(texts({ ...NOTHING, project: { name: state.name, unsaved: state.dirty } })).toEqual([
-      ["project", "project", "Project: Pooled QC study · unsaved changes"],
+      ["project", "project", "Project (unsaved changes): Pooled QC study"],
+    ]);
+    expect(texts({ ...NOTHING, project: { name: state.name, unsaved: state.dirty } }, zh)).toEqual([
+      ["project", "project", "项目（有未保存的更改）：Pooled QC study"],
     ]);
     expect(texts({ ...NOTHING, project: { name: state.name, unsaved: false } })).toEqual([
       ["project", "project", "Project: Pooled QC study"],
@@ -170,5 +175,60 @@ describe("the shell's context line", () => {
       "projectActivity",
       "inspecting",
     ]);
+  });
+
+  describe("as a surface shows it", () => {
+    const state = targetedProject();
+    const everything: ShellContextFacts = {
+      project: { name: state.name, unsaved: false },
+      projectActivity: "projectBusyChecking",
+      viewing: { name: "sample.mzML", context: null, spectrumIndex: 0 },
+      conversionScope: { scope: "selected", eligible: 2 },
+      conversionStatus: "running",
+      inspecting: provenanceOf(state, { kind: "artifact", id: state.artifacts[0]!.id }),
+    };
+    const arranged = (surface: "workbench" | "conversion" | "project") =>
+      prioritizeShellContext(shellContextItems(everything, en), surface).map((item) => [
+        item.id,
+        item.priority,
+      ]);
+
+    it("puts an operation's status first, where it never gives way", () => {
+      expect(arranged("workbench")).toEqual([
+        ["conversionActivity", 1],
+        ["projectActivity", 1],
+        ["viewing", 2],
+        ["inspecting", 5],
+        ["project", 3],
+        ["conversionScope", 4],
+      ]);
+    });
+
+    it("ranks the object that surface is about above the other, in the same places", () => {
+      expect(arranged("project")).toEqual([
+        ["conversionActivity", 1],
+        ["projectActivity", 1],
+        ["viewing", 5],
+        ["inspecting", 2],
+        ["project", 3],
+      ]);
+      expect(arranged("conversion").map(([id]) => id)).toEqual(
+        arranged("workbench").map(([id]) => id),
+      );
+    });
+
+    it("leaves the conversion scope out where no conversion is being set up", () => {
+      expect(arranged("project").some(([id]) => id === "conversionScope")).toBe(false);
+      expect(arranged("conversion").some(([id]) => id === "conversionScope")).toBe(true);
+    });
+
+    it("keeps every item's whole sentence, whatever its rank", () => {
+      const projected = shellContextItems(everything, en);
+      for (const surface of ["workbench", "conversion", "project"] as const) {
+        for (const item of prioritizeShellContext(projected, surface)) {
+          expect(item.text).toBe(projected.find((candidate) => candidate.id === item.id)?.text);
+        }
+      }
+    });
   });
 });

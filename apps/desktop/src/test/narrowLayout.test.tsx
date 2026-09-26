@@ -30,6 +30,7 @@ import {
   thirdFile,
   unavailableBackend,
 } from "./previewFixtures";
+import { showBackendBanner } from "./backendBanner";
 
 const mountedStyles: HTMLStyleElement[] = [];
 
@@ -326,6 +327,7 @@ describe("narrow desktop layout markup", () => {
     expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Preview focused" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Remove highlighted" })).toHaveLength(1);
+    await showBackendBanner();
     expect(screen.getAllByRole("button", { name: "Check again" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Choose folder…" })).toHaveLength(1);
   });

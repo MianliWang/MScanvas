@@ -48,6 +48,7 @@ import type {
   ConversionCatalogRow,
   ConversionIntentDescriptor,
 } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { showBackendBanner } from "../support/backendBanner";
 
 const PANEL = "section.conversion-panel";
 const REGION = '[data-live-region="conversion-availability"]';
@@ -353,6 +354,7 @@ function terminalQueue(sequence: number, authority: typeof AUTHORITY_A) {
 
 /** Presses the backend banner's own recheck, which is not a conversion action. */
 async function pressCheckAgain(): Promise<void> {
+  await showBackendBanner();
   const recheck = await browser.$('[data-backend-action="recheck"]');
   await recheck.click();
 }

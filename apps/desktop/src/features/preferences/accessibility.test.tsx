@@ -185,9 +185,13 @@ describe("the workspace shell, by keyboard", () => {
     const inspector = screen.getByRole("button", { name: en.inspectorToggle });
     expect(inspector).toHaveAttribute("aria-controls", "workbench-inspector");
     // Refused because there is nothing loaded to inspect, and it says why
-    // rather than only looking grey.
-    expect(inspector).toBeDisabled();
+    // rather than only looking grey -- and it stays in the tab order, so the
+    // reason and the control are reachable from the keyboard (PM9 L20).
+    expect(inspector).toHaveAttribute("aria-disabled", "true");
+    expect(inspector).not.toBeDisabled();
     expect(inspector).toHaveAttribute("title", en.inspectorUnavailable);
+    inspector.focus();
+    expect(inspector).toHaveFocus();
   });
 
   it("keeps the layout reset reachable by keyboard and announces nothing it has not done", async () => {

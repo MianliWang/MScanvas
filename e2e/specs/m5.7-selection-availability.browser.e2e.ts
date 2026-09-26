@@ -40,6 +40,7 @@ import {
   viewerReads,
   visibleSpan,
 } from "../support/viewer";
+import { showBackendBanner } from "../support/backendBanner";
 
 const VIEWPORTS = [
   { name: "1920x1080", width: 1_920, height: 1_080 },
@@ -71,6 +72,7 @@ async function recheckTheBackend(verdict: unknown): Promise<void> {
   await setInvokeResult("inspect_backend", verdict);
   // By the action's own identity: a label is not an identity once the
   // interface has two languages, and the banner carries the identity.
+  await showBackendBanner();
   const recheck = await browser.$('[data-backend-action="recheck"]');
   if (!(await recheck.isExisting())) {
     throw new Error("the backend banner offers no recheck action");

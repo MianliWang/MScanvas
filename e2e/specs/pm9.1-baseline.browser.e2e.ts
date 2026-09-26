@@ -23,12 +23,14 @@
  * Two parts, kept apart:
  * - the functional cases assert behaviour the owners already define;
  * - the observation block records geometry and keyboard samples at the PM9
- *   viewports and languages. It asserts only limits other specs already hold.
- *   A rectangle it records is not a verdict that the layout is acceptable, and
- *   no overflow is not acceptance.
+ *   viewports and languages. It asserts the limits other specs already hold
+ *   and, since PM9.2, the convergence limits for L10, L14–L16, L20 and L22,
+ *   each named where it is asserted. Beyond those, a rectangle it records is
+ *   not a verdict that the layout is acceptable, and no overflow is not
+ *   acceptance.
  *
  * Status when written: authored, NOT RUN. Nothing here has compiled, been
- * discovered or passed.
+ * discovered or passed. The PM9.2 additions are authored and NOT RUN too.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -736,8 +738,8 @@ async function tabTo(id: string, limit = 40): Promise<boolean> {
 // ---------------------------------------------------------------- observation
 
 /**
- * What one frame is evidence for. Recorded, never judged here beyond the limits
- * other specs already hold.
+ * What one frame is evidence for. Recorded, and judged here only against the
+ * limits other specs already hold and the PM9.2 limits named below.
  */
 async function observe(label: string) {
   const measured = await browser.execute(() => {
@@ -791,14 +793,17 @@ async function observe(label: string) {
       contextLine: items.length > 0,
       header: rect(header),
       contextBar: rect(document.querySelector(".workbench-context-bar")),
+      shellContext: rect(document.querySelector(".shell-context")),
       contextItems: items.map((item) => ({
         id: item.getAttribute("data-shell-context"),
+        priority: item.getAttribute("data-priority"),
         text: item.textContent,
         truncated: item.scrollWidth > item.clientWidth,
         ...rect(item),
       })),
       contextRows: new Set(items.map((item) => Math.round(item.getBoundingClientRect().top))).size,
       dropHint: rect(document.querySelector(".workbench-header .workspace-drop-hint")),
+      backendToggle: rect(document.querySelector("[data-backend-toggle]")),
       regions: {
         roster: rect(document.querySelector("#workbench-roster")),
         main:
@@ -843,10 +848,34 @@ async function observe(label: string) {
     expect(control.x).toBeGreaterThanOrEqual(0);
     expect(control.x + control.width).toBeLessThanOrEqual(measured.css.width + 1);
   }
+  const line = measured.shellContext;
   for (const item of measured.contextItems) {
     // The design system's compact control minimum, which the draft claims.
     expect(item.height ?? 0).toBeGreaterThanOrEqual(31.5);
+    // An operation's status is never cut behind a long name (PM9.2 L14–L16):
+    // not ellipsized itself, and not pushed past the line, which clips.
+    if (item.priority === "1" && line !== null) {
+      expect(item.truncated).toBe(false);
+      expect(item.x ?? 0).toBeGreaterThanOrEqual(line.x - 1);
+      expect((item.x ?? 0) + (item.width ?? 0)).toBeLessThanOrEqual(line.x + line.width + 1);
+    }
   }
+  // The header's second line stays one row (L14–L16): the context, the folded
+  // backend reading and the drop hint all fit the bar's height, so nothing
+  // has wrapped below them.
+  if (measured.contextBar !== null) {
+    const tallest = Math.max(
+      ...[measured.dropHint, measured.backendToggle, ...measured.contextItems].map((box) => box?.height ?? 0),
+    );
+    expect(measured.contextBar.height).toBeLessThanOrEqual(tallest + 1);
+  }
+  // The document keeps no height of its own that the body cannot scroll: every
+  // region owns its content's overflow (L22).
+  expect(measured.outerScroll.vertical).toBeLessThanOrEqual(1);
+  // Both observed states have a usable installation and nothing else to say,
+  // so the notices track reserves no band (L10).
+  expect(measured.workArea.notices?.height ?? 0).toBeLessThanOrEqual(1);
+  expect(measured.backendToggle).not.toBe(null);
   return measured;
 }
 
@@ -868,6 +897,7 @@ async function keyboardSample(label: string, limit = 40) {
         inHeader: active.closest(".workbench-header") !== null,
         context: active.getAttribute("data-shell-context"),
         name: active.getAttribute("aria-label") ?? (active.textContent ?? "").trim(),
+        refused: active.getAttribute("aria-disabled") === "true",
         inViewport: box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight,
       };
     });
@@ -880,7 +910,7 @@ async function keyboardSample(label: string, limit = 40) {
     stops.push({ ...at, treatment: await focusedTreatment() });
   }
   evidence.push({ label: `${label}-keyboard`, kind: "Observation only.", stops });
-  return stops as { context: string | null; treatment: { visible: boolean } }[];
+  return stops as { context: string | null; name: string; refused: boolean; treatment: { visible: boolean } }[];
 }
 
 // ---------------------------------------------------------------- cases
@@ -929,7 +959,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       // the Conversion surface resolves, and what Details describes.
       expect(await contextText("project")).toBe(fill(en.shellContextProject, { name: "Test project" }));
       expect(await contextText("viewing")).toMatch(new RegExp(`^${prefix(en.shellContextViewing)}QC_pool_01\\.mzML`, "u"));
-      expect((await contextText("conversionScope"))?.startsWith(prefix(en.shellContextScope))).toBe(true);
+      // The scope bears on a conversion being set up, so the Project surface
+      // leaves it out (PM9.2 L14–L16); the route below reaches it from the
+      // Workbench, where it is shown.
+      expect(await contextText("conversionScope")).toBe(null);
       expect(await contextText("conversionActivity")).toBe(null);
       expect(await contextText("projectActivity")).toBe(null);
 
@@ -1266,7 +1299,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     });
   });
 
-  describe("observation (post-draft candidate; geometry is recorded, not accepted)", () => {
+  describe("observation (geometry recorded; PM9.2 limits asserted, the rest not accepted)", () => {
     const VIEWPORTS = [
       [1920, 1080],
       [1366, 768],
@@ -1314,6 +1347,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             expect(stop).toBeDefined();
             expect(stop?.treatment.visible).toBe(true);
           }
+          // The Details entry is a stop, with a visible ring, at every width
+          // and whether or not there is anything to show (PM9.2 L20).
+          const details = stops.find((candidate) => candidate.name === (locale === "en" ? en : zh).inspectorToggle);
+          expect(details).toBeDefined();
+          expect(details?.treatment.visible).toBe(true);
         }
         // motion's development build warns once per animation that reduced
         // motion is on. This test turned it on, so that one notice is expected
@@ -1325,5 +1363,24 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         ).toEqual([]);
       });
     }
+
+    it("PM9.2 L20: the Details entry at 1366x768 while there is nothing to show", async () => {
+      // Both G states have something to show. This is the state L20 is about:
+      // closed by default at this width, refused, and still a stop that shows
+      // where focus is.
+      await metrics(1366, 768);
+      await open("populated", "en");
+      // The usable reading folds the banner; observe() expects it folded.
+      await browser.$("[data-backend-toggle]").waitForExist();
+      await frames();
+      const label = "pm9-2-details-refused-en-1366x768";
+      await observe(label);
+      const stops = await keyboardSample(label);
+      const details = stops.find((candidate) => candidate.name === en.inspectorToggle);
+      expect(details).toBeDefined();
+      expect(details?.refused).toBe(true);
+      expect(details?.treatment.visible).toBe(true);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
   });
 });

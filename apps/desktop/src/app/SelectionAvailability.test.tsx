@@ -39,6 +39,7 @@ import {
   unavailableBackend,
 } from "../test/previewFixtures";
 import { App } from "./App";
+import { showBackendBanner } from "../test/backendBanner";
 
 const SCAN_COUNT = 60;
 const PLOT_PIXELS = 1_000;
@@ -124,6 +125,7 @@ function region(): HTMLElement {
 
 /** Closes the backend lane, by asking for a check that will not answer yet. */
 async function startACheck(): Promise<void> {
+  await showBackendBanner();
   fireEvent.click(screen.getAllByRole("button", { name: "Check again" })[0] as HTMLElement);
   await waitFor(() => {
     expect(notice()).not.toBeNull();

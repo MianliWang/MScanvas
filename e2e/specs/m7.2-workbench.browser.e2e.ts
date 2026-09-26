@@ -140,7 +140,8 @@ describe("M7.2 workbench shell and grouped roster", () => {
       if (language === "zh-CN") await locale(language);
       const details = browser.$('[aria-controls="workbench-inspector"]');
       const unavailable = async (state: string) => {
-        expect(await details.isEnabled()).toBe(false);
+        // Refused but focusable, so its reason is reachable (PM9.2 L20).
+        expect(await details.getAttribute("aria-disabled")).toBe("true");
         expect(await details.getAttribute("aria-expanded")).toBe("false");
         expect(await browser.$("#workbench-inspector").isDisplayed()).toBe(false);
         expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(true);
@@ -165,7 +166,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await unavailable("failed");
       await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
       await browser.$("#workbench-evidence").$(language === "en" ? "button=Try reading this file again" : "button=重试读取此文件").click();
-      await details.waitForEnabled(); await details.click();
+      await browser.waitUntil(async () => (await details.getAttribute("aria-disabled")) === null); await details.click();
       await browser.$("#workbench-inspector").waitForDisplayed();
       expect(await browser.$("#workbench-inspector").getText()).toContain(selectedFile.fileName);
       await capture(`review-inspector-${language}-loaded`);

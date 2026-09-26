@@ -23,6 +23,7 @@ import type {
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { PreviewApiProvider } from "./api";
 import { App } from "../../app/App";
+import { showBackendBanner } from "../../test/backendBanner";
 import type { Deferred, FakePreviewApi, FakePreviewApiOptions } from "../../test/previewFixtures";
 import {
   availableBackend,
@@ -126,6 +127,7 @@ function heldRecheck(): {
 
 /** Presses the banner's own recheck, which is not a conversion action. */
 async function pressCheckAgain(): Promise<void> {
+  await showBackendBanner();
   const control = await screen.findByRole("button", { name: "Check again" });
   fireEvent.click(control);
 }

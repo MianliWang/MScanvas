@@ -34,6 +34,7 @@ import {
   shippedIntent,
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
+import { showBackendBanner } from "../support/backendBanner";
 
 /** The binding every answer in this run describes, as a plan carries it. */
 const SETTLED_RECEIPT = firstBindingReceipt;
@@ -175,6 +176,7 @@ function conversionStarts(calls: { command: string }[]): number {
  */
 async function recheckTheBackend(verdict: unknown): Promise<void> {
   await setInvokeResult("inspect_backend", verdict);
+  await showBackendBanner();
   const recheck = await browser.$('[data-backend-action="recheck"]');
   if (!(await recheck.isExisting())) {
     throw new Error("the backend banner offers no recheck action");

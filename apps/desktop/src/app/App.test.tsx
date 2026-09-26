@@ -14,6 +14,7 @@ import type {
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
 import { blurAsABrowserWould } from "../test/browserFocus";
+import { showBackendBanner } from "../test/backendBanner";
 import type {
   FakeWorkspaceDropTransport,
   FolderScan,
@@ -167,6 +168,7 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     const readsBefore = api.openCount();
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
@@ -187,8 +189,11 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     const picksBefore = api.requestedSpectra.length;
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
     const reopen = await screen.findByRole("button", { name: /^Preview QC_pool_01/ });
+    // The one owned next step in this state, so the surface's primary action (PM9 L1).
+    expect(reopen).toHaveClass("primary-button");
 
     expect(reopen).toHaveTextContent("QC_pool_01.mzML");
     fireEvent.click(reopen);
@@ -312,6 +317,7 @@ describe("mzML preview workspace", () => {
     // is monotonic, so the two can never disagree.
     trusted = false;
     api.quarantineBackend();
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     // A quarantined session has its own heading rather than borrowing the one
     // for an unusable installation: nothing is wrong with ProteoWizard, and the
@@ -341,6 +347,7 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     const readsBefore = api.requestedSpectra.length;
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
@@ -400,6 +407,7 @@ describe("mzML preview workspace", () => {
 
     recheck.resolve(availableBackend);
 
+    await showBackendBanner();
     const choose = await screen.findByRole("button", { name: "Choose folder…" });
     expect(choose).toBeEnabled();
     expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
@@ -412,6 +420,7 @@ describe("mzML preview workspace", () => {
     // application has neither a command nor a picker for.
     const api = createFakePreviewApi({ chosenInstallation: chosenFolderWithoutTools });
     renderApp(api);
+    await showBackendBanner();
     fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
 
     expect(await screen.findByText(/has neither msconvert.exe nor msaccess.exe/)).toBeVisible();
@@ -429,6 +438,7 @@ describe("mzML preview workspace", () => {
     renderApp(api);
     expect(bannerOf(await screen.findByText(/ProteoWizard is available/))).toHaveTextContent("3.0.25000");
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
@@ -1784,6 +1794,7 @@ describe("the session workspace roster", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     const readsBefore = api.openCount();
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
@@ -3468,6 +3479,7 @@ describe("telling two identically named acquisitions apart", () => {
 
     // Changing installation discards backend-derived readings but deliberately
     // retains the active roster row as a one-action recovery affordance.
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     expect(
