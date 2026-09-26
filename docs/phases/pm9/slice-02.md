@@ -393,6 +393,29 @@ retained state; the refused `Capture file facts` keeps its pre-PM9.2 primary
 styling; Clear list's focus and hover and the zh-CN keyboard walks are
 code-evidenced only.
 
+**Manual visual review harness.** Before closing, the owner asked for a
+test-only way to look at the product that PM9.3 to PM9.7 can reuse; it is PM9
+testing infrastructure, not a slice, and adds no production code. Commit
+`c5a3f7e988409b59d427a95ed3382c8ccf858300` (tree `4718e269856852ad3d7200ea568b0e8797515d81`) adds `MSCANVAS_BROWSER_HEADED=true`,
+which drops only Chrome's headless and hidden-scrollbar flags (unset, the
+arguments are the list they were), and `pnpm qa:pm9:manual`, which opens one
+of the eight PM9 controlled scenarios headed, over the same Vite and mocked IPC
+boundary, and stays until the reviewer ends it; keys step through eleven sweep
+viewports, the scenarios and the two languages, and each view is saved as a
+screenshot. Only 960×640, 1366×768 and 1920×1080 remain the automated anchors.
+The PM9 answer tables and the CDP viewport helper moved, verbatim, from the
+PM9.1 spec into `e2e/support/` so both share them. How to run it and how to
+set it beside the v5.11 reference are in `e2e/README.md`. Its evidence is the
+production frontend over a controlled IPC fixture: not Rust, native WebView2
+DPI, ProteoWizard or scientific validation. Checked: the default Chrome
+arguments equal the previous list; PM9.1's spec passes 22 of 22 headless on
+it; the default glob still matches 30 files and not the manual spec; headed
+smoke runs open `populated` in en and `busyInspected` in zh-CN, apply all
+eleven viewports and receive a review key without the page seeing it; an
+interactive session stays open and ends one second after its window closes,
+leaving no process; and the production build contains none of its switches,
+keys, answer tables or scenario names.
+
 **Evidence boundaries.** The five records above now carry dated notes: their
 measurements and captures stay attributed to the builds they observed, and the
 current behaviour to `b81fc785d2be703e09ac4183dd1c3a17dea58cb7`. PM9.1's residual obligations are not

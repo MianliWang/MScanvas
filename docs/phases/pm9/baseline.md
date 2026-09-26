@@ -206,6 +206,12 @@ browser baseline mirrors five of them by name and adds three variants
   960×640, en and zh-CN, with reduced motion; evidence under
   `test-results/pm9.N/`. PM9.1's spec and its exact command are in §6.
 - Repository: `python scripts/check_repo.py`, `git diff --check`.
+- Manual visual review, test-only: `pnpm qa:pm9:manual` opens one controlled
+  scenario headed and stays until the reviewer ends it, with an eleven-size
+  viewport sweep and both languages; `MSCANVAS_BROWSER_HEADED=true` shows any
+  browser spec's window. Production frontend over a controlled IPC fixture
+  only; usage, the v5.11 side-by-side and the evidence boundary are in
+  `e2e/README.md`.
 - Rust is not affected by PM9.1 or PM9.2 (§7.1); PR #127's Rust
   qualification, now merged in main (§8), is in the
   [integration record §14](../../development/M8_M9_SOURCE_INTEGRATION.md#14-found-on-the-repaired-head-a-reference-added-during-save-as-and-signal-summaries-against-their-evidence-pr-127).
