@@ -182,6 +182,38 @@ stops at < 4 GiB or ≥ 90 %. A group the gate blocks is reported
 RESOURCE_DEFERRED; it is not waited for. There are at most two substantive
 product repair cycles. The first L13 implementation is not one.
 
+### 0.4 Implementation state
+
+- `e31aba3` (test-only). One shared `revealRosterRow` in
+  `e2e/support/viewer.ts` replaces the reveal in `openTheViewer`, in m7.3's
+  `open` and in m7.4's `viewer`, and PM9.3-G is extended as §0.2 describes.
+  - **Static diagnosis:** the shared answer table replies to every
+    `save_ui_preferences` with one fixed record whose layout is `automatic`.
+    `SessionPreferencesProvider.commitLayout` adopts the layout a save
+    confirms. So a roster toggled open below 1050 px is folded again when its
+    save is answered. That fits both recorded failures: m5.7's "still not
+    displayed after 15000ms" at `viewer.ts:138`, and m7.3's "did not become
+    interactable" on the row it clicks next.
+  - It is not a product defect: Rust merges the request onto the stored
+    record and reads it back.
+  - The helper now installs a store that reads back what it was asked to save,
+    presses the toggle once it is operable (it refuses a press while
+    preferences load), and waits for the row.
+  - The discriminating run is still owed: one 960×640 reveal with the shared
+    table and one with the read-back store, recording the toggle's
+    `aria-disabled` and `aria-expanded` and the roster's `hidden` around the
+    press.
+- `47c981b` (production, L13). The chromatogram header now carries the title
+  and the figure and export actions, as the selected spectrum's does. TIC/BPC
+  and Zoom in, Zoom out and Reset range sit on a line above the plot, where the
+  spectrum keeps its m/z controls. Header content is about 610 px in English
+  instead of about 900, against an evidence column of about 800 px at 1152×720
+  with the roster open, the narrowest default arrangement. The expected cost is
+  that line, about 44 px of chromatogram height, except in English at 960×640,
+  where it replaces the second header row. It is weighed in the render.
+- The before-capture is taken by restoring `Chromatogram.tsx` and `app/app.css`
+  from `eae0fc3` for one G run, then verifying the tree against `HEAD`.
+
 ## 1. Viewer ownership map
 
 Read at the production tree of `9786809`. Paths are under
