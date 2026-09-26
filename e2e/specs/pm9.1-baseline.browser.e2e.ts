@@ -68,6 +68,9 @@ import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/
 let output = "";
 const evidence: unknown[] = [];
 
+/** motion's development-build notice when the page asks for reduced motion. */
+const REDUCED_MOTION_NOTICE = "You have Reduced Motion enabled on your device";
+
 async function unexpectedConsole(): Promise<string[]> {
   return (await consoleEntries())
     .filter((entry) => !ALLOWED_CONSOLE_SUBSTRINGS.some((allowed) => entry.text.includes(allowed)))
@@ -507,6 +510,11 @@ function scenario(name: Scenario, locale: Locale = "en"): Record<string, unknown
   table.begin_project_job = { operationId: "project-job-1" };
   table.cancel_project_job = { outcome: "cancelled" };
   table.get_targeted_ms1_runtime = { newRuns: "available" };
+  // A working native drop subscription, as M7.2 answers it. The shared
+  // table's `null` makes the shell report drop as unavailable, which is true
+  // of that answer but not of the state these scenarios describe, and its
+  // notice would take height from every geometry reading.
+  table.subscribe_workspace_drop_updates = { reservationId: "pm9-browser-reservation" };
   table.read_targeted_ms1_rows = { total: 2, offset: 0, rows: [storedRow(CAFFEINE, true), storedRow(ABSENT, false)] };
   table.read_targeted_ms1_evidence = { targetId: CAFFEINE, traces: [] };
   table.preview_targeted_ms1_figure = { svg: STAND_IN_SVG, specId: "pm9-stand-in", width: 1200, height: 640 };
@@ -1307,7 +1315,14 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             expect(stop?.treatment.visible).toBe(true);
           }
         }
-        expect(await unexpectedConsole()).toEqual([]);
+        // motion's development build warns once per animation that reduced
+        // motion is on. This test turned it on, so that one notice is expected
+        // in the zh-CN runs and nothing else is.
+        expect(
+          (await unexpectedConsole()).filter(
+            (entry) => !(locale === "zh-CN" && entry.includes(REDUCED_MOTION_NOTICE)),
+          ),
+        ).toEqual([]);
       });
     }
   });

@@ -135,6 +135,9 @@ function answers(options: { readonly refusedViewport?: boolean; readonly locale?
   // Two mzML rows, so a second acquisition can replace the first.
   table.get_workspace_roster = { datasets: [MZML_ROW, secondFile], capacity: FAKE_WORKSPACE_CAPACITY };
   table.get_project_state = NO_PROJECT;
+  // A working native drop subscription, as M7.2 answers it, so no drop
+  // notice takes height from the viewer.
+  table.subscribe_workspace_drop_updates = { reservationId: "pm93-browser-reservation" };
   if (options.locale === "zh-CN") {
     const preferences = {
       schemaVersion: 1,
@@ -972,7 +975,13 @@ describe("PM9.3 viewer contracts, rendered", () => {
         }
         // The labels are the locale's own; zh-CN is the reference's language.
         evidence.push({ label: `pm93-g-${locale}-labels`, next: locale === "en" ? en.scanNext : zh.scanNext });
-        expect(await unexpectedConsole()).toEqual([]);
+        // motion's development build warns that reduced motion is on; this
+        // test turned it on in zh-CN, so that notice alone is expected there.
+        expect(
+          (await unexpectedConsole()).filter(
+            (entry) => !(locale === "zh-CN" && entry.includes("You have Reduced Motion enabled on your device")),
+          ),
+        ).toEqual([]);
       });
     }
   });
