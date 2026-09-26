@@ -44,6 +44,31 @@ function configuredPort(name: string, fallback: number): number {
 const DEV_SERVER_PORT = configuredPort("MSCANVAS_BROWSER_DEV_PORT", 5273);
 const DEV_SERVER_URL = `http://127.0.0.1:${String(DEV_SERVER_PORT)}`;
 
+/**
+ * Chrome's arguments. Headless by default so the suite runs the same way on a
+ * workstation and on a machine with no display. `--window-size` fixes the
+ * *outer* window; every viewport assertion sets the inner size explicitly
+ * before reading a box, so nothing here decides what those tests measure.
+ *
+ * Headed is for a person to look at -- the manual review harness, or a spec
+ * watched as it runs -- and drops only what hides the window and its
+ * scrollbars. Everything else, the Vite server and the mocked IPC boundary
+ * included, is the same composition.
+ */
+export function chromeArgs(headed: boolean): string[] {
+  return [
+    ...(headed ? [] : ["--headless=new"]),
+    "--disable-gpu",
+    "--no-sandbox",
+    "--window-size=1920,1080",
+    "--force-device-scale-factor=1",
+    ...(headed ? [] : ["--hide-scrollbars"]),
+  ];
+}
+
+/** `MSCANVAS_BROWSER_HEADED=true` shows the window; unset, the suite is unchanged. */
+const HEADED = process.env["MSCANVAS_BROWSER_HEADED"] === "true";
+
 export const config: WebdriverIO.Config = {
   runner: "local",
   // Absolute. The runner exports its TypeScript loader through `NODE_OPTIONS`,
@@ -65,19 +90,8 @@ export const config: WebdriverIO.Config = {
         mode: "browser",
         devServerUrl: DEV_SERVER_URL,
       },
-      // Headless by default so the suite runs the same way on a workstation and
-      // on a machine with no display. `--window-size` fixes the *outer* window;
-      // every viewport assertion sets the inner size explicitly before reading a
-      // box, so nothing here decides what those tests measure.
       "goog:chromeOptions": {
-        args: [
-          "--headless=new",
-          "--disable-gpu",
-          "--no-sandbox",
-          "--window-size=1920,1080",
-          "--force-device-scale-factor=1",
-          "--hide-scrollbars",
-        ],
+        args: chromeArgs(HEADED),
       },
     },
   ],

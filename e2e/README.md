@@ -25,9 +25,104 @@ prove the parts browser mode has to assume.
 | `pnpm e2e:build` | Builds the frontend and the `--features e2e` binary. |
 | `pnpm e2e:tauri` | The real-WebView suite. Needs `e2e:build` and `tauri-driver` first. |
 | `pnpm e2e:native-dialog` | The save-dialog selector probe. See `native/README.md`. |
+| `pnpm qa:pm9:manual` | Opens one PM9 controlled scenario in a visible window for a person to review. Test-only; see below. |
 
 The Tauri layer needs `tauri-driver` on `PATH` (`cargo install tauri-driver`)
 and a debug binary built with `--features e2e`.
+
+## Manual visual review (PM9)
+
+A person looking at the product, not a test that judges it. It opens one of
+PM9's controlled scenarios -- the states the PM9.1 spec asserts, from
+`support/pm9Scenarios.ts` -- in a visible Chrome window and leaves it there
+until the reviewer ends it. It serves PM9.3 to PM9.7 as much as PM9.2.
+
+**What it is, and what it is not.** Browser manual review is the real
+production frontend over a controlled IPC fixture: the same Vite, React and
+components the application ships, with the Tauri backend replaced at the IPC
+boundary by an answer table. It is not Rust execution, not native WebView2 or
+its DPI, not ProteoWizard and not a scientific validation. A command the
+scenario's table does not answer is refused at the boundary, so driving the
+page beyond its scenario shows refusals, not a backend. ProteoWizard is never
+run, and the HOLD is unaffected.
+
+**Nothing of it ships.** There is no route, query flag, debug menu or build
+switch in the application. The review keys and the answer table are injected
+into the test browser's documents by the harness (`browser.addInitScript`);
+the spec is `manual/pm9-scenario.manual.ts`, outside the suite's glob, and only
+`wdio.manual.conf.ts` names it.
+
+Run it from the repository root in PowerShell:
+
+```powershell
+$env:MSCANVAS_PM9_MANUAL_SCENARIO = "populated"   # the default
+$env:MSCANVAS_PM9_MANUAL_LOCALE = "zh-CN"         # en (the default) or zh-CN
+$env:MSCANVAS_PM9_MANUAL_VIEWPORT = "1366x768"    # the default; any size below
+$env:MSCANVAS_BROWSER_DEV_PORT = "5273"           # only if 5273 is taken
+pnpm qa:pm9:manual
+```
+
+The variables stay set for the rest of that PowerShell session; clear one with,
+for example, `Remove-Item Env:MSCANVAS_PM9_MANUAL_LOCALE`.
+
+Scenarios: `populated`, `converting`, `projectWithResult`,
+`resultPayloadMissing`, `resultPayloadCorrupt`,
+`resultSourceAndRuntimeUnavailable`, `qcCapture`, `busyInspected`. Each opens
+in its starting state; reaching, say, `busyInspected`'s inspected result is the
+reviewer's own path through the real interface (Project, then the result's
+Inspect).
+
+In the page, hold Alt+Shift and press:
+
+| Key | Does |
+|---|---|
+| Right / Left | next / previous viewport |
+| Down / Up | next / previous scenario |
+| L | the other language |
+| Q | ends the session |
+
+Closing the window, or Ctrl+C in the terminal, also ends it. The terminal names
+the current scenario, language and viewport, and every view is kept as a
+screenshot under `test-results/pm9-manual/` (git-ignored), sized exactly to the
+logical viewport, which is how a size larger than the window is reviewed whole.
+
+**Viewports.** 960x640, 1024x768, 1152x720, 1280x720, 1280x800, 1366x768,
+1440x900, 1536x864, 1680x1050, 1920x1080 and 2560x1440, logical pixels at DPR
+1. Only 960x640, 1366x768 and 1920x1080 are the automated contract's anchors;
+the rest are review points. A size becomes a regression case only when a real
+defect is found at it, and then in an automated spec, not here.
+
+**Language.** The scenario opens with the stored preference the application
+reads at start, as the PM9.1 spec does; nothing about how the application
+chooses or applies a language changes.
+
+**Comparing with the v5.11 reference.** The accepted reference is owner-held
+and not in the repository. Open it on its own, in any browser, beside the
+review window:
+
+```powershell
+Start-Process "C:\Users\rough\Downloads\mscanvas_unified_demo_v5_11.html"
+```
+
+Its recorded identity is in `docs/phases/pm9/baseline.md` §3 (490,253 bytes and
+a SHA-256). The harness neither copies the demo nor uses its synthetic
+scientific content. Compare the two side by side for task hierarchy, evidence
+emphasis, action density, context clarity, progressive disclosure and
+responsive behaviour, and record findings in the owning slice.
+
+**Headed automated specs.** `MSCANVAS_BROWSER_HEADED=true` shows the window for
+any browser spec; it drops only the headless and hidden-scrollbar flags. Unset,
+the suite is exactly as it was.
+
+```powershell
+$env:MSCANVAS_BROWSER_HEADED = "true"
+pnpm e2e:browser --spec ./e2e/specs/pm9.1-baseline.browser.e2e.ts
+Remove-Item Env:MSCANVAS_BROWSER_HEADED
+```
+
+`MSCANVAS_PM9_MANUAL_SMOKE=true` checks the harness itself and exits: it opens
+the scenario, walks the whole viewport list and presses one review key. It
+accepts nothing about the pages.
 
 ## The `e2e` Cargo feature
 
