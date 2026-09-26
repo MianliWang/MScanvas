@@ -1,10 +1,11 @@
 import { motion, useReducedMotion } from "motion/react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { SettingsDialog } from "../preferences/SettingsDialog";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { shellContextItems, type ShellContextFacts } from "./shellContext";
+import { prioritizeShellContext, shellContextItems, type ShellContextFacts } from "./shellContext";
 
 export type WorkbenchSurface = "workbench" | "conversion" | "project";
-export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCount, busy, retained, projectBusy = false, context = null, dropStatus }: {
+export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCount, busy, retained, projectBusy = false, context = null, dropStatus, backend = null }: {
   readonly surface: WorkbenchSurface; readonly onNavigate: (surface: WorkbenchSurface) => void;
   readonly detailsAvailable: boolean;
   readonly rowCount: number; readonly busy: boolean; readonly retained: boolean; readonly dropStatus: "available" | "connecting" | "unavailable";
@@ -12,6 +13,12 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
   readonly projectBusy?: boolean;
   /** What the context line describes, or `null` for none. */
   readonly context?: ShellContextFacts | null;
+  /**
+   * The folded backend reading, when there is nothing to act on: whether the
+   * banner is showing, and how to show or fold it. `null` while the banner
+   * has something to say, which it then always shows.
+   */
+  readonly backend?: { readonly expanded: boolean; readonly onToggle: () => void } | null;
 }) {
   const t = useUiMessages(), reduced = useReducedMotion();
   const { panels } = useSessionPreferences();
@@ -22,9 +29,10 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
    * fold for it, and none of them starts work or resets a selection.
    */
   const go = (target: WorkbenchSurface) => { onNavigate(target); panels.navigate(); };
-  const contextItems = context === null ? [] : shellContextItems(context, t);
+  const contextItems = context === null ? [] : prioritizeShellContext(shellContextItems(context, t), surface);
   const rosterOpen = panels.present.roster;
   const detailsOpen = panels.present.details && detailsAvailable;
+  const detailsRefused = panels.busy || !detailsAvailable;
   /**
    * Refused only while the stored record is still being read.
    *
@@ -45,6 +53,24 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
   const loading = panels.busy ? t("panelsLoading") : undefined;
   const resettable = panels.requested.roster !== "automatic" || panels.requested.details !== "automatic";
   const unsaved = panels.save.status === "unsaved";
+  /**
+   * The backend toggle leaves when the banner has something to say again -- a
+   * check, a superseded reading, a lane holding it back -- and a reader who was
+   * on it would be left on the body. Their place goes to the banner that
+   * replaced it. Read in the ref's cleanup, which runs while the node is still
+   * in the document: removing a focused node reports no blur to rely on.
+   */
+  const toggleHeldFocus = useRef(false);
+  const backendToggle = useCallback((node: HTMLButtonElement | null) => {
+    if (node === null) return;
+    return () => { toggleHeldFocus.current = document.activeElement === node; };
+  }, []);
+  const backendFolding = backend !== null;
+  useLayoutEffect(() => {
+    if (backendFolding || !toggleHeldFocus.current) return;
+    toggleHeldFocus.current = false;
+    document.getElementById("backend-status")?.focus({ preventScroll: true });
+  }, [backendFolding]);
   return <header className="topbar workbench-header">
     <button type="button" className="workbench-home" aria-label={t("home")} onClick={() => go("workbench")}>
       <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M3 22h22M5 20v-5m4 5V9m5 11V3m5 17v-8m4 8v-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
@@ -69,13 +95,16 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
       <button type="button" className="secondary-button" aria-expanded={rosterOpen} aria-controls="workbench-roster"
         aria-disabled={panels.busy || undefined} title={loading}
         onClick={() => { if (!panels.busy) panels.toggle("roster"); }}>{t("rosterToggle")}</button>
-      {/* `detailsAvailable` is a property of the workspace rather than a
-          passing refusal: with no preview read there is no panel to show, so
-          that one stays `disabled`. */}
+      {/* Details is closed by default below 1700 px (PM9 L20), so its entry
+          has to stay findable: the same control in the same place on every
+          surface and in every state, focusable even when there is nothing to
+          show, and saying why -- in the terms of the surface it is on --
+          rather than leaving the tab order whenever a preview is re-read or
+          the surface changes. Refused with `aria-disabled`, as the others. */}
       <button type="button" className="secondary-button" aria-expanded={detailsOpen} aria-controls="workbench-inspector"
-        disabled={!detailsAvailable} aria-disabled={panels.busy || undefined}
-        title={loading ?? (detailsAvailable ? undefined : t("inspectorUnavailable"))}
-        onClick={() => { if (!panels.busy) panels.toggle("details"); }}>{t("inspectorToggle")}</button>
+        aria-disabled={detailsRefused || undefined}
+        title={loading ?? (detailsAvailable ? undefined : t(surface === "project" ? "provenanceNothingSelected" : "inspectorUnavailable"))}
+        onClick={() => { if (!detailsRefused) panels.toggle("details"); }}>{t("inspectorToggle")}</button>
       <button type="button" className="secondary-button" data-layout-reset="" aria-disabled={panels.busy || !resettable || undefined}
         title={loading ?? (resettable ? undefined : t("layoutNothingToReset"))}
         onClick={() => { if (!panels.busy && resettable) panels.reset(); }}>{t("layoutReset")}</button>
@@ -101,14 +130,22 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
     </p> : null}
     {/* The header's second line: where the reader is, then how files arrive.
         It shares the line the drop hint already had rather than adding a row
-        to the shell's grid. Not a live region: each fact here is announced,
-        where it is announced at all, by the surface that owns it. */}
+        to the shell's grid, and it never wraps into a second one: each item
+        gives way by its rank instead (`prioritizeShellContext`). Not a live
+        region: each fact here is announced, where it is announced at all, by
+        the surface that owns it. */}
     <div className="workbench-context-bar">
       {contextItems.length === 0 ? null : (
         <div className="shell-context" role="group" aria-label={t("shellContextRegion")}>
           {contextItems.map(item => <button type="button" key={item.id} className="shell-context-item"
-            data-shell-context={item.id} title={item.text} onClick={() => go(item.target)}>{item.text}</button>)}
+            data-shell-context={item.id} data-priority={item.priority} title={item.text} onClick={() => go(item.target)}>{item.text}</button>)}
         </div>
+      )}
+      {/* The backend banner folds away while it has nothing to act on (PM9
+          L10); this is where it is read and reopened from. */}
+      {backend === null ? null : (
+        <button type="button" ref={backendToggle} className="shell-backend-toggle" data-backend-toggle=""
+          aria-expanded={backend.expanded} aria-controls="backend-status" onClick={backend.onToggle}>{t("backendReadyShort")}</button>
       )}
       <p className="workspace-drop-hint">{t(dropStatus === "available" ? "shellDropHint" : dropStatus === "connecting" ? "shellDropConnecting" : "shellDropUnavailable")}</p>
     </div>

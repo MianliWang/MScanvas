@@ -938,6 +938,7 @@ export const DatasetRoster = memo(function DatasetRoster({
             focusedIsConvertible ? "preview-needs-conversion-description" : undefined
           }
           className="secondary-button"
+          data-contextual=""
           disabled={!canPreview || state.focused === null || focusedIsConvertible}
           onClick={() => {
             if (state.focused !== null && !focusedIsConvertible) {
@@ -957,8 +958,13 @@ export const DatasetRoster = memo(function DatasetRoster({
             {t("needsConversion")}
           </span>
         ) : null}
+        {/* Preview focused and Remove highlighted act on a row the reader has
+            picked, so they stand out only while one is picked (PM9 L9): quiet
+            while disabled, ordinary buttons otherwise, and never moved -- their
+            place, name and focus handling stay as they are. */}
         <button
           className="secondary-button"
+          data-contextual=""
           disabled={!canRemove || state.selected.size === 0}
           onClick={(event) => {
             const control = event.currentTarget;

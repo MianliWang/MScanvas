@@ -156,3 +156,61 @@ export function shellContextItems(facts: ShellContextFacts, t: UiMessage): reado
 
   return items;
 }
+
+/**
+ * How much a context item may give up when the line is short of room: 1 never
+ * shrinks, and each rank after it gives way sooner than the one before.
+ */
+export type ShellContextPriority = 1 | 2 | 3 | 4 | 5;
+
+export interface PrioritizedShellContextItem extends ShellContextItem {
+  readonly priority: ShellContextPriority;
+}
+
+/** The order on screen, the same on every surface. */
+const LINE_ORDER: readonly ShellContextItemId[] = [
+  "conversionActivity",
+  "projectActivity",
+  "viewing",
+  "inspecting",
+  "project",
+  "conversionScope",
+];
+
+/**
+ * The line as a surface shows it (PM9 L14–L16): an operation's status first
+ * and never cut, then the object being looked at, then the project, then the
+ * conversion scope where it bears on the task.
+ *
+ * The order is fixed rather than sorted by rank, so moving between surfaces
+ * never moves a button -- a focused item stays where the reader left it. Rank
+ * decides only which item gives way first when a long name leaves too little
+ * room. The scope is left out on the Project surface, where no conversion is
+ * set up. Nothing else is dropped: the project and the scope have no place in
+ * Details to be read from instead, and an item that shrinks still carries its
+ * whole sentence as its accessible name.
+ */
+export function prioritizeShellContext(
+  items: readonly ShellContextItem[],
+  surface: WorkbenchSurface,
+): readonly PrioritizedShellContextItem[] {
+  const primaryObject: ShellContextItemId = surface === "project" ? "inspecting" : "viewing";
+  const rank = (id: ShellContextItemId): ShellContextPriority => {
+    switch (id) {
+      case "conversionActivity":
+      case "projectActivity":
+        return 1;
+      case "project":
+        return 3;
+      case "conversionScope":
+        return 4;
+      case "viewing":
+      case "inspecting":
+        return id === primaryObject ? 2 : 5;
+    }
+  };
+  return items
+    .filter(item => !(item.id === "conversionScope" && surface === "project"))
+    .map(item => ({ ...item, priority: rank(item.id) }))
+    .sort((left, right) => LINE_ORDER.indexOf(left.id) - LINE_ORDER.indexOf(right.id));
+}

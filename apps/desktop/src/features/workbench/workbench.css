@@ -10,23 +10,49 @@
 .navigation-underline { position: absolute; bottom: -1px; height: 2px; background: var(--color-accent); left: 0; right: 0; }
 .work-status-dot, .project-work-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); }
 .workbench-global-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
-.workbench-global-actions .secondary-button { border-color: transparent; background: transparent; }
+/* Reset and Settings stay quiet. The two panel toggles keep the button's own
+   border, so Details reads as a control while it is closed by default below
+   1700px (PM9 L20); refused, they dim, but never their focus ring. */
+.workbench-global-actions .secondary-button:not([aria-controls]) { border-color: transparent; background: transparent; }
 .workbench-global-actions button[aria-expanded="true"] { background: var(--color-surface-selected); border-color: var(--color-border); }
+.workbench-global-actions button[aria-controls][aria-disabled="true"]:not(:focus-visible) { cursor: not-allowed; opacity: 0.48; }
 .workbench-header .workspace-drop-hint { flex-basis: 100%; white-space: normal; margin: 5px 0 0; font-size: 12px; }
-/* PM9.2 draft: the header's second line carries where the reader is, then the drop hint. */
-.workbench-context-bar { display: flex; flex-basis: 100%; flex-wrap: wrap; align-items: center; gap: 2px 16px; min-width: 0; margin: 4px 0 0; }
-.workbench-context-bar .workspace-drop-hint { flex: 0 1 auto; margin: 0 0 0 auto; }
+/* The header's second line: where the reader is, the folded backend reading,
+   then the drop hint. One row always (PM9 L14–L16): nothing wraps below it,
+   and the hint gives way before the context does. */
+.workbench-context-bar { display: flex; flex-basis: 100%; flex-wrap: nowrap; align-items: center; gap: 2px 16px; min-width: 0; margin: 4px 0 0; }
+.workbench-context-bar .workspace-drop-hint { flex: 0 1 auto; min-width: 0; margin: 0 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shell-backend-toggle { flex: 0 0 auto; min-height: 32px; padding: 2px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.3; white-space: nowrap; }
+.shell-backend-toggle:hover { color: var(--color-text-primary); }
+.shell-backend-toggle[aria-expanded="true"] { background: var(--color-surface-selected); }
 /* The shell is one `auto` grid column, sized by its widest item's min-content.
    Unwrapped item text would count at full length there and widen the whole
    shell past a narrow window; the line's width comes from the header instead,
    and its items ellipsize inside it. */
 .shell-context { display: flex; flex: 1 1 320px; flex-wrap: nowrap; gap: 4px; min-width: 0; overflow: hidden; contain: inline-size; }
 .shell-context-item { flex: 0 1 auto; min-width: 0; min-height: 32px; padding: 2px 8px; overflow: hidden; border: 1px solid transparent; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+/* Rank decides which item gives way first (`prioritizeShellContext`): an
+   operation's status never shrinks, the object on screen shrinks last, and a
+   long project name gives way before it. Flex shrink is proportional, not
+   ordered, so each rank's factor is a thousand times the one above it: a rank
+   reaches its floor before the next one up visibly moves. The floor keeps a
+   label's first letters on every pill that shrinks, so none is left an empty,
+   focusable box; it is small enough that two statuses and four floors still
+   fit a 960px line. */
+.shell-context-item:not([data-priority="1"]) { min-width: 3.5em; }
+.shell-context-item[data-priority="1"] { flex-shrink: 0; }
+.shell-context-item[data-priority="2"] { flex-shrink: 1; }
+.shell-context-item[data-priority="3"] { flex-shrink: 1000; }
+.shell-context-item[data-priority="4"] { flex-shrink: 1000000; }
+.shell-context-item[data-priority="5"] { flex-shrink: 1000000000; }
 .shell-context-item:hover { border-color: var(--color-border); color: var(--color-text-primary); }
 /* The line clips its overflow for the ellipsis, so the global focus ring, drawn
    outside the button, would be cut off; draw it inside instead. */
 .shell-context-item:focus-visible { outline-offset: -2px; }
 .workbench-shell .shell-notices { max-height: min(24vh, 180px); overflow: auto; padding: 6px 16px 0; }
+/* With nothing to show -- the backend banner folded, no other notice -- the
+   track keeps no height at all (PM9 L10). */
+.workbench-shell .shell-notices:not(:has(> .notice)) { padding: 0; }
 /* A status that appears is bounded so it cannot take the workspace's height.
    A disclosure the reader opened is a different thing: it was asked for, and
    at 180px the setup help was eight paragraphs inside a scrollport the height
@@ -37,8 +63,14 @@
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }
 .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 280px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
 .workbench-shell .workspace-sidebar { grid-area: roster; display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: hidden; }
-.workbench-evidence, .workbench-conversion { grid-area: main; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.workbench-inspector { grid-area: inspector; min-width: 0; min-height: 0; overflow: auto; }
+/* Each region positions its own out-of-flow accessible text, so none of it is
+   placed against the shell below the window, where it gave the document a
+   height the body cannot scroll (PM9 L22). Each region stays the scroll owner
+   of its own content. A surface is a column: its title, then its content,
+   which fills what is left and scrolls beyond it. */
+.workbench-evidence, .workbench-conversion { position: relative; display: flex; flex-direction: column; grid-area: main; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.workbench-inspector { position: relative; grid-area: inspector; min-width: 0; min-height: 0; overflow: auto; }
+.surface-title { flex: none; margin: 0 0 8px; color: var(--color-text-primary); font-size: 16px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
 .workbench-shell .panel { border-radius: 8px; box-shadow: 0 1px 2px rgb(23 35 55 / 0.03); }
 .workbench-shell .dataset-roster-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .workbench-shell .dataset-roster-panel > .panel-header { flex: 0 0 auto; padding: 12px; }
@@ -50,8 +82,11 @@
 .workbench-shell .roster-field .link-button { grid-column: 2; justify-self: end; }
 .workbench-shell .dataset-roster-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; border-bottom: 1px solid var(--color-border); }
 .workbench-shell .dataset-roster-actions button { font-size: 12px; min-height: 32px; padding: 4px 8px; }
-.organization-toolbar { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; gap: 8px; padding: 8px 12px 4px; }
+.workbench-shell .dataset-roster-actions [data-contextual]:disabled { border-color: transparent; background: transparent; }
+.organization-toolbar { display: flex; flex-wrap: wrap; align-items: center; flex: 0 0 auto; gap: 4px 8px; padding: 6px 12px; }
 .organization-toolbar button { font-size: 12px; }
+.organization-toolbar .secondary-button { border-color: transparent; background: transparent; }
+.organization-toolbar .roster-selection-context { margin-left: auto; padding: 0; }
 .roster-selection-context { margin: 0; padding: 4px 12px 8px; font-size: 12px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 .grouped-roster { flex: 1 1 auto; min-height: 80px; padding: 0 4px 8px; margin: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
 .roster-group-header { display: grid; grid-template-columns: 24px minmax(0, 1fr) 28px; align-items: center; min-height: 40px; padding: 2px 4px; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-primary); }
@@ -92,7 +127,7 @@
 .group-name-dialog label { display: block; font-size: 13px; margin-bottom: 6px; }
 .group-name-dialog input { width: 100%; min-height: 36px; border: 1px solid var(--color-border-strong); border-radius: 6px; padding: 6px 8px; }
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
-.workbench-shell .viewer-column { min-height: 100%; }
+.workbench-shell .viewer-column { flex: 1 0 auto; }
 .workbench-shell .viewer-stack { display: flex; flex-direction: column; gap: 12px; overflow: visible; min-height: 0; }
 .workbench-shell .chromatogram-panel { flex: 0 0 auto; min-height: 0; }
 .workbench-shell .spectrum-table-panel { flex: none; min-height: 0; }
@@ -148,8 +183,8 @@
 .spectrum-panel > .spectrum-export-status:empty { margin: 0; padding: 0; }
 .spectrum-source-details .metadata-lines { overflow-wrap: anywhere; }
 @media (max-width: 600px) { .plot-range-form { grid-template-columns: auto minmax(90px, 1fr); } }
-.workbench-shell .workspace-placeholder { min-height: 100%; }
-.workbench-conversion > .panel { min-height: 100%; overflow: visible; }
+.workbench-shell .workspace-placeholder { flex: 1 0 auto; }
+.workbench-conversion > .panel { flex: 1 0 auto; overflow: visible; }
 .workbench-inspector > .panel { min-height: 100%; }
 @media (max-width: 1050px) {
   .workbench-header { gap: 0 12px; padding-inline: 12px; }

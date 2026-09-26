@@ -65,6 +65,16 @@ export interface BackendStatusProps {
   readonly onRecheck: () => void;
   readonly onChooseInstallation: () => void;
   readonly onUseAutomaticDiscovery: () => void;
+  /**
+   * Folded to its reading alone, out of sight, because there is nothing to act
+   * on (PM9 L10). The reading stays the one live region, so a verdict is still
+   * announced; the actions and the help keep their nodes and are hidden, and
+   * the header's toggle shows them again. Never set while the banner has
+   * something to say.
+   */
+  readonly collapsed?: boolean;
+  /** Called when the reader uses the banner, so it stays open for the outcome. */
+  readonly onEngage?: () => void;
 }
 
 /**
@@ -91,6 +101,8 @@ export function BackendStatus({
   onRecheck,
   onChooseInstallation,
   onUseAutomaticDiscovery,
+  collapsed = false,
+  onEngage,
 }: BackendStatusProps) {
   const t = useUiMessages();
   const pendingRestore = useRef<PickerTrigger | null>(null);
@@ -117,6 +129,7 @@ export function BackendStatus({
       id === "choose" && document.activeElement === control
         ? { control, action: id, outstanding: false }
         : null;
+    onEngage?.();
     run[id]();
   };
 
@@ -203,7 +216,14 @@ export function BackendStatus({
       className="backend-setup-help"
       data-backend-help=""
       open={helpOpen}
-      onToggle={(event) => setHelpOpen(event.currentTarget.open)}
+      hidden={collapsed}
+      onToggle={(event) => {
+        const open = event.currentTarget.open;
+        setHelpOpen(open);
+        // Help opened while a check is running stays open when a quiet verdict
+        // arrives, instead of folding away under the reader.
+        if (open) onEngage?.();
+      }}
     >
       <summary>{t("backendHelpTitle")}</summary>
       <p>{t("backendHelpProvider")}</p>
@@ -225,12 +245,20 @@ export function BackendStatus({
   // which is the one mutation a screen reader does not announce. So pressing
   // `Check again` used to be silent, and so was the verdict that followed it.
   // The `<details>` help keeps its identity for the same reason: a verdict
-  // arriving on its own must not take a reader's place in the tab order.
+  // arriving on its own must not take a reader's place in the tab order. For
+  // the same reason, focus anywhere in the banner counts as engaging it: a
+  // quiet verdict does not fold a banner a reader is in. Focusable itself, but
+  // outside the tab order, so the header's toggle can hand its place here when
+  // the banner has something to say again.
   return (
     <div
-      className={`notice notice-${banner.tone}`}
+      id="backend-status"
+      tabIndex={-1}
+      className={collapsed ? "visually-hidden" : `notice notice-${banner.tone}`}
       data-backend-status={banner.kind}
       data-backend-reading={banner.kind === "staleReading" ? "superseded" : undefined}
+      data-backend-collapsed={collapsed ? "" : undefined}
+      onFocus={() => onEngage?.()}
     >
       {/* One live region for the whole banner, so a verdict, its reason and the
           build it names are announced as one thing rather than as three. */}
@@ -261,7 +289,7 @@ export function BackendStatus({
           <span data-backend-code="">{t("backendProblemCode", { code: banner.code })}</span>
         ) : null}
       </div>
-      <div className="backend-status-actions">
+      <div className="backend-status-actions" hidden={collapsed}>
         {banner.actions.map((entry, position) => (
           <button
             // The semantic id, not the position: React must not carry one

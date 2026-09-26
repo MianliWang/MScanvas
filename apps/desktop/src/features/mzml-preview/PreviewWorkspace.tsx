@@ -272,6 +272,15 @@ export function PreviewWorkspace() {
   const backendUnavailable =
     workspace.backend.status === "resolved" &&
     workspace.backend.availability.state === "unavailable";
+  // The banner has nothing to act on only while a usable installation stands
+  // and nothing is being checked, superseded or held back by the conversion
+  // lane; then it folds to a phrase in the header and costs the workspace no
+  // height (PM9 L10). Every other state keeps it on screen. Whether the reader
+  // opened it again is presentation for this session and stored nowhere.
+  const [backendExpanded, setBackendExpanded] = useState(false);
+  const backendQuiet =
+    backendUsable && !workspace.backendReadingStale && !workspace.conversion.backendQuarantined;
+  const backendCollapsed = backendQuiet && !workspace.backendBusy && !backendExpanded;
 
   // Curating the workspace is not backend work, so it stays available when no
   // ProteoWizard is installed. What it waits for is a picker already on screen,
@@ -437,7 +446,8 @@ export function PreviewWorkspace() {
         detailsAvailable={detailsAvailable} rowCount={roster.datasets.length}
         busy={workspace.conversion.busy}
         retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus}
-        projectBusy={project.busy !== "idle"} context={shellContext} />
+        projectBusy={project.busy !== "idle"} context={shellContext}
+        backend={backendQuiet ? { expanded: !backendCollapsed, onToggle: () => setBackendExpanded(backendCollapsed) } : null} />
 
       {workspace.dropPresentation.status === "idle" ? null : (
         <div
@@ -470,6 +480,8 @@ export function PreviewWorkspace() {
           onUseAutomaticDiscovery={workspace.useAutomaticDiscovery}
           readingSuperseded={workspace.backendReadingStale}
           state={workspace.backend}
+          collapsed={backendCollapsed}
+          onEngage={() => setBackendExpanded(true)}
         />
 
         {/* A picker that would not open is its own problem. It never replaces
@@ -799,7 +811,11 @@ export function PreviewWorkspace() {
             admits them, and the two collections are not the same list. It needs
             no provider, so it is reachable on a machine with no converter
             installed. */}
-        <section id="workbench-project" className="workbench-project" hidden={surface !== "project" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("projectSurface")}>
+        {/* Each surface names itself (PM9 L1) in the navigation's own words, so
+            the title and the tab that leads here cannot disagree; the region's
+            accessible name is the title, unchanged from the label it replaces. */}
+        <section id="workbench-project" className="workbench-project" hidden={surface !== "project" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-project">
+          <h1 id="surface-title-project" className="surface-title">{t("projectSurface")}</h1>
           <ProjectPanel
             session={project}
             liveDatasetHandles={liveDatasetHandles}
@@ -824,7 +840,8 @@ export function PreviewWorkspace() {
             }}
           />
         </section>
-        <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("conversionTask")}>
+        <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-conversion">
+          <h1 id="surface-title-conversion" className="surface-title">{t("conversionTask")}</h1>
           <ConversionPanel
             configuration={workspace.conversionConfiguration}
             conversion={workspace.conversion}
@@ -853,7 +870,8 @@ export function PreviewWorkspace() {
               spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
             />
           ) : null}        </aside>
-        <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("workbench")}>
+        <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-workbench">
+        <h1 id="surface-title-workbench" className="surface-title">{t("workbench")}</h1>
 
         {preview.status === "loaded" ? (
           <div className="viewer-column">
@@ -1015,7 +1033,11 @@ export function PreviewWorkspace() {
               <div className="empty-state">
                 <strong>{t("emptyEvidence")}</strong>
                 <span>{backendUnavailable ? t("previewBackendRequired") : t("emptyEvidenceHelp")}</span>
-                {workspace.activeDataset !== null ? <button type="button" className="secondary-button" disabled={!canPreview} onClick={workspace.previewActiveAgain}>
+                {/* The one owned next step in this state -- the acquisition that
+                    was being read, one click from being read again -- so it is
+                    this surface's primary action (PM9 L1). No other state gets
+                    one invented for it. */}
+                {workspace.activeDataset !== null ? <button type="button" className="primary-button" disabled={!canPreview} onClick={workspace.previewActiveAgain}>
                   {t("previewRetained", { name: formatDatasetLabel(workspace.activeDataset) })}
                 </button> : null}
               </div>
