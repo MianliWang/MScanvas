@@ -8,8 +8,11 @@ that follows published `main`: a partial M7.6, M8 and M9. The only product
 code it changes is two focus-restoration repairs on the Project surface, found
 while qualifying it (§11), and project-integrity repairs in the Rust project
 store, found by the review of the pull request that publishes it: three
-requalified (§13) and a fourth implemented locally, whose validation the owner
-deferred (§14); the only other code is two build-provenance repairs to the
+requalified (§13) and a fourth qualified after the owner had deferred its
+validation (§14); a check, at targeted-MS1 result publication
+(`targeted_ms1.rs`), that a result's signal summaries are its evidence's,
+found by the same review, first deferred and then reclassified before
+publication (§14); the only other code is two build-provenance repairs to the
 partial M7.6 candidate script, found by the same review (§12). Publication goes
 through pull request #127 under the owner's explicit authorization, and no tag,
 release, installer or public beta follows from it. When this text is read on
@@ -18,9 +21,9 @@ evidence that the stack was published.
 
 Status when written:
 
+- `PR #127 FINAL LOCAL SOURCE CANDIDATE QUALIFIED — NOT PUSHED`: `03effab`, the signal-summary repair, on top of the stale-reference repair `8ad3912` (§14); source qualification, not release qualification
 - `SOURCE INTEGRATION CANDIDATE QUALIFIED LOCALLY` (§8) through `cf4af12`, with the build-provenance repair checked on its own (§12) and the project-integrity repairs requalified (§13)
-- `REPAIR IMPLEMENTED LOCALLY — VALIDATION DEFERRED / NOT PUSHED`: the stale-reference repair `8ad3912` (§14)
-- `SOURCE PUSHED — PR #127 OPEN / NOT MERGED`, its head `72904b8`
+- `SOURCE PUSHED — PR #127 OPEN / NOT MERGED`, its head `72904b8` as last observed
 - `M8 LOCAL IMPLEMENTATION COMPLETE`
 - `M9 LOCAL IMPLEMENTATION COMPLETE`
 - `M7.6 RELEASE QUALIFICATION DEFERRED / INCOMPLETE`
@@ -46,10 +49,12 @@ Status when written:
 | **Build-provenance repair** after its review (§12): the script and its test | `5a2b1887c307493c71d1c9c7a64b6318e63afe6a` | `c15f4b703890e83e1e0eff3d921e8c0121a31568` |
 | Documentation successor that recorded §12; head of PR #127, superseded | `cd7ec23e10cb04560bfb3e90550a24197fc247ef` | `682ac7077aa1b5d3b4b95270dfcfad96e21d4799` |
 | Project-integrity repair (§13) as first committed; its tests did not compile, superseded | `532c6921766a32e173aaa1f9527d00b0f70f74a2` | `2b08fc6850ad9526f5bdcdec5ee8413a408e5710` |
-| **Project-integrity repair** (§13): the same, one test assertion corrected; the last qualified code | `cf4af12c5619d17dffa6e31b4debf9b4990a75ca` | `a41381350a2d947f72e665c61b905829aeaaf78c` |
+| **Project-integrity repair** (§13): the same, one test assertion corrected; the last code on which every group, frontend and browser included, ran | `cf4af12c5619d17dffa6e31b4debf9b4990a75ca` | `a41381350a2d947f72e665c61b905829aeaaf78c` |
 | Documentation successor that recorded §13; **the head of PR #127** when validation was deferred (§14) | `72904b81f05264ad4e265be3676e4b7f3a8b8ce1` | `029db871f6b61989a6dc25f0d2ce45e3431d357b` |
 | Stale-reference repair (§14), as first written; superseded | `b000c2623f28844016171d8c0993b403f771c858` | `c716894b925a227e74df7abf8cb9a3ee2c5e6ca9` |
-| Stale-reference repair after its review (§14): implemented locally; validation deferred; not pushed | `8ad3912788d5dc68df5ea8c307f5e5e2f5665250` | `faf83deda086dbb694db00610d8a1b87a913d32a` |
+| Stale-reference repair after its review (§14): qualified locally on its documentation successor; not pushed | `8ad3912788d5dc68df5ea8c307f5e5e2f5665250` | `faf83deda086dbb694db00610d8a1b87a913d32a` |
+| Documentation successor that recorded the deferral (§14); where the stale-reference repair was qualified | `d56b17b6eab8dfdc5e15a85959c971121ee7685c` | `a0b237ce11d2bb4b8851feb6ea39f1f180c66a99` |
+| **Signal-summary repair** (§14): the final code candidate; qualified locally; not pushed | `03effab38e7101b6dec33f6bb0f9fdda18f0f3e1` | `9f0fab3316ca3fa426390d7801dc6e7f41b63982` |
 
 A candidate cannot name itself; documentation-only successors, which change
 Markdown alone, record what ran on it. The first two candidates change only
@@ -65,11 +70,14 @@ changes exactly `scripts/build_candidate.ps1` and adds
 nothing §8's groups build, test or read changes (§12). The project-integrity
 repair changes Rust and frontend code (`git diff --name-only cd7ec23 cf4af12`,
 §13), so §13's groups ran again on it. The stale-reference repair changes Rust
-alone (`git diff --name-only cf4af12 8ad3912`, §14); the owner deferred its
-validation, so nothing here qualifies it. The head of PR #127 is still
-`72904b8`, a Markdown-only successor of `cf4af12`. A later qualification
-validates the newest cumulative candidate, and the head it publishes is a
-Markdown-only successor of that candidate.
+alone (`git diff --name-only 72904b8 8ad3912` is `project/mod.rs` and
+`targeted_ms1/tests.rs`, §14); its validation, deferred
+by the owner, ran on `d56b17b` (§14). The signal-summary repair changes Rust
+alone too (`git diff --name-only d56b17b 03effab` is
+`apps/desktop/src-tauri/src/targeted_ms1.rs` and its `tests.rs`), and the Rust
+group ran again on it (§14). As last observed, the head of PR #127 is still
+`72904b8`, a Markdown-only successor of `cf4af12`. The head a publication
+pushes is a Markdown-only successor of `03effab`.
 
 ## 2. The stack
 
@@ -380,9 +388,9 @@ Carried out through pull request #127 under the owner's explicit
 authorization — first for the head that recorded §8's runs, and then, on a
 second authorization, for the build-provenance repair of §12 and its
 documentation successor, and then, on a third, for the project-integrity repair
-of §13 and its documentation successor. The stale-reference repair of §14 has
-not been published: its validation was deferred, and publishing it, with the
-steps below, waits for that validation and for its own authorization:
+of §13 and its documentation successor. The two repairs of §14 have not been
+published. Both are qualified locally on the final candidate `03effab`, and
+publishing them, with the steps below, waits for its own authorization:
 
 1. **Rebind live state.** `git ls-remote origin refs/heads/main` still
    `1daf802f06d0149b5de3dbd12e8b01e7e86862ec`; the effective `main` ruleset read
@@ -393,10 +401,10 @@ steps below, waits for that validation and for its own authorization:
    whose diff from it (`git diff --name-only`) is Markdown alone — or, for the
    second authorization, the build-provenance repair of §12 and a Markdown-only
    successor of it — or, for the third, the project-integrity repair of §13,
-   requalified there, and a Markdown-only successor of it — or, later, a
-   cumulative candidate that includes the stale-reference repair of §14, once
-   the validation deferred there has passed on it, and a Markdown-only
-   successor of it. A head with any other change is a new candidate that
+   requalified there, and a Markdown-only successor of it — or, later, the
+   final candidate `03effab`, which carries both repairs of §14 and is
+   qualified there, and a Markdown-only successor of it. A head with any other
+   change is a new candidate that
    §8 does not qualify, and it is not published until its affected groups have
    run.
 2. **Push the branch as it is**, without force, and open one pull request:
@@ -424,8 +432,10 @@ steps below, waits for that validation and for its own authorization:
    be deleted, remote or local, and only with the owner's consent. Until then
    every task branch stays.
 
-After a successful publication the second status above is superseded by the
-Git fact the merge records; the others are unchanged by it.
+After a successful publication, the Git fact the merge records supersedes the
+`SOURCE PUSHED — PR #127 OPEN / NOT MERGED` status and the `NOT PUSHED` of the
+`PR #127 FINAL LOCAL SOURCE CANDIDATE QUALIFIED` status; the others are
+unchanged by it.
 
 ## 11. Found during qualification: two focus races on the Project surface
 
@@ -751,12 +761,13 @@ blocker:
 
 No second review ran.
 
-## 14. Found on the repaired head: a reference added during Save As, and a deferred check (PR #127)
+## 14. Found on the repaired head: a reference added during Save As, and signal summaries against their evidence (PR #127)
 
 **What was found.** The automated review of `72904b8` left two further
 findings, both in code older than the repairs of §13. Each was traced
-read-only before anything changed, and the owner decided to repair the first
-and defer the second.
+read-only before anything changed. The owner decided to repair the first and
+defer the second, and before publication reclassified the second as a
+blocker and had it repaired too (the last part of this section).
 
 - **A reference added while Save As ran (comment 4106290979).** Registering a
   reference does not advance the session generation. Save As resolves the
@@ -770,7 +781,8 @@ and defer the second.
   sets `busy`, which disables Add reference and Save As), so the panel does not
   reach it, but the Rust store, which owns this state, did not refuse it.
 - **Worker signal summaries not checked against the evidence points
-  (comment 4106290972).** Deferred; the ledger entry is below.
+  (comment 4106290972).** First recorded here as deferred; reclassified before
+  publication and repaired in `03effab` (below).
 
 **Repair.** `b000c26`, then `8ad3912` after the review below. Save As records
 the references, in document order, when it resolves them; on its return it
@@ -801,13 +813,15 @@ copy step to act in and no test; the check is unconditional.
 `8ad3912`, host memory was below the admission threshold for heavy validation
 (2.39 GiB free, 92.4% used), and the owner then chose to defer the remaining
 validation to a later consolidated qualification campaign, because heavy tests
-interfere with normal use of the host. So `8ad3912` is **REPAIR IMPLEMENTED
-LOCALLY — VALIDATION DEFERRED / NOT PUSHED**. Nothing in this record qualifies
-it beyond the two runs above; it was not pushed; PR #127 keeps `72904b8` as its
-head, and its review threads are as they were. The later campaign validates
-the newest cumulative candidate, not `8ad3912` on its own first.
+interfere with normal use of the host. So, as recorded at `d56b17b`, `8ad3912`
+was **REPAIR IMPLEMENTED LOCALLY — VALIDATION DEFERRED / NOT PUSHED**: nothing
+then qualified it beyond the two runs above, it was not pushed, and PR #127
+kept `72904b8` as its head with its review threads as they were. The deferred
+validation later ran on `d56b17b` (below), and the Rust group ran again on the
+final candidate `03effab`.
 
-Pending validation, one command at a time under the host-memory policy of §8:
+The deferred validation, one command at a time under the host-memory policy
+of §8 (it ran on `d56b17b`, recorded below):
 
 1. Rust: `cargo fmt --all --check`;
    `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`;
@@ -827,7 +841,11 @@ Pending validation, one command at a time under the host-memory policy of §8:
 Pending review and publication, in order, each under its own authorization:
 
 1. Rebind: `main` = `origin/main` = `1daf802`; the remote branch at
-   `72904b8`; the delta confined to the candidate.
+   `72904b8`; the delta confined to the candidate. A read-only rebind on
+   2026-09-25 (22:29–22:32 -04:00, before `03effab`) found `main` and the
+   remote branch as stated, with the local delta then ending at `d56b17b`. It
+   is repeated, with the delta ending at the final candidate's documentation
+   successor, before any push.
 2. Push the candidate's documentation successor without force, and read back
    the pull request's head.
 3. The required checks (Frontend, Rust, Repository quality) on that head, and
@@ -837,11 +855,11 @@ Pending review and publication, in order, each under its own authorization:
    `PRRT_kwDOTg8rHs6l6zna` (comment 4102459651), `PRRT_kwDOTg8rHs6l6zne`
    (4102459658) and `PRRT_kwDOTg8rHs6l6zni` (4102459663) with the owner's
    templates for §13's repairs; `PRRT_kwDOTg8rHs6mERYA` (4106290979) for the
-   repair above; `PRRT_kwDOTg8rHs6mERX8` (4106290972) as deferred, with the
-   ledger entry below. Then confirm that every thread is resolved.
+   stale-reference repair; `PRRT_kwDOTg8rHs6mERX8` (4106290972) for the
+   signal-summary repair below. Then confirm that every thread is resolved.
 5. Append an update to the pull request's description that supersedes its
    stale statements — Rust inherited, `cd7ec23` as the candidate, 2170
-   frontend tests — and carries the deferred-finding ledger.
+   frontend tests — and records both repairs of this section.
 6. The true merge bound to that head; its parents and tree; natural-main CI;
    `git pull --ff-only`; every task branch kept.
 
@@ -865,25 +883,129 @@ position.
 
 No second review ran.
 
-**Deferred: signal summaries against evidence points (comment 4106290972).**
+**Qualification on `d56b17b`.** On 2026-09-25 the consolidated campaign ran
+the deferred validation above on `d56b17b` (tree
+`a0b237ce11d2bb4b8851feb6ea39f1f180c66a99`), the commit that recorded the
+deferral; `git diff --name-only 8ad3912 d56b17b` lists only this record, so the
+code under test was `8ad3912`'s. Logs are under `.tmp/vw-20260925/integration/`
+(git-ignored). The Rust group was admitted at 21:09:49 (-04:00) with 14.69 GiB
+free and 53.6% in use, and every command exited 0:
 
-- *Evidence.* `validate_payload` (`targeted_ms1.rs`) and
-  `PayloadRow::is_consistent` (`project/payload.rs`) check each trace's point
-  count, theoretical m/z, finiteness, and `anyNonzeroPoint` against `max`; they
-  do not recompute `sum` or `max` from the evidence points. The pinned adapter
-  derives both from one list (`adapter_v1.py`, the evidence points,
-  `math.fsum` and `max` of the same values). The adapter and the runtime are
-  digest-pinned and refused as `runtimeUnverified` on a mismatch, a release
-  build has no executor, and a stored payload is digest-checked on every read.
-  The gap is older than the repairs (`ec7c155`).
-- *Consequence.* Only a defective or foreign worker could publish a result
-  whose table and panel (`sum`, `max`, any nonzero point) contradict its figure
-  (the evidence points).
-- *Owner.* The repository owner, as targeted-MS1 result validation.
-- *Decision point.* Before any executor other than the pinned development
-  adapter can produce results — a bundled runtime or a changed adapter — or at
-  the next targeted-MS1 result-validation work, whichever comes first. The
-  check then: `max` equal to the largest point (0.0 without points), `sum`
-  within the error bound of summing the points (the adapter uses `fsum`, and a
-  reader may parse one unit in the last place off), with a refusal test and
-  the real-runtime suite passing.
+| Command | Result |
+| --- | --- |
+| `git diff --check`; `git diff --check 1daf802 HEAD`; `cargo fmt --all --check` | 0; 0; 0 |
+| the PowerShell parser on `scripts/build_candidate.ps1`; `python -B scripts/test_build_candidate.py`; `python -B scripts/check_repo.py` | 0 — 0 parse errors; 0 — 7 tests; 0 |
+| `git diff --stat 1daf802 HEAD --` §5's files; `git diff --quiet 97392e9 d56b17b --` the same files | 0 — as §5; 0 |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 |
+| `cargo test --locked --workspace --all-targets` | 0 — 1914 passed, 56 ignored |
+| `cargo test --locked -p mscanvas-desktop --lib project::` | 0 — 138 passed |
+| `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 — 89 passed, 33 ignored |
+| the nine regressions of §13 and above, *a stale save does not overwrite another writer's state*, and `save_as` | 0 — 21 passed, 2 ignored |
+| the same `targeted_ms1` filter with `-- --ignored --test-threads=1 --nocapture` | 0 — 33 of 33 |
+| `cargo check --locked --release --workspace` | 0 |
+
+The first real-runtime run did not record that no other process used
+`.tmp/m91-jobs/attempts`, so the owner authorized one recorded rerun: at
+22:26 (-04:00), admitted with 15.35 GiB free and 51.5% in use, 33 of 33, the
+same tests, with no Python, OpenMS, MSCanvas, provider, cargo or harness
+process running and the directory empty before and after
+(`.tmp/vw-20260925/integration/rust-rerun/`). No handle-inspection tool was
+used. `git diff --name-only cf4af12 d56b17b` lists two Rust files and this
+record, which no frontend group or browser spec reads, so §13's frontend and
+browser rows stood for it. So `8ad3912` was qualified locally on `d56b17b`.
+
+**Reclassified before publication and repaired: signal summaries against
+their evidence (comment 4106290972).** This finding was recorded here on
+`d56b17b` as deferred and not blocking, on the grounds that only a defective
+or foreign worker could produce it. Before publication the owner reclassified
+it as a blocker for scientific-result consistency: a stored result's table and
+panel read each row's signal summary, its figure reads the evidence points,
+and nothing made the two agree before the payload became permanent.
+
+- *What the worker writes* (`adapter_v1.py`). Per trace, sorted by m/z, it
+  takes the extracted intensities once and writes them as that trace's
+  evidence points, `[spectrum index, retention time, intensity]`; `sum` is
+  their `math.fsum` (the exact sum, rounded once), and `max` their largest,
+  0.0 over no points. A window in which no MS1 spectrum with peaks lies still
+  has one evidence line per trace, with no points. `anyNonzeroPoint` is whether any trace's
+  maximum is above zero, that is, whether any point is.
+- *The invariant, enforced at publication.* In `validate_payload`, before
+  anything is staged, every row with an ion and a signal has exactly one
+  evidence line per trace, and one `sum` and one `max` per trace. For each
+  trace, `max` equals the largest intensity of that line's points (0.0 when it
+  has none), compared exactly: it is written as the same text as the point it
+  is. `sum` is within a relative 1e-9 of the points' absolute sum from a
+  compensated (Neumaier) sum of the points; evidence of zeros admits only a
+  zero sum. `anyNonzeroPoint` equals whether any point of any of the row's
+  traces is above zero. A mismatch is the existing `resultInvalid` at the
+  result stage, and nothing is staged. Stored payloads are not re-derived when
+  read; they stay bound by their digests.
+- *Why a tolerance for `sum`.* The workspace's `serde_json` parses without
+  `float_roundtrip`, so a value may arrive a unit or two in the last place away
+  from the one the worker wrote, and turning that feature on would change a
+  manifest. This module already compares values that crossed a text boundary
+  to within a relative 1e-9 (`same_value`, and the theoretical m/z just above
+  this check). The compensated sum's error is a few units in the last place of
+  the points' absolute sum, to first order independent of the number of
+  points, far below 1e-9 of it for any count a 64 MiB evidence file can hold.
+- *Unchanged.* The worker, the payload format, the project schema, the
+  dependencies, manifests and locks, the interface, target order and mapping,
+  and every scientific algorithm. No row is rewritten and there is no
+  fallback.
+
+The repair is `03effab38e7101b6dec33f6bb0f9fdda18f0f3e1` (tree
+`9f0fab3316ca3fa426390d7801dc6e7f41b63982`): `targeted_ms1.rs` and
+`targeted_ms1/tests.rs`. Its tests, in `targeted_ms1::tests`:
+
+- *a signal summary that is its evidence summary is accepted*: sums as
+  `math.fsum` writes them; one trace above zero and one of zeros; a window with
+  no points, sums and maxima of 0.0. The same empty window with a sum, or with
+  a maximum and the flag it implies, is refused.
+- *a signal summary that contradicts its evidence is refused*: zero evidence
+  under a nonzero sum and maximum (the review's example) and under a sum alone;
+  a sum off on either trace; a maximum that is a point but not the largest; the
+  flag alone; each trace's summary on the other trace; and a summary with an
+  entry no trace has.
+- *a worker whose signal summary contradicts its evidence publishes nothing*
+  (real runtime, ignored by default): the pinned adapter completes and is
+  staged, and the same adapter altered to write each sum, or each maximum, as
+  `x * 1.001 + 1.0` is refused as `resultInvalid` at the result stage, with
+  nothing staged.
+
+RED on `d56b17b`'s implementation, the tests added
+(`.tmp/pr127-4106290972/`): the unit tests exited 101, with the refused cases
+0–4 and 6 and both empty-window cases accepted; the flag alone (case 5) was
+already refused by the row's own rule, which ties it to the maxima. The
+real-runtime test exited 101: the result of the adapter that raises its sums
+completed. The adapter that raises its maxima, and the summary with an extra
+entry, which the review of the change found, were not run on the old code.
+
+The Rust group on `03effab`, admitted at 23:59:42 (-04:00) with 12.41 GiB free
+and 60.8% in use (12.04–12.52 GiB and 60.5–62.0% before each later command),
+one command at a time; every command exited 0. Logs are under
+`.tmp/pr127-4106290972/final/` (git-ignored).
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all --check` | 0 |
+| `cargo test --locked -p mscanvas-desktop --lib a_signal_summary` | 0 — 2 passed |
+| `cargo test --locked -p mscanvas-desktop --lib a_worker_whose_signal_summary -- --ignored --test-threads=1 --nocapture` | 0 — 1 passed |
+| `cargo test --locked -p mscanvas-desktop --lib targeted_ms1` | 0 — 91 passed, 34 ignored |
+| the same with `-- --ignored --test-threads=1 --nocapture` | 0 — 34 of 34: the 33 of `d56b17b` and the new test |
+| `cargo test --locked --workspace --all-targets` | 0 — 1916 passed, 57 ignored |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | 0 |
+| `cargo check --locked --release --workspace` | 0 |
+| `python -B scripts/check_repo.py` | 0 |
+| `git diff --check`; `git diff --check 72904b8 HEAD` | 0; 0 |
+| `git diff --quiet d56b17b HEAD --` §5's files; `git diff --quiet 97392e9 HEAD --` the same | 0; 0 |
+
+Against `d56b17b` the two new unit tests account for the desktop library's
+1242 → 1244 and the workspace's 1914 → 1916, and the new real-runtime test for
+56 → 57 ignored and 33 → 34. Before and after each real-runtime step no
+process of this campaign, and no OpenMS, MSCanvas, provider, cargo or harness
+process, was running. The only Python process was an unrelated editor language
+server (the VS Code isort extension's `lsp_server.py`), which was left alone.
+`.tmp/m91-jobs/attempts` was empty before and after. `03effab` changes two Rust files, which no frontend group or browser
+spec reads, so §13's frontend and browser rows stand for it. It is the
+**PR #127 FINAL LOCAL SOURCE CANDIDATE QUALIFIED — NOT PUSHED**: source
+qualification, not release qualification.

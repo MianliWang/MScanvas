@@ -2184,6 +2184,192 @@ fn a_payload_is_accepted_only_when_every_row_says_what_its_outcome_requires() {
     assert!(validate_payload(&plan, &rows, short.as_bytes(), false).is_none());
 }
 
+/// The synthetic payload with the first target's signal and each of its
+/// traces' points replaced, as the worker would write them.
+fn with_first_signal(
+    plan: &TargetedMs1Plan,
+    signal: &str,
+    points: [&str; 2],
+) -> (Vec<u8>, Vec<u8>) {
+    let (rows, evidence) = synthetic_payload(plan);
+    let id = plan.targets[0].target_id.to_string();
+    let zero_signal =
+        "{\"points\":2,\"sum\":[0.0,0.0],\"max\":[0.0,0.0],\"anyNonzeroPoint\":false}";
+    let zero_points = "[[80,40.0,0.0],[81,40.5,0.0]]";
+    let rows: String = String::from_utf8(rows)
+        .expect("utf-8")
+        .lines()
+        .map(|line| {
+            let line = if line.contains(&id) {
+                line.replacen(zero_signal, signal, 1)
+            } else {
+                line.to_owned()
+            };
+            line + "\n"
+        })
+        .collect();
+    let evidence: String = String::from_utf8(evidence)
+        .expect("utf-8")
+        .lines()
+        .map(|line| {
+            let line = match (0..2)
+                .find(|trace| line.contains(&id) && line.contains(&format!("\"trace\":{trace},")))
+            {
+                Some(trace) => line.replacen(zero_points, points[trace], 1),
+                None => line.to_owned(),
+            };
+            line + "\n"
+        })
+        .collect();
+    (rows.into_bytes(), evidence.into_bytes())
+}
+
+// The worker's summary of one trace (`adapter_v1.py`): `math.fsum` of the
+// points' intensities, the largest of them (0.0 over none), and whether any
+// point of any trace is above zero. Values as its `json.dumps` writes them.
+const TRACE_M: &str = "[[80,40.0,50000000.0],[81,40.5,0.1],[82,41.0,0.7]]";
+const TRACE_M1: &str = "[[80,40.0,2500000.0],[81,40.5,0.25],[82,41.0,0.5]]";
+
+fn summary(sum: &str, max: &str, any: bool) -> String {
+    format!("{{\"points\":3,\"sum\":{sum},\"max\":{max},\"anyNonzeroPoint\":{any}}}")
+}
+
+#[test]
+fn a_signal_summary_that_is_its_evidence_summary_is_accepted() {
+    let scratch = Scratch::new("m91-summary-honest");
+    let plan = resolved_for_checks(&scratch, 2);
+    // The sums are the ones `math.fsum` gives, as the worker writes them.
+    let honest = summary("[50000000.8,2500000.75]", "[50000000.0,2500000.0]", true);
+    let (rows, evidence) = with_first_signal(&plan, &honest, [TRACE_M, TRACE_M1]);
+    assert!(validate_payload(&plan, &rows, &evidence, false).is_some());
+    // One trace above zero is enough for `anyNonzeroPoint`.
+    let zero = "[[80,40.0,0.0],[81,40.5,0.0],[82,41.0,0.0]]";
+    let one = summary("[50000000.8,0.0]", "[50000000.0,0.0]", true);
+    let (rows, evidence) = with_first_signal(&plan, &one, [TRACE_M, zero]);
+    assert!(validate_payload(&plan, &rows, &evidence, false).is_some());
+    // A window no spectrum fell into: no points, sums and maxima of 0.0.
+    let (rows, evidence) = synthetic_payload(&plan);
+    let id = plan.targets[0].target_id.to_string();
+    let as_empty_failure = |row: &str| {
+        row.replace(
+            "\"outcome\":\"NOT_DETECTED\",\"failureReason\":null",
+            "\"outcome\":\"FAILED\",\"failureReason\":\"WINDOW_WITHOUT_MS1_PEAKS\"",
+        )
+        .replace("\"points\":2", "\"points\":0")
+    };
+    let rows: String = String::from_utf8(rows)
+        .expect("utf-8")
+        .lines()
+        .map(|line| {
+            (if line.contains(&id) {
+                as_empty_failure(line)
+            } else {
+                line.to_owned()
+            }) + "\n"
+        })
+        .collect();
+    let evidence: String = String::from_utf8(evidence)
+        .expect("utf-8")
+        .lines()
+        .map(|line| {
+            (if line.contains(&id) {
+                line.replace("[[80,40.0,0.0],[81,40.5,0.0]]", "[]")
+            } else {
+                line.to_owned()
+            }) + "\n"
+        })
+        .collect();
+    assert!(validate_payload(&plan, rows.as_bytes(), evidence.as_bytes(), false).is_some());
+    // Review comment 4106290972: the same empty window with a sum, or a
+    // maximum and the flag it implies, that no point supports.
+    let accepted: Vec<usize> = [
+        "{\"points\":0,\"sum\":[1.0,0.0],\"max\":[0.0,0.0],\"anyNonzeroPoint\":false}",
+        "{\"points\":0,\"sum\":[0.0,0.0],\"max\":[1.0,0.0],\"anyNonzeroPoint\":true}",
+    ]
+    .into_iter()
+    .enumerate()
+    .filter(|(_, signal)| {
+        let claimed = rows.replacen(
+            "{\"points\":0,\"sum\":[0.0,0.0],\"max\":[0.0,0.0],\"anyNonzeroPoint\":false}",
+            signal,
+            1,
+        );
+        validate_payload(&plan, claimed.as_bytes(), evidence.as_bytes(), false).is_some()
+    })
+    .map(|(index, _)| index)
+    .collect();
+    assert!(accepted.is_empty(), "empty cases accepted: {accepted:?}");
+}
+
+#[test]
+fn a_signal_summary_that_contradicts_its_evidence_is_refused() {
+    let scratch = Scratch::new("m91-summary-refused");
+    let plan = resolved_for_checks(&scratch, 2);
+    let zero = "[[80,40.0,0.0],[81,40.5,0.0]]";
+    let refused = [
+        // Review comment 4106290972: zero-intensity evidence under a row that
+        // reports a nonzero sum and maximum, and one that reports a sum alone.
+        (
+            "{\"points\":2,\"sum\":[5.0,0.0],\"max\":[5.0,0.0],\"anyNonzeroPoint\":true}"
+                .to_owned(),
+            [zero, zero],
+        ),
+        (
+            "{\"points\":2,\"sum\":[5.0,0.0],\"max\":[0.0,0.0],\"anyNonzeroPoint\":false}"
+                .to_owned(),
+            [zero, zero],
+        ),
+        // Each fact alone, against honest evidence: a sum, on either trace.
+        (
+            summary("[50000001.8,2500000.75]", "[50000000.0,2500000.0]", true),
+            [TRACE_M, TRACE_M1],
+        ),
+        (
+            summary("[50000000.8,2500001.75]", "[50000000.0,2500000.0]", true),
+            [TRACE_M, TRACE_M1],
+        ),
+        // A maximum that is a point of its trace, but not the largest.
+        (
+            summary("[50000000.8,2500000.75]", "[0.7,2500000.0]", true),
+            [TRACE_M, TRACE_M1],
+        ),
+        // The flag. The row's own rule ties it to the maxima, and each maximum
+        // must be its trace's largest point, so this is refused before the
+        // flag is compared with the points, which stays as a second guard.
+        (
+            summary("[50000000.8,2500000.75]", "[50000000.0,2500000.0]", false),
+            [TRACE_M, TRACE_M1],
+        ),
+        // Each trace's summary on the other trace: every value is a real one,
+        // bound to the wrong evidence line.
+        (
+            summary("[2500000.75,50000000.8]", "[2500000.0,50000000.0]", true),
+            [TRACE_M, TRACE_M1],
+        ),
+    ];
+    let accepted: Vec<usize> = refused
+        .iter()
+        .enumerate()
+        .filter(|(_, (signal, points))| {
+            let (rows, evidence) = with_first_signal(&plan, signal, *points);
+            validate_payload(&plan, &rows, &evidence, false).is_some()
+        })
+        .map(|(index, _)| index)
+        .collect();
+    assert!(accepted.is_empty(), "cases accepted: {accepted:?}");
+    // A summary with an entry no trace has, which no evidence line can check.
+    // Only a library absence, whose row does not tie the lengths, reaches here.
+    let extra =
+        "{\"points\":2,\"sum\":[0.0,0.0,5.0],\"max\":[0.0,0.0,5.0],\"anyNonzeroPoint\":false}";
+    let (rows, evidence) = with_first_signal(&plan, extra, [zero, zero]);
+    let absent = String::from_utf8(rows).expect("utf-8").replacen(
+        "\"outcome\":\"NOT_DETECTED\",\"failureReason\":null",
+        "\"outcome\":\"FAILED\",\"failureReason\":\"TARGET_ABSENT_FROM_ENGINE_LIBRARY\"",
+        1,
+    );
+    assert!(validate_payload(&plan, absent.as_bytes(), &evidence, false).is_none());
+}
+
 #[test]
 fn a_runtime_file_changed_added_or_missing_is_refused() {
     let scratch = Scratch::new("m91-runtime");
@@ -4111,6 +4297,56 @@ fn a_worker_whose_output_is_missing_malformed_or_unknown_publishes_nothing() {
         }
         assert!(!staged, "case {index}");
     }
+}
+
+/// The pinned adapter with its one occurrence of `from` replaced by `to`.
+fn adapter_with(from: &str, to: &str) -> &'static [u8] {
+    let source = std::str::from_utf8(recipe::ADAPTER_SOURCE).expect("utf-8");
+    assert_eq!(source.matches(from).count(), 1, "{from}");
+    Box::leak(source.replacen(from, to, 1).into_bytes().into_boxed_slice())
+}
+
+/// Review comment 4106290972, through the real engine: a worker whose row
+/// summary is not its evidence's is refused before anything is staged.
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn a_worker_whose_signal_summary_contradicts_its_evidence_publishes_nothing() {
+    let (end, staged) = attempt_with(recipe::ADAPTER_SOURCE, Duration::from_secs(120));
+    assert!(
+        matches!(end, AttemptEnd::Completed { .. }),
+        "the pinned adapter completes: {end:?}"
+    );
+    assert!(staged, "and its result is staged");
+    // Relative changes: an absolute one could vanish into a large sum.
+    let outcomes: Vec<String> = [
+        (
+            "sums.append(math.fsum(values))",
+            "sums.append(math.fsum(values) * 1.001 + 1.0)",
+        ),
+        (
+            "maxima.append(max(values, default=0.0))",
+            "maxima.append(max(values, default=0.0) * 1.001 + 1.0)",
+        ),
+    ]
+    .into_iter()
+    .map(
+        |(from, to)| match attempt_with(adapter_with(from, to), Duration::from_secs(120)) {
+            (
+                AttemptEnd::Failed {
+                    failure:
+                        RunFailure {
+                            code: FailureCode::ResultInvalid,
+                            stage: FailureStage::Result,
+                        },
+                    ..
+                },
+                false,
+            ) => "refused".to_owned(),
+            (end, staged) => format!("staged {staged}: {end:?}"),
+        },
+    )
+    .collect();
+    assert_eq!(outcomes, ["refused", "refused"]);
 }
 
 #[test]

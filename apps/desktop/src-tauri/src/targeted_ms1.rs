@@ -1358,8 +1358,9 @@ fn check_report(
 ///
 /// Beyond each line's own shape: one row per target, in the plan's order; every
 /// relation names a target of this plan; every row with an ion has exactly one
-/// evidence line per trace, of as many points as its signal visited; and the
-/// recovery flag is on every row or on none, as the run reported.
+/// evidence line per trace, of as many points as its signal visited, and its
+/// signal summary is those points' own (`summarizes`); and the recovery flag
+/// is on every row or on none, as the run reported.
 fn validate_payload(
     plan: &TargetedMs1Plan,
     rows: &[u8],
@@ -1417,17 +1418,27 @@ fn validate_payload(
             .collect();
         match (&row.ion, &row.signal) {
             (Some(ion), Some(signal)) => {
-                if own.len() != ion.mz_theoretical.len() {
+                // Every summary fact belongs to exactly one evidence line.
+                if own.len() != ion.mz_theoretical.len()
+                    || signal.sum.len() != own.len()
+                    || signal.max.len() != own.len()
+                {
                     return None;
                 }
+                let mut any_nonzero_point = false;
                 for (trace, mz) in ion.mz_theoretical.iter().enumerate() {
                     let line = own.iter().find(|line| usize::from(line.trace) == trace)?;
                     if !line.is_consistent()
                         || line.points.len() != usize::try_from(signal.points).ok()?
                         || (line.mz_theoretical - mz).abs() > 1e-9 * mz.abs()
+                        || !summarizes(line, *signal.sum.get(trace)?, *signal.max.get(trace)?)
                     {
                         return None;
                     }
+                    any_nonzero_point |= line.points.iter().any(|point| point.2 > 0.0);
+                }
+                if signal.any_nonzero_point != any_nonzero_point {
+                    return None;
                 }
             }
             (None, None)
@@ -1452,4 +1463,37 @@ fn validate_payload(
     }
     // Every evidence line belongs to a row.
     (accounted == lines.len() && summary.is_whole()).then_some(summary)
+}
+
+/// Whether `sum` and `max` are the worker's summary of this trace's evidence
+/// points (`adapter_v1.py`): `max` the largest intensity, 0.0 over no points,
+/// and `sum` their `math.fsum`, the exact sum rounded once.
+///
+/// `max` is written as the same text as the point it is, so it is compared
+/// exactly. `sum` is compared to within a relative 1e-9 of the points'
+/// absolute sum, as `same_value` compares values that crossed a text boundary:
+/// without `serde_json`'s exact float parsing each value may arrive a unit or
+/// two in the last place away, and the compensated sum here differs from the
+/// exact one by a few units of the points' absolute sum, to first order
+/// whatever the number of points: far below 1e-9 for any count a payload file
+/// can hold. Evidence of zeros admits only a zero sum.
+fn summarizes(line: &EvidenceLine, sum: f64, max: f64) -> bool {
+    let (mut total, mut compensation, mut scale) = (0.0_f64, 0.0_f64, 0.0_f64);
+    let mut largest: Option<f64> = None;
+    for &(_, _, intensity) in &line.points {
+        // Neumaier's summation: to first order, the error does not grow with
+        // the point count.
+        let next = total + intensity;
+        compensation += if total.abs() >= intensity.abs() {
+            (total - next) + intensity
+        } else {
+            (intensity - next) + total
+        };
+        total = next;
+        scale += intensity.abs();
+        largest = Some(largest.map_or(intensity, |largest| largest.max(intensity)));
+    }
+    scale.is_finite()
+        && largest.unwrap_or(0.0) == max
+        && (total + compensation - sum).abs() <= 1e-9 * scale
 }
