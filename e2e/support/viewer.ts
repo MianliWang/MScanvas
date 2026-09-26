@@ -166,13 +166,15 @@ export async function readBackSavedLayout(): Promise<void> {
       invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>;
     };
     const invoke = internals.invoke;
-    internals.invoke = (command, args) => {
-      const stored = table[command] as { outcome?: string; preferences?: Record<string, unknown> } | undefined;
-      const layout = (args["request"] as { layout?: unknown } | undefined)?.layout;
-      if (command === "save_ui_preferences" && stored?.outcome === "saved" && stored.preferences !== undefined && layout !== undefined) {
-        table[command] = { ...stored, preferences: { ...stored.preferences, layout } };
+    internals.invoke = (command, args, ...rest: unknown[]) => {
+      if (command === "save_ui_preferences") {
+        const stored = table[command] as { outcome?: string; preferences?: Record<string, unknown> } | null | undefined;
+        const layout = (args?.["request"] as { layout?: unknown } | undefined)?.layout;
+        if (stored?.outcome === "saved" && stored.preferences !== undefined && layout !== undefined) {
+          table[command] = { ...stored, preferences: { ...stored.preferences, layout } };
+        }
       }
-      return invoke(command, args);
+      return (invoke as (...all: unknown[]) => Promise<unknown>)(command, args, ...rest);
     };
   }, IPC_TABLE_KEY);
 }
@@ -194,7 +196,8 @@ export async function revealRosterRow(handle: string): Promise<void> {
   await browser.waitUntil(async () => (await toggle.getAttribute("aria-disabled")) === null, {
     timeoutMsg: "the roster toggle never became operable",
   });
-  await toggle.click();
+  // Only a folded roster is opened: pressing an open one would close it.
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
   await row.waitForDisplayed();
 }
 

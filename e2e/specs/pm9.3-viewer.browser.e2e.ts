@@ -49,6 +49,7 @@ import {
   SPECTRUM_PLOT,
   SPECTRUM_RANGE,
   SPECTRUM_STATUS,
+  readBackSavedLayout,
   revealRosterRow,
   selectTheSpectrum,
   viewerReads,
@@ -496,21 +497,26 @@ async function observeViewer(label: string) {
       const r = node.getBoundingClientRect();
       return Math.max(0, Math.min(r.bottom, evidenceBox.bottom, innerHeight) - Math.max(r.top, evidenceBox.top, 0));
     };
-    // How many rows a toolbar's controls take: a control whose top is more
-    // than half a 32px control below the current row's starts another.
+    // How many rows a toolbar's heading and controls take: an item that
+    // begins below everything in the current row starts another. By overlap
+    // rather than by top edge, so a label over its input and a 32px summary
+    // beside it are one row, and a heading counts, so actions that drop below
+    // it as a whole are a second row.
     const rows = (css: string) => {
       const node = document.querySelector(css);
       if (node === null || node.getClientRects().length === 0) return null;
-      const tops = [...node.querySelectorAll("button, label, summary")]
+      const boxes = [...node.querySelectorAll("h2, button, label, summary")]
         .filter((item) => item.getClientRects().length > 0)
-        .map((item) => item.getBoundingClientRect().top)
-        .sort((a, b) => a - b);
+        .map((item) => item.getBoundingClientRect())
+        .sort((a, b) => a.top - b.top);
       let count = 0;
-      let row = -Infinity;
-      for (const top of tops) {
-        if (top - row > 16) {
+      let bottom = -Infinity;
+      for (const box of boxes) {
+        if (box.top >= bottom - 1) {
           count += 1;
-          row = top;
+          bottom = box.bottom;
+        } else {
+          bottom = Math.max(bottom, box.bottom);
         }
       }
       return { rows: count, height: node.getBoundingClientRect().height };
@@ -534,6 +540,7 @@ async function observeViewer(label: string) {
         top = Math.max(top, b.top);
         bottom = Math.min(bottom, b.bottom);
       }
+      bottom = Math.min(bottom, innerHeight);
       evidence.scrollTop = saved;
       return { height: r.height, visible: Math.max(0, bottom - top) };
     };
@@ -615,6 +622,8 @@ async function observeViewer(label: string) {
 
 /** Opens or closes one header panel toggle, and waits for the header to say so. */
 async function setPanel(panel: "roster" | "details", open: boolean) {
+  // The press is saved, and the shell adopts the layout the save confirms.
+  await readBackSavedLayout();
   const toggle = browser.$(`[aria-controls="workbench-${panel === "roster" ? "roster" : "inspector"}"]`);
   if ((await toggle.getAttribute("aria-expanded")) !== String(open)) await toggle.click();
   await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === String(open), {
@@ -638,7 +647,7 @@ async function keyboardWalk() {
       if (node === null) return null;
       const r = node.getBoundingClientRect();
       return {
-        name: (node.getAttribute("aria-label") ?? node.closest("label")?.textContent ?? node.textContent ?? node.tagName).trim().slice(0, 48),
+        name: (node.getAttribute("aria-label") || node.closest("label")?.textContent || node.textContent || node.tagName).trim().slice(0, 48),
         inPanel: node.closest(".chromatogram-panel") !== null,
         focusVisible: node.matches(":focus-visible"),
         outline: getComputedStyle(node).outlineStyle,
@@ -1103,6 +1112,15 @@ describe("PM9.3 viewer contracts, rendered", () => {
           defaults.push(measured);
         }
 
+        // L13: no viewer toolbar takes a second row in any default arrangement
+        // (DESIGN_SYSTEM: "toolbars must not grow into wrapping ribbons").
+        const wrapped = defaults.flatMap((frame) =>
+          Object.entries(frame.toolbars)
+            .filter(([, toolbar]) => toolbar !== null && toolbar.rows > 1)
+            .map(([name, toolbar]) => `${frame.label} ${name} ${String(toolbar?.rows)}`),
+        );
+        expect(wrapped).toEqual([]);
+
         // The keyboard path through the chromatogram at the narrow anchor.
         const walk = await keyboardWalk();
         evidence.push({ label: `pm93-g-${locale}-960x640-keyboard`, walk });
@@ -1133,14 +1151,6 @@ describe("PM9.3 viewer contracts, rendered", () => {
         await observeViewer(`pm93-g-${locale}-960x640-details-open`);
         await setPanel("details", false);
 
-        // L13: no viewer toolbar takes a second row in any default arrangement
-        // (DESIGN_SYSTEM: "toolbars must not grow into wrapping ribbons").
-        const wrapped = defaults.flatMap((frame) =>
-          Object.entries(frame.toolbars)
-            .filter(([, toolbar]) => toolbar !== null && toolbar.rows > 1)
-            .map(([name, toolbar]) => `${frame.label} ${name} ${String(toolbar?.rows)}`),
-        );
-        expect(wrapped).toEqual([]);
         // The labels are the locale's own; zh-CN is the reference's language.
         evidence.push({ label: `pm93-g-${locale}-labels`, next: locale === "en" ? en.scanNext : zh.scanNext });
         // motion's development build warns that reduced motion is on; this
