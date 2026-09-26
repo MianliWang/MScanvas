@@ -2,16 +2,15 @@
 
 PM9 | Acceptance: U1, U2, U7 (same session), U9, U10 | Depends on: PM9.1 |
 Serial, one writer
-Status: **PM9.2 PRODUCT CONVERGENCE IMPLEMENTED — FOCUSED RENDERED ACCEPTANCE
-PENDING.** The owner's dispositions in
+Status: **PM9.2 PRODUCT CONVERGENCE — FOCUSED RENDERED ACCEPTANCE PASSED EXCEPT ONE OWNER DECISION.** The owner's dispositions in
 [baseline §3.1](baseline.md#31-rendered-comparison-and-dispositions-2026-09-25)
-are implemented on the reconciled base (see "Convergence implemented" below):
-production `6b31161be6ff66d31c1a9152b4cf59cefffa1afe`, tests
-`e533c946c1796e8b47005331b15eef5fae28b852`. Frontend checks pass; nothing has
-been rendered. Until the focused rendered set below runs, the convergence is
-`IMPLEMENTED_UNVALIDATED`. The draft's browser functional acceptance
-(2026-09-25, on `a0783bb`,
-[baseline §7](baseline.md#7-validation-window-2026-09-25)) predates it.
+were implemented on the reconciled base (`6b31161`), repaired once from the
+rendered evidence and accepted in the browser on the final candidate
+`0d22fc7843c0ec9583ca44bc4fa91e0a94803eb0` (see "Focused rendered acceptance"
+below). Every obligation passes except one criterion of L14–L16: at its narrow
+floor the English conversion-scope item reads "For co…", which does not say
+what it is. Fixing it changes the English wording that the frozen PM9.1 B2 test
+pins, so it waits for the owner. Native rendering at 150 % stays PENDING.
 
 ## Goal
 
@@ -246,7 +245,8 @@ BLOCKED_PROVIDER_HOLD.
 ### Records this supersedes, to amend after acceptance
 
 Not edited before the rendered acceptance; each is superseded by the rows
-above once accepted:
+above once accepted. The acceptance below ends with one owner decision, so
+they are still unamended; the amendments are drafted and wait for it:
 
 - [M7.2 record](../../ux/M7_2_WORKBENCH_SHELL_ROSTER_ORGANIZATION.md): Details
   "disabled until a preview is loaded" (L20).
@@ -260,6 +260,79 @@ above once accepted:
 - [PRIMARY_WORKFLOWS](../../product/PRIMARY_WORKFLOWS.md) WF-001 step 2: the
   release and build are reported through the folded reading and its toggle
   rather than a standing band (L10).
+
+## Focused rendered acceptance (2026-09-26)
+
+The owner's dispatch "PM9.2 — focused rendered acceptance and closure", on
+`feat/pm9-product-convergence` from `28e3f11`. Browser only, one spec at a
+time, with the memory gate; no Cargo, Rust, OpenMS, provider or native work.
+Records: `.tmp/pm92-accept/run1`–`run4` (each run's `summary.txt`, logs and
+`classify.txt`) and `test-results/<spec>/browser-*` (git-ignored); the details
+and numbers are in [baseline §9](baseline.md#9-pm92-focused-rendered-acceptance-2026-09-26).
+
+**B1, as the owner clarified it.** The invariant is unchanged: context facts
+come from their owners, and a context item navigates without starting work or
+changing the processing scope. What is shown is page-sensitive: the scope is
+absent on the Project surface and, where it is relevant, reads exactly what
+the Conversion surface resolves. Hiding it changes nothing it is made of. B1
+now asserts each of these at every route step (`9c8459c`).
+
+**Candidate.** Tested code: `0d22fc7843c0ec9583ca44bc4fa91e0a94803eb0`, tree
+`9610fe373dd8dae7a59abd1930d4fd95311450f6`. Its production code is
+`6b31161` plus the repair `56d826244e18354d672da974407bfb6337ada5f1` less
+the one rule `0d22fc7` withdraws. Test-only commits on the way: `9c8459c`
+(B1), `6d4a3a3` and `fc6506c` (rendered order, focus, L1 and L22 frames),
+`a2ccfbf` (ellipsis measured on the item's own copy) and `8d3c9d8` (a frame
+is read only once the resized layout has settled).
+
+**One repair cycle, used.** Run 1 on `fc6506c` found two defects:
+L14–L16's order leaked (a higher rank took a sub-pixel share and drew an
+ellipsis, "Inspecting: Targeted MS1 res…" while the project name had 168 px
+to give), and L9 still read as one filled button and four equal bordered
+ones. `56d8262` repaired both and made the drop hint give way first. Its rerun
+showed that one of its rules, the selection count sharing New group's row,
+crushed the count into six lines once the Undo link appears (the band grew from
+67 to 121 px); `0d22fc7` withdrew that rule to its rendered state before the
+repair. Nothing new was designed after the cycle.
+
+**Browser results on `0d22fc7`** (run 4), by stable test identity against the
+2026-09-25 campaign on `a0783bb`:
+
+| Spec | Result | Against `a0783bb` |
+| --- | --- | --- |
+| `pm9.1-baseline` | 22 of 22 | B1–B7 pass; PM9-G four states × three viewports × two languages; eight PM9.2 cases |
+| `m7.5-preferences` | 7 of 8 | 1 known failure, same text; "holds the gated startup state" now passes, because Details is refused with `aria-disabled` (L20) |
+| `m7.2-workbench` | 1 of 11 | 10 known failures, same text |
+| `m5.7-selection-availability` | 7 of 8 | 1 known failure (960×640), same text |
+| `m8.1`–`m8.5`, `m9.1`, `m9.4` | all pass | same pass |
+| `pm9.3-viewer` | 11 of 11 | same pass |
+| `m6.1`, `m6.4` (run 1, `fc6506c`) | 0 of 9, 0 of 24 | known setup failures on the obsolete selector; no later change touches that path |
+
+No new failure in any run; one known failure now passes.
+
+**Final dispositions.**
+
+| Row | Disposition, from the rendered evidence |
+| --- | --- |
+| L1 | **Pass.** Every surface is titled in the navigation's words, in en and zh-CN. The evidence surface offers no primary action with nothing read and nothing retained, and after an installation change the retained acquisition's reopen is its one filled primary, in both languages |
+| L9 | **Pass** on the owner's criterion. The block reads in three tiers: one filled (`Add files…`), three bordered (`Add mzML folder…`, `Preview focused`, `Remove highlighted`), two quiet (`Clear list`, `New group`); the picked-row pair goes quiet while refused. No menu, no capability or meaning changed. The organizing band is one line in zh-CN; in en the count keeps a line of its own (67 px, 75 px before PM9.2), so the implementation record's "two bands become one" holds in zh-CN only |
+| L10 | **Pass.** A quiet reading folds to `ProteoWizard ready` and the notices track takes 0 px (89 px before). Missing, unsupported and quarantined readings stay on screen with their actions and help (M7.5). A toggle that leaves while focused hands the keyboard to the banner, rendered; the help is not folded under a reader, in Vitest |
+| L14–L16 | **Pass except (e) in en.** The status is never cut; ranks give way strictly in order, lower first, with the drop hint gone before any of them; the scope is absent on Project and elsewhere reads the Conversion surface's own; the line is one row. At the 5.5em floor zh-CN keeps "正在检…" and "待转换…", en keeps "Inspect…", but the English scope keeps "For co…", which does not identify it. **Owner decision:** reword the English value to lead with the word that tells it apart, e.g. "Conversion scope: {{scope}} · {{eligible}} eligible" (a copy change under ADR 0047, which also changes what the frozen B2 and two other PM9.1 checks pin), or accept it as a limit |
+| L20 | **Pass.** Closed by default at 1366×768; the same bordered control in the same place on every surface; refused, it stays a Tab stop with a visible ring, says why, and a press does nothing |
+| L22 | **Pass.** The document keeps no height or width of its own in any frame (before: 64 to 851 px of vertical overflow). The evidence, Conversion, Project and inspector regions and the roster list each own their overflow. At 960×640 the main region has 524 px on screen (435 before); the spectrum panel 85 px in en and 136 px in zh-CN (25 and 76 before), the L1 title taking 29 px of the 89 the fold returned |
+
+**Known limits.** When the drop hint is squeezed below its ellipsis it shows a
+clipped first glyph, and its 16 px gap stays after it reaches 0. Two statuses
+at once, an unsaved long-named project at its floor, the rank-2 shrink after
+rank 3 is floored, the superseded reading and zh-CN with the Undo link are not
+rendered. The give-way order rests on Blink rounding sub-unit shrink shares to
+nothing (commented in `workbench.css`). The en count wraps between "0" and
+"checked". In the retained state two filled accents are on screen (the reopen
+and `Add files…`). The Project surface's refused `Capture file facts` renders
+at full accent: `aria-disabled` is not dimmed for `.primary-button`, which PM9.2
+did not touch. Clear list's focus and hover, and every zh-CN keyboard walk, are
+code-evidenced only. Native Windows at 150 % is PENDING and the
+provider-positive route BLOCKED_PROVIDER_HOLD.
 
 ## Not in this slice
 

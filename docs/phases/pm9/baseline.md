@@ -167,10 +167,12 @@ no disposition yet.
 | L23 Horizontal fit | No overflow | 0 in every frame at `a0783bb` and at `d56b17b`; the regression that failed the first run at `daa801c`, reproduced at `292c1d9`, is §7.3's | Meets §6's assertion |
 
 PM9.2 implemented the action rows L1, L9, L10, L14–L16 and L22 and L20's
-conditions on 2026-09-26 (`6b31161`); none of that is rendered yet, so the
-production column above still describes `a0783bb`. How each row was disposed
-of is in [slice-02](slice-02.md#convergence-implemented-2026-09-26-on-c562327).
-L13 stays PM9.3's.
+conditions on 2026-09-26 (`6b31161`) and they were rendered and accepted in
+the browser on `0d22fc7` (§9), except L14–L16's English scope at its floor,
+which waits for the owner. The production column above still describes
+`a0783bb`. How each row was disposed of is in
+[slice-02](slice-02.md#focused-rendered-acceptance-2026-09-26). L13 stays
+PM9.3's.
 
 Not captured in this comparison: empty and entry states, a pending range band
 (PM9.3's G frames later hold one, on screen only at 1920×1080; slice-03 §3),
@@ -599,3 +601,70 @@ The PM9 acceptance status is unchanged by the merge: PM9.1 is not complete
 implementation and PM9.4–PM9.7 have not started, and the ProteoWizard HOLD
 still keeps a native launch, which probes the provider on mount, out of reach
 (§7.6).
+
+## 9. PM9.2 focused rendered acceptance (2026-09-26)
+
+On `feat/pm9-product-convergence`, from `28e3f11`, in the owner's dispatch
+"PM9.2 — focused rendered acceptance and closure". Browser specs only, one at
+a time; Cargo, Rust, OpenMS, provider and native work were out of scope, and
+the frontend static, unit and build checks of the implementation were taken as
+given except where a repair changed code. Records are git-ignored:
+`.tmp/pm92-accept/run1`–`run4` and `test-results/<spec>/browser-*`.
+
+**Memory.** Heavy work waited for admission (≥ 8 GiB available, ≤ 80 % used)
+from 03:51, when 5.17 GiB was available, until 04:07 (8.41 GiB, 73.4 %). Every
+spec's reading is in its run's `summary.txt`; none approached the emergency
+stop.
+
+**Runs.**
+
+| Run | Candidate (tree) | Specs | Outcome by stable identity against `a0783bb` |
+| --- | --- | --- | --- |
+| 1 | `fc6506c` (`ec4fa27`) | PM9.1; m7.5, m7.2, m5.7, m6.1, m6.4; m8.1–m8.5, m9.1, m9.4; PM9.3 | 71 same pass, 45 same known failure, 1 now passing, 0 new failure; PM9.1 16 of 21, its five failures the new order assertion and a measurement artefact |
+| 2 | `a2ccfbf` (`64a19f3`), after the repair | the same without m5.7, m6.1, m6.4 | 64 same pass, 11 same known failure, 1 now passing, 0 new failure; PM9.1 21 of 22, one unsettled read |
+| 3 | `8d3c9d8` (`683f616`) | PM9.1 | 22 of 22 |
+| 4 | `0d22fc7` (`9610fe3`), final | as run 2, with m5.7 | 71 same pass, 12 same known failure, 1 now passing, 0 new failure; PM9.1 22 of 22 |
+
+Known-failure text was compared number-normalized with the campaign's shard
+logs for m7.2, m7.5, m5.7 and m6.1 and is the same for every test; m6.4 ran
+in two halves in the campaign and is compared by outcome only. The test that
+now passes is M7.5's gated startup, which requires every refused control to be
+reachable; Details used to be `disabled`.
+
+**Two measurement corrections, test-only.** The first ellipsis probe took a
+14px font in two zh-CN frames and reported ellipses the pixels do not show;
+`a2ccfbf` measures an unconstrained copy of the item instead. And a read taken
+straight after a viewport change can still see the previous height (run 2's
+zh-CN busy frame at 1366×768: main region 964 px, document 312 px over, while
+its screenshot shows the settled layout; §7.4 records the same at `a0783bb`);
+`8d3c9d8` reads a frame only once the `100vh` shell fills the viewport, at most
+65 ms in run 3.
+
+**The one repair cycle.** `56d8262` gave each context rank a shrink factor 1e8
+times the one above it, made the drop hint give way before the line, raised
+the floor to 5.5em, and quieted Clear list. Its rule putting the en selection
+count on New group's row crushed the count to six lines whenever the Undo link
+shows (m7.2 frames 05 and 08: band 121 px, against 67 px before the repair and
+75 px at `a0783bb`); `0d22fc7` restored that rule to run 1's state.
+
+**Rendered judgement.** Two read-only passes judged each row from the
+screenshots and the recorded geometry, every finding checked by an adversarial
+second reader; the dispositions and limits are in
+[slice-02](slice-02.md#focused-rendered-acceptance-2026-09-26).
+
+**At 960×640, before (`a0783bb`) and after (`0d22fc7`).**
+
+| Frame | Notices | Main on screen | Evidence on screen | Document vertical overflow |
+| --- | ---: | ---: | --- | ---: |
+| idle en | 89 → 0 | 435 → 524 | spectrum panel 25 → 85 | 555 → 0 |
+| idle zh-CN | 89 → 0 | 435 → 524 | spectrum panel 76 → 136 | 504 → 0 |
+| busy en (Project) | 89 → 0 | 435 → 524 | targeted report 209 → 269 | 851 → 0 |
+| busy zh-CN (Project) | 89 → 0 | 435 → 524 | targeted report 227 → 287 | 815 → 0 |
+
+The header stays 88 px; the L1 title takes 29 px of the 89 px the fold returns.
+
+**Status.** PM9.2: every obligation passes in the browser except L14–L16 (e) in
+en, which waits for the owner's decision on the scope wording. PM9.1 is
+unchanged by this run: J1–J6 measurements and the helper diagnoses are not
+done, native rendering at 150 % is PENDING, and the provider-positive route is
+BLOCKED_PROVIDER_HOLD. PM9.3 has not started; L13 is its first item.
