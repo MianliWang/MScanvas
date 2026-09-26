@@ -641,6 +641,43 @@ async function home() {
 }
 
 /** Which destination the navigation marks as the current page. */
+/**
+ * The scope as the Conversion surface resolves it, in the context line's words:
+ * the checked scope and the eligible count from its own summary. `null` where
+ * the surface states no scope.
+ */
+function ownedScope(): Promise<string | null> {
+  return browser.execute(
+    (selected: string, all: string, template: string) => {
+      const checked = document.querySelector<HTMLInputElement>('input[name="conversion-scope"]:checked');
+      const eligible = /(\d+) eligible/u.exec(document.querySelector("#conversion-scope-summary")?.textContent ?? "")?.[1];
+      if (checked === null || eligible === undefined) return null;
+      return template.replace("{{scope}}", checked.value === "all" ? all : selected).replace("{{eligible}}", eligible);
+    },
+    en.m74CnvSelected,
+    en.m74CnvAll,
+    en.shellContextScope,
+  ) as Promise<string | null>;
+}
+
+/**
+ * What the processing scope is made of: each roster row's conversion
+ * membership, the chosen scope and the Conversion surface's own counts. Read
+ * from every mounted surface, whichever is shown.
+ */
+function membership(): Promise<unknown> {
+  return browser.execute(() => ({
+    rows: [...document.querySelectorAll<HTMLInputElement>('.grouped-roster input[type="checkbox"]')].map((box) => [
+      box.getAttribute("aria-label"),
+      box.checked,
+      box.indeterminate,
+    ]),
+    scope: document.querySelector<HTMLInputElement>('input[name="conversion-scope"]:checked')?.value ?? null,
+    counts: document.querySelector("#conversion-scope-summary")?.textContent ?? null,
+    selection: document.querySelector(".roster-selection-context")?.textContent ?? null,
+  }));
+}
+
 function currentDestination(): Promise<string | null> {
   return browser.execute(
     () => document.querySelector(".workbench-navigation > button[aria-current='page']")?.textContent ?? null,
@@ -967,6 +1004,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await contextText("projectActivity")).toBe(null);
 
       const before = await ipcCalls();
+      const scopeBefore = await membership();
       const routes = [
         ["viewing", "workbench", en.workbench],
         ["conversionScope", "conversion", en.conversionTask],
@@ -978,6 +1016,18 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await activate(id);
         expect(await surface()).toBe(target);
         expect(await currentDestination()).toBe(destination);
+        // Page-sensitive, not owner-sensitive: where the scope bears on the
+        // task, the line states the one the Conversion surface resolves; on
+        // the Project surface it is absent. Either way, hiding it changes
+        // nothing it is made of.
+        if (target === "project") {
+          expect(await contextText("conversionScope")).toBe(null);
+        } else {
+          const owned = await ownedScope();
+          expect(owned).not.toBe(null);
+          expect(await contextText("conversionScope")).toBe(owned);
+        }
+        expect(await membership()).toEqual(scopeBefore);
       }
       // Still the same inspected record, where Details describes it.
       expect(await browser.$('#workbench-inspector [data-provenance="input"]').isDisplayed()).toBe(true);
