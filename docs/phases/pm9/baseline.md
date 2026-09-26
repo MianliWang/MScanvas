@@ -190,6 +190,11 @@ Set `MSCANVAS_PM9_CANDIDATE` to the commit under test. Evidence is written
 under `MSCANVAS_PM9_OUTPUT_ROOT`, default `test-results/pm9.1/browser-*/`
 (`evidence.json`, PNGs).
 
+"No request" below means: nothing that starts a task, mutates a record, reads
+a source or repeats a stored-result read. The five commands whose `lib.rs`
+doc comment says they are read-only are recorded, not failed (§6.5). No
+owner promises zero IPC, and the spec does not add that requirement.
+
 | Case | State (§6.3) | Acceptance | Expected | Status |
 | --- | --- | --- | --- | --- |
 | PM9-B1 | `populated`, row viewed, spectrum selected, reference inspected | U1, U10 | Project, viewed acquisition, scope and inspected reference each read from their owner, with no activity item; each item, by pointer and by Tab plus Enter, changes only the surface and the current destination; the focus ring is visible; no request while every owner is idle | NOT RUN |
@@ -197,15 +202,15 @@ under `MSCANVAS_PM9_OUTPUT_ROOT`, default `test-results/pm9.1/browser-*/`
 | PM9-B3 | `projectWithResult` with typed targets | U5, U7 | The typed text is unchanged after Home → project item; no review or run request | NOT RUN |
 | PM9-B4 (×4) | `projectWithResult`, `resultPayloadMissing`, `resultPayloadCorrupt`, `resultSourceAndRuntimeUnavailable` | U6, U7 | The report's availability is as recorded. Its state block keeps the payload (whole, missing or damaged), the source (found, or not found where recorded) and new runs (available, or no runtime) apart, as M9.1 reads them. A missing or damaged payload is never read. The inspecting item names the record identically in every state. Details links the producing run and shows the plan SHA-256. Home → inspecting returns to the same report, with no request and no re-read of rows | NOT RUN |
 | PM9-B5 | `qcCapture`, capture held | U6, U10 | A busy item and the Project dot while held, unchanged across navigation, with no request; after release no busy item or dot; the inspected object moves to the new QC record (`useProject` `captureQc`) and routes to its report, which carries no verdict words | NOT RUN |
-| PM9-B6 | `converting`, then settled through the next slot poll | U4 (lane only), U10 | The running item and active dot; navigation asks only the lane's slot poll; once settled, the retained item and dot remain and no activity item does | NOT RUN |
+| PM9-B6 | `converting`, then settled through the lane's next slot read, held and released | U4 (lane only), U10 | The running item and active dot; navigation asks nothing beyond read-only reads; nothing moves while the settling read is held; once it is released, the retained item and dot remain and no activity item does | NOT RUN |
 | PM9-B7 | `populated` with a held check, then Close and Open | U7, U10 | The busy item and the accepted operation's identifier survive navigation with no request; after release no busy item, and the inspection a check does not change is kept; Close then Open leaves nothing inspected and the viewed row unchanged; only `close_project` and `open_project` are asked | NOT RUN |
 | PM9-G (×4) | `populated` idle and `busyInspected`, en and zh-CN, each at 1920×1080 → 1366×768 → 960×640; reduced motion in zh-CN | U9 (observation) | Geometry recorded (§6.4). Asserted only: no off-origin request, no path on screen, horizontal overflow ≤ 1 px, header controls within the viewport width, context items at the 31.5 px compact minimum, and every context item a Tab stop with a visible focus treatment | NOT RUN (observation) |
 
 Relation to existing tests: B1 and B7 extend `ContextLineShell.test.tsx`, and
 B4 extends `Pm9Baseline.test.tsx`, into the rendered layer. Both component
 tests remain, and so do the legacy specs in §2. Deep focus-race behaviour stays
-with the component tests. No case uses a timed sleep; B6 waits on the lane's
-own two-second poll through `waitUntil`.
+with the component tests. No case uses a timed sleep. B6 holds the lane's
+slot read and waits for that read to arrive, not for a length of time.
 
 ### 6.3 Parity with the Vitest scenarios
 
@@ -251,7 +256,10 @@ import them: `pm9Scenarios.tsx` mounts `App` through Testing Library, and
   truncated), the number of rows the items use, the drop hint, the roster,
   main and Details boxes, the main region's visible versus content height,
   outer versus panel scroll, every header control, the reduced-motion flag,
-  and each keyboard stop with its focus treatment.
+  and each keyboard stop with its focus treatment. Also recorded: the work
+  area left below the header, the notices band, how much of the main region
+  is on screen, and each evidence panel's on-screen height (chromatogram,
+  spectrum, scans, targeted report, QC report, running conversion).
 - Judged in the window, not asserted: whether the line costs the evidence area
   too much; wrapping and long-label truncation in both languages; folding at
   960×640; the measured panel floors, which m7.2, m7.3 and viewer-r1 own and
@@ -267,3 +275,43 @@ import them: `pm9Scenarios.tsx` mounts `App` through Testing Library, and
   a free dev port (5273, or `MSCANVAS_BROWSER_DEV_PORT`); the reference re-hashed
   against §3 before any comparison. No provider, runtime or native session is
   needed.
+
+### 6.5 Static review corrections (PM9.3 preparation)
+
+A bounded static reading of the spec found three test-authoring defects. Each
+was corrected test-only in `e2e/specs/pm9.1-baseline.browser.e2e.ts`, and none
+has been run.
+
+1. **Zero-IPC assertions.** B1–B5 and B7 asserted an empty request delta, and
+   B6 exempted only the slot poll. No owner guarantees that navigation asks
+   nothing, so that was a new requirement written into a test. `askedSince` is
+   replaced by `unexpectedSince(label, before)`. It records every command in
+   the evidence and fails only on commands outside `READ_ONLY`, the five whose
+   `lib.rs` doc says they launch or read nothing:
+   - `get_workspace_conversion_state`
+   - `get_targeted_ms1_progress`
+   - `get_targeted_ms1_runtime`
+   - `describe_workspace_conversion_queue`
+   - `project_selected_spectrum`
+
+   The following stay excluded:
+   - `read_conversion_configuration`, which may run an `msconvert --help`
+     probe;
+   - `inspect_backend`, which checks an installation;
+   - `preview_figure`, which has no read-only statement;
+   - `get_project_state`, which replaces the Project surface;
+   - source reads, and any repeated stored-result read.
+
+   B7's replacement still expects exactly `close_project` and `open_project`
+   beyond those reads.
+2. **Clock-driven settling.** B6 changed the slot answer and waited for the
+   lane's two-second interval to pick it up. It now holds
+   `get_workspace_conversion_state` and changes the answer. It waits on
+   `heldCallers` until the next read is parked, asserts that the line has not
+   moved, and then releases. The transition is the fixture's, and the only
+   wait is for a request to arrive. B5 and B7 already used hold and release.
+3. **Work area missing from geometry.** `observe()` recorded the header and
+   whole regions, but not what the second header line leaves for the work.
+   It now records the work-area band, the notices band, the main region's
+   on-screen height and each evidence panel's on-screen height. These are
+   observations, with no threshold (§6.4).

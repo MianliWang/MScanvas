@@ -37,6 +37,7 @@ import {
   ALLOWED_CONSOLE_SUBSTRINGS,
   consoleEntries,
   focusedTreatment,
+  heldCallers,
   holdInvoke,
   installIpcBoundary,
   ipcCalls,
@@ -637,19 +638,38 @@ function currentDestination(): Promise<string | null> {
 }
 
 /**
- * Everything asked since `before`, apart from the busy owner's own poll.
+ * Reads an owner may make without the reader asking for anything, each stated
+ * read-only in its `lib.rs` doc comment: the conversion slot ("launches nothing
+ * and changes nothing"), targeted progress and runtime ("read-only"), the queue
+ * description ("no gate, no picker, no reservation, no process") and the
+ * spectrum's screen projection ("launches no process, re-reads no
+ * acquisition"). No owner promises a trip between surfaces issues none of
+ * them, so they are recorded rather than failed.
  *
- * Idle, nothing polls -- the conversion lane re-reads its slot only while a
- * queue is under way (`useConversionOperation.ts`), and a panel move commits
- * nothing (`panelPresentation.ts` `commits`) -- so a trip between surfaces
- * should leave this empty. While a queue runs, its slot read is the only
- * request expected.
+ * Not here, on purpose: `read_conversion_configuration` may run an
+ * `msconvert --help` probe; `inspect_backend` checks an installation;
+ * `preview_figure` carries no read-only statement; `get_project_state` would
+ * replace what the Project surface shows; and a source read
+ * (`open_mzml_preview`, `load_selected_spectrum`) or a stored-result read
+ * repeated on return is a duplicate, not a projection.
  */
-function askedSince(before: readonly IpcCall[], after: readonly IpcCall[], polls: readonly string[] = []) {
-  return after
-    .slice(before.length)
-    .map((call) => call.command)
-    .filter((command) => !polls.includes(command));
+const READ_ONLY = [
+  "get_workspace_conversion_state",
+  "get_targeted_ms1_progress",
+  "get_targeted_ms1_runtime",
+  "describe_workspace_conversion_queue",
+  "project_selected_spectrum",
+] as const;
+
+/**
+ * What was asked since `before` that is not one of those reads: a task, a
+ * mutation, a source read or a repeated stored-result read. Every command is
+ * recorded in the evidence, read-only ones included.
+ */
+async function unexpectedSince(label: string, before: readonly IpcCall[]): Promise<string[]> {
+  const commands = (await ipcCalls()).slice(before.length).map((call) => call.command);
+  evidence.push({ label: `${label}-requests`, commands });
+  return commands.filter((command) => !(READ_ONLY as readonly string[]).includes(command));
 }
 
 /** Views the populated roster's mzML row by the Workbench's own action, as M8.5 does. */
@@ -724,8 +744,39 @@ async function observe(label: string) {
       .map((selector) => document.querySelector<HTMLElement>(selector))
       .find((element) => element !== null && !element.hidden) ?? null;
     const items = [...document.querySelectorAll<HTMLElement>("[data-shell-context]")];
+    // What the header leaves for the work: the band below it, the main region's
+    // share of that band, and how much of each evidence panel is on screen
+    // without scrolling. The second header line costs height here, most of all
+    // at 960x640, so this is recorded beside the header's own size.
+    const headerBottom = header === null ? 0 : header.getBoundingClientRect().bottom;
+    const mainBox = main === null ? null : main.getBoundingClientRect();
+    const onScreen = (box: DOMRect) => {
+      const top = Math.max(box.top, mainBox?.top ?? 0, 0);
+      const bottom = Math.min(box.bottom, mainBox?.bottom ?? innerHeight, innerHeight);
+      return Math.max(0, bottom - top);
+    };
+    const panels = [
+      ".chromatogram-panel",
+      ".spectrum-panel",
+      ".spectrum-table-panel",
+      "[data-targeted-report]",
+      "[data-qc-report]",
+      ".conversion-running",
+    ]
+      .map((selector) => ({ selector, element: document.querySelector<HTMLElement>(selector) }))
+      .filter(({ element }) => element !== null && main !== null && main.contains(element));
     return {
       css: { width: innerWidth, height: innerHeight },
+      workArea: {
+        top: headerBottom,
+        height: innerHeight - headerBottom,
+        notices: rect(document.querySelector(".shell-notices")),
+        mainOnScreen: mainBox === null ? 0 : onScreen(mainBox),
+      },
+      evidencePanels: panels.map(({ selector, element }) => {
+        const box = element!.getBoundingClientRect();
+        return { selector, top: box.top, height: box.height, onScreen: onScreen(box) };
+      }),
       lang: document.documentElement.lang,
       surface: shell?.getAttribute("data-surface") ?? null,
       reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -900,9 +951,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       evidence.push({ label: "pm9-b1-context-focus", ...ring });
       expect(ring.visible).toBe(true);
 
-      // Nothing was imported, read, run, captured, saved, exported, retried or
-      // cancelled, and nothing was re-read: idle owners ask nothing.
-      expect(askedSince(before, await ipcCalls())).toEqual([]);
+      // Nothing was imported, run, captured, saved, exported, retried or
+      // cancelled, and no source or stored result was read again. Documented
+      // read-only reads are recorded, not failed.
+      expect(await unexpectedSince("pm9-b1", before)).toEqual([]);
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -940,7 +992,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
 
       // Navigation changed what is shown, not what is held.
       expect(await held()).toEqual(before);
-      expect(askedSince(calls, await ipcCalls())).toEqual([]);
+      expect(await unexpectedSince("pm9-b2", calls)).toEqual([]);
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -966,7 +1018,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
 
       expect(await browser.$("[data-targeted-text]").getValue()).toBe(typed);
       // A draft is text on the page: no review was asked for and nothing ran.
-      expect(askedSince(calls, await ipcCalls())).toEqual([]);
+      expect(await unexpectedSince("pm9-b3", calls)).toEqual([]);
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -1040,7 +1092,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         expect(await browser.$(`[data-targeted-report="${RESULT}"]`).getAttribute("data-availability")).toBe(availability);
 
         // No run, review, check, admission or re-read of the stored rows.
-        expect(askedSince(calls, await ipcCalls())).toEqual([]);
+        expect(await unexpectedSince(`pm9-b4-${name}`, calls)).toEqual([]);
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
@@ -1068,7 +1120,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await contextText("projectActivity")).toBe(recording);
       await activate("projectActivity");
       expect(await surface()).toBe("project");
-      expect(askedSince(calls, await ipcCalls())).toEqual([]);
+      expect(await unexpectedSince("pm9-b5-while-held", calls)).toEqual([]);
 
       await releaseInvokeHold("capture_project_qc_summary");
       await waitForContext("projectActivity", (text) => text === null, "leaves no busy label once settled");
@@ -1112,10 +1164,20 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await navigate([en.projectSurface]);
       await activate("conversionActivity");
       expect(await surface()).toBe("conversion");
-      expect(askedSince(calls, await ipcCalls(), [poll])).toEqual([]);
+      expect(await unexpectedSince("pm9-b6-while-running", calls)).toEqual([]);
 
-      // Rust settles the queue; the next poll reports it.
+      // Rust settles the queue, and the transition is the fixture's to give:
+      // the lane's next slot read is parked, the answer changed, then released.
+      // The wait is for that read to arrive, not for a length of time.
+      await holdInvoke(poll);
       await setInvokeResult(poll, conversionSlot(2, SETTLED));
+      await browser.waitUntil(async () => (await heldCallers(poll)) > 0, {
+        timeout: 15_000,
+        timeoutMsg: "the lane never read its slot again while the queue ran",
+      });
+      // Nothing has been answered yet, so nothing may have moved.
+      expect(await contextText("conversionActivity")).toBe(running);
+      await releaseInvokeHold(poll);
       await waitForContext("conversionActivity", (text) => text === en.shellConversionRetained, "reports the settled queue");
       expect(await browser.$(".workbench-navigation .work-status-dot").getAttribute("aria-label")).toBe(en.workRetained);
       expect(
@@ -1127,7 +1189,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           prefix(en.shellContextActivity),
         ),
       ).toBe(false);
-      evidence.push({ label: "pm9-b6-settle-requests", commands: askedSince(calls, await ipcCalls()) });
+      // Recorded: what settling asked for. The lane's own reads may follow.
+      await unexpectedSince("pm9-b6-settled", calls);
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -1155,7 +1218,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await surface()).toBe("project");
       // The live operation is the one that was accepted, not a new one.
       expect(await browser.$("[data-project-cancel]").getAttribute("data-project-cancel")).toBe("project-job-1");
-      expect(askedSince(calls, await ipcCalls())).toEqual([]);
+      expect(await unexpectedSince("pm9-b7-while-held", calls)).toEqual([]);
 
       await setInvokeResult(
         "check_project_links",
@@ -1189,7 +1252,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await contextText("inspecting")).toBe(null);
       // The viewer is its own owner: a project change leaves the viewed row alone.
       expect(await contextText("viewing")).toBe(viewing);
-      expect(askedSince(beforeReplace, await ipcCalls())).toEqual(["close_project", "open_project"]);
+      // The two explicit replacements, and nothing else that starts or re-reads.
+      expect(await unexpectedSince("pm9-b7-replace", beforeReplace)).toEqual(["close_project", "open_project"]);
       expect(await unexpectedConsole()).toEqual([]);
     });
   });
