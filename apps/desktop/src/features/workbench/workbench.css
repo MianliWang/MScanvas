@@ -16,7 +16,11 @@
 /* PM9.2 draft: the header's second line carries where the reader is, then the drop hint. */
 .workbench-context-bar { display: flex; flex-basis: 100%; flex-wrap: wrap; align-items: center; gap: 2px 16px; min-width: 0; margin: 4px 0 0; }
 .workbench-context-bar .workspace-drop-hint { flex: 0 1 auto; margin: 0 0 0 auto; }
-.shell-context { display: flex; flex: 1 1 320px; flex-wrap: nowrap; gap: 4px; min-width: 0; overflow: hidden; }
+/* The shell is one `auto` grid column, sized by its widest item's min-content.
+   Unwrapped item text would count at full length there and widen the whole
+   shell past a narrow window; the line's width comes from the header instead,
+   and its items ellipsize inside it. */
+.shell-context { display: flex; flex: 1 1 320px; flex-wrap: nowrap; gap: 4px; min-width: 0; overflow: hidden; contain: inline-size; }
 .shell-context-item { flex: 0 1 auto; min-width: 0; min-height: 32px; padding: 2px 8px; overflow: hidden; border: 1px solid transparent; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .shell-context-item:hover { border-color: var(--color-border); color: var(--color-text-primary); }
 /* The line clips its overflow for the ellipsis, so the global focus ring, drawn
