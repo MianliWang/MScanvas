@@ -795,16 +795,19 @@ async function observe(label: string) {
     const items = [...document.querySelectorAll<HTMLElement>("[data-shell-context]")];
     // Whether an item shows an ellipsis at all. `scrollWidth` is a whole
     // number, and a sub-pixel shrink is still an ellipsis on screen, so the
-    // item's text is measured in its own font against its content box.
-    const probe = document.createElement("span");
-    probe.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden;white-space:nowrap";
-    document.body.append(probe);
+    // item's text is measured against its content box. Measured on an
+    // unconstrained copy beside the item, so the copy has the item's own
+    // cascade -- font, language, density -- and nothing is re-derived.
     const shape = (item: HTMLElement) => {
       const style = getComputedStyle(item);
-      probe.style.font = style.font;
-      probe.style.letterSpacing = style.letterSpacing;
-      probe.textContent = item.textContent;
-      const natural = probe.getBoundingClientRect().width;
+      const copy = item.cloneNode(true) as HTMLElement;
+      copy.removeAttribute("data-shell-context");
+      copy.style.cssText = "position:absolute;left:0;top:0;visibility:hidden;width:max-content;min-width:0;max-width:none";
+      item.after(copy);
+      const range = document.createRange();
+      range.selectNodeContents(copy);
+      const natural = range.getBoundingClientRect().width;
+      copy.remove();
       const content =
         item.getBoundingClientRect().width -
         ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"]
@@ -813,7 +816,6 @@ async function observe(label: string) {
       return { natural, content, ellipsized: natural > content + 0.01, floor: parseFloat(style.minWidth) || 0 };
     };
     const shapes = items.map(shape);
-    probe.remove();
     // What the header leaves for the work: the band below it, the main region's
     // share of that band, and how much of each evidence panel is on screen
     // without scrolling. The second header line costs height here, most of all
@@ -954,6 +956,11 @@ async function observe(label: string) {
           .map((lower) => `${label}: ${higher.id} ellipsized while ${lower.id} is ${String(lower.width)} px over a ${String(lower.floor)} px floor`),
   );
   expect(outOfOrder).toEqual([]);
+  // The drop hint gives way before the context does (L14–L16): no item shows
+  // an ellipsis while the hint still has width to give.
+  if (measured.contextItems.some((item) => item.priority !== "1" && item.ellipsized)) {
+    expect(measured.dropHint?.width ?? 0).toBeLessThanOrEqual(1);
+  }
   // The header's second line stays one row (L14–L16): the context, the folded
   // backend reading and the drop hint all fit the bar's height, so nothing
   // has wrapped below them.
@@ -999,12 +1006,28 @@ async function surfaceFrame(label: string) {
       primaries: [...(main?.querySelectorAll<HTMLButtonElement>(".primary-button") ?? [])]
         .filter((button) => button.getClientRects().length > 0)
         .map((button) => ({ text: button.textContent, disabled: button.disabled, ...box(button) })),
+      // The surface owns its own vertical overflow (L22).
+      regionScroll:
+        main === null
+          ? null
+          : { overflowY: getComputedStyle(main).overflowY, clientHeight: main.clientHeight, scrollHeight: main.scrollHeight },
+      outerScroll: {
+        vertical: document.documentElement.scrollHeight - innerHeight,
+        horizontal: document.documentElement.scrollWidth - innerWidth,
+      },
     };
   });
   const screenshot = await cdp("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
   if (typeof screenshot.data !== "string") throw Error("Screenshot bytes missing");
   writeFileSync(join(output, `${label}.png`), Buffer.from(screenshot.data, "base64"));
   evidence.push({ label, kind: "Observation only.", candidate: process.env["MSCANVAS_PM9_CANDIDATE"] ?? "unlabelled", ...measured });
+  // The document keeps no height or width of its own; what does not fit the
+  // surface is reached through the surface's own scroll (L22).
+  expect(measured.outerScroll.vertical).toBeLessThanOrEqual(1);
+  expect(measured.outerScroll.horizontal).toBeLessThanOrEqual(1);
+  if (measured.regionScroll !== null && measured.regionScroll.scrollHeight > measured.regionScroll.clientHeight + 1) {
+    expect(["auto", "scroll"]).toContain(measured.regionScroll.overflowY);
+  }
   return measured;
 }
 
@@ -1579,25 +1602,28 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       });
     }
 
-    it("PM9.2 L1: the retained acquisition's reopen is the evidence surface's one primary action", async () => {
-      await metrics(1366, 768);
-      await open("populated", "en");
-      await viewTheRow();
-      // A different installation, chosen: its readings replace the old one's,
-      // and the acquisition stays one press from being read again (WF-001).
-      await setInvokeResult("choose_backend_installation", chosenBackend);
-      await showBackendBanner();
-      await browser.$('[data-backend-action="choose"]').click();
-      const reopen = browser.$("#workbench-evidence .primary-button");
-      await reopen.waitForDisplayed({ timeoutMsg: "no reopen action after the installation changed" });
-      await frames();
-      const seen = await surfaceFrame("pm9-2-l1-retained-en-1366x768");
-      expect(seen.primaries.map((primary) => primary.text)).toEqual([
-        expect.stringMatching(new RegExp(`^${prefix(en.previewRetained)}QC_pool_01\\.mzML`, "u")),
-      ]);
-      expect(seen.primaries[0]?.disabled).toBe(false);
-      expect(await unexpectedConsole()).toEqual([]);
-    });
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`PM9.2 L1: the retained acquisition's reopen is the evidence surface's one primary action, in ${locale}`, async () => {
+        const words = locale === "en" ? en : zh;
+        await metrics(1366, 768);
+        await open("populated", locale);
+        await viewTheRow();
+        // A different installation, chosen: its readings replace the old one's,
+        // and the acquisition stays one press from being read again (WF-001).
+        await setInvokeResult("choose_backend_installation", chosenBackend);
+        await showBackendBanner();
+        await browser.$('[data-backend-action="choose"]').click();
+        const reopen = browser.$("#workbench-evidence .primary-button");
+        await reopen.waitForDisplayed({ timeoutMsg: "no reopen action after the installation changed" });
+        await frames();
+        const seen = await surfaceFrame(`pm9-2-l1-retained-${locale}-1366x768`);
+        expect(seen.primaries.map((primary) => primary.text)).toEqual([
+          expect.stringMatching(new RegExp(`^${prefix(words.previewRetained)}QC_pool_01\\.mzML`, "u")),
+        ]);
+        expect(seen.primaries[0]?.disabled).toBe(false);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
 
     it("PM9.2 L10: the folded reading's toggle hands the keyboard to the banner when it has something to say", async () => {
       await metrics(1366, 768);
