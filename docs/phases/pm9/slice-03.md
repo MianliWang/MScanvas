@@ -229,20 +229,19 @@ product repair cycles. The first L13 implementation is not one.
   and its Export spectrum disclosure now share one wrapping line, as the
   chromatogram's figure actions and Export toggle do. Opened, the disclosure
   still takes the whole width below them.
-- Checks run on `696602c`, all exit 0:
+- Static checks on `d51ee21` (tree `f06aa6b`), whose `apps/`, `e2e/` and
+  `scripts/` equal `696602c`'s, all exit 0, run once:
   - `pnpm typecheck`;
   - `pnpm e2e:typecheck`;
-  - `check_repo.py`;
-  - `git diff --check`;
-  - Vitest, 12 files and 404 tests in four invocations:
-    - `Chromatogram.test.tsx`, 106 tests;
-    - `ChromatogramExport`, `LinkedViewer`, `LinkedFigureExport`,
-      `SelectionAvailability`, `viewerSelectionAuthority`, `narrowLayout`,
-      `QuickFigureActions` and `LinkedFigureBinding`, 156 tests;
-    - `SelectedSpectrumExport`, `narrowLayout`, `cssom` and
-      `src/features/workbench`, 142 tests.
+  - one Vitest invocation, 18 files and 376 tests: `Chromatogram`,
+    `ChromatogramExport`, `LinkedViewer`, `LinkedFigureExport`,
+    `SelectionAvailability`, `viewerSelectionAuthority`, `narrowLayout`,
+    `QuickFigureActions`, `LinkedFigureBinding`, `SelectedSpectrumExport`,
+    `cssom` and the seven files under `src/features/workbench`;
+  - `python -B scripts/check_repo.py`;
+  - `git diff --check`.
 
-  The first two invocations ran on `47c981b`, before the CSS commit.
+  Earlier partial runs during implementation are superseded by this one.
 - **RESOURCE_DEFERRED (2026-09-26).** Every browser group was refused at
   admission. Every reading from the session's first check to 15:45 fell
   between 2.60 and 7.53 GiB available and 76.2–91.8 % used, against ≥ 8 GiB and ≤ 80 %. Nothing
