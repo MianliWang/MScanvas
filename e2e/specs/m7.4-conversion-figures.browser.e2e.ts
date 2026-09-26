@@ -6,6 +6,7 @@ import { availableBackend, finalizedAttemptFacts, outputSetReport, queueItem, qu
 import type { FigurePreviewRequest, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { ipcTable } from "../support/fixtures";
 import { consoleEntries, heldCallers, holdInvoke, installIpcBoundary, IPC_TABLE_KEY, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
+import { revealRosterRow } from "../support/viewer";
 
 const authority = availableBackend.authority;
 const names = ["Synthetic sample 空格 very-long-member-0001.mzML", "Synthetic sample 空格 very-long-member-0002.mzML"];
@@ -91,7 +92,7 @@ async function conversion() {
 async function viewer(selectSpectrum = true) {
   await browser.$(".workbench-home").click();
   const row = browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]');
-  if (!await row.isDisplayed()) await browser.$('[aria-controls="workbench-roster"]').click();
+  await revealRosterRow(selectedFile.handle);
   await row.click();
   if (await browser.$('[aria-controls="workbench-roster"]').getAttribute("aria-expanded") === "true") await browser.$(".workbench-home").click();
   await browser.$('.spectrum-table-panel [data-source-index="0"]').waitForDisplayed();

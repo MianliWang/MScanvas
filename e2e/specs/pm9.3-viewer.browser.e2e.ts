@@ -22,11 +22,14 @@
  * (chromatogram range scope), ADR 0038 (m/z viewport context), ADR 0040
  * (spectrum range export) and the M7.3 record.
  *
- * Deliberately not reused: `openTheViewer` (its toggle-then-wait at narrow
- * windows is the recorded shared failure) and the DPR-waiting `metrics()`
- * helpers. The viewport helper is M8.2/M9.1's, with DPR fixed at 1.
+ * Deliberately not reused: `openTheViewer` and the DPR-waiting `metrics()`
+ * helpers. The viewport helper is M8.2/M9.1's, with DPR fixed at 1. A row is
+ * revealed through the shared `revealRosterRow`, the narrow-window reveal PM9.3
+ * repaired (slice-03 §0).
  *
- * Status when written: authored, NOT RUN.
+ * Status when written: authored, NOT RUN. PM9.3 extended the observation to
+ * the eleven-size sweep and made L13 (one chromatogram header row) and one row
+ * per viewer toolbar its regression.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -46,6 +49,7 @@ import {
   SPECTRUM_PLOT,
   SPECTRUM_RANGE,
   SPECTRUM_STATUS,
+  revealRosterRow,
   selectTheSpectrum,
   viewerReads,
 } from "../support/viewer";
@@ -244,11 +248,8 @@ async function frames() {
 
 /** Opens the viewer on one roster row, as M8.5 does: reveal the roster if folded, then click. */
 async function view(handle: string) {
-  const row = `.grouped-roster [data-handle="${handle}"]`;
-  if (!(await browser.$(row).isDisplayed())) {
-    await browser.$('[aria-controls="workbench-roster"]').click();
-  }
-  await browser.$(row).click();
+  await revealRosterRow(handle);
+  await browser.$(`.grouped-roster [data-handle="${handle}"]`).click();
   await browser.$(`${SCANS} [data-source-index="0"]`).waitForExist({ timeout: 60_000 });
 }
 
@@ -495,6 +496,47 @@ async function observeViewer(label: string) {
       const r = node.getBoundingClientRect();
       return Math.max(0, Math.min(r.bottom, evidenceBox.bottom, innerHeight) - Math.max(r.top, evidenceBox.top, 0));
     };
+    // How many rows a toolbar's controls take: a control whose top is more
+    // than half a 32px control below the current row's starts another.
+    const rows = (css: string) => {
+      const node = document.querySelector(css);
+      if (node === null || node.getClientRects().length === 0) return null;
+      const tops = [...node.querySelectorAll("button, label, summary")]
+        .filter((item) => item.getClientRects().length > 0)
+        .map((item) => item.getBoundingClientRect().top)
+        .sort((a, b) => a - b);
+      let count = 0;
+      let row = -Infinity;
+      for (const top of tops) {
+        if (top - row > 16) {
+          count += 1;
+          row = top;
+        }
+      }
+      return { rows: count, height: node.getBoundingClientRect().height };
+    };
+    // What the evidence column's own scroll can put on screen: the element is
+    // scrolled to the column's top (clamped where the column ends) and its
+    // height is compared with what the column and every clipping ancestor
+    // leave of it. The scroll is put back.
+    const reach = (css: string) => {
+      const node = document.querySelector(css);
+      if (node === null || evidence === null || evidence.hidden) return null;
+      const saved = evidence.scrollTop;
+      evidence.scrollTop = saved + node.getBoundingClientRect().top - evidence.getBoundingClientRect().top;
+      const r = node.getBoundingClientRect();
+      let top = r.top;
+      let bottom = r.bottom;
+      for (let a = node.parentElement; a !== null && a !== evidence.parentElement; a = a.parentElement) {
+        const style = getComputedStyle(a);
+        if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+        const b = a.getBoundingClientRect();
+        top = Math.max(top, b.top);
+        bottom = Math.min(bottom, b.bottom);
+      }
+      evidence.scrollTop = saved;
+      return { height: r.height, visible: Math.max(0, bottom - top) };
+    };
     return {
       css: { width: innerWidth, height: innerHeight },
       lang: document.documentElement.lang,
@@ -502,7 +544,38 @@ async function observeViewer(label: string) {
       evidence:
         evidence === null || evidence.hidden
           ? null
-          : { top: evidenceBox!.top, height: evidenceBox!.height, scrollHeight: evidence.scrollHeight },
+          : {
+              top: evidenceBox!.top,
+              height: evidenceBox!.height,
+              width: evidenceBox!.width,
+              scrollHeight: evidence.scrollHeight,
+            },
+      toolbars: {
+        chromatogramHeader: rows(".chromatogram-panel > .panel-header"),
+        chromatogramControls: rows(".chromatogram-body > .chromatogram-controls"),
+        spectrumHeader: rows(".spectrum-panel > .panel-header"),
+        spectrumViewport: rows(".spectrum-viewport-actions"),
+        scansHeader: rows(".spectrum-table-panel > .panel-header"),
+        scanViewControls: rows(".scan-view-controls"),
+      },
+      rangeRows: {
+        chromatogram: rows(".chromatogram-panel .plot-range-actions"),
+        spectrum: rows(".spectrum-panel .plot-range-actions"),
+      },
+      reach: {
+        spectrumHeader: reach(".spectrum-panel > .panel-header"),
+        spectrumViewport: reach(".spectrum-viewport-actions"),
+        scanSteps: reach(".spectrum-scan-steps"),
+        tableHeader: reach(".spectrum-table-head"),
+        firstRow: reach('.spectrum-table-panel [data-row-position="0"]'),
+      },
+      documentOverflowY: document.documentElement.scrollHeight - innerHeight,
+      // Which acquisition the evidence belongs to, where the shell names it
+      // (ADR 0006's Run identity; PM9.2's context line).
+      identity: (() => {
+        const item = document.querySelector<HTMLElement>('[data-shell-context="viewing"]');
+        return item === null ? null : { text: item.textContent, truncated: item.scrollWidth > item.clientWidth };
+      })(),
       panels: {
         chromatogram: box(".chromatogram-panel"),
         spectrum: box(".spectrum-panel"),
@@ -537,7 +610,46 @@ async function observeViewer(label: string) {
   // The limits other viewer specs already hold; no-overflow is a floor, not acceptance.
   expect(measured.horizontalOverflow).toBeLessThanOrEqual(1);
   expect(measured.external).toEqual([]);
-  return measured;
+  return { label, ...measured };
+}
+
+/** Opens or closes one header panel toggle, and waits for the header to say so. */
+async function setPanel(panel: "roster" | "details", open: boolean) {
+  const toggle = browser.$(`[aria-controls="workbench-${panel === "roster" ? "roster" : "inspector"}"]`);
+  if ((await toggle.getAttribute("aria-expanded")) !== String(open)) await toggle.click();
+  await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === String(open), {
+    timeoutMsg: `the ${panel} toggle never became ${String(open)}`,
+  });
+  await frames();
+}
+
+/**
+ * Real Tab presses from the evidence region into and through the chromatogram
+ * panel: each stop's name, whether it shows the focus treatment, and whether
+ * it is on screen. Stops once focus has left the panel.
+ */
+async function keyboardWalk() {
+  await browser.execute(() => document.querySelector<HTMLElement>("#workbench-evidence")?.focus({ preventScroll: true }));
+  const stops: { name: string; inPanel: boolean; focusVisible: boolean; outline: string; onScreen: boolean }[] = [];
+  for (let step = 0; step < 30; step += 1) {
+    await browser.keys(["Tab"]);
+    const stop = await browser.execute(() => {
+      const node = document.activeElement as HTMLElement | null;
+      if (node === null) return null;
+      const r = node.getBoundingClientRect();
+      return {
+        name: (node.getAttribute("aria-label") ?? node.closest("label")?.textContent ?? node.textContent ?? node.tagName).trim().slice(0, 48),
+        inPanel: node.closest(".chromatogram-panel") !== null,
+        focusVisible: node.matches(":focus-visible"),
+        outline: getComputedStyle(node).outlineStyle,
+        onScreen: r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth,
+      };
+    });
+    if (stop === null) break;
+    if (!stop.inPanel && stops.some((each) => each.inPanel)) break;
+    stops.push(stop);
+  }
+  return stops;
 }
 
 // ---------------------------------------------------------------- cases
@@ -939,10 +1051,12 @@ describe("PM9.3 viewer contracts, rendered", () => {
     });
   });
 
-  describe("observation (current viewer; geometry recorded, not accepted)", () => {
+  describe("observation (current viewer; geometry recorded, L13 and toolbar rows asserted)", () => {
     for (const locale of ["en", "zh-CN"] as const) {
       it(`PM9.3-G viewer with a selected scan, a committed RT range and a pending m/z band in ${locale}`, async () => {
-        await metrics(1920, 1080);
+        // The entry state first, at the narrow anchor, reached the way a reader
+        // at that window reaches it: the roster from the header, then a row.
+        await metrics(960, 640);
         if (locale === "zh-CN") {
           await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
         }
@@ -951,6 +1065,10 @@ describe("PM9.3 viewer contracts, rendered", () => {
         await browser.$(".workbench-header").waitForDisplayed();
         await answerBySource();
         await view(MZML_ROW.handle);
+        await frames();
+        const defaults = [await observeViewer(`pm93-g-${locale}-960x640-entry`)];
+
+        await metrics(1920, 1080);
         await activateRow(2);
         await waitForReads(1);
         await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
@@ -962,17 +1080,67 @@ describe("PM9.3 viewer contracts, rendered", () => {
         await browser.$(`${MZ_PANEL} .plot-pending-actions`).waitForDisplayed();
         await browser.execute(() => document.querySelector<HTMLElement>("#workbench-evidence")?.scrollTo({ top: 0 }));
 
-        // One state, then the window narrows, as a reader resizing it would.
+        // One state, then the window narrows, as a reader resizing it would:
+        // the three anchors and the eight review sizes of the manual sweep,
+        // each with the panels its width opens by default.
         for (const [width, height] of [
+          [2560, 1440],
           [1920, 1080],
+          [1680, 1050],
+          [1536, 864],
+          [1440, 900],
           [1366, 768],
+          [1280, 800],
+          [1280, 720],
+          [1152, 720],
+          [1024, 768],
           [960, 640],
         ] as const) {
           await metrics(width, height);
           await frames();
           const measured = await observeViewer(`pm93-g-${locale}-${String(width)}x${String(height)}`);
           expect(measured.lang).toBe(locale);
+          defaults.push(measured);
         }
+
+        // The keyboard path through the chromatogram at the narrow anchor.
+        const walk = await keyboardWalk();
+        evidence.push({ label: `pm93-g-${locale}-960x640-keyboard`, walk });
+        const inPanel = walk.filter((stop) => stop.inPanel);
+        expect(inPanel.length).toBeGreaterThan(0);
+        expect(inPanel.filter((stop) => !stop.focusVisible || stop.outline === "none" || !stop.onScreen)).toEqual([]);
+        await browser.execute(() => document.querySelector<HTMLElement>("#workbench-evidence")?.scrollTo({ top: 0 }));
+
+        // Details opened by the reader where its width does not open it, and
+        // the one-column swap at the narrow anchor. Recorded, not asserted.
+        for (const [width, height] of [
+          [1536, 864],
+          [1366, 768],
+          [1280, 800],
+          [1152, 720],
+        ] as const) {
+          await metrics(width, height);
+          await setPanel("details", true);
+          await observeViewer(`pm93-g-${locale}-${String(width)}x${String(height)}-details-open`);
+          await setPanel("details", false);
+        }
+        await metrics(960, 640);
+        await frames();
+        await setPanel("roster", true);
+        await observeViewer(`pm93-g-${locale}-960x640-roster-open`);
+        await setPanel("roster", false);
+        await setPanel("details", true);
+        await observeViewer(`pm93-g-${locale}-960x640-details-open`);
+        await setPanel("details", false);
+
+        // L13: no viewer toolbar takes a second row in any default arrangement
+        // (DESIGN_SYSTEM: "toolbars must not grow into wrapping ribbons").
+        const wrapped = defaults.flatMap((frame) =>
+          Object.entries(frame.toolbars)
+            .filter(([, toolbar]) => toolbar !== null && toolbar.rows > 1)
+            .map(([name, toolbar]) => `${frame.label} ${name} ${String(toolbar?.rows)}`),
+        );
+        expect(wrapped).toEqual([]);
         // The labels are the locale's own; zh-CN is the reference's language.
         evidence.push({ label: `pm93-g-${locale}-labels`, next: locale === "en" ? en.scanNext : zh.scanNext });
         // motion's development build warns that reduced motion is on; this

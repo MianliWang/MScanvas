@@ -133,9 +133,7 @@ export async function openTheViewer(options: OpenViewerOptions = {}): Promise<vo
   await installIpcBoundary(options.answers ?? ipcTable());
   await browser.url("/");
   const row = `.grouped-roster [data-handle="${MZML_ROW.handle}"]`;
-  await browser.$(row).waitForExist();
-  if (!await browser.$(row).isDisplayed()) await browser.$('[aria-controls="workbench-roster"]').click();
-  await browser.$(row).waitForDisplayed();
+  await revealRosterRow(MZML_ROW.handle);
   if (options.scans !== undefined) {
     await seedARunOf(options.scans);
   }
@@ -148,6 +146,56 @@ export async function openTheViewer(options: OpenViewerOptions = {}): Promise<vo
   // the captions below it out of view, and a control out of view reads as
   // absent to both a person and `getText`.
   await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
+}
+
+/**
+ * Makes the answer table's preference store read back the layout it was asked
+ * to save, as Rust's does: it merges the request onto the stored record.
+ *
+ * The shared table answers every `save_ui_preferences` with one fixed record
+ * whose layout is automatic, and the shell adopts the layout a save confirms
+ * (M7.5). So a panel toggled open where automatic means closed -- the roster
+ * below 1050px -- was folded again as soon as its save was answered. Installed
+ * after navigation, like the other page-side answer wrappers; a second install
+ * only repeats the same echo.
+ */
+export async function readBackSavedLayout(): Promise<void> {
+  await browser.execute((tableKey: string) => {
+    const table = Reflect.get(window, tableKey) as Record<string, unknown>;
+    const internals = Reflect.get(window, "__TAURI_INTERNALS__") as {
+      invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>;
+    };
+    const invoke = internals.invoke;
+    internals.invoke = (command, args) => {
+      const stored = table[command] as { outcome?: string; preferences?: Record<string, unknown> } | undefined;
+      const layout = (args["request"] as { layout?: unknown } | undefined)?.layout;
+      if (command === "save_ui_preferences" && stored?.outcome === "saved" && stored.preferences !== undefined && layout !== undefined) {
+        table[command] = { ...stored, preferences: { ...stored.preferences, layout } };
+      }
+      return invoke(command, args);
+    };
+  }, IPC_TABLE_KEY);
+}
+
+/**
+ * Puts one roster row on screen, opening the roster where the window has
+ * folded it into the header (below 1050px).
+ *
+ * The toggle refuses a press while the stored preferences are still being
+ * read (`aria-disabled`), so it is pressed once it is operable, and the wait
+ * is for the row itself rather than for the press.
+ */
+export async function revealRosterRow(handle: string): Promise<void> {
+  const row = browser.$(`.grouped-roster [data-handle="${handle}"]`);
+  await row.waitForExist();
+  if (await row.isDisplayed()) return;
+  await readBackSavedLayout();
+  const toggle = browser.$('[aria-controls="workbench-roster"]');
+  await browser.waitUntil(async () => (await toggle.getAttribute("aria-disabled")) === null, {
+    timeoutMsg: "the roster toggle never became operable",
+  });
+  await toggle.click();
+  await row.waitForDisplayed();
 }
 
 /**
