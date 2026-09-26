@@ -43,7 +43,7 @@ eighth slice.
 | # | Result | Rework? | Notes |
 | --- | --- | --- | --- |
 | Gate | Development entry gate amended (2026-09-25) | — | The owner allowed provisional local PM9 development from the verified local checkpoint `d56b17b6eab8dfdc5e15a85959c971121ee7685c` on `feat/pm9-product-convergence`, stopping before PM9.3. This is **not** an accepted integration baseline: its ancestry holds the unvalidated `8ad3912` and the unmerged PR #127 stack. Test execution stays paused; budget, v5.11 direction, schema 4, scientific scope, HOLD and publication rules are unchanged. Reconciliation with the eventually accepted `main` is a separate task. |
-| PM9.1 | **STATIC PREPARATION IMPLEMENTED — RENDERED BASELINE PENDING** | — | [baseline.md](baseline.md): ownership map, legacy-spec map from recorded evidence, reference identity and known deviations, verification entry points. Controlled scenarios in `apps/desktop/src/test/pm9Scenarios.tsx`. Not done: rendered captures at the three viewports and two languages, reference rendering, task-sequence and request/mount measurements. |
+| PM9.1 | **STATIC PREPARATION IMPLEMENTED — RENDERED BASELINE PENDING** | — | [baseline.md](baseline.md): ownership map, legacy-spec map from recorded evidence, reference identity and known deviations, verification entry points. Controlled scenarios in `apps/desktop/src/test/pm9Scenarios.tsx`. Browser baseline spec `e2e/specs/pm9.1-baseline.browser.e2e.ts` authored, **NOT RUN** ([baseline §6](baseline.md#6-browser-baseline-spec-authored-not-run)). Not done: rendered captures at the three viewports and two languages, reference rendering, task-sequence and request/mount measurements. |
 | PM9.2 | **LOCAL IMPLEMENTATION DRAFT — NOT BUILT / NOT RENDERED / NOT TESTED** | — | Code commits `317481edf9270fac49af07dcc0d2a63866a0a30a` (the shell context line, the Project work dot, PM9.1 scenarios and tests) and `9786809fcfe3f6933bf7c1ec8d1f011ae5310970` (tree `da9ae8eb3dcc9eb4412153ad7e3671a7b0770f0b`: focus ring drawn inside the clipped line, 32 px compact items), found by a bounded static read before this record; see [slice-02.md](slice-02.md). Depends provisionally on PM9.1's static facts only. |
 
 ### Verification backlog (for the next owner-opened window)
@@ -58,8 +58,10 @@ Target the reconciled cumulative candidate, not each intermediate commit.
 3. The seven M8/M9 browser specs, which wait on `.workbench-header` and whose
    layout readings move with the header's second line.
 4. PM9.1's rendered baseline and the PM9.2 context line at 1920×1080,
-   1366×768 and 960×640, en and zh-CN, keyboard and reduced motion; confirm the
-   header's height change leaves the measured panel floors intact.
+   1366×768 and 960×640, en and zh-CN, keyboard and reduced motion — starting
+   with `pnpm e2e:browser --spec ./e2e/specs/pm9.1-baseline.browser.e2e.ts`
+   ([baseline §6](baseline.md#6-browser-baseline-spec-authored-not-run)); confirm
+   the header's height change leaves the measured panel floors intact.
 5. `python scripts/check_repo.py` and `git diff --check`.
 
 ## Closing record

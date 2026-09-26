@@ -4,7 +4,8 @@ Status: **STATIC PREPARATION IMPLEMENTED — RENDERED BASELINE PENDING.**
 Everything here was read from source, recorded evidence and the reference
 material; nothing was built, rendered or run. The rendered comparison,
 task-sequence measurements and reference captures are pending a validation
-window the owner opens.
+window the owner opens. The browser baseline spec is authored and **NOT RUN**
+(§6).
 
 ## 1. Ownership map
 
@@ -108,8 +109,9 @@ Known intentional deviations, to be confirmed by the rendered comparison:
 ## 4. Controlled scenarios
 
 `apps/desktop/src/test/pm9Scenarios.tsx`, synthetic, built from the existing
-fixture builders only. Rendered with the real composition in Vitest; the same
-states are the starting point for the pending browser baseline.
+fixture builders only. Rendered with the real composition in Vitest; the
+browser baseline mirrors five of them by name and adds three variants
+([§6.3](#63-parity-with-the-vitest-scenarios)).
 
 | Scenario | What a reader sees |
 | --- | --- |
@@ -127,9 +129,9 @@ states are the starting point for the pending browser baseline.
   then the whole `pnpm test`.
 - Type and build: `pnpm typecheck`, `pnpm build`; the i18n coverage test is part
   of `pnpm test`.
-- Browser (after an e2e baseline spec exists): one `wdio --spec` invocation per
-  file at 1920×1080, 1366×768 and 960×640, en and zh-CN, with reduced motion;
-  evidence under `test-results/pm9.N/`.
+- Browser: one `wdio --spec` invocation per file at 1920×1080, 1366×768 and
+  960×640, en and zh-CN, with reduced motion; evidence under
+  `test-results/pm9.N/`. PM9.1's spec and its exact command are in §6.
 - Repository: `python scripts/check_repo.py`, `git diff --check`.
 - Rust is not affected by PM9.1 or the PM9.2 draft; the deferred PR #127 Rust
   checklist is in the
@@ -137,3 +139,122 @@ states are the starting point for the pending browser baseline.
 - Resource rules for any window: admission at ≥ 8 GiB available and ≤ 80 % used;
   defer the next heavy command below 4 GiB or at ≥ 90 %; run in the foreground,
   one command at a time; confirm task-owned descendants have exited.
+
+## 6. Browser baseline spec (authored, NOT RUN)
+
+`e2e/specs/pm9.1-baseline.browser.e2e.ts`, written on the provisional PM9
+branch over the unchanged PM9.2 production draft (tree `da9ae8e`). It uses
+the existing browser harness (`e2e/support/harness.ts`, the IPC boundary
+preloaded, hold/release, call and console ledgers) and M8.2/M9.1's CDP
+viewport helper with DPR 1. The browser config's `specs/**/*.browser.e2e.ts`
+glob registers it. It adds no framework, backend, production seam or
+production mock switch, and it does not use `openTheViewer` or M7.2's
+`metrics()`. It has not been compiled, discovered or run.
+
+### 6.1 Journeys and IDs
+
+J IDs follow the order of [slice-01](slice-01.md) pending item 4, in its words.
+
+| Journey | IDs | Existing coverage (state as recorded) | New cases | Later human or native check |
+| --- | --- | --- | --- | --- |
+| J1 curate and inspect | U1, U2, U3 | Vitest `Pm9Baseline.test.tsx` (roster across navigation) and `App.test.tsx` removal cases, including "clears the preview when the row it belongs to is removed"; browser m7.2, m7.3, viewer-r1 (red, §2) | B1, B2 | native Explorer drop (m7.2 native); J1 step and decision measurement |
+| J2 convert | U4, U10 | Vitest conversion suites, `Pm9Baseline` converting and ended; browser m6.x, m7.4 (red, §2) | B1 (scope route), B6 | live provider stays `PENDING` under the ProteoWizard HOLD |
+| J3 reopen and check a project | U7, U10 | browser m8.1 (open, check, cancel), m8.3 (reattachment) | B7 | native open dialog |
+| J4 targeted setup, review and run | U5, U7, U10 | browser m9.1 (single run and cancel), m9.4 (batch); Vitest `shellContext.test.ts` (the project's activity sentence) | B3 (draft only) | a real runtime run (Rust suite; native) |
+| J5 read QC and targeted results and export | U6, U8 | browser m8.5 (QC capture, report, reopen), m9.1's M9.2 section (stored result with source missing and runtime unavailable, exports) | B4, B5 | — |
+| J6 Home / Settings / folding | U1, U9 | browser m7.1, m7.5 (red, §2), m8.2 (Details folding); Vitest `ContextLineShell.test.tsx` | B1 (Home, keyboard), G | OS scaling in a native window |
+
+Not in the new spec and left to the owners above: the Settings round trip
+(m7.1, m7.5), the context line during a targeted run or batch (m9.1, m9.4,
+`shellContext.test.ts`), exports (m8.5, m9.1), and source removal clearing the
+viewer (`App.test.tsx`). The conversion (B6) and the project check (B7) are not
+evidence of targeted execution. The QC capture (B5) is descriptive only; no
+score is added or expected.
+
+### 6.2 Case ledger
+
+Every case is mock-backed: real frontend, Vite and Chrome, with only the IPC
+boundary replaced. None is real-backend or native evidence. Each is **NOT
+RUN**. Command (future entry, in an owner-opened window, after
+`pnpm e2e:typecheck`):
+
+```text
+pnpm e2e:browser --spec ./e2e/specs/pm9.1-baseline.browser.e2e.ts
+```
+
+Set `MSCANVAS_PM9_CANDIDATE` to the commit under test. Evidence is written
+under `MSCANVAS_PM9_OUTPUT_ROOT`, default `test-results/pm9.1/browser-*/`
+(`evidence.json`, PNGs).
+
+| Case | State (§6.3) | Acceptance | Expected | Status |
+| --- | --- | --- | --- | --- |
+| PM9-B1 | `populated`, row viewed, spectrum selected, reference inspected | U1, U10 | Project, viewed acquisition, scope and inspected reference each read from their owner, with no activity item; each item, by pointer and by Tab plus Enter, changes only the surface and the current destination; the focus ring is visible; no request while every owner is idle | NOT RUN |
+| PM9-B2 | `populated` plus one membership toggle, spectrum 0 and one m/z zoom | U1, U2, U3, U7 | Roster order, highlight and membership, the selected scan, the committed m/z caption, and the viewing and scope items are unchanged after Conversion → Project → Workbench; no request | NOT RUN |
+| PM9-B3 | `projectWithResult` with typed targets | U5, U7 | The typed text is unchanged after Home → project item; no review or run request | NOT RUN |
+| PM9-B4 (×4) | `projectWithResult`, `resultPayloadMissing`, `resultPayloadCorrupt`, `resultSourceAndRuntimeUnavailable` | U6, U7 | The report's availability is as recorded; the inspecting item names the record identically in every state; Details links the producing run and shows the plan SHA-256; Home → inspecting returns to the same report; no request, including no re-read of rows | NOT RUN |
+| PM9-B5 | `qcCapture`, capture held | U6, U10 | A busy item and the Project dot while held, unchanged across navigation, with no request; after release no busy item or dot; the inspected object moves to the new QC record (`useProject` `captureQc`) and routes to its report, which carries no verdict words | NOT RUN |
+| PM9-B6 | `converting`, then settled through the next slot poll | U4 (lane only), U10 | The running item and active dot; navigation asks only the lane's slot poll; once settled, the retained item and dot remain and no activity item does | NOT RUN |
+| PM9-B7 | `populated` with a held check, then Close and Open | U7, U10 | The busy item and the accepted operation's identifier survive navigation with no request; after release no busy item, and the inspection a check does not change is kept; Close then Open leaves nothing inspected and the viewed row unchanged; only `close_project` and `open_project` are asked | NOT RUN |
+| PM9-G (×4) | `populated` idle and `busyInspected`, en and zh-CN, each at 1920×1080 → 1366×768 → 960×640; reduced motion in zh-CN | U9 (observation) | Geometry recorded (§6.4). Asserted only: no off-origin request, no path on screen, horizontal overflow ≤ 1 px, header controls within the viewport width, context items at the 31.5 px compact minimum, and every context item a Tab stop with a visible focus treatment | NOT RUN (observation) |
+
+Relation to existing tests: B1 and B7 extend `ContextLineShell.test.tsx`, and
+B4 extends `Pm9Baseline.test.tsx`, into the rendered layer. Both component
+tests remain, and so do the legacy specs in §2. Deep focus-race behaviour stays
+with the component tests. No case uses a timed sleep; B6 waits on the lane's
+own two-second poll through `waitUntil`.
+
+### 6.3 Parity with the Vitest scenarios
+
+The spec restates the builders' identifiers, names and labels. It cannot
+import them: `pm9Scenarios.tsx` mounts `App` through Testing Library, and
+`projectFixtures.ts` imports Vitest.
+
+- Mirrored by name: `populated`, `converting`, `projectWithResult`,
+  `resultPayloadMissing`, `resultPayloadCorrupt`.
+- Not mirrored: `empty`, whose no-installation binding would have to be
+  restamped on every authority the shared table carries, and
+  `conversionEnded`. B6 reaches a retained queue by settling `converting`
+  instead. The stopped-before-start report stays Vitest-only.
+- Browser-only: `resultSourceAndRuntimeUnavailable` (source missing at its
+  checked location, runtime unavailable, payload available); `qcCapture`
+  (M8.5's layer over the viewed row, identifiers `…-9901-…`, M8.5's controlled
+  snapshot); `busyInspected` (a synthetic composite: `converting`'s lane with
+  the stored result inspected and long user-written names; used by G only).
+- Converter binding: every browser table keeps `ipcTable()`'s one available
+  binding. The Vitest stored-result scenarios use `unavailableBackend`, and
+  mixing two authorities in one table would model a session the currency
+  rules may discard.
+- `describe_workspace_conversion_queue` is not answered by the shared table.
+  Where the scope holds an eligible row, the Conversion surface shows a failed
+  review. The context line reads the resolved scope, not the review.
+- The settled queue is `completed`, with its one item finalized and no report.
+  `backendReadingRecovery.test.tsx` already drives this running-to-completed
+  pair.
+
+### 6.4 Geometry and reference checks to collect later
+
+- Versions. The spec records `candidate` with each frame. The observation block
+  does not require the context line, so a later authorized pre-draft capture of
+  `d56b17b` can use the same block. The functional cases require the line and
+  would fail there. No pre-draft capture exists, and a capture of the new
+  header is not a before-change baseline.
+- Recorded per frame: header, context bar and each item (text, box, whether
+  truncated), the number of rows the items use, the drop hint, the roster,
+  main and Details boxes, the main region's visible versus content height,
+  outer versus panel scroll, every header control, the reduced-motion flag,
+  and each keyboard stop with its focus treatment.
+- Judged in the window, not asserted: whether the line costs the evidence area
+  too much; wrapping and long-label truncation in both languages; folding at
+  960×640; the measured panel floors, which m7.2, m7.3 and viewer-r1 own and
+  which are rerun per §2; and the M8/M9 specs' header readings. No pixel
+  threshold is added and no existing limit is relaxed.
+- Still open. The representative set discharges no U9 obligation. Still
+  pending: other scenario, language and viewport combinations; DPR and OS
+  scaling (native, recorded separately); the reference rendered at PM9's
+  viewports and §3's production column; J1–J6 step, decision, request and
+  mount measurements ([slice-01](slice-01.md) pending item 4); and no
+  screenshot golden.
+- Prerequisites: an owner-opened window; the browser config's ChromeDriver and
+  a free dev port (5273, or `MSCANVAS_BROWSER_DEV_PORT`); the reference re-hashed
+  against §3 before any comparison. No provider, runtime or native session is
+  needed.

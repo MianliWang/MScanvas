@@ -34,12 +34,17 @@ is what this slice continues), [screen model](../../product/SCREEN_MODEL.md) and
 - `apps/desktop/src/app/Pm9Baseline.test.tsx`: scenario tests — first-run
   context, roster preserved across navigation, conversion running and ended,
   stored result whole / missing / corrupt — **written, not run**.
+- `e2e/specs/pm9.1-baseline.browser.e2e.ts`: the browser baseline spec on the
+  existing harness — seven functional cases over the context line and four
+  observation runs — **authored, NOT RUN**; ledger and J1–J6 map in
+  [baseline §6](baseline.md#6-browser-baseline-spec-authored-not-run).
 
 ## Pending (needs a validation window)
 
 1. Run the tests above; record exits.
-2. Author the browser baseline spec first: none exists yet, only the Vitest
-   scenarios. Then render in the browser harness (`e2e/support/harness.ts`: IPC
+2. Run the authored browser baseline spec
+   ([baseline §6](baseline.md#6-browser-baseline-spec-authored-not-run)), and
+   render in the browser harness (`e2e/support/harness.ts`: IPC
    boundary preloaded, hold/reject, console ledger) at 1920×1080, 1366×768 and
    960×640 CSS, en and zh-CN, keyboard traversal and reduced motion (CDP
    `Emulation.setEmulatedMedia`, as the M7.2 spec does). DPR is recorded
