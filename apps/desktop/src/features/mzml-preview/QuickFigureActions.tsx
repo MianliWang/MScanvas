@@ -21,13 +21,16 @@ export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, on
     claimed.current = true; setActive(operation);
     if (operation === "png") onPng(); else onCopy();
   };
+  // The caption comes first: it names what the actions produce, and sits before
+  // them on their line rather than under them.
   return <div className="figure-quick-group" role="group" aria-label={context}>
+    <p className="figure-quick-context" id={id}>{context}</p>
     <div className="figure-quick-actions" aria-describedby={id}>
     <button type="button" className="secondary-button" onClick={onPreview}>{t("figureExportTitle")}</button>
     {quickVisible ? <><button type="button" className="secondary-button" disabled={figureUnavailable || pngUnavailable || (busy && active !== "png")}
       aria-describedby={id} aria-disabled={busy || undefined} onClick={() => run("png")}>{active === "png" && busy ? t("viewerExporting", { name: "PNG" }) : t("figureQuickPng")}</button>
     <button type="button" className="secondary-button" disabled={figureUnavailable || (busy && active !== "copy")}
       aria-describedby={id} aria-disabled={busy || undefined} onClick={() => run("copy")}>{t(active === "copy" && busy ? "viewerCopying" : "viewerCopy")}</button></> : null}
-    </div><p className="figure-quick-context" id={id}>{context}</p>
+    </div>
   </div>;
 }

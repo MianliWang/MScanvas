@@ -396,8 +396,16 @@ button:disabled,
   cursor: pointer;
 }
 
-.figure-quick-group { min-width: 0; }
-.figure-quick-context { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 0.8125rem; overflow-wrap: anywhere; }
+/* A plot header's figure actions and the caption naming what they produce --
+   which plot, which range, what size -- share one line, the caption first, so
+   the header is as tall as its buttons. Under the buttons it cost each plot
+   header a line, and at 960x640 that put the selected spectrum's plot below the
+   window (PM9.3; M7.3 has it begin inside). Short of room the caption wraps
+   within its own width; the buttons never do. */
+.figure-quick-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.figure-quick-group > .figure-quick-actions { flex: none; }
+.figure-quick-context { flex: 0 1 auto; min-width: 9em; margin: 0; color: var(--color-text-secondary); font-size: 0.8125rem; overflow-wrap: anywhere; }
+.panel-header .figure-quick-context { max-width: 14em; margin: 0; white-space: normal; text-overflow: clip; text-align: right; line-height: 1.2; }
 .figure-export-source { margin: 0; overflow-wrap: anywhere; }
 .figure-export-options { min-width: 0; margin: 0; padding: 0; border: 0; }
 
@@ -1163,7 +1171,7 @@ button:disabled,
   align-items: center;
   gap: 8px;
   margin: 0;
-  padding: 2px 8px 4px;
+  padding: 1px 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
 }
@@ -1441,7 +1449,7 @@ button:disabled,
   align-items: center;
   gap: 6px;
   margin: 0;
-  padding: 2px 8px 4px;
+  padding: 1px 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
 }
@@ -1724,7 +1732,7 @@ button:disabled,
   align-items: center;
   gap: 8px;
   margin: 0;
-  padding: 2px 8px 4px;
+  padding: 1px 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
 }

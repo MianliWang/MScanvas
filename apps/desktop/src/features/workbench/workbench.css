@@ -141,7 +141,7 @@
 .group-name-dialog input { width: 100%; min-height: 36px; border: 1px solid var(--color-border-strong); border-radius: 6px; padding: 6px 8px; }
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 .workbench-shell .viewer-column { flex: 1 0 auto; }
-.workbench-shell .viewer-stack { display: flex; flex-direction: column; gap: 12px; overflow: visible; min-height: 0; }
+.workbench-shell .viewer-stack { display: flex; flex-direction: column; gap: 8px; overflow: visible; min-height: 0; }
 .workbench-shell .chromatogram-panel { flex: 0 0 auto; min-height: 0; }
 .workbench-shell .spectrum-table-panel { flex: none; min-height: 0; }
 .workbench-shell .spectrum-table-viewport { flex: none; }
@@ -162,10 +162,12 @@
 .spectrum-table-head .spectrum-table-cell { overflow: visible; }
 @media (prefers-reduced-motion: reduce) { .scan-sort-button svg { transition: none; } }
 .workbench-shell .spectrum-panel { flex: 0 0 auto; min-height: 0; }
-.workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { padding: 8px 12px; }
+/* The header's own bottom padding already separates it from the plot's
+   controls, so the body adds little above them (PM9.3, 960x640). */
+.workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { padding: 4px 12px 8px; }
 .workbench-shell .chromatogram-svg { flex: none; height: 150px; }
 .workbench-shell .spectrum-plot { height: 220px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
-.workbench-shell .spectrum-summary { margin: 0 0 6px; font-size: 13px; }
+.workbench-shell .spectrum-summary { margin: 0; font-size: 13px; }
 .workbench-shell .spectrum-panel > .panel-header { flex-direction: row; align-items: start; flex-wrap: wrap; padding: 8px 12px; }
 .workbench-shell .chromatogram-panel > .panel-header { padding: 8px 12px; }
 /* The figure actions and the export disclosure share one line, as the
