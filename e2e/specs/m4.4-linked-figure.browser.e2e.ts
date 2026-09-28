@@ -44,8 +44,8 @@ const EXPORT_ACTIONS = [
 /** Everything the open surface has to keep within reach, all of it at once. */
 const EVERY_ACTION = [...EXPORT_ACTIONS, ...LINKED_ACTIONS] as const;
 
-/** The viewer column, which is one of the two scroll owners in play. */
-const VIEWER_STACK = ".viewer-stack";
+/** The evidence column, the viewer's scroll owner since M7.2/M7.3. */
+const EVIDENCE = "#workbench-evidence";
 
 async function unexpectedConsole(): Promise<string[]> {
   return (await consoleEntries())
@@ -459,12 +459,14 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
        */
       await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
       await selectAScan();
-      const closed = await scrollExtent(CHROMATOGRAM);
+      // The evidence column is the scroll owner that grows when the surface
+      // opens, not the chromatogram panel of the three-row grid this first
+      // measured (PM9.3).
+      const closed = await scrollExtent(EVIDENCE);
       await openExport();
 
-      const opened = await scrollExtent(CHROMATOGRAM);
+      const opened = await scrollExtent(EVIDENCE);
       expect(opened.extent).toBeGreaterThan(closed.extent);
-      expect(opened.extent).toBeGreaterThan(opened.height);
 
       for (const label of EVERY_ACTION) {
         const reach = await bringIntoView(label);
@@ -558,22 +560,24 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     it(`keeps the three views apart with the linked section open at ${viewport.name}`, async () => {
       // The surface must not buy its extra room by covering the views beside
       // it. Each panel keeps its own band, and nothing the linked section draws
-      // is painted over the scan table below.
+      // is painted over the view below: in M7.3's order, chromatogram, selected
+      // spectrum, then scans (this was written for chromatogram, scans,
+      // spectrum; PM9.3).
       await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
       await selectAScan();
       await openExport();
-      await scrollTo(VIEWER_STACK, 0);
+      await scrollTo(EVIDENCE, 0);
 
       const chromatogram = await panelBox(CHROMATOGRAM);
       const table = await panelBox("section.spectrum-table-panel");
       const spectrum = await panelBox("section.spectrum-panel");
-      expect(chromatogram.bottom).toBeLessThanOrEqual(table.top + 1);
-      expect(table.bottom).toBeLessThanOrEqual(spectrum.top + 1);
+      expect(chromatogram.bottom).toBeLessThanOrEqual(spectrum.top + 1);
+      expect(spectrum.bottom).toBeLessThanOrEqual(table.top + 1);
 
       const intruding = await browser.execute((labels: readonly string[]) => {
-        const below = document.querySelector("section.spectrum-table-panel");
+        const below = document.querySelector("section.spectrum-panel");
         if (below === null) {
-          return ["the scan table is not on screen"];
+          return ["the selected spectrum is not on screen"];
         }
         const bounds = below.getBoundingClientRect();
         // Only what is actually painted there. A control scrolled out of its

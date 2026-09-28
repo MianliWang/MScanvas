@@ -309,10 +309,12 @@ describe("the linked viewer, rendered", () => {
         // Stacked, not overlapping. Two panels sharing pixels would hide rows
         // behind a plot, which is the failure a screenshot would show and a
         // unit test could not.
+        // In M7.3's order: chromatogram, selected spectrum, then scans (this
+        // was written for chromatogram, scans, spectrum; PM9.3).
         const chromatogram = await boxOf(CHROMATOGRAM);
         const spectrum = await boxOf(SPECTRUM);
-        expect(chromatogram.bottom).toBeLessThanOrEqual(table.top + 0.5);
-        expect(table.bottom).toBeLessThanOrEqual(spectrum.top + 0.5);
+        expect(chromatogram.bottom).toBeLessThanOrEqual(spectrum.top + 0.5);
+        expect(spectrum.bottom).toBeLessThanOrEqual(table.top + 0.5);
         expect(table.height).toBeGreaterThan(0);
         expect(spectrum.height).toBeGreaterThan(0);
 
@@ -1107,7 +1109,8 @@ describe("the linked viewer, rendered", () => {
       readonly overflowY: string;
     }> {
       return browser.execute(() => {
-        const stack = document.querySelector<HTMLElement>("div.viewer-stack");
+        // The evidence column, the scroll owner since M7.2/M7.3 (PM9.3).
+        const stack = document.querySelector<HTMLElement>("#workbench-evidence");
         return {
           scrollHeight: stack?.scrollHeight ?? 0,
           clientHeight: stack?.clientHeight ?? 0,

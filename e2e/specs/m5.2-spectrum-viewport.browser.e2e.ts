@@ -447,7 +447,8 @@ async function stackOverflow(): Promise<{
   readonly overflowY: string;
 }> {
   return browser.execute(() => {
-    const stack = document.querySelector<HTMLElement>("div.viewer-stack");
+    // The evidence column, the scroll owner since M7.2/M7.3 (PM9.3).
+    const stack = document.querySelector<HTMLElement>("#workbench-evidence");
     return {
       scrollHeight: stack?.scrollHeight ?? 0,
       clientHeight: stack?.clientHeight ?? 0,
