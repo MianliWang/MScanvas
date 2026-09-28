@@ -29,6 +29,8 @@ const SCANS = 200;
 
 const TOGGLE = "button#chromatogram-export-toggle";
 const PANEL = "#chromatogram-export-panel";
+/** The evidence column, the viewer's scroll owner since M7.2/M7.3. */
+const EVIDENCE = "#workbench-evidence";
 
 async function unexpectedConsole(): Promise<string[]> {
   return (await consoleEntries())
@@ -61,9 +63,6 @@ const EXPORT_ACTIONS = [
   "Export CSV\u2026",
   "Export TSV\u2026",
 ] as const;
-
-/** The viewer column, which is one of the two scroll owners in play. */
-const VIEWER_STACK = ".viewer-stack";
 
 /**
  * What the application can actually be scrolled to.
@@ -317,14 +316,15 @@ describe("exporting the chromatogram, rendered", () => {
        * because a control only the WebDriver can reveal is not reachable.
        */
       await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
-      const closed = await scrollExtent(CHROMATOGRAM);
+      const closed = await scrollExtent(EVIDENCE);
       await openExport();
 
       // Opening puts the surface into a scrollable layout rather than into a
-      // clipped area: the panel now has more content than box, and says so.
-      const opened = await scrollExtent(CHROMATOGRAM);
+      // clipped area: the column that scrolls the evidence has more to scroll
+      // through. Since M7.2/M7.3 that owner is the evidence column, not the
+      // chromatogram panel of the three-row grid this first measured (PM9.3).
+      const opened = await scrollExtent(EVIDENCE);
       expect(opened.extent).toBeGreaterThan(closed.extent);
-      expect(opened.extent).toBeGreaterThan(opened.height);
 
       for (const label of EXPORT_ACTIONS) {
         const reach = await bringIntoView(label);
@@ -341,22 +341,24 @@ describe("exporting the chromatogram, rendered", () => {
       // it. Each panel keeps its own band, and each is still scrollable to.
       await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
       await openExport();
-      await scrollTo(VIEWER_STACK, 0);
+      await scrollTo(EVIDENCE, 0);
 
+      // M7.3's order: chromatogram, selected spectrum, then scans (this was
+      // written for the earlier chromatogram, scans, spectrum; PM9.3).
       const chromatogram = await panelBox(CHROMATOGRAM);
       const table = await panelBox("section.spectrum-table-panel");
       const spectrum = await panelBox("section.spectrum-panel");
-      expect(chromatogram.bottom).toBeLessThanOrEqual(table.top + 1);
-      expect(table.bottom).toBeLessThanOrEqual(spectrum.top + 1);
+      expect(chromatogram.bottom).toBeLessThanOrEqual(spectrum.top + 1);
+      expect(spectrum.bottom).toBeLessThanOrEqual(table.top + 1);
 
       // And nothing the surface draws reaches into the panel below it. The
       // boxes not overlapping is not the same claim: a panel that spills its
       // content keeps its own bounds and paints over its neighbour anyway,
       // which is buying room rather than making it.
       const intruding = await browser.execute((labels: readonly string[]) => {
-        const below = document.querySelector("section.spectrum-table-panel");
+        const below = document.querySelector("section.spectrum-panel");
         if (below === null) {
-          return ["the scan table is not on screen"];
+          return ["the selected spectrum is not on screen"];
         }
         const bounds = below.getBoundingClientRect();
         // Only what is actually painted there. A control scrolled out of its
@@ -465,7 +467,8 @@ describe("exporting the chromatogram, rendered", () => {
     await openExport();
     await chooseScope("Current range");
 
-    expect(await rangeNote()).toContain("whole run until the viewport is changed");
+    // M7.3's sentence; the copy this first expected predates it (PM9.3).
+    expect(await rangeNote()).toContain("whole run until a range is committed");
 
     await control("Export CSV…").click();
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
