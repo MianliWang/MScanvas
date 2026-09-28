@@ -159,8 +159,9 @@ async function navigate(names: readonly string[]) {
   }, names);
 }
 
+/** Home, found by its place rather than its label, so it serves either locale. */
 async function home() {
-  await browser.$(`button[aria-label="${en.home}"]`).click();
+  await browser.$(".workbench-home").click();
 }
 
 /**
@@ -648,6 +649,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
   afterEach(async function () {
     // CDP overrides outlive a test; the next one starts from no emulated media.
     await cdp("Emulation.setEmulatedMedia", { features: [] });
+    await cdp("Emulation.setFocusEmulationEnabled", { enabled: false });
     evidence.push({
       test: this.currentTest?.title,
       state: this.currentTest?.state,
@@ -1235,6 +1237,19 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await browser.$(".workbench-header").waitForDisplayed();
     }
 
+    /**
+     * The banner's sentences that `text` repeats, and "ProteoWizard" when it
+     * names the installation the banner already speaks for (UI-09).
+     */
+    function restatesBanner(text: string) {
+      return browser.execute((evidence: string) => {
+        const said = [...document.querySelectorAll<HTMLElement>("#backend-status .backend-status-reading > *")]
+          .map((node) => (node.textContent ?? "").trim())
+          .filter((sentence) => sentence.length > 0 && evidence.includes(sentence));
+        return /ProteoWizard/u.test(evidence) ? [...said, "ProteoWizard"] : said;
+      }, text);
+    }
+
     /** The drop hint as the line leaves it: shown whole, shown cut, or gone. */
     function dropHintState() {
       return browser.execute(() => {
@@ -1350,6 +1365,19 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           expect(count?.split).toEqual([]);
         };
         await record(`ui-rework-organizing-${locale}-1366x768`);
+        // UI-16: made narrower than the count, as long counts make it, the
+        // count breaks only between its parts, never inside one.
+        const narrowCount = (width: string) =>
+          browser.execute((value: string) => {
+            document.querySelector<HTMLElement>(".roster-selection-context")!.style.maxWidth = value;
+          }, width);
+        await narrowCount("7em");
+        await frames();
+        const narrow = await textShape(".roster-selection-context");
+        await narrowCount("");
+        shapes.push({ label: `ui-rework-organizing-${locale}-forced-narrow`, narrow });
+        expect(narrow?.lines).toBeGreaterThan(1);
+        expect(narrow?.split).toEqual([]);
         await browser.$(".organization-toolbar button").click();
         await browser.$("#organization-group-name").setValue("QC");
         await browser.$(".group-name-dialog button[type='submit']").click();
@@ -1393,7 +1421,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         expect(await capture.getAttribute("aria-disabled")).toBe("true");
         const seen = await browser.execute(() => {
           const button = document.querySelector<HTMLElement>("[data-project-capture]")!;
-          const enabled = document.querySelector<HTMLElement>(".dataset-roster-actions .primary-button");
+          const enabled = document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]");
           const reason = (button.getAttribute("aria-describedby") ?? "")
             .split(/\s+/u)
             .map((id) => document.getElementById(id))
@@ -1439,7 +1467,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             () => document.querySelector("#workbench-evidence .workspace-placeholder .empty-state")?.textContent ?? "",
           );
           evidence.push({ label: `ui-rework-empty-copy-${locale}-${String(width)}`, text, primaries: seen.primaries });
-          expect(text).not.toContain(words(locale).previewBackendRequired);
+          expect(await restatesBanner(text)).toEqual([]);
           expect(seen.primaries).toEqual([]);
         }
         expect(await unexpectedConsole()).toEqual([]);
@@ -1460,7 +1488,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           const text = await browser.execute(
             () => document.querySelector("#workbench-evidence .workspace-placeholder .empty-state")?.textContent ?? "",
           );
-          expect(text).not.toContain(words(locale).previewBackendRequired);
+          expect(await restatesBanner(text)).toEqual([]);
           expect(await unexpectedConsole()).toEqual([]);
         });
       }
@@ -1494,7 +1522,17 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await openTable(scenario("populated"), { hold: ["inspect_backend"] });
       await browser.$('[data-backend-status="checking"]').waitForExist();
       await browser.waitUntil(async () => (await heldCallers("inspect_backend")) >= 1);
+      // A reader on the keyboard is in a focused window. Earlier cases can leave
+      // this headless page without system focus, and then `focus()` moves
+      // `activeElement` but fires no focus event -- a state no reader is in.
+      await cdp("Emulation.setFocusEmulationEnabled", { enabled: true });
       await browser.execute(() => document.querySelector<HTMLElement>("[data-backend-help] summary")?.focus());
+      const held = await browser.execute(() => ({
+        hasFocus: document.hasFocus(),
+        collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,
+        focus: document.activeElement?.closest("[data-backend-help]") !== null,
+      }));
+      expect(held).toEqual({ hasFocus: true, collapsed: false, focus: true });
       await releaseInvokeHold("inspect_backend");
       await browser.$('[data-backend-status="available"]').waitForExist();
       await frames();
@@ -1570,7 +1608,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     it("UI-20: Clear list shows its focus ring unclipped and answers hover", async () => {
       await metrics(1366, 768);
       await open("populated");
-      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions .primary-button")?.focus());
+      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]")?.focus());
       let found = false;
       for (let step = 0; step < 8 && !found; step += 1) {
         await browser.keys("Tab");
@@ -1609,12 +1647,14 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         const list = document.querySelector<HTMLElement>(".grouped-roster")!;
         const clip = list.getBoundingClientRect();
         const rows = [...list.querySelectorAll<HTMLElement>("[data-handle]")];
-        const row = rows.find((candidate) => candidate.getBoundingClientRect().bottom > clip.bottom);
+        const row = rows.find((candidate) => candidate.getBoundingClientRect().top >= clip.bottom);
         if (row === undefined) return null;
-        // Leave the row's lower 15 px under the list's edge.
-        list.scrollTop += row.getBoundingClientRect().bottom - clip.bottom - 15;
-        const box = row.querySelector<HTMLInputElement>('input[type="checkbox"]')!.getBoundingClientRect();
-        return { handle: row.getAttribute("data-handle"), x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), scrollTop: list.scrollTop };
+        const checkbox = () => row.querySelector<HTMLInputElement>('input[type="checkbox"]')!.getBoundingClientRect();
+        // Leave the lower half of the row's checkbox under the list's edge.
+        list.scrollTop += checkbox().bottom - clip.bottom - checkbox().height / 2;
+        const box = checkbox();
+        if (box.bottom <= clip.bottom + 1 || box.top >= clip.bottom - 1) return null;
+        return { handle: row.getAttribute("data-handle"), x: Math.round(box.x + box.width / 2), y: Math.round((box.top + clip.bottom) / 2), scrollTop: list.scrollTop, clipped: box.bottom - clip.bottom };
       });
       expect(target).not.toBe(null);
       const before = await browser.execute(() => [...document.querySelectorAll<HTMLInputElement>('.grouped-roster [data-handle] input[type="checkbox"]')].map((box) => box.checked));
@@ -1648,17 +1688,19 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await browser.$("#workbench-inspector .provenance-digest").waitForDisplayed();
         await frames();
         const seen = await browser.execute(() => {
+          // Lines on screen: a line a clamp hides is laid out below the box.
           const lines = (node: Element) => {
             const range = document.createRange();
             range.selectNodeContents(node);
-            return new Set([...range.getClientRects()].map((box) => Math.round(box.top))).size;
+            const bottom = node.getBoundingClientRect().bottom;
+            return new Set([...range.getClientRects()].filter((box) => box.top < bottom - 1).map((box) => Math.round(box.top))).size;
           };
           const inspector = document.querySelector<HTMLElement>("#workbench-inspector")!;
           return {
             digests: [...inspector.querySelectorAll<HTMLElement>(".provenance-digest")]
               .filter((node) => node.getClientRects().length > 0)
               .map((node) => ({ lines: lines(node), full: (node.getAttribute("title") ?? node.textContent ?? "").replace(/\s/gu, "").length })),
-            names: [...inspector.querySelectorAll<HTMLElement>(".provenance-link .link-button, .provenance-name")]
+            names: [...inspector.querySelectorAll<HTMLElement>(".provenance-link-name, .provenance-name")]
               .filter((node) => node.getClientRects().length > 0)
               .map((node) => lines(node)),
             overflow: inspector.scrollWidth - inspector.clientWidth,
@@ -1701,7 +1743,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
 
     for (const locale of ["en", "zh-CN"] as const) {
       it(`UI-42: the Conversion surface running, settled, stopped before start and in review, in ${locale}`, async () => {
-        const ETA = /\d+\s?%|\bETA\b|remaining|剩余|预计/u;
+        // A progress estimate, not the word: "prevents remaining items from
+        // starting" is the stop control's own description.
+        const ETA = /\d+\s?%|\bETA\b|\b(?:time|seconds?|minutes?|hours?) (?:left|remaining)\b|\bremaining time\b|剩余时间|预计/u;
         const check = async (label: string) => {
           await frames();
           const seen = await surfaceFrame(label);
@@ -1797,7 +1841,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         evidence.push({ label, stops });
         expect(stops.filter((stop) => !stop.treatment.visible || !stop.onScreen || !stop.uncovered)).toEqual([]);
       };
-      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions .primary-button")?.focus());
+      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]")?.focus());
       await walk("ui-rework-walk-roster", 20);
       for (const [name, label] of [
         [en.conversionTask, "conversion"],
@@ -1834,6 +1878,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
               const declared = new Set([...text.matchAll(/(--[\w-]+)\s*:/gu)].map((match) => match[1]));
               for (const match of text.matchAll(/var\(\s*(--[\w-]+)\s*\)/gu)) {
                 const name = match[1]!;
+                // Radix declares its own on the element it positions, at run time.
+                if (name.startsWith("--radix-")) continue;
                 if (!declared.has(name) && root.getPropertyValue(name).trim() === "") undeclared.add(name);
               }
             }
@@ -1841,16 +1887,29 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           scan(rules);
         }
         const sizes: Record<string, number> = {};
+        const small: Record<string, number> = {};
         for (const node of [...document.querySelectorAll<HTMLElement>("body *")]) {
           if (node.closest("svg") !== null || node.getClientRects().length === 0) continue;
           if (![...node.childNodes].some((child) => child.nodeType === 3 && (child.textContent ?? "").trim() !== "")) continue;
           const size = getComputedStyle(node).fontSize;
           sizes[size] = (sizes[size] ?? 0) + 1;
+          // Below the reference's 12px caption: which elements, for the record.
+          if (parseFloat(size) < 12) {
+            const name = `${node.tagName.toLowerCase()}.${[...node.classList].join(".")} ${size}`;
+            small[name] = (small[name] ?? 0) + 1;
+          }
         }
-        return { undeclared: [...undeclared], fontSizes: sizes, focus: root.getPropertyValue("--color-focus").trim() };
+        return { undeclared: [...undeclared], fontSizes: sizes, small, focus: root.getPropertyValue("--color-focus").trim() };
       });
       evidence.push({ label: "ui-rework-measure", ...seen });
       expect(seen.undeclared).toEqual([]);
+      expect(seen.focus).toBe("#1769d1");
+      // One focus colour: Settings no longer declares its own (UI-46).
+      await browser.$(".settings-entry").click();
+      await browser.$(".settings-dialog").waitForDisplayed();
+      expect(await browser.execute(() => getComputedStyle(document.querySelector(".settings-dialog")!).getPropertyValue("--color-focus").trim())).toBe(seen.focus);
+      await browser.keys("Escape");
+      await browser.$(".settings-dialog").waitForExist({ reverse: true });
       expect(await unexpectedConsole()).toEqual([]);
     });
   });

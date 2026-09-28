@@ -630,6 +630,26 @@ async function observeViewer(label: string) {
           .map((id) => document.getElementById(id)?.textContent ?? "")
           .join(" ");
       })(),
+      // Whether the selected spectrum's heading block, whole, and its controls,
+      // in one line, fit its header side by side (UI-28: "one row where the
+      // controls fit"). Measured by laying each out at that size and back.
+      spectrumControlsFit: (() => {
+        const header = document.querySelector<HTMLElement>(".spectrum-panel > .panel-header");
+        const heading = header?.querySelector<HTMLElement>(":scope > div");
+        const actions = header?.querySelector<HTMLElement>(":scope > .spectrum-export-header-actions");
+        if (!header || !heading || !actions) return null;
+        const at = (node: HTMLElement, width: string) => {
+          const saved = [node.style.flex, node.style.width];
+          node.style.flex = "none";
+          node.style.width = width;
+          const measured = node.getBoundingClientRect().width;
+          [node.style.flex, node.style.width] = saved as [string, string];
+          return measured;
+        };
+        const style = getComputedStyle(header);
+        const room = header.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        return at(heading, "max-content") + parseFloat(style.columnGap) + at(actions, "min-content") <= room + 0.5;
+      })(),
       // Which acquisition the evidence belongs to, where the shell names it
       // (ADR 0006's Run identity; PM9.2's context line).
       identity: (() => {
@@ -1173,9 +1193,12 @@ describe("PM9.3 viewer contracts, rendered", () => {
         // L13: no viewer toolbar takes a second row in any default arrangement
         // (DESIGN_SYSTEM: "toolbars must not grow into wrapping ribbons").
         // Since the known UI rework (UI-32), the lines under the plots count too.
+        // The selected spectrum's header is held to one row where its controls
+        // fit beside the heading, and to heading plus one row of controls where
+        // they do not (UI-28).
         const overOneRow = (frame: (typeof defaults)[number], withRangeRows: boolean) =>
           Object.entries({ ...frame.toolbars, ...(withRangeRows ? frame.rangeRows : {}) })
-            .filter(([, toolbar]) => toolbar !== null && toolbar.rows > 1)
+            .filter(([name, toolbar]) => toolbar !== null && toolbar.rows > (name === "spectrumHeader" && frame.spectrumControlsFit === false ? 2 : 1))
             .map(([name, toolbar]) => `${frame.label} ${name} ${String(toolbar?.rows)}`);
         const wrapped = defaults.flatMap((frame) => overOneRow(frame, true));
         expect(wrapped).toEqual([]);

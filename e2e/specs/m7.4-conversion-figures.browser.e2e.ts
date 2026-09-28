@@ -367,7 +367,9 @@ describe("M7.4 conversion, recovery and export composition", () => {
     it(`active Clear focus returns to Add files when conversion settles ${timing} close`, async () => {
       await open(960, 640, 1.25, true);
       const clear = browser.$("#workbench-roster").$("button=" + UI_RESOURCES.en.clearList);
-      if (!await clear.isDisplayed()) await browser.$('[aria-controls="workbench-roster"]').click();
+      // The roster is folded at 960 px; opened the way the store confirms it
+      // (PM9 UI-23), so it does not fold again before Clear is pressed.
+      await revealRosterRow(selectedFile.handle);
       await clear.click();
       const cancel = browser.$('[role="dialog"]').$("button=Cancel and clear");
       await expect(cancel).toBeEnabled();
