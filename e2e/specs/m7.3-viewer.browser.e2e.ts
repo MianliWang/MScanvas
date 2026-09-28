@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 import { ipcTable } from "../support/fixtures";
-import { revealRosterRow, seedARunOf } from "../support/viewer";
+import { readBackSavedLayout, revealRosterRow, seedARunOf } from "../support/viewer";
 import { installIpcBoundary, IPC_TABLE_KEY, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult, setInvokeRejection } from "../support/harness";
 
 const RT = "svg.chromatogram-svg";
@@ -257,6 +257,9 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.keys("Enter");
     await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum" && call.args.index === 99999));
     await metrics(1366, 768, 1.5);
+    // Each toggle is saved, and the shell adopts the layout the save confirms;
+    // the shared table's fixed record would fold Details again (PM9.3).
+    await readBackSavedLayout();
     for (const id of ["workbench-roster", "workbench-inspector"]) {
       const toggle = browser.$('[aria-controls="' + id + '"]');
       if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
