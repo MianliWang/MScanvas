@@ -902,7 +902,7 @@ The result column is filled at closure.
 | UI-20 | PM9.2 limits | Clear list focus and hover, code-evidenced only | untested | Visible, unclipped ring; discernible hover | RENDER | VERIFIED — NO DEFECT FOUND: Clear list's ring is visible and unclipped and its hover discernible |
 | UI-21 | M7.4 | Pointer click on the membership checkbox of a partly clipped roster row | suspicion | Exactly that row toggles; nothing scrolls between press and click | RENDER | FIXED AND RENDER-VERIFIED: a press no longer focus-scrolls or keyboard-reveals the row; exactly that row toggles and the list does not move (before: the list moved 3 px between press and click; a half-clipped checkbox then exposed the keyboard reveal moving it 40 px, toggling nothing) |
 | UI-24 | PM9.2 limits | A refused `Capture file facts` (and other refused primaries) at full accent; its reason only in `title` | reported | Refused primaries look refused and stay focusable; the reason is visible text | FIX | FIXED AND RENDER-VERIFIED: refused primaries give up the accent everywhere and stay Tab stops with a visible ring; Capture file facts and targeted Run say their reason as text, en and zh-CN (before: full accent, reason only in `title`) |
-| UI-25 | L12 | Details (245 px): SHA-256 values and long names wrap down the column | reported | Short, scannable facts; the full value reachable | FIX | FIXED AND RENDER-VERIFIED: digests one line (the whole value in the tooltip), names at most three lines, no overflow, en and zh-CN (before: digests up to thirteen lines, names six) |
+| UI-25 | L12 | Details (245 px): SHA-256 values and long names wrap down the column | reported | Short, scannable facts; the full value reachable | FIX | UNRESOLVED: digests are one line (the whole value in the tooltip) and names at most three, no overflow, en and zh-CN (before: thirteen and six lines); but a long fact label still leaves its value a narrow column, and the targeted MS1 engine string wraps to about eight lines, so the facts are not yet short and scannable. The correction budget was spent |
 | UI-26 | PM9.3 B | Quick-action caption breaks inside the size ("1200 / × 640 px") | reported | Size kept whole; the line reflows at the separators | FIX | FIXED AND RENDER-VERIFIED: the size is on one line in every default frame, en and zh-CN |
 | UI-27 | PM9.3 B | Chromatogram header takes two rows at a 571 px column (roster and Details open at 1152) | reported (PM9.3 regression) | One row; caption kept | FIX | FIXED AND RENDER-VERIFIED: the chromatogram header is one row at the 571 px column, the caption under the buttons, en and zh-CN (before: two rows) |
 | UI-28 | PM9.3 B | Spectrum header takes 2–3 rows with Details opened at 1152–1280 | reported | One row where the controls fit; caption kept | FIX | FIXED AND RENDER-VERIFIED: one row with Details open at 1280–1536, en and zh-CN; at 1152 in English the controls measure too wide to sit beside the heading and take one row of their own, the spectrum's sentence whole and uncovered (before, PM9.3's closure: two rows at 1280, three at 1152 in en) |
@@ -911,7 +911,7 @@ The result column is filled at closure.
 | UI-31 | PM9.3 B | Range lines print raw floats beside the four-decimal "Showing" | reported | Formatted with the domain formatters; exact values in the editor and export notes | FIX | FIXED AND RENDER-VERIFIED: four decimals on range lines and "full range" before a commit; the exact values stay in the editor and the export notes |
 | UI-32 | PM9.3 B | The en chromatogram range row wraps at 828 and 785 px | reported | One line; its disclosures stay Tab stops | FIX | FIXED AND RENDER-VERIFIED: range rows are one line at 828 and 785 px and in every default frame of 690 px and wider |
 | UI-33 | PM9.3 B | "(unit not reported)" four or five times per chromatogram | reported | Stated once per axis; the plot's description still carries it | FIX | FIXED AND RENDER-VERIFIED: the unit caveat twice per chromatogram panel (once per axis) and in the plot's accessible description (before: four or five times) |
-| UI-34 | PM9.3 §3 | Viewer copy density judged | untested | Judged after the fixes | RENDER | FIXED AND RENDER-VERIFIED: judged after the fixes, one statement per fact; the last duplicate, a settled commit printing the caption's numbers, now says "the range shown" (correction cycle 2) |
+| UI-34 | PM9.3 §3 | Viewer copy density judged | untested | Judged after the fixes | RENDER | UNRESOLVED: the settled duplicate is gone ("the range shown", cycle 2), but cycle 2 regressed the live line. At the start of every wheel or drag gesture it switches to the old committed numbers, announcing them, and switches back when the gesture settles. A probe recorded "the range shown 0.0125 to 0.0500" → "0.0125 to 0.0500" → "the range shown 0.0152 to 0.0470"; before cycle 2 it changed once, on settle |
 | UI-36 | PM9.3 §1 | Failed spectrum load, never asserted | untested | Selection kept, failure and Retry shown, exports withheld | RENDER (Vitest) | VERIFIED — NO DEFECT FOUND (Vitest): the selection is kept, the failure and Retry are shown, the figure and data exports are withheld, and Retry recovers |
 | UI-47 | PM9.3 B | Inert `.viewer-stack` grid CSS in `app.css` | suspicion | Removed where the cascade proves it dead | FIX | FIXED AND RENDER-VERIFIED: the `.viewer-stack` grid, gap, overflow and 1120 px rows are removed; the default frames' geometry is unchanged |
 | UI-49 | advisor, dispatch §5 | The whole viewer task at 960×640 and 1366×768: entry → select a scan → read the whole spectrum → reach the row | untested | Scroll to the whole spectrum plot measured before and after, with no plot shrunk | RENDER | VERIFIED — NO DEFECT FOUND: measured before and after, identical: at 960×640 the whole spectrum is 207 px of scroll away and its row 434 px, at 1366×768 79 px; no plot shrunk (220 px) |
@@ -925,7 +925,9 @@ The result column is filled at closure.
 | UI-13, UI-22, UI-37–UI-41, UI-43; m6.x | legacy specs | m7.5, m7.2, m4.1, m4.2, m5.3, the m4.3/m4.4/viewer-r1 setup and (d) cases, m7.1; m6.1–m6.9 | test debt | Stale harness setup, not a UI defect. Owners unchanged: PM9.7; m6.x PM9.4 (held). More than one reviewable repair | BOUNDARY | NOT APPLICABLE: stale harness setups, not UI defects; owners unchanged (PM9.7; m6.x with PM9.4). On `ea85a88`, m4.3, m4.4, m5.2, m5.3, viewer-r1 and viewer-r1-scale fail only as at PM9.3's closure, message for message; m4.1, m4.2, m7.1, m7.2 and m7.5 only as in the PM9.1 campaign's classification (by outcome, m7.2's messages checked), one m7.5 case now passing; m6.x NOT RERUN, every case having failed in that classification (57 of 57) |
 | UI-23 | PM9.3 §0.5 | m7.4's active-Clear pair (focus back to Add files at 960) | test debt, one line | Exercised because UI-19 changes Add files: the reveal goes through `revealRosterRow` | RENDER (test-only repair) | FIXED AND RENDER-VERIFIED (test-only): the pair opens the roster through `revealRosterRow`; m7.4 16 of 16 |
 
-**Closure (2026-09-28).** Every row above has its result; none is UNRESOLVED.
+**State at the end of the batch (2026-09-28).** Every row above has its
+result. Two are UNRESOLVED, UI-25 and UI-34, and the rework is **not
+closed**.
 Code candidate `ea85a8873e15684ad4bf86ea2c0368941d74bdd4` (tree
 `72251d3f6078d7bc7f852e4c9b0b7154a1f0cf7b`), after `ec10c59` (production),
 `4078601` (tests), `859eaf0` (correction cycle 1) and `ea85a88` (correction
@@ -955,9 +957,14 @@ native, provider, OpenMS or Cargo run. One unit test failed once in four runs
 and passed alone and in the full suite: App.test's "closes the reading actions
 when the backend state is not positively available".
 
-Observed outside the list, not changed: in Details, a long fact label leaves its
-value a narrow column. The targeted MS1 engine string wraps to about eight
-lines. This is L12's, with PM9.6.
+Not exercised: long range values at the intermediate widths (785, 828 and
+1152 px). Every rendered range came from short fixture values.
 
-Status: **KNOWN UI/UX REWORK CLOSED — PM9 REPORTED UI/UX ISSUES CLEARED**.
-PM9.4 is not started. PM9.1 stays PARTIAL for J1–J6.
+After the documentation commit, a final check found the two UNRESOLVED items,
+and the dispatch's two correction cycles were already spent: UI-25's long
+values, and UI-34's live line regressing on gestures (a browser probe,
+recorded in the row). Each needs a small change and a PM9.1 or PM9.3 run in a
+third cycle, which is the owner's to authorize.
+
+Status: **KNOWN UI/UX REWORK OPEN — UI-25 AND UI-34 UNRESOLVED — PM9.4
+HELD**. PM9.1 stays PARTIAL for J1–J6.

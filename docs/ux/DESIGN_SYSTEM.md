@@ -261,10 +261,13 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   committed range is the one on screen -- the viewport buttons commit what
   they show -- the line says "the range shown" rather than repeat the
   caption's numbers, which stay in its live announcement; it prints its own
-  only while they differ, during a gesture (UI-34).
+  only while they differ, during a gesture (UI-34). Open: that switch is
+  announced at the start of every gesture, the old range read out, and then
+  again when the gesture settles.
 - **Details facts.** In the 245 px Details column a digest is one line (the
   whole value in its tooltip, still selected and copied in full) and a name at
-  most three lines (UI-25).
+  most three lines (UI-25). Open: a long label still leaves a long value a
+  narrow column.
 - **Counts.** A count keeps its word in either language: no-break spaces in
   the resources and `word-break: keep-all` (UI-16). Where the 280 px roster
   cannot hold the organizing buttons and the count on one line, the count
