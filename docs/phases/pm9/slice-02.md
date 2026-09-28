@@ -453,3 +453,25 @@ L14–L16 and L22) are implemented and rendered at the three viewports in both
 languages with keyboard and reduced-motion samples; and L20's Details
 affordance is confirmed obvious, stable and keyboard reachable. Until then U1,
 U2, U7 and U9 stay `IMPLEMENTED_UNVALIDATED` at most.
+
+## Known UI/UX rework (2026-09-28)
+
+Appended; PM9.2's closure above is unchanged and stays its historical record.
+The limits it recorded were reworked before PM9.4, in the bounded rework of
+[baseline §12](baseline.md#12-known-uiux-rework-2026-09-28), on code candidate
+`ea85a88`:
+
+- The context line's give-way order is computed rather than resting on 1e8
+  shrink factors and Blink rounding; the drop hint is whole or gone, its gap
+  with it; a project with unsaved changes leads with that fact at its floor;
+  two statuses stay whole (UI-02–UI-05, UI-48).
+- The banner's superseded reading, help focus and recovery rings were
+  rendered and hold (UI-06–UI-08).
+- The organizing count keeps each number with its word and takes the band's
+  second line where the roster cannot hold it (UI-15–UI-17).
+- One filled primary in the retained state; Clear list's ring and hover; a
+  press on a partly clipped row scrolls nothing (UI-19–UI-21).
+- Refused primaries look refused and say why (UI-24); the shell's left edges
+  agree (UI-01).
+
+L9 was not reopened (UI-18). The results, per item, are in §12's table.

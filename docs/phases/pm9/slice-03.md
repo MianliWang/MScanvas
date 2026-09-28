@@ -833,3 +833,27 @@ candidate that carries PM9.3's changes.
 For the viewer, U3, U8, U9 and U10 pass PM9.3's slice acceptance in the
 controlled-IPC browser. Integrated acceptance is PM9.7's. Native rendering at
 150 % belongs to the qualification after it.
+
+## Known UI/UX rework (2026-09-28)
+
+Appended; the closure above is unchanged and stays PM9.3's historical record.
+The viewer defects it left, and those found in its acceptance, were reworked in
+[baseline §12](baseline.md#12-known-uiux-rework-2026-09-28), on code candidate
+`ea85a88`:
+
+- Figure captions reflow only at their separators (UI-26). Plot header actions
+  keep the heading's row wherever they fit, the caption going under the
+  buttons, down to the 571 px column; where the selected spectrum's controls
+  do not fit beside its heading they take one row of their own, never cutting
+  its sentence (UI-27, UI-28; UI-29 recorded).
+- The m/z pill is as wide as its controls (UI-30).
+- Range lines print at the plot's precision, say "full range" before a commit
+  and "the range shown" once one settles, and stay one line from 690 px; the
+  missing unit is said once per axis and kept in the plot's description
+  (UI-31–UI-34).
+- A failed spectrum load is asserted (UI-36); `.viewer-stack`'s inert grid
+  rules are removed (UI-47); the viewer task at 960×640 and 1366×768 is
+  measured, unchanged, with no plot shrunk (UI-49); m7.4's active-Clear pair
+  passes through `revealRosterRow` (UI-23).
+
+The Full/Current scope's persistence stays the owner's (UI-35).

@@ -882,45 +882,82 @@ The result column is filled at closure.
 
 | ID | Source | Surface, condition | Kind | Expected | Action | Result |
 | --- | --- | --- | --- | --- | --- | --- |
-| UI-01 | L11 | Shell insets; header 20/12 px against content 16 px | reported | The left edges of the header, notices and content align; the inset rule is recorded | FIX | |
-| UI-02 | PM9.2 limits | Drop hint when squeezed: a clipped first glyph and a 16 px gap left behind | reported | The hint is whole or gone, and its gap goes with it; the give-way order is unchanged | FIX | |
-| UI-03 | PM9.2 limits | Unsaved, very long project name at its floor | untested (fails by construction) | The unsaved marker leads and survives the floor, en and zh-CN | FIX | |
-| UI-04 | PM9.2 limits | Two rank-1 statuses (conversion running and a project check; Rust does not refuse project operations during a conversion) | untested | Both statuses whole; lower ranks give way in order; nothing hard-clipped | RENDER | |
-| UI-05 | PM9.2 limits, L3 residual | The rank-2 object shrinking after ranks 3–5 floor, with long viewed and inspected names | untested | Rank 2 gives way last and keeps an identifying prefix | RENDER | |
-| UI-48 | PM9.2 limits (critic) | The give-way order rests on 1e8/1e16/1e24 shrink factors and Blink rounding | reported | Explicit, engine-independent allocation (a pure function with a unit test); PM9.1's order checks stay green | FIX | |
-| UI-12 | M7.4 | Home off the viewport after a programmatic scroll | suspicion | The root never scrolls; Home stays on screen | RENDER | |
-| UI-06 | PM9.2 L10 | Superseded backend reading after the L10 fold | untested | The band stays unfolded with its actions and help, with no header toggle | RENDER | |
-| UI-07 | PM9.2 L10 | Keyboard focus in the banner help when a quiet verdict arrives | untested (Vitest only) | Not folded under the reader; focus kept | RENDER | |
-| UI-08 | M8.0 A4 | Focus rings on the banner's recovery actions | untested | Visible, unclipped 2 px ring | RENDER | |
-| UI-09 | M8.0 A3 | Empty evidence restates the backend sentence ("Install ProteoWizard…; existing acquisitions remain"), which is wrong for unsupported or quarantined readings and for an empty roster | reported | Said once, in the banner; the evidence pane makes no false claim | FIX | |
-| UI-10 | M8.0 A2, §3.1 | The `empty` first-run state, never rendered | untested | Reads as purposeful, with truthful next actions and no new primary | RENDER | |
-| UI-11 | §3.1, §10, critic | Scrolled and focus-driven positions on the roster, Conversion, Project, Settings and Details; the roster/Details swap at 960×640 on Conversion and Project | untested | Focus visible and on screen; nothing sticky covers it; no document overflow | RENDER | |
-| UI-15 | PM9.2 L9 | The en selection count on its own line in the organizing row | reported | One line where it fits; never crushed; decided together with UI-17 | FIX | |
-| UI-16 | PM9.2 limits | The count breaks between a number and its word | reported | Each number stays with its word | FIX | |
-| UI-17 | PM9.2 limits | zh-CN organizing row with Undo, never rendered | untested | Count whole, one text line; band judged | RENDER | |
-| UI-19 | PM9.2 limits | Two filled accents in the retained state (the reopen and Add files…) | reported | One filled primary while the reopen is offered | FIX | |
-| UI-20 | PM9.2 limits | Clear list focus and hover, code-evidenced only | untested | Visible, unclipped ring; discernible hover | RENDER | |
-| UI-21 | M7.4 | Pointer click on the membership checkbox of a partly clipped roster row | suspicion | Exactly that row toggles; nothing scrolls between press and click | RENDER | |
-| UI-24 | PM9.2 limits | A refused `Capture file facts` (and other refused primaries) at full accent; its reason only in `title` | reported | Refused primaries look refused and stay focusable; the reason is visible text | FIX | |
-| UI-25 | L12 | Details (245 px): SHA-256 values and long names wrap down the column | reported | Short, scannable facts; the full value reachable | FIX | |
-| UI-26 | PM9.3 B | Quick-action caption breaks inside the size ("1200 / × 640 px") | reported | Size kept whole; the line reflows at the separators | FIX | |
-| UI-27 | PM9.3 B | Chromatogram header takes two rows at a 571 px column (roster and Details open at 1152) | reported (PM9.3 regression) | One row; caption kept | FIX | |
-| UI-28 | PM9.3 B | Spectrum header takes 2–3 rows with Details opened at 1152–1280 | reported | One row where the controls fit; caption kept | FIX | |
-| UI-29 | PM9.3 §0.1 | Details opened at 1440 and 1536 not written up | untested | Recorded, with header and range rows | RENDER | |
-| UI-30 | PM9.3 B | Full-width m/z pill against the chromatogram's content-width pills | reported | One design language | FIX | |
-| UI-31 | PM9.3 B | Range lines print raw floats beside the four-decimal "Showing" | reported | Formatted with the domain formatters; exact values in the editor and export notes | FIX | |
-| UI-32 | PM9.3 B | The en chromatogram range row wraps at 828 and 785 px | reported | One line; its disclosures stay Tab stops | FIX | |
-| UI-33 | PM9.3 B | "(unit not reported)" four or five times per chromatogram | reported | Stated once per axis; the plot's description still carries it | FIX | |
-| UI-34 | PM9.3 §3 | Viewer copy density judged | untested | Judged after the fixes | RENDER | |
-| UI-36 | PM9.3 §1 | Failed spectrum load, never asserted | untested | Selection kept, failure and Retry shown, exports withheld | RENDER (Vitest) | |
-| UI-47 | PM9.3 B | Inert `.viewer-stack` grid CSS in `app.css` | suspicion | Removed where the cascade proves it dead | FIX | |
-| UI-49 | advisor, dispatch §5 | The whole viewer task at 960×640 and 1366×768: entry → select a scan → read the whole spectrum → reach the row | untested | Scroll to the whole spectrum plot measured before and after, with no plot shrunk | RENDER | |
-| UI-42 | §3.1, §10 | Conversion & results: running, settled, ended and review states | untested | Title, no overflow, visible focus, no ETA or percentage | RENDER | |
-| UI-44 | M7.5 | zh-CN shows English for six fixed-sentence boundary codes | reported | Owned en and zh-CN resources, frontend only | FIX | |
-| UI-45 | M8.0 C | Type, spacing, radii and control minimums never measured; L8 row density | untested | Measured once; concrete defects fixed; kept deviations recorded (no app-wide text resize) | MEASURE | |
-| UI-46 | M8.0 | State and focus colours never compared; undeclared `var()`s; two focus-ring colours | untested/suspicion | Undeclared vars fixed; focus colour decided; kept deviations recorded | MEASURE | |
-| UI-14 | L7 | Roster 280 px at 1920 against the reference's 285 | deviation | One fixed width; 5 px, no task effect | BOUNDARY: recorded intentional in DESIGN_SYSTEM | |
-| UI-18 | L9 | Moving organizing controls into a menu | decision | L9 passed at PM9.2's closure; UI-15 carries the evidence against it | BOUNDARY: not reopened | |
-| UI-35 | PM9.3 §1 | Chromatogram Full/Current scope kept across previews | semantics | The labels are truthful; changing persistence changes export semantics, which §5 of the dispatch preserves | BOUNDARY: owner decision | |
-| UI-13, UI-22, UI-37–UI-41, UI-43; m6.x | legacy specs | m7.5, m7.2, m4.1, m4.2, m5.3, the m4.3/m4.4/viewer-r1 setup and (d) cases, m7.1; m6.1–m6.9 | test debt | Stale harness setup, not a UI defect. Owners unchanged: PM9.7; m6.x PM9.4 (held). More than one reviewable repair | BOUNDARY | |
-| UI-23 | PM9.3 §0.5 | m7.4's active-Clear pair (focus back to Add files at 960) | test debt, one line | Exercised because UI-19 changes Add files: the reveal goes through `revealRosterRow` | RENDER (test-only repair) | |
+| UI-01 | L11 | Shell insets; header 20/12 px against content 16 px | reported | The left edges of the header, notices and content align; the inset rule is recorded | FIX | FIXED AND RENDER-VERIFIED: 16 px header inset; the header's, an open notice's and the content's left edges agree within 1 px at 1920, 1366 and 960, en and zh-CN (before: header 20 px, content 16 px) |
+| UI-02 | PM9.2 limits | Drop hint when squeezed: a clipped first glyph and a 16 px gap left behind | reported | The hint is whole or gone, and its gap goes with it; the give-way order is unchanged | FIX | FIXED AND RENDER-VERIFIED: `fitContextLine`; the hint is whole or gone, its gap with it, at seven widths, en and zh-CN |
+| UI-03 | PM9.2 limits | Unsaved, very long project name at its floor | untested (fails by construction) | The unsaved marker leads and survives the floor, en and zh-CN | FIX | FIXED AND RENDER-VERIFIED: "Unsaved changes: …" / "未保存的更改：…" with a 7em floor; the marker is visible at every width (before: "Project", "项目（") |
+| UI-04 | PM9.2 limits | Two rank-1 statuses (conversion running and a project check; Rust does not refuse project operations during a conversion) | untested | Both statuses whole; lower ranks give way in order; nothing hard-clipped | RENDER | VERIFIED — NO DEFECT FOUND: both statuses whole at 1366, 1152 and 960, each a visible focus stop, en and zh-CN (the zh-CN case first failed on the test's English Home label) |
+| UI-05 | PM9.2 limits, L3 residual | The rank-2 object shrinking after ranks 3–5 floor, with long viewed and inspected names | untested | Rank 2 gives way last and keeps an identifying prefix | RENDER | FIXED AND RENDER-VERIFIED (with UI-48): the viewed file keeps "View…" / "正在查…" at every width; rank 2 gives way last by construction |
+| UI-48 | PM9.2 limits (critic) | The give-way order rests on 1e8/1e16/1e24 shrink factors and Blink rounding | reported | Explicit, engine-independent allocation (a pure function with a unit test); PM9.1's order checks stay green | FIX | FIXED AND RENDER-VERIFIED: `allocateLine` with six unit cases replaces the 1e8 shrink factors; PM9.1's order cases pass |
+| UI-12 | M7.4 | Home off the viewport after a programmatic scroll | suspicion | The root never scrolls; Home stays on screen | RENDER | VERIFIED — NO DEFECT FOUND: the root does not scroll and Home stays on screen at 960×640 |
+| UI-06 | PM9.2 L10 | Superseded backend reading after the L10 fold | untested | The band stays unfolded with its actions and help, with no header toggle | RENDER | VERIFIED — NO DEFECT FOUND: the superseded reading stays unfolded with its three actions and no header toggle, 1366 and 960, en and zh-CN |
+| UI-07 | PM9.2 L10 | Keyboard focus in the banner help when a quiet verdict arrives | untested (Vitest only) | Not folded under the reader; focus kept | RENDER | VERIFIED — NO DEFECT FOUND: not folded, focus kept (the first run's failure was a headless page without system focus; the case now emulates it) |
+| UI-08 | M8.0 A4 | Focus rings on the banner's recovery actions | untested | Visible, unclipped 2 px ring | RENDER | VERIFIED — NO DEFECT FOUND: every recovery action's ring is visible and inside the notices at 1366 and 960 |
+| UI-09 | M8.0 A3 | Empty evidence restates the backend sentence ("Install ProteoWizard…; existing acquisitions remain"), which is wrong for unsupported or quarantined readings and for an empty roster | reported | Said once, in the banner; the evidence pane makes no false claim | FIX | FIXED AND RENDER-VERIFIED: the pane says "Plots and scans can be read once the backend above is usable." and repeats no banner sentence, for missing, unsupported and quarantined readings, en and zh-CN (before: the install instruction in all three) |
+| UI-10 | M8.0 A2, §3.1 | The `empty` first-run state, never rendered | untested | Reads as purposeful, with truthful next actions and no new primary | RENDER | FIXED AND RENDER-VERIFIED (with UI-09): the empty first run reads as purposeful, with no primary in the evidence pane, at three sizes, en and zh-CN |
+| UI-11 | §3.1, §10, critic | Scrolled and focus-driven positions on the roster, Conversion, Project, Settings and Details; the roster/Details swap at 960×640 on Conversion and Project | untested | Focus visible and on screen; nothing sticky covers it; no document overflow | RENDER | VERIFIED — NO DEFECT FOUND: keyboard walks the roster, Conversion, Project and Settings at 1366, Details with links in it, and each panel that swaps in on Conversion and Project at 960×640, with focus visible, on screen and uncovered and no document overflow |
+| UI-15 | PM9.2 L9 | The en selection count on its own line in the organizing row | reported | One line where it fits; never crushed; decided together with UI-17 | FIX | VERIFIED — NO DEFECT FOUND: the count stays whole and takes the band's second line where the 280 px roster cannot hold it beside the buttons, decided with UI-17; the component comment that said otherwise is corrected |
+| UI-16 | PM9.2 limits | The count breaks between a number and its word | reported | Each number stays with its word | FIX | FIXED AND RENDER-VERIFIED: no-break spaces and `keep-all`; forced narrow, the count breaks only between counts, en and zh-CN |
+| UI-17 | PM9.2 limits | zh-CN organizing row with Undo, never rendered | untested | Count whole, one text line; band judged | RENDER | VERIFIED — NO DEFECT FOUND: zh-CN with Undo keeps the count whole on one text line; the band's two lines judged acceptable |
+| UI-19 | PM9.2 limits | Two filled accents in the retained state (the reopen and Add files…) | reported | One filled primary while the reopen is offered | FIX | FIXED AND RENDER-VERIFIED: one filled primary (the reopen) beside the roster, `Add files…` secondary and enabled; at 960×640, where the roster takes the pane's place, `Add files…` is the one filled action; en and zh-CN (before: both filled) |
+| UI-20 | PM9.2 limits | Clear list focus and hover, code-evidenced only | untested | Visible, unclipped ring; discernible hover | RENDER | VERIFIED — NO DEFECT FOUND: Clear list's ring is visible and unclipped and its hover discernible |
+| UI-21 | M7.4 | Pointer click on the membership checkbox of a partly clipped roster row | suspicion | Exactly that row toggles; nothing scrolls between press and click | RENDER | FIXED AND RENDER-VERIFIED: a press no longer focus-scrolls or keyboard-reveals the row; exactly that row toggles and the list does not move (before: the list moved 3 px between press and click; a half-clipped checkbox then exposed the keyboard reveal moving it 40 px, toggling nothing) |
+| UI-24 | PM9.2 limits | A refused `Capture file facts` (and other refused primaries) at full accent; its reason only in `title` | reported | Refused primaries look refused and stay focusable; the reason is visible text | FIX | FIXED AND RENDER-VERIFIED: refused primaries give up the accent everywhere and stay Tab stops with a visible ring; Capture file facts and targeted Run say their reason as text, en and zh-CN (before: full accent, reason only in `title`) |
+| UI-25 | L12 | Details (245 px): SHA-256 values and long names wrap down the column | reported | Short, scannable facts; the full value reachable | FIX | FIXED AND RENDER-VERIFIED: digests one line (the whole value in the tooltip), names at most three lines, no overflow, en and zh-CN (before: digests up to thirteen lines, names six) |
+| UI-26 | PM9.3 B | Quick-action caption breaks inside the size ("1200 / × 640 px") | reported | Size kept whole; the line reflows at the separators | FIX | FIXED AND RENDER-VERIFIED: the size is on one line in every default frame, en and zh-CN |
+| UI-27 | PM9.3 B | Chromatogram header takes two rows at a 571 px column (roster and Details open at 1152) | reported (PM9.3 regression) | One row; caption kept | FIX | FIXED AND RENDER-VERIFIED: the chromatogram header is one row at the 571 px column, the caption under the buttons, en and zh-CN (before: two rows) |
+| UI-28 | PM9.3 B | Spectrum header takes 2–3 rows with Details opened at 1152–1280 | reported | One row where the controls fit; caption kept | FIX | FIXED AND RENDER-VERIFIED: one row with Details open at 1280–1536, en and zh-CN; at 1152 in English the controls measure too wide to sit beside the heading and take one row of their own, the spectrum's sentence whole and uncovered (before, PM9.3's closure: two rows at 1280, three at 1152 in en) |
+| UI-29 | PM9.3 §0.1 | Details opened at 1440 and 1536 not written up | untested | Recorded, with header and range rows | RENDER | VERIFIED — NO DEFECT FOUND: Details opened at 1536 and 1440 recorded; every header and range row is one row |
+| UI-30 | PM9.3 B | Full-width m/z pill against the chromatogram's content-width pills | reported | One design language | FIX | FIXED AND RENDER-VERIFIED: the m/z pill is as wide as its controls in every default frame |
+| UI-31 | PM9.3 B | Range lines print raw floats beside the four-decimal "Showing" | reported | Formatted with the domain formatters; exact values in the editor and export notes | FIX | FIXED AND RENDER-VERIFIED: four decimals on range lines and "full range" before a commit; the exact values stay in the editor and the export notes |
+| UI-32 | PM9.3 B | The en chromatogram range row wraps at 828 and 785 px | reported | One line; its disclosures stay Tab stops | FIX | FIXED AND RENDER-VERIFIED: range rows are one line at 828 and 785 px and in every default frame of 690 px and wider |
+| UI-33 | PM9.3 B | "(unit not reported)" four or five times per chromatogram | reported | Stated once per axis; the plot's description still carries it | FIX | FIXED AND RENDER-VERIFIED: the unit caveat twice per chromatogram panel (once per axis) and in the plot's accessible description (before: four or five times) |
+| UI-34 | PM9.3 §3 | Viewer copy density judged | untested | Judged after the fixes | RENDER | FIXED AND RENDER-VERIFIED: judged after the fixes, one statement per fact; the last duplicate, a settled commit printing the caption's numbers, now says "the range shown" (correction cycle 2) |
+| UI-36 | PM9.3 §1 | Failed spectrum load, never asserted | untested | Selection kept, failure and Retry shown, exports withheld | RENDER (Vitest) | VERIFIED — NO DEFECT FOUND (Vitest): the selection is kept, the failure and Retry are shown, the figure and data exports are withheld, and Retry recovers |
+| UI-47 | PM9.3 B | Inert `.viewer-stack` grid CSS in `app.css` | suspicion | Removed where the cascade proves it dead | FIX | FIXED AND RENDER-VERIFIED: the `.viewer-stack` grid, gap, overflow and 1120 px rows are removed; the default frames' geometry is unchanged |
+| UI-49 | advisor, dispatch §5 | The whole viewer task at 960×640 and 1366×768: entry → select a scan → read the whole spectrum → reach the row | untested | Scroll to the whole spectrum plot measured before and after, with no plot shrunk | RENDER | VERIFIED — NO DEFECT FOUND: measured before and after, identical: at 960×640 the whole spectrum is 207 px of scroll away and its row 434 px, at 1366×768 79 px; no plot shrunk (220 px) |
+| UI-42 | §3.1, §10 | Conversion & results: running, settled, ended and review states | untested | Title, no overflow, visible focus, no ETA or percentage | RENDER | VERIFIED — NO DEFECT FOUND: running, settled, ended and review at three sizes, en and zh-CN: title, no overflow, visible on-screen focus on the surface's controls, no ETA or percentage (the first run matched "remaining items" in the stop control's description) |
+| UI-44 | M7.5 | zh-CN shows English for six fixed-sentence boundary codes | reported | Owned en and zh-CN resources, frontend only | FIX | FIXED AND RENDER-VERIFIED: six fixed sentences and the count-free queue bound have owned en and zh-CN resources; a refused file picker shows the owned sentence and, in zh-CN, not the boundary's English; `conversion_not_plannable` and three test seams stay declared; the M7.5 record has an appended correction |
+| UI-45 | M8.0 C | Type, spacing, radii and control minimums never measured; L8 row density | untested | Measured once; concrete defects fixed; kept deviations recorded (no app-wide text resize) | MEASURE | FIXED AND RENDER-VERIFIED: no undeclared custom property; Roster help's summary is a 32 px target and every visible control is held to it; the caption's never-applied size is removed; the tallies and the kept 11 px deviation are in DESIGN_SYSTEM |
+| UI-46 | M8.0 | State and focus colours never compared; undeclared `var()`s; two focus-ring colours | untested/suspicion | Undeclared vars fixed; focus colour decided; kept deviations recorded | MEASURE | FIXED AND RENDER-VERIFIED: one focus colour, the reference's `#1769d1`, Settings included |
+| UI-14 | L7 | Roster 280 px at 1920 against the reference's 285 | deviation | One fixed width; 5 px, no task effect | BOUNDARY: recorded intentional in DESIGN_SYSTEM | NOT APPLICABLE: an intentional deviation, recorded in DESIGN_SYSTEM |
+| UI-18 | L9 | Moving organizing controls into a menu | decision | L9 passed at PM9.2's closure; UI-15 carries the evidence against it | BOUNDARY: not reopened | NOT APPLICABLE: decided at PM9.2's closure (L9) and not reopened |
+| UI-35 | PM9.3 §1 | Chromatogram Full/Current scope kept across previews | semantics | The labels are truthful; changing persistence changes export semantics, which §5 of the dispatch preserves | BOUNDARY: owner decision | NOT APPLICABLE: export semantics, the owner's; the Full/Current labels stay truthful |
+| UI-13, UI-22, UI-37–UI-41, UI-43; m6.x | legacy specs | m7.5, m7.2, m4.1, m4.2, m5.3, the m4.3/m4.4/viewer-r1 setup and (d) cases, m7.1; m6.1–m6.9 | test debt | Stale harness setup, not a UI defect. Owners unchanged: PM9.7; m6.x PM9.4 (held). More than one reviewable repair | BOUNDARY | NOT APPLICABLE: stale harness setups, not UI defects; owners unchanged (PM9.7; m6.x with PM9.4). On `ea85a88`, m4.3, m4.4, m5.2, m5.3, viewer-r1 and viewer-r1-scale fail only as at PM9.3's closure, message for message; m4.1, m4.2, m7.1, m7.2 and m7.5 only as in the PM9.1 campaign's classification (by outcome, m7.2's messages checked), one m7.5 case now passing; m6.x NOT RERUN, every case having failed in that classification (57 of 57) |
+| UI-23 | PM9.3 §0.5 | m7.4's active-Clear pair (focus back to Add files at 960) | test debt, one line | Exercised because UI-19 changes Add files: the reveal goes through `revealRosterRow` | RENDER (test-only repair) | FIXED AND RENDER-VERIFIED (test-only): the pair opens the roster through `revealRosterRow`; m7.4 16 of 16 |
+
+**Closure (2026-09-28).** Every row above has its result; none is UNRESOLVED.
+Code candidate `ea85a8873e15684ad4bf86ea2c0368941d74bdd4` (tree
+`72251d3f6078d7bc7f852e4c9b0b7154a1f0cf7b`), after `ec10c59` (production),
+`4078601` (tests), `859eaf0` (correction cycle 1) and `ea85a88` (correction
+cycle 2). One independent review, three dimension reviewers with a skeptic per
+finding, confirmed fifteen findings, all applied in cycle 1: a UI-19 regression
+in the constrained layout, the UI-03 and UI-09 copy, four stale unit tests, m5.7's
+description, a docstring, and coverage in UI-01, UI-11, UI-28 and UI-42. Cycle 2
+came from validation: a settled commit still printed the caption's numbers
+(UI-34), and UI-44 had no rendered case.
+
+Static on the candidate, each exit 0: `pnpm lint`, `pnpm typecheck`,
+`pnpm e2e:typecheck`, `pnpm test` (111 files, 2222 tests; the repository has no
+low-concurrency mode, `test` is `vitest run`), `pnpm build`,
+`python scripts/check_repo.py`, `git diff --check`. No manifest, lock, Rust,
+schema or provider path changed since `3588e30`.
+
+Browser, controlled IPC at DPR 1, one spec at a time behind the memory gate:
+PM9.1 55 of 55 and PM9.3 13 of 13. Together they cover the three anchors and the
+eleven-size sweep in en and zh-CN, reduced motion in zh-CN, Details opened at
+1536–1152 including the 571 px column, and the 828 px evidence column. m5.7
+8/8, m7.3 16/16, m7.4 16/16, m7.4's preview observer 7/7, m8.1–m8.5, m9.1 and
+m9.4 all pass. The rest show only the known failures in the test-debt row.
+
+Not run: m6.x (see that row), and the native specs whose Add files and
+description selectors were updated (m7.2 and m7.3 native, m5.7 tauri). No
+native, provider, OpenMS or Cargo run. One unit test failed once in four runs
+and passed alone and in the full suite: App.test's "closes the reading actions
+when the backend state is not positively available".
+
+Observed outside the list, not changed: in Details, a long fact label leaves its
+value a narrow column. The targeted MS1 engine string wraps to about eight
+lines. This is L12's, with PM9.6.
+
+Status: **KNOWN UI/UX REWORK CLOSED — PM9 REPORTED UI/UX ISSUES CLEARED**.
+PM9.4 is not started. PM9.1 stays PARTIAL for J1–J6.

@@ -257,10 +257,11 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   values are the range editor's and the export notes'. Before a range is
   committed the line says "full range" rather than repeat the caption's
   numbers. A missing unit is said once per axis on the chromatogram panel and
-  is part of the plot's accessible description (UI-31, UI-33). Settled, the
-  committed line and the "Showing" caption print the same numbers: they are
-  different facts -- the export's range, announced live, and the viewport --
-  that part during a gesture or a pending band, and both stay (UI-34).
+  is part of the plot's accessible description (UI-31, UI-33). Where the
+  committed range is the one on screen -- the viewport buttons commit what
+  they show -- the line says "the range shown" rather than repeat the
+  caption's numbers, which stay in its live announcement; it prints its own
+  only while they differ, during a gesture (UI-34).
 - **Details facts.** In the 245 px Details column a digest is one line (the
   whole value in its tooltip, still selected and copied in full) and a name at
   most three lines (UI-25).
@@ -268,6 +269,18 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   the resources and `word-break: keep-all` (UI-16). Where the 280 px roster
   cannot hold the organizing buttons and the count on one line, the count
   takes the band's second line, whole (UI-15, UI-17).
+- **Measured once (UI-45), at 1366×768 with a spectrum selected.** No
+  stylesheet names an undeclared custom property (`--color-text-muted` and
+  `--color-text` were; Radix declares its own at run time). Visible text sizes:
+  12 px 135 elements, 14 px 34, 11 px 25, 13 px 19, 19 px 6, 16 and 17 px one
+  each. Radii are 0, 6 and 8 px; roster rows 44, 59 and 61 px. One control was
+  below the 32 px compact minimum, Roster help's summary at 18 px; it is 32 px
+  now, and the case holds every visible control to it. Kept deviation: 11 px
+  for the viewer's dense secondary text -- the figure caption, "Showing"
+  ranges, the scan table's sort headers and result count -- and a roster row's
+  folder context. It sits under the reference's 12 px caption; raising it is a
+  type-scale decision, not a defect fix, and would reflow the headers PM9.3
+  measured.
 
 ## M6.6 destination and conflict surface
 
