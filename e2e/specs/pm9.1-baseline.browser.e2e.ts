@@ -50,11 +50,13 @@ import {
 import { showBackendBanner } from "../support/backendBanner";
 import { cdp, metrics } from "../support/cdp";
 import {
+  EMPTY_ROSTER,
   NO_PROJECT,
   PLAN_SHA,
   QC_ARTIFACT,
   QC_LAYER,
   RESULT,
+  RUNNING,
   SETTLED,
   TARGETED_LAYER,
   TARGETED_RUN,
@@ -65,14 +67,26 @@ import {
   type Locale,
   type Scenario,
 } from "../support/pm9Scenarios";
-import { MZML_ROW } from "../support/fixtures";
+import { MZML_ROW, VENDOR_ROW } from "../support/fixtures";
 import {
   SPECTRUM_PLOT,
+  revealRosterRow,
   selectTheSpectrum,
   selectedRowPosition,
   spectrumRangeCaption,
 } from "../support/viewer";
-import { chosenBackend, secondFile } from "../../apps/desktop/src/test/previewFixtures";
+import {
+  availableBackend,
+  chosenBackend,
+  chosenFolderWithoutTools,
+  quarantinedBackend,
+  queueItem,
+  queueOf,
+  secondFile,
+  settledAt,
+  shippedIntent,
+  unavailableBackend,
+} from "../../apps/desktop/src/test/previewFixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 
@@ -1201,6 +1215,642 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await browser.execute(() => document.activeElement?.id ?? null)).toBe("backend-status");
       expect(await toggle().getAttribute("aria-expanded")).toBe("true");
       expect(await browser.$("#backend-status").getAttribute("data-backend-collapsed")).toBe(null);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  });
+
+  /*
+   * The known UI/UX rework (baseline §12, 2026-09-28). Each case names the
+   * frozen item it exercises. Written before the rework and run on its
+   * starting candidate first, so the before-and-after is the same case.
+   */
+  describe("PM9 known UI/UX rework (baseline §12)", () => {
+    const LONG_FILE = `${"Plasma_QC_batch_08_".repeat(7)}replicate_04.mzML`;
+    const LONG_PROJECT = `${"Plasma_QC_batch_08_".repeat(4)}study`;
+    const words = (locale: Locale) => (locale === "en" ? en : zh);
+
+    async function openTable(table: Record<string, unknown>, options: { readonly hold?: readonly string[] } = {}) {
+      await installIpcBoundary(table, options);
+      await browser.url("/");
+      await browser.$(".workbench-header").waitForDisplayed();
+    }
+
+    /** The drop hint as the line leaves it: shown whole, shown cut, or gone. */
+    function dropHintState() {
+      return browser.execute(() => {
+        const hint = document.querySelector<HTMLElement>(".workbench-header .workspace-drop-hint");
+        if (hint === null || hint.getClientRects().length === 0 || hint.getBoundingClientRect().width < 1) return "gone";
+        return hint.scrollWidth > hint.clientWidth + 1 ? "cut" : "whole";
+      }) as Promise<"gone" | "cut" | "whole">;
+    }
+
+    /** Lines a text box takes, and any number-and-word pair split across two. */
+    function textShape(css: string) {
+      return browser.execute((selector: string) => {
+        const node = document.querySelector(selector);
+        if (node === null || node.getClientRects().length === 0) return null;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const lines = new Set([...range.getClientRects()].map((box) => Math.round(box.top))).size;
+        const split: string[] = [];
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        for (let text = walker.nextNode(); text !== null; text = walker.nextNode()) {
+          for (const match of (text.textContent ?? "").matchAll(/\d+[\s ]+[^\s ·]+/gu)) {
+            const pair = document.createRange();
+            pair.setStart(text, match.index ?? 0);
+            pair.setEnd(text, (match.index ?? 0) + match[0].length);
+            if (new Set([...pair.getClientRects()].map((box) => Math.round(box.top))).size > 1) split.push(match[0]);
+          }
+        }
+        return { text: node.textContent, lines, split, top: node.getBoundingClientRect().top };
+      }, css);
+    }
+
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`UI-02/03/05/48: the context line gives way in order, with a long viewed file and an unsaved long project, in ${locale}`, async () => {
+        const table = scenario("populated", locale);
+        const roster = table["get_workspace_roster"] as { datasets: Record<string, unknown>[] };
+        table["get_workspace_roster"] = { ...roster, datasets: [{ ...roster.datasets[0], fileName: LONG_FILE }, ...roster.datasets.slice(1)] };
+        table["get_project_state"] = capturedProject({ name: LONG_PROJECT, dirty: true });
+        await metrics(1920, 1080);
+        await openTable(table);
+        await viewTheRow();
+        await selectTheSpectrum(0);
+        const shapes = [];
+        for (const [width, height] of [
+          [1920, 1080],
+          [1366, 768],
+          [1280, 720],
+          [1152, 720],
+          [1051, 768],
+          [1050, 768],
+          [960, 640],
+        ] as const) {
+          await metrics(width, height);
+          await frames();
+          const label = `ui-rework-line-${locale}-${String(width)}x${String(height)}`;
+          const measured = await observe(label);
+          const hint = await dropHintState();
+          shapes.push({ label, hint, items: measured.contextItems.map((item) => ({ id: item.id, ellipsized: item.ellipsized, visible: item.visible })) });
+          // UI-02: the hint is whole or gone, never a sliver.
+          expect(hint).not.toBe("cut");
+          // UI-03: at any width the project item says it is unsaved.
+          const project = measured.contextItems.find((item) => item.id === "project");
+          expect(project?.visible ?? "").toMatch(locale === "en" ? /unsaved/iu : /未保存/u);
+          // UI-05: the viewed file, given way, still says what it is.
+          const viewing = measured.contextItems.find((item) => item.id === "viewing");
+          expect(viewing?.visible.startsWith(locale === "en" ? "View" : "正在查")).toBe(true);
+        }
+        evidence.push({ label: `ui-rework-line-${locale}`, shapes });
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`UI-04: two statuses at once, a conversion running and a project check, in ${locale}`, async () => {
+        await metrics(1920, 1080);
+        await open("busyInspected", locale);
+        await navigate([en.projectSurface, zh.projectSurface]);
+        await holdInvoke("check_project_links");
+        await browser.$("[data-project-check]").click();
+        await waitForContext("projectActivity", (text) => text !== null, "shows the check");
+        await waitForContext("conversionActivity", (text) => text !== null, "shows the conversion");
+        await home();
+        for (const [width, height] of [
+          [1366, 768],
+          [1152, 720],
+          [960, 640],
+        ] as const) {
+          await metrics(width, height);
+          await frames();
+          const measured = await observe(`ui-rework-two-statuses-${locale}-${String(width)}x${String(height)}`);
+          // observe() holds both statuses whole and inside the line; here both are there.
+          expect(measured.contextItems.filter((item) => item.priority === "1").map((item) => item.id)).toEqual([
+            "conversionActivity",
+            "projectActivity",
+          ]);
+          const stops = await keyboardSample(`ui-rework-two-statuses-${locale}-${String(width)}x${String(height)}`);
+          for (const item of measured.contextItems) {
+            expect(stops.find((stop) => stop.context === item.id)?.treatment.visible).toBe(true);
+          }
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`UI-15/16/17: the organizing row keeps the count whole, with and without Undo, in ${locale}`, async () => {
+        await metrics(1366, 768);
+        await open("populated", locale);
+        await browser.$(".roster-selection-context").waitForDisplayed();
+        const shapes: unknown[] = [];
+        const record = async (label: string) => {
+          await frames();
+          const count = await textShape(".roster-selection-context");
+          const newGroup = await browser.$(".organization-toolbar button").getLocation("y");
+          const band = await browser.$(".organization-toolbar").getSize("height");
+          shapes.push({ label, count, newGroupTop: newGroup, band });
+          expect(count?.lines).toBe(1);
+          expect(count?.split).toEqual([]);
+        };
+        await record(`ui-rework-organizing-${locale}-1366x768`);
+        await browser.$(".organization-toolbar button").click();
+        await browser.$("#organization-group-name").setValue("QC");
+        await browser.$(".group-name-dialog button[type='submit']").click();
+        await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+        await browser.$(".organization-toolbar .link-button").waitForDisplayed();
+        await record(`ui-rework-organizing-undo-${locale}-1366x768`);
+        await metrics(960, 640);
+        await revealRosterRow(MZML_ROW.handle);
+        await record(`ui-rework-organizing-undo-${locale}-960x640`);
+        evidence.push({ label: `ui-rework-organizing-${locale}`, shapes });
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`UI-19: the retained state offers one filled primary action, in ${locale}`, async () => {
+        await metrics(1366, 768);
+        await open("populated", locale);
+        await viewTheRow();
+        await setInvokeResult("choose_backend_installation", chosenBackend);
+        await showBackendBanner();
+        await browser.$('[data-backend-action="choose"]').click();
+        await browser.$("#workbench-evidence .primary-button").waitForDisplayed();
+        await frames();
+        const primaries = await browser.execute(() =>
+          [...document.querySelectorAll<HTMLElement>(".workbench-shell .primary-button")]
+            .filter((button) => button.getClientRects().length > 0)
+            .map((button) => (button.textContent ?? "").trim()),
+        );
+        evidence.push({ label: `ui-rework-retained-${locale}`, primaries });
+        expect(primaries).toEqual([expect.stringMatching(new RegExp(`^${prefix(words(locale).previewRetained)}`, "u"))]);
+        // Add files stays offered, only quieter.
+        expect(await browser.$(".dataset-roster-actions button").isEnabled()).toBe(true);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`UI-24: a refused Capture file facts looks refused and says why, in ${locale}`, async () => {
+        await metrics(1366, 768);
+        await open("populated", locale);
+        await navigate([en.projectSurface, zh.projectSurface]);
+        const capture = browser.$("[data-project-capture]");
+        await capture.waitForDisplayed();
+        expect(await capture.getAttribute("aria-disabled")).toBe("true");
+        const seen = await browser.execute(() => {
+          const button = document.querySelector<HTMLElement>("[data-project-capture]")!;
+          const enabled = document.querySelector<HTMLElement>(".dataset-roster-actions .primary-button");
+          const reason = (button.getAttribute("aria-describedby") ?? "")
+            .split(/\s+/u)
+            .map((id) => document.getElementById(id))
+            .filter((node): node is HTMLElement => node !== null && node.getClientRects().length > 0)
+            .map((node) => node.textContent ?? "")
+            .join(" ");
+          const style = getComputedStyle(button);
+          return {
+            opacity: Number(style.opacity),
+            background: style.backgroundColor,
+            enabledBackground: enabled === null ? null : getComputedStyle(enabled).backgroundColor,
+            reason,
+          };
+        });
+        evidence.push({ label: `ui-rework-capture-${locale}`, ...seen });
+        expect(seen.opacity < 0.9 || seen.background !== seen.enabledBackground).toBe(true);
+        expect(seen.reason).toContain(words(locale).projectCaptureNeedsSelection);
+        await browser.execute(() => document.querySelector<HTMLElement>("[data-project-check]")?.focus());
+        await browser.keys("Tab");
+        expect(await browser.execute(() => document.activeElement?.hasAttribute("data-project-capture") ?? false)).toBe(true);
+        expect((await focusedTreatment()).visible).toBe(true);
+        await surfaceFrame(`ui-rework-capture-${locale}-1366x768`);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`UI-09/10: the first run with no installation says the backend once, truthfully, in ${locale}`, async () => {
+        const table = scenario("populated", locale);
+        table["inspect_backend"] = unavailableBackend;
+        table["get_workspace_roster"] = EMPTY_ROSTER;
+        table["get_project_state"] = NO_PROJECT;
+        await metrics(1920, 1080);
+        await openTable(table);
+        await browser.$('[data-backend-status="missing"]').waitForExist();
+        for (const [width, height] of [
+          [1920, 1080],
+          [1366, 768],
+          [960, 640],
+        ] as const) {
+          await metrics(width, height);
+          await frames();
+          const seen = await surfaceFrame(`ui-rework-empty-${locale}-${String(width)}x${String(height)}`);
+          const text = await browser.execute(
+            () => document.querySelector("#workbench-evidence .workspace-placeholder .empty-state")?.textContent ?? "",
+          );
+          evidence.push({ label: `ui-rework-empty-copy-${locale}-${String(width)}`, text, primaries: seen.primaries });
+          expect(text).not.toContain(words(locale).previewBackendRequired);
+          expect(seen.primaries).toEqual([]);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      for (const [kind, reading] of [
+        ["unsupported", chosenFolderWithoutTools],
+        ["quarantined", quarantinedBackend],
+      ] as const) {
+        it(`UI-09: an ${kind} installation is not told to install ProteoWizard, in ${locale}`, async () => {
+          const table = scenario("populated", locale);
+          table["inspect_backend"] = reading;
+          await metrics(1366, 768);
+          await openTable(table);
+          await browser.$(`[data-backend-status="${kind}"]`).waitForExist();
+          await frames();
+          await surfaceFrame(`ui-rework-${kind}-${locale}-1366x768`);
+          const text = await browser.execute(
+            () => document.querySelector("#workbench-evidence .workspace-placeholder .empty-state")?.textContent ?? "",
+          );
+          expect(text).not.toContain(words(locale).previewBackendRequired);
+          expect(await unexpectedConsole()).toEqual([]);
+        });
+      }
+
+      it(`UI-06: a superseded reading stays on screen with its actions, in ${locale}`, async () => {
+        await metrics(1366, 768);
+        await open("converting", locale);
+        await setInvokeResult("inspect_backend", { ...availableBackend, authority: settledAt(2, 2) });
+        await setInvokeResult("get_workspace_conversion_state", { ...conversionSlot(1, RUNNING), authority: settledAt(2, 2) });
+        await browser.$('[data-backend-reading="superseded"]').waitForExist({ timeout: 30_000 });
+        for (const [width, height] of [
+          [1366, 768],
+          [960, 640],
+        ] as const) {
+          await metrics(width, height);
+          await frames();
+          await surfaceFrame(`ui-rework-superseded-${locale}-${String(width)}x${String(height)}`);
+          const seen = await browser.execute(() => ({
+            collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,
+            toggle: document.querySelector("[data-backend-toggle]") !== null,
+            actions: [...document.querySelectorAll<HTMLElement>("[data-backend-action]")].filter((a) => a.getClientRects().length > 0).length,
+          }));
+          expect(seen).toEqual({ collapsed: false, toggle: false, actions: 3 });
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+
+    it("UI-07: a verdict that arrives while the reader is in the banner's help does not fold it", async () => {
+      await metrics(1366, 768);
+      await openTable(scenario("populated"), { hold: ["inspect_backend"] });
+      await browser.$('[data-backend-status="checking"]').waitForExist();
+      await browser.waitUntil(async () => (await heldCallers("inspect_backend")) >= 1);
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-backend-help] summary")?.focus());
+      await releaseInvokeHold("inspect_backend");
+      await browser.$('[data-backend-status="available"]').waitForExist();
+      await frames();
+      const seen = await browser.execute(() => ({
+        collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,
+        expanded: document.querySelector("[data-backend-toggle]")?.getAttribute("aria-expanded") ?? null,
+        focus: document.activeElement?.closest("[data-backend-help]") !== null,
+      }));
+      expect(seen).toEqual({ collapsed: false, expanded: "true", focus: true });
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("UI-08: every recovery action on an unavailable backend shows an unclipped focus ring", async () => {
+      const table = scenario("populated");
+      table["inspect_backend"] = unavailableBackend;
+      await installIpcBoundary(table);
+      for (const [width, height] of [
+        [1366, 768],
+        [960, 640],
+      ] as const) {
+        await metrics(width, height);
+        await browser.url("/");
+        await browser.$(".workbench-header").waitForDisplayed();
+        await browser.$('[data-backend-status="missing"]').waitForExist();
+        await startAtHome();
+        const stops = [];
+        for (let step = 0; step < 40; step += 1) {
+          await browser.keys("Tab");
+          const at = await browser.execute(() => {
+            const active = document.activeElement as HTMLElement | null;
+            if (active === null || active.closest("#backend-status") === null) return null;
+            const style = getComputedStyle(active);
+            const reach = (parseFloat(style.outlineOffset) || 0) + (parseFloat(style.outlineWidth) || 0);
+            const box = active.getBoundingClientRect();
+            const clip = document.querySelector(".shell-notices")!.getBoundingClientRect();
+            return {
+              name: (active.textContent ?? "").trim(),
+              inside: box.left - reach >= clip.left - 0.5 && box.right + reach <= clip.right + 0.5 && box.top - reach >= clip.top - 0.5 && box.bottom + reach <= clip.bottom + 0.5,
+            };
+          });
+          if (at === null) continue;
+          stops.push({ ...at, treatment: await focusedTreatment() });
+        }
+        evidence.push({ label: `ui-rework-banner-focus-${String(width)}x${String(height)}`, stops });
+        expect(stops.length).toBeGreaterThan(0);
+        expect(stops.filter((stop) => !stop.treatment.visible || !stop.inside)).toEqual([]);
+      }
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("UI-12: a programmatic scroll never moves the header or Home", async () => {
+      await metrics(960, 640);
+      await open("populated");
+      await revealRosterRow(MZML_ROW.handle);
+      await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+      await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+      await selectTheSpectrum(0);
+      await browser.execute(() => {
+        const rows = document.querySelectorAll(".spectrum-table-row[data-source-index]");
+        rows[rows.length - 1]?.scrollIntoView({ block: "center" });
+      });
+      await frames();
+      const seen = await browser.execute(() => {
+        const home = document.querySelector(".workbench-home")!.getBoundingClientRect();
+        return { rootScroll: document.scrollingElement?.scrollTop ?? 0, homeTop: home.top, homeBottom: home.bottom };
+      });
+      expect(seen.rootScroll).toBe(0);
+      expect(seen.homeTop).toBeGreaterThanOrEqual(0);
+      expect(seen.homeBottom).toBeLessThanOrEqual(640);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("UI-20: Clear list shows its focus ring unclipped and answers hover", async () => {
+      await metrics(1366, 768);
+      await open("populated");
+      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions .primary-button")?.focus());
+      let found = false;
+      for (let step = 0; step < 8 && !found; step += 1) {
+        await browser.keys("Tab");
+        found = await browser.execute(() => document.activeElement?.hasAttribute("data-list-wide") ?? false);
+      }
+      expect(found).toBe(true);
+      const ring = await browser.execute(() => {
+        const active = document.activeElement as HTMLElement;
+        const style = getComputedStyle(active);
+        const reach = (parseFloat(style.outlineOffset) || 0) + (parseFloat(style.outlineWidth) || 0);
+        const box = active.getBoundingClientRect();
+        const clip = document.querySelector("#workbench-roster")!.getBoundingClientRect();
+        return { inside: box.top - reach >= clip.top - 0.5 && box.left - reach >= clip.left - 0.5, rest: style.backgroundColor };
+      });
+      expect((await focusedTreatment()).visible).toBe(true);
+      expect(ring.inside).toBe(true);
+      await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur());
+      const rest = await browser.execute(() => getComputedStyle(document.querySelector("[data-list-wide]")!).backgroundColor);
+      await browser.$("[data-list-wide]").moveTo();
+      const hover = await browser.execute(() => getComputedStyle(document.querySelector("[data-list-wide]")!).backgroundColor);
+      evidence.push({ label: "ui-rework-clear-list", ring, rest, hover });
+      expect(hover).not.toBe(rest);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("UI-21: a pointer click on a partly clipped row's checkbox toggles that row and scrolls nothing", async () => {
+      const table = scenario("populated");
+      table["get_workspace_roster"] = {
+        capacity: 1024,
+        datasets: Array.from({ length: 30 }, (_, index) => ({ ...MZML_ROW, handle: `r-${String(index)}`, fileName: `Replicate_${String(index)}.mzML` })),
+      };
+      await metrics(1366, 768);
+      await openTable(table);
+      await browser.$('.grouped-roster [data-handle="r-0"]').waitForDisplayed();
+      const target = await browser.execute(() => {
+        const list = document.querySelector<HTMLElement>(".grouped-roster")!;
+        const clip = list.getBoundingClientRect();
+        const rows = [...list.querySelectorAll<HTMLElement>("[data-handle]")];
+        const row = rows.find((candidate) => candidate.getBoundingClientRect().bottom > clip.bottom);
+        if (row === undefined) return null;
+        // Leave the row's lower 15 px under the list's edge.
+        list.scrollTop += row.getBoundingClientRect().bottom - clip.bottom - 15;
+        const box = row.querySelector<HTMLInputElement>('input[type="checkbox"]')!.getBoundingClientRect();
+        return { handle: row.getAttribute("data-handle"), x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), scrollTop: list.scrollTop };
+      });
+      expect(target).not.toBe(null);
+      const before = await browser.execute(() => [...document.querySelectorAll<HTMLInputElement>('.grouped-roster [data-handle] input[type="checkbox"]')].map((box) => box.checked));
+      await browser.performActions([
+        { type: "pointer", id: "ui21", parameters: { pointerType: "mouse" }, actions: [
+          { type: "pointerMove", duration: 0, origin: "viewport", x: target!.x, y: target!.y },
+          { type: "pointerDown", button: 0 },
+          { type: "pointerUp", button: 0 },
+        ] },
+      ]);
+      await browser.releaseActions();
+      await frames();
+      const after = await browser.execute((handle: string) => ({
+        checked: [...document.querySelectorAll<HTMLInputElement>('.grouped-roster [data-handle] input[type="checkbox"]')].map((box) => box.checked),
+        target: document.querySelector<HTMLInputElement>(`.grouped-roster [data-handle="${handle}"] input[type="checkbox"]`)?.checked ?? null,
+        scrollTop: document.querySelector<HTMLElement>(".grouped-roster")!.scrollTop,
+      }), target!.handle ?? "");
+      evidence.push({ label: "ui-rework-clipped-checkbox", target, after });
+      expect(after.target).toBe(true);
+      expect(after.checked.filter((value, index) => value !== before[index]).length).toBe(1);
+      expect(after.scrollTop).toBe(target!.scrollTop);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`UI-25: Details keeps digests to one line and names bounded, in ${locale}`, async () => {
+        await metrics(1920, 1080);
+        await open("busyInspected", locale);
+        await navigate([en.projectSurface, zh.projectSurface]);
+        await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+        await browser.$("#workbench-inspector .provenance-digest").waitForDisplayed();
+        await frames();
+        const seen = await browser.execute(() => {
+          const lines = (node: Element) => {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            return new Set([...range.getClientRects()].map((box) => Math.round(box.top))).size;
+          };
+          const inspector = document.querySelector<HTMLElement>("#workbench-inspector")!;
+          return {
+            digests: [...inspector.querySelectorAll<HTMLElement>(".provenance-digest")]
+              .filter((node) => node.getClientRects().length > 0)
+              .map((node) => ({ lines: lines(node), full: (node.getAttribute("title") ?? node.textContent ?? "").replace(/\s/gu, "").length })),
+            names: [...inspector.querySelectorAll<HTMLElement>(".provenance-link .link-button, .provenance-name")]
+              .filter((node) => node.getClientRects().length > 0)
+              .map((node) => lines(node)),
+            overflow: inspector.scrollWidth - inspector.clientWidth,
+          };
+        });
+        evidence.push({ label: `ui-rework-details-${locale}`, ...seen });
+        await surfaceFrame(`ui-rework-details-${locale}-1920x1080`);
+        expect(seen.digests.length).toBeGreaterThan(0);
+        expect(seen.digests.filter((digest) => digest.lines !== 1)).toEqual([]);
+        expect(seen.digests.filter((digest) => digest.full < 64)).toEqual([]);
+        expect(seen.names.filter((count) => count > 3)).toEqual([]);
+        expect(seen.overflow).toBeLessThanOrEqual(1);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`UI-01: the header, notices and content share one left edge, in ${locale}`, async () => {
+        await metrics(1920, 1080);
+        await open("populated", locale);
+        for (const [width, height] of [
+          [1920, 1080],
+          [1366, 768],
+          [960, 640],
+        ] as const) {
+          await metrics(width, height);
+          await frames();
+          const edges = await browser.execute(() => {
+            const layout = document.querySelector<HTMLElement>(".workspace-layout")!;
+            const first = [...layout.children].find((child) => (child as HTMLElement).getClientRects().length > 0) as HTMLElement | undefined;
+            return {
+              header: document.querySelector(".workbench-home")!.getBoundingClientRect().left,
+              content: first?.getBoundingClientRect().left ?? null,
+            };
+          });
+          evidence.push({ label: `ui-rework-edges-${locale}-${String(width)}`, ...edges });
+          expect(Math.abs((edges.content ?? 0) - edges.header)).toBeLessThanOrEqual(1);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`UI-42: the Conversion surface running, settled, stopped before start and in review, in ${locale}`, async () => {
+        const ETA = /\d+\s?%|\bETA\b|remaining|剩余|预计/u;
+        const check = async (label: string) => {
+          await frames();
+          const seen = await surfaceFrame(label);
+          const text = await browser.execute(() => (document.querySelector<HTMLElement>("#workbench-conversion")?.innerText ?? ""));
+          expect(seen.title?.text).toBe(words(locale).conversionTask);
+          expect(ETA.test(text)).toBe(false);
+        };
+        const sizes = [
+          [1920, 1080],
+          [1366, 768],
+          [960, 640],
+        ] as const;
+        // Running, then settled by the lane's own next read (PM9-B6's route).
+        await metrics(1920, 1080);
+        await open("converting", locale);
+        await navigate([en.conversionTask, zh.conversionTask]);
+        await browser.$('section.conversion-panel[aria-busy="true"]').waitForExist();
+        for (const [width, height] of sizes) {
+          await metrics(width, height);
+          await check(`ui-rework-conversion-running-${locale}-${String(width)}x${String(height)}`);
+        }
+        const poll = "get_workspace_conversion_state";
+        await holdInvoke(poll);
+        await setInvokeResult(poll, conversionSlot(2, SETTLED));
+        await browser.waitUntil(async () => (await heldCallers(poll)) > 0, { timeout: 15_000 });
+        await releaseInvokeHold(poll);
+        await browser.$('li[data-item-state="finalized"]').waitForExist();
+        for (const [width, height] of sizes) {
+          await metrics(width, height);
+          await check(`ui-rework-conversion-settled-${locale}-${String(width)}x${String(height)}`);
+        }
+        // Stopped before its one item began: mounted directly, a queue that ended.
+        const ended = scenario("populated", locale);
+        ended["get_workspace_conversion_state"] = conversionSlot(1, {
+          status: "terminal",
+          reason: "stopped",
+          operationId: "pm9-ended",
+          queue: queueOf([queueItem(VENDOR_ROW.handle, VENDOR_ROW.fileName, { sourceKind: VENDOR_ROW.sourceKind, state: "notRun" })]),
+        });
+        ended["describe_workspace_conversion_queue"] = {
+          outcome: "planned",
+          plan: {
+            items: [{ datasetHandle: VENDOR_ROW.handle, fileName: VENDOR_ROW.fileName, sourceKind: VENDOR_ROW.sourceKind, output: { kind: "knownSingle", fileName: "sample-9.mzML" } }],
+            outputFormat: "mzML",
+            compression: "zlib",
+            validationMode: "output_only",
+            capacity: 16,
+            intent: shippedIntent,
+            conflictPolicy: "fail",
+            destinationPolicy: { kind: "customFolder" },
+            receipt: 1,
+          },
+        };
+        await metrics(1920, 1080);
+        await openTable(ended);
+        await navigate([en.conversionTask, zh.conversionTask]);
+        await browser.$('li[data-item-state="notRun"]').waitForExist();
+        for (const [width, height] of sizes) {
+          await metrics(width, height);
+          await check(`ui-rework-conversion-ended-${locale}-${String(width)}x${String(height)}`);
+        }
+        // A reviewed plan: every eligible row, answered by the plan's describe.
+        await browser.$('input[name="conversion-scope"][value="all"]').click();
+        await browser.$("#conversion-plan-summary").waitForExist();
+        for (const [width, height] of sizes) {
+          await metrics(width, height);
+          await check(`ui-rework-conversion-review-${locale}-${String(width)}x${String(height)}`);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+
+    it("UI-11: keyboard walks through the roster, Conversion, Project and Settings stay visible and on screen", async () => {
+      await metrics(1366, 768);
+      await open("populated");
+      const walk = async (label: string, limit: number) => {
+        const stops = [];
+        for (let step = 0; step < limit; step += 1) {
+          await browser.keys("Tab");
+          const at = await browser.execute(() => {
+            const active = document.activeElement as HTMLElement | null;
+            if (active === null || active === document.body) return null;
+            const box = active.getBoundingClientRect();
+            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(box.height / 2, 8));
+            return {
+              name: (active.getAttribute("aria-label") ?? active.textContent ?? active.tagName).trim().slice(0, 40),
+              onScreen: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
+              uncovered: hit === null || active === hit || active.contains(hit) || hit.contains(active),
+            };
+          });
+          if (at !== null) stops.push({ ...at, treatment: await focusedTreatment() });
+        }
+        evidence.push({ label, stops });
+        expect(stops.filter((stop) => !stop.treatment.visible || !stop.onScreen || !stop.uncovered)).toEqual([]);
+      };
+      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions .primary-button")?.focus());
+      await walk("ui-rework-walk-roster", 20);
+      for (const [name, label] of [
+        [en.conversionTask, "conversion"],
+        [en.projectSurface, "project"],
+      ] as const) {
+        await navigate([name]);
+        await browser.execute((region: string) => document.querySelector<HTMLElement>(`#workbench-${region} h1`)?.focus(), label);
+        await startAtHome();
+        await walk(`ui-rework-walk-${label}`, 40);
+      }
+      await browser.$("[data-settings-entry]").click();
+      await browser.$("[data-settings-dialog]").waitForDisplayed();
+      await walk("ui-rework-walk-settings", 16);
+      await browser.keys("Escape");
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("UI-45/46: a computed-style pass, and no stylesheet names an undeclared custom property", async () => {
+      await metrics(1366, 768);
+      await open("populated");
+      await viewTheRow();
+      await selectTheSpectrum(0);
+      await frames();
+      const seen = await browser.execute(() => {
+        const root = getComputedStyle(document.documentElement);
+        const undeclared = new Set<string>();
+        for (const sheet of [...document.styleSheets]) {
+          let rules: CSSRuleList;
+          try { rules = sheet.cssRules; } catch { continue; }
+          const scan = (list: CSSRuleList) => {
+            for (const rule of [...list]) {
+              if ("cssRules" in rule && (rule as CSSGroupingRule).cssRules) scan((rule as CSSGroupingRule).cssRules);
+              const text = rule.cssText;
+              const declared = new Set([...text.matchAll(/(--[\w-]+)\s*:/gu)].map((match) => match[1]));
+              for (const match of text.matchAll(/var\(\s*(--[\w-]+)\s*\)/gu)) {
+                const name = match[1]!;
+                if (!declared.has(name) && root.getPropertyValue(name).trim() === "") undeclared.add(name);
+              }
+            }
+          };
+          scan(rules);
+        }
+        const sizes: Record<string, number> = {};
+        for (const node of [...document.querySelectorAll<HTMLElement>("body *")]) {
+          if (node.closest("svg") !== null || node.getClientRects().length === 0) continue;
+          if (![...node.childNodes].some((child) => child.nodeType === 3 && (child.textContent ?? "").trim() !== "")) continue;
+          const size = getComputedStyle(node).fontSize;
+          sizes[size] = (sizes[size] ?? 0) + 1;
+        }
+        return { undeclared: [...undeclared], fontSizes: sizes, focus: root.getPropertyValue("--color-focus").trim() };
+      });
+      evidence.push({ label: "ui-rework-measure", ...seen });
+      expect(seen.undeclared).toEqual([]);
       expect(await unexpectedConsole()).toEqual([]);
     });
   });

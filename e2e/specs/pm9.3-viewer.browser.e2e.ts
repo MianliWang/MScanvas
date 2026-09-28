@@ -523,7 +523,7 @@ async function observeViewer(label: string) {
     const rows = (css: string) => {
       const node = document.querySelector(css);
       if (node === null || node.getClientRects().length === 0) return null;
-      const boxes = [...node.querySelectorAll("h2, button, label, summary")]
+      const boxes = [...node.querySelectorAll("h2, button, label, summary, .plot-committed-range")]
         .filter((item) => item.getClientRects().length > 0)
         .map((item) => item.getBoundingClientRect())
         .sort((a, b) => a.top - b.top);
@@ -595,6 +595,41 @@ async function observeViewer(label: string) {
         firstRow: reach('.spectrum-table-panel [data-row-position="0"]'),
       },
       documentOverflowY: document.documentElement.scrollHeight - innerHeight,
+      // The known UI rework (baseline §12). Each quick-action caption: on how
+      // many lines its figure size sits (UI-26).
+      captions: [...document.querySelectorAll(".figure-quick-context")]
+        .filter((node) => node.getClientRects().length > 0)
+        .map((node) => {
+          const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+          for (let text = walker.nextNode(); text !== null; text = walker.nextNode()) {
+            const match = /\d+\s×\s\d+\spx/u.exec(text.textContent ?? "");
+            if (match === null) continue;
+            const range = document.createRange();
+            range.setStart(text, match.index);
+            range.setEnd(text, match.index + match[0].length);
+            return { text: node.textContent, sizeLines: new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size };
+          }
+          return { text: node.textContent, sizeLines: null };
+        }),
+      // The m/z controls' pill against the column it sits in (UI-30).
+      mzPill: (() => {
+        const pill = document.querySelector(".spectrum-viewport-actions");
+        if (pill === null || pill.parentElement === null || pill.getClientRects().length === 0) return null;
+        return { width: pill.getBoundingClientRect().width, column: pill.parentElement.getBoundingClientRect().width };
+      })(),
+      // What the lines under the plots print (UI-31, UI-33).
+      rangeTexts: [...document.querySelectorAll(".plot-committed-range")].map((node) => node.textContent ?? ""),
+      chromatogramUnits: (() => {
+        const panel = document.querySelector<HTMLElement>(".chromatogram-panel");
+        return panel === null ? null : (panel.innerText.match(/unit not reported|单位未报告/gu) ?? []).length;
+      })(),
+      plotDescription: (() => {
+        const plot = document.querySelector("svg.chromatogram-svg");
+        return (plot?.getAttribute("aria-describedby") ?? "")
+          .split(/\s+/u)
+          .map((id) => document.getElementById(id)?.textContent ?? "")
+          .join(" ");
+      })(),
       // Which acquisition the evidence belongs to, where the shell names it
       // (ADR 0006's Run identity; PM9.2's context line).
       identity: (() => {
@@ -815,13 +850,18 @@ describe("PM9.3 viewer contracts, rendered", () => {
       // Confirm by the band's own action ("Zoom to selection").
       await browser.$(`${RT_PANEL} .plot-pending-actions button:nth-child(1)`).click();
       await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForExist({ reverse: true });
-      const committed = await rangeLine(RT_PANEL);
-      expect(committed.committed).toBe(true);
+      const line = await rangeLine(RT_PANEL);
+      expect(line.committed).toBe(true);
+      // The exact bounds are the export note's: the line under the plot shows
+      // them at the plot's own four decimals (the known UI rework, UI-31).
+      const note = await textOf(`${EXPORT_PANEL} .chromatogram-export-range .chromatogram-export-note`);
+      const [, low, high] = /(-?[\d.]+(?:e[-+]?\d+)?) to (-?[\d.]+(?:e[-+]?\d+)?)/u.exec(note) ?? [];
+      const committed = { low: Number(low), high: Number(high) };
       expect(committed.low).toBeLessThan(committed.high);
-      // The panel offers exactly what it will send.
-      expect(await textOf(`${EXPORT_PANEL} .chromatogram-export-range .chromatogram-export-note`)).toBe(
-        fill(en.viewerExportRtHelp, { low: String(committed.low), high: String(committed.high) }),
-      );
+      // The panel offers exactly what it will send, and the line says the same range.
+      expect(note).toBe(fill(en.viewerExportRtHelp, { low: String(committed.low), high: String(committed.high) }));
+      expect(line.low).toBeCloseTo(committed.low, 3);
+      expect(line.high).toBeCloseTo(committed.high, 3);
 
       const before = countOf(await ipcCalls(), "begin_chromatogram_export");
       await press(EXPORT_PANEL, fill(en.viewerExportFormat, { name: "CSV" }));
@@ -838,7 +878,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForDisplayed();
       const pending = await rangeLine(RT_PANEL);
       expect(pending.pending).toBe(true);
-      expect([pending.low, pending.high]).not.toEqual([committed.low, committed.high]);
+      expect([pending.low, pending.high]).not.toEqual([line.low, line.high]);
       const overPending = countOf(await ipcCalls(), "begin_chromatogram_export");
       await press(EXPORT_PANEL, fill(en.viewerExportFormat, { name: "CSV" }));
       const kept = (await lastRequest("begin_chromatogram_export", overPending))["range"] as Record<string, unknown>;
@@ -1132,12 +1172,30 @@ describe("PM9.3 viewer contracts, rendered", () => {
 
         // L13: no viewer toolbar takes a second row in any default arrangement
         // (DESIGN_SYSTEM: "toolbars must not grow into wrapping ribbons").
-        const wrapped = defaults.flatMap((frame) =>
-          Object.entries(frame.toolbars)
+        // Since the known UI rework (UI-32), the lines under the plots count too.
+        const overOneRow = (frame: (typeof defaults)[number], withRangeRows: boolean) =>
+          Object.entries({ ...frame.toolbars, ...(withRangeRows ? frame.rangeRows : {}) })
             .filter(([, toolbar]) => toolbar !== null && toolbar.rows > 1)
-            .map(([name, toolbar]) => `${frame.label} ${name} ${String(toolbar?.rows)}`),
-        );
+            .map(([name, toolbar]) => `${frame.label} ${name} ${String(toolbar?.rows)}`);
+        const wrapped = defaults.flatMap((frame) => overOneRow(frame, true));
         expect(wrapped).toEqual([]);
+
+        // The rest of the known UI rework on the default frames (baseline §12):
+        // the figure size never split (UI-26); the m/z pill as wide as its
+        // controls, not the column (UI-30); range lines at the plot's own
+        // precision (UI-31); the missing unit said once per axis, and still in
+        // the plot's description (UI-33); no committed-range numbers before a
+        // range is committed (UI-31).
+        const rework = defaults.flatMap((frame) => [
+          ...frame.captions.filter((caption) => caption.sizeLines !== 1).map((caption) => `${frame.label} caption ${String(caption.text)}`),
+          ...(frame.mzPill !== null && frame.mzPill.width > frame.mzPill.column - 8 ? [`${frame.label} m/z pill spans its column`] : []),
+          ...frame.rangeTexts.filter((text) => /\d\.\d{5,}/u.test(text)).map((text) => `${frame.label} raw digits: ${text}`),
+          ...(frame.chromatogramUnits !== null && frame.chromatogramUnits !== 2 ? [`${frame.label} unit caveat ${String(frame.chromatogramUnits)} times`] : []),
+          ...(/unit not reported|单位未报告/u.test(frame.plotDescription) ? [] : [`${frame.label} plot description without the unit caveat`]),
+        ]);
+        const entry = defaults[0]!;
+        const entryLine = entry.rangeTexts[0] ?? "";
+        expect({ rework, entryLine: /\d/u.test(entryLine) ? entryLine : null }).toEqual({ rework: [], entryLine: null });
 
         // The keyboard path through the chromatogram at the narrow anchor.
         const walk = await keyboardWalk();
@@ -1148,18 +1206,25 @@ describe("PM9.3 viewer contracts, rendered", () => {
         await browser.execute(() => document.querySelector<HTMLElement>("#workbench-evidence")?.scrollTo({ top: 0 }));
 
         // Details opened by the reader where its width does not open it, and
-        // the one-column swap at the narrow anchor. Recorded, not asserted.
+        // the one-column swap at the narrow anchor. Since the known UI rework
+        // (UI-27, UI-28, UI-29) the plot headers stay one row down to the
+        // 571 px column of 1152x720, and the lines under the plots from 699 px.
+        const detailsOpen = [];
         for (const [width, height] of [
           [1536, 864],
+          [1440, 900],
           [1366, 768],
           [1280, 800],
           [1152, 720],
         ] as const) {
           await metrics(width, height);
           await setPanel("details", true);
-          await observeViewer(`pm93-g-${locale}-${String(width)}x${String(height)}-details-open`);
+          detailsOpen.push(await observeViewer(`pm93-g-${locale}-${String(width)}x${String(height)}-details-open`));
           await setPanel("details", false);
         }
+        expect(
+          detailsOpen.flatMap((frame) => overOneRow(frame, (frame.evidence?.width ?? 0) >= 690)),
+        ).toEqual([]);
         await metrics(960, 640);
         await frames();
         await setPanel("roster", true);
@@ -1178,6 +1243,63 @@ describe("PM9.3 viewer contracts, rendered", () => {
             (entry) => !(locale === "zh-CN" && entry.includes("You have Reduced Motion enabled on your device")),
           ),
         ).toEqual([]);
+      });
+    }
+
+    // The whole task at a short window (the known UI rework, UI-49): from the
+    // entry state, choose a scan on the chromatogram, then read the whole
+    // selected spectrum and reach its row. Recorded for the before-and-after:
+    // how far the evidence column scrolls for each, with no plot shrunk.
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`PM9.3-T the viewer task at 960x640 and 1366x768 in ${locale}`, async () => {
+        const task = [];
+        await installIpcBoundary(answers({ locale }));
+        for (const [width, height] of [
+          [960, 640],
+          [1366, 768],
+        ] as const) {
+          await metrics(width, height);
+          await browser.url("/");
+          await browser.$(".workbench-header").waitForDisplayed();
+          await answerBySource();
+          await view(MZML_ROW.handle);
+          await frames();
+          await clickPlot(PLOT, 2 / 7);
+          await waitForReads(1);
+          await browser.$(SPECTRUM_PLOT).waitForExist();
+          await settled(`pm93-t-${locale}-${String(width)}`);
+          await frames();
+          const measured = await browser.execute((scans: string) => {
+            const evidence = document.querySelector<HTMLElement>("#workbench-evidence")!;
+            evidence.scrollTop = 0;
+            const bottom = () => evidence.getBoundingClientRect().bottom;
+            const chromatogram = document.querySelector("svg.chromatogram-svg")!.getBoundingClientRect();
+            const plot = () => document.querySelector("svg.spectrum-plot")!.getBoundingClientRect();
+            const atEntry = { plotTop: plot().top, plotHeight: plot().height, onScreen: Math.max(0, Math.min(plot().bottom, bottom()) - plot().top) };
+            // Scroll until the whole spectrum plot is on screen.
+            const toWholePlot = Math.max(0, plot().bottom - bottom());
+            evidence.scrollTop = toWholePlot;
+            const row = document.querySelector(`${scans} [aria-selected="true"]`)!.getBoundingClientRect();
+            const toRow = Math.max(0, row.bottom - bottom());
+            evidence.scrollTop = 0;
+            return {
+              chromatogramWhole: chromatogram.top >= 0 && chromatogram.bottom <= bottom(),
+              atEntry,
+              toWholePlot,
+              toRowAfterPlot: toRow,
+              scrollRange: evidence.scrollHeight - evidence.clientHeight,
+            };
+          }, SCANS);
+          task.push({ label: `pm93-t-${locale}-${String(width)}x${String(height)}`, ...measured });
+          // The contracts the task rests on: the chromatogram whole at the
+          // column's top and the selected spectrum beginning inside the window
+          // (M7.3). The distances are recorded, not asserted.
+          expect(measured.chromatogramWhole).toBe(true);
+          expect(measured.atEntry.plotTop).toBeLessThan(height);
+          expect(measured.atEntry.plotHeight).toBeGreaterThanOrEqual(219);
+        }
+        evidence.push({ label: `pm93-t-${locale}`, kind: "Observation only.", candidate: process.env["MSCANVAS_PM9_CANDIDATE"] ?? "unlabelled", task });
+        expect(await unexpectedConsole()).toEqual([]);
       });
     }
   });
