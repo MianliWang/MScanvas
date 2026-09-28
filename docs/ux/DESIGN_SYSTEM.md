@@ -70,6 +70,16 @@ session Settings controls deliver en/zh-CN viewer messages without remounting
 workspace state. [The M7.3 record](M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md) owns
 rendered/native attribution and publication status.
 
+Amended 2026-09-28 (PM9.3). Each plot header carries its title and its figure
+actions on one line: a caption naming what they produce (plot, range, size),
+Export figure, Quick PNG, Copy plot and the plot's export entry. The plot's own
+controls sit in pill groups on the line directly above the drawing: the
+chromatogram's TIC/BPC and RT range, and the spectrum's m/z range. In a default
+panel arrangement no viewer toolbar takes a second row, from 960×640 to
+2560×1440 in either language, and at 960×640 the selected spectrum's plot
+begins inside the window. See
+[PM9.3](../phases/pm9/slice-03.md#05-validation-repair-and-closure-2026-09-28).
+
 ### M7.2 consumer mapping
 
 The implemented shell uses a white header, quiet gray background, blue active

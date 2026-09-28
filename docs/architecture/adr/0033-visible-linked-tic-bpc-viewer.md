@@ -10,6 +10,15 @@ The dated [ADR 0039 amendment](0039-visible-spectrum-viewport-adapter.md#m73-inp
 governs those mappings; the historical evidence below and full-model nearest-scan,
 clip/extent/reduction and source-refusal contracts remain in force.
 
+Current-layout cross-reference (2026-09-28): the *Layout* section's floors
+(186 / 122 / 202 px) were measured for R1's three-row grid, and they are
+historical. The M7.2/M7.3 shell stacks chromatogram, selected spectrum and
+scans at their natural heights, and the evidence column scrolls them. PM9.3
+states the 960×640 requirement in task terms and verifies it rendered. The
+chromatogram header now holds the title and the figure actions; its trace and
+range groups sit on a line above the plot
+([PM9.3](../../phases/pm9/slice-03.md#05-validation-repair-and-closure-2026-09-28)).
+
 Related: [0032](0032-viewer-interaction-and-viewport-state.md),
 [0003](0003-msaccess-preview-spike.md),
 [0028](0028-figure-renderer-and-semantic-specification.md),

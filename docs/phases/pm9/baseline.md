@@ -176,7 +176,8 @@ the browser on `0d22fc7` (§9); L14–L16's English scope at its floor was
 closed on `b81fc78` by the owner's copy decision (§9, Closure). The production column above still describes
 `a0783bb`. How each row was disposed of is in
 [slice-02](slice-02.md#focused-rendered-acceptance-2026-09-26). L13 stays
-PM9.3's.
+PM9.3's. PM9.3 fixed it on 2026-09-28 and settled L3, L5 and L21's open
+parts for the viewer (§11).
 
 Not captured in this comparison: empty and entry states, a pending range band
 (PM9.3's G frames later hold one, on screen only at 1920×1080; slice-03 §3),
@@ -818,3 +819,38 @@ unresolved):
   is a precondition of PM9.7 only.
 - Completion: PM9.1's and PM9.2's statuses follow from their own Completion
   text, not from convenience.
+
+## 11. PM9.3 focused rendered acceptance (2026-09-28)
+
+The full record is in
+[slice-03 §0.5](slice-03.md#05-validation-repair-and-closure-2026-09-28); this
+section keeps what later slices and PM9.7 read from the baseline.
+
+- **Candidate.** `d98432bd82e6ba25531cef0b06f453dff6a55351` (tree
+  `54bdfc7044f5df7740e78a0bc78974ad1ad2eeb6`). Its production code is
+  `55c30f3`'s. Every browser frame is controlled-IPC Chrome at DPR 1 and is not
+  native evidence.
+- **Before-and-after.** The before side is the viewer of `eae0fc3` under
+  PM9.3's extended G case (`test-results/pm9.3/before/browser-B9rgaP`). It is
+  PM9.3's own measurement, not PM9.1's J1–J6. At 960×640:
+  - the chromatogram panel is 398 → 368 px in en and 347 → 368 px in zh-CN;
+  - the spectrum header is 102 → 56 px;
+  - the spectrum plot on screen is 0 → 13 px in both languages;
+  - toolbars over one row went from the chromatogram (en) and spectrum
+    headers to none.
+- **L13.** Fixed, and asserted in every default arrangement of the sweep.
+- **L3.** The viewed file is named, untruncated, in the context line at every
+  size, and in Details. No heading is added to the evidence column.
+- **L5.** The scans stay below the spectrum, and they are verified reachable.
+- **L21.** At 960×640 the roster or Details swaps with the evidence, and the
+  header and the context line stay.
+- **The 960×640 panel floors** are met in task terms (slice-03 §0.1(2)). ADR
+  0033's floors and `app.css`'s `.viewer-stack` grid rows are inert under the
+  M7.2/M7.3 stack. ADR 0006's 544 px is unchanged; that its breakdown names a
+  removed sidebar is an owner question for PM9.7.
+- **The fixture store.** The shared answer table's fixed
+  `save_ui_preferences` record reads `automatic` layout and `en` back. The
+  shell adopts what a save confirms, so every spec that toggles a panel or
+  applies a language through Settings must install `readBackSavedPreferences`
+  (`e2e/support/viewer.ts`). This also covers m7.2's copies and m7.4's
+  active-Clear pair, which are PM9.7's.

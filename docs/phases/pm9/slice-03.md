@@ -1,10 +1,12 @@
 # PM9.3 — evidence-first viewer: chromatogram, scans, spectrum, inspection and export
 
 PM9 | Acceptance: U3, U8 (viewer), U9, U10 | Depends on: PM9.2 | Serial, one writer
-Status: **IN PROGRESS — IMPLEMENTED; RENDERED ACCEPTANCE RESOURCE_DEFERRED**
-(2026-09-26, §0.4). Re-expanded on 2026-09-26 against the current tree
-(§0 below). §1–§5 are the static preparation, kept as evidence; §0 replaces
-§6 as the plan.
+Status: **PM9.3 VIEWER PRODUCT CONVERGENCE COMPLETE — FOCUSED RENDERED
+ACCEPTANCE PASS** (2026-09-28, §0.5). The final candidate is `d98432b`, whose
+production code is `55c30f3`'s. It was implemented on 2026-09-26 with its
+rendered acceptance deferred for memory (§0.4). It was re-expanded on
+2026-09-26 against the current tree (§0). §1–§5 are the static preparation,
+kept as evidence; §0 replaces §6 as the plan.
 
 The paragraphs below are the history that led here. §1–§3 and §5 were read at
 `9786809` (tree `da9ae8e`) from source and recorded evidence. The viewer's
@@ -281,6 +283,219 @@ product repair cycles. The first L13 implementation is not one.
     and m7.4's zh-CN cases, which apply the language through Settings, may
     therefore render in English. This is unconfirmed until those specs run.
 
+### 0.5 Validation, repair and closure (2026-09-28)
+
+**Window.** The owner reopened it.
+
+- Admission: 12.27 GiB available, 61.3 % used.
+- Every heavy command read 11.73–13.74 GiB available and 56.8–63.0 % used,
+  so no emergency stop.
+- Every browser result below is controlled-IPC Chrome at DPR 1 over
+  synthetic answers. None of it is native evidence at 150 %.
+- Frames are under `test-results/pm9.3/{before,after,cycle1*,final}/`
+  (git-ignored). Logs stayed in the session scratchpad.
+
+**Helper diagnosis: a test helper bug, confirmed.** One discriminating run
+with the temporary spec of §0.4, two reveals at a 960×640 window:
+
+- **Shared table.** The toggle was operable at the press (no
+  `aria-disabled`). The save asked for `roster: "shown"` and was answered
+  `automatic`. By the next driver command the roster was `hidden` again, and
+  it stayed hidden.
+- **Read-back store.** The roster opened and stayed open.
+
+The refusal while preferences load played no part. `openTheViewer`'s
+`setWindowSize(960, 640)` gives a 938×486 viewport; the failures do not
+depend on that, and it is recorded, not changed.
+
+The same fixed record also reads back `locale: "en"`:
+
+- m7.4's zh-CN failure shot shows English after Settings applied zh-CN;
+- m7.3's 100000-row case lost the Details it had toggled.
+
+`readBackSavedLayout` became `readBackSavedPreferences` (`17c29a9`) and
+echoes both groups. `revealRosterRow` installs it, and so do PM9.3's
+`setPanel` and m7.3's and m7.4's `preferences()`, before they save.
+
+**Before-capture.** Production of `eae0fc3` with the tests of `1012f4e`
+(`test-results/pm9.3/before/browser-B9rgaP`). The L13 assertion failed, as
+expected:
+
+- in en, the chromatogram header took two rows at 960×640 (entry and
+  selected) and at 1152×720 (roster open, 828 px column);
+- the spectrum header took two rows at every size in both languages, with
+  Export spectrum on a line of its own.
+
+One reading was unsettled: zh-CN 1920×1080 still carried the 2560×1440
+frame's height, 360 px over. `2ab6f5f` now observes a frame only once the
+shell fills the viewport, as PM9.1 does.
+
+**Repair cycle 1 (`55c30f3`), the only one used.**
+
+- *Failed condition.* The helper repair let m7.3's 960×640 case reach its
+  assertion for the first time since M7.4: the selected spectrum's plot must
+  begin inside the window (M7.3 recorded 592.8). It began at 663.6 on
+  `696602c`.
+- *Before PM9.3.* It was below the window too, at about 644 in zh-CN and 695
+  in en.
+- *Diagnosis.* Three things pushed it down:
+  - M7.4's quick-action caption line under the buttons in both plot headers;
+  - the spectrum header's Export spectrum line (already fixed in `696602c`);
+  - L13's controls line, 44 px.
+- *Fix.*
+  - The caption moves before the buttons, on their line, capped at 14em and
+    wrapping inside itself.
+  - The spectrum summary loses its 6 px margin.
+  - The pills' padding becomes 1 px, the plot bodies' top padding 4 px, and
+    the gap between panels 8 px.
+- *Rejected.*
+  - Hiding the caption: it is the only on-screen statement of Quick PNG's
+    range and size before the press.
+  - Controls below the plots: M5.2 records that a reader meets the controls
+    before the plot they act on.
+- *Measured along the way.* A rule putting the spectrum's title and summary
+  on one line wrapped Export spectrum under the buttons at ≤ 1440 px. It was
+  reverted inside the same cycle.
+
+**Final candidate.** `d98432bd82e6ba25531cef0b06f453dff6a55351` (tree
+`54bdfc7044f5df7740e78a0bc78974ad1ad2eeb6`). Its `apps/` equals
+`55c30f3533c9a90f8dd67b2aa6f28d5004db01e5`'s (tree
+`d3110817766fe91cd4f107bd2f32992a432327be`), the last production change.
+
+Static checks on `d98432b`, all exit 0:
+
+- `pnpm lint`, `pnpm typecheck` and `pnpm e2e:typecheck`;
+- `pnpm test`: 110 files, 2212 tests;
+- `pnpm build`;
+- `python -B scripts/check_repo.py` and `git diff --check`.
+
+**Browser, all on production `55c30f3`.** Outcomes are compared by stable
+identity with the 2026-09-25 campaign on `a0783bb`:
+
+| Spec | Tests of | Result | Against `a0783bb` |
+| --- | --- | --- | --- |
+| PM9.3 | `d98432b` | 11 of 11 (V1–V9, G en, G zh-CN) | G is extended, so it is not comparable with the earlier 11 of 11 |
+| PM9.1 | `d98432b` | 22 of 22 | as before |
+| m5.7 | `d98432b` | 8 of 8 | 1 now passing |
+| m7.3 | `17c29a9` | 16 of 16 | 3 now passing |
+| m7.4-conversion-figures | `17c29a9` | 14 of 16 | 4 now passing, among them PM9.4's two conversion-intent cases (same fixture cause); 2 known: active Clear, PM9.7 |
+| m4.3 | `266088d` | 21 of 23 | 8 now passing; 2 known, family (b) |
+| m4.4 | `d98432b` | 16 of 18 | 8 now passing; 2 known: 259/260 (b) and outside the range (d) |
+| m5.2 | `d98432b` | 43 of 48 | 7 now passing; 5 known, all SUPERSEDED |
+| m5.3 | `17c29a9` | 0 of 13 | 13 known, family (b) |
+| viewer-r1-linked-viewer | `d98432b` | 46 of 54 | 6 now passing; 8 known: 5 SUPERSEDED, 1 (d), 2 (b) |
+| viewer-r1-scale | `17c29a9` | 2 of 3 | 1 known, SUPERSEDED |
+
+No spec gained a failure, and 37 tests now pass that failed before.
+
+Newly reached assertions were classified before anything was changed. Four
+sets carried the pre-M7.3 geometry of §5: a panel's own scroll extent,
+`div.viewer-stack` as the scroll column, and the order chromatogram, scans,
+spectrum. They were re-derived test-only:
+
+- m4.3's reach, panels-apart and range-note cases (`266088d`);
+- m4.4's reach and views-apart cases (`d98432b`);
+- the scroll column in m5.2 and viewer-r1 (`d98432b`);
+- viewer-r1's scan-steps order (`d98432b`).
+
+Each now reads the evidence column and M7.3's order. The reach, clipping,
+hit-test, intrusion, reachable-row and wheel assertions after them are
+unchanged, and they now run and pass.
+
+What is left belongs elsewhere:
+
+- **Family (b) stale setup** (`label*=`, `li.dataset-row`, a closed
+  disclosure): the 20 cases above and m4.1/m4.2, which were not rerun. They
+  go to PM9.7's regression gate.
+- **(d) driver geometry:** m4.4's outside-range case and viewer-r1's
+  row-below-the-header case, recorded UNKNOWN for PM9.7.
+- **SUPERSEDED:** each keeps the replacement §5 names, and is retired at PM9.7
+  against it. No test is deleted.
+
+**Rendered acceptance.** Frames at the three anchors and the eight sweep
+sizes, in en and zh-CN; zh-CN with reduced motion. Before → final
+(`final/browser-6XglM1`), with a selected scan, a committed RT range and a
+pending m/z band. The spectrum header was 102 px in every frame before and
+is 56 px in every frame now:
+
+| Frame | Chromatogram | Spectrum plot on screen | Toolbars over one row |
+| --- | ---: | ---: | --- |
+| 960×640 en | 398 → 368 | 0 → 13 | chromatogram, spectrum → none |
+| 960×640 zh-CN | 347 → 368 | 0 → 13 | spectrum → none |
+| 1024×768 | 347 → 368 | 103 → 141 | spectrum → none |
+| 1152×720 en (828 px column) | 430 → 400 | 0 → 61 | chromatogram, spectrum → none |
+| 1152×720 zh-CN | 347 → 368 | 55 → 93 | spectrum → none |
+| 1280×720 | 347 → 368 | 55 → 93 | spectrum → none |
+| 1366×768 | 347 → 368 | 103 → 141 | spectrum → none |
+| 1536×864 | 347 → 368 | 199 → 220 | spectrum → none |
+| 1680, 1920, 2560 | 347 → 368 | 220 → 220 | spectrum → none |
+
+- **L13.** Every viewer toolbar is one row in every default arrangement of the
+  sweep, in both languages, and the G case asserts it. Every action, group
+  and name is kept.
+- **Viewer height at 960×640**, in the task terms of §0.1, both languages:
+  - the chromatogram plot is on screen, 150 of 150 px;
+  - the spectrum plot begins inside the evidence column (13 px on screen, top
+    at about 611 in a 640 px window);
+  - the evidence column's own scroll reaches, whole: the spectrum header
+    (56/56 px), its m/z controls (39/39), the scan steps (39/39), the sticky
+    table header (36/36) and the first row (30/30);
+  - document overflow is 0 horizontally and vertically in every frame, and
+    nothing is shrunk or hidden;
+  - m7.3's 960×640 case and viewer-r1's reachable-row cases pass.
+
+  ADR 0006's 544 px is unchanged. That its breakdown names a sidebar the M7.2
+  fold removed is an owner question for PM9.7.
+- **Keyboard at 960×640.** The walk makes 13 stops in both languages, all
+  with the visible focus treatment and on screen: the figure actions, Export,
+  TIC, BPC, Zoom in/out, Reset range, the plot, Edit range, Plot gestures
+  and Source details.
+- **Entry state (L3).** At entry the chromatogram's readout invites a
+  selection. The spectrum panel's "No spectrum selected" begins inside the
+  viewport, so it reads as an invitation, not a gap. No scan is pre-selected.
+  The viewed file is named, untruncated, in the context line in every frame,
+  and in Details. No evidence-column heading is added: it would cost the
+  height 960×640 lacks.
+- **L5 and L21.** The scans stay below the spectrum, the M7.3 composition,
+  and are verified reachable. At 960×640 the roster or Details swaps with the
+  evidence (the design system's fold). The header and the context line
+  ("Viewing: … · spectrum 2") stay.
+- **1920×1080** is neither sparse nor fragmented, and the scan table's header
+  enters the first screen. **2560×1440** shows the whole viewer.
+- **Automated and manual differ in one place.** The screenshots show what the
+  geometry does not: at 14em the caption can break inside the size ("1200 /
+  × 640 px", or "px" alone in zh-CN). That is B below. The manual headed
+  harness was not opened: its scenarios start without a preview, and G's
+  sweep covered its viewport list with the viewer loaded.
+- **History.** PM9.3's G frames of 2026-09-25 (`a0783bb`, `browser-l7oU7m`)
+  include the 89 px notice band PM9.2 removed, so they are not compared
+  number for number.
+
+**Findings.**
+
+- **A, implemented:**
+  - L13 (`47c981b`);
+  - the spectrum header's stacked Export spectrum line (`696602c`);
+  - the spectrum plot below the 960×640 window (`55c30f3`).
+- **B, retained:**
+  - the caption breaking inside the size, where the size should stay whole;
+  - the full-width m/z pill beside the chromatogram's content-width pills;
+  - two range lines under each plot. The raw committed digits ("1.4003361815380306")
+    stand beside "Showing 1.4003", and in en the chromatogram's range row
+    wraps at 828 px;
+  - "(unit not reported)" four times in the chromatogram's lines;
+  - the inert `.viewer-stack` grid rules and their comment in `app.css`;
+  - Details opened by the reader at 1152–1280 px: the spectrum header takes
+    two or three rows, and at 571 px the chromatogram header takes two.
+- **C:** none new. The RT×m/z map, view history and auto peak height stay out
+  of scope.
+
+**Unchanged.** No Rust, IPC, schema, request, state, owner, cache or poll
+change. V1–V9 hold. PM9.3's before-and-after of the viewer paths is the
+capture above plus V1–V9's request ledgers: the controls moved, none was
+added or removed, and each action is still one press. PM9.1's J1–J6 stays
+PM9.1's, on `d56b17b`.
+
 ## 1. Viewer ownership map
 
 Read at the production tree of `9786809`. Paths are under
@@ -526,6 +741,11 @@ The budget and unfreeze condition in [slices.md](slices.md) still apply.
 
 ## 6. Pending (needs a validation window)
 
+Superseded as the plan by §0, and closed by §0.5 on 2026-09-28. Items 1, 2, 4
+and 5 were done there. Item 3 is PM9.3's own before-and-after: §0.5's
+capture plus V1–V9's request ledgers. PM9.1's J1–J6 are measured on
+`d56b17b`.
+
 1. Run `pm9.3-viewer.browser.e2e.ts` and the corrected PM9.1 spec on the
    cumulative candidate; record exits. **Done** on `a0783bb`: 11 of 11 and 14
    of 14 ([baseline §7](baseline.md#7-validation-window-2026-09-25)).
@@ -570,3 +790,26 @@ preparation only. None is met yet: the §4 spec passes 11 of 11 on `a0783bb`,
 which carries no PM9.3 change, so it shows only that the authored harness
 executes against the unchanged viewer; the first criterion applies to the
 candidate that carries PM9.3's changes.
+
+**Met on 2026-09-28** (§0.5), in the browser, on `d98432b` (production
+`55c30f3`):
+- The §4 spec passes 11 of 11 with PM9.3's changes, its G case extended to
+  the sweep with the L13 assertion.
+- The §5 legacy specs are either repaired, re-derived for M7.3, or recorded
+  with a diagnosis and an owner. Nothing was deleted, and nothing gained a
+  failure.
+- The NEEDS RENDER rows are settled:
+  - the evidence leads at 1366×768 and 960×640;
+  - the empty entry reads as an invitation;
+  - the pending band is a shaded band with boundaries, a "Pending" line and
+    its two actions;
+  - the export entries sit on each plot header's one line, after a caption
+    naming their range and size;
+  - the fold swaps and keeps the header and the context line;
+  - `app.css`'s `.viewer-stack` floors are confirmed inert.
+- The presentation changes are rendered at the three anchors and the sweep,
+  in both languages, with a keyboard walk, and with reduced motion in zh-CN.
+
+For the viewer, U3, U8, U9 and U10 pass PM9.3's slice acceptance in the
+controlled-IPC browser. Integrated acceptance is PM9.7's. Native rendering at
+150 % belongs to the qualification after it.
