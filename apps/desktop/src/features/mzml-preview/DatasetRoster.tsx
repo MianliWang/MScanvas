@@ -23,9 +23,10 @@ export interface DatasetRosterProps {
   readonly dispatch: (action: RosterAction) => void;
   readonly onAddFiles: () => void;
   /**
-   * Whether another surface's next step holds the filled accent: the evidence
-   * pane offering to read the retained acquisition again. `Add files…` stays
-   * offered, as a secondary action (PM9 UI-19).
+   * Whether another surface's next step holds the filled accent on screen
+   * beside this one: the evidence pane offering to read the retained
+   * acquisition again. `Add files…` stays offered, as a secondary action (PM9
+   * UI-19).
    */
   readonly addFilesQuiet?: boolean;
   readonly onAddFolder: () => void;

@@ -650,6 +650,20 @@ async function observeViewer(label: string) {
         const room = header.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
         return at(heading, "max-content") + parseFloat(style.columnGap) + at(actions, "min-content") <= room + 0.5;
       })(),
+      // The sentence about the selected spectrum, whole and uncovered by its
+      // header's controls (UI-28).
+      spectrumHeading: (() => {
+        const heading = document.querySelector<HTMLElement>(".spectrum-panel > .panel-header > div:not(.spectrum-export-header-actions)");
+        const actions = document.querySelector<HTMLElement>(".spectrum-panel > .panel-header > .spectrum-export-header-actions");
+        const summary = heading?.querySelector<HTMLElement>("p");
+        if (!heading || !actions || !summary || summary.getClientRects().length === 0) return null;
+        const text = heading.getBoundingClientRect();
+        const covered = [...actions.querySelectorAll<HTMLElement>("button, summary, .figure-quick-context")]
+          .filter((node) => node.getClientRects().length > 0)
+          .map((node) => node.getBoundingClientRect())
+          .some((box) => box.left < text.right - 1 && box.right > text.left + 1 && box.top < text.bottom - 1 && box.bottom > text.top + 1);
+        return { cut: summary.scrollWidth > summary.clientWidth + 1, covered };
+      })(),
       // Which acquisition the evidence belongs to, where the shell names it
       // (ADR 0006's Run identity; PM9.2's context line).
       identity: (() => {
@@ -1230,8 +1244,11 @@ describe("PM9.3 viewer contracts, rendered", () => {
 
         // Details opened by the reader where its width does not open it, and
         // the one-column swap at the narrow anchor. Since the known UI rework
-        // (UI-27, UI-28, UI-29) the plot headers stay one row down to the
-        // 571 px column of 1152x720, and the lines under the plots from 699 px.
+        // (UI-27, UI-28, UI-29) the chromatogram header stays one row down to
+        // the 571 px column of 1152x720. The spectrum header does too wherever
+        // its heading and controls fit side by side; where they do not (en at
+        // 1152x720) it takes the heading plus one row of controls. The lines
+        // under the plots count from 699 px.
         const detailsOpen = [];
         for (const [width, height] of [
           [1536, 864],
@@ -1247,6 +1264,12 @@ describe("PM9.3 viewer contracts, rendered", () => {
         }
         expect(
           detailsOpen.flatMap((frame) => overOneRow(frame, (frame.evidence?.width ?? 0) >= 690)),
+        ).toEqual([]);
+        // And never by cutting or covering the sentence about the spectrum.
+        expect(
+          [...defaults, ...detailsOpen]
+            .filter((frame) => frame.spectrumHeading !== null && (frame.spectrumHeading.cut || frame.spectrumHeading.covered))
+            .map((frame) => `${frame.label} ${JSON.stringify(frame.spectrumHeading)}`),
         ).toEqual([]);
         await metrics(960, 640);
         await frames();

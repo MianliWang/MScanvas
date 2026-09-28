@@ -5527,8 +5527,9 @@ def validate_every_boundary_error_code_is_accounted_for(errors: list[str]) -> No
 
     So the remainder is declared rather than discovered.
     `ownedErrorMessages.test.ts` lists the codes that are deliberately shown
-    through the honest untranslated-original wrapper -- the ones whose message
-    interpolates evidence a paraphrase would lose, and the test seams -- and
+    through the honest untranslated-original wrapper -- a code that carries more
+    than one sentence a single resource would have to merge, and the test
+    seams -- and
     this requires every code Rust can produce to be in one list or the other.
 
     Adding a boundary code therefore fails here until it is either given a

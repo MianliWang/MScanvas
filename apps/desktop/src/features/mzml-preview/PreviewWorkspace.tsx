@@ -382,8 +382,11 @@ export function PreviewWorkspace() {
     !workspace.conversion.backendQuarantined;
   // The evidence pane's one next step, reading the retained acquisition again,
   // holds the filled accent while it is on screen; `Add files…` gives it up
-  // rather than offer a second (PM9 UI-19).
+  // rather than offer a second (PM9 UI-19). In the constrained layout the two
+  // are never on screen together -- an open roster takes the pane's place --
+  // so there it keeps the accent.
   const reopenOffered =
+    !constrained &&
     surface === "workbench" &&
     workspace.activeDataset !== null &&
     preview.status !== "loaded" &&

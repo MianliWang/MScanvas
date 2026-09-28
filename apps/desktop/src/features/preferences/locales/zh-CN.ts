@@ -664,7 +664,7 @@ export const zhCN = {
   shellDropUnavailable: "文件拖放不可用；请使用添加文件",
   shellContextRegion: "当前上下文",
   shellContextProject: "项目：{{name}}",
-  shellContextProjectUnsaved: "未保存的项目：{{name}}",
+  shellContextProjectUnsaved: "未保存的更改：{{name}}",
   shellContextProjectNone: "项目：未打开",
   shellContextViewing: "正在查看：{{name}}",
   shellContextViewingSpectrum: "正在查看：{{name}} · 质谱 {{index}}",

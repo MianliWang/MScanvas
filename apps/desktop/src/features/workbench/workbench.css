@@ -42,8 +42,8 @@
    With the hint gone, a 960px line holds one status and four floors; two
    statuses at once put it at its edge. */
 .shell-context-item:not([data-priority="1"]) { min-width: 5.5em; }
-/* An unsaved project leads with that fact, and its floor keeps the whole word
-   -- "Unsaved…", "未保存的…" -- rather than "Unsave…" (PM9 UI-03). */
+/* A project with unsaved changes leads with that fact, and its floor keeps the
+   whole word -- "Unsaved…", "未保存的…" -- rather than "Unsave…" (PM9 UI-03). */
 .shell-context-item[data-unsaved] { min-width: 7em; }
 .shell-context-item:hover { border-color: var(--color-border); color: var(--color-text-primary); }
 /* The line clips its overflow for the ellipsis, so the global focus ring, drawn
@@ -227,7 +227,8 @@
   .workbench-shell .dataset-roster-filters { grid-template-columns: 1fr 1fr; }
 }
 .roster-help { font-size: 12px; color: var(--color-text-secondary); }
-.roster-help summary { cursor: pointer; }
+/* A compact control's 32 px, as every other disclosure summary here (PM9 UI-45). */
+.roster-help summary { min-height: 32px; padding-block: 6px; cursor: pointer; }
 .roster-help p { margin: 6px 0; }
 
 /* The panel arrangement is on screen either way; this says it will not survive

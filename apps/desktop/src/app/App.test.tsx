@@ -132,7 +132,8 @@ describe("mzML preview workspace", () => {
     // Not one read. Nothing about an unusable backend stops the user telling
     // MSCanvas which acquisitions this session is about.
     expect(api.openCount()).toBe(0);
-    expect(screen.getByText(/Install ProteoWizard to read a file/)).toBeVisible();
+    // The evidence pane points at the banner rather than repeat it (PM9 UI-09).
+    expect(screen.getByText("Plots and scans can be read once the backend above is usable.")).toBeVisible();
   });
 
   it("reports an available backend with the release the backend itself named", async () => {
@@ -3088,7 +3089,8 @@ describe("adding a folder of mzML files", () => {
     );
 
     expect(await screen.findByText("The folder could not be added")).toBeVisible();
-    expect(screen.getByText(/That folder could not be scanned safely\./u)).toBeVisible();
+    // The code's owned sentence, not the boundary's English (PM9 UI-44).
+    expect(screen.getByText(/MSCanvas stopped scanning that folder/u)).toBeVisible();
     expect(rosterRows()).toHaveLength(0);
     expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
   });

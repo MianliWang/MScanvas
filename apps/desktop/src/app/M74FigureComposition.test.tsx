@@ -162,7 +162,7 @@ describe("M7.4 through the delivered figure owner", () => {
       fireEvent[event](plot, { button: 0, pointerId: 1, isPrimary: true, pointerType: "mouse", clientX: x, clientY: 80 });
     }
     fireEvent.click(plot, { detail: 1 });
-    expect(within(panel).getByRole("button", { name: "Zoom to selection — m/z 350 to 500" })).toBeVisible();
+    expect(within(panel).getByRole("button", { name: "Zoom to selection — m/z 350.0000 to 500.0000" })).toBeVisible();
     const dialog = await openFigure(panel);
     fireEvent.click(within(dialog).getByRole("radio", { name: "Current range" }));
     await waitFor(() => expect(preview.mock.calls.at(-1)?.[0].source).toEqual({ kind: "spectrum", token: "token-1", range: { scope: "current", low: 200, high: 800 } }));
@@ -179,7 +179,7 @@ describe("M7.4 through the delivered figure owner", () => {
     await waitFor(() => expect(svg).toHaveAttribute("aria-disabled", "false"));
     expect(within(dialog).getByText("Export cancelled. Nothing was saved.")).toBeVisible();
     fireEvent.click(within(dialog).getByRole("button", { name: "Return to viewer" }));
-    expect(within(panel).getByRole("button", { name: "Zoom to selection — m/z 350 to 500" })).toBeVisible();
+    expect(within(panel).getByRole("button", { name: "Zoom to selection — m/z 350.0000 to 500.0000" })).toBeVisible();
     expect(api.spectrumProjectionRequests.at(-1)).toEqual({ exportToken: "token-1", low: 200, high: 800 });
   });
 

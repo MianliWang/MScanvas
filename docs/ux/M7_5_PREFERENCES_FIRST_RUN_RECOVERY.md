@@ -429,3 +429,26 @@ Retained, ignored and local under `.tmp/m75-evidence/`: the checkpoint, the
 per-unit gate records with their serial reversion controls, the localization
 inventory, the source-review findings, and the browser and native acceptance
 records with their own bytes, runs, screenshots and attribution.
+
+## Correction (PM9 known UI/UX rework, 2026-09-28)
+
+Appended; the record above is unchanged. Its reason for the eleven declared
+boundary codes was wrong for most of them (PM9 baseline §12, UI-44):
+
+- Six are fixed English sentences with nothing interpolated:
+  `backend_supervision_failed`, `file_picker_selection_unreadable`,
+  `file_picker_selection_too_large`, `folder_scan_unreadable`,
+  `folder_scan_failed` and `file_unreadable`. Each now has an owned en and
+  zh-CN resource.
+- `queue_too_large` embeds only the bound, 16. Its resource is worded without
+  the number, so it cannot go stale when the constant moves.
+- `spectrum_failed` is produced only in `preview/tests.rs` and is reclassified
+  as a test seam.
+- `conversion_not_plannable` carries two fixed sentences under one code, and
+  which one applies is the part a reader acts on. It stays declared.
+
+Four codes remain declared: `conversion_not_plannable` and the three test
+seams. The change is frontend only: no DTO, no Rust, no retry or
+classification change. `ownedErrorMessages.test.ts` holds each new resource in
+both locales, and `check_repo.py`'s boundary-code check still accounts for
+every code.

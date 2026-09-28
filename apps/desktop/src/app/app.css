@@ -417,7 +417,7 @@ button:disabled,
 /* Each part of the caption -- plot, range, size -- is kept whole, so the
    caption reflows only at its separators and never splits "1200 × 640 px"
    (PM9 UI-26). Its floor is its widest part. */
-.figure-quick-context { flex: 0 1 auto; margin: 0; color: var(--color-text-secondary); font-size: 0.8125rem; }
+.figure-quick-context { flex: 0 1 auto; margin: 0; color: var(--color-text-secondary); }
 .figure-quick-part { white-space: nowrap; }
 .panel-header .figure-quick-context { max-width: 14em; margin: 0; white-space: normal; text-overflow: clip; text-align: right; line-height: 1.2; }
 .figure-export-source { margin: 0; overflow-wrap: anywhere; }

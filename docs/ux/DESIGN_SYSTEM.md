@@ -215,6 +215,60 @@ Every control defines default, hover, active, focus-visible, selected, disabled,
 
 Use motion to maintain spatial continuity, signal state or reveal a panel. Avoid decorative motion over scientific evidence. Respect reduced-motion preferences.
 
+## PM9 known UI/UX rework decisions (2026-09-28)
+
+Decided in the bounded rework of [PM9 baseline §12](../phases/pm9/baseline.md#12-known-uiux-rework-2026-09-28).
+Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
+
+- **Shell insets.** The header, the notices and the content share one left
+  edge: 16 px at every width (UI-01). The header no longer uses 20 px, or 12 px
+  below 1050 px.
+- **The header's second line.** What gives way is computed, not left to
+  flex-shrink ratios (UI-48): the drop hint first and whole, its gap with it;
+  then each context item by rank, lowest first, down to its floor; an
+  operation's status never. The floor is 5.5em, and 7em for a project with
+  unsaved changes, which leads with that fact ("Unsaved changes: …", UI-03).
+- **Roster width.** 280 px at every width that shows the roster beside the
+  evidence, against the v5.11 reference's 285 px at 1920 (UI-14). This is
+  intentional: one fixed width across 1051–2560 px keeps the viewer column's
+  measured floors, and the 5 px change no task.
+- **Refused primaries.** A refused primary action (`aria-disabled`) gives up
+  the accent: subtle surface, secondary text, strong border and a not-allowed
+  cursor. It does not fade, so its focus ring keeps full contrast, and it stays
+  a Tab stop. Its reason is visible text beside it, not only a tooltip
+  (UI-24).
+- **One primary per state.** While the evidence pane offers the retained
+  acquisition again beside the roster, that is the filled action; `Add
+  files…` stays offered as a secondary. In the constrained layout, where an
+  open roster takes the pane's place, `Add files…` keeps the accent (UI-19).
+- **Focus colour.** One colour, the reference's `#1769d1`, for every focus
+  ring (UI-46). Settings no longer declares its own, and the lighter `#2a7fff`
+  token is gone.
+- **Plot headers.** A figure caption names plot, range and size; each part is
+  kept whole and the caption reflows only at its separators (UI-26). A plot
+  header's actions keep the heading's row wherever their buttons fit beside
+  it; where the caption does not also fit, it goes under the buttons rather
+  than costing them the row (UI-27, UI-28). The sentence about the selected
+  spectrum is never truncated to make room: where heading and controls do not
+  fit side by side, the controls take their own row.
+- **Viewport pills.** The m/z controls' pill is as wide as its controls, as
+  the chromatogram's are (UI-30).
+- **Ranges and units.** Range lines print at the plot's own precision; exact
+  values are the range editor's and the export notes'. Before a range is
+  committed the line says "full range" rather than repeat the caption's
+  numbers. A missing unit is said once per axis on the chromatogram panel and
+  is part of the plot's accessible description (UI-31, UI-33). Settled, the
+  committed line and the "Showing" caption print the same numbers: they are
+  different facts -- the export's range, announced live, and the viewport --
+  that part during a gesture or a pending band, and both stay (UI-34).
+- **Details facts.** In the 245 px Details column a digest is one line (the
+  whole value in its tooltip, still selected and copied in full) and a name at
+  most three lines (UI-25).
+- **Counts.** A count keeps its word in either language: no-break spaces in
+  the resources and `word-break: keep-all` (UI-16). Where the 280 px roster
+  cannot hold the organizing buttons and the count on one line, the count
+  takes the band's second line, whole (UI-15, UI-17).
+
 ## M6.6 destination and conflict surface
 
 This is a focused continuation of the accepted v5.11 organization using the

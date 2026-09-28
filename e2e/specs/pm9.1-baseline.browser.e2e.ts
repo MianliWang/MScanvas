@@ -70,6 +70,7 @@ import {
 import { MZML_ROW, VENDOR_ROW } from "../support/fixtures";
 import {
   SPECTRUM_PLOT,
+  readBackSavedPreferences,
   revealRosterRow,
   selectTheSpectrum,
   selectedRowPosition,
@@ -1250,6 +1251,52 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       }, text);
     }
 
+    /**
+     * Real Tab presses from wherever focus is: each stop's name and whether it
+     * is visible, on screen and not covered, and the document's own overflow
+     * after the walk. With `scope`, the walk ends once focus leaves it.
+     */
+    async function focusWalk(label: string, limit: number, scope?: string) {
+      const stops = [];
+      for (let step = 0; step < limit; step += 1) {
+        await browser.keys("Tab");
+        const at = await browser.execute((region: string | null) => {
+          const active = document.activeElement as HTMLElement | null;
+          if (active === null || active === document.body) return null;
+          if (region !== null && active.closest(region) === null) return "left" as const;
+          const box = active.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(box.height / 2, 8));
+          return {
+            name: (active.getAttribute("aria-label") ?? active.textContent ?? active.tagName).trim().slice(0, 40),
+            onScreen: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
+            uncovered: hit === null || active === hit || active.contains(hit) || hit.contains(active),
+          };
+        }, scope ?? null);
+        if (at === "left") break;
+        if (at !== null) stops.push({ ...at, treatment: await focusedTreatment() });
+      }
+      const overflow = await browser.execute(() => ({
+        x: document.documentElement.scrollWidth - innerWidth,
+        y: document.documentElement.scrollHeight - innerHeight,
+      }));
+      evidence.push({ label, stops, overflow });
+      expect(stops.length).toBeGreaterThan(0);
+      expect(stops.filter((stop) => !stop.treatment.visible || !stop.onScreen || !stop.uncovered)).toEqual([]);
+      expect(overflow.x).toBeLessThanOrEqual(1);
+      expect(overflow.y).toBeLessThanOrEqual(1);
+    }
+
+    /** Puts focus on the first focusable control inside `css`. */
+    function enter(css: string) {
+      return browser.execute((selector: string) => {
+        const first = document
+          .querySelector(selector)
+          ?.querySelector<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select, summary, [tabindex]:not([tabindex="-1"])');
+        first?.focus();
+        return first !== null && first !== undefined;
+      }, css);
+    }
+
     /** The drop hint as the line leaves it: shown whole, shown cut, or gone. */
     function dropHintState() {
       return browser.execute(() => {
@@ -1408,7 +1455,18 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         evidence.push({ label: `ui-rework-retained-${locale}`, primaries });
         expect(primaries).toEqual([expect.stringMatching(new RegExp(`^${prefix(words(locale).previewRetained)}`, "u"))]);
         // Add files stays offered, only quieter.
-        expect(await browser.$(".dataset-roster-actions button").isEnabled()).toBe(true);
+        expect(await browser.$(".dataset-roster-actions [data-add-files]").isEnabled()).toBe(true);
+        // At 960x640 the roster takes the evidence pane's place, the reopen is
+        // off screen, and Add files is the one filled action again.
+        await metrics(960, 640);
+        await revealRosterRow(MZML_ROW.handle);
+        const narrow = await browser.execute(() =>
+          [...document.querySelectorAll<HTMLElement>(".workbench-shell .primary-button")]
+            .filter((button) => button.getClientRects().length > 0)
+            .map((button) => (button.hasAttribute("data-add-files") ? "add-files" : (button.textContent ?? "").trim())),
+        );
+        evidence.push({ label: `ui-rework-retained-${locale}-960x640`, primaries: narrow });
+        expect(narrow).toEqual(["add-files"]);
         expect(await unexpectedConsole()).toEqual([]);
       });
 
@@ -1719,6 +1777,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       it(`UI-01: the header, notices and content share one left edge, in ${locale}`, async () => {
         await metrics(1920, 1080);
         await open("populated", locale);
+        // The folded backend reading, opened from the header, is a notice.
+        await browser.$("[data-backend-toggle]").click();
+        await browser.$(".shell-notices > .notice").waitForDisplayed();
         for (const [width, height] of [
           [1920, 1080],
           [1366, 768],
@@ -1731,10 +1792,13 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             const first = [...layout.children].find((child) => (child as HTMLElement).getClientRects().length > 0) as HTMLElement | undefined;
             return {
               header: document.querySelector(".workbench-home")!.getBoundingClientRect().left,
+              notice: document.querySelector(".shell-notices > .notice")?.getBoundingClientRect().left ?? null,
               content: first?.getBoundingClientRect().left ?? null,
             };
           });
           evidence.push({ label: `ui-rework-edges-${locale}-${String(width)}`, ...edges });
+          expect(edges.notice).not.toBe(null);
+          expect(Math.abs((edges.notice ?? 0) - edges.header)).toBeLessThanOrEqual(1);
           expect(Math.abs((edges.content ?? 0) - edges.header)).toBeLessThanOrEqual(1);
         }
         expect(await unexpectedConsole()).toEqual([]);
@@ -1743,15 +1807,18 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
 
     for (const locale of ["en", "zh-CN"] as const) {
       it(`UI-42: the Conversion surface running, settled, stopped before start and in review, in ${locale}`, async () => {
-        // A progress estimate, not the word: "prevents remaining items from
-        // starting" is the stop control's own description.
-        const ETA = /\d+\s?%|\bETA\b|\b(?:time|seconds?|minutes?|hours?) (?:left|remaining)\b|\bremaining time\b|剩余时间|预计/u;
+        // Any estimate: the lookahead skips only the stop control's own
+        // description, "prevents remaining items from starting".
+        const ETA = /\d+\s?%|\bETA\b|[Rr]emaining(?! items)|剩余|预计/u;
         const check = async (label: string) => {
           await frames();
           const seen = await surfaceFrame(label);
           const text = await browser.execute(() => (document.querySelector<HTMLElement>("#workbench-conversion")?.innerText ?? ""));
           expect(seen.title?.text).toBe(words(locale).conversionTask);
           expect(ETA.test(text)).toBe(false);
+          // Focus on this surface's own controls: visible, on screen, uncovered.
+          expect(await enter("#workbench-conversion")).toBe(true);
+          await focusWalk(`${label}-focus`, 30, "#workbench-conversion");
         };
         const sizes = [
           [1920, 1080],
@@ -1818,44 +1885,71 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       });
     }
 
-    it("UI-11: keyboard walks through the roster, Conversion, Project and Settings stay visible and on screen", async () => {
+    it("UI-11: keyboard walks through the roster, Conversion, Project, Settings and Details, and the 960x640 swap, stay visible and on screen", async () => {
       await metrics(1366, 768);
       await open("populated");
-      const walk = async (label: string, limit: number) => {
-        const stops = [];
-        for (let step = 0; step < limit; step += 1) {
-          await browser.keys("Tab");
-          const at = await browser.execute(() => {
-            const active = document.activeElement as HTMLElement | null;
-            if (active === null || active === document.body) return null;
-            const box = active.getBoundingClientRect();
-            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(box.height / 2, 8));
-            return {
-              name: (active.getAttribute("aria-label") ?? active.textContent ?? active.tagName).trim().slice(0, 40),
-              onScreen: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
-              uncovered: hit === null || active === hit || active.contains(hit) || hit.contains(active),
-            };
-          });
-          if (at !== null) stops.push({ ...at, treatment: await focusedTreatment() });
-        }
-        evidence.push({ label, stops });
-        expect(stops.filter((stop) => !stop.treatment.visible || !stop.onScreen || !stop.uncovered)).toEqual([]);
-      };
       await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]")?.focus());
-      await walk("ui-rework-walk-roster", 20);
+      await focusWalk("ui-rework-walk-roster", 20);
       for (const [name, label] of [
         [en.conversionTask, "conversion"],
         [en.projectSurface, "project"],
       ] as const) {
         await navigate([name]);
-        await browser.execute((region: string) => document.querySelector<HTMLElement>(`#workbench-${region} h1`)?.focus(), label);
-        await startAtHome();
-        await walk(`ui-rework-walk-${label}`, 40);
+        expect(await enter(`#workbench-${label}`)).toBe(true);
+        await focusWalk(`ui-rework-walk-${label}`, 40, `#workbench-${label}`);
       }
       await browser.$("[data-settings-entry]").click();
       await browser.$("[data-settings-dialog]").waitForDisplayed();
-      await walk("ui-rework-walk-settings", 16);
+      await focusWalk("ui-rework-walk-settings", 16);
       await browser.keys("Escape");
+      await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
+
+      // Details where it holds controls: a stored result inspected on the
+      // Project surface, with its related records as links.
+      await open("busyInspected");
+      await navigate([en.projectSurface]);
+      await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+      // Closed by default below 1700 px; opened the way the store confirms it.
+      await readBackSavedPreferences();
+      const details = browser.$('[aria-controls="workbench-inspector"]');
+      if ((await details.getAttribute("aria-expanded")) !== "true") await details.click();
+      await browser.$("#workbench-inspector .provenance-digest").waitForDisplayed();
+      expect(await enter("#workbench-inspector")).toBe(true);
+      await focusWalk("ui-rework-walk-details-1366x768", 20, "#workbench-inspector");
+
+      // At 960x640 each panel takes the surface's place (the swap), on
+      // Conversion and on Project. Details is offered where it has something
+      // to show and says why where it has not; either way it is recorded.
+      await metrics(960, 640);
+      await frames();
+      const swaps = [];
+      for (const [name, label] of [
+        [en.conversionTask, "conversion"],
+        [en.projectSurface, "project"],
+      ] as const) {
+        await navigate([name]);
+        for (const panel of ["workbench-roster", "workbench-inspector"] as const) {
+          const toggle = browser.$(`[aria-controls="${panel}"]`);
+          if ((await toggle.getAttribute("aria-disabled")) === "true") {
+            swaps.push({ label, panel, offered: false, reason: await toggle.getAttribute("title") });
+            continue;
+          }
+          await toggle.click();
+          await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === "true");
+          const surfaceHidden = await browser.execute((region: string) => {
+            const node = document.querySelector<HTMLElement>(`#workbench-${region}`);
+            return node === null || node.getClientRects().length === 0;
+          }, label);
+          swaps.push({ label, panel, offered: true, surfaceHidden });
+          expect(surfaceHidden).toBe(true);
+          expect(await enter(`#${panel}`)).toBe(true);
+          await focusWalk(`ui-rework-walk-${label}-${panel}-960x640`, 20, `#${panel}`);
+          await toggle.click();
+          await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === "false");
+        }
+      }
+      evidence.push({ label: "ui-rework-swaps-960x640", swaps });
+      expect(swaps.filter((swap) => swap.offered).length).toBeGreaterThanOrEqual(3);
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -1899,10 +1993,27 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             small[name] = (small[name] ?? 0) + 1;
           }
         }
-        return { undeclared: [...undeclared], fontSizes: sizes, small, focus: root.getPropertyValue("--color-focus").trim() };
+        // Control minimums, radii and row density, for the record (UI-45):
+        // the reference's 32 px compact control, 6/8 px radii, 44/32 px rows.
+        const shown = (node: Element) => node.getClientRects().length > 0;
+        const name = (node: Element) => `${node.tagName.toLowerCase()}.${[...node.classList].join(".")}`;
+        const shortControls: Record<string, number> = {};
+        for (const node of [...document.querySelectorAll<HTMLElement>('button, select, summary, input:not([type="checkbox"]):not([type="radio"])')].filter(shown)) {
+          const height = Math.round(node.getBoundingClientRect().height);
+          if (height < 32) shortControls[`${name(node)} ${String(height)}px`] = (shortControls[`${name(node)} ${String(height)}px`] ?? 0) + 1;
+        }
+        const radii: Record<string, number> = {};
+        for (const node of [...document.querySelectorAll<HTMLElement>(".panel, button, select, input, .notice")].filter(shown)) {
+          const radius = getComputedStyle(node).borderTopLeftRadius;
+          radii[radius] = (radii[radius] ?? 0) + 1;
+        }
+        const rows = [...new Set([...document.querySelectorAll<HTMLElement>(".grouped-roster [data-handle]")].filter(shown).map((row) => Math.round(row.getBoundingClientRect().height)))];
+        return { undeclared: [...undeclared], fontSizes: sizes, small, shortControls, radii, rosterRowHeights: rows, focus: root.getPropertyValue("--color-focus").trim() };
       });
       evidence.push({ label: "ui-rework-measure", ...seen });
       expect(seen.undeclared).toEqual([]);
+      // No visible control below the reference's 32 px compact minimum.
+      expect(seen.shortControls).toEqual({});
       expect(seen.focus).toBe("#1769d1");
       // One focus colour: Settings no longer declares its own (UI-46).
       await browser.$(".settings-entry").click();
