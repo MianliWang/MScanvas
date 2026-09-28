@@ -40,6 +40,8 @@ eighth slice.
 
 ## Current status (2026-09-26, mid-phase normalization)
 
+**KNOWN UI/UX REWORK ACTIVE — PM9.4 HELD** (2026-09-28, the owner's priority): every UI/UX issue recorded and still present on an implemented surface closes before PM9.4, in one bounded rework under PM9 ([baseline §12](baseline.md#12-known-uiux-rework-2026-09-28)). It is not an eighth slice. PM9.2's and PM9.3's closures stay historical.
+
 One status per slice; the reasons, the residual classification and the
 decisions are in [baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26).
 
@@ -48,7 +50,7 @@ decisions are in [baseline §10](baseline.md#10-mid-phase-normalization-2026-09-
 | PM9.1 | **PARTIAL — J1–J6 baseline measurement outstanding** | Measure J1–J6 on the pre-PM9 candidate `d56b17b` / an owner-opened window / PM9.1; required before PM9.7, blocks nothing earlier |
 | PM9.2 | **COMPLETE** | — |
 | PM9.3 | **COMPLETE** | — (closed 2026-09-28 on `d98432b`, production `55c30f3`; [slice-03 §0.5](slice-03.md#05-validation-repair-and-closure-2026-09-28)); its legacy residue is PM9.7's (see the log) |
-| PM9.4 | NOT STARTED | Conversion configuration → review → queue → recovery → outputs / after PM9.3 / PM9.4: U4 (its live-provider check with the external qualification), U8 (conversion), U9, U10 |
+| PM9.4 | NOT STARTED — **HELD** (known UI/UX rework active, [baseline §12](baseline.md#12-known-uiux-rework-2026-09-28)) | Conversion configuration → review → queue → recovery → outputs / after PM9.3 / PM9.4: U4 (its live-provider check with the external qualification), U8 (conversion), U9, U10 |
 | PM9.5 | NOT STARTED | Targeted-MS1 setup → plan review → progress → result entry / after PM9.4 / PM9.5: U5, U7 (drafts), U9, U10 |
 | PM9.6 | NOT STARTED | Reports, evidence, history, exports and explicit continuation, with L12 / PM9.2, PM9.3, PM9.5 / PM9.6: U6, U7, U8 (stored), U9, U10 |
 | PM9.7 | NOT STARTED | Integrated journeys against PM9.1's J1–J6, regression including PM9.2's surface specs (m7.1, m7.2, m7.4's active-Clear cases, m7.5), final reference-deviation disposition, candidate freeze / PM9.1's remainder and PM9.2–PM9.6 / PM9.7: U1–U10 integrated |
