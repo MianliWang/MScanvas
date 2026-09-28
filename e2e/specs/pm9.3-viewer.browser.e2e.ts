@@ -479,8 +479,26 @@ async function laneFree() {
 
 // ---------------------------------------------------------------- observation
 
+/**
+ * Waits until the `100vh` shell fills the resized viewport, as PM9.1's
+ * `settled` does (`8d3c9d8`). A read straight after `metrics()` can still see
+ * the previous height: PM9.3's before-capture read the zh-CN 1920x1080 frame
+ * with the document 360 px over, the 2560x1440 frame's height.
+ */
+async function settled(label: string) {
+  await browser.waitUntil(
+    () =>
+      browser.execute(() => {
+        const shell = document.querySelector(".workbench-shell");
+        return shell !== null && Math.abs(shell.getBoundingClientRect().height - innerHeight) <= 1;
+      }),
+    { timeout: 10_000, interval: 50, timeoutMsg: `${label}: the shell never filled the resized viewport` },
+  );
+}
+
 /** Viewer geometry for one frame. Recorded only; judged in a validation window. */
 async function observeViewer(label: string) {
+  await settled(label);
   const measured = await browser.execute(() => {
     const box = (css: string) => {
       const node = document.querySelector<HTMLElement>(css);
