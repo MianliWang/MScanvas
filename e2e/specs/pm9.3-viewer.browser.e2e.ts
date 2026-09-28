@@ -619,6 +619,12 @@ async function observeViewer(label: string) {
       })(),
       // What the lines under the plots print (UI-31, UI-33).
       rangeTexts: [...document.querySelectorAll(".plot-committed-range")].map((node) => node.textContent ?? ""),
+      // What those lines show, without the numbers kept for announcement.
+      rangeVisible: [...document.querySelectorAll(".plot-committed-range")].map((node) => {
+        const copy = node.cloneNode(true) as HTMLElement;
+        copy.querySelectorAll(".visually-hidden").forEach((hidden) => hidden.remove());
+        return copy.textContent ?? "";
+      }),
       chromatogramUnits: (() => {
         const panel = document.querySelector<HTMLElement>(".chromatogram-panel");
         return panel === null ? null : (panel.innerText.match(/unit not reported|单位未报告/gu) ?? []).length;
@@ -1229,6 +1235,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
           ...frame.rangeTexts.filter((text) => /\d\.\d{5,}/u.test(text)).map((text) => `${frame.label} raw digits: ${text}`),
           ...(frame.chromatogramUnits !== null && frame.chromatogramUnits !== 2 ? [`${frame.label} unit caveat ${String(frame.chromatogramUnits)} times`] : []),
           ...(/unit not reported|单位未报告/u.test(frame.plotDescription) ? [] : [`${frame.label} plot description without the unit caveat`]),
+          // Settled, the committed range is the one the caption prints: the
+          // line says so and does not repeat its numbers (dispatch item 5).
+          ...(/\d/u.test(frame.rangeVisible[0] ?? "") ? [`${frame.label} committed line repeats the caption: ${String(frame.rangeVisible[0])}`] : []),
         ]);
         const entry = defaults[0]!;
         const entryLine = entry.rangeTexts[0] ?? "";

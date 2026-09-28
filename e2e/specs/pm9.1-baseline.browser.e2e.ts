@@ -44,6 +44,7 @@ import {
   installIpcBoundary,
   ipcCalls,
   releaseInvokeHold,
+  setInvokeRejection,
   setInvokeResult,
   type IpcCall,
 } from "../support/harness";
@@ -1952,6 +1953,32 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(swaps.filter((swap) => swap.offered).length).toBeGreaterThanOrEqual(3);
       expect(await unexpectedConsole()).toEqual([]);
     });
+
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`UI-44: a fixed boundary sentence reaches the reader in their language, in ${locale}`, async () => {
+        // The boundary's own words for this code: English, whatever the session.
+        const boundary = "That selection is larger than MSCanvas reads from one picker, so nothing was added. Choose fewer files at a time.";
+        await metrics(1366, 768);
+        await open("populated", locale);
+        await setInvokeRejection("choose_workspace_files", {
+          kind: "file_picker_selection_too_large",
+          summary: boundary,
+          detail: null,
+          retryable: true,
+        });
+        await browser.$(".dataset-roster-actions [data-add-files]").click();
+        const owned = words(locale).errFilePickerSelectionTooLarge;
+        await browser.waitUntil(async () => (await browser.execute(() => document.body.innerText)).includes(owned), {
+          timeoutMsg: "the owned sentence never showed",
+        });
+        await surfaceFrame(`ui-rework-boundary-sentence-${locale}-1366x768`);
+        const shown = await browser.execute(() => document.body.innerText);
+        evidence.push({ label: `ui-rework-boundary-sentence-${locale}`, owned, boundaryShown: shown.includes(boundary) });
+        expect(shown).toContain(owned);
+        if (locale === "zh-CN") expect(shown).not.toContain(boundary);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
 
     it("UI-45/46: a computed-style pass, and no stylesheet names an undeclared custom property", async () => {
       await metrics(1366, 768);

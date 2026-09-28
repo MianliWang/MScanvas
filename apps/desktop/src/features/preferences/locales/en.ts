@@ -532,6 +532,8 @@ export const en = {
   rangeMzAxis: "m/z",
   rangeCommitted: "Committed {{name}}: {{low}} to {{high}}",
   rangeCommittedFull: "Committed {{name}}: full range",
+  rangeCommittedShown: "Committed {{name}}: the range shown",
+  rangeBounds: "{{low}} to {{high}}",
   rangePending: "Pending {{name}}: {{low}} to {{high}}",
   rangeConfirmContext: "Zoom to selection — {{name}} {{low}} to {{high}}",
   rangeConfirm: "Zoom to selection",

@@ -27,13 +27,19 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
   const close = () => { setDraft(null); setProblem(null); if (details.current) details.current.open = false; summary.current?.focus(); };
   const focusPlot = () => root.current?.parentElement?.querySelector<SVGSVGElement>('svg[role="img"]')?.focus({ preventScroll: true });
   return <div className="plot-range-actions" ref={root}>
-    {/* Before any range is committed the plot's caption already prints the
-        full range's numbers, so this line says so rather than print them twice. */}
+    {/* The plot's caption prints the range on screen. Where the committed
+        range is that range -- before any commit, and once a commit settles --
+        this line says so rather than print the same numbers twice; it prints
+        its own only while they differ, during a gesture. Announced, the
+        numbers stay part of what a commit says. */}
     <p className="plot-committed-range" aria-live="polite">{pending !== null
       ? t("rangePending", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })
       : current.committed === null
         ? t("rangeCommittedFull", { name: axis })
-        : t("rangeCommitted", { name: axis, low: format(current.committed.low), high: format(current.committed.high) })}</p>
+        : sameRange(current.committed, current.shown)
+          ? <>{t("rangeCommittedShown", { name: axis })}{" "}<span className="visually-hidden">{t("rangeBounds", {
+            low: format(current.committed.low), high: format(current.committed.high) })}</span></>
+          : t("rangeCommitted", { name: axis, low: format(current.committed.low), high: format(current.committed.high) })}</p>
     {pending === null ? null : <div className="plot-pending-actions">
       <button type="button" className="secondary-button" onClick={() => { port.confirm(pending); focusPlot(); }}
         aria-label={t("rangeConfirmContext", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })}>

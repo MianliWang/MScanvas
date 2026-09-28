@@ -532,6 +532,8 @@ export const zhCN = {
   rangeMzAxis: "m/z",
   rangeCommitted: "已提交 {{name}}：{{low}} 至 {{high}}",
   rangeCommittedFull: "已提交 {{name}}：完整范围",
+  rangeCommittedShown: "已提交 {{name}}：当前显示的范围",
+  rangeBounds: "{{low}} 至 {{high}}",
   rangePending: "待确认 {{name}}：{{low}} 至 {{high}}",
   rangeConfirmContext: "放大选区 — {{name}} {{low}} 至 {{high}}",
   rangeConfirm: "放大选区",

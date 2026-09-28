@@ -192,6 +192,8 @@ export interface MessageParameters {
   readonly viewerFigureSize: { readonly width: string; readonly height: string; readonly theme: string };
   readonly rangeCommitted: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeCommittedFull: { readonly name: string };
+  readonly rangeCommittedShown: { readonly name: string };
+  readonly rangeBounds: { readonly low: string; readonly high: string };
   readonly rangePending: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeConfirmContext: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeEdit: { readonly name: string };
