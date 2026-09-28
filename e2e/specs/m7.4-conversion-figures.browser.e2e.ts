@@ -6,7 +6,7 @@ import { availableBackend, finalizedAttemptFacts, outputSetReport, queueItem, qu
 import type { FigurePreviewRequest, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { ipcTable } from "../support/fixtures";
 import { consoleEntries, heldCallers, holdInvoke, installIpcBoundary, IPC_TABLE_KEY, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
-import { revealRosterRow } from "../support/viewer";
+import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
 
 const authority = availableBackend.authority;
 const names = ["Synthetic sample 空格 very-long-member-0001.mzML", "Synthetic sample 空格 very-long-member-0002.mzML"];
@@ -79,6 +79,8 @@ async function open(width = 1366, height = 768, dpr = 1, running = false, empty 
   expect(await browser.execute(() => [innerWidth, innerHeight, devicePixelRatio])).toEqual([width, height, dpr]);
 }
 async function preferences(language: "en" | "zh-CN", density: "comfortable" | "compact") {
+  // Settings saves the choice and the shell adopts what the save confirms.
+  await readBackSavedPreferences();
   await browser.$("[data-settings-entry]").click();
   await browser.$('[data-settings-dialog] input[value="' + language + '"]').click();
   await browser.$('[data-settings-dialog] input[value="' + density + '"]').click();

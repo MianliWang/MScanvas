@@ -149,17 +149,18 @@ export async function openTheViewer(options: OpenViewerOptions = {}): Promise<vo
 }
 
 /**
- * Makes the answer table's preference store read back the layout it was asked
- * to save, as Rust's does: it merges the request onto the stored record.
+ * Makes the answer table's preference store read back what it was asked to
+ * save, as Rust's does: it merges the request onto the stored record.
  *
- * The shared table answers every `save_ui_preferences` with one fixed record
- * whose layout is automatic, and the shell adopts the layout a save confirms
+ * The shared table answers every `save_ui_preferences` with one fixed record,
+ * automatic layout and English, and the shell adopts what a save confirms
  * (M7.5). So a panel toggled open where automatic means closed -- the roster
- * below 1050px -- was folded again as soon as its save was answered. Installed
- * after navigation, like the other page-side answer wrappers; a second install
- * only repeats the same echo.
+ * below 1050px -- was folded again as soon as its save was answered, and a
+ * language applied in Settings went back to English. Installed after
+ * navigation, like the other page-side answer wrappers; a second install only
+ * repeats the same echo.
  */
-export async function readBackSavedLayout(): Promise<void> {
+export async function readBackSavedPreferences(): Promise<void> {
   await browser.execute((tableKey: string) => {
     const table = Reflect.get(window, tableKey) as Record<string, unknown>;
     const internals = Reflect.get(window, "__TAURI_INTERNALS__") as {
@@ -169,9 +170,16 @@ export async function readBackSavedLayout(): Promise<void> {
     internals.invoke = (command, args, ...rest: unknown[]) => {
       if (command === "save_ui_preferences") {
         const stored = table[command] as { outcome?: string; preferences?: Record<string, unknown> } | null | undefined;
-        const layout = (args?.["request"] as { layout?: unknown } | undefined)?.layout;
-        if (stored?.outcome === "saved" && stored.preferences !== undefined && layout !== undefined) {
-          table[command] = { ...stored, preferences: { ...stored.preferences, layout } };
+        const request = args?.["request"] as { layout?: unknown; appearance?: unknown } | undefined;
+        if (stored?.outcome === "saved" && stored.preferences !== undefined && request !== undefined) {
+          table[command] = {
+            ...stored,
+            preferences: {
+              ...stored.preferences,
+              ...(request.layout === undefined ? {} : { layout: request.layout }),
+              ...(request.appearance === undefined ? {} : { appearance: request.appearance }),
+            },
+          };
         }
       }
       return (invoke as (...all: unknown[]) => Promise<unknown>)(command, args, ...rest);
@@ -191,7 +199,7 @@ export async function revealRosterRow(handle: string): Promise<void> {
   const row = browser.$(`.grouped-roster [data-handle="${handle}"]`);
   await row.waitForExist();
   if (await row.isDisplayed()) return;
-  await readBackSavedLayout();
+  await readBackSavedPreferences();
   const toggle = browser.$('[aria-controls="workbench-roster"]');
   await browser.waitUntil(async () => (await toggle.getAttribute("aria-disabled")) === null, {
     timeoutMsg: "the roster toggle never became operable",

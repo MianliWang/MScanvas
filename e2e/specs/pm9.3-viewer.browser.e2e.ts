@@ -49,7 +49,7 @@ import {
   SPECTRUM_PLOT,
   SPECTRUM_RANGE,
   SPECTRUM_STATUS,
-  readBackSavedLayout,
+  readBackSavedPreferences,
   revealRosterRow,
   selectTheSpectrum,
   viewerReads,
@@ -641,7 +641,7 @@ async function observeViewer(label: string) {
 /** Opens or closes one header panel toggle, and waits for the header to say so. */
 async function setPanel(panel: "roster" | "details", open: boolean) {
   // The press is saved, and the shell adopts the layout the save confirms.
-  await readBackSavedLayout();
+  await readBackSavedPreferences();
   const toggle = browser.$(`[aria-controls="workbench-${panel === "roster" ? "roster" : "inspector"}"]`);
   if ((await toggle.getAttribute("aria-expanded")) !== String(open)) await toggle.click();
   await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === String(open), {
