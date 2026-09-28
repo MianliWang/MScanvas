@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { RawTextField } from "../../components/fields/RawTextField";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { formatMz } from "./format";
 import type { PlotInputPort, PlotInputSnapshot } from "./viewer/plotInputAdapters";
 import { sameRange, usableRange } from "./viewer/rangeSelection";
 import { validateRangeDraft } from "./viewer/rangeDraft";
@@ -19,17 +20,23 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
   if (current === null) return null;
   const pending = current.range?.phase === "pending" ? current.range : null;
   const axis = t(port.axis === "rt" ? "rangeRtAxis" : "rangeMzAxis");
-  const committed = current.committed ?? current.full;
+  // At the plot's own precision, as its axis and caption print it; the exact
+  // values are the editor's and the export note's (PM9 UI-31).
+  const format = (value: number) => (port.axis === "mz" ? formatMz(value) : value.toFixed(4));
   const id = `plot-range-${port.axis}`;
   const close = () => { setDraft(null); setProblem(null); if (details.current) details.current.open = false; summary.current?.focus(); };
   const focusPlot = () => root.current?.parentElement?.querySelector<SVGSVGElement>('svg[role="img"]')?.focus({ preventScroll: true });
   return <div className="plot-range-actions" ref={root}>
-    <p className="plot-committed-range" aria-live="polite">{t(pending === null ? "rangeCommitted" : "rangePending", {
-      name: axis, low: String((pending?.domain ?? committed).low), high: String((pending?.domain ?? committed).high),
-    })}</p>
+    {/* Before any range is committed the plot's caption already prints the
+        full range's numbers, so this line says so rather than print them twice. */}
+    <p className="plot-committed-range" aria-live="polite">{pending !== null
+      ? t("rangePending", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })
+      : current.committed === null
+        ? t("rangeCommittedFull", { name: axis })
+        : t("rangeCommitted", { name: axis, low: format(current.committed.low), high: format(current.committed.high) })}</p>
     {pending === null ? null : <div className="plot-pending-actions">
       <button type="button" className="secondary-button" onClick={() => { port.confirm(pending); focusPlot(); }}
-        aria-label={t("rangeConfirmContext", { name: axis, low: String(pending.domain.low), high: String(pending.domain.high) })}>
+        aria-label={t("rangeConfirmContext", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })}>
         {t("rangeConfirm")}
       </button>
       <button type="button" className="secondary-button" onClick={() => { port.cancel(pending.transaction); focusPlot(); }}>{t("rangeCancel")}</button>

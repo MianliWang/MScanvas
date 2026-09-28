@@ -144,7 +144,7 @@ export function ProvenanceDetails({
           data-provenance-link={related.id}
           onClick={() => onSelect({ kind, id: related.id })}
         >
-          {name}
+          <span className="provenance-link-name" title={name}>{name}</span>
         </button>
         {trailing?.(record)}
       </li>
@@ -232,7 +232,7 @@ export function ProvenanceDetails({
       ) : provenance.kind === "input" ? (
         <div data-provenance="input">
           <p className="provenance-kind">{t("provenanceKindInput")}</p>
-          <h3 className="provenance-name">{provenance.input.label}</h3>
+          <h3 className="provenance-name" title={provenance.input.label}>{provenance.input.label}</h3>
           {/* Current, and labelled as current. The section below is history. */}
           <p className="provenance-section-label">{t("provenanceCurrentFile")}</p>
           <p className="provenance-current-row">{currentState(provenance.input)}</p>
@@ -257,7 +257,7 @@ export function ProvenanceDetails({
       ) : provenance.kind === "layer" ? (
         <div data-provenance="layer">
           <p className="provenance-kind">{t("provenanceKindLayer")}</p>
-          <h3 className="provenance-name">{layerName}</h3>
+          <h3 className="provenance-name" title={layerName}>{layerName}</h3>
           {/* Current, and resolved against the roster: a remembered row that
               is no longer there is a layer that is not in the Workbench. */}
           <p className="provenance-section-label">{t("provenanceLayerAvailability")}</p>
@@ -298,7 +298,7 @@ export function ProvenanceDetails({
       ) : provenance.kind === "run" ? (
         <div data-provenance="run">
           <p className="provenance-kind">{t("provenanceKindRun")}</p>
-          <h3 className="provenance-name">{runName(provenance.run)}</h3>
+          <h3 className="provenance-name" title={runName(provenance.run)}>{runName(provenance.run)}</h3>
           <p className="provenance-current-row">
             <span className="provenance-outcome" data-provenance-outcome={provenance.run.outcome}>
               {t(outcomeKey(provenance.run))}
@@ -341,7 +341,7 @@ export function ProvenanceDetails({
       ) : (
         <div data-provenance="artifact" data-artifact-kind={provenance.artifact.kind}>
           <p className="provenance-kind">{t("provenanceKindArtifact")}</p>
-          <h3 className="provenance-name">{artifactName(provenance.artifact)}</h3>
+          <h3 className="provenance-name" title={artifactName(provenance.artifact)}>{artifactName(provenance.artifact)}</h3>
           {/* Where the record lives, said rather than left as a gap beside the
               references above, which have files of their own. File facts and
               a snapshot live inside the document; a targeted result's rows
@@ -371,7 +371,7 @@ export function ProvenanceDetails({
               {provenance.artifact.targetedMs1.result === null ? null : (
                 <dl className="provenance-facts" data-provenance-payload="">
                   <dt>{t("targetedPayloadDigest")}</dt>
-                  <dd className="provenance-digest">
+                  <dd className="provenance-digest" title={provenance.artifact.targetedMs1.result.payload.manifestSha256}>
                     {provenance.artifact.targetedMs1.result.payload.manifestSha256}
                   </dd>
                 </dl>
@@ -478,7 +478,7 @@ function ProducerFacts({ snapshot }: { readonly snapshot: QcSnapshot }) {
         <dt>{t("provenanceProducerRevision")}</dt>
         <dd>{reported(producer.sourceRevision)}</dd>
         <dt>{t("provenanceProducerDigest")}</dt>
-        <dd className="provenance-digest" data-producer-digest="">
+        <dd className="provenance-digest" data-producer-digest="" title={producer.executableSha256}>
           {producer.executableSha256}
         </dd>
       </dl>

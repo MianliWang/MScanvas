@@ -47,10 +47,10 @@ describe("the shell's context line", () => {
     // The state comes before the name, so a long name cannot push the word
     // that says the project is unsaved out of sight (PM9 L14–L16).
     expect(texts({ ...NOTHING, project: { name: state.name, unsaved: state.dirty } })).toEqual([
-      ["project", "project", "Project (unsaved changes): Pooled QC study"],
+      ["project", "project", "Unsaved project: Pooled QC study"],
     ]);
     expect(texts({ ...NOTHING, project: { name: state.name, unsaved: state.dirty } }, zh)).toEqual([
-      ["project", "project", "项目（有未保存的更改）：Pooled QC study"],
+      ["project", "project", "未保存的项目：Pooled QC study"],
     ]);
     expect(texts({ ...NOTHING, project: { name: state.name, unsaved: false } })).toEqual([
       ["project", "project", "Project: Pooled QC study"],

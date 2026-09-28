@@ -881,7 +881,8 @@ describe("reaching the plot without a pointer", () => {
     plot().focus();
 
     expect(document.activeElement).toBe(plot());
-    expect(plot()).toHaveAttribute("aria-describedby", "chromatogram-readout");
+    // The readout, then each axis's unit state, said once on the panel (PM9 UI-33).
+    expect(plot()).toHaveAttribute("aria-describedby", "chromatogram-readout chromatogram-units");
     expect(document.querySelector("#chromatogram-readout")?.textContent).toMatch(
       /^Selected index 20,/u,
     );
@@ -2203,7 +2204,7 @@ describe("choosing a scan while selection is unavailable", () => {
     // Described, never disabled: this plot can still be read, and marking it
     // unavailable would say the run cannot be.
     expect(plot().getAttribute("aria-describedby")).toBe(
-      "chromatogram-readout viewer-selection-availability",
+      "chromatogram-readout chromatogram-units viewer-selection-availability",
     );
     expect(plot().getAttribute("aria-disabled")).toBeNull();
     expect(styleOf(".chromatogram-svg").pointerEvents).not.toBe("none");
@@ -2211,9 +2212,9 @@ describe("choosing a scan while selection is unavailable", () => {
     expect(screen.queryByText(/conversion is running/u)).toBeNull();
   });
 
-  it("keeps describing the readout alone once selection returns", () => {
+  it("keeps describing the readout and the units alone once selection returns", () => {
     renderChromatogram();
-    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout");
+    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units");
   });
 
   it("still reports the scan under the pointer", () => {

@@ -122,6 +122,14 @@
   gap: 8px;
 }
 
+/* A refused action's reason, under the actions it belongs to (PM9 UI-24). */
+.project-action-reason {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-align: end;
+}
+
 .project-note,
 .project-empty {
   margin: 0;
@@ -346,6 +354,17 @@
   text-align: left;
 }
 
+/* In Details (245 px) a long name is bounded to three lines rather than
+   running down the column; the whole name is its tooltip and, for a link, its
+   accessible name (PM9 UI-25). Wider surfaces keep it whole. */
+.workbench-inspector .provenance-name,
+.workbench-inspector .provenance-link-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
 .provenance-link.is-gone {
   font-size: 12px;
   color: var(--color-text-tertiary);
@@ -508,6 +527,16 @@
 
 .provenance-digest {
   font-family: var(--font-mono);
+}
+
+/* In Details, a digest is one line: a prefix to scan and compare, the whole
+   value in its tooltip and still selected, copied and read in full (PM9
+   UI-25). Wider surfaces keep it whole. */
+.workbench-inspector .provenance-digest {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*
@@ -704,9 +733,10 @@
 }
 
 /* Run is the one control here whose unavailability decides the next step, so
-   an inert control reads as inert. Scoped to this setup: the rest of the
-   surface keeps its own treatment. */
-.targeted-setup button[aria-disabled="true"] {
+   an inert control reads as inert: Run through the refused-primary treatment
+   every primary shares (PM9 UI-24), the rest here by fading. Scoped to this
+   setup: the rest of the surface keeps its own treatment. */
+.targeted-setup button[aria-disabled="true"]:not(.primary-button) {
   cursor: not-allowed;
   opacity: 0.48;
 }

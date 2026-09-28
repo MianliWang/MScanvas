@@ -826,6 +826,7 @@ export function ProjectPanel({
                   type="button"
                   className="primary-button"
                   aria-disabled={working || selected.length === 0 || undefined}
+                  aria-describedby={state.inputs.length > 0 && selected.length === 0 ? "project-capture-reason" : undefined}
                   title={selected.length === 0 ? t("projectCaptureNeedsSelection") : undefined}
                   data-project-capture=""
                   onClick={() => {
@@ -836,6 +837,14 @@ export function ProjectPanel({
                 </button>
               </div>
             </div>
+            {/* Said, not only hovered: the refused capture is still a Tab stop,
+                and its reason has to reach a reader who arrives there (PM9
+                UI-24). With no reference at all, the empty list says so. */}
+            {state.inputs.length > 0 && selected.length === 0 ? (
+              <p className="project-action-reason" id="project-capture-reason">
+                {t("projectCaptureNeedsSelection")}
+              </p>
+            ) : null}
 
             {state.inputs.length === 0 ? (
               <p className="project-empty">{t("projectNoReferences")}</p>

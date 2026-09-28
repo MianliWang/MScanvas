@@ -500,8 +500,8 @@ function ChromatogramPlot({
          */
         aria-describedby={
           selectionAvailability.status === "available"
-            ? "chromatogram-readout"
-            : `chromatogram-readout ${SPECTRUM_SELECTION_NOTICE_ID}`
+            ? "chromatogram-readout chromatogram-units"
+            : `chromatogram-readout chromatogram-units ${SPECTRUM_SELECTION_NOTICE_ID}`
         }
         aria-labelledby="chromatogram-heading"
         className="chromatogram-svg"
@@ -610,8 +610,10 @@ function ChromatogramPlot({
         {/* The unit state, said rather than assumed. Nothing in the accepted
             contract establishes what these numbers are measured in, and a
             chromatogram labelled "minutes" states something the file did not.
-            Beside it, what the traces are made of. */}
-        {t("viewerRtUnits")} ·{" "}
+            Beside it, what the traces are made of. Said once per axis here,
+            and part of the plot's description, rather than after every
+            retention time on the panel (PM9 UI-33). */}
+        <span id="chromatogram-units">{t("viewerRtUnits")}</span> ·{" "}
         <span className="chromatogram-range">
           {t("viewerShowing", { low: domain.low.toFixed(4), high: domain.high.toFixed(4) }) +
             (showingFullRange ? t("viewerFullRange") : "")}

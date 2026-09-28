@@ -16,7 +16,9 @@
   --color-accent: #1769d1;
   --color-accent-hover: #0f59c7;
   --color-accent-soft: #dceaff;
-  --color-focus: #2a7fff;
+  /* One focus colour everywhere, the reference's (DESIGN_SYSTEM; PM9 UI-46):
+     Settings used this and the rest of the app a lighter #2a7fff. */
+  --color-focus: #1769d1;
   --color-success: #177245;
   --color-success-soft: #ddf4e8;
   --color-warning: #9a6500;

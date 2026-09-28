@@ -380,6 +380,15 @@ export function PreviewWorkspace() {
     !workspace.previewBackendBusy &&
     (!workspace.conversion.busy || workspace.conversion.adopting) &&
     !workspace.conversion.backendQuarantined;
+  // The evidence pane's one next step, reading the retained acquisition again,
+  // holds the filled accent while it is on screen; `Add files…` gives it up
+  // rather than offer a second (PM9 UI-19).
+  const reopenOffered =
+    surface === "workbench" &&
+    workspace.activeDataset !== null &&
+    preview.status !== "loaded" &&
+    preview.status !== "opening" &&
+    preview.status !== "failed";
   // There is deliberately no `canConvert` here any more. Converting had an
   // expression of its own on this line, strictly wider than the guard the
   // operation applied, and the panel's `Retry` answered to it as well -- three
@@ -787,6 +796,7 @@ export function PreviewWorkspace() {
               panels.navigate();
             }}
             onAddFiles={workspace.addFiles}
+            addFilesQuiet={reopenOffered}
             onAddFolder={workspace.addFolder}
             canRemove={canRemove}
             onClearList={() => {
@@ -935,7 +945,7 @@ export function PreviewWorkspace() {
                 exportToggle={
                   workspace.chromatogramExportToken === null ? null : (
                     <div className="figure-quick-actions"><QuickFigureActions busy={workspace.scientificExportBusy} quickVisible={!chromatogramExportOpen}
-                      context={`${t("viewerChromatogram")} · ${t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun")} · ${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} px`}
+                      context={[t("viewerChromatogram"), t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun"), `${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} px`]}
                       figureUnavailable={workspace.renderSettingsProblem !== null || (!workspace.chromatogramTraces.tic && !workspace.chromatogramTraces.bpc)}
                       pngUnavailable={workspace.pngDpiProblem !== null} onPreview={() => openFigure("chromatogram")}
                       onPng={() => workspace.exportChromatogram("png")} onCopy={workspace.copyChromatogramPlot} />

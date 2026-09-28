@@ -286,6 +286,36 @@ describe("mzML preview workspace", () => {
     expect(await screen.findByText("No ProteoWizard installation was found")).toBeVisible();
   });
 
+  it("keeps the selection through a failed spectrum load, says so with Retry and withholds its exports (PM9 UI-36)", async () => {
+    let failing = true;
+    const api = createFakePreviewApi({
+      spectrum: (index) =>
+        failing
+          ? Promise.reject(previewError())
+          : Promise.resolve<SelectedSpectrumOutcome>({ outcome: "spectrum", spectrum: buildSpectrum(index, 12) }),
+    });
+    await openTheFile(api);
+    const grid = await screen.findByRole("grid", { name: "Spectra" });
+    const identifier = "controllerType=0 controllerNumber=1 scan=1";
+    selectRowByIdentifier(identifier);
+
+    const retry = await screen.findByRole("button", { name: "Try loading this spectrum again" });
+    const panel = retry.closest("section")!;
+    // The failure, in the panel it happened to, beside the selection it was for.
+    expect(within(panel).getByText(/could not be loaded/u)).toBeVisible();
+    expect(within(grid).getByText(identifier).closest('[role="row"]')).toHaveAttribute("aria-selected", "true");
+    // Nothing to make a figure or a file of.
+    for (const name of ["Quick PNG", "Copy plot", "Export figure"]) {
+      expect(within(panel).queryByRole("button", { name })).toBeNull();
+    }
+    expect(within(panel).queryByText("Export spectrum")).toBeNull();
+
+    failing = false;
+    fireEvent.click(retry);
+    expect(await within(panel).findByRole("button", { name: "Quick PNG" })).toBeVisible();
+    expect(within(grid).getByText(identifier).closest('[role="row"]')).toHaveAttribute("aria-selected", "true");
+  });
+
   it("does not start a row read once the session has stopped trusting the backend", async () => {
     // A preview loaded before the stop stays on screen -- nothing about it
     // became untrue -- and quarantine does not change the installation, so the

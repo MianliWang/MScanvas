@@ -5,7 +5,8 @@ import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, onPreview, onPng, onCopy, context, quickVisible = true }: {
   readonly busy: boolean; readonly figureUnavailable: boolean; readonly pngUnavailable: boolean;
   readonly onPreview: () => void; readonly onPng: () => void; readonly onCopy: () => void;
-  readonly context: string;
+  /** What the actions produce -- plot, range, size -- one part each. */
+  readonly context: readonly string[];
   readonly quickVisible?: boolean;
 }) {
   const t = useUiMessages();
@@ -23,8 +24,11 @@ export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, on
   };
   // The caption comes first: it names what the actions produce, and sits before
   // them on their line rather than under them.
-  return <div className="figure-quick-group" role="group" aria-label={context}>
-    <p className="figure-quick-context" id={id}>{context}</p>
+  return <div className="figure-quick-group" role="group" aria-label={context.join(" · ")}>
+    <p className="figure-quick-context" id={id}>{context.map((part, index) => <span key={index}>
+      {/* The separator stays with the part before it. */}
+      {index === 0 ? null : "\u00a0· "}<span className="figure-quick-part">{part}</span>
+    </span>)}</p>
     <div className="figure-quick-actions" aria-describedby={id}>
     <button type="button" className="secondary-button" onClick={onPreview}>{t("figureExportTitle")}</button>
     {quickVisible ? <><button type="button" className="secondary-button" disabled={figureUnavailable || pngUnavailable || (busy && active !== "png")}

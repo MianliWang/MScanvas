@@ -355,6 +355,9 @@ export function TargetedMs1Setup({
   const batch = review?.kind === "batch" ? review.resolution : null;
   const runnable = batch !== null ? batchRunnable(batch) : plan !== null && blocked === null;
   const phase = phaseKey(session.analysisPhase);
+  const runReason = runnable
+    ? null
+    : t(batch !== null && batch.members.length > 0 ? "targetedBatchNotReady" : "targetedRunNeedsReview");
 
   const onRun = () => {
     if (working || !runnable) return;
@@ -509,11 +512,8 @@ export function TargetedMs1Setup({
           type="button"
           className="primary-button"
           aria-disabled={working || !runnable || undefined}
-          title={
-            runnable
-              ? undefined
-              : t(batch !== null && batch.members.length > 0 ? "targetedBatchNotReady" : "targetedRunNeedsReview")
-          }
+          aria-describedby={runReason === null ? undefined : `${ids}-run-reason`}
+          title={runReason ?? undefined}
           data-targeted-run={batch === null ? "" : "batch"}
           onClick={onRun}
         >
@@ -522,6 +522,13 @@ export function TargetedMs1Setup({
             : t("targetedRunBatch", { count: batch.members.length })}
         </button>
       </div>
+      {/* Said, not only hovered: a refused primary is still a Tab stop, and its
+          reason has to reach a reader who arrives there (PM9 UI-24). */}
+      {runReason === null ? null : (
+        <p id={`${ids}-run-reason`} className="project-note">
+          {runReason}
+        </p>
+      )}
 
       {analysing && !ranBatch ? (
         <p className="project-note" data-targeted-phase={session.analysisPhase ?? ""}>
@@ -815,12 +822,12 @@ function BatchReview({
                         {member.expectedContent.map((content) => (
                           <span key={content.relativeName} className="targeted-batch-fact">
                             {t("targetedSourceBytes")} {formatCount(content.byteLength)} · SHA-256{" "}
-                            <span className="provenance-digest">{content.sha256}</span>
+                            <span className="provenance-digest" title={content.sha256}>{content.sha256}</span>
                           </span>
                         ))}
                         <span className="targeted-batch-fact">
                           {t("targetedPlanDigestLabel")}{" "}
-                          <span className="provenance-digest">{member.planSha256}</span>
+                          <span className="provenance-digest" title={member.planSha256}>{member.planSha256}</span>
                         </span>
                       </>
                     )}
@@ -1953,15 +1960,15 @@ export function TargetedFacts({ lineage }: { readonly lineage: TargetedLineage }
       <p className="provenance-section-label">{t("targetedPlan")}</p>
       <dl className="provenance-facts" data-targeted-plan-facts="">
         <dt>{t("targetedPlanDigestLabel")}</dt>
-        <dd className="provenance-digest">{execution.planSha256}</dd>
+        <dd className="provenance-digest" title={execution.planSha256}>{execution.planSha256}</dd>
         {plan === null ? null : (
           <>
             <dt>{t("targetedTargetListDigest")}</dt>
-            <dd className="provenance-digest">{plan.targetListSha256}</dd>
+            <dd className="provenance-digest" title={plan.targetListSha256}>{plan.targetListSha256}</dd>
             <dt>{t("targetedRecipeVersion")}</dt>
             <dd>{plan.recipe.recipeVersion}</dd>
             <dt>{t("targetedEngineProfileDigest")}</dt>
-            <dd className="provenance-digest">{plan.recipe.engineProfileSha256}</dd>
+            <dd className="provenance-digest" title={plan.recipe.engineProfileSha256}>{plan.recipe.engineProfileSha256}</dd>
             <dt>{t("targetedSummaryTargets")}</dt>
             <dd>{formatCount(plan.targets.length)}</dd>
             <dt>{t("targetedFieldMzHalfWidth")}</dt>
@@ -1983,7 +1990,7 @@ export function TargetedFacts({ lineage }: { readonly lineage: TargetedLineage }
               <dt>{t("targetedSourceBytes")}</dt>
               <dd>{formatCount(member.byteLength)}</dd>
               <dt>SHA-256</dt>
-              <dd className="provenance-digest">{member.sha256}</dd>
+              <dd className="provenance-digest" title={member.sha256}>{member.sha256}</dd>
             </div>
           ))}
         </dl>
@@ -2011,11 +2018,11 @@ export function TargetedFacts({ lineage }: { readonly lineage: TargetedLineage }
               )}
             </dd>
             <dt>{t("targetedAdapterDigest")}</dt>
-            <dd className="provenance-digest">{attempt.adapterSha256}</dd>
+            <dd className="provenance-digest" title={attempt.adapterSha256}>{attempt.adapterSha256}</dd>
             <dt>{t("targetedRuntimeDigest")}</dt>
-            <dd className="provenance-digest">{attempt.runtimeManifestSha256}</dd>
+            <dd className="provenance-digest" title={attempt.runtimeManifestSha256}>{attempt.runtimeManifestSha256}</dd>
             <dt>{t("targetedInterpreterDigest")}</dt>
-            <dd className="provenance-digest">{attempt.interpreterSha256}</dd>
+            <dd className="provenance-digest" title={attempt.interpreterSha256}>{attempt.interpreterSha256}</dd>
           </dl>
           {attempt.loadedModules.length === 0 ? null : (
             <details className="targeted-modules">
@@ -2024,7 +2031,7 @@ export function TargetedFacts({ lineage }: { readonly lineage: TargetedLineage }
                 {attempt.loadedModules.map((module) => (
                   <div key={module.name} className="targeted-member">
                     <dt>{module.name}</dt>
-                    <dd className="provenance-digest">{module.sha256}</dd>
+                    <dd className="provenance-digest" title={module.sha256}>{module.sha256}</dd>
                   </div>
                 ))}
               </dl>

@@ -2,6 +2,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { SettingsDialog } from "../preferences/SettingsDialog";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { fitContextLine } from "./contextLineLayout";
 import { prioritizeShellContext, shellContextItems, type ShellContextFacts } from "./shellContext";
 
 export type WorkbenchSurface = "workbench" | "conversion" | "project";
@@ -71,6 +72,19 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
     toggleHeldFocus.current = false;
     document.getElementById("backend-status")?.focus({ preventScroll: true });
   }, [backendFolding]);
+  /**
+   * The second line gives way by rank (`fitContextLine`). Every render can
+   * change what it says, and a resize changes its room.
+   */
+  const contextBar = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => { if (contextBar.current !== null) fitContextLine(contextBar.current); });
+  useLayoutEffect(() => {
+    const bar = contextBar.current;
+    if (bar === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => fitContextLine(bar));
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, []);
   return <header className="topbar workbench-header">
     <button type="button" className="workbench-home" aria-label={t("home")} onClick={() => go("workbench")}>
       <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M3 22h22M5 20v-5m4 5V9m5 11V3m5 17v-8m4 8v-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
@@ -131,23 +145,24 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
     {/* The header's second line: where the reader is, then how files arrive.
         It shares the line the drop hint already had rather than adding a row
         to the shell's grid, and it never wraps into a second one: each item
-        gives way by its rank instead (`prioritizeShellContext`). Not a live
+        gives way by its rank instead (`prioritizeShellContext`, `fitContextLine`). Not a live
         region: each fact here is announced, where it is announced at all, by
         the surface that owns it. */}
-    <div className="workbench-context-bar">
+    <div className="workbench-context-bar" ref={contextBar}>
       {contextItems.length === 0 ? null : (
         <div className="shell-context" role="group" aria-label={t("shellContextRegion")}>
           {contextItems.map(item => <button type="button" key={item.id} className="shell-context-item"
-            data-shell-context={item.id} data-priority={item.priority} title={item.text} onClick={() => go(item.target)}>{item.text}</button>)}
+            data-shell-context={item.id} data-priority={item.priority} data-line-rank={item.priority} title={item.text}
+            data-unsaved={item.id === "project" && context?.project?.unsaved === true ? "" : undefined} onClick={() => go(item.target)}>{item.text}</button>)}
         </div>
       )}
       {/* The backend banner folds away while it has nothing to act on (PM9
           L10); this is where it is read and reopened from. */}
       {backend === null ? null : (
-        <button type="button" ref={backendToggle} className="shell-backend-toggle" data-backend-toggle=""
+        <button type="button" ref={backendToggle} className="shell-backend-toggle" data-backend-toggle="" data-line-rank="1"
           aria-expanded={backend.expanded} aria-controls="backend-status" onClick={backend.onToggle}>{t("backendReadyShort")}</button>
       )}
-      <p className="workspace-drop-hint">{t(dropStatus === "available" ? "shellDropHint" : dropStatus === "connecting" ? "shellDropConnecting" : "shellDropUnavailable")}</p>
+      <p className="workspace-drop-hint" data-line-rank="6" data-line-removable="">{t(dropStatus === "available" ? "shellDropHint" : dropStatus === "connecting" ? "shellDropConnecting" : "shellDropUnavailable")}</p>
     </div>
   </header>;
 }

@@ -22,6 +22,12 @@ export interface DatasetRosterProps {
   readonly onReloadRoster: () => void;
   readonly dispatch: (action: RosterAction) => void;
   readonly onAddFiles: () => void;
+  /**
+   * Whether another surface's next step holds the filled accent: the evidence
+   * pane offering to read the retained acquisition again. `Add files…` stays
+   * offered, as a secondary action (PM9 UI-19).
+   */
+  readonly addFilesQuiet?: boolean;
   readonly onAddFolder: () => void;
   readonly onRemoveSelected: () => void;
   /** Starts Clear and reports whether this activation acquired the mutation gate. */
@@ -135,6 +141,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   onReloadRoster,
   dispatch,
   onAddFiles,
+  addFilesQuiet = false,
   onAddFolder,
   onRemoveSelected,
   onClearList,
@@ -899,7 +906,8 @@ export const DatasetRoster = memo(function DatasetRoster({
       <details className="roster-help"><summary>{t("rosterHelp")}</summary><p>{t("rosterLifetime")}</p><p>{t("rosterKeyboardHelp")}</p></details>
       <div className="dataset-roster-actions">
         <button
-          className="primary-button"
+          className={addFilesQuiet ? "secondary-button" : "primary-button"}
+          data-add-files=""
           disabled={!canAddFiles}
           onClick={(event) => {
             startPicking(event, onAddFiles);

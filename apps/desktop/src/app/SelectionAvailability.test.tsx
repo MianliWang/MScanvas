@@ -155,7 +155,7 @@ describe("the viewer's selection availability", () => {
     // explanation that is not there is worse than none.
     expect(notice()).toBeNull();
     expect(grid().getAttribute("aria-describedby")).toBeNull();
-    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout");
+    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units");
   });
 
   it("explains the closed lane once, and both surfaces point at that one sentence", async () => {
@@ -172,7 +172,7 @@ describe("the viewer's selection availability", () => {
     // Both surfaces, the same id, and the plot keeps its readout as well.
     expect(grid().getAttribute("aria-describedby")).toBe("viewer-selection-availability");
     expect(plot().getAttribute("aria-describedby")).toBe(
-      "chromatogram-readout viewer-selection-availability",
+      "chromatogram-readout chromatogram-units viewer-selection-availability",
     );
 
     // Announced politely, by the element that was already there.

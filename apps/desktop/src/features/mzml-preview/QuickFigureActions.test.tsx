@@ -13,7 +13,7 @@ describe("quick scientific figure actions", () => {
     const copy = vi.fn();
     function Harness() {
       const [busy, setBusy] = useState(false);
-      return <QuickFigureActions busy={busy} figureUnavailable={false} pngUnavailable={false} context="Spectrum 2 · Current range · 960 × 600 px"
+      return <QuickFigureActions busy={busy} figureUnavailable={false} pngUnavailable={false} context={["Spectrum 2", "Current range", "960 × 600 px"]}
         onPreview={() => {}} onPng={() => { setBusy(true); void png().finally(() => setBusy(false)); }} onCopy={copy} />;
     }
     render(<SessionPreferencesProvider><Harness /></SessionPreferencesProvider>);

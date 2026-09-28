@@ -163,9 +163,12 @@ export function GroupedRosterList(props: Props) {
   const groupName = (id: string) => id === UNGROUPED ? t("ungrouped") : state.organization.groups.find(group => group.id === id)?.name ?? t("ungrouped");
   return <DragDropProvider manager={manager} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
     {/* Organizing is the roster's less frequent work, so it shares one quiet
-        row with the selection count rather than taking two bands above the
-        first row (PM9 L9). New group stays this row's first button: a row or
-        group menu whose own trigger has left the document returns focus to it. */}
+        band with the selection count rather than taking two bands above the
+        first row (PM9 L9). Where the 280 px roster cannot hold both on one
+        line -- the English count, or Undo beside New group -- the count takes
+        the band's second line, whole (PM9 UI-15). New group stays this row's
+        first button: a row or group menu whose own trigger has left the
+        document returns focus to it. */}
     <div className="organization-toolbar">
       <button type="button" className="secondary-button" onClick={event => setEditing({ id: null, name: "", returnTo: event.currentTarget })}>{t("newGroup")}</button>
       {state.organization.history.length ? <button type="button" className="link-button" onClick={() => dispatch({ type: "organization", action: { type: "undo" } })}>{t("undoOrganization")}</button> : null}
@@ -176,6 +179,16 @@ export function GroupedRosterList(props: Props) {
       data-windowed={windowing.windowed} data-drag-active={dragSource !== null}
       onScroll={windowing.onScroll} onFocus={props.onFocus} onBlur={props.onBlur}
       onPointerDownCapture={() => { if (payload.current === null) suppressedClick.current = false; }}
+      // A press never scrolls the list under the pointer. Focusing a partly
+      // clipped row or checkbox brings it into view between press and release,
+      // and the release can then land on another row (PM9 UI-21).
+      onMouseDown={event => {
+        if (event.button !== 0 || !(event.target instanceof Element)) return;
+        const focusable = event.target.closest<HTMLElement>("button, a, input, [tabindex]");
+        if (focusable === null || !(focusable.matches('input[type="checkbox"]') || focusable.getAttribute("role") === "row")) return;
+        event.preventDefault();
+        focusable.focus({ preventScroll: true });
+      }}
       onKeyDownCapture={event => { if (payload.current !== null && event.code === "Tab") manager.actions.stop({ canceled: true }); }}
       onKeyDown={event => {
         if (payload.current !== null || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
