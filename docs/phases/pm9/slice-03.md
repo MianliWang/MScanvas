@@ -333,13 +333,16 @@ shell fills the viewport, as PM9.1 does.
 **Repair cycle 1 (`55c30f3`), the only one used.**
 
 - *Failed condition.* The helper repair let m7.3's 960×640 case reach its
-  assertion for the first time since M7.4: the selected spectrum's plot must
-  begin inside the window (M7.3 recorded 592.8). It began at 663.6 on
-  `696602c`.
+  assertion: the selected spectrum's plot must begin inside the window (M7.3
+  recorded 592.8). It began at 663.6 on `696602c`. In the recorded runs,
+  such as `a0783bb` and the M9 closure, that case failed at setup, so when it
+  last passed is not known.
 - *Before PM9.3.* It was below the window too, at about 644 in zh-CN and 695
-  in en.
+  in en, estimated from the before-capture's geometry.
 - *Diagnosis.* Three things pushed it down:
-  - M7.4's quick-action caption line under the buttons in both plot headers;
+  - the quick-action caption line under the buttons in both plot headers.
+    The caption came with M7.4 (`e495464`), after M7.3's measurement; that
+    it is what moved the plot since then is an inference;
   - the spectrum header's Export spectrum line (already fixed in `696602c`);
   - L13's controls line, 44 px.
 - *Fix.*
@@ -405,7 +408,8 @@ unchanged, and they now run and pass.
 What is left belongs elsewhere:
 
 - **Family (b) stale setup** (`label*=`, `li.dataset-row`, a closed
-  disclosure): the 20 cases above and m4.1/m4.2, which were not rerun. They
+  disclosure): 18 of the cases above (m4.3 2, m4.4 1, m5.3 13, viewer-r1
+  2), plus m4.1/m4.2, which were not rerun. They
   go to PM9.7's regression gate.
 - **(d) driver geometry:** m4.4's outside-range case and viewer-r1's
   row-below-the-header case, recorded UNKNOWN for PM9.7.
@@ -460,8 +464,18 @@ is 56 px in every frame now:
   and are verified reachable. At 960×640 the roster or Details swaps with the
   evidence (the design system's fold). The header and the context line
   ("Viewing: … · spectrum 2") stay.
+- **1366×768**, default and with Details opened (a 785 px column), keeps the
+  evidence ahead. Both plots and all their controls are on the first screen,
+  every header is one row, and neither side panel crowds the evidence. With
+  Details opened, the chromatogram's range line wraps "Plot gestures" to a
+  second line (B below).
+- **1536×864** (zh-CN): both plots are whole on the first screen, and each
+  header is one row.
 - **1920×1080** is neither sparse nor fragmented, and the scan table's header
-  enters the first screen. **2560×1440** shows the whole viewer.
+  enters the first screen.
+- **2560×1440** (en) shows the whole viewer at once: both plots, the pending
+  band with its actions, all eight scan rows and Details. Every frame named
+  here was looked at, not only measured.
 - **Automated and manual differ in one place.** The screenshots show what the
   geometry does not: at 14em the caption can break inside the size ("1200 /
   × 640 px", or "px" alone in zh-CN). That is B below. The manual headed
@@ -486,7 +500,13 @@ is 56 px in every frame now:
   - "(unit not reported)" four times in the chromatogram's lines;
   - the inert `.viewer-stack` grid rules and their comment in `app.css`;
   - Details opened by the reader at 1152–1280 px: the spectrum header takes
-    two or three rows, and at 571 px the chromatogram header takes two.
+    two or three rows. At 571 px the chromatogram header takes two, and that
+    is a regression of this slice: the inline caption causes it, and after
+    L13 alone it took one. It is a reader-opened arrangement, so it is
+    recorded under §0.1 rather than failed.
+- **Remaining known failures, 33:** 18 are family (b), 2 are (d), 11 are
+  SUPERSEDED (m5.2 5, viewer-r1 5, viewer-r1-scale 1), and 2 are m7.4's
+  active-Clear pair.
 - **C:** none new. The RT×m/z map, view history and auto peak height stay out
   of scope.
 
