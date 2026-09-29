@@ -722,6 +722,55 @@ describe("moving the viewport", () => {
     expect(state().committedDomain?.high).toBeLessThan(full.high);
   });
 
+  it("says a commit once, when a wheel settles, and nothing when the wheel starts (PM9 UI-34)", () => {
+    renderChromatogram();
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    const line = document.querySelector(".plot-committed-range")!;
+    const before = line.textContent;
+    expect(before).toBe("Committed retention time: the range shown 0.1000 to 0.3000");
+    // Read whole when it changes, not only the numbers that changed.
+    expect(line).toHaveAttribute("aria-atomic", "true");
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(line, { characterData: true, childList: true, subtree: true });
+
+    fireEvent.wheel(plot(), { clientX: 500, deltaY: -240 });
+
+    // The gesture is drawn, but the committed range has not moved, so the live
+    // line has nothing new to say: no mutation, no announcement.
+    expect(state().gesture).not.toBeNull();
+    expect(observer.takeRecords()).toEqual([]);
+    expect(line.textContent).toBe(before);
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    // Settled: one change, to the new commit.
+    expect(state().gesture).toBeNull();
+    expect(observer.takeRecords()).not.toEqual([]);
+    expect(line.textContent).not.toBe(before);
+    expect(line.textContent).toMatch(/^Committed retention time: the range shown \d\.\d{4} to \d\.\d{4}$/u);
+    observer.disconnect();
+  });
+
+  it("says nothing when a wheel is abandoned before it settles (PM9 UI-34)", () => {
+    renderChromatogram();
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    const line = document.querySelector(".plot-committed-range")!;
+    const before = line.textContent;
+    fireEvent.wheel(plot(), { clientX: 500, deltaY: -240 });
+    expect(state().gesture).not.toBeNull();
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(line, { characterData: true, childList: true, subtree: true });
+
+    key({ key: "Escape" });
+
+    expect(state().gesture).toBeNull();
+    expect(observer.takeRecords()).toEqual([]);
+    expect(line.textContent).toBe(before);
+    observer.disconnect();
+  });
+
   it("lets a selection made mid-wheel win over the settle that arrives later", () => {
     /*
      * PR #72 finding 8, at the visible adapter. The debounce is an adapter: it

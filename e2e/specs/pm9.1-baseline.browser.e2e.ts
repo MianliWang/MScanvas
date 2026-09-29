@@ -1739,12 +1739,14 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     });
 
     for (const locale of ["en", "zh-CN"] as const) {
-      it(`UI-25: Details keeps digests to one line and names bounded, in ${locale}`, async () => {
+      it(`UI-25: Details keeps digests to one line, names bounded and long values full width, in ${locale}`, async () => {
         await metrics(1920, 1080);
         await open("busyInspected", locale);
         await navigate([en.projectSurface, zh.projectSurface]);
         await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
         await browser.$("#workbench-inspector .provenance-digest").waitForDisplayed();
+        // The engine's modules, real paths, open so the frame shows them.
+        await browser.$("#workbench-inspector .targeted-modules > summary").click();
         await frames();
         const seen = await browser.execute(() => {
           // Lines on screen: a line a clamp hides is laid out below the box.
@@ -1758,7 +1760,23 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           return {
             digests: [...inspector.querySelectorAll<HTMLElement>(".provenance-digest")]
               .filter((node) => node.getClientRects().length > 0)
-              .map((node) => ({ lines: lines(node), full: (node.getAttribute("title") ?? node.textContent ?? "").replace(/\s/gu, "").length })),
+              .map((node) => ({
+                lines: lines(node),
+                full: (node.getAttribute("title") ?? node.textContent ?? "").replace(/\s/gu, "").length,
+                // Characters on screen: the box's width over one character's.
+                shown: Math.floor(node.clientWidth / (node.scrollWidth / Math.max(1, (node.textContent ?? "").trim().length))),
+              })),
+            facts: [...inspector.querySelectorAll<HTMLElement>(".provenance-facts dd")]
+              .filter((node) => node.getClientRects().length > 0)
+              .map((node) => ({
+                lines: lines(node),
+                share: node.getBoundingClientRect().width / node.closest("dl")!.getBoundingClientRect().width,
+              })),
+            // A list wider than its column is clipped by the panel, where the
+            // inspector's own overflow cannot see it.
+            lists: [...inspector.querySelectorAll<HTMLElement>(".provenance-facts")]
+              .filter((node) => node.getClientRects().length > 0)
+              .map((node) => node.scrollWidth - node.clientWidth),
             names: [...inspector.querySelectorAll<HTMLElement>(".provenance-link-name, .provenance-name")]
               .filter((node) => node.getClientRects().length > 0)
               .map((node) => lines(node)),
@@ -1772,6 +1790,32 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         expect(seen.digests.filter((digest) => digest.full < 64)).toEqual([]);
         expect(seen.names.filter((count) => count > 3)).toEqual([]);
         expect(seen.overflow).toBeLessThanOrEqual(1);
+        // A value that wraps has its list's whole width, not a column beside the
+        // list's longest label.
+        const wrapped = seen.facts.filter((fact) => fact.lines > 1);
+        expect(wrapped.length).toBeGreaterThan(0);
+        expect(wrapped.filter((fact) => fact.share < 0.9)).toEqual([]);
+        // A digest shows a prefix long enough to compare by eye.
+        expect(seen.digests.filter((digest) => digest.shown < 16)).toEqual([]);
+        expect(seen.lists.filter((excess) => excess > 1)).toEqual([]);
+
+        // Where Details takes the surface's place (960x640), label and value
+        // stay side by side.
+        await metrics(960, 640);
+        await readBackSavedPreferences();
+        const details = browser.$('[aria-controls="workbench-inspector"]');
+        if ((await details.getAttribute("aria-expanded")) !== "true") await details.click();
+        await browser.$("#workbench-inspector [data-targeted-plan-facts]").waitForDisplayed();
+        await frames();
+        const beside = await browser.execute(() => {
+          const list = document.querySelector("#workbench-inspector [data-targeted-plan-facts]")!;
+          const label = list.querySelector("dt")!.getBoundingClientRect();
+          const value = list.querySelector("dd")!.getBoundingClientRect();
+          return { sameRow: Math.abs(label.top - value.top) < 2, valueRight: value.left >= label.right };
+        });
+        evidence.push({ label: `ui-rework-details-swap-${locale}`, beside });
+        await surfaceFrame(`ui-rework-details-swap-${locale}-960x640`);
+        expect(beside).toEqual({ sameRow: true, valueRight: true });
         expect(await unexpectedConsole()).toEqual([]);
       });
 

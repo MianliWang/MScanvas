@@ -164,7 +164,13 @@ export type Availability = "available" | "payloadMissing" | "payloadCorrupt";
 
 export function targetedProject(
   availability: Availability,
-  options: { readonly sourceMissing?: boolean; readonly name?: string; readonly label?: string } = {},
+  options: {
+    readonly sourceMissing?: boolean;
+    readonly name?: string;
+    readonly label?: string;
+    // e2e only: projectFixtures.ts has no counterpart, and no Vitest fixture changes.
+    readonly modules?: readonly string[];
+  } = {},
 ) {
   const expectedContent = [{ role: "primary", relativeName: "", byteLength: 1024, sha256: DIGEST }];
   return {
@@ -236,7 +242,7 @@ export function targetedProject(
               openmsRevision: "c1370fb",
               openmsBuildTime: "2025-01-01",
             },
-            loadedModules: [{ name: "pyopenms/_pyopenms_1.pyd", sha256: DIGEST }],
+            loadedModules: (options.modules ?? ["pyopenms/_pyopenms_1.pyd"]).map((name) => ({ name, sha256: DIGEST })),
           },
           failure: null,
           stop: null,
@@ -494,6 +500,8 @@ export function scenario(name: Scenario, locale: Locale = "en"): Record<string, 
       table.get_project_state = targetedProject("available", {
         name: `${"Plasma_QC_batch_08_".repeat(4)}study`,
         label: `${"Plasma_QC_batch_08_".repeat(7)}replicate_04.mzML`,
+        // A real run's module paths (adapter_v1.py), wider than any fact label in Details.
+        modules: ["python313.dll", "site-packages/pyopenms/_pyopenms_1.cp313-win_amd64.pyd"],
       });
       return table;
   }

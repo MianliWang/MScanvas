@@ -134,9 +134,51 @@ const SPECTRUM = {
   viewportDomain: { state: "admitted", low: 100, high: 650 },
 };
 
-function answers(options: { readonly refusedViewport?: boolean; readonly locale?: "en" | "zh-CN" } = {}) {
+/**
+ * The same eight scans at a real run's size (baseline §12's coverage gap):
+ * retention times in seconds from 1234.5678 to 3456.7892, base peaks above
+ * m/z 1000 and intensities in the tens and hundreds of millions. Synthetic; no
+ * file was read.
+ */
+function longScans() {
+  const preview = eightScans();
+  preview.spectrumTable.rows.forEach((row, index) =>
+    Object.assign(row, {
+      retentionTime: { value: 1234.5678 + index * 317.4602, unitKnown: false },
+      basePeakMz: 1234.5678 + index * 107.5838,
+      basePeakIntensity: 12_345_678 + index * 1_111_111,
+      totalIonCurrent: (index + 1) * 123_456_789,
+      precursorMz: row.msLevel === 1 ? null : 1456.7891 + index,
+    }),
+  );
+  Object.assign(preview.runSummary, {
+    retentionTimeRange: {
+      minimum: { value: 1234.5678, unitKnown: false },
+      maximum: { value: 1234.5678 + 7 * 317.4602, unitKnown: false },
+    },
+  });
+  return preview;
+}
+
+/** Twelve points from m/z 1234.5678 to 1987.6543, at intensities of a real spectrum's size. */
+const LONG_MZ = Array.from({ length: 12 }, (_, i) => 1234.5678 + (i * (1987.6543 - 1234.5678)) / 11);
+const LONG_SPECTRUM: typeof SPECTRUM = {
+  ...SPECTRUM,
+  mz: LONG_MZ,
+  intensity: [12_345_678, 45_678_901, 3_456_789, 65_432_109, 98_765_432, 41_234_567, 17_654_321, 74_321_098, 29_876_543, 18_765_432, 54_321_987, 7_654_321],
+  mzLow: LONG_MZ[0]!,
+  mzHigh: LONG_MZ[11]!,
+  basePeakMz: LONG_MZ[4]!,
+  basePeakIntensity: 98_765_432,
+  // The sum of the points above.
+  totalIonCurrent: 469_507_178,
+  precursors: [{ index: 0, mz: 1456.7891, intensity: 84_000_000 }],
+  viewportDomain: { state: "admitted", low: LONG_MZ[0]!, high: LONG_MZ[11]! },
+};
+
+function answers(options: { readonly refusedViewport?: boolean; readonly locale?: "en" | "zh-CN"; readonly long?: boolean } = {}) {
   const table: Record<string, unknown> = ipcTable({ refusedViewport: options.refusedViewport === true });
-  table.open_mzml_preview = eightScans();
+  table.open_mzml_preview = options.long === true ? longScans() : eightScans();
   // Two mzML rows, so a second acquisition can replace the first.
   table.get_workspace_roster = { datasets: [MZML_ROW, secondFile], capacity: FAKE_WORKSPACE_CAPACITY };
   table.get_project_state = NO_PROJECT;
@@ -165,7 +207,7 @@ function answers(options: { readonly refusedViewport?: boolean; readonly locale?
  * A refused viewport keeps the shared table's single spectrum instead, so the
  * refusal it carries is the one the application meets.
  */
-async function answerBySource() {
+async function answerBySource(fixture: typeof SPECTRUM = SPECTRUM) {
   await browser.execute(
     (tableKey: string, fixture: { mz: number[]; intensity: number[] }) => {
       const table = Reflect.get(window, tableKey) as Record<string, unknown>;
@@ -214,7 +256,7 @@ async function answerBySource() {
       };
     },
     IPC_TABLE_KEY,
-    SPECTRUM,
+    fixture,
   );
 }
 
@@ -258,7 +300,7 @@ async function open(options: Parameters<typeof answers>[0] = {}) {
   await installIpcBoundary(answers(options));
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed();
-  if (options.refusedViewport !== true) await answerBySource();
+  if (options.refusedViewport !== true) await answerBySource(options.long === true ? LONG_SPECTRUM : SPECTRUM);
   await view(MZML_ROW.handle);
 }
 
@@ -398,7 +440,7 @@ async function rangeLine(panel: string) {
   const [, low, high] = /(-?[\d.]+(?:e[-+]?\d+)?) to (-?[\d.]+(?:e[-+]?\d+)?)$/u.exec(text) ?? [];
   return {
     pending: text.startsWith(prefix(en.rangePending)),
-    committed: text.startsWith(prefix(en.rangeCommitted)),
+    committed: text.startsWith(prefix(en.rangeCommittedShown)),
     low: Number(low),
     high: Number(high),
   };
@@ -711,6 +753,80 @@ async function observeViewer(label: string) {
   expect(measured.horizontalOverflow).toBeLessThanOrEqual(1);
   expect(measured.external).toEqual([]);
   return { label, ...measured };
+}
+
+/**
+ * The lines under the plots, for the long-value case (baseline §12's coverage
+ * gap): each range line and pending action whole inside every box that clips
+ * it, each visible number on one line, each action's label on one line.
+ */
+function rangeIntegrity(): Promise<string[]> {
+  return browser.execute(() => {
+    const evidence = document.querySelector<HTMLElement>("#workbench-evidence");
+    const lineCount = (range: Range) => new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+    const clipped = (node: Element) => {
+      const r = node.getBoundingClientRect();
+      for (let a = node.parentElement; a !== null; a = a.parentElement) {
+        const style = getComputedStyle(a);
+        if (style.overflowX !== "visible" || style.overflowY !== "visible") {
+          const left = a.getBoundingClientRect().left + a.clientLeft;
+          if (r.left < left - 0.5 || r.right > left + a.clientWidth + 0.5) return true;
+        }
+        if (a === evidence) break;
+      }
+      return false;
+    };
+    return [...document.querySelectorAll<HTMLElement>(".plot-range-actions")].flatMap((row) => {
+      const plot = row.closest(".chromatogram-panel") === null ? "m/z" : "rt";
+      const problems: string[] = [];
+      const line = row.querySelector<HTMLElement>(".plot-committed-range");
+      if (line !== null) {
+        if (clipped(line) || line.scrollWidth > line.clientWidth + 1) problems.push("line clipped");
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        for (let text = walker.nextNode(); text !== null; text = walker.nextNode()) {
+          // The announced bounds are not on screen.
+          if ((text.parentElement?.closest(".visually-hidden") ?? null) !== null) continue;
+          const value = text.textContent ?? "";
+          const numbers = /\d+\.\d+/gu;
+          for (let match = numbers.exec(value); match !== null; match = numbers.exec(value)) {
+            const range = document.createRange();
+            range.setStart(text, match.index);
+            range.setEnd(text, match.index + match[0].length);
+            if (lineCount(range) !== 1) problems.push(`${match[0]} split`);
+          }
+        }
+      }
+      for (const button of row.querySelectorAll<HTMLElement>(".plot-pending-actions button")) {
+        const label = document.createRange();
+        label.selectNodeContents(button);
+        if (clipped(button) || button.scrollWidth > button.clientWidth + 1 || lineCount(label) !== 1) {
+          problems.push(`${(button.textContent ?? "").trim()} clipped`);
+        }
+      }
+      return problems.map((problem) => `${plot} ${problem}`);
+    });
+  });
+}
+
+/** How many rows the chromatogram's context line takes, by overlap, as `observeViewer` counts toolbars. */
+function contextRows(): Promise<number | null> {
+  return browser.execute(() => {
+    const context = document.querySelector(".chromatogram-context");
+    if (context === null || context.getClientRects().length === 0) return null;
+    const boxes = [...context.querySelectorAll("p, summary")]
+      .filter((node) => node.getClientRects().length > 0)
+      .map((node) => node.getBoundingClientRect())
+      .sort((a, b) => a.top - b.top);
+    let count = 0;
+    let bottom = -Infinity;
+    for (const box of boxes) {
+      if (box.top >= bottom - 1) {
+        count += 1;
+        bottom = box.bottom;
+      } else bottom = Math.max(bottom, box.bottom);
+    }
+    return count;
+  });
 }
 
 /** Opens or closes one header panel toggle, and waits for the header to say so. */
@@ -1156,6 +1272,57 @@ describe("PM9.3 viewer contracts, rendered", () => {
       expect(countOf(await ipcCalls(), "open_mzml_preview")).toBe(2);
       expect(await unexpectedConsole()).toEqual([]);
     });
+
+    it("PM9.3-V10 says a committed range once, when a gesture settles, and not when it starts (UI-34)", async () => {
+      await metrics(1920, 1080);
+      await open();
+      await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
+      const line = `${RT_PANEL} .plot-committed-range`;
+      const shownLine = fill(en.rangeCommittedShown, { name: en.rangeRtAxis });
+
+      // A committed range first, so a gesture has old numbers it could read out.
+      await browser.$(RT_PANEL).$(`button=${en.viewerZoomIn}`).click();
+      await browser.waitUntil(async () => (await textOf(line)).startsWith(shownLine), {
+        timeout: 15_000,
+        timeoutMsg: "Zoom in never committed",
+      });
+      await frames();
+      const before = await rangeLine(RT_PANEL);
+      const beforeText = await textOf(line);
+
+      // Every text the live line takes from here on, as a reader would hear it.
+      await browser.execute((css: string) => {
+        const node = document.querySelector(css)!;
+        const seen: string[] = [];
+        (window as unknown as { __pm93Line?: string[] }).__pm93Line = seen;
+        new MutationObserver(() => {
+          seen.push((node.textContent ?? "").trim());
+        }).observe(node, { characterData: true, childList: true, subtree: true });
+      }, line);
+
+      const at = await point(PLOT, 0.5);
+      await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -300 }).perform();
+      // Waits for the settled commit itself, not for the first change: under the
+      // regression the first change is the gesture's start.
+      await browser.waitUntil(
+        async () => {
+          const now = await rangeLine(RT_PANEL);
+          return (await textOf(line)).startsWith(shownLine) && (now.low !== before.low || now.high !== before.high);
+        },
+        { timeout: 15_000, timeoutMsg: "the wheel never settled into a new commit" },
+      );
+      await frames();
+      const after = await textOf(line);
+      const seen = await browser.execute(() => (window as unknown as { __pm93Line?: string[] }).__pm93Line ?? []);
+      const atomic = await browser.$(line).getAttribute("aria-atomic");
+      evidence.push({ label: "pm93-v10-live-line", before: beforeText, seen, after, atomic });
+      // One change, to the settled commit; nothing when the gesture started (UI-34).
+      expect([...new Set(seen)]).toEqual([after]);
+      // Read whole: the change is to the numbers alone, which a reader must not
+      // hear without the words they belong to.
+      expect(atomic).toBe("true");
+      expect(await unexpectedConsole()).toEqual([]);
+    });
   });
 
   describe("observation (current viewer; geometry recorded, L13 and toolbar rows asserted)", () => {
@@ -1354,6 +1521,96 @@ describe("PM9.3 viewer contracts, rendered", () => {
           expect(measured.atEntry.plotHeight).toBeGreaterThanOrEqual(219);
         }
         evidence.push({ label: `pm93-t-${locale}`, kind: "Observation only.", candidate: process.env["MSCANVAS_PM9_CANDIDATE"] ?? "unlabelled", task });
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+
+    // Baseline §12's coverage gap: every rendered range came from short fixture
+    // values. PM9.3-G's state with values of a real run's size at the
+    // intermediate evidence columns (785, 699, 828, 571 and 928 px), then with a
+    // pending retention-time band: a settled committed line keeps its numbers
+    // for announcement only, so a long retention time reaches a range row only
+    // while a band is pending. Held here: range rows from 690 px, pending bands,
+    // captions, long values and the lines' integrity. G's toolbar, heading and
+    // unit checks do not depend on the values and are not repeated.
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`PM9.3-L long range values at the intermediate widths in ${locale}`, async () => {
+        type Frame = Awaited<ReturnType<typeof observeViewer>> & { readonly integrity: string[]; readonly context: number | null };
+        const LONG_RANGE = /\d{4}\.\d{4} (?:to|至) \d{4}\.\d{4}$/u;
+        const sweep = async (phase: string): Promise<Frame[]> => {
+          const measured: Frame[] = [];
+          for (const [width, height, details] of [
+            [1366, 768, true],
+            [1280, 800, true],
+            [1152, 720, false],
+            [1152, 720, true],
+            [960, 640, false],
+          ] as const) {
+            await metrics(width, height);
+            if (details) await setPanel("details", true);
+            else await frames();
+            const frame = await observeViewer(
+              `pm93-l-${locale}-${phase}-${String(width)}x${String(height)}${details ? "-details-open" : ""}`,
+            );
+            measured.push({ ...frame, integrity: await rangeIntegrity(), context: await contextRows() });
+            if (details) await setPanel("details", false);
+          }
+          evidence.push({
+            label: `pm93-l-${locale}-${phase}`,
+            frames: measured.map((frame) => ({
+              label: frame.label,
+              column: frame.evidence?.width ?? null,
+              rangeRows: frame.rangeRows,
+              rangeTexts: frame.rangeTexts,
+              integrity: frame.integrity,
+              contextRows: frame.context,
+            })),
+          });
+          return measured;
+        };
+        const problems = (list: readonly Frame[], pending: number) =>
+          list.flatMap((frame) => [
+            ...(frame.lang === locale ? [] : [`${frame.label} lang ${frame.lang}`]),
+            ...(frame.pendingActions === pending ? [] : [`${frame.label} ${String(frame.pendingActions)} pending bands`]),
+            ...((frame.evidence?.width ?? 0) >= 690
+              ? Object.entries(frame.rangeRows)
+                  .filter(([, row]) => row !== null && row.rows > 1)
+                  .map(([name, row]) => `${frame.label} ${name} range row ${String(row?.rows)}`)
+              : []),
+            ...frame.captions
+              .filter((caption) => caption.sizeLines !== 1)
+              .map((caption) => `${frame.label} caption ${String(caption.text)}`),
+            ...frame.rangeTexts.filter((text) => !LONG_RANGE.test(text)).map((text) => `${frame.label} not long: ${text}`),
+            ...frame.integrity.map((problem) => `${frame.label} ${problem}`),
+          ]);
+
+        await metrics(1920, 1080);
+        await open({ locale, long: true });
+        await activateRow(2);
+        await waitForReads(1);
+        await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
+        await drag(PLOT, 0.2, 0.8);
+        await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForDisplayed();
+        await browser.$(`${RT_PANEL} .plot-pending-actions button:nth-child(1)`).click();
+        await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForExist({ reverse: true });
+        await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
+        await drag(SPECTRUM_PLOT, 0.2, 0.6);
+        await browser.$(`${MZ_PANEL} .plot-pending-actions`).waitForDisplayed();
+        await browser.execute(() => document.querySelector<HTMLElement>("#workbench-evidence")?.scrollTo({ top: 0 }));
+
+        // Phase 1: a committed retention-time range and a pending m/z band.
+        const committed = problems(await sweep("committed-rt"), 1);
+
+        // Phase 2: a band drawn inside the committed range, left pending.
+        await metrics(1920, 1080);
+        await frames();
+        await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
+        await drag(PLOT, 0.3, 0.7);
+        await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForDisplayed();
+        await browser.execute(() => document.querySelector<HTMLElement>("#workbench-evidence")?.scrollTo({ top: 0 }));
+        const pending = problems(await sweep("pending-rt"), 2);
+
+        expect({ committed, pending }).toEqual({ committed: [], pending: [] });
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
