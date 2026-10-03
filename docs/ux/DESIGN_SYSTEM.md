@@ -260,14 +260,18 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   is part of the plot's accessible description (UI-31, UI-33). Where the
   committed range is the one on screen -- the viewport buttons commit what
   they show -- the line says "the range shown" rather than repeat the
-  caption's numbers, which stay in its live announcement; it prints its own
-  only while they differ, during a gesture (UI-34). Open: that switch is
-  announced at the start of every gesture, the old range read out, and then
-  again when the gesture settles.
+  caption's numbers, which stay in its live announcement, read whole
+  (atomic). It follows the pending band and the committed range, never a
+  gesture: a wheel or drag changes only the caption, and a commit is
+  announced once, when it settles (UI-34). While a gesture is in flight the
+  line still reads "the range shown"; it is true again once the gesture
+  settles or is abandoned. A range line gives way inside its own box (a 12em
+  basis) before the pending actions beside it take a second row (UI-32).
 - **Details facts.** In the 245 px Details column a digest is one line (the
-  whole value in its tooltip, still selected and copied in full) and a name at
-  most three lines (UI-25). Open: a long label still leaves a long value a
-  narrow column.
+  whole value in its tooltip, still selected and copied in full), a name at
+  most three lines, and each fact is its label over its value, so a long value
+  has the column's full width (UI-25). At 1050 px and below, where Details
+  takes the surface's place, label and value stay side by side.
 - **Counts.** A count keeps its word in either language: no-break spaces in
   the resources and `word-break: keep-all` (UI-16). Where the 280 px roster
   cannot hold the organizing buttons and the count on one line, the count

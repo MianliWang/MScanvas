@@ -757,8 +757,10 @@ async function observeViewer(label: string) {
 
 /**
  * The lines under the plots, for the long-value case (baseline §12's coverage
- * gap): each range line and pending action whole inside every box that clips
- * it, each visible number on one line, each action's label on one line.
+ * gap): each range line and pending action not cut off at the sides by any box
+ * that clips it (sides only: the evidence column scrolls vertically, so a row
+ * below the fold is not cut off), each visible number on one line, each
+ * action's label on one line.
  */
 function rangeIntegrity(): Promise<string[]> {
   return browser.execute(() => {

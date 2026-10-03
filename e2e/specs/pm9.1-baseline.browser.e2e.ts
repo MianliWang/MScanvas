@@ -1802,6 +1802,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         // Where Details takes the surface's place (960x640), label and value
         // stay side by side.
         await metrics(960, 640);
+        // The breakpoint's fit lands at the next rendering step; let it commit
+        // before the toggle is read.
+        await frames();
         await readBackSavedPreferences();
         const details = browser.$('[aria-controls="workbench-inspector"]');
         if ((await details.getAttribute("aria-expanded")) !== "true") await details.click();
@@ -1811,11 +1814,15 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           const list = document.querySelector("#workbench-inspector [data-targeted-plan-facts]")!;
           const label = list.querySelector("dt")!.getBoundingClientRect();
           const value = list.querySelector("dd")!.getBoundingClientRect();
-          return { sameRow: Math.abs(label.top - value.top) < 2, valueRight: value.left >= label.right };
+          return {
+            sized: label.width > 0 && value.width > 0,
+            sameRow: Math.abs(label.top - value.top) < 2,
+            valueRight: value.left >= label.right,
+          };
         });
         evidence.push({ label: `ui-rework-details-swap-${locale}`, beside });
         await surfaceFrame(`ui-rework-details-swap-${locale}-960x640`);
-        expect(beside).toEqual({ sameRow: true, valueRight: true });
+        expect(beside).toEqual({ sized: true, sameRow: true, valueRight: true });
         expect(await unexpectedConsole()).toEqual([]);
       });
 
