@@ -857,3 +857,9 @@ The viewer defects it left, and those found in its acceptance, were reworked in
   passes through `revealRosterRow` (UI-23).
 
 The Full/Current scope's persistence stays the owner's (UI-35).
+
+Batch 2 (2026-10-03, `5e4c6ac`): the committed range line follows the pending
+band and the committed range, never a gesture, and is announced once, whole,
+when a commit settles (UI-34); a range line gives way inside its own box so a
+pending band's actions stay on one row with a real run's values and at a
+699 px column (UI-32, PM9.3-L).

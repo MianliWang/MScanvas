@@ -902,16 +902,16 @@ The result column is filled at closure.
 | UI-20 | PM9.2 limits | Clear list focus and hover, code-evidenced only | untested | Visible, unclipped ring; discernible hover | RENDER | VERIFIED — NO DEFECT FOUND: Clear list's ring is visible and unclipped and its hover discernible |
 | UI-21 | M7.4 | Pointer click on the membership checkbox of a partly clipped roster row | suspicion | Exactly that row toggles; nothing scrolls between press and click | RENDER | FIXED AND RENDER-VERIFIED: a press no longer focus-scrolls or keyboard-reveals the row; exactly that row toggles and the list does not move (before: the list moved 3 px between press and click; a half-clipped checkbox then exposed the keyboard reveal moving it 40 px, toggling nothing) |
 | UI-24 | PM9.2 limits | A refused `Capture file facts` (and other refused primaries) at full accent; its reason only in `title` | reported | Refused primaries look refused and stay focusable; the reason is visible text | FIX | FIXED AND RENDER-VERIFIED: refused primaries give up the accent everywhere and stay Tab stops with a visible ring; Capture file facts and targeted Run say their reason as text, en and zh-CN (before: full accent, reason only in `title`) |
-| UI-25 | L12 | Details (245 px): SHA-256 values and long names wrap down the column | reported | Short, scannable facts; the full value reachable | FIX | UNRESOLVED: digests are one line (the whole value in the tooltip) and names at most three, no overflow, en and zh-CN (before: thirteen and six lines); but a long fact label still leaves its value a narrow column, and the targeted MS1 engine string wraps to about eight lines, so the facts are not yet short and scannable. The correction budget was spent |
+| UI-25 | L12 | Details (245 px): SHA-256 values and long names wrap down the column | reported | Short, scannable facts; the full value reachable | FIX | FIXED AND RENDER-VERIFIED (batch 2): above 1050 px each fact in Details is its label over its value, so a wrapped value has its list's whole width (en and zh-CN, share 1.0; before 0.29 and 0.44), a digest shows a prefix of about 30 characters, and a real run's module paths no longer clip their list; digests stay one line and names at most three; at 960×640, where Details takes the surface's place, label and value stay side by side |
 | UI-26 | PM9.3 B | Quick-action caption breaks inside the size ("1200 / × 640 px") | reported | Size kept whole; the line reflows at the separators | FIX | FIXED AND RENDER-VERIFIED: the size is on one line in every default frame, en and zh-CN |
 | UI-27 | PM9.3 B | Chromatogram header takes two rows at a 571 px column (roster and Details open at 1152) | reported (PM9.3 regression) | One row; caption kept | FIX | FIXED AND RENDER-VERIFIED: the chromatogram header is one row at the 571 px column, the caption under the buttons, en and zh-CN (before: two rows) |
 | UI-28 | PM9.3 B | Spectrum header takes 2–3 rows with Details opened at 1152–1280 | reported | One row where the controls fit; caption kept | FIX | FIXED AND RENDER-VERIFIED: one row with Details open at 1280–1536, en and zh-CN; at 1152 in English the controls measure too wide to sit beside the heading and take one row of their own, the spectrum's sentence whole and uncovered (before, PM9.3's closure: two rows at 1280, three at 1152 in en) |
 | UI-29 | PM9.3 §0.1 | Details opened at 1440 and 1536 not written up | untested | Recorded, with header and range rows | RENDER | VERIFIED — NO DEFECT FOUND: Details opened at 1536 and 1440 recorded; every header and range row is one row |
 | UI-30 | PM9.3 B | Full-width m/z pill against the chromatogram's content-width pills | reported | One design language | FIX | FIXED AND RENDER-VERIFIED: the m/z pill is as wide as its controls in every default frame |
 | UI-31 | PM9.3 B | Range lines print raw floats beside the four-decimal "Showing" | reported | Formatted with the domain formatters; exact values in the editor and export notes | FIX | FIXED AND RENDER-VERIFIED: four decimals on range lines and "full range" before a commit; the exact values stay in the editor and the export notes |
-| UI-32 | PM9.3 B | The en chromatogram range row wraps at 828 and 785 px | reported | One line; its disclosures stay Tab stops | FIX | FIXED AND RENDER-VERIFIED: range rows are one line at 828 and 785 px and in every default frame of 690 px and wider |
+| UI-32 | PM9.3 B | The en chromatogram range row wraps at 828 and 785 px | reported | One line; its disclosures stay Tab stops | FIX | FIXED AND RENDER-VERIFIED: range rows are one line at 828 and 785 px and in every default frame of 690 px and wider; with a real run's values (PM9.3-L) and for a pending retention-time band at 699 px, the line gives way inside its own box (12em basis) so the actions stay on one row, the sentence then taking two text lines with each number whole (batch 2; before, the pending RT row took two rows at 785 and 699 px in en) |
 | UI-33 | PM9.3 B | "(unit not reported)" four or five times per chromatogram | reported | Stated once per axis; the plot's description still carries it | FIX | FIXED AND RENDER-VERIFIED: the unit caveat twice per chromatogram panel (once per axis) and in the plot's accessible description (before: four or five times) |
-| UI-34 | PM9.3 §3 | Viewer copy density judged | untested | Judged after the fixes | RENDER | UNRESOLVED: the settled duplicate is gone ("the range shown", cycle 2), but cycle 2 regressed the live line. At the start of every wheel or drag gesture it switches to the old committed numbers, announcing them, and switches back when the gesture settles. A probe recorded "the range shown 0.0125 to 0.0500" → "0.0125 to 0.0500" → "the range shown 0.0152 to 0.0470"; before cycle 2 it changed once, on settle |
+| UI-34 | PM9.3 §3 | Viewer copy density judged | untested | Judged after the fixes | RENDER | FIXED AND RENDER-VERIFIED (batch 2): one statement per fact; a settled commit says "the range shown" rather than repeat the caption's numbers. The committed line follows the pending band and the committed range, never a gesture: PM9.3-V10 records one change, on settle, where batch 1's code announced the old numbers at the gesture's start too; abandoning a gesture changes nothing (Vitest); the line is atomic. Kept: mid-gesture the line still reads "the range shown", true again once the gesture settles or is abandoned (DESIGN_SYSTEM) |
 | UI-36 | PM9.3 §1 | Failed spectrum load, never asserted | untested | Selection kept, failure and Retry shown, exports withheld | RENDER (Vitest) | VERIFIED — NO DEFECT FOUND (Vitest): the selection is kept, the failure and Retry are shown, the figure and data exports are withheld, and Retry recovers |
 | UI-47 | PM9.3 B | Inert `.viewer-stack` grid CSS in `app.css` | suspicion | Removed where the cascade proves it dead | FIX | FIXED AND RENDER-VERIFIED: the `.viewer-stack` grid, gap, overflow and 1120 px rows are removed; the default frames' geometry is unchanged |
 | UI-49 | advisor, dispatch §5 | The whole viewer task at 960×640 and 1366×768: entry → select a scan → read the whole spectrum → reach the row | untested | Scroll to the whole spectrum plot measured before and after, with no plot shrunk | RENDER | VERIFIED — NO DEFECT FOUND: measured before and after, identical: at 960×640 the whole spectrum is 207 px of scroll away and its row 434 px, at 1366×768 79 px; no plot shrunk (220 px) |
@@ -966,5 +966,37 @@ values, and UI-34's live line regressing on gestures (a browser probe,
 recorded in the row). Each needs a small change and a PM9.1 or PM9.3 run in a
 third cycle, which is the owner's to authorize.
 
-Status: **KNOWN UI/UX REWORK OPEN — UI-25 AND UI-34 UNRESOLVED — PM9.4
-HELD**. PM9.1 stays PARTIAL for J1–J6.
+Status at the end of batch 1: **KNOWN UI/UX REWORK OPEN — UI-25 AND UI-34
+UNRESOLVED — PM9.4 HELD**. PM9.1 stays PARTIAL for J1–J6.
+
+**Batch 2 (2026-10-03).** The owner re-issued the same dispatch, and with it a
+new batch on this frozen list: the two UNRESOLVED rows and the long-range
+coverage gap, with nothing already fixed reworked. Test first (`d31d134`), then
+production (`697e405`), one independent focused review (three dimensions, a
+skeptic per finding: four low findings, none in production code), and one
+correction cycle (`5e4c6ac`: DESIGN_SYSTEM's stale description, a 960×640 check
+that could pass on zero-size boxes, a docstring). Code candidate `5e4c6ac`.
+
+Before, on the starting production (`d31d134`'s, equal to `ea85a88`'s): the two
+new UI-34 unit cases failed, PM9.3-V10 recorded the gesture's start announcing
+the old numbers, PM9.3-L failed in en (a pending retention-time row of two rows
+at 785 and 699 px), and PM9.1's UI-25 failed in en and zh-CN (wrapped values at
+0.29 and 0.44 of their list). After, each passes. Also found and fixed: a real
+run's module paths left their digests no width; a pending retention-time band
+at a 699 px column wrapped with short values too, a state UI-32 had never
+exercised.
+
+Static on the candidate, each exit 0: `pnpm lint`, `pnpm typecheck`,
+`pnpm e2e:typecheck`, `pnpm test` (111 files, 2224 tests), `pnpm build`,
+`python scripts/check_repo.py`, `git diff --check`. No manifest, lock, Rust,
+schema or provider path changed. Browser, one spec at a time behind the memory
+gate: PM9.3 16 of 16 (with V10 and PM9.3-L at the 785, 699, 828, 571 and 928 px
+columns, en and zh-CN) and PM9.1 55 of 55. The affected legacy specs match
+batch 1's final run case for case: m7.3, m7.4, m5.7, m8.1–m8.5, m9.1 and m9.4
+pass; m4.3, m4.4, m5.2, m5.3 and both viewer-r1 specs fail only as there,
+message for message. The owner relaxed the admission gate for this run to 6 GiB
+free and 85% used; the emergency line was unchanged. Not run, as in batch 1:
+m6.x and the native specs.
+
+Status: **PM9 REPORTED UI/UX ISSUES CLEARED — RENDERED ACCEPTANCE PASS**.
+PM9.4 is not started. PM9.1 stays PARTIAL for J1–J6.
