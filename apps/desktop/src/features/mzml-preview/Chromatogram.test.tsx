@@ -30,6 +30,8 @@ import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailabili
 import type { ViewerInteractionController } from "./viewer/useViewerInteraction";
 import { useViewerInteraction } from "./viewer/useViewerInteraction";
 import { buildRows } from "../../test/previewFixtures";
+import { COMMITTED_CLAIMS, fixed, textOutside, untrue } from "../../test/rangeClaims";
+import { UI_RESOURCES } from "../preferences/i18n";
 
 const TIC_ONLY: TraceVisibility = { tic: true, bpc: false };
 const BPC_ONLY: TraceVisibility = { tic: false, bpc: true };
@@ -229,6 +231,48 @@ function shown(): RetentionTimeDomain {
     throw new Error("nothing is on screen");
   }
   return domain;
+}
+
+/** The range row's one announcer, as UI-34 keeps it: polite, read whole, alone (the editor's problem line aside). */
+function liveLine(): Element {
+  const regions = [...document.querySelectorAll(".plot-range-actions [aria-live]")].filter((node) => node.closest(".plot-range-editor") === null);
+  expect(regions).toHaveLength(1);
+  const line = regions[0]!;
+  expect(line).toHaveClass("plot-committed-range");
+  expect(line).toHaveAttribute("aria-live", "polite");
+  expect(line).toHaveAttribute("aria-atomic", "true");
+  return line;
+}
+
+/** Every change inside the live line, read synchronously with `takeRecords`. */
+function observeLine(): MutationObserver {
+  const observer = new MutationObserver(() => undefined);
+  observer.observe(liveLine(), { attributes: true, characterData: true, childList: true, subtree: true });
+  return observer;
+}
+
+/** What the live line says, spaces collapsed. */
+function spoken(): string {
+  return (liveLine().textContent ?? "").replace(/\s+/gu, " ").trim();
+}
+
+/**
+ * The committed row is true of the interaction now (PM9 UI-34): the visible
+ * sentence has a declared truth condition and meets it against the reducer's
+ * own state, the caption prints the range the plot displays, the committed
+ * bounds stay the live line's last words (PM9.3's rangeLine and LONG_RANGE read
+ * them there), and at rest the line does not repeat the caption's numbers.
+ */
+function expectTruthfulLine(): void {
+  const now = state();
+  expect(now.rangeSelection).toBeNull();
+  const displayed = fixed(shown());
+  const committed = now.committedDomain === null ? null : fixed(now.committedDomain);
+  const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
+  expect(untrue(visible, "retention time", { committed, shown: displayed })).toBeNull();
+  expect(document.querySelector(".chromatogram-range")?.textContent).toContain(displayed);
+  if (committed !== null) expect(spoken().endsWith(committed), `"${spoken()}" does not end with ${committed}`).toBe(true);
+  if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
 }
 
 /**
@@ -722,53 +766,142 @@ describe("moving the viewport", () => {
     expect(state().committedDomain?.high).toBeLessThan(full.high);
   });
 
-  it("says a commit once, when a wheel settles, and nothing when the wheel starts (PM9 UI-34)", () => {
+  it("keeps the committed line true through held wheels, and says each commit once, when it settles (PM9 UI-34)", () => {
     renderChromatogram();
-    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
-    const line = document.querySelector(".plot-committed-range")!;
-    const before = line.textContent;
-    expect(before).toBe("Committed retention time: the range shown 0.1000 to 0.3000");
-    // Read whole when it changes, not only the numbers that changed.
-    expect(line).toHaveAttribute("aria-atomic", "true");
-    const observer = new MutationObserver(() => undefined);
-    observer.observe(line, { characterData: true, childList: true, subtree: true });
+    expectTruthfulLine();
+    const observer = observeLine();
 
+    // A wheel from the whole run, held: the plot displays the gesture's range,
+    // and nothing is committed yet.
     fireEvent.wheel(plot(), { clientX: 500, deltaY: -240 });
-
-    // The gesture is drawn, but the committed range has not moved, so the live
-    // line has nothing new to say: no mutation, no announcement.
     expect(state().gesture).not.toBeNull();
+    expect(state().committedDomain).toBeNull();
+    expectTruthfulLine();
+    // Starting a gesture says nothing.
     expect(observer.takeRecords()).toEqual([]);
-    expect(line.textContent).toBe(before);
 
+    // Settled: one change, to the first commit.
     act(() => {
       vi.advanceTimersByTime(200);
     });
-
-    // Settled: one change, to the new commit.
     expect(state().gesture).toBeNull();
+    expect(state().committedDomain).not.toBeNull();
     expect(observer.takeRecords()).not.toEqual([]);
-    expect(line.textContent).not.toBe(before);
-    expect(line.textContent).toMatch(/^Committed retention time: the range shown \d\.\d{4} to \d\.\d{4}$/u);
+    expectTruthfulLine();
+
+    // Held again from that commit: the plot displays another range than the
+    // committed one, and the line has to stay true of both.
+    const settled = state().committedDomain!;
+    fireEvent.wheel(plot(), { clientX: 300, deltaY: -240 });
+    expect(state().gesture).not.toBeNull();
+    expect(fixed(shown())).not.toBe(fixed(settled));
+    expectTruthfulLine();
+    expect(observer.takeRecords()).toEqual([]);
+
+    // Settled again: one change, to the new commit, and nothing after it.
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(state().committedDomain).not.toEqual(settled);
+    expect(observer.takeRecords()).not.toEqual([]);
+    expectTruthfulLine();
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(observer.takeRecords()).toEqual([]);
     observer.disconnect();
   });
 
-  it("says nothing when a wheel is abandoned before it settles (PM9 UI-34)", () => {
+  it("abandons a held wheel on Escape without a word, and keeps the commit (PM9 UI-34)", () => {
     renderChromatogram();
     send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
-    const line = document.querySelector(".plot-committed-range")!;
-    const before = line.textContent;
+    const committed = state().committedDomain;
+    const before = spoken();
+    const observer = observeLine();
     fireEvent.wheel(plot(), { clientX: 500, deltaY: -240 });
     expect(state().gesture).not.toBeNull();
-    const observer = new MutationObserver(() => undefined);
-    observer.observe(line, { characterData: true, childList: true, subtree: true });
+    expect(fixed(shown())).not.toBe(fixed(committed!));
+    expectTruthfulLine();
 
     key({ key: "Escape" });
 
     expect(state().gesture).toBeNull();
+    expect(state().committedDomain).toBe(committed);
     expect(observer.takeRecords()).toEqual([]);
-    expect(line.textContent).toBe(before);
+    expect(spoken()).toBe(before);
+    expectTruthfulLine();
+    // Its settle went with it: nothing commits afterwards.
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(state().committedDomain).toBe(committed);
+    expect(observer.takeRecords()).toEqual([]);
     observer.disconnect();
+  });
+
+  it("keeps nothing of the previous run's commit when a new preview replaces it mid-gesture (PM9 UI-34)", () => {
+    const { model } = renderChromatogram();
+    if (model.status !== "ready") throw new Error("expected a drawable run");
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    fireEvent.wheel(plot(), { clientX: 500, deltaY: -240 });
+    expect(state().gesture).not.toBeNull();
+
+    // The workspace's own announcement of a new preview (ADR 0032).
+    send({ type: "preview-loaded", fullDomain: model.fullDomain });
+
+    expect(state().committedDomain).toBeNull();
+    expect(spoken()).not.toContain("0.1000 to 0.3000");
+    expectTruthfulLine();
+    // The old gesture's settle addresses an epoch the new preview retired.
+    const loaded = state();
+    const observer = observeLine();
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(state()).toBe(loaded);
+    expect(observer.takeRecords()).toEqual([]);
+    observer.disconnect();
+  });
+
+  it("says once that a wheel discarded a pending band, the owners' rule, and once more when the wheel settles (PM9 UI-34)", () => {
+    renderChromatogram();
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    const committed = state().committedDomain;
+    // A band drawn and released, waiting to be confirmed.
+    send({ type: "range-started", domain: { low: 0.15, high: 0.25 } });
+    send({ type: "range-released", transaction: state().rangeSelection!.transaction });
+    expect(state().rangeSelection?.phase).toBe("pending");
+    expect(spoken()).toBe("Pending retention time: 0.1500 to 0.2500");
+    const observer = observeLine();
+
+    // A gesture's start discards a pending band (interactionState's
+    // gesture-started), so the line reports the committed range again: a real
+    // change, said once, and true while the gesture is held.
+    fireEvent.wheel(plot(), { clientX: 500, deltaY: -240 });
+    expect(state().gesture).not.toBeNull();
+    expect(state().committedDomain).toBe(committed);
+    expect(observer.takeRecords()).not.toEqual([]);
+    expectTruthfulLine();
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(state().committedDomain).not.toEqual(committed);
+    expect(observer.takeRecords()).not.toEqual([]);
+    expectTruthfulLine();
+    observer.disconnect();
+  });
+
+  it("gives each committed sentence one truth condition in both bundled languages (PM9 UI-34)", () => {
+    const en = UI_RESOURCES.en as Record<string, string>;
+    const zh = UI_RESOURCES["zh-CN"] as Record<string, string>;
+    const keys = Object.keys(en).filter((key) => en[key]!.startsWith("Committed {{name}}"));
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) {
+      const index = COMMITTED_CLAIMS.findIndex((claim) => claim.en === en[key]);
+      expect(index, `no truth condition is declared for ${key}: "${en[key]!}"`).not.toBe(-1);
+      expect(COMMITTED_CLAIMS.findIndex((claim) => claim.zh === zh[key]), `${key} in zh-CN: "${String(zh[key])}"`).toBe(index);
+    }
   });
 
   it("lets a selection made mid-wheel win over the settle that arrives later", () => {

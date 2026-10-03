@@ -60,6 +60,7 @@ import {
   buildSpectrum,
   secondFile,
 } from "../../apps/desktop/src/test/previewFixtures";
+import { fixed, untrue } from "../../apps/desktop/src/test/rangeClaims";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 
@@ -444,6 +445,88 @@ async function rangeLine(panel: string) {
     low: Number(low),
     high: Number(high),
   };
+}
+
+/** WebDriver's Escape key. */
+const ESCAPE = String.fromCharCode(0xe00c);
+
+/**
+ * One plot's range row and caption, read in one script: the sentence a sighted
+ * reader sees (outside .visually-hidden, the pending actions and the
+ * disclosures), what the live line says, the bounds it carries, the bounds the
+ * caption prints for the range on screen, and how many announcers the row has.
+ */
+function rangeFacts(panel: string) {
+  return browser.execute((css: string) => {
+    const root = document.querySelector(css)!;
+    const row = root.querySelector(".plot-range-actions")!;
+    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+    let visible = "";
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const hidden = node.parentElement?.closest(".visually-hidden, .plot-pending-actions, details");
+      if (hidden === null || hidden === undefined || !row.contains(hidden)) visible += node.textContent ?? "";
+    }
+    const bounds = (text: string) => {
+      const match = /(-?\d+\.\d+) (?:to|至) (-?\d+\.\d+)/u.exec(text);
+      return match === null ? null : `${match[1]} to ${match[2]}`;
+    };
+    const spoken = (row.querySelector(".plot-committed-range")?.textContent ?? "").replace(/\s+/gu, " ").trim();
+    return {
+      visible: visible.replace(/\s+/gu, " ").trim(),
+      spoken,
+      bounds: bounds(spoken),
+      displayed: bounds(root.querySelector(".chromatogram-range, #spectrum-viewport-range")?.textContent ?? ""),
+      announcers: [...row.querySelectorAll("[aria-live]")].filter((node) => node.closest(".plot-range-editor") === null).length,
+    };
+  }, panel);
+}
+
+/** Records what the live line says each time anything inside it changes. */
+async function watchLine(panel: string) {
+  await browser.execute((css: string) => {
+    const line = document.querySelector(`${css} .plot-committed-range`)!;
+    const seen: string[] = [];
+    Reflect.set(window, "__pm93Line", seen);
+    new MutationObserver(() => {
+      seen.push((line.textContent ?? "").replace(/\s+/gu, " ").trim());
+    }).observe(line, { attributes: true, characterData: true, childList: true, subtree: true });
+  }, panel);
+}
+
+/** Every text the live line has taken since watchLine, in order. */
+function lineChanges(): Promise<string[]> {
+  return browser.execute(() => (Reflect.get(window, "__pm93Line") as string[] | undefined) ?? []);
+}
+
+/**
+ * A middle-button press on a plot, moved past the slop and held: a pan in
+ * flight. Middle drag pans since M7.3, where a primary drag proposes a band.
+ * The button stays down until releasePan; nothing in between may call
+ * browser.keys or an unskipped action().perform(), which release every input
+ * source.
+ */
+async function holdPan(selector: string, from: number, to: number) {
+  const start = await point(selector, from);
+  const end = await point(selector, to);
+  await browser.performActions([
+    {
+      type: "pointer",
+      id: "pm93-pointer",
+      parameters: { pointerType: "mouse" },
+      actions: [
+        { type: "pointerMove", duration: 0, origin: "viewport", ...start },
+        { type: "pointerDown", button: 1 },
+        { type: "pointerMove", duration: 150, origin: "viewport", ...end },
+      ],
+    },
+  ]);
+}
+
+async function releasePan() {
+  await browser.performActions([
+    { type: "pointer", id: "pm93-pointer", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerUp", button: 1 }] },
+  ]);
+  await browser.releaseActions();
 }
 
 /** Chooses one scope radio by script: which scope is chosen is the subject, not how. */
@@ -1263,6 +1346,11 @@ describe("PM9.3 viewer contracts, rendered", () => {
         timeout: 15_000,
         timeoutMsg: "the committed range survived a new preview",
       });
+      // Nothing of the previous acquisition's commit stays in the committed
+      // line, neither shown nor announced (UI-34).
+      const fresh = await rangeFacts(RT_PANEL);
+      expect(fresh.visible).toBe(fill(en.rangeCommittedFull, { name: en.rangeRtAxis }));
+      expect(fresh.spoken).not.toContain(fixed({ low: before.rt.low, high: before.rt.high }));
       // Recorded, not asserted: whether the run scope, the table's search and
       // the figure draft follow the new preview is not a documented contract.
       evidence.push({
@@ -1275,56 +1363,93 @@ describe("PM9.3 viewer contracts, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it("PM9.3-V10 says a committed range once, when a gesture settles, and not when it starts (UI-34)", async () => {
-      await metrics(1920, 1080);
-      await open();
-      await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
-      const line = `${RT_PANEL} .plot-committed-range`;
-      const shownLine = fill(en.rangeCommittedShown, { name: en.rangeRtAxis });
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`PM9.3-V10 keeps the committed line true through a held pan, and says each commit once, never a gesture's start or cancel (UI-34) in ${locale}`, async () => {
+        const words = locale === "en" ? en : zh;
+        await metrics(1920, 1080);
+        await open({ locale });
+        await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
+        const line = `${RT_PANEL} .plot-committed-range`;
+        // Settled: the live line carries a commit other than `previous`, and the caption shows it.
+        const settledOn = (previous: string | null) => async () => {
+          const now = await rangeFacts(RT_PANEL);
+          return now.bounds !== null && now.bounds !== previous && now.bounds === now.displayed;
+        };
+        // Each visible sentence against the state it is about; collected, so one
+        // run says which checkpoints were false.
+        const problems: string[] = [];
+        const judge = (label: string, facts: { readonly visible: string; readonly displayed: string | null }, committed: string | null) => {
+          const why = untrue(facts.visible, words.rangeRtAxis, { committed, shown: facts.displayed ?? "" }, locale);
+          if (why !== null) problems.push(`${label}: ${why}`);
+          if (committed !== null && committed === facts.displayed && /\d/u.test(facts.visible)) problems.push(`${label}: repeats the caption: ${facts.visible}`);
+        };
 
-      // A committed range first, so a gesture has old numbers it could read out.
-      await browser.$(RT_PANEL).$(`button=${en.viewerZoomIn}`).click();
-      await browser.waitUntil(async () => (await textOf(line)).startsWith(shownLine), {
-        timeout: 15_000,
-        timeoutMsg: "Zoom in never committed",
+        // A committed range first, so a gesture has a commit to differ from.
+        await browser.$(RT_PANEL).$(`button=${words.viewerZoomIn}`).click();
+        await browser.waitUntil(settledOn(null), { timeout: 15_000, timeoutMsg: "Zoom in never committed" });
+        await frames();
+        const zoomed = await rangeFacts(RT_PANEL);
+        judge("zoomed", zoomed, zoomed.bounds);
+        await watchLine(RT_PANEL);
+
+        // 1. A middle-button pan, held: the plot displays the gesture's range;
+        // nothing is committed yet.
+        await holdPan(PLOT, 0.5, 0.35);
+        await frames();
+        const held = await rangeFacts(RT_PANEL);
+        expect(held.displayed).not.toBe(zoomed.bounds);
+        expect(held.bounds).toBe(zoomed.bounds);
+        judge("held pan", held, zoomed.bounds);
+        // Starting a gesture says nothing.
+        expect(await lineChanges()).toEqual([]);
+
+        // 2. Released: one change, to the new commit.
+        await releasePan();
+        await browser.waitUntil(settledOn(zoomed.bounds), { timeout: 15_000, timeoutMsg: "the pan never settled into a new commit" });
+        await frames();
+        const panned = await rangeFacts(RT_PANEL);
+        judge("panned", panned, panned.bounds);
+        expect(await lineChanges()).toEqual([panned.spoken]);
+        if (locale === "en") {
+          // The parser V3, V4 and V9 read the line with still finds the commit at its end.
+          const parsed = await rangeLine(RT_PANEL);
+          expect({ committed: parsed.committed, bounds: fixed(parsed) }).toEqual({ committed: true, bounds: panned.bounds });
+        }
+
+        // 3. Another held pan, cancelled with Escape: nothing said, nothing committed.
+        await holdPan(PLOT, 0.35, 0.5);
+        await frames();
+        const cancelling = await rangeFacts(RT_PANEL);
+        expect(cancelling.displayed).not.toBe(panned.bounds);
+        expect(cancelling.bounds).toBe(panned.bounds);
+        judge("held pan before Escape", cancelling, panned.bounds);
+        expect(await browser.execute((css: string) => document.activeElement === document.querySelector(css), PLOT)).toBe(true);
+        await browser.performActions([
+          { type: "key", id: "pm93-keyboard", actions: [{ type: "keyDown", value: ESCAPE }, { type: "keyUp", value: ESCAPE }] },
+        ]);
+        await releasePan();
+        await frames();
+        const abandoned = await rangeFacts(RT_PANEL);
+        expect({ bounds: abandoned.bounds, displayed: abandoned.displayed }).toEqual({ bounds: panned.bounds, displayed: panned.bounds });
+        judge("abandoned", abandoned, panned.bounds);
+        expect(await lineChanges()).toEqual([panned.spoken]);
+
+        // 4. A successive wheel commits again, said once, when it settles.
+        const at = await point(PLOT, 0.5);
+        await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -300 }).perform();
+        await browser.waitUntil(settledOn(panned.bounds), { timeout: 15_000, timeoutMsg: "the wheel never settled into a new commit" });
+        await frames();
+        const wheeled = await rangeFacts(RT_PANEL);
+        judge("wheeled", wheeled, wheeled.bounds);
+        const changes = await lineChanges();
+        evidence.push({ label: `pm93-v10-live-line-${locale}`, zoomed, held, panned, cancelling, abandoned, wheeled, changes, problems });
+        expect(changes).toEqual([panned.spoken, wheeled.spoken]);
+        expect([wheeled.announcers, await browser.$(line).getAttribute("aria-live"), await browser.$(line).getAttribute("aria-atomic")]).toEqual([1, "polite", "true"]);
+        // UI-34: every sentence shown, held gestures included, was true when shown.
+        expect(problems).toEqual([]);
+        expect(await unexpectedConsole()).toEqual([]);
       });
-      await frames();
-      const before = await rangeLine(RT_PANEL);
-      const beforeText = await textOf(line);
-
-      // Every text the live line takes from here on, as a reader would hear it.
-      await browser.execute((css: string) => {
-        const node = document.querySelector(css)!;
-        const seen: string[] = [];
-        (window as unknown as { __pm93Line?: string[] }).__pm93Line = seen;
-        new MutationObserver(() => {
-          seen.push((node.textContent ?? "").trim());
-        }).observe(node, { characterData: true, childList: true, subtree: true });
-      }, line);
-
-      const at = await point(PLOT, 0.5);
-      await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -300 }).perform();
-      // Waits for the settled commit itself, not for the first change: under the
-      // regression the first change is the gesture's start.
-      await browser.waitUntil(
-        async () => {
-          const now = await rangeLine(RT_PANEL);
-          return (await textOf(line)).startsWith(shownLine) && (now.low !== before.low || now.high !== before.high);
-        },
-        { timeout: 15_000, timeoutMsg: "the wheel never settled into a new commit" },
-      );
-      await frames();
-      const after = await textOf(line);
-      const seen = await browser.execute(() => (window as unknown as { __pm93Line?: string[] }).__pm93Line ?? []);
-      const atomic = await browser.$(line).getAttribute("aria-atomic");
-      evidence.push({ label: "pm93-v10-live-line", before: beforeText, seen, after, atomic });
-      // One change, to the settled commit; nothing when the gesture started (UI-34).
-      expect([...new Set(seen)]).toEqual([after]);
-      // Read whole: the change is to the numbers alone, which a reader must not
-      // hear without the words they belong to.
-      expect(atomic).toBe("true");
-      expect(await unexpectedConsole()).toEqual([]);
-    });
+    }
   });
 
   describe("observation (current viewer; geometry recorded, L13 and toolbar rows asserted)", () => {

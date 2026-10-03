@@ -32,6 +32,7 @@ import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { bindUiMessages, UI_RESOURCES } from "../preferences/i18n";
 import type { UiMessage } from "../preferences/i18n";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
+import { fixed, textOutside, untrue } from "../../test/rangeClaims";
 import { useLayoutEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -486,6 +487,63 @@ function messages(locale: "en" | "zh-CN"): UiMessage {
       bundle[key],
     )) as never);
 }
+
+describe("the committed m/z line (PM9 UI-34)", () => {
+  /** The range row's one announcer: polite, read whole, alone. */
+  function liveLine(): Element {
+    const regions = [...document.querySelectorAll(".plot-range-actions [aria-live]")].filter((node) => node.closest(".plot-range-editor") === null);
+    expect(regions).toHaveLength(1);
+    expect(regions[0]).toHaveClass("plot-committed-range");
+    expect(regions[0]).toHaveAttribute("aria-atomic", "true");
+    return regions[0]!;
+  }
+
+  /** The committed row is true of what the reducer holds now, a held gesture included. */
+  function expectTruthfulLine(): void {
+    const now = live();
+    if (now.status !== "ready") throw new Error(`expected an admitted viewport, got ${now.status}`);
+    expect(now.rangeSelection).toBeNull();
+    const displayed = fixed(liveShown());
+    const committed = now.committed === null ? null : fixed(now.committed);
+    const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
+    expect(untrue(visible, "m/z", { committed, shown: displayed })).toBeNull();
+    expect(rangeText()).toContain(displayed);
+    const spoken = (liveLine().textContent ?? "").replace(/\s+/gu, " ").trim();
+    if (committed !== null) expect(spoken.endsWith(committed), `"${spoken}" does not end with ${committed}`).toBe(true);
+    if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
+  }
+
+  it("stays true through a held pan, says the commit once, and keeps nothing for another spectrum", () => {
+    renderViewport();
+    commitSubrange();
+    expectTruthfulLine();
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(liveLine(), { attributes: true, characterData: true, childList: true, subtree: true });
+
+    // Held: a middle-button pan past the slop, not released.
+    pressPointer(CENTRE_X);
+    movePointer(CENTRE_X + 40);
+    const held = live();
+    expect(held.status === "ready" ? held.gesture : null).not.toBeNull();
+    expect(fixed(liveShown())).not.toBe("200.0000 to 300.0000");
+    expectTruthfulLine();
+    expect(observer.takeRecords()).toEqual([]);
+
+    // Released: one change, to the new commit; the drawing it owes says nothing more.
+    releasePointer(CENTRE_X + 40);
+    expect(observer.takeRecords()).not.toEqual([]);
+    expectTruthfulLine();
+    drawProjection(DRAWN);
+    expect(observer.takeRecords()).toEqual([]);
+
+    // Another spectrum is another context (ADR 0038): nothing of this commit is kept.
+    const previous = fixed(ready().committed!);
+    send({ type: "spectrum-selected", spectrumToken: "another", domain: { state: "admitted", low: 1_000, high: 2_000 } });
+    expect(liveLine().textContent).not.toContain(previous);
+    expectTruthfulLine();
+    observer.disconnect();
+  });
+});
 
 describe("what each m/z control would do", () => {
   const cases: readonly {
