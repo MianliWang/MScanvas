@@ -530,7 +530,6 @@ export const zhCN = {
   viewerFigureSize: "{{width}} × {{height}} 像素，{{theme}}主题",
   rangeRtAxis: "保留时间",
   rangeMzAxis: "m/z",
-  rangeCommitted: "已提交 {{name}}：{{low}} 至 {{high}}",
   rangeCommittedFull: "已提交 {{name}}：完整范围",
   rangeCommittedShown: "已提交 {{name}}：当前显示的范围",
   rangeBounds: "{{low}} 至 {{high}}",

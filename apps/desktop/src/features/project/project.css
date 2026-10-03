@@ -539,6 +539,28 @@
   white-space: nowrap;
 }
 
+/* In the 245 px Details column a fact is its label over its value. Beside a
+   column as wide as the list's longest label, a long value had 41-64 px and a
+   real module path left its digest none (PM9 UI-25). A label breaks anywhere,
+   as a module path must. At 1050 px and below Details takes the surface's
+   place and keeps label and value side by side. */
+@media (width > 1050px) {
+  .workbench-inspector .provenance-facts {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0;
+  }
+
+  .workbench-inspector .provenance-facts dt {
+    overflow-wrap: anywhere;
+  }
+
+  /* Facts are set apart from one another, not from the section label above. */
+  .workbench-inspector .provenance-facts dd + dt,
+  .workbench-inspector .targeted-member + .targeted-member > dt {
+    margin-top: 6px;
+  }
+}
+
 /*
  * The targeted MS1 recipe (M9.1): a setup, a report of one stored result, and
  * one target's extracted points.

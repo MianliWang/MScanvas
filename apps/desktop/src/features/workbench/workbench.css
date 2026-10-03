@@ -194,7 +194,11 @@
   cursor: pointer; min-height: 32px; align-content: center; border-radius: 4px;
 }
 .plot-range-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; margin: 4px 0; }
-.plot-committed-range { flex: 1 1 auto; margin: 0; font-size: 12px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+/* A range line gives way inside its own box before the pending actions and
+   disclosures beside it take a second row: with a real run's values, and for
+   a pending retention-time band at a 699 px column with any values (PM9
+   UI-32). 12em is wider than any one formatted value, so no number breaks. */
+.plot-committed-range { flex: 1 1 12em; margin: 0; font-size: 12px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .plot-pending-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .plot-range-actions button { min-height: 32px; }
 .plot-range-form { display: grid; grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr); gap: 6px; align-items: center; padding: 8px 0; }

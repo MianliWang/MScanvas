@@ -190,7 +190,6 @@ export interface MessageParameters {
   readonly viewerExportSaved: { readonly name: string; readonly details: string };
   readonly viewerExportCopied: { readonly details: string };
   readonly viewerFigureSize: { readonly width: string; readonly height: string; readonly theme: string };
-  readonly rangeCommitted: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeCommittedFull: { readonly name: string };
   readonly rangeCommittedShown: { readonly name: string };
   readonly rangeBounds: { readonly low: string; readonly high: string };

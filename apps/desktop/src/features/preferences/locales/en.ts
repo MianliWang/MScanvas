@@ -530,7 +530,6 @@ export const en = {
   viewerFigureSize: "{{width}} by {{height}} pixels, {{theme}} theme",
   rangeRtAxis: "retention time",
   rangeMzAxis: "m/z",
-  rangeCommitted: "Committed {{name}}: {{low}} to {{high}}",
   rangeCommittedFull: "Committed {{name}}: full range",
   rangeCommittedShown: "Committed {{name}}: the range shown",
   rangeBounds: "{{low}} to {{high}}",
