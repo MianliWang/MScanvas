@@ -1273,3 +1273,40 @@ reflog, times EDT on 2026-10-03):
 | `ui34-before/browser-JXepAM` | V10, en and zh-CN, 21:28:25–21:28:29 | `164ffb3` | Tests uncommitted, not `164ffb3`'s, consistent with `4ff3c8c`'s; production known only from the rendered line (batch 2's) | NOT IDENTITY-QUALIFIED; excluded from RED and GREEN claims |
 | `ui34-after/browser-sVQnBS` | PM9.3, 17 cases, 21:30:13–21:30:52 | `b7b8eeb` | Candidate `b7b8eeb` written by the run into its 60 observation entries; clean status not recorded | The accepted GREEN: 17 of 17, 58 frames |
 | `ui34-after/m7.3/browser-jFfW2u` | m7.3, 22:44:55–22:45:33 | `cf36829`, docs only after `b7b8eeb` | No candidate field; clean status not recorded | Accepted as recorded: 16 of 16 |
+| `final-val/A/A-pm9.1.meta.txt` | Group A's admission, 2026-10-04 00:07:17 | `f4e591b` | Clean status not reached: the reading came first and refused | Admission record only; nothing ran |
+
+Result (2026-10-04). Group A did not start. Its admission reading at 00:07:17
+EDT gave 3.64 GiB free and 88.5% used, against 6 GiB and 85%. An earlier
+reading, at 23:55 EDT before any work, gave 3.98 GiB and 87.4%. The sequence
+stopped at A, with no waiting or polling. Not run:
+
+- PM9.1;
+- m5.7;
+- the e2e typecheck;
+- PM9.3-V11 and V12, which are authored and NOT RUN, with no behaviour
+  claimed for them.
+
+No process was launched, so none of this task's is left. HEAD was `f4e591b`
+(tree `f8035a12912ba37b204720149c553943ad1d7893`), with a clean worktree and no
+stash. No defect was found and no production code changed. The latest
+production candidate stays `b7b8eeb5087b755ea6d8b99e6d8d38b848d5103c`. The newer
+test commit is `a1f61af553e2232856abc84d9a1a0c5b140c8829` (tree
+`b170de7abbaac489d41478a562917845fa82c651`), and the commits after it are
+documentation only.
+
+Owed on resumption, in this order, each group on its own admission, from the
+repository root with `MSCANVAS_PM9_OUTPUT_ROOT` set to the group's directory
+and `MSCANVAS_PM9_CANDIDATE` set to HEAD:
+
+```text
+A  pnpm e2e:browser --spec ./e2e/specs/pm9.1-baseline.browser.e2e.ts
+B  pnpm e2e:browser --spec ./e2e/specs/m5.7-selection-availability.browser.e2e.ts
+S  pnpm e2e:typecheck
+C  pnpm e2e:browser --spec ./e2e/specs/pm9.3-viewer.browser.e2e.ts --mochaOpts.grep closeout-sample
+```
+
+C must report exactly two tests. Nothing completed earlier needs rerunning.
+
+Status: **KNOWN UI/UX REWORK — FINAL VALIDATION RESOURCE_DEFERRED**. PM9.4 is
+not started. PM9.1 stays PARTIAL for J1–J6 on `d56b17b`. A passing PM9.1 spec
+file would not complete that historical measurement.
