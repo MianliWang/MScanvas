@@ -1193,6 +1193,18 @@ describe("rows the fixtures do not cover by default", () => {
 });
 
 describe("the task as one path (PM9.5)", () => {
+  /** A second acquisition, for a request opened from another row or run as a batch. */
+  const otherInput = projectInput({
+    id: "11111111-1111-4111-8111-222222222222",
+    label: "second.mzML",
+    verification: "matchingRecordedContent",
+  });
+  const other = projectLayer({ id: "dddddddd-1111-4111-8111-222222222222", sourceInputId: otherInput.id });
+  const two = {
+    inputs: [projectInput({ verification: "matchingRecordedContent" }), otherInput],
+    layers: [projectLayer(), other],
+  };
+
   it("names its own choice of acquisitions and the request's limit (R1, R2)", async () => {
     mount(layered());
     const setup = await openSetup();
@@ -1414,16 +1426,6 @@ describe("the task as one path (PM9.5)", () => {
   });
 
   it("keeps the typed request across closing and another row, not into another project (R11)", async () => {
-    const otherInput = projectInput({
-      id: "11111111-1111-4111-8111-222222222222",
-      label: "second.mzML",
-      verification: "matchingRecordedContent",
-    });
-    const other = projectLayer({ id: "dddddddd-1111-4111-8111-222222222222", sourceInputId: otherInput.id });
-    const two = {
-      inputs: [projectInput({ verification: "matchingRecordedContent" }), otherInput],
-      layers: [projectLayer(), other],
-    };
     const api = mount(layered(two));
     await openSetup();
     await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 120, 30");
@@ -1444,11 +1446,70 @@ describe("the task as one path (PM9.5)", () => {
     expect(query<HTMLInputElement>(`[data-targeted-member="${LAYER}"]`).checked).toBe(false);
 
     // Another project: the setup closes, and the draft goes with its project.
-    api.set(layered({ ...two, projectId: "aaaaaaaa-0000-4111-8111-000000000002" }));
+    const copy = layered({ ...two, projectId: "aaaaaaaa-0000-4111-8111-000000000002" });
+    api.set(copy);
     await press(screen.getByRole("button", { name: en.projectOpen }));
     expect(document.querySelector("[data-targeted-setup]")).toBeNull();
     await press(query(`[data-project-targeted="${LAYER}"]`));
     expect(query<HTMLTextAreaElement>("[data-targeted-text]").value).toBe("");
     expect(query<HTMLInputElement>("[data-targeted-width]").value).toBe("6");
+
+    // Another copy of the same project, with the same identifiers, replaces it too.
+    await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 120, 30");
+    await press(query("[data-targeted-review]"));
+    await press(screen.getByRole("button", { name: en.projectOpen }));
+    expect(document.querySelector("[data-targeted-setup]")).toBeNull();
+    await press(query(`[data-project-targeted="${LAYER}"]`));
+    expect(query<HTMLTextAreaElement>("[data-targeted-text]").value).toBe("");
+    expect(document.querySelector("[data-targeted-review-area]")).toBeNull();
+  });
+
+  it("gives a refused run's keyboard to its refusal once the run has settled (R9)", async () => {
+    const api = mount(layered());
+    await reviewed(api);
+    api.refuseOnce("runTargetedMs1", "analysisQuarantined");
+    // The refusal arrives before the project is read again; the run is out until then.
+    const reread = api.holdOnce("getProjectState");
+    const run = query("[data-targeted-run]");
+    run.focus();
+    await press(run);
+    expect(query('[data-targeted-run-block="running"]')).toBeTruthy();
+    await act(async () => reread());
+    const refused = query('[data-targeted-run-refused="analysisQuarantined"]');
+    expect(document.querySelector("[data-targeted-run-block]")).toBeNull();
+    expect(document.activeElement).toBe(refused);
+  });
+
+  it("keeps one filled primary when a new request is ready beside the last run's result (R8, R12)", async () => {
+    const api = mount(layered(two));
+    await reviewed(api);
+    const base = targetedProject();
+    api.set({ ...base, inputs: two.inputs, layers: [base.layers[0], other] });
+    await press(query("[data-targeted-run]"));
+    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).className).toBe("primary-button");
+
+    api.setTargeted({
+      batchResolution: {
+        problems: [],
+        common: {
+          recipe: PLAN.recipe,
+          parameters: PLAN.parameters,
+          targetListSha256: PLAN.targetListSha256,
+          targets: PLAN.targets,
+        },
+        members: [
+          { layerId: LAYER, inputId: projectInput().id, planSha256: PLAN.planSha256, expectedContent: PLAN.expectedContent, refused: null, blocked: null },
+          { layerId: other.id, inputId: otherInput.id, planSha256: "D".repeat(64), expectedContent: PLAN.expectedContent, refused: null, blocked: null },
+        ],
+        engine: FAKE_ENGINE,
+      },
+    });
+    await press(query(`[data-targeted-member="${other.id}"]`));
+    await press(query("[data-targeted-review]"));
+    const run = query("[data-targeted-run]");
+    expect(run.textContent).toBe(en.targetedRunBatch.replace("{{count}}", "2"));
+    expect(run.className).toBe("primary-button");
+    expect(run.getAttribute("aria-disabled")).toBeNull();
+    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).className).toBe("secondary-button");
   });
 });

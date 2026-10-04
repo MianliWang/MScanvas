@@ -346,6 +346,16 @@ async function wheelTo(selector: string): Promise<boolean> {
   });
   for (let step = 0; step < 40; step += 1) {
     if (await onScreen(selector)) return true;
+    // A wheel over a table or list that scrolls itself would scroll that
+    // instead: the point must stay over the surface's own margin.
+    const inner = await browser.execute(
+      (x: number, y: number) =>
+        (document.elementFromPoint(x, y)?.closest(".targeted-review-scroll, .targeted-batch-scroll, .targeted-member-list") ??
+          null) !== null,
+      point.x,
+      point.y,
+    );
+    if (inner) throw new Error(`the wheel point ${String(point.x)},${String(point.y)} is over an inner scroller`);
     await cdp("Input.dispatchMouseEvent", { type: "mouseWheel", x: point.x, y: point.y, deltaX: 0, deltaY: 200 });
     await frames();
   }
@@ -441,7 +451,8 @@ describe("PM9.5 targeted-MS1 journey, rendered", () => {
     expect(ended.filled).toEqual([copy("en", "targetedBatchOpenResult")]);
     expect(await control(RUN)).toMatchObject({ text: copy("en", "targetedRunAgain"), primary: false });
     expect(ended.setupText).toContain(copy("en", "targetedRunAgainNote"));
-    // Focus stayed on the block's heading when its Cancel run left.
+    // The block outlived its run: the keyboard is still on its heading. (A
+    // stop control leaving is T5's.)
     expect(await focusedOn(`${BLOCK} h4`)).toBe(true);
 
     const beforeOpen = await callCount();
