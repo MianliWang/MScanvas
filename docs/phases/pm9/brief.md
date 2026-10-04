@@ -6,7 +6,7 @@ Budget: seven slices, including the opening baseline (PM9.1) and the closing
 acceptance (PM9.7). No uncounted planning or cleanup slice.
 Status: **IN PROGRESS** since the 2026-09-26 mid-phase normalization
 ([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)): PM9.1 is partial, with only J1–J6 left;
-PM9.2 is complete; PM9.3 is complete (2026-09-28, [slice-03 §0.5](slice-03.md#05-validation-repair-and-closure-2026-09-28)), and the midpoint check follows it; PM9.4–PM9.7 have not started. The known UI/UX rework (2026-09-28 to 2026-10-03, [baseline §12](baseline.md#12-known-uiux-rework-2026-09-28)) closed in two batches: **PM9 REPORTED UI/UX ISSUES CLEARED**, on `5e4c6ac`. PM9.4 is not started. Before that:
+PM9.2 is complete; PM9.3 is complete (2026-09-28, [slice-03 §0.5](slice-03.md#05-validation-repair-and-closure-2026-09-28)), and the midpoint check follows it; PM9.4–PM9.7 have not started. The known UI/UX rework (2026-09-28 to 2026-10-03, [baseline §12](baseline.md#12-known-uiux-rework-2026-09-28)) closed in two batches and a UI-34 wording continuation: **PM9 REPORTED UI/UX ISSUES CLEARED**, on `b7b8eeb`. PM9.4 is not started. Before that:
 the 2026-09-25 validation window established PM9.1's browser rendered
 baseline, which is not complete, and passed PM9.2's browser functional
 acceptance on the production-code candidate `a0783bb`. PM9.3 has static

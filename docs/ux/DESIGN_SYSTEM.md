@@ -257,16 +257,23 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   values are the range editor's and the export notes'. Before a range is
   committed the line says "full range" rather than repeat the caption's
   numbers. A missing unit is said once per axis on the chromatogram panel and
-  is part of the plot's accessible description (UI-31, UI-33). Where the
-  committed range is the one on screen -- the viewport buttons commit what
-  they show -- the line says "the range shown" rather than repeat the
-  caption's numbers, which stay in its live announcement, read whole
-  (atomic). It follows the pending band and the committed range, never a
-  gesture: a wheel or drag changes only the caption, and a commit is
-  announced once, when it settles (UI-34). While a gesture is in flight the
-  line still reads "the range shown"; it is true again once the gesture
-  settles or is abandoned. A range line gives way inside its own box (a 12em
-  basis) before the pending actions beside it take a second row (UI-32).
+  is part of the plot's accessible description (UI-31, UI-33). Once a range
+  is committed the line says "part of the full range" -- the whole run or
+  spectrum is stored as no commit, so a committed range is always a proper
+  part of it -- and keeps its bounds in its live announcement ("…, namely X
+  to Y"), read whole (atomic). Neither committed sentence claims to be the
+  range on screen, which the caption prints, a gesture's included, so neither
+  is false while a wheel or drag is in flight. The line follows the pending
+  band and the committed range, never a gesture's range: a gesture's frames
+  and abandonment change nothing, and neither does its start unless the start
+  discards a pending band (the owners' rule), after which the line reports
+  the committed range. A gesture's commit is announced once, when it settles
+  (UI-34). Decision trail: batch 2 (2026-10-03, `5e4c6ac`) said "the range
+  shown" and accepted it as untrue while a gesture was in flight; the wording
+  continuation (2026-10-03, `b7b8eeb`) superseded that, because a sentence
+  claiming to be the range on screen may not stay visible while it is false.
+  A range line gives way inside its own box (a 12em basis) before the pending
+  actions beside it take a second row (UI-32).
 - **Details facts.** In the 245 px Details column a digest is one line (the
   whole value in its tooltip, still selected and copied in full), a name at
   most three lines, and each fact is its label over its value, so a long value

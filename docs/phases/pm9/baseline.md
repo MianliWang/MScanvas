@@ -911,7 +911,7 @@ The result column is filled at closure.
 | UI-31 | PM9.3 B | Range lines print raw floats beside the four-decimal "Showing" | reported | Formatted with the domain formatters; exact values in the editor and export notes | FIX | FIXED AND RENDER-VERIFIED: four decimals on range lines and "full range" before a commit; the exact values stay in the editor and the export notes |
 | UI-32 | PM9.3 B | The en chromatogram range row wraps at 828 and 785 px | reported | One line; its disclosures stay Tab stops | FIX | FIXED AND RENDER-VERIFIED: range rows are one line at 828 and 785 px and in every default frame of 690 px and wider; with a real run's values (PM9.3-L) and for a pending retention-time band at 699 px, the line gives way inside its own box (12em basis) so the actions stay on one row, the sentence then taking two text lines with each number whole (batch 2; before, the pending RT row took two rows at 785 and 699 px in en). Observed and judged, no number split or clipped (PM9.3-L's integrity check at every column): at the 571 px column the zh-CN m/z range row now takes one row instead of two, and en keeps two; with a real run's values the chromatogram's context line takes a third row at 699 px in en, before and after alike |
 | UI-33 | PM9.3 B | "(unit not reported)" four or five times per chromatogram | reported | Stated once per axis; the plot's description still carries it | FIX | FIXED AND RENDER-VERIFIED: the unit caveat twice per chromatogram panel (once per axis) and in the plot's accessible description (before: four or five times) |
-| UI-34 | PM9.3 §3 | Viewer copy density judged | untested | Judged after the fixes | RENDER | FIXED AND RENDER-VERIFIED (batch 2): one statement per fact; a settled commit says "the range shown" rather than repeat the caption's numbers. The committed line follows the pending band and the committed range, never a gesture: PM9.3-V10 records one change, on settle, where batch 1's code announced the old numbers at the gesture's start too; abandoning a gesture changes nothing (Vitest); the line is atomic. Kept: mid-gesture the line still reads "the range shown", true again once the gesture settles or is abandoned (DESIGN_SYSTEM) |
+| UI-34 | PM9.3 §3 | Viewer copy density judged | untested | Judged after the fixes | RENDER | FIXED AND RENDER-VERIFIED (batch 2): one statement per fact; a settled commit says "the range shown" rather than repeat the caption's numbers. The committed line follows the pending band and the committed range, never a gesture: PM9.3-V10 records one change, on settle, where batch 1's code announced the old numbers at the gesture's start too; abandoning a gesture changes nothing (Vitest); the line is atomic. Kept: mid-gesture the line still reads "the range shown", true again once the gesture settles or is abandoned (DESIGN_SYSTEM). Superseded by the wording continuation (2026-10-03, `b7b8eeb`): that visible sentence was false while a gesture was in flight; the committed line now says "part of the full range" (zh-CN "完整范围的一部分"), true before, during and after a wheel or pan, with batch 2's announcement timing unchanged |
 | UI-36 | PM9.3 §1 | Failed spectrum load, never asserted | untested | Selection kept, failure and Retry shown, exports withheld | RENDER (Vitest) | VERIFIED — NO DEFECT FOUND (Vitest): the selection is kept, the failure and Retry are shown, the figure and data exports are withheld, and Retry recovers |
 | UI-47 | PM9.3 B | Inert `.viewer-stack` grid CSS in `app.css` | suspicion | Removed where the cascade proves it dead | FIX | FIXED AND RENDER-VERIFIED: the `.viewer-stack` grid, gap, overflow and 1120 px rows are removed; the default frames' geometry is unchanged |
 | UI-49 | advisor, dispatch §5 | The whole viewer task at 960×640 and 1366×768: entry → select a scan → read the whole spectrum → reach the row | untested | Scroll to the whole spectrum plot measured before and after, with no plot shrunk | RENDER | VERIFIED — NO DEFECT FOUND: measured before and after, identical: at 960×640 the whole spectrum is 207 px of scroll away and its row 434 px, at 1366×768 79 px; no plot shrunk (220 px) |
@@ -939,8 +939,10 @@ came from validation: a settled commit still printed the caption's numbers
 (UI-34), and UI-44 had no rendered case.
 
 Static on the candidate, each exit 0: `pnpm lint`, `pnpm typecheck`,
-`pnpm e2e:typecheck`, `pnpm test` (111 files, 2222 tests; the repository has no
-low-concurrency mode, `test` is `vitest run`), `pnpm build`,
+`pnpm e2e:typecheck`, `pnpm test` (111 files, 2222 tests, at Vitest's default
+worker count; corrected 2026-10-03: this said the repository has no
+low-concurrency mode, but its Vitest 4.1.11 has `--maxWorkers` and
+`--no-file-parallelism`, which `test` (`vitest run`) passes through), `pnpm build`,
 `python scripts/check_repo.py`, `git diff --check`. No manifest, lock, Rust,
 schema or provider path changed since `3588e30`.
 
@@ -977,7 +979,12 @@ skeptic per finding: four low findings, none in production code), and one
 correction cycle (`5e4c6ac`: DESIGN_SYSTEM's stale description, a 960×640 check
 that could pass on zero-size boxes, a docstring). Code candidate `5e4c6ac`.
 
-Before, on the starting production (`d31d134`'s, equal to `ea85a88`'s): the two
+Before, on a mixed working tree (corrected 2026-10-03; it was not a clean
+historical commit): `5e4c6ac` with the six production files `697e405` changed
+checked out from `d31d134`, which hold their `ea85a88` content, and no other
+production file differs between `ea85a88` and `5e4c6ac`; the tests were
+`5e4c6ac`'s, and the correction cycle's test changes there sit after the
+assertions that produced the results below: the two
 new UI-34 unit cases failed, PM9.3-V10 recorded the gesture's start announcing
 the old numbers, PM9.3-L failed in en (a pending retention-time row of two rows
 at 785 and 699 px), and PM9.1's UI-25 failed in en and zh-CN (wrapped values at
@@ -1000,3 +1007,90 @@ m6.x and the native specs.
 
 Status: **PM9 REPORTED UI/UX ISSUES CLEARED — RENDERED ACCEPTANCE PASS**.
 PM9.4 is not started. PM9.1 stays PARTIAL for J1–J6.
+
+**UI-34 wording continuation (2026-10-03).** The owner accepted batch 2 as
+execution evidence and kept the other 41 dispositions, and with them the
+evidence each cites. Batch 2's UI-34 timing repair stands: on `5e4c6ac` a
+gesture's start no longer announced the old numbers (PM9.3-V10). One part of
+UI-34 stayed open: while a wheel or pan was in flight the plot showed the
+gesture's range and the committed line still said "the range shown", a claim of
+equality with the range on screen that was false (batch 2 had recorded it as
+kept). This continuation is additional effort, one narrow correction after batch
+1's two cycles and batch 2's one; it resets neither count.
+
+What the line refers to: the committed range, `committedDomain` in
+`viewer/interactionState.ts` and `committed` in `viewer/spectrumViewport.ts`. It
+is set by the viewport buttons and keys, the range editor's Apply, a confirmed
+band, a settled wheel or pan, and a reveal on selection; it is the only range a
+Current-range export consumes; it is not the range on screen while a gesture is
+in flight. Both owners store the whole run or spectrum as no commit, so a
+committed range is always a proper part of it.
+
+The line now says what is committed and nothing about the screen: "Committed
+{name}: part of the full range" (zh-CN "已提交 {name}：完整范围的一部分") once a
+range is committed, "full range" while nothing narrower is, and a pending band's
+bounds while one is pending. The committed bounds stay announced rather than
+printed, behind their own separator (", namely X to Y" / "，即 X 至 Y"), and stay
+the line's last words. Still one live line, polite and atomic; no timer, no
+second announcer, no change to commit or cancel. Code: `b7b8eeb`, tree
+`c91bbc64ce15b7c596fa84afa41f7566ab6822e4` (production: `PlotRangeActions.tsx`,
+`i18n.ts` and both locales); tests first in `164ffb3` and `4ff3c8c`.
+
+Before, test first on the unchanged production of `5e4c6ac`: a shared claim
+table (`apps/desktop/src/test/rangeClaims.ts`) gives each committed sentence a
+truth condition over the owners' state. Four unit cases failed on it and on
+nothing else: a held wheel from a commit (shown 0.1135 to 0.4284, committed
+0.0818 to 0.5209), a held wheel before Escape and a wheel over a pending band
+(shown 0.1267 to 0.2701, committed 0.1000 to 0.3000), and a held m/z pan (shown
+195.9350 to 295.9350, committed 200.0000 to 300.0000). PM9.3-V10 passed every
+timing check and failed the semantic one in en and zh-CN: the held pan showed
+2.0303 to 6.2303 while 1.4000 to 5.6000 was committed. After: each passes.
+V10's live line changed exactly twice in each locale, on the pan's release and
+on the wheel's settle, and never at a gesture's start or on Escape. PM9.3-G and
+PM9.3-L give the same range rows, row for row and pixel for pixel, as batch 2's
+final run in all 58 frames, the 960×640 frames and the 785, 699, 828, 571 and
+928 px columns included, in en and zh-CN.
+
+V10 holds the pan through the DevTools input domain: held across two WebDriver
+action calls, ChromeDriver released the middle button as a button change, a
+pointermove and then an auxclick, instead of a pointerup, so the pan never ended
+(probed on Chrome 154). The before and after runs used the same Chrome,
+154.0.8037.93. A MutationObserver trace proves what the DOM does, not what a
+screen reader says.
+
+Checks on `b7b8eeb`, each exit 0: `pnpm typecheck`, which is also `pnpm lint`
+(both run `tsc -b --pretty false`, so it was run once), `pnpm e2e:typecheck`,
+the focused Vitest with `--maxWorkers=1 --no-file-parallelism` over
+Chromatogram, SpectrumViewport, usePlotInput, i18n and localizationCoverage (5
+files, 242 tests), PM9.3 17 of 17, `pnpm build`, `python scripts/check_repo.py`,
+`git diff --check`. No manifest, lock, Rust, schema or provider path changed.
+Inherited from batch 2 on `5e4c6ac`, whose inputs this does not change: the full
+Vitest run (111 files, 2224 tests), PM9.1 55 of 55, the Details evidence and the
+16 downstream specs. The changed inputs are the four production files above;
+their consumers are the five Vitest files and PM9.3, rerun here; m7.3 reads only
+a pending band's text, as evidence. The admission gate was the owner's, 6 GiB
+free and 85% used; every heavy group started above it.
+
+One narrow review of the truth and timing invariant (one reviewer, a skeptic per
+finding) raised two test-strength findings and refuted both. The claim table's
+condition for "part of the full range" is the owners' exact contract, null for
+the whole source, which their reducer tests hold; comparing at print precision
+would call the planner's near-full commits, genuine proper parts, false. The m/z
+axis's frames and abandonment are held by existing SpectrumViewport cases and by
+the shared input path V10 watches. No correction was needed.
+
+Boundaries, recorded rather than changed. A gesture that starts over a pending
+band discards it (the owners' rule in `gesture-started`), and the line then
+reports the committed range once: a true sentence about a real change, older
+than UI-34 and now pinned by a unit case. The retention-time planner's documented
+rounding (`spectrumViewportAction.ts`, recorded for the slice that next owns that
+planner) can commit a range one ulp short of the full run; the line then says
+"part of the full range" with bounds that print like the full run's, true but
+odd, as before. At rest the line no longer says that the caption's numbers are
+the committed ones; the caption prints them, and the export notes give the exact
+bounds.
+
+Status: **PM9 REPORTED UI/UX ISSUES CLEARED — RENDERED ACCEPTANCE PASS**, confirmed
+after the continuation: UI-34's committed line is true throughout the exercised
+transitions and its announcements still pass. PM9.4 is not started. PM9.1 stays
+PARTIAL for J1–J6 on `d56b17b`.

@@ -863,3 +863,7 @@ band and the committed range, never a gesture, and is announced once, whole,
 when a commit settles (UI-34); a range line gives way inside its own box so a
 pending band's actions stay on one row with a real run's values and at a
 699 px column (UI-32, PM9.3-L).
+
+Wording continuation (2026-10-03, `b7b8eeb`): the committed range line says
+"part of the full range" rather than "the range shown", so it stays true while a
+wheel or pan is in flight; its announcement timing is batch 2's (UI-34).
