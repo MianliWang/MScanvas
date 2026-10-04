@@ -3,12 +3,12 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, holdInvoke, horizontalOverflow, installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
+import { CONVERT, checkMembers, isRefused, showConversion, waitUntilOffered } from "../support/conversion";
 import { availableBackend, completeCatalog, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
 import type { ConversionConflictPolicy, DestinationPolicy, SelectedFile, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
 
 const DESCRIBE = "describe_workspace_conversion_queue";
 const BEGIN = "begin_workspace_conversion_queue";
-const CONVERT = ".conversion-plan button.primary-button";
 const ALL = 'input[name="conversion-scope"][value="all"]';
 const SELECTED = 'input[name="conversion-scope"][value="selected"]';
 const SEARCH = 'input[type="search"]';
@@ -57,9 +57,13 @@ async function start(count = 3) {
     [DESCRIBE]: planned([2]), get_workspace_conversion_state: idle,
   });
   await browser.url("/");
-  await browser.$('[data-handle="open"]').waitForDisplayed();
+  // M7.2: a row click views or highlights a row; the checkbox makes it a
+  // member, and the Conversion surface is its own destination (PM9.4, baseline
+  // section 2). At 1366 px the roster stays beside it.
+  await browser.$('.grouped-roster [data-handle="open"]').waitForDisplayed();
+  await showConversion();
 }
-async function ready() { await browser.$(CONVERT).waitForEnabled({ timeout: 30_000 }); }
+async function ready() { await waitUntilOffered(CONVERT); }
 async function names() { return browser.execute(() => [...document.querySelectorAll('[aria-label="Reviewed conversion order"] .conversion-queue-name')].map((node) => node.textContent)); }
 
 describe("M6.7 explicit selected/all review", () => {
@@ -70,12 +74,10 @@ describe("M6.7 explicit selected/all review", () => {
 
   it("reviews a selected subset and excludes unsupported rows while all includes filtered-out rows", async () => {
     await start();
-    expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+    expect(await isRefused(CONVERT)).toBe(true);
     expect(await requests(DESCRIBE)).toEqual([]);
-    await click('[data-handle="raw-2"]'); await ready();
-    await browser.action("key").down("\uE009").perform(true);
-    await click('[data-handle="open"]');
-    await browser.action("key").up("\uE009").perform();
+    await checkMembers(["raw-2"]); await ready();
+    await checkMembers(["open"]);
     expect(await browser.$("#conversion-scope-summary").getText()).toContain("2 requested · 1 eligible · 1 excluded");
     const previous = await requests(DESCRIBE);
     await browser.$(SEARCH).setValue("sample-2");
@@ -98,11 +100,11 @@ describe("M6.7 explicit selected/all review", () => {
     const refusal = browser.$('[data-testid="conversion-capacity"]');
     await refusal.waitForExist();
     expect(await refusal.getText()).toContain("17 eligible acquisitions exceed the queue capacity of 16");
-    expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+    expect(await isRefused(CONVERT)).toBe(true);
     expect(await requests(BEGIN)).toEqual([]);
     expect(await requests("choose_workspace_conversion_destination")).toEqual([]);
     await capture("capacity-refusal", '[data-testid="conversion-capacity"]');
-    await click('[data-handle="raw-2"]');
+    await checkMembers(["raw-2"]);
     await setInvokeResult(DESCRIBE, planned([2]));
     await click(ALL); await browser.keys("ArrowUp");
     await ready();
@@ -122,14 +124,14 @@ describe("M6.7 explicit selected/all review", () => {
     await holdInvoke(DESCRIBE);
     await browser.$("select#dataset-roster-sort").selectByAttribute("value", "name-desc");
     await browser.waitUntil(async () => (await requests(DESCRIBE)).length > before);
-    expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+    expect(await isRefused(CONVERT)).toBe(true);
     expect(await names()).toEqual([]);
     expect(await requests(BEGIN)).toEqual([]);
     await capture("order-review-withdrawn", "#conversion-plan-pending");
     await setInvokeResult(DESCRIBE, planned([3, 2, 1], { kind: "namedSubfolder", name: "Converted" }, "skip"));
     await releaseInvokeHold(DESCRIBE); await ready();
     expect(await names()).toEqual(["sample-3.raw", "sample-2.raw", "sample-1.raw"]);
-    await click('[data-handle="raw-2"]');
+    await checkMembers(["raw-2"]);
     await setInvokeResult(DESCRIBE, planned([2], { kind: "namedSubfolder", name: "Converted" }, "skip"));
     await click(SELECTED); await ready();
     expect(await browser.$("#conversion-subfolder-name").getValue()).toBe("Converted");
@@ -139,6 +141,8 @@ describe("M6.7 explicit selected/all review", () => {
   for (const [width, height] of [[1366, 768], [1920, 1080], [1200, 800], [960, 640]]) {
     it(`keeps scope, review and action usable at ${width}x${height}`, async () => {
       await start(); await viewport(width!, height!);
+      // Below 1050 px the surface swaps with the roster, so it is shown again.
+      await showConversion();
       await setInvokeResult(DESCRIBE, planned([1, 2, 3])); await click(ALL); await ready();
       expect((await horizontalOverflow()).scrollWidth).toBeLessThanOrEqual(width! + 1);
       for (const selector of [ALL, '[aria-label="Reviewed conversion order"]', CONVERT]) {
