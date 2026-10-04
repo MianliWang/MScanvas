@@ -1276,6 +1276,12 @@ reflog, times EDT on 2026-10-03):
 | `ui34-after/browser-sVQnBS` | PM9.3, 17 cases, 21:30:13–21:30:52 | `b7b8eeb` | Candidate `b7b8eeb` written by the run into its 60 observation entries; clean status not recorded | The accepted GREEN: 17 of 17, 58 frames |
 | `ui34-after/m7.3/browser-jFfW2u` | m7.3, 22:44:55–22:45:33 | `cf36829`, docs only after `b7b8eeb` | No candidate field; clean status not recorded | Accepted as recorded: 16 of 16 |
 | `final-val/A/A-pm9.1.meta.txt` | Group A's admission, 2026-10-04 00:07:17 | `f4e591b` | Clean status not reached: the reading came first and refused | Admission record only; nothing ran |
+| `final-val/A/` (`browser-YURYlR`, `A-pm9.1.log`) | PM9.1, whole, 2026-10-04 01:33:05–01:34:37 | `709c94a` | Tree `38cabbe`, clean, read by the runner; candidate `709c94a` written by the run; reporter log retained | 55 of 55, exit 0 |
+| `final-val/B/B-m5.7.log` | m5.7, 01:35:01–01:35:18 | `709c94a` | As A | 8 of 8, exit 0 |
+| `final-val/S/` | `pnpm e2e:typecheck`, 01:35:39 | `709c94a` | As A | Exit 0; superseded by S2 for the final test content |
+| `final-val/C/browser-gzP7m1` | PM9.3 closeout samples, 01:35:51–01:36:04 | `709c94a` | As A | V11 passed; V12 failed on its own scroll step, a test defect corrected in `1a6d887` |
+| `final-val/S2/` | `pnpm e2e:typecheck`, 01:37:26 | `1a6d887` | Tree `1675b83`, clean | Exit 0 |
+| `final-val/C2/browser-NPsRGK` | PM9.3 closeout samples, 01:37:39–01:37:51 | `1a6d887` | Tree `1675b83`, clean; candidate `1a6d887` written by the run | 2 of 2, exit 0 |
 
 Result (2026-10-04). Group A did not start. Its admission reading at 00:07:17
 EDT gave 3.64 GiB free and 88.5% used, against 6 GiB and 85%. An earlier
@@ -1312,6 +1318,73 @@ C  pnpm e2e:browser --spec ./e2e/specs/pm9.3-viewer.browser.e2e.ts --mochaOpts.g
 
 C must report exactly two tests. Nothing completed earlier needs rerunning.
 
-Status: **KNOWN UI/UX REWORK — FINAL VALIDATION RESOURCE_DEFERRED**. PM9.4 is
-not started. PM9.1 stays PARTIAL for J1–J6 on `d56b17b`. A passing PM9.1 spec
-file would not complete that historical measurement.
+Status at that point: **KNOWN UI/UX REWORK — FINAL VALIDATION
+RESOURCE_DEFERRED**.
+
+Resumed (2026-10-04, at the owner's word). Each group ran on its own reading,
+in the fixed order, foreground and one browser session at a time. Each group's
+`*.meta.txt` holds its reading, HEAD and tree, the launched process tree (pid,
+creation time, command line) and its leftovers, which were none every time.
+Chrome 154.0.8037.93 throughout.
+
+| Group | Reading | HEAD | Command | Result |
+| --- | --- | --- | --- | --- |
+| A | 8.15 GiB, 74.3% | `709c94a` | `pnpm e2e:browser --spec ./e2e/specs/pm9.1-baseline.browser.e2e.ts` | 55 of 55, exit 0 |
+| B | 8.12 GiB, 74.4% | `709c94a` | `pnpm e2e:browser --spec ./e2e/specs/m5.7-selection-availability.browser.e2e.ts` | 8 of 8, exit 0 |
+| S | 8.13 GiB, 74.3% | `709c94a` | `pnpm e2e:typecheck` | exit 0 |
+| C | 7.81 GiB, 75.3% | `709c94a` | `pnpm e2e:browser --spec ./e2e/specs/pm9.3-viewer.browser.e2e.ts --mochaOpts.grep closeout-sample` | 1 of 2, exit 1 |
+| S2 | 7.16 GiB, 77.4% | `1a6d887` | `pnpm e2e:typecheck` | exit 0 |
+| C2 | 7.18 GiB, 77.3% | `1a6d887` | as C | 2 of 2, exit 0 |
+
+C's failure was V12's own setup, not the product. The m/z line sat at 908 px in
+a 640 px viewport because WebdriverIO 9's `element.scrollIntoView(options)`
+wheels at the viewport's origin, over the header. That scrolls the window and
+never the evidence column, as its source shows. The facts V12 recorded before
+the failing check matched what C2 later asserted. Corrected test-only in
+`1a6d887`, which changes nothing but that step. S2 is the typecheck of the final
+test content, and C2 reran both samples. PM9.1's and m5.7's inputs (production,
+both specs, `e2e/support`, the browser config, the manifests and the lock) are
+the same on `b7b8eeb`, `709c94a` and `1a6d887`. A and B therefore stand for the
+final content.
+
+The pending-band transition, observed (PM9.3-V11, en):
+
+- The committed range was 1.4000 to 5.6000. The band "Pending retention time:
+  2.6604 to 4.3413" was drawn inside it, its actions shown and the band drawn.
+- A held middle-button pan started over the band. The band's actions went and
+  the rectangle was hidden: the owner discarded the band. The caption showed
+  the pan (2.0303 to 6.2303), and the line said "Committed retention time:
+  part of the full range" with 1.4000 to 5.6000 announced. That was the one
+  change, and the sentence was true while the pan was held.
+- Escape and the release: the caption was back at 1.4000 to 5.6000 and the
+  band was not restored. Nothing more had changed 500 ms later.
+- A wheel then committed 2.1148 to 4.8858 and was the second change. The
+  observer saw exactly those two changes. There was one announcer, polite and
+  atomic, and no false sentence.
+
+A new source keeping nothing of the old one's values is V9's, unchanged since
+`b7b8eeb`'s 17 of 17.
+
+The Chinese m/z sample, rendered (PM9.3-V12):
+
+- The page language was zh-CN, through the preference fixture.
+- Inner size 960×640 at DPR 1, emulated through DevTools. The outer window was
+  the headless 1920×1080. The evidence column was 928 px and the spectrum
+  panel 913 px.
+- The line was on screen at 353 to 371 px, and its row was one row and whole.
+- The visible text was exactly "已提交 m/z：完整范围的一部分", which is true
+  of a committed range.
+- The live text was "已提交 m/z：完整范围的一部分，即 210.0000 至 540.0000",
+  and the caption read "显示 m/z 210.0000 至 540.0000".
+- Frame: `pm93-v12-zh-CN-committed-mz-960x640`.
+
+These are DOM observations, not a screen reader's speech. No defect was found
+in production. The production candidate stays
+`b7b8eeb5087b755ea6d8b99e6d8d38b848d5103c`. The final tested test content is
+`1a6d887b9e3baba095497abc080bd5b0a8bdbb1e` (tree
+`1675b834453c071b8e15593898239f5b3ab32b7f`), and the commit recording this is
+documentation only.
+
+Status: **PM9 REPORTED UI/UX ISSUES CLEARED — REQUIRED FINAL VALIDATION
+COMPLETE**. PM9.4 is not started. PM9.1 stays PARTIAL for J1–J6 on `d56b17b`;
+this passing PM9.1 spec is not that historical measurement.
