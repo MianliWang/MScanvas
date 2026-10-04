@@ -2,8 +2,9 @@
 
 PM9 | Acceptance: U5, U7 (drafts), U9, U10 | Depends on: PM9.2; after PM9.4 | Serial, one writer
 Status: **IMPLEMENTED — QUALIFICATION RESOURCE_DEFERRED** (2026-10-04, §12).
-Production `f877870`, tests `207b441`; the final candidate's static, unit,
-build and browser groups were refused at the memory gate and have not run.
+Production `f877870`, tests `207b441`. On that candidate, C1 (typecheck and
+the targeted Vitest files) was refused at the memory gate; no other static,
+unit, build or browser group was attempted.
 Expanded 2026-10-04 from the code of the starting point below. The midpoint
 check is not repeated; nothing here unfreezes the route.
 
@@ -301,13 +302,16 @@ scroller. One substantive cycle is used of the two authorized.
 | D5 e2e typecheck | diff `7bb4ba6b…` | exit 0 |
 | D6 PM9.5 spec | diff `7bb4ba6b…` | did not run: Vite could not bind 127.0.0.1:5273 (EACCES). Another application (pid 7444, not task-owned, untouched) held 5273 as an ephemeral port; this host's dynamic range is 1024–15000. Later browser groups use `MSCANVAS_BROWSER_DEV_PORT=15273` |
 | D7 PM9.5 spec | diff `7bb4ba6b…`, port 15273 | 10/10 pass, development run |
-| D8 typecheck + targeted Vitest | `435e3c9` + focus fix | **REFUSED at admission** (5.9 GiB free, 81.4% used) |
+| D8 typecheck + targeted Vitest | `2c4d536` with the uncommitted tree later committed unchanged as `bcb7474` and `435e3c9` (the refused-run focus effect included) | **REFUSED at admission** (5.9 GiB free, 81.4% used) |
 | C1 the same, for cycle 1 | `207b441`, clean | **REFUSED at admission** (4.97 GiB free, 84.3% used) |
 | `check_repo`, `git diff --check`, scope | `207b441` | pass, clean, none outside the frontend |
 
 D-group results are development evidence for uncommitted states, identified by
-diff digest. None is inherited by the final candidate: `bcb7474` added a focus
-fix after D7, and cycle 1 changed production again.
+diff digest. **The committed production has no compile or test evidence at
+all.** `bcb7474` added the refused-run focus effect after D7, and `f877870`
+changed `useProject.ts`, `ProjectPanel.tsx`, `TargetedMs1.tsx` and both
+bundles; neither has been typechecked, and no result above is inherited by
+either.
 
 **RED limit (G0).** Mocha stops a case at its first failed assertion, so on
 the unchanged production G0 observed RED only at:
@@ -352,10 +356,33 @@ groups with `-Port 15273`):
    (`M9_1_TARGETED_MS1_HANDOFF.md`, `M9_4_TARGETED_MS1_BATCH.md`,
    `PRIMARY_WORKFLOWS.md`).
 
-PM9.4's spec is not owed: it reads `scenario("populated")`, which is
-unchanged.
+The order matters: cycle 1 has never compiled, so step 1 comes first, and m9.1
+has not run against the new order at all. One correction cycle remains; a
+failure on resume is classified on its evidence as a test-authoring fix or as
+cycle 2.
 
-**Process custody.** Every group above was launched by the scratchpad runner
-with its PID, creation time, command and parent recorded; every launched tree
-had zero leftovers. Chrome also woke Google Updater as its child during G0,
-and it had ended by the leftover check. Nothing was killed by name or port.
+PM9.4's spec is not owed. It reads `scenario("populated")`, which is
+unchanged. Its P4 case navigates through the Project surface, whose
+`ProjectPanel.tsx` changed, but nothing in that change can reach P4's
+assertions. Those are the IPC ledger during navigation and the conversion
+state:
+
+- `ProjectPanel` issues no IPC of its own;
+- the project read on mount is unchanged;
+- with the project idle and no targeted setup open, the busy-sentence
+  refactor, the replacement reset and the analysing-only cancel label render
+  nothing different.
+
+**Process custody.**
+
+- Every heavy group was launched by the scratchpad runner. It recorded each
+  process's PID, creation time, command and parent, and every launched tree
+  had zero leftovers.
+- During G0, Chrome woke Google Updater as its child. Updater had ended by the
+  leftover check.
+- Nothing was killed by name or port.
+- `check_repo` ran twice, on `207b441` and before the record commit. It is a
+  static Python script that starts no subprocess. The first run went to the
+  background automatically after 120 s; the second was started there and
+  waited on with a short sleep loop. Each ran alone.
+- The reviewer was a read-only subagent and ran no build or test.
