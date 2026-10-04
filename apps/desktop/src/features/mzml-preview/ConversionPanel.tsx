@@ -446,8 +446,15 @@ export function ConversionPanel({
   useEffect(() => {
     const node = panel.current;
     if (node === null) return;
+    // Only the controls whose leaving the status line explains: Convert, and
+    // the queue's own (Stop, Retry, Skip, Add…). A plan-side link that leaves
+    // under a finished queue is not answered by the old queue's status.
     const record = (event: FocusEvent) => {
-      if (event.target instanceof HTMLElement) lastFocused.current = event.target;
+      const target = event.target;
+      lastFocused.current =
+        target instanceof HTMLElement && (target === convertButton.current || target.closest(".conversion-running") !== null)
+          ? target
+          : null;
     };
     node.addEventListener("focusin", record);
     return () => node.removeEventListener("focusin", record);
@@ -460,7 +467,12 @@ export function ConversionPanel({
       lastFocused.current = null;
       return;
     }
-    if (restoreAfterPicker.current && (state.status === "awaitingDestination" || state.status === "idle")) return;
+    // From the press until the picker answers -- the starting window, the
+    // wait for a destination, and a cancel back to idle -- the return to
+    // Convert is the picker's own. A press under a finished queue starts in
+    // that window with the slot still `terminal`.
+    if (restoreAfterPicker.current &&
+      (conversion.converting || state.status === "awaitingDestination" || state.status === "idle")) return;
     const status = panel.current?.querySelector<HTMLElement>(`#${QUEUE_STATUS_ID}`) ?? null;
     if (status === null) return;
     lastFocused.current = null;
@@ -860,7 +872,8 @@ function PlanState({
       (startAvailability.reason === "backend-unavailable" || startAvailability.reason === "backend-quarantined"));
   const refused = startAvailability.status !== "available";
   return (
-    <div className="conversion-plan" tabIndex={-1} aria-labelledby={repeating ? "conversion-next-heading" : undefined}>
+    <div className="conversion-plan" tabIndex={-1} role={repeating ? "group" : undefined}
+      aria-labelledby={repeating ? "conversion-next-heading" : undefined}>
       {/* Under a finished queue, this block is the next conversion and says
           so, so the settings below cannot be read as the queue's (R5). */}
       {repeating ? <h3 id="conversion-next-heading">{t("m74CnvNextConversion")}</h3> : null}
@@ -872,9 +885,14 @@ function PlanState({
           checked={resolvedScope.scope === "all"} onChange={() => onScopeChange("all")} />{t("m74CnvAll")}</label>
       </fieldset>
       <p id="conversion-scope-summary" aria-live="polite">
+        {/* One template per language, so the punctuation between the two
+            sentences is the bundle's (R2). The excluded note joins the counts
+            rather than travelling as a parameter of its own: a resource
+            parameter may not be empty, and it is empty whenever nothing is
+            excluded. */}
         {t("m74CnvScopeLine", {
-          counts: t("m74CnvScopeCounts", { requested: String(resolvedScope.requestedCount), eligible: String(count), excluded: String(resolvedScope.excludedCount) }),
-          note: resolvedScope.excludedCount > 0 ? t("m74CnvNotConvertible") : "",
+          counts: t("m74CnvScopeCounts", { requested: String(resolvedScope.requestedCount), eligible: String(count), excluded: String(resolvedScope.excludedCount) }) +
+            (resolvedScope.excludedCount > 0 ? t("m74CnvNotConvertible") : ""),
           help: resolvedScope.scope === "all" ? t("m74CnvScopeAllHelp") : t("m74CnvScopeSelectedHelp"),
         })}
       </p>
@@ -1065,7 +1083,7 @@ function PlanState({
           // One filled primary per state (R7): under a finished queue whose
           // outputs are on offer, adding them is the primary and starting the
           // next conversion is not.
-          className={`${repeating && conversion.eligibleOutputCount > 0 ? "secondary-button" : "primary-button"} conversion-start`}
+          className={`${repeating && conversion.eligibleOutputCount > 0 && conversion.canAdopt ? "secondary-button" : "primary-button"} conversion-start`}
           // The one rule, and the whole of it. The empty-row case and the plan
           // are inside it rather than beside it: a second clause here is
           // exactly how this control came to answer a different question from
@@ -1192,12 +1210,16 @@ function QueueState({
   // queue is not rerun, and a quarantined session reruns nothing; each has
   // its own sentence instead.
   const retryJudged =
-    state.status === "terminal" && state.reason === "completed" && !conversion.backendQuarantined && queue.failedCount > 0;
+    state.status === "terminal" && state.reason === "completed" && !conversion.backendQuarantined &&
+    queue.failedCount > 0 && !conversion.busy;
   // Rows a stop or the reader left unconverted: converting them again is a new
   // queue from the checked rows, and the reader is told so (R9).
+  // Not while an adoption or an export holds the panel: the next conversion
+  // it points to is not on screen then.
   const leftUnconverted =
     state.status === "terminal" &&
     !conversion.backendQuarantined &&
+    !conversion.busy &&
     queue.cancelledCount + queue.notRunCount + queue.skippedByRequestCount > 0;
   const stopping = state.status === "stopping" || (state.status === "running" && conversion.stopping);
   // The queue's one status sentence. Always the block's first element, in

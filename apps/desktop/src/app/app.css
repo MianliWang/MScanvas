@@ -2267,6 +2267,11 @@ button:disabled,
 
 /* A conversion control refused while its own request runs stays a Tab stop
    (PM9.4 R11) and reads as refused without fading its focus ring. */
+/* The surface's link buttons -- Skip, Describe again, Dismiss, the settings
+   links -- meet the 32 px compact-control minimum like its other controls
+   (PM9.4 R12). */
+.conversion-panel .link-button { min-height: 32px; }
+
 .conversion-panel .secondary-button[aria-disabled="true"],
 .conversion-panel .link-button[aria-disabled="true"] {
   color: var(--color-text-secondary);
