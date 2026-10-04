@@ -1470,9 +1470,10 @@ keeps what later slices and PM9.7 read from the baseline.
 
 - **Candidate.**
   - Production: `f877870`.
-  - Tests: `207b441ac32dcf20f962b30f11c448724b96292d` (tree
-    `36150ba77ed1ed3b0bd86934707741eac79b7eb4`), qualified on the
-    documentation successor `ccb9184` with equal `apps/` and `e2e/`.
+  - Tests: `e02bb1224ef2bfbb31299fdc6b05df6192094cc6` (tree
+    `d2bacabbfb05f0a1b503389ea17a86f164943f61`).
+  - Every other group ran on `ccb9184`, whose inputs equal these; only the
+    PM9.5 spec and documents differ.
   - Frontend only: no manifest, lock, Rust, IPC, schema or workflow path
     changed.
 - **Passed.**

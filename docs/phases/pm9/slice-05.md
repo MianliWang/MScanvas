@@ -2,10 +2,8 @@
 
 PM9 | Acceptance: U5, U7 (drafts), U9, U10 | Depends on: PM9.2; after PM9.4 | Serial, one writer
 Status: **PM9.5 TARGETED-MS1 JOURNEY COMPLETE — FOCUSED BROWSER/RENDERED
-ACCEPTANCE PASS** (2026-10-04, §12). Production `f877870`, tests `207b441`,
-qualified on the documentation successor `ccb9184`, whose `apps/` and `e2e/`
-equal `207b441`'s. Real-engine and native release qualification are
-unchanged.
+ACCEPTANCE PASS** (2026-10-04, §12). Production `f877870`, tests `e02bb12`.
+Real-engine and native release qualification are unchanged.
 Expanded 2026-10-04 from the code of the starting point below. The midpoint
 check is not repeated; nothing here unfreezes the route.
 
@@ -248,33 +246,40 @@ termination, output publication, native WebView2 at 150 % or a screen reader.
 memory).** Closed: every group of checkpoint 1's remaining list ran on the
 final candidate and passed.
 
-**Candidate.** HEAD `ccb918480bed9c40475c8f55085c6db4b138d884` (tree
-`c69205780d31ef8d5886b5337c1bbd1d2037e1be`), clean. `git diff 207b441 ccb9184
--- apps e2e` is empty, so the code under test is production `f877870` and
-tests `207b441`.
+**Candidate.**
+
+- **Code.** Production `f877870d0a69963c18f29715915d6fddaef1c09a`, unchanged
+  since cycle 1. Tests `e02bb1224ef2bfbb31299fdc6b05df6192094cc6` (tree
+  `d2bacabbfb05f0a1b503389ea17a86f164943f61`).
+- **Groups.** Q1–Q3, U1, B0, G2b and G3 ran on
+  `ccb918480bed9c40475c8f55085c6db4b138d884` (tree
+  `c69205780d31ef8d5886b5337c1bbd1d2037e1be`), clean. The PM9.5 spec and its
+  last typecheck ran on `e02bb12`'s content.
+- **Inputs.** Between the two, `git diff --name-only ccb9184 e02bb12` names
+  only `pm9.5-targeted-ms1.browser.e2e.ts` and documents, so every group's
+  inputs equal the final candidate's.
 
 | Group | Result |
 | --- | --- |
 | Q1 `pnpm typecheck` (also `pnpm lint`: both `tsc -b`) | exit 0 |
 | Q2 `TargetedMs1.test.tsx`, `TargetedMs1Batch.test.tsx` | 2 files, 73 tests |
-| Q3 `pnpm e2e:typecheck` | exit 0 |
+| Q3 `pnpm e2e:typecheck` | exit 0; again (Q4–Q6) after each change to the PM9.5 spec, last on `e02bb12`'s content |
 | U1 full Vitest, `--maxWorkers=1 --no-file-parallelism` | 112 files, 2251 tests (PM9.4: 2237) |
 | B0 `pnpm build` | exit 0; its chunk-size warning predates PM9 (M7.2 and M7.3 logs) |
-| G1 PM9.5 spec | 10 of 10 (0 of 10 in G0) |
+| G1 PM9.5 spec | 10 of 10 on `ccb9184` (0 of 10 in G0). Then T9 was extended (`3ac0d0f`). It now reaches the last row inside the bounded review tables by a real wheel and by the keyboard, and keeps a just-opened frame at every anchor. That run went 10 of 10 (G1b), but its check was too weak, because End also moved the surface (`0e0eb15`). The stricter check went 8 of 10 (G1c): it failed only on T9's keyboard criterion, because a press sent during an animated scroll chained to the surface (`e02bb12`). **G1d on `e02bb12`: 10 of 10** |
 | G2 m9.1 + m9.4 | not started: port 15273 still held a TIME_WAIT connection (owner pid 0) of G1's own closed server. Rerun as G2b on 15274: m9.1 12 of 12, m9.4 5 of 5 |
 | G3 PM9.1 whole (port 15275) | 55 of 55 |
 | `check_repo`, `git diff --check`, scope | pass, clean, nothing outside the frontend, tests and documents |
 
 Each group was admitted on its own reading, between 9.24 GiB free (70.8%
-used) and 7.46 GiB (76.5%), and ran alone in the foreground. Local
-high-memory work ended with G3.
+used) and 7.34 GiB (76.8%), and ran alone in the foreground.
 
 **Acceptance.** R1–R12: pass, each GREEN in G1 and held by Vitest.
 
 | Finding | G1 | Vitest |
 | --- | --- | --- |
 | R1, R2 | T1 | the bundle values in both languages |
-| R3 | T1, T2, T4; T9's 200-target and 16-member reach | order, problems first |
+| R3 | T1, T2, T4. T9 at 960×640 in both languages: Run is reached, and the 200th target and the 16th acquisition are reached inside their scrollers by a real wheel over them and by Tab then Page Down, with the surface's own scroll unchanged (positions in the evidence) | order, problems first |
 | R4 | T2, T3, T6, T8 | each reason; refused presses send nothing |
 | R5 | T6 | review and run refusals; another operation's refusal not shown |
 | R6 | T1, T5, T8 | status line, Cancel run, Close's reason |
@@ -288,16 +293,19 @@ high-memory work ended with G3.
 V1–V7 hold. O1–O4 and F1–F3 stay as §4 records them, F1 needing a read-only
 projection of the bounds that this dispatch did not authorize.
 
-**Rendered evidence** (`.tmp/pm95-runs/G1/browser-3HkrFs/`, git-ignored).
+**Rendered evidence** (`.tmp/pm95-runs/G1d/browser-7YstlW/`, git-ignored).
 
-- **Frames.** 53, from Chrome 154.0.8037.93 headless at DPR 1. Each records
+- **Frames.** 67, from Chrome 154.0.8037.93 headless at DPR 1. Each records
   the CSS and outer viewport, the surface's and the setup's widths, the page
-  language, the roster and Details state, and the candidate
-  (`ccb9184`).
-- **Coverage.** Input/error, ready, batch running, batch ended and single
-  ended at 1920×1080, 1366×768 and 960×640, in en and zh-CN. The review and
-  the ended batch at 1280×720, 1536×864 and 2560×1440. The 200-target and
-  16-member reviews at 960×640 in both languages.
+  language, the roster and Details state, and the candidate (`e02bb12`).
+- **Coverage.**
+  - At 1920×1080, 1366×768 and 960×640, in en and zh-CN: the setup as it
+    opens, input/error, ready, batch running, batch ended and single ended.
+  - At 1280×720, 1536×864 and 2560×1440: the review and the ended batch.
+  - At 960×640, in both languages: the 200-target and 16-member reviews, each
+    with its last row reached by wheel and by keyboard.
+- **Not seen.** No framework overlay appears in the frames, and the console
+  ledger is empty. There is no dedicated overlay assertion.
 - **Judged in every frame:**
   - overflow ≤ 1 px;
   - no estimate;
@@ -312,6 +320,14 @@ projection of the bounds that this dispatch did not authorize.
   (`.tmp/pm95-observe/out/`) and G0's failure frames.
 - **The manual entry** is §8's; it was not used for acceptance.
 
+**Test-authoring fixes** (outside the correction-cycle count):
+
+- m9.4's stopping frame reads the shared stop word (`435e3c9`);
+- T1's heading check is described as what it is, and the wheel helper refuses
+  a point over an inner scroller (`207b441`);
+- the inner-scroll check, made strict (`0e0eb15`) and made to wait for each
+  scroll to settle (`e02bb12`).
+
 **Process custody, checkpoint 2.**
 
 - Every group recorded each launched process's PID, creation time, command and
@@ -325,6 +341,9 @@ projection of the bounds that this dispatch did not authorize.
   created after its launch.
 - Chrome again woke Google Updater as its child, and Updater had ended.
 - Nothing was killed by name or port.
+- Each browser group used its own unused dev port (15273–15278), since a port
+  just released keeps a TIME_WAIT connection.
+- Local high-memory work ended with G1d.
 
 **Remaining, outside this slice.**
 
