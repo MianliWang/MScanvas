@@ -392,14 +392,18 @@ describe("saving conversion diagnostics", () => {
     const adopt = await within(panel).findByRole("button", {
       name: "Add converted output to workspace",
     });
-    expect(adopt).toBeEnabled();
+    // Refused through aria-disabled since PM9.4 (R11), which toBeEnabled and
+    // toBeDisabled do not read.
+    expect(adopt).not.toHaveAttribute("aria-disabled");
     fireEvent.click(within(panel).getByRole("button", { name: EXPORT_LABEL }));
 
     await waitFor(() => {
       expect(
         within(panel).getByRole("button", { name: "Add converted output to workspace" }),
-      ).toBeDisabled();
+      ).toHaveAttribute("aria-disabled", "true");
     });
+    // Pressed while refused, it still adds nothing.
+    fireEvent.click(within(panel).getByRole("button", { name: "Add converted output to workspace" }));
     expect(api.calls()).not.toContain("adoptConversionOutputs");
 
     release!();

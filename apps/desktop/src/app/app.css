@@ -428,8 +428,7 @@ button:disabled,
    time. The marker is suppressed and the position rendered instead, so the
    number is a cell the names can align against rather than a glyph the browser
    places outside the box. */
-.conversion-queue-list,
-.conversion-requested-list {
+.conversion-queue-list {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -440,8 +439,7 @@ button:disabled,
   list-style: none;
 }
 
-.conversion-queue-list > li,
-.conversion-requested-list > li {
+.conversion-queue-list > li {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -518,7 +516,6 @@ button:disabled,
 .conversion-queue-attempts,
 .conversion-queue-facts,
 .conversion-queue-reason,
-.conversion-queue-retry,
 .conversion-queue-residue,
 .conversion-queue-set-result,
 .conversion-queue-set-completeness,
@@ -2271,6 +2268,15 @@ button:disabled,
    links -- meet the 32 px compact-control minimum like its other controls
    (PM9.4 R12). */
 .conversion-panel .link-button { min-height: 32px; }
+
+/* The requested order before a plan arrives is the same list as the reviewed
+   one, numbered once by its own cells (PM9.4 R5). Its own rules rather than a
+   second selector on the queue list's, which the CSSOM tests find by name. */
+.conversion-requested-list { display: flex; min-width: 0; flex-direction: column; margin: 0; padding: 0; gap: 4px; font-size: 0.85rem; list-style: none; }
+.conversion-requested-list > li { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+
+/* Whether Retry reruns a failure: a line of its own, like the reason (R8). */
+.conversion-queue-retry { min-width: 0; flex: 1 0 100%; padding-left: 2.2em; color: var(--color-text-secondary); overflow-wrap: anywhere; }
 
 .conversion-panel .secondary-button[aria-disabled="true"],
 .conversion-panel .link-button[aria-disabled="true"] {
