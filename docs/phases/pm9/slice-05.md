@@ -1,9 +1,11 @@
 # PM9.5 — targeted-MS1 journey: request, review, run, stop, result entry
 
 PM9 | Acceptance: U5, U7 (drafts), U9, U10 | Depends on: PM9.2; after PM9.4 | Serial, one writer
-Status: **IN PROGRESS** (expanded 2026-10-04 from the code of the starting
-point below). The midpoint check is not repeated; nothing here unfreezes the
-route.
+Status: **IMPLEMENTED — QUALIFICATION RESOURCE_DEFERRED** (2026-10-04, §12).
+Production `f877870`, tests `207b441`; the final candidate's static, unit,
+build and browser groups were refused at the memory gate and have not run.
+Expanded 2026-10-04 from the code of the starting point below. The midpoint
+check is not repeated; nothing here unfreezes the route.
 
 ## 0. Starting point
 
@@ -240,4 +242,120 @@ termination, output publication, native WebView2 at 150 % or a screen reader.
 
 ## 12. Record
 
-Filled at closure.
+**2026-10-04, checkpoint 1 (resource deferral).** Not closed. Everything below
+is what exists and what it rests on; nothing here is acceptance of the final
+candidate.
+
+**Identities.**
+
+| What | Commit | Tree |
+| --- | --- | --- |
+| Start | `df14a9b2376aed60c75c2ac35c4e27b2e9ec551b` | `f0894fd951198684c62e37ef6aac7239dc838475` |
+| This expansion | `28624d4` | — |
+| Spec, fixture and manual scenario (test-only) | `2c4d5365abd5aa77f1920b1864b5c92408e8432a` | `b33a8cad998b6233291f5afc2559f1b4431bbdbd` |
+| Production | `bcb7474`, then cycle 1 `f877870` | — |
+| Tests | `435e3c9`, then cycle 1 `207b441ac32dcf20f962b30f11c448724b96292d` | `36150ba77ed1ed3b0bd86934707741eac79b7eb4` |
+
+**Changed paths** (`df14a9b..207b441`), frontend, tests and this file only:
+`TargetedMs1.tsx`, `ProjectPanel.tsx`, `useProject.ts`, `project.css`,
+`en.ts`, `zh-CN.ts`, `i18n.ts`; `TargetedMs1.test.tsx`,
+`TargetedMs1Batch.test.tsx`; `e2e/specs/pm9.5-targeted-ms1.browser.e2e.ts`,
+`e2e/support/targeted.ts`, `e2e/support/pm9Scenarios.ts` (one new scenario,
+existing cases unchanged), `e2e/specs/m9.4-targeted-ms1-batch.browser.e2e.ts`
+(one test-authoring line), `e2e/README.md`. No Rust, `projectApi.ts`, schema,
+manifest, lock or workflow path (scoped `git diff`, 2026-10-04).
+
+**Findings.** R1–R12 are implemented as §4 states them. One independent
+focused review (read-only, after `435e3c9`) found no blocker, three should-fix
+items and one minor item, all applied as **correction cycle 1**
+(`f877870`, `207b441`):
+
+1. With real timing, a run refused before it existed dropped focus to `body`:
+   the refusal commits while the run block is still mounted, and the block
+   leaves only after the re-read. Focus is now handed over once the run has
+   settled.
+2. Opening another copy with the same identifiers kept the setup, its draft,
+   a stale review and an ending. The session now counts replacements where it
+   clears the inspection, and the surface resets on that count. An ending is
+   shown only while its run is in the project.
+3. A new ready request beside a completed run's Open result made two filled
+   primaries. Open result yields.
+4. The caption read "1 targets"; it no longer agrees in number.
+
+The review's notes were also applied, test-only: T1's heading check is
+described as what it is, and the wheel helper refuses a point over an inner
+scroller. One substantive cycle is used of the two authorized.
+
+**Evidence so far.**
+
+| Group | Identity | Result |
+| --- | --- | --- |
+| O0 observation | `df14a9b` + untracked fixture (`.tmp/pm95-observe/run/O0-observe.meta.txt`) | Before frames and geometry (§4 grounding). Observation only, not RED |
+| S0 e2e typecheck | `2c4d536`, clean | exit 0 |
+| G0 PM9.5 spec, unchanged production | `2c4d536`, clean | 0/10, as expected |
+| D1 typecheck | uncommitted, before launch | not run (the operator's own output pipe stopped the runner before launch) |
+| D1b typecheck | uncommitted diff `aae606c8…` | exit 1, only the expected test reference to the removed key |
+| D2 typecheck | diff `2847b414…` | exit 0 |
+| D3 targeted Vitest | diff `2847b414…` | 70/71: the setup did not open, because a reset in an effect raced a first click; fixed by resetting during render |
+| D4 Vitest, `features/project` + PM9 compositions | diff `7bb4ba6b…` | 11 files, 203 tests, pass |
+| D5 e2e typecheck | diff `7bb4ba6b…` | exit 0 |
+| D6 PM9.5 spec | diff `7bb4ba6b…` | did not run: Vite could not bind 127.0.0.1:5273 (EACCES). Another application (pid 7444, not task-owned, untouched) held 5273 as an ephemeral port; this host's dynamic range is 1024–15000. Later browser groups use `MSCANVAS_BROWSER_DEV_PORT=15273` |
+| D7 PM9.5 spec | diff `7bb4ba6b…`, port 15273 | 10/10 pass, development run |
+| D8 typecheck + targeted Vitest | `435e3c9` + focus fix | **REFUSED at admission** (5.9 GiB free, 81.4% used) |
+| C1 the same, for cycle 1 | `207b441`, clean | **REFUSED at admission** (4.97 GiB free, 84.3% used) |
+| `check_repo`, `git diff --check`, scope | `207b441` | pass, clean, none outside the frontend |
+
+D-group results are development evidence for uncommitted states, identified by
+diff digest. None is inherited by the final candidate: `bcb7474` added a focus
+fix after D7, and cycle 1 changed production again.
+
+**RED limit (G0).** Mocha stops a case at its first failed assertion, so on
+the unchanged production G0 observed RED only at:
+
+| Cases | First finding |
+| --- | --- |
+| T1–T7 and T9 (en, zh-CN) | R3: no review area (T4: the review after Run) |
+| T8 | R4: the Review reason's key did not exist |
+
+R1 and R2 are copy, held by Vitest values rather than by RED. The criteria
+after each first finding rest on O0's frames and on reading.
+
+**v5.11 comparison.** The reference was re-hashed before use:
+`mscanvas_unified_demo_v5_11.html`, 490,253 bytes, SHA-256
+`d09b60e0bd3225721ddf87731ec64c0577015952afc05d91290d5461b3896337` (baseline
+§3). It has no Project surface; its targeted step is one node of a synthetic
+multi-step method, with a configure → review → run page sequence. It was read
+for task hierarchy, not rendered, and none of its science was taken.
+
+| Aspect | v5.11 | Before (O0) | After | Disposition |
+| --- | --- | --- | --- | --- |
+| Path | Three pages with a stepper | One setup, Run above the review | One setup: request, Review plan, review, Run, then the run or batch | Adopted: the review leads to the action. Separate pages and the stepper are not (PM9.4's precedent; the stepper stays with PM9.7) |
+| Inputs fixed for the run | Named, with a count, beside Start | Source name at the top only | "Acquisition: …" in the review; batch members in order with readiness, above Run | Adopted |
+| Stale plan | "Plan invalidated" tag, Start disabled with an alert | Review removed; Run's reason generic | Review removed; Run says the request changed after its review | Adopted in substance; keeping an invalid review on screen is not |
+| Run in progress | State title; Stop in the page head | Busy line and Cancel at the top of the surface | "Run in progress" block with its phase and Cancel run; busy line kept | Adopted. No task id or method version, which the projection does not have |
+| Progress | Step states, N/M, a progress track, ETA | Phase sentence; member states and counts | Unchanged, plus "Stop requested…" | States and counts adopted; track and ETA not (no estimates) |
+| Stopped | "Stopped" and "earlier results not overwritten" | Panel-local "Stopping…" | Requested until answered; cancelled and not-started members; the next step said | Adopted |
+| Done | "View results" as the primary | Run filled again; "shown below" | Open result as the primary; Run again secondary, with its consequence | Adopted; "edit next task" is editing the request in place |
+| Log | Task log | — | — (run facts in Details) | Not adopted |
+
+**Remaining under this dispatch** (each its own admission reading; browser
+groups with `-Port 15273`):
+
+1. S1 on `207b441`: `pnpm typecheck` (= `pnpm lint`, both `tsc -b`) and
+   `pnpm e2e:typecheck`.
+2. The targeted Vitest files, then U1: `pnpm exec vitest run --maxWorkers=1
+   --no-file-parallelism` from `apps/desktop`.
+3. B0: `pnpm build`.
+4. G1: the PM9.5 spec. G2: m9.1 and m9.4. G3: PM9.1 whole, which reads
+   `pm9Scenarios.ts`.
+5. Then this record, `slices.md`, the baseline and the product notes
+   (`M9_1_TARGETED_MS1_HANDOFF.md`, `M9_4_TARGETED_MS1_BATCH.md`,
+   `PRIMARY_WORKFLOWS.md`).
+
+PM9.4's spec is not owed: it reads `scenario("populated")`, which is
+unchanged.
+
+**Process custody.** Every group above was launched by the scratchpad runner
+with its PID, creation time, command and parent recorded; every launched tree
+had zero leftovers. Chrome also woke Google Updater as its child during G0,
+and it had ended by the leftover check. Nothing was killed by name or port.
