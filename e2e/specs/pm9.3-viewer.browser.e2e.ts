@@ -447,9 +447,6 @@ async function rangeLine(panel: string) {
   };
 }
 
-/** WebDriver's Escape key. */
-const ESCAPE = String.fromCharCode(0xe00c);
-
 /**
  * One plot's range row and caption, read in one script: the sentence a sighted
  * reader sees (outside .visually-hidden, the pending actions and the
@@ -501,32 +498,34 @@ function lineChanges(): Promise<string[]> {
 /**
  * A middle-button press on a plot, moved past the slop and held: a pan in
  * flight. Middle drag pans since M7.3, where a primary drag proposes a band.
- * The button stays down until releasePan; nothing in between may call
- * browser.keys or an unskipped action().perform(), which release every input
- * source.
+ *
+ * Driven through the DevTools input domain rather than WebDriver actions: held
+ * across two action calls, ChromeDriver releases the middle button as a button
+ * change (a pointermove, then an auxclick with `buttons` 2) instead of a
+ * pointerup, so the pan never ends (observed on Chrome 154). Returns where the
+ * pointer rests, for releasePan.
  */
 async function holdPan(selector: string, from: number, to: number) {
   const start = await point(selector, from);
   const end = await point(selector, to);
-  await browser.performActions([
-    {
-      type: "pointer",
-      id: "pm93-pointer",
-      parameters: { pointerType: "mouse" },
-      actions: [
-        { type: "pointerMove", duration: 0, origin: "viewport", ...start },
-        { type: "pointerDown", button: 1 },
-        { type: "pointerMove", duration: 150, origin: "viewport", ...end },
-      ],
-    },
-  ]);
+  await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: start.x, y: start.y, button: "none", buttons: 0 });
+  await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: start.x, y: start.y, button: "middle", buttons: 4, clickCount: 1 });
+  for (let step = 1; step <= 5; step += 1) {
+    const x = Math.round(start.x + ((end.x - start.x) * step) / 5);
+    await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x, y: start.y, button: "middle", buttons: 4 });
+  }
+  return end;
 }
 
-async function releasePan() {
-  await browser.performActions([
-    { type: "pointer", id: "pm93-pointer", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerUp", button: 1 }] },
-  ]);
-  await browser.releaseActions();
+async function releasePan(at: { readonly x: number; readonly y: number }) {
+  await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button: "middle", buttons: 0, clickCount: 1 });
+}
+
+/** Escape, pressed and released on whatever has the focus. */
+async function pressEscape() {
+  const key = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 };
+  await cdp("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key });
+  await cdp("Input.dispatchKeyEvent", { type: "keyUp", ...key });
 }
 
 /** Chooses one scope radio by script: which scope is chosen is the subject, not how. */
@@ -1394,7 +1393,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
 
         // 1. A middle-button pan, held: the plot displays the gesture's range;
         // nothing is committed yet.
-        await holdPan(PLOT, 0.5, 0.35);
+        const first = await holdPan(PLOT, 0.5, 0.35);
         await frames();
         const held = await rangeFacts(RT_PANEL);
         expect(held.displayed).not.toBe(zoomed.bounds);
@@ -1404,7 +1403,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
         expect(await lineChanges()).toEqual([]);
 
         // 2. Released: one change, to the new commit.
-        await releasePan();
+        await releasePan(first);
         await browser.waitUntil(settledOn(zoomed.bounds), { timeout: 15_000, timeoutMsg: "the pan never settled into a new commit" });
         await frames();
         const panned = await rangeFacts(RT_PANEL);
@@ -1417,17 +1416,15 @@ describe("PM9.3 viewer contracts, rendered", () => {
         }
 
         // 3. Another held pan, cancelled with Escape: nothing said, nothing committed.
-        await holdPan(PLOT, 0.35, 0.5);
+        const second = await holdPan(PLOT, 0.35, 0.5);
         await frames();
         const cancelling = await rangeFacts(RT_PANEL);
         expect(cancelling.displayed).not.toBe(panned.bounds);
         expect(cancelling.bounds).toBe(panned.bounds);
         judge("held pan before Escape", cancelling, panned.bounds);
         expect(await browser.execute((css: string) => document.activeElement === document.querySelector(css), PLOT)).toBe(true);
-        await browser.performActions([
-          { type: "key", id: "pm93-keyboard", actions: [{ type: "keyDown", value: ESCAPE }, { type: "keyUp", value: ESCAPE }] },
-        ]);
-        await releasePan();
+        await pressEscape();
+        await releasePan(second);
         await frames();
         const abandoned = await rangeFacts(RT_PANEL);
         expect({ bounds: abandoned.bounds, displayed: abandoned.displayed }).toEqual({ bounds: panned.bounds, displayed: panned.bounds });
