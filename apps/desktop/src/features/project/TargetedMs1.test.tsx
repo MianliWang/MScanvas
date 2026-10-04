@@ -130,6 +130,19 @@ function query<T extends HTMLElement>(selector: string): T {
 }
 
 const details = () => query("#workbench-inspector");
+
+/** The text a control's description points at, one entry per described element. */
+function described(control: Element) {
+  return (control.getAttribute("aria-describedby") ?? "")
+    .split(/\s+/u)
+    .filter(Boolean)
+    .map((id) => document.getElementById(id)?.textContent ?? "");
+}
+
+/** Whether `first` comes before `second` in the document. */
+function precedes(first: Element, second: Element) {
+  return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
 const liveRegion = () =>
   document.querySelector("[data-live-region='project']")?.textContent ?? "";
 
@@ -197,7 +210,7 @@ describe("the setup", () => {
     // Run is reachable but inert, and says why.
     const run = query("[data-targeted-run]");
     expect(run.getAttribute("aria-disabled")).toBe("true");
-    expect(run.getAttribute("title")).toBe(en.targetedRunNeedsReview);
+    expect(described(run)).toEqual([en.targetedRunNeedsReview]);
     await press(run);
     expect(caused(api)).toEqual([]);
 
@@ -1176,5 +1189,266 @@ describe("rows the fixtures do not cover by default", () => {
     expect(row.textContent).toContain(en.targetedOutcomeFailed);
     expect(row.textContent).toContain(en.targetedRowFailureNoValidFit);
     expect(row.textContent).not.toContain(en.targetedOutcomeNotDetected);
+  });
+});
+
+describe("the task as one path (PM9.5)", () => {
+  it("names its own choice of acquisitions and the request's limit (R1, R2)", async () => {
+    mount(layered());
+    const setup = await openSetup();
+    expect(query("[data-targeted-members] legend").textContent).toBe(en.targetedAcquisitions);
+    expect([en.targetedAcquisitions, zh.targetedAcquisitions]).toEqual(["Acquisitions to analyse", "要分析的采集"]);
+    expect(within(setup).getByText(en.targetedAcquisitionsHelp)).toBeTruthy();
+    expect(en.targetedAcquisitionsHelp).toContain("separate from the Workbench's highlighted and checked rows");
+    expect(within(setup).getByText(en.targetedTargetsFormat)).toBeTruthy();
+    expect([en.targetedTargetsFormat, zh.targetedTargetsFormat].map((format) => format.includes("200"))).toEqual([true, true]);
+  });
+
+  it("leads the review to Run and says why Review or Run waits, in each state (R3, R4)", async () => {
+    const api = mount(layered({ published: false }));
+    await openSetup();
+    const review = query("[data-targeted-review]");
+    const run = query("[data-targeted-run]");
+    // Nothing typed: neither can act, each says why, and a press sends nothing.
+    expect(review.getAttribute("aria-disabled")).toBe("true");
+    expect(described(review)).toEqual([en.targetedReviewNeedsTargets]);
+    expect(described(run)).toEqual([en.targetedRunNeedsReview]);
+    await press(review);
+    expect(caused(api)).toEqual([]);
+    await press(query(`[data-targeted-member="${LAYER}"]`));
+    expect(described(review)).toEqual([en.targetedReviewNeedsAcquisition]);
+    await press(query(`[data-targeted-member="${LAYER}"]`));
+
+    // Problems come first in the review, which sits between Review plan and Run.
+    api.setTargeted({
+      resolution: {
+        plan: null,
+        problems: [{ row: 1, field: "formula", problem: "invalid" }],
+        blocked: null,
+        engine: FAKE_ENGINE,
+      },
+    });
+    await type(query("[data-targeted-text]"), "A, Xx9, 10, 5");
+    await press(review);
+    const area = query("[data-targeted-review-area]");
+    expect(precedes(review, area) && precedes(area, run)).toBe(true);
+    expect(precedes(query("[data-targeted-problems]"), query("[data-targeted-engine]"))).toBe(true);
+    expect(described(run)).toEqual([en.targetedRunFixProblems]);
+
+    // An edit withdraws the review, and Run says the request changed.
+    api.setTargeted({
+      resolution: { plan: PLAN, problems: [], blocked: "notYetPublished", engine: FAKE_ENGINE },
+    });
+    await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 120, 30");
+    expect(document.querySelector("[data-targeted-review-area]")).toBeNull();
+    expect(described(run)).toEqual([en.targetedRunChanged]);
+
+    // A blocked plan: what would run, then the plan's own refusal, which is Run's reason.
+    await press(review);
+    expect(query("[data-targeted-plan-for]").textContent).toBe(
+      en.targetedPlanFor.replace("{{name}}", projectInput().label),
+    );
+    expect(query(`[data-targeted-plan="${PLAN.planSha256}"] caption`).textContent).toBe(
+      en.targetedPlanCaption
+        .replace("{{count}}", String(PLAN.targets.length))
+        .replace("{{ppm}}", PLAN.parameters.mzHalfWidthPpm)
+        .replace("{{width}}", PLAN.parameters.expectedPeakWidthS),
+    );
+    expect(described(run)).toEqual([en.projectRefusedNotYetPublished]);
+    await press(run);
+    expect(api.runTargetedMs1).not.toHaveBeenCalled();
+  });
+
+  it("takes the keyboard from Review plan to the review it answered (R3, R9)", async () => {
+    mount(layered());
+    await openSetup();
+    await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 120, 30");
+    const review = query("[data-targeted-review]");
+    review.focus();
+    await press(review);
+    expect(document.activeElement).toBe(query("[data-targeted-review-area] h4"));
+  });
+
+  it("says a refused review or run beside what was refused, and only its own (R5)", async () => {
+    const api = mount(layered());
+    await openSetup();
+    await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 120, 30");
+    api.refuseOnce("resolveTargetedMs1Plan", "recipeSourceUnsupported");
+    await press(query("[data-targeted-review]"));
+    expect(query('[data-targeted-review-refused="recipeSourceUnsupported"]').textContent).toBe(
+      en.projectRefusedRecipeSourceUnsupported,
+    );
+    expect(query('[data-project-problem="recipeSourceUnsupported"]')).toBeTruthy();
+    // A new request withdraws the refusal of the old one, everywhere.
+    await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 121, 30");
+    expect(document.querySelector("[data-targeted-review-refused]")).toBeNull();
+    expect(document.querySelector("[data-project-problem]")).toBeNull();
+
+    // A run refused before it existed is said beside Run, with no ending; the
+    // block the press made goes, and its refusal has the keyboard instead.
+    await press(query("[data-targeted-review]"));
+    api.refuseOnce("runTargetedMs1", "planNotCurrent");
+    const run = query("[data-targeted-run]");
+    run.focus();
+    await press(run);
+    const refused = query('[data-targeted-run-refused="planNotCurrent"]');
+    expect(refused.textContent).toBe(en.projectRefusedPlanNotCurrent);
+    expect(document.querySelector("[data-targeted-run-block]")).toBeNull();
+    expect(document.activeElement).toBe(refused);
+    expect(described(run)).toEqual([en.projectRefusedPlanNotCurrent]);
+
+    // Another operation's refusal is not the setup's to say.
+    api.refuseOnce("saveProject", "staleDocument");
+    await press(screen.getByRole("button", { name: en.projectSave }));
+    expect(query('[data-project-problem="staleDocument"]')).toBeTruthy();
+    expect(document.querySelector("[data-targeted-review-refused], [data-targeted-run-refused]")).toBeNull();
+  });
+
+  it("says what is out beside the controls it holds (R6)", async () => {
+    const api = mount(layered());
+    await openSetup();
+    await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 120, 30");
+    const release = api.holdOnce("resolveTargetedMs1Plan");
+    await press(query("[data-targeted-review]"));
+    expect(query('[data-targeted-status="reviewing"]').textContent).toBe(en.projectBusyReviewingPlan);
+    expect(described(query("[data-targeted-review]"))).toEqual([en.projectBusyReviewingPlan]);
+    expect(described(query("[data-targeted-run]"))).toEqual([en.projectBusyReviewingPlan]);
+    await act(async () => release());
+    expect(document.querySelector("[data-targeted-status]")).toBeNull();
+  });
+
+  it("follows a run beside its request: its phase, Cancel run, a stop requested and what ended (R6, R7, R9)", async () => {
+    const api = mount(layered());
+    api.setTargeted({ progress: { operationId: "project-job-1", phase: "runningEngine" } });
+    await reviewed(api);
+    const release = api.holdOnce("runTargetedMs1");
+    const run = query("[data-targeted-run]");
+    run.focus();
+    await press(run);
+    const block = query('[data-targeted-run-block="running"]');
+    // The keyboard follows from Run, now inert, to what the press made.
+    expect(document.activeElement).toBe(within(block).getByRole("heading"));
+    await screen.findAllByText(en.targetedPhaseRunningEngine);
+    expect(described(query("[data-targeted-close]"))).toEqual([en.targetedRunInProgressTitle]);
+    expect(described(run)).toEqual([en.targetedRunInProgressTitle]);
+
+    const cancel = query("[data-targeted-cancel-run]");
+    expect(cancel.textContent).toBe(en.targetedCancelRun);
+    cancel.focus();
+    await press(cancel);
+    await press(cancel);
+    expect(api.cancelled).toEqual(["project-job-1"]);
+    // Requested, not observed: every stop control says so, and the run is still running.
+    expect(cancel.textContent).toBe(en.targetedStopRequested);
+    expect(cancel.getAttribute("aria-disabled")).toBe("true");
+    expect(query("[data-project-cancel]").textContent).toBe(en.targetedStopRequested);
+    await press(query("[data-project-cancel]"));
+    expect(api.cancelled).toEqual(["project-job-1"]);
+    expect(liveRegion()).toBe(en.targetedStopRequested);
+    expect(query("[data-targeted-run-block]").getAttribute("data-targeted-run-block")).toBe("running");
+
+    // The stop arrived too late: the run completed after all, and is said to have.
+    api.set(targetedProject());
+    await act(async () => release());
+    expect(query("[data-targeted-run-block]").getAttribute("data-targeted-run-block")).toBe("completed");
+    expect(query('[data-targeted-last="completed"]').textContent).toBe(en.targetedLastCompleted);
+    // Cancel run left with the run; its heading has the keyboard, not the page.
+    expect(document.activeElement).toBe(within(query("[data-targeted-run-block]")).getByRole("heading"));
+  });
+
+  it("ends a run with its own entry, and offers the same plan again only as what it is (R8, R9)", async () => {
+    const api = mount(layered());
+    await reviewed(api);
+    api.set(targetedProject());
+    await press(query("[data-targeted-run]"));
+    const open = query(`[data-targeted-open-result="${ARTIFACT}"]`);
+    expect(open.className).toBe("primary-button");
+    const run = query("[data-targeted-run]");
+    expect(run.textContent).toBe(en.targetedRunAgain);
+    expect(run.className).toBe("secondary-button");
+    expect(described(run)).toEqual([en.targetedRunAgainNote]);
+
+    await press(open);
+    expect(document.activeElement).toBe(query(`[data-targeted-report="${ARTIFACT}"] h3`));
+
+    // An edit withdraws the review, never the ending.
+    await type(query("[data-targeted-width]"), "7");
+    expect(document.querySelector("[data-targeted-review-area]")).toBeNull();
+    expect(query('[data-targeted-last="completed"]')).toBeTruthy();
+    expect(query("[data-targeted-run]").textContent).toBe(en.targetedRun);
+  });
+
+  it("offers a failed run's own run, never a result (R8)", async () => {
+    const api = mount(layered());
+    await reviewed(api);
+    api.set(withRun({ outcome: "failed" }, { failure: { code: "sourceChanged", stage: "source" } }));
+    await press(query("[data-targeted-run]"));
+    expect(query('[data-targeted-last="failed"]').textContent).toBe(
+      `${en.targetedLastFailed} ${en.targetedFailureSourceChanged}`,
+    );
+    expect(document.querySelector("[data-targeted-open-result]")).toBeNull();
+    await press(query(`[data-project-inspect-layer="${LAYER}"]`));
+    await press(query(`[data-targeted-show-run="${RUN}"]`));
+    expect(query(`[data-project-inspect-run="${RUN}"]`).getAttribute("aria-current")).toBe("true");
+  });
+
+  it("leads a problem back to the line it was typed on (R10)", async () => {
+    const api = mount(layered());
+    api.setTargeted({
+      resolution: {
+        plan: null,
+        problems: [{ row: 2, field: "formula", problem: "invalid" }],
+        blocked: null,
+        engine: FAKE_ENGINE,
+      },
+    });
+    await openSetup();
+    await type(query("[data-targeted-text]"), "A, C6H6, 10, 5\n# comment\nB, Xx9, 10, 5");
+    await press(query("[data-targeted-review]"));
+    const line = query('[data-targeted-problem-line="3"]');
+    expect(line.getAttribute("aria-label")).toBe(en.targetedGoToLine.replace("{{line}}", "3"));
+    await press(line);
+    const area = query<HTMLTextAreaElement>("[data-targeted-text]");
+    expect(document.activeElement).toBe(area);
+    expect(area.value.slice(area.selectionStart, area.selectionEnd)).toBe("B, Xx9, 10, 5");
+  });
+
+  it("keeps the typed request across closing and another row, not into another project (R11)", async () => {
+    const otherInput = projectInput({
+      id: "11111111-1111-4111-8111-222222222222",
+      label: "second.mzML",
+      verification: "matchingRecordedContent",
+    });
+    const other = projectLayer({ id: "dddddddd-1111-4111-8111-222222222222", sourceInputId: otherInput.id });
+    const two = {
+      inputs: [projectInput({ verification: "matchingRecordedContent" }), otherInput],
+      layers: [projectLayer(), other],
+    };
+    const api = mount(layered(two));
+    await openSetup();
+    await type(query("[data-targeted-text]"), "Caffeine, C8H10N4O2, 120, 30");
+    await type(query("[data-targeted-width]"), "7");
+    await press(query("[data-targeted-review]"));
+    await press(query("[data-targeted-close]"));
+    await press(query(`[data-project-targeted="${LAYER}"]`));
+    expect(query<HTMLTextAreaElement>("[data-targeted-text]").value).toBe("Caffeine, C8H10N4O2, 120, 30");
+    expect(query<HTMLInputElement>("[data-targeted-width]").value).toBe("7");
+    // No review survives: a reopened setup is reviewed again.
+    expect(document.querySelector("[data-targeted-review-area]")).toBeNull();
+
+    // From another row: the same request, for that acquisition.
+    await press(query(`[data-project-targeted="${other.id}"]`));
+    expect(query(`[data-targeted-setup="${other.id}"]`)).toBeTruthy();
+    expect(query<HTMLTextAreaElement>("[data-targeted-text]").value).toBe("Caffeine, C8H10N4O2, 120, 30");
+    expect(query<HTMLInputElement>(`[data-targeted-member="${other.id}"]`).checked).toBe(true);
+    expect(query<HTMLInputElement>(`[data-targeted-member="${LAYER}"]`).checked).toBe(false);
+
+    // Another project: the setup closes, and the draft goes with its project.
+    api.set(layered({ ...two, projectId: "aaaaaaaa-0000-4111-8111-000000000002" }));
+    await press(screen.getByRole("button", { name: en.projectOpen }));
+    expect(document.querySelector("[data-targeted-setup]")).toBeNull();
+    await press(query(`[data-project-targeted="${LAYER}"]`));
+    expect(query<HTMLTextAreaElement>("[data-targeted-text]").value).toBe("");
+    expect(query<HTMLInputElement>("[data-targeted-width]").value).toBe("6");
   });
 });
