@@ -400,14 +400,30 @@ async function scrollsInside(table: string, label: string) {
       return { shown: inScroller && onScreen, inner: scroller.scrollTop, outer: owner.scrollTop };
     }, table);
 
+  /**
+   * Keyboard (and wheel) scrolling animates. The next press waits until the
+   * scroller has stopped moving: a press sent while it is still on its way to
+   * its end finds it already there and moves the surface instead, which says
+   * nothing about the scroller.
+   */
+  const settled = async () => {
+    let previous = await lastShown();
+    for (let step = 0; step < 40; step += 1) {
+      await frames();
+      const now = await lastShown();
+      if (now.inner === previous.inner && now.outer === previous.outer) return now;
+      previous = now;
+    }
+    return previous;
+  };
+
   const point = await place();
   if (point === null) throw new Error(`no scroller holds ${table}`);
   const beforeWheel = await lastShown();
   let wheel = beforeWheel;
   for (let step = 0; step < 60 && !wheel.shown; step += 1) {
     await cdp("Input.dispatchMouseEvent", { type: "mouseWheel", x: point.x, y: point.y, deltaX: 0, deltaY: 200 });
-    await frames();
-    wheel = await lastShown();
+    wheel = await settled();
   }
   await frame(`${label}-wheel`);
 
@@ -422,12 +438,11 @@ async function scrollsInside(table: string, label: string) {
     }, table);
   }
   // Read once the keyboard is on the scroller: focusing it may bring it into view.
-  const beforeKeys = await lastShown();
+  const beforeKeys = await settled();
   let keyboard = beforeKeys;
   for (let step = 0; tabbed && step < 40 && !keyboard.shown; step += 1) {
     await browser.keys(["PageDown"]);
-    await frames();
-    keyboard = await lastShown();
+    keyboard = await settled();
   }
   await frame(`${label}-keyboard`);
   return {
