@@ -413,9 +413,12 @@ product defects. Each fix is test authoring, except one CSS restatement.
     click, a later focus destination that permanently cancels the picker's
     return. It now opens them by script, and uses focus emulation for headless
     Chrome, as PM9.1's UI-07 does.
-- **Before the runs, from the single review:** correction cycle 1, above. It
-  is the only substantive cycle used; the second authorized one was not
-  needed.
+- **Correction cycles: two, both within the budget.**
+  - Cycle 1 came from the single review, before the runs (`5459f98`,
+    `6922a60`).
+  - Cycle 2 is `55d75fb`'s CSS restatement, found by D2. It touches a
+    production file, so it is counted although it renders nothing differently.
+  - The rest are test-authoring fixes.
 
 **Attribution.**
 
@@ -433,9 +436,32 @@ product defects. Each fix is test authoring, except one CSS restatement.
 
 **Acceptance list, final.**
 
-- **R1–R12: pass.**
-  - Each was RED on the unchanged production in G0a and GREEN in G1, and is
-    held by its Vitest case.
+- **R1–R12: pass.** Each is GREEN in G1 and held by its Vitest case.
+  - **What G0a observed as RED.** Mocha stops a case at its first failed
+    assertion, so on the unchanged production G0a observed RED only at each
+    case's first finding:
+
+    | Case | First finding |
+    | --- | --- |
+    | P1 | R1 |
+    | P2 | R3 |
+    | P3 | R5's order |
+    | P4 | R11, focus after Stop queue |
+    | P5 | R10 |
+    | P6 | R7 |
+    | P7 | R9 |
+    | P8 | R7, and R12's 19.4 px summaries |
+
+  - **What G0a never reached.** The assertions after those did not run on the
+    before tree. Their before state rests on the before frames and the code, not
+    on an observed failure:
+    - R4, and R7 and R11 in P3;
+    - R6 in P1 and P2;
+    - R8 and R11 in P6;
+    - R2.
+
+    R8's absence, for example, is visible in `pm94-p8-mixed-en-1366x768.png`
+    of `G0-before`.
   - R11's focus continuity is checked in Chrome with real key presses
     (P3, P4, P6).
   - R12 is measured: every button and summary on the surface is at least
@@ -465,6 +491,35 @@ product defects. Each fix is test authoring, except one CSS restatement.
   - M7.4's disclosure and `useId` ids;
   - the owned messages;
   - PM9.4's `aria-disabled`.
+
+**Compared with the v5.11 reference.** The reference is
+`mscanvas_unified_demo_v5_11.html`, 490,253 bytes, SHA-256
+`d09b60e0bd3225721ddf87731ec64c0577015952afc05d91290d5461b3896337`. It matches
+[baseline §3](baseline.md) and ADR 0047. Its conversion is step 1 of a
+multi-step method, which Navigation's recorded deviation already maps to
+Conversion & results. It was used as a task and interaction reference, not as
+a feature list.
+
+- **Adopted:**
+  - one primary action per state;
+  - a review that leads to the action;
+  - a refused start that states its reason (its stale-plan alert);
+  - a state word on every queue row;
+  - a note that the run binds what was reviewed.
+- **Deliberately not adopted:**
+  - a separate review page (rejected by M6.7);
+  - the subfolder default (production ships custom folder);
+  - the percentage track and the ETA layer (CNV-D8);
+  - simulated output names;
+  - methods, templates, presets, the node editor and steps;
+  - settings outside the admitted catalog.
+- **Deviations left for PM9.7's disposition:**
+  - the one-line settings summary with an edit action;
+  - the three-phase stepper.
+
+The manual review harness (`pnpm qa:pm9:manual`) was not used. It is headed
+and person-driven, and none of its scenarios navigates to Conversion; the
+frames above come from the automated spec.
 
 **Limits.**
 
