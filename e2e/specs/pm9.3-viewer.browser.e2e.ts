@@ -1447,6 +1447,169 @@ describe("PM9.3 viewer contracts, rendered", () => {
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
+
+    // UI-34's closeout samples (baseline §12). Discarding a pending band is a
+    // real state transition: a gesture that starts over one discards it (the
+    // owners' `gesture-started`), and the line then says the committed range,
+    // once. Nothing more at that gesture's start, nothing on Escape, which does
+    // not bring the band back, and a later commit is still said once.
+    it("PM9.3-V11 says once that a pan discarded a pending band, and nothing on Escape, which restores no band (UI-34, closeout-sample) in en", async () => {
+      await metrics(1920, 1080);
+      await open();
+      await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
+      const line = `${RT_PANEL} .plot-committed-range`;
+      // The pending band as its owner shows it: the band's actions and its drawn rectangle.
+      const band = () =>
+        browser.execute(
+          (css: string) => ({
+            actions: document.querySelector(`${css} .plot-pending-actions`) !== null,
+            drawn: document.querySelector(`${css} .plot-range-band`)?.getAttribute("visibility") ?? null,
+          }),
+          RT_PANEL,
+        );
+      const problems: string[] = [];
+      const judge = (label: string, facts: { readonly visible: string; readonly displayed: string | null }, committed: string | null) => {
+        const why = untrue(facts.visible, en.rangeRtAxis, { committed, shown: facts.displayed ?? "" });
+        if (why !== null) problems.push(`${label}: ${why}`);
+      };
+
+      // A committed range first, so a pan has somewhere to go and the line has
+      // bounds to keep.
+      await browser.$(RT_PANEL).$(`button=${en.viewerZoomIn}`).click();
+      await browser.waitUntil(
+        async () => {
+          const now = await rangeFacts(RT_PANEL);
+          return now.bounds !== null && now.bounds === now.displayed;
+        },
+        { timeout: 15_000, timeoutMsg: "Zoom in never committed" },
+      );
+      await frames();
+      const zoomed = await rangeFacts(RT_PANEL);
+      judge("zoomed", zoomed, zoomed.bounds);
+
+      // A band drawn inside it and released: pending, with nothing new on screen.
+      await drag(PLOT, 0.3, 0.7);
+      await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForDisplayed();
+      await frames();
+      const pending = await rangeFacts(RT_PANEL);
+      const [bandLow, bandHigh] = (pending.bounds ?? "").split(" to ");
+      expect(await band()).toEqual({ actions: true, drawn: "visible" });
+      expect(pending.spoken).toBe(fill(en.rangePending, { name: en.rangeRtAxis, low: bandLow!, high: bandHigh! }));
+      expect(pending.displayed).toBe(zoomed.bounds);
+      await watchLine(RT_PANEL);
+
+      // 1. A middle-button pan starts over the band and is held. The owner
+      // discards the band, and the line goes from it to the committed range,
+      // unchanged: one change, and true while the pan is held.
+      const pan = await holdPan(PLOT, 0.5, 0.35);
+      await frames();
+      const held = await rangeFacts(RT_PANEL);
+      expect(await band()).toEqual({ actions: false, drawn: "hidden" });
+      expect(held.displayed).not.toBe(zoomed.bounds);
+      expect({ visible: held.visible, spoken: held.spoken }).toEqual({ visible: zoomed.visible, spoken: zoomed.spoken });
+      judge("held pan", held, zoomed.bounds);
+      expect(await lineChanges()).toEqual([held.spoken]);
+
+      // 2. Escape abandons the pan: the committed range is on screen again, the
+      // band stays discarded, and the line says nothing more, then or later.
+      expect(await browser.execute((css: string) => document.activeElement === document.querySelector(css), PLOT)).toBe(true);
+      await pressEscape();
+      await releasePan(pan);
+      await frames();
+      await browser.pause(500);
+      const abandoned = await rangeFacts(RT_PANEL);
+      expect(await band()).toEqual({ actions: false, drawn: "hidden" });
+      expect({ bounds: abandoned.bounds, displayed: abandoned.displayed }).toEqual({ bounds: zoomed.bounds, displayed: zoomed.bounds });
+      judge("abandoned", abandoned, zoomed.bounds);
+      expect(await lineChanges()).toEqual([held.spoken]);
+
+      // 3. A later commit is still said, once, when it settles.
+      const at = await point(PLOT, 0.5);
+      await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -300 }).perform();
+      await browser.waitUntil(
+        async () => {
+          const now = await rangeFacts(RT_PANEL);
+          return now.bounds !== null && now.bounds !== zoomed.bounds && now.bounds === now.displayed;
+        },
+        { timeout: 15_000, timeoutMsg: "the wheel never settled into a new commit" },
+      );
+      await frames();
+      const wheeled = await rangeFacts(RT_PANEL);
+      judge("wheeled", wheeled, wheeled.bounds);
+      const changes = await lineChanges();
+      evidence.push({ label: "pm93-v11-discarded-band-en", zoomed, pending, held, abandoned, wheeled, changes, problems });
+      expect(changes).toEqual([held.spoken, wheeled.spoken]);
+      expect([wheeled.announcers, await browser.$(line).getAttribute("aria-live"), await browser.$(line).getAttribute("aria-atomic")]).toEqual([1, "polite", "true"]);
+      expect(problems).toEqual([]);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("PM9.3-V12 renders a committed m/z range in zh-CN at 960x640, its label true and its bounds announced (UI-34, closeout-sample)", async () => {
+      await metrics(1920, 1080);
+      await open({ locale: "zh-CN" });
+      await activateRow(2);
+      await waitForReads(1);
+      await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
+      expect((await rangeFacts(MZ_PANEL)).visible).toBe(fill(zh.rangeCommittedFull, { name: zh.rangeMzAxis }));
+      await browser.$(MZ_PANEL).$(`button=${zh.viewerMzZoomIn}`).click();
+      await browser.waitUntil(
+        async () => {
+          const now = await rangeFacts(MZ_PANEL);
+          return now.bounds !== null && now.bounds === now.displayed;
+        },
+        { timeout: 15_000, timeoutMsg: "Zoom in m/z never committed" },
+      );
+
+      // The narrow anchor, reached as a reader narrowing the window reaches it,
+      // with the m/z range row scrolled into the evidence column's view.
+      await metrics(960, 640);
+      await frames();
+      await browser.$(`${MZ_PANEL} .plot-range-actions`).scrollIntoView({ block: "center" });
+      await frames();
+      const frame = await observeViewer("pm93-v12-zh-CN-committed-mz-960x640");
+      const facts = await rangeFacts(MZ_PANEL);
+      const rendered = await browser.execute((css: string) => {
+        const line = document.querySelector(`${css} .plot-committed-range`)!.getBoundingClientRect();
+        return {
+          outer: { width: outerWidth, height: outerHeight },
+          inner: { width: innerWidth, height: innerHeight },
+          devicePixelRatio,
+          spectrumPanel: document.querySelector(css)?.getBoundingClientRect().width ?? null,
+          line: { top: line.top, bottom: line.bottom, left: line.left, right: line.right },
+        };
+      }, MZ_PANEL);
+      const integrity = await rangeIntegrity();
+      const [low, high] = (facts.displayed ?? "").split(" to ");
+      evidence.push({
+        label: "pm93-v12-zh-CN-committed-mz-960x640",
+        rendered,
+        column: frame.evidence?.width ?? null,
+        rangeRow: frame.rangeRows.spectrum,
+        facts,
+        integrity,
+      });
+
+      // Rendered in Chinese, at the narrow anchor, the line on screen.
+      expect({ lang: frame.lang, inner: rendered.inner, devicePixelRatio: rendered.devicePixelRatio }).toEqual({
+        lang: "zh-CN",
+        inner: { width: 960, height: 640 },
+        devicePixelRatio: 1,
+      });
+      expect(rendered.line.top >= 0 && rendered.line.bottom <= 640 && rendered.line.right > rendered.line.left).toBe(true);
+      // A range narrower than the spectrum is committed, and the visible label
+      // says so and nothing about the screen.
+      expect(facts.displayed).not.toBe(fixed(SPECTRUM.viewportDomain));
+      expect(facts.visible).toBe(fill(zh.rangeCommittedPart, { name: zh.rangeMzAxis }));
+      expect(untrue(facts.visible, zh.rangeMzAxis, { committed: facts.bounds, shown: facts.displayed ?? "" }, "zh-CN")).toBeNull();
+      // The live line carries the committed bounds, which at rest are the caption's.
+      expect(facts.bounds).toBe(facts.displayed);
+      expect(facts.spoken).toBe(`${facts.visible}${fill(zh.rangeCommittedBounds, { low: low!, high: high! })}`);
+      expect([facts.announcers, await browser.$(`${MZ_PANEL} .plot-committed-range`).getAttribute("aria-live")]).toEqual([1, "polite"]);
+      // Whole, and one row where UI-32 holds range rows (columns of 690 px and wider).
+      expect(integrity).toEqual([]);
+      expect((frame.evidence?.width ?? 0) < 690 || frame.rangeRows.spectrum?.rows === 1).toBe(true);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
   });
 
   describe("observation (current viewer; geometry recorded, L13 and toolbar rows asserted)", () => {
