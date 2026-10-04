@@ -1388,3 +1388,52 @@ documentation only.
 Status: **PM9 REPORTED UI/UX ISSUES CLEARED — REQUIRED FINAL VALIDATION
 COMPLETE**. PM9.4 is not started. PM9.1 stays PARTIAL for J1–J6 on `d56b17b`;
 this passing PM9.1 spec is not that historical measurement.
+
+## 13. Midpoint check (2026-10-04)
+
+The route schedules a midpoint check after PM9.3 ([slices.md](slices.md)). It
+was paused on 2026-09-28, when the owner put the known UI/UX rework (§12)
+first, and is done now, as PM9.4 starts. As at the 2026-09-26 normalization
+(§10), only the scope ledger, the decisions, the route and the roadmap were
+rerun, then the plan check. The evidence is the tracked records, their Git
+history and the retained runs they cite; nothing was run for it.
+
+- **Scope ledger: unchanged.** Must: PM9.4–PM9.6 as routed, PM9.1's J1–J6 and
+  PM9.7. The rework (two batches and a wording continuation, 2026-09-28 to
+  2026-10-04) was extra effort under PM9 at the owner's priority. It is
+  recorded in §12, counts as no slice and moved no slice's scope. Seven
+  slices, no eighth.
+- **What the rework settled for the slices after it.** The shell and viewer
+  rows it closed are not reopened unless a later slice's code regresses them.
+  §2's legacy map stands for PM9.4:
+  - m6.1, m6.4, m6.6, m6.7, m6.8 and m6.9 are PM9.4's;
+  - m7.4's two conversion-intent cases have passed since `17c29a9` and need
+    no repair;
+  - PM9.2's surface failures and m7.2's `metrics()` stay PM9.7's.
+- **Decisions.**
+  1. PM9.4 is frontend-only: no Rust, DTO, schema, dependency or lock change.
+     A fact the interface needs and Rust does not supply is recorded as a
+     missing prerequisite, never guessed in React.
+  2. PM9.4 repairs its own legacy specs inside the slice: one shared opener
+     for the Conversion surface, plus a narrow setup fix per spec. A repair
+     that does not fit is the existing unfreeze condition in
+     [slices.md](slices.md). It goes to the owner, not quietly to PM9.7.
+  3. Unchanged:
+     - native rendering at OS scaling and every provider-positive check stay
+       with the qualification after PM9.7 (§10, decision 1);
+     - J1–J6 stays PM9.1's, on `d56b17b` (§10, decision 2).
+- **Route and roadmap: unchanged.** PM9.4, then PM9.5, PM9.6 and PM9.7.
+- **Plan check.**
+  - Coverage: every facet of U1–U10 still has a slice, and every open item
+    in §10's table still has one owner.
+  - Conflict: nothing planned contradicts a locked decision or the brief's
+    out-of-scope list.
+  - Size: PM9.4 is the heaviest slice so far: the conversion journey plus six
+    legacy specs, in one dispatch with two correction cycles. Its expansion
+    bounds the legacy repair to setup, with the unfreeze rule as the stop.
+  - Dependencies: PM9.4 needs PM9.2 and follows PM9.3, and both are
+    complete.
+  - Budget: seven slices.
+
+No decision is needed from the owner, and PM9.4 starts
+([slice-04](slice-04.md)).
