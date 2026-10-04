@@ -942,7 +942,9 @@ Static on the candidate, each exit 0: `pnpm lint`, `pnpm typecheck`,
 `pnpm e2e:typecheck`, `pnpm test` (111 files, 2222 tests, at Vitest's default
 worker count; corrected 2026-10-03: this said the repository has no
 low-concurrency mode, but its Vitest 4.1.11 has `--maxWorkers` and
-`--no-file-parallelism`, which `test` (`vitest run`) passes through), `pnpm build`,
+`--no-file-parallelism`, which the UI-34 continuation ran as
+`pnpm exec vitest run --maxWorkers=1 --no-file-parallelism <files>` from
+`apps/desktop`), `pnpm build`,
 `python scripts/check_repo.py`, `git diff --check`. No manifest, lock, Rust,
 schema or provider path changed since `3588e30`.
 
@@ -1064,12 +1066,42 @@ the focused Vitest with `--maxWorkers=1 --no-file-parallelism` over
 Chromatogram, SpectrumViewport, usePlotInput, i18n and localizationCoverage (5
 files, 242 tests), PM9.3 17 of 17, `pnpm build`, `python scripts/check_repo.py`,
 `git diff --check`. No manifest, lock, Rust, schema or provider path changed.
-Inherited from batch 2 on `5e4c6ac`, whose inputs this does not change: the full
-Vitest run (111 files, 2224 tests), PM9.1 55 of 55, the Details evidence and the
-16 downstream specs. The changed inputs are the four production files above;
-their consumers are the five Vitest files and PM9.3, rerun here; m7.3 reads only
-a pending band's text, as evidence. The admission gate was the owner's, 6 GiB
-free and 85% used; every heavy group started above it.
+
+Consumers, corrected the same day: the closeout (`cf36829`) said here that the
+four production files reach only the five Vitest files above and PM9.3, and that
+m7.3 reads only a pending band. Any test that mounts the viewer can render the
+line from the changed bundle. A grep of the 111 Vitest files for a mounted `App`,
+`PreviewWorkspace`, `Chromatogram`, `SpectrumViewport`, `SelectedSpectrumPanel`
+or `PlotRangeActions`, directly or through `src/test/pm9Scenarios.tsx`, found 38.
+The 35 not among the five were rerun on the same code with the same flags, in
+three serial groups (17 files and 376 tests, 16 and 265, 2 and 15), each exit 0.
+m7.3, the one other browser spec that reads the line, was rerun once: 16 of 16 on
+Chrome 154.0.8037.93, and its confirmed m/z band renders "Committed m/z: part of
+the full range" (frame `range-02-explicit-confirm`).
+
+Inherited from batch 2 on `5e4c6ac`: the other 71 Vitest files, which mount no
+viewer, name neither removed key (the typecheck covers them) and iterate no
+bundle; PM9.1 55 of 55; the Details evidence; and the other 15 of batch 2's 16
+downstream specs. Of those, m7.4, m8.1–m8.5, m9.1 and m9.4 commit no range, so
+any line they render is the unchanged "full range". m5.7's wheel and PM9.1's
+PM9-B2 commit one and render the new sentence without reading it; PM9-B2
+compares the caption. m4.3, m4.4, m5.2, m5.3 and both viewer-r1 specs carried
+only their known harness failures in batch 2, and their range helpers read the
+captions (`.chromatogram-range`, `#spectrum-viewport-range`), not the line. Any
+batch 2 frame taken while a range was committed shows the old sentence. The
+row's geometry where PM9.3 measures it (960×640, and the 571 to 928 px columns)
+is batch 2's. Narrower columns are unmeasured; the English sentence is seven
+characters longer than before and the Chinese one character longer.
+
+The admission gate was the owner's: start a heavy group at 6 GiB free or more
+and 85% used or less, and no later heavy command below 4 GiB or at 90% or more.
+The before and after frontend checks, the build and PM9.3 started at 7.19 to
+7.53 GiB free and 76 to 77% used. The consumer reruns' first two groups started
+at 6.47 GiB and 79.6%. The third, the two files found after m7.3, was declined by
+the admission check at 5.74 GiB and then started as a later command at 5.70 GiB
+and 82.0%. m7.3 started at 6.04 GiB and 80.9%. The read-only design review that
+chose the wording ran no build or test; it started at 1.84 GiB free and 94.2%
+used.
 
 One narrow review of the truth and timing invariant (one reviewer, a skeptic per
 finding) raised two test-strength findings and refuted both. The claim table's
