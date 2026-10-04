@@ -1561,10 +1561,12 @@ describe("PM9.3 viewer contracts, rendered", () => {
       );
 
       // The narrow anchor, reached as a reader narrowing the window reaches it,
-      // with the m/z range row scrolled into the evidence column's view.
+      // with the m/z range row scrolled into the evidence column's view. By the
+      // page's own scrollIntoView: WebdriverIO's wheels at the viewport's
+      // origin, over the header, and so never scrolls the evidence column.
       await metrics(960, 640);
       await frames();
-      await browser.$(`${MZ_PANEL} .plot-range-actions`).scrollIntoView({ block: "center" });
+      await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "center" }), `${MZ_PANEL} .plot-range-actions`);
       await frames();
       const frame = await observeViewer("pm93-v12-zh-CN-committed-mz-960x640");
       const facts = await rangeFacts(MZ_PANEL);
