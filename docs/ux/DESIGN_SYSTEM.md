@@ -339,6 +339,24 @@ packages.
   reflow must preserve the primary action, error text and science area without
   clipping or a new full-width toolbar ribbon.
 
+PM9.4 conversion journey (2026-10-04, [slice-04](../phases/pm9/slice-04.md)):
+
+- The next conversion reads in the order it is decided: scope (`Checked rows`
+  or `All workspace rows`), settings, destination and conflict, then the
+  reviewed summary, and directly under it Convert. Under a finished queue that
+  block is headed "Next conversion", and while a queue runs it is not on screen.
+- One filled primary per state. A refused Convert follows UI-24: it gives up the
+  accent through `aria-disabled` and stays a Tab stop whose reason is reachable.
+  Under a finished queue whose outputs are offered, adding them is the primary.
+- A control pressed while its request is in flight (Stop queue, Stop this file,
+  Skip, Add converted outputs) stays focusable through `aria-disabled`. When the
+  pressed control leaves -- Convert, Retry, Stop queue, a settling queue --
+  focus goes to the queue's status line, never into the roster or the plan.
+- Each failure of a completed queue says whether Retry reruns it, and Retry's
+  scope is visible text. A stopped or partly skipped queue says how to convert
+  what did not finish. A rerun under way says it is one. Progress stays item
+  counts with no percentage or estimate.
+
 These are candidate design rules. The rendered and native evidence required to
 accept their implementation is recorded separately; this section claims no new
 QA result.

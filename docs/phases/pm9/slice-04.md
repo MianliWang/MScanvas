@@ -273,4 +273,46 @@ native and Tauri specs are not run.
 
 ## 10. Record
 
-Filled at closure.
+Filled at closure. Progress so far, with the evidence it rests on:
+
+**2026-10-04, checkpoint 1 (resource deferral).**
+
+- **Before evidence.** Taken on unchanged production (`b7b8eeb`'s), at test
+  commit `4248107` (tree `93d1bdb`). Records are under `test-results/pm9.4/`,
+  git-ignored; each group's `*.meta.txt` holds its reading, HEAD, tree and
+  process tree.
+  - S0: `pnpm e2e:typecheck`, exit 0.
+  - G0a: the PM9.4 spec, 0 of 9. Every failure is a finding's RED:
+    - P1 at R1 (the scope label said "selected rows");
+    - P2 at R3;
+    - P3 at R5's order;
+    - P4 only at R11 (focus after Stop queue). Its navigation trip issued no
+      work command, so V3 already held.
+    - P5 and P7 at their missing resources (R10, R9);
+    - P6 at R7 (two filled primaries);
+    - P8 at R7, and at R12's row Details summaries, measured at 19.4 px.
+    - Already true before: 960×640 reach of Convert by wheel and by Tab, no
+      overflow, and no estimate.
+  - G0b: m6.7, 7 of 7, with the shared opener alone. It confirms the static
+    diagnosis: the m6.x failures were setup, not product.
+- **Done since, not yet compiled or run.**
+  - Production: R1–R12, plus the Basic/Advanced view kept by the panel so
+    that it survives the settings leaving while a queue runs.
+  - Unit tests:
+    - mechanical copy and `aria-disabled` updates;
+    - `ConversionStop`'s body-focus assertion replaced by the status-line one
+      (R11);
+    - the new `ConversionJourney.test.tsx`.
+  - Legacy specs: m6.1, m6.4, m6.6, m6.8 and m6.9 repaired statically, per §6.
+  - Product notes: PRIMARY_WORKFLOWS, M6.7 and DESIGN_SYSTEM.
+- **Deferred.** D1 (`pnpm typecheck`) was refused at admission twice: 1.92 GiB
+  free and 93.9% used at 03:07:03, then 3.45 GiB and 89.1% at 03:14:41. No
+  later group started.
+
+**Resume, in order, each on its own admission:**
+
+1. D1, `pnpm typecheck`.
+2. D2, the affected Vitest files, bounded workers. Fix what they show, test
+   side first.
+3. The single review.
+4. S1, U1, B0, G1, G2 and G3, as in §8.

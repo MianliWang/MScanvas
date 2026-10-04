@@ -275,9 +275,10 @@ availability, queue, adoption and export contracts.
    missing, is not a file, or is not the companion MSCanvas expects, the
    acquisition is refused with a sentence saying which file to put beside it —
    and choosing the `.wiff.scan` on its own says to choose the `.wiff` instead.
-2. Choose `Selected rows` or `All workspace rows`. Selected uses the curated
+2. Choose `Checked rows` or `All workspace rows`. Checked uses the curated
    checkbox membership even when it contains just one row; focus is viewer/keyboard state
-   only. All uses every eligible row in the workspace, regardless of search.
+   only. (PM9.4, 2026-10-04: called `Selected rows` until then, which since M7.2
+   collided with the roster's highlighted "selected" rows.) All uses every eligible row in the workspace, regardless of search.
    Both scopes exclude unsupported rows and show requested/eligible/excluded
    counts. The three families may be mixed. Vendor rows cannot be previewed,
    and say so. There is no `Convert visible` scope: search changes presentation
@@ -343,7 +344,12 @@ availability, queue, adoption and export contracts.
    in [ADR 0043, CNV-D4](../architecture/adr/0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite),
    not a pending checkbox or provider experiment.
 6. Read the exact ordered member list and the Rust-authored capacity, then use
-   `Convert N selected…` or `Convert all N eligible…` when that plan is ready.
+   `Convert N eligible…` or `Convert all N eligible…` when that plan is ready. N is
+   the eligible count the scope line states (PM9.4, 2026-10-04: `Convert N
+   selected…` until then, which read "Convert 0 selected…" beside one checked
+   mzML row). The review sits directly above the action, after the scope,
+   settings, destination and conflict it answers; a refused Convert stays a Tab
+   stop whose reason can be reached.
    The existing roster sort applies to the full workspace before scope selection;
    ties keep Rust's added order. Search does not alter either scope's membership
    or order. Over-capacity means too many eligible items, not too many requested
