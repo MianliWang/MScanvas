@@ -1157,6 +1157,18 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
   const FLAT_64 = intentId("no_additional_centroiding", "all", "mz64_intensity64", "zlib");
   const REFUSED = '[data-axis="processing"] input[value="unscoped_default_centroiding"]';
 
+  /**
+   * The id of the note the refused choice names. Minted by `useId` since M7.4
+   * (`e495464`), so it is read from the control rather than written here, and
+   * looked up as an attribute: a minted id need not be a valid `#` selector.
+   */
+  async function noteId(): Promise<string> {
+    await advanced();
+    const id = await browser.execute((css: string) => document.querySelector(css)?.getAttribute("aria-describedby") ?? "", REFUSED);
+    expect(id).not.toBe("");
+    return id;
+  }
+
   /** The sentence one refused choice carries, read from the note its control names. */
   async function refusalNote(): Promise<string> {
     await advanced();
@@ -1235,11 +1247,13 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
     expect(keyboard.refusedDisabled).toBe(true);
     expect(keyboard.wayOutDisabled).toBe(false);
     expect(keyboard.wayOutFocused).toBe(true);
+    // Described by the note whose sentence refusalNote() read above.
+    const NOTE_ID = await noteId();
     expect(keyboard.refusedDescribedBy).toBe(NOTE_ID);
 
     // The new sentence is laid out rather than clipped, and showing it does not
     // make the document scroll sideways at this viewport.
-    const noteBox = await boxOf(`#${NOTE_ID}`);
+    const noteBox = await boxOf(`[id="${NOTE_ID}"]`);
     const panelBox = await boxOf(SETTINGS);
     expect(noteBox.width).toBeGreaterThan(0);
     expect(noteBox.height).toBeGreaterThan(0);
@@ -1299,7 +1313,8 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
       // clipped, still inside the panel, and still not a cause of sideways
       // scrolling.
       expect(await refusalNote()).toContain("MSCanvas has not measured that combination");
-      const noteBox = await boxOf(`#${NOTE_ID}`);
+      const NOTE_ID = await noteId();
+      const noteBox = await boxOf(`[id="${NOTE_ID}"]`);
       const panelBox = await boxOf(SETTINGS);
       expect(noteBox.height).toBeGreaterThan(0);
       expect(noteBox.left).toBeGreaterThanOrEqual(panelBox.left - 1);
