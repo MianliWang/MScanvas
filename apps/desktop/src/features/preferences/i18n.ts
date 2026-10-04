@@ -39,7 +39,10 @@ export interface MessageParameters {
   readonly targetedLineOverfull: { readonly line: string };
   readonly targetedEngine: { readonly engine: string };
   readonly targetedWhereLine: { readonly line: string };
-  readonly targetedPlanCaption: { readonly ppm: string; readonly width: string };
+  readonly targetedPlanCaption: { readonly count: number; readonly ppm: string; readonly width: string };
+  readonly targetedPlanFor: { readonly name: string };
+  readonly targetedGoToLine: { readonly line: string };
+  readonly targetedRunBatchAgain: { readonly count: number };
   readonly targetedPlanDigest: { readonly digest: string };
   readonly targetedRowsBounded: { readonly count: number; readonly total: number };
   readonly targetedShowEvidenceNamed: { readonly name: string };

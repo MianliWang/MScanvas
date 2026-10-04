@@ -38,12 +38,14 @@ import type {
 } from "./projectApi";
 import { QcReport } from "./QcReport";
 import {
+  EMPTY_TARGETED_DRAFT,
   FAILURE_KEYS,
   OUTCOME_KEYS,
   phaseKey,
   TargetedMs1Report,
   TargetedMs1Setup,
   batchSummary,
+  type TargetedDraft,
 } from "./TargetedMs1";
 import type { ProjectBusy, ProjectSession } from "./useProject";
 
@@ -473,6 +475,22 @@ export function ProjectPanel({
     readonly projectId: string | null;
     readonly layerId: string;
   } | null>(null);
+  /**
+   * What the user typed into the setup, kept for the open project so closing
+   * the setup or opening it from another row does not throw it away. Never
+   * persisted, and never carried into another project.
+   */
+  const [targetedDraft, setTargetedDraft] = useState<TargetedDraft>(EMPTY_TARGETED_DRAFT);
+  // A project replaced under the setup closes it and takes the draft with it,
+  // also when the same project is opened again after a Close. Reset while
+  // rendering the replacement, not in an effect after it: an effect could
+  // land after the reader's first press in the new project and undo it.
+  const [shownProject, setShownProject] = useState(state.projectId);
+  if (shownProject !== state.projectId) {
+    setShownProject(state.projectId);
+    setTargeted(null);
+    setTargetedDraft(EMPTY_TARGETED_DRAFT);
+  }
   const targetedLayer =
     targeted !== null && targeted.projectId === state.projectId
       ? (state.layers.find((layer) => layer.id === targeted.layerId) ?? null)
@@ -518,9 +536,21 @@ export function ProjectPanel({
     session.targetedBatchJustEnded && session.lastTargetedBatch !== null
       ? session.lastTargetedBatch
       : null;
+  /** What the surface is doing, in the busy line's words; also the setup's reason to hold. */
+  const busyText =
+    busyKey(busy) === null
+      ? null
+      : batch !== null
+        ? t("projectBusyBatch", { position: batchPosition, total: batch.length })
+        : t(busyKey(busy) as "projectBusySaving");
+  // A cancel of a targeted run is a request until the run answers: every
+  // control that could send it says so, and none sends it twice.
+  const stopping = busy === "analysing" && session.stopRequested;
   const announcement =
     busyKey(busy) !== null
-      ? t(busyKey(busy) as "projectBusySaving")
+      ? stopping
+        ? t("targetedStopRequested")
+        : t(busyKey(busy) as "projectBusySaving")
       : pending !== null
         ? t("projectUnsavedQuestion")
         : problem !== null
@@ -626,9 +656,7 @@ export function ProjectPanel({
 
       {busyKey(busy) === null ? null : (
         <p className="project-busy" data-project-busy={busy}>
-          {batch !== null
-            ? t("projectBusyBatch", { position: batchPosition, total: batch.length })
-            : t(busyKey(busy) as "projectBusySaving")}
+          {busyText}
           {busy === "analysing" && phase !== null ? (
             <span data-project-busy-phase={session.analysisPhase ?? ""}>{t(phase)}</span>
           ) : null}
@@ -642,12 +670,15 @@ export function ProjectPanel({
             <button
               type="button"
               className="link-button"
+              aria-disabled={stopping || undefined}
               data-project-cancel={session.activeOperation}
-              onClick={() => void session.cancelJob()}
+              onClick={() => {
+                if (!stopping) void session.cancelJob();
+              }}
             >
               {/* A batch's one operation is the whole batch: cancelling it is
                   the batch's Stop, so it is named that. */}
-              {t(batch === null ? "projectCancel" : "targetedBatchStop")}
+              {t(stopping ? "targetedStopRequested" : batch === null ? "projectCancel" : "targetedBatchStop")}
             </button>
           )}
         </p>
@@ -742,6 +773,9 @@ export function ProjectPanel({
               session={session}
               layerId={targetedLayer.id}
               sourceName={targetedSource?.label ?? t("provenanceRelatedGone")}
+              draft={targetedDraft}
+              onDraft={setTargetedDraft}
+              busyText={busyText}
               refusalText={(code) => t(refusalKey(code))}
               onClose={() => {
                 const layerId = targetedLayer.id;

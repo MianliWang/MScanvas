@@ -22,7 +22,7 @@
  * own word and is never drawn as an absence.
  */
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
 
 import {
   toPreviewError,
@@ -243,10 +243,29 @@ export function parseTargets(text: string): {
 /** The most acquisitions one batch names. Rust enforces it; this only says it. */
 export const MAX_BATCH_MEMBERS = 16;
 
+/** The request as typed. Held by the surface, so it outlives the setup that shows it. */
+export interface TargetedDraft {
+  readonly ppm: string;
+  readonly width: string;
+  readonly text: string;
+}
+
+/** A request with nothing typed yet, at the recipe's documented defaults. */
+export const EMPTY_TARGETED_DRAFT: TargetedDraft = { ppm: "5", width: "6", text: "" };
+
 export interface TargetedMs1SetupProps {
   readonly session: ProjectSession;
   readonly layerId: string;
   readonly sourceName: string;
+  /**
+   * What the user has typed, held by the surface for the open project: closing
+   * the setup or opening it from another row keeps it, and a project replaced
+   * under it discards it.
+   */
+  readonly draft: TargetedDraft;
+  readonly onDraft: (draft: TargetedDraft) => void;
+  /** What the project is doing, in the surface's busy line's words, or `null` while idle. */
+  readonly busyText: string | null;
   readonly onClose: () => void;
   /** The sentence for one refusal identifier, as the surface words it. */
   readonly refusalText: (code: string) => string;
@@ -269,32 +288,90 @@ export function TargetedMs1Setup({
   session,
   layerId,
   sourceName,
+  draft,
+  onDraft,
+  busyText,
   onClose,
   refusalText,
 }: TargetedMs1SetupProps) {
   const t = useUiMessages();
   const ids = useId();
-  const [ppm, setPpm] = useState("5");
-  const [width, setWidth] = useState("6");
-  const [text, setText] = useState("");
   // Which acquisitions the request is for. The layer whose control opened the
   // setup is the one the user asked about; every other is theirs to add.
   const [chosen, setChosen] = useState<readonly string[]>([layerId]);
   const [review, setReview] = useState<Review | null>(null);
-  // Whether the batch on screen was run from here, so its progress and its
-  // end are shown beside the review they came from.
-  const [ranBatch, setRanBatch] = useState(false);
   const [overfull, setOverfull] = useState<number | null>(null);
+  // Whether the request changed after a review was on screen, so Run can say
+  // why it waits rather than only that it does.
+  const [changed, setChanged] = useState(false);
+  // How many reviews have answered here; each answer is brought into view.
+  const [answered, setAnswered] = useState(0);
+  // The run this setup started, and how many it has started. Its progress and
+  // its ending stay beside the review they came from until another run starts
+  // or the setup closes: an edit withdraws a review, never an ending, and a
+  // member that never started exists nowhere else.
+  const [started, setStarted] = useState<"single" | "batch" | null>(null);
+  const [runs, setRuns] = useState(0);
+  // A result asked for by Open result, given the keyboard once it is on screen.
+  const [opening, setOpening] = useState<string | null>(null);
   const working = session.busy !== "idle";
   const analysing = session.busy === "analysing";
+  // The run this setup started is what holds its controls while it is out.
+  const following = analysing && started !== null;
   const heading = useRef<HTMLHeadingElement | null>(null);
+  const textarea = useRef<HTMLTextAreaElement | null>(null);
+  const reviewArea = useRef<HTMLElement | null>(null);
+  const reviewHeading = useRef<HTMLHeadingElement | null>(null);
+
+  // A refusal of a review or a run. Only this setup asks for either, so one is
+  // always its own to say beside what was refused.
+  const refusal =
+    session.problem !== null &&
+    (session.problemDuring === "reviewing" || session.problemDuring === "analysing")
+      ? { code: session.problem, during: session.problemDuring }
+      : null;
+  const refusedAtOpen = useRef(refusal !== null);
 
   // Opened by a control in a layer row, and it appears above the lists: the
-  // keyboard follows to what the press made, and the surface scrolls to it.
+  // keyboard follows to what the press made, and the surface scrolls to it. A
+  // refusal still on screen answered an earlier setup, not this one.
   useEffect(() => {
     bringIntoView(heading.current);
     heading.current?.focus({ preventScroll: true });
+    if (refusedAtOpen.current) session.dismissProblem();
   }, []);
+
+  // A review answers below Review plan: the surface scrolls to it, and the
+  // keyboard follows from the press to the answer's heading.
+  useEffect(() => {
+    if (answered === 0) return;
+    bringIntoView(reviewArea.current);
+    if (document.activeElement?.hasAttribute("data-targeted-review") === true) {
+      reviewHeading.current?.focus({ preventScroll: true });
+    }
+  }, [answered]);
+
+  // A run refused before it existed takes away the block its press made, with
+  // the keyboard on it: the refusal, said beside Run, has it instead.
+  const runRefused = session.problem !== null && session.problemDuring === "analysing";
+  useEffect(() => {
+    if (!runRefused) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body) {
+      document.getElementById(`${ids}-run-refused`)?.focus({ preventScroll: true });
+    }
+  }, [runRefused, ids]);
+
+  // Open result: the result's report takes the keyboard once it is on screen,
+  // and is brought into view even where it was already shown.
+  useEffect(() => {
+    if (opening === null) return;
+    const report = document.querySelector<HTMLElement>(`[data-targeted-report="${opening}"]`);
+    if (report === null) return;
+    setOpening(null);
+    bringIntoView(report);
+    report.querySelector<HTMLElement>("h3")?.focus({ preventScroll: true });
+  }, [opening, session.inspecting]);
 
   const layers = session.state.layers.map((layer) => ({
     id: layer.id,
@@ -309,15 +386,17 @@ export function TargetedMs1Setup({
   const members = layers.filter((layer) => chosen.includes(layer.id)).map((layer) => layer.id);
 
   // Any edit makes the plan on screen a plan for other text or other
-  // acquisitions, so it goes. The inputs are held while anything is out, so a
-  // review cannot answer for a request that changed while it was being asked.
+  // acquisitions, so it goes, with the refusal of the request before it. The
+  // inputs are held while anything is out, so a review cannot answer for a
+  // request that changed while it was being asked.
   const forget = () => {
+    if (review !== null) setChanged(true);
     setReview(null);
     setOverfull(null);
-    setRanBatch(false);
+    if (refusal !== null) session.dismissProblem();
   };
-  const edited = (set: (value: string) => void) => (value: string) => {
-    set(value);
+  const edit = (field: keyof TargetedDraft) => (value: string) => {
+    onDraft({ ...draft, [field]: value });
     forget();
   };
   const toggle = (id: string) => {
@@ -327,18 +406,32 @@ export function TargetedMs1Setup({
     forget();
   };
 
+  // Why Review plan cannot be pressed: nothing to review, or (said by the
+  // status line) something already out.
+  const reviewReason = working
+    ? null
+    : members.length === 0
+      ? ("targetedReviewNeedsAcquisition" as const)
+      : draft.text.trim() === ""
+        ? ("targetedReviewNeedsTargets" as const)
+        : null;
+  const reviewRefused = working || reviewReason !== null;
+
   const onReview = async () => {
     const [only] = members;
-    if (working || only === undefined) return;
-    const parsed = parseTargets(text);
+    if (reviewRefused || only === undefined) return;
+    setChanged(false);
+    const parsed = parseTargets(draft.text);
     if (parsed.overfull !== null) {
       setOverfull(parsed.overfull);
       setReview(null);
+      setAnswered((count) => count + 1);
       return;
     }
+    setOverfull(null);
     const request = {
-      mzHalfWidthPpm: ppm,
-      expectedPeakWidthS: width,
+      mzHalfWidthPpm: draft.ppm,
+      expectedPeakWidthS: draft.width,
       targets: parsed.targets,
     };
     if (members.length === 1) {
@@ -348,23 +441,66 @@ export function TargetedMs1Setup({
       const resolution = await session.reviewTargetedMs1Batch({ layerIds: members, ...request });
       setReview(resolution === null ? null : { kind: "batch", resolution, lines: parsed.lines });
     }
+    setAnswered((count) => count + 1);
   };
 
   const plan = review?.kind === "single" ? review.resolution.plan : null;
   const blocked = review?.kind === "single" ? review.resolution.blocked : null;
   const batch = review?.kind === "batch" ? review.resolution : null;
   const runnable = batch !== null ? batchRunnable(batch) : plan !== null && blocked === null;
-  const phase = phaseKey(session.analysisPhase);
-  const runReason = runnable
-    ? null
-    : t(batch !== null && batch.members.length > 0 ? "targetedBatchNotReady" : "targetedRunNeedsReview");
+
+  // What the last run this setup started left, as the session answered it.
+  const lastEnd = started === "single" && !analysing ? session.lastTargetedRun : null;
+  const lastRecord =
+    lastEnd === null ? undefined : session.state.runs.find((run) => run.id === lastEnd.runId);
+  const endedBatch = started === "batch" && !analysing ? session.lastTargetedBatch : null;
+  // Whether Run would run again what already ran from here: a new run of the
+  // same reviewed plans, never a continuation of the last.
+  const again =
+    (plan !== null && lastRecord?.targetedMs1?.planSha256 === plan.planSha256) ||
+    (batch !== null &&
+      endedBatch !== null &&
+      endedBatch.length === batch.members.length &&
+      endedBatch.every((member, index) => member.planSha256 === batch.members[index]?.planSha256));
+
+  const count = members.length;
+  const runLabel = again
+    ? count >= 2
+      ? t("targetedRunBatchAgain", { count })
+      : t("targetedRunAgain")
+    : count >= 2
+      ? t("targetedRunBatch", { count })
+      : t("targetedRun");
+  // Why Run cannot act on the request on screen. A blocked plan says why in
+  // its own sentence, just above Run.
+  const runReason =
+    working || runnable
+      ? null
+      : review === null
+        ? changed
+          ? ("targetedRunChanged" as const)
+          : ("targetedRunNeedsReview" as const)
+        : batch !== null
+          ? batch.problems.length > 0 || batch.members.length === 0
+            ? ("targetedRunFixProblems" as const)
+            : ("targetedBatchNotReady" as const)
+          : plan === null
+            ? ("targetedRunFixProblems" as const)
+            : null;
+  const statusId = `${ids}-status`;
+  const runTitleId = `${ids}-run-title`;
+  const blockedId = `${ids}-blocked`;
+  // While something is out, what holds a control is what is out.
+  const heldBy = following ? runTitleId : statusId;
 
   const onRun = () => {
     if (working || !runnable) return;
+    setRuns((each) => each + 1);
     if (batch !== null) {
-      setRanBatch(true);
+      setStarted("batch");
       void session.runTargetedMs1Batch(batch.members.map((member) => member.planSha256 ?? ""));
     } else if (plan !== null) {
+      setStarted("single");
       void session.runTargetedMs1(plan.planSha256);
     }
   };
@@ -382,23 +518,33 @@ export function TargetedMs1Setup({
           artifactId: null,
           reason: null,
         }));
-  const progress = !ranBatch
-    ? null
-    : analysing
-      ? (session.analysisBatch ?? queued)
-      : session.lastTargetedBatch;
+  const progress =
+    started !== "batch"
+      ? null
+      : analysing
+        ? (session.analysisBatch ?? queued)
+        : session.lastTargetedBatch;
 
-  // How the last single run this session started over a chosen layer ended,
-  // while that run is still in the project.
-  const last = session.lastTargetedRun;
-  const lastRun =
-    last === null || ranBatch
-      ? undefined
-      : session.state.runs.find(
-          (run) => run.id === last.runId && run.layerIds.some((id) => members.includes(id)),
-        );
-  const lastFailure = lastRun?.targetedMs1?.failure ?? null;
+  // A problem's line leads back to it: the keyboard goes into the targets,
+  // with that line selected.
+  const goToLine = (line: number) => {
+    const element = textarea.current;
+    if (element === null) return;
+    const typed = element.value.split("\n");
+    const start = typed.slice(0, line - 1).reduce((sum, each) => sum + each.length + 1, 0);
+    element.focus();
+    element.setSelectionRange(start, start + (typed[line - 1]?.length ?? 0));
+  };
+  const openResult = (artifactId: string) => {
+    session.inspect({ kind: "artifact", id: artifactId });
+    setOpening(artifactId);
+  };
+  const showRun = (runId: string) => session.inspect({ kind: "run", id: runId });
+
   const [only] = members;
+  const reviewRefusal = refusal?.during === "reviewing" ? refusal.code : null;
+  const runRefusal = refusal?.during === "analysing" ? refusal.code : null;
+  const runRefusalId = `${ids}-run-refused`;
 
   return (
     <section
@@ -414,6 +560,7 @@ export function TargetedMs1Setup({
           type="button"
           className="link-button"
           aria-disabled={analysing || undefined}
+          aria-describedby={analysing ? heldBy : undefined}
           data-targeted-close=""
           onClick={() => {
             if (!analysing) onClose();
@@ -461,10 +608,10 @@ export function TargetedMs1Setup({
           <input
             type="text"
             inputMode="decimal"
-            value={ppm}
+            value={draft.ppm}
             disabled={working}
             data-targeted-ppm=""
-            onChange={(event) => edited(setPpm)(event.target.value)}
+            onChange={(event) => edit("ppm")(event.target.value)}
           />
         </label>
         <label>
@@ -472,24 +619,25 @@ export function TargetedMs1Setup({
           <input
             type="text"
             inputMode="decimal"
-            value={width}
+            value={draft.width}
             disabled={working}
             data-targeted-width=""
-            onChange={(event) => edited(setWidth)(event.target.value)}
+            onChange={(event) => edit("width")(event.target.value)}
           />
         </label>
       </div>
       <label className="targeted-targets">
         <span>{t("targetedTargetsLabel")}</span>
         <textarea
+          ref={textarea}
           rows={6}
-          value={text}
+          value={draft.text}
           disabled={working}
           spellCheck={false}
           aria-describedby={`${ids}-format`}
           placeholder={t("targetedTargetsPlaceholder")}
           data-targeted-text=""
-          onChange={(event) => edited(setText)(event.target.value)}
+          onChange={(event) => edit("text")(event.target.value)}
         />
       </label>
       <p id={`${ids}-format`} className="project-note">
@@ -500,88 +648,285 @@ export function TargetedMs1Setup({
         <button
           type="button"
           className="secondary-button"
-          aria-disabled={working || text.trim() === "" || members.length === 0 || undefined}
+          aria-disabled={reviewRefused || undefined}
+          aria-describedby={
+            working ? heldBy : reviewReason === null ? undefined : `${ids}-review-reason`
+          }
           data-targeted-review=""
-          onClick={() => {
-            if (text.trim() !== "") void onReview();
-          }}
+          onClick={() => void onReview()}
         >
           {t("targetedReview")}
         </button>
+      </div>
+      {/* Beside the controls it holds: the surface's own busy line may be
+          scrolled out of sight. While this setup's run is out, its block
+          below says so instead. */}
+      {working && !following ? (
+        <p id={statusId} className="project-note" data-targeted-status={session.busy}>
+          {busyText}
+        </p>
+      ) : reviewReason === null ? null : (
+        <p
+          id={`${ids}-review-reason`}
+          className="project-note"
+          data-targeted-review-reason={reviewReason}
+        >
+          {t(reviewReason)}
+        </p>
+      )}
+
+      {/* The review leads to Run: what will run, or what stops it, is read
+          before the control that runs it. */}
+      {overfull === null && reviewRefusal === null && review === null ? null : (
+        <section
+          ref={reviewArea}
+          className="targeted-review-area"
+          aria-labelledby={`${ids}-review-title`}
+          data-targeted-review-area=""
+        >
+          <h4 ref={reviewHeading} id={`${ids}-review-title`} tabIndex={-1}>
+            {t("targetedReviewTitle")}
+          </h4>
+          {overfull === null ? null : (
+            <p className="project-problem" data-targeted-overfull={overfull}>
+              {t("targetedLineOverfull", { line: String(overfull) })}
+            </p>
+          )}
+          {reviewRefusal === null ? null : (
+            <p className="project-problem" data-targeted-review-refused={reviewRefusal}>
+              {refusalText(reviewRefusal)}
+            </p>
+          )}
+          {review === null ? null : review.kind === "single" ? (
+            <PlanReview
+              resolution={review.resolution}
+              lines={review.lines}
+              nameOf={nameOf}
+              blockedId={blockedId}
+              onLine={goToLine}
+              refusalText={refusalText}
+            />
+          ) : (
+            <BatchReview
+              resolution={review.resolution}
+              lines={review.lines}
+              nameOf={nameOf}
+              onLine={goToLine}
+              refusalText={refusalText}
+            />
+          )}
+        </section>
+      )}
+
+      <div className="project-actions">
         <button
           type="button"
-          className="primary-button"
+          className={again ? "secondary-button" : "primary-button"}
           aria-disabled={working || !runnable || undefined}
-          aria-describedby={runReason === null ? undefined : `${ids}-run-reason`}
-          title={runReason ?? undefined}
+          aria-describedby={
+            working
+              ? heldBy
+              : runRefusal !== null
+                ? runRefusalId
+                : runReason !== null
+                  ? `${ids}-run-reason`
+                  : !runnable && blocked !== null
+                    ? blockedId
+                    : again
+                      ? `${ids}-run-again`
+                      : undefined
+          }
           data-targeted-run={batch === null ? "" : "batch"}
           onClick={onRun}
         >
-          {batch === null
-            ? t("targetedRun")
-            : t("targetedRunBatch", { count: batch.members.length })}
+          {runLabel}
         </button>
       </div>
       {/* Said, not only hovered: a refused primary is still a Tab stop, and its
           reason has to reach a reader who arrives there (PM9 UI-24). */}
       {runReason === null ? null : (
-        <p id={`${ids}-run-reason`} className="project-note">
-          {runReason}
+        <p id={`${ids}-run-reason`} className="project-note" data-targeted-run-reason={runReason}>
+          {t(runReason)}
+        </p>
+      )}
+      {again && !working ? (
+        <p id={`${ids}-run-again`} className="project-note" data-targeted-run-again="">
+          {t(count >= 2 ? "targetedRunBatchAgainNote" : "targetedRunAgainNote")}
+        </p>
+      ) : null}
+      {runRefusal === null ? null : (
+        <p
+          id={runRefusalId}
+          className="project-problem"
+          tabIndex={-1}
+          data-targeted-run-refused={runRefusal}
+        >
+          {refusalText(runRefusal)}
         </p>
       )}
 
-      {analysing && !ranBatch ? (
-        <p className="project-note" data-targeted-phase={session.analysisPhase ?? ""}>
-          {t(phase ?? "targetedPhasePreparing")}
-        </p>
-      ) : null}
-
-      {!analysing && lastRun !== undefined ? (
-        <p className="project-note" data-targeted-last={lastRun.outcome}>
-          {lastRun.outcome === "completed"
-            ? t("targetedLastCompleted")
-            : lastRun.outcome === "cancelled"
-              ? t("targetedLastCancelled")
-              : lastFailure === null
-                ? t("targetedLastFailed")
-                : `${t("targetedLastFailed")} ${t(FAILURE_KEYS[lastFailure.code])}`}
-        </p>
+      {started === "single" && (analysing || lastEnd !== null) ? (
+        <RunBlock
+          key={runs}
+          headingId={runTitleId}
+          running={analysing}
+          phase={session.analysisPhase}
+          end={lastEnd}
+          failure={lastRecord?.targetedMs1?.failure ?? null}
+          canStop={session.activeOperation !== null}
+          stopRequested={session.stopRequested}
+          onStop={() => void session.cancelJob()}
+          onOpen={openResult}
+          onShowRun={showRun}
+        />
       ) : null}
 
       {progress === null ? null : (
         <BatchProgress
+          key={runs}
+          headingId={runTitleId}
           members={progress}
           running={analysing}
           canStop={session.activeOperation !== null}
+          stopRequested={session.stopRequested}
           phase={session.analysisPhase}
           runs={session.state.runs}
           nameOf={nameOf}
           refusalText={refusalText}
           onStop={() => void session.cancelJob()}
-          onOpen={(artifactId) => session.inspect({ kind: "artifact", id: artifactId })}
-          onShowRun={(runId) => session.inspect({ kind: "run", id: runId })}
+          onOpen={openResult}
+          onShowRun={showRun}
         />
       )}
+    </section>
+  );
+}
 
-      {overfull === null ? null : (
-        <p className="project-problem" data-targeted-overfull={overfull}>
-          {t("targetedLineOverfull", { line: String(overfull) })}
-        </p>
-      )}
+/**
+ * Hands the keyboard to a block's heading when the control it was on leaves
+ * with the work that offered it: never to the page.
+ */
+function useFocusKeptOnEnd(
+  running: boolean,
+  section: RefObject<HTMLElement | null>,
+  heading: RefObject<HTMLHeadingElement | null>,
+) {
+  useEffect(() => {
+    if (running) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body || section.current?.contains(active) === true) {
+      heading.current?.focus({ preventScroll: true });
+    }
+  }, [running]);
+}
 
-      {review === null ? null : review.kind === "single" ? (
-        <PlanReview
-          resolution={review.resolution}
-          lines={review.lines}
-          refusalText={refusalText}
-        />
-      ) : (
-        <BatchReview
-          resolution={review.resolution}
-          lines={review.lines}
-          nameOf={nameOf}
-          refusalText={refusalText}
-        />
+/**
+ * One run this setup started: where it is while it runs, and how it ended,
+ * with the run or result it left. Its phase is the engine's own; nothing here
+ * is a percentage or a time.
+ */
+function RunBlock({
+  headingId,
+  running,
+  phase,
+  end,
+  failure,
+  canStop,
+  stopRequested,
+  onStop,
+  onOpen,
+  onShowRun,
+}: {
+  readonly headingId: string;
+  readonly running: boolean;
+  readonly phase: string | null;
+  readonly end: ProjectSession["lastTargetedRun"];
+  readonly failure: { readonly code: FailureCode } | null;
+  /** Whether there is an accepted operation to name, so a cancel can send something. */
+  readonly canStop: boolean;
+  readonly stopRequested: boolean;
+  readonly onStop: () => void;
+  readonly onOpen: (artifactId: string) => void;
+  readonly onShowRun: (runId: string) => void;
+}) {
+  const t = useUiMessages();
+  const section = useRef<HTMLElement | null>(null);
+  const heading = useRef<HTMLHeadingElement | null>(null);
+  // Appears when Run is pressed, below it: the surface scrolls to it, and the
+  // keyboard follows from Run -- now inert -- to what the press made.
+  useEffect(() => {
+    bringIntoView(section.current);
+    if (document.activeElement?.hasAttribute("data-targeted-run") === true) {
+      heading.current?.focus({ preventScroll: true });
+    }
+  }, []);
+  useFocusKeptOnEnd(running, section, heading);
+  const artifactId = end?.outcome === "completed" ? end.artifactId : null;
+  return (
+    <section
+      ref={section}
+      className="targeted-run"
+      aria-labelledby={headingId}
+      data-targeted-run-block={running ? "running" : (end?.outcome ?? "")}
+    >
+      <h4 ref={heading} id={headingId} tabIndex={-1}>
+        {t(running ? "targetedRunInProgressTitle" : "targetedRunEndedTitle")}
+      </h4>
+      {running ? (
+        <>
+          <p className="project-note" data-targeted-phase={phase ?? ""}>
+            {t(phaseKey(phase) ?? "targetedPhasePreparing")}
+          </p>
+          {canStop ? (
+            <div className="project-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                aria-disabled={stopRequested || undefined}
+                data-targeted-cancel-run=""
+                onClick={() => {
+                  if (!stopRequested) onStop();
+                }}
+              >
+                {t(stopRequested ? "targetedStopRequested" : "targetedCancelRun")}
+              </button>
+              <span className="project-note">{t("targetedCancelRunHelp")}</span>
+            </div>
+          ) : null}
+        </>
+      ) : end === null ? null : (
+        <>
+          <p className="project-note" data-targeted-last={end.outcome}>
+            {end.outcome === "completed"
+              ? t("targetedLastCompleted")
+              : end.outcome === "cancelled"
+                ? t("targetedLastCancelled")
+                : failure === null
+                  ? t("targetedLastFailed")
+                  : `${t("targetedLastFailed")} ${t(FAILURE_KEYS[failure.code])}`}
+          </p>
+          <div className="project-actions">
+            {artifactId !== null ? (
+              <button
+                type="button"
+                className="primary-button"
+                data-targeted-open-result={artifactId}
+                onClick={() => onOpen(artifactId)}
+              >
+                {t("targetedBatchOpenResult")}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="secondary-button"
+                data-targeted-show-run={end.runId}
+                onClick={() => onShowRun(end.runId)}
+              >
+                {t("targetedBatchShowRun")}
+              </button>
+            )}
+          </div>
+        </>
       )}
     </section>
   );
@@ -607,45 +952,66 @@ function EngineFacts({ engine }: { readonly engine: EngineIdentity }) {
   );
 }
 
-/** Every problem with the typed request, where it was typed. */
+/**
+ * Every problem with the typed request, where it was typed. A target's line
+ * leads back to it; the list scrolls inside the review however long it is.
+ */
 function ProblemsTable({
   problems,
   lines,
+  onLine,
 }: {
   readonly problems: readonly PlanProblem[];
   readonly lines: readonly number[];
+  readonly onLine: (line: number) => void;
 }) {
   const t = useUiMessages();
   return (
-    <table className="qc-report-table" data-targeted-problems="">
-      <caption>{t("targetedProblems")}</caption>
-      <thead>
-        <tr>
-          <th scope="col">{t("targetedProblemWhere")}</th>
-          <th scope="col">{t("targetedProblemField")}</th>
-          <th scope="col">{t("targetedProblemWhat")}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {problems.map((problem, index) => (
-          <tr key={index} data-targeted-problem={problem.problem}>
-            <th scope="row">
-              {problem.row === null
-                ? t("targetedWhereParameters")
-                : t("targetedWhereLine", {
-                    line: String(lines[problem.row - 1] ?? problem.row),
-                  })}
-            </th>
-            <td>{t(keyed(FIELD_KEYS, problem.field, FIELD_KEYS.targets))}</td>
-            <td>{t(keyed(PROBLEM_KEYS, problem.problem, PROBLEM_KEYS.invalid))}</td>
+    <div className="targeted-review-scroll">
+      <table className="qc-report-table" data-targeted-problems="">
+        <caption>{t("targetedProblems")}</caption>
+        <thead>
+          <tr>
+            <th scope="col">{t("targetedProblemWhere")}</th>
+            <th scope="col">{t("targetedProblemField")}</th>
+            <th scope="col">{t("targetedProblemWhat")}</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {problems.map((problem, index) => {
+            const line = problem.row === null ? null : (lines[problem.row - 1] ?? problem.row);
+            return (
+              <tr key={index} data-targeted-problem={problem.problem}>
+                <th scope="row">
+                  {line === null ? (
+                    t("targetedWhereParameters")
+                  ) : (
+                    <button
+                      type="button"
+                      className="link-button"
+                      aria-label={t("targetedGoToLine", { line: String(line) })}
+                      data-targeted-problem-line={line}
+                      onClick={() => onLine(line)}
+                    >
+                      {t("targetedWhereLine", { line: String(line) })}
+                    </button>
+                  )}
+                </th>
+                <td>{t(keyed(FIELD_KEYS, problem.field, FIELD_KEYS.targets))}</td>
+                <td>{t(keyed(PROBLEM_KEYS, problem.problem, PROBLEM_KEYS.invalid))}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
-/** The ordered targets and the two parameters, as Rust resolved them. */
+/**
+ * The ordered targets and the two parameters, as Rust resolved them. Two
+ * hundred targets scroll inside the review, never pushing Run out of reach.
+ */
 function TargetsTable({
   parameters,
   targets,
@@ -658,66 +1024,86 @@ function TargetsTable({
 }) {
   const t = useUiMessages();
   return (
-    <table className="qc-report-table" {...tableProps}>
-      <caption>
-        {t("targetedPlanCaption", {
-          ppm: parameters.mzHalfWidthPpm,
-          width: parameters.expectedPeakWidthS,
-        })}
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">{t("targetedFieldLabel")}</th>
-          <th scope="col">{t("targetedFieldFormula")}</th>
-          <th scope="col">{t("targetedFieldRt")}</th>
-          <th scope="col">{t("targetedFieldRtHalfWidth")}</th>
-          <th scope="col">{t("targetedFieldNeutralMass")}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {targets.map((target) => (
-          <tr key={target.targetId} data-targeted-plan-target={target.targetId}>
-            <th scope="row">{target.label}</th>
-            <td>{target.formula}</td>
-            <td>{target.rtS}</td>
-            <td>{target.rtHalfWidthS}</td>
-            <td>{target.neutralMass ?? t("targetedMassFromFormula")}</td>
+    <div className="targeted-review-scroll">
+      <table className="qc-report-table" {...tableProps}>
+        <caption>
+          {t("targetedPlanCaption", {
+            count: targets.length,
+            ppm: parameters.mzHalfWidthPpm,
+            width: parameters.expectedPeakWidthS,
+          })}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">{t("targetedFieldLabel")}</th>
+            <th scope="col">{t("targetedFieldFormula")}</th>
+            <th scope="col">{t("targetedFieldRt")}</th>
+            <th scope="col">{t("targetedFieldRtHalfWidth")}</th>
+            <th scope="col">{t("targetedFieldNeutralMass")}</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {targets.map((target) => (
+            <tr key={target.targetId} data-targeted-plan-target={target.targetId}>
+              <th scope="row">{target.label}</th>
+              <td>{target.formula}</td>
+              <td>{target.rtS}</td>
+              <td>{target.rtHalfWidthS}</td>
+              <td>{target.neutralMass ?? t("targetedMassFromFormula")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
+/**
+ * One acquisition's review: what needs fixing first; then what would run --
+ * the acquisition, the ordered targets and the parameters; then the engine
+ * and the plan's digest; last, what stops the plan running now, just above
+ * Run.
+ */
 function PlanReview({
   resolution,
   lines,
+  nameOf,
+  blockedId,
+  onLine,
   refusalText,
 }: {
   readonly resolution: PlanResolution;
   readonly lines: readonly number[];
+  readonly nameOf: (layerId: string) => string;
+  readonly blockedId: string;
+  readonly onLine: (line: number) => void;
   readonly refusalText: (code: string) => string;
 }) {
   const t = useUiMessages();
   const { plan, problems, blocked, engine } = resolution;
   return (
     <div className="targeted-review" data-targeted-review-result={plan === null ? "problems" : "plan"}>
-      <EngineFacts engine={engine} />
-      {problems.length > 0 ? <ProblemsTable problems={problems} lines={lines} /> : null}
+      {problems.length > 0 ? <ProblemsTable problems={problems} lines={lines} onLine={onLine} /> : null}
       {plan === null ? null : (
         <>
+          <p className="project-note" data-targeted-plan-for="">
+            {t("targetedPlanFor", { name: nameOf(plan.layerId) })}
+          </p>
           <TargetsTable
             parameters={plan.parameters}
             targets={plan.targets}
             tableProps={{ "data-targeted-plan": plan.planSha256 }}
           />
-          <p className="project-note targeted-digest">
-            {t("targetedPlanDigest", { digest: plan.planSha256 })}
-          </p>
         </>
       )}
+      <EngineFacts engine={engine} />
+      {plan === null ? null : (
+        <p className="project-note targeted-digest">
+          {t("targetedPlanDigest", { digest: plan.planSha256 })}
+        </p>
+      )}
       {blocked === null ? null : (
-        <p className="project-problem" data-targeted-blocked={blocked}>
+        <p id={blockedId} className="project-problem" data-targeted-blocked={blocked}>
           {refusalText(blocked)}
         </p>
       )}
@@ -737,19 +1123,22 @@ export function batchRunnable(resolution: BatchResolution) {
 }
 
 /**
- * A batch review: the one request every member shares, then every member in
- * the order it will run, each ready or saying what stops it. Nothing is
- * pooled: each member is its own plan over its own source.
+ * A batch review: what needs fixing first; then the one request every member
+ * shares, and every member in the order it will run, each ready or saying
+ * what stops it; then the technical provenance. Nothing is pooled: each
+ * member is its own plan over its own source.
  */
 function BatchReview({
   resolution,
   lines,
   nameOf,
+  onLine,
   refusalText,
 }: {
   readonly resolution: BatchResolution;
   readonly lines: readonly number[];
   readonly nameOf: (layerId: string) => string;
+  readonly onLine: (line: number) => void;
   readonly refusalText: (code: string) => string;
 }) {
   const t = useUiMessages();
@@ -759,84 +1148,88 @@ function BatchReview({
       className="targeted-review"
       data-targeted-review-result={problems.length > 0 ? "problems" : "batch"}
     >
-      <EngineFacts engine={engine} />
-      {problems.length > 0 ? <ProblemsTable problems={problems} lines={lines} /> : null}
+      {problems.length > 0 ? <ProblemsTable problems={problems} lines={lines} onLine={onLine} /> : null}
       {common === null ? null : (
-        <>
-          <TargetsTable
-            parameters={common.parameters}
-            targets={common.targets}
-            tableProps={{ "data-targeted-batch-targets": common.targetListSha256 }}
-          />
-          <p className="project-note targeted-digest">
-            {t("targetedTargetListDigestLine", { digest: common.targetListSha256 })}
-          </p>
-        </>
+        <TargetsTable
+          parameters={common.parameters}
+          targets={common.targets}
+          tableProps={{ "data-targeted-batch-targets": common.targetListSha256 }}
+        />
       )}
       {members.length === 0 ? null : (
         <>
           <p className="targeted-independent" data-targeted-batch-independent="">
             {t("targetedBatchIndependent", { count: members.length })}
           </p>
-          <table className="qc-report-table" data-targeted-batch-members={members.length}>
-            <caption>{t("targetedBatchMembersCaption")}</caption>
-            <thead>
-              <tr>
-                <th scope="col">{t("targetedBatchColumnOrder")}</th>
-                <th scope="col">{t("targetedBatchColumnAcquisition")}</th>
-                <th scope="col">{t("targetedBatchColumnReadiness")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.map((member, index) => {
-                const stop = member.refused ?? member.blocked;
-                return (
-                  <tr
-                    key={member.layerId}
-                    data-targeted-batch-plan={member.layerId}
-                    data-ready={stop === null ? "ready" : stop}
-                  >
-                    <td>{index + 1}</td>
-                    <th scope="row">{nameOf(member.layerId)}</th>
-                    <td className={stop === null ? undefined : "targeted-not-ready"}>
-                      {stop === null ? t("targetedBatchReady") : refusalText(stop)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {/* Technical provenance, on request: what each member's own plan
-              binds and is named by. */}
-          <details className="targeted-modules" data-targeted-batch-details="">
-            <summary>{t("targetedBatchPlanDetails")}</summary>
-            <dl className="provenance-facts">
-              {members.map((member) => (
-                <div key={member.layerId} className="targeted-member">
-                  <dt>{nameOf(member.layerId)}</dt>
-                  <dd>
-                    {member.planSha256 === null ? (
-                      t("targetedBatchNoPlan")
-                    ) : (
-                      <>
-                        {member.expectedContent.map((content) => (
-                          <span key={content.relativeName} className="targeted-batch-fact">
-                            {t("targetedSourceBytes")} {formatCount(content.byteLength)} · SHA-256{" "}
-                            <span className="provenance-digest" title={content.sha256}>{content.sha256}</span>
-                          </span>
-                        ))}
-                        <span className="targeted-batch-fact">
-                          {t("targetedPlanDigestLabel")}{" "}
-                          <span className="provenance-digest" title={member.planSha256}>{member.planSha256}</span>
-                        </span>
-                      </>
-                    )}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </details>
+          <div className="targeted-review-scroll">
+            <table className="qc-report-table" data-targeted-batch-members={members.length}>
+              <caption>{t("targetedBatchMembersCaption")}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t("targetedBatchColumnOrder")}</th>
+                  <th scope="col">{t("targetedBatchColumnAcquisition")}</th>
+                  <th scope="col">{t("targetedBatchColumnReadiness")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((member, index) => {
+                  const stop = member.refused ?? member.blocked;
+                  return (
+                    <tr
+                      key={member.layerId}
+                      data-targeted-batch-plan={member.layerId}
+                      data-ready={stop === null ? "ready" : stop}
+                    >
+                      <td>{index + 1}</td>
+                      <th scope="row">{nameOf(member.layerId)}</th>
+                      <td className={stop === null ? undefined : "targeted-not-ready"}>
+                        {stop === null ? t("targetedBatchReady") : refusalText(stop)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </>
+      )}
+      <EngineFacts engine={engine} />
+      {common === null ? null : (
+        <p className="project-note targeted-digest">
+          {t("targetedTargetListDigestLine", { digest: common.targetListSha256 })}
+        </p>
+      )}
+      {members.length === 0 ? null : (
+        // Technical provenance, on request: what each member's own plan binds
+        // and is named by.
+        <details className="targeted-modules" data-targeted-batch-details="">
+          <summary>{t("targetedBatchPlanDetails")}</summary>
+          <dl className="provenance-facts">
+            {members.map((member) => (
+              <div key={member.layerId} className="targeted-member">
+                <dt>{nameOf(member.layerId)}</dt>
+                <dd>
+                  {member.planSha256 === null ? (
+                    t("targetedBatchNoPlan")
+                  ) : (
+                    <>
+                      {member.expectedContent.map((content) => (
+                        <span key={content.relativeName} className="targeted-batch-fact">
+                          {t("targetedSourceBytes")} {formatCount(content.byteLength)} · SHA-256{" "}
+                          <span className="provenance-digest" title={content.sha256}>{content.sha256}</span>
+                        </span>
+                      ))}
+                      <span className="targeted-batch-fact">
+                        {t("targetedPlanDigestLabel")}{" "}
+                        <span className="provenance-digest" title={member.planSha256}>{member.planSha256}</span>
+                      </span>
+                    </>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </details>
       )}
     </div>
   );
@@ -890,9 +1283,11 @@ export function batchSummary(members: readonly BatchMemberProgress[], t: UiMessa
  * existing report; nothing here shows two members' results together.
  */
 function BatchProgress({
+  headingId,
   members,
   running,
   canStop,
+  stopRequested,
   phase,
   runs,
   nameOf,
@@ -901,6 +1296,7 @@ function BatchProgress({
   onOpen,
   onShowRun,
 }: {
+  readonly headingId: string;
   readonly members: readonly BatchMemberProgress[];
   readonly running: boolean;
   /**
@@ -908,6 +1304,8 @@ function BatchProgress({
    * something. Not for the instant before the batch's operation is accepted.
    */
   readonly canStop: boolean;
+  /** Whether a stop was asked for: said until the batch answers how it ended. */
+  readonly stopRequested: boolean;
   readonly phase: string | null;
   readonly runs: ProjectSession["state"]["runs"];
   readonly nameOf: (layerId: string) => string;
@@ -917,13 +1315,8 @@ function BatchProgress({
   readonly onShowRun: (runId: string) => void;
 }) {
   const t = useUiMessages();
-  const ids = useId();
   const section = useRef<HTMLElement | null>(null);
   const heading = useRef<HTMLHeadingElement | null>(null);
-  const [stopping, setStopping] = useState(false);
-  useEffect(() => {
-    if (!running) setStopping(false);
-  }, [running]);
   // Appears when Run is pressed, below it: the surface scrolls to it, and the
   // keyboard follows from Run -- now inert -- to what the press made.
   useEffect(() => {
@@ -932,14 +1325,15 @@ function BatchProgress({
       heading.current?.focus({ preventScroll: true });
     }
   }, []);
+  useFocusKeptOnEnd(running, section, heading);
   return (
     <section
       ref={section}
       className="targeted-batch"
-      aria-labelledby={`${ids}-title`}
+      aria-labelledby={headingId}
       data-targeted-batch={running ? "running" : "ended"}
     >
-      <h4 ref={heading} id={`${ids}-title`} tabIndex={-1}>
+      <h4 ref={heading} id={headingId} tabIndex={-1}>
         {t(running ? "targetedBatchRunningTitle" : "targetedBatchEndedTitle")}
       </h4>
       <p className="project-note" data-targeted-batch-summary="">
@@ -1034,15 +1428,13 @@ function BatchProgress({
           <button
             type="button"
             className="secondary-button"
-            aria-disabled={stopping || undefined}
+            aria-disabled={stopRequested || undefined}
             data-targeted-batch-stop=""
             onClick={() => {
-              if (stopping) return;
-              setStopping(true);
-              onStop();
+              if (!stopRequested) onStop();
             }}
           >
-            {t(stopping ? "targetedBatchStopping" : "targetedBatchStop")}
+            {t(stopRequested ? "targetedStopRequested" : "targetedBatchStop")}
           </button>
           <span className="project-note">{t("targetedBatchStopHelp")}</span>
         </div>

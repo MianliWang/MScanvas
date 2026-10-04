@@ -71,8 +71,19 @@ export interface ProjectSession {
    * cancel and nothing is sent.
    */
   readonly activeOperation: string | null;
+  /**
+   * Whether this session has asked to cancel `activeOperation`. A request,
+   * not an outcome: what ended is said only once the operation answers.
+   */
+  readonly stopRequested: boolean;
   /** The stable identifier of the last refusal, or `null`. */
   readonly problem: string | null;
+  /**
+   * What the surface was doing when `problem` was refused, or `null`. Lets the
+   * targeted setup say a refusal of its own review or run beside the control
+   * that asked, rather than only at the top of the surface.
+   */
+  readonly problemDuring: ProjectBusy | null;
   /** Set when the last operation was cancelled rather than refused. */
   readonly cancelled: boolean;
   /**
@@ -243,6 +254,7 @@ export function useProject(
   const [state, setState] = useState<ProjectState>(NO_PROJECT);
   const [busy, setBusy] = useState<ProjectBusy>("idle");
   const [problem, setProblem] = useState<string | null>(null);
+  const [problemDuring, setProblemDuring] = useState<ProjectBusy | null>(null);
   const [cancelled, setCancelled] = useState<false | "operation" | "targetedRun">(false);
   const [pending, setPending] = useState<PendingIntent | null>(null);
   const [selected, setSelected] = useState<readonly string[]>([]);
@@ -302,6 +314,7 @@ export function useProject(
       const sequence = issued.current;
       setBusy(kind);
       setProblem(null);
+      setProblemDuring(null);
       setCancelled(false);
       setTargetedRunJustEnded(false);
       setTargetedBatchJustEnded(false);
@@ -336,6 +349,7 @@ export function useProject(
             setCancelled("operation");
           } else {
             setProblem(code);
+            setProblemDuring(kind);
           }
         }
         // A refused capture still recorded its run, and a refused anything else
@@ -358,6 +372,8 @@ export function useProject(
   /** The operation this session accepted and has not yet seen finish. */
   const [activeOperation, setActiveOperation] = useState<string | null>(null);
   const active = useRef<string | null>(null);
+  /** The accepted operation this session has asked to cancel, if any. */
+  const [stopAsked, setStopAsked] = useState<string | null>(null);
 
   /**
    * Accepts an operation, then runs it under the identifier it was accepted
@@ -383,7 +399,10 @@ export function useProject(
         } finally {
           if (active.current === operationId) {
             active.current = null;
-            if (mounted.current) setActiveOperation(null);
+            if (mounted.current) {
+              setActiveOperation(null);
+              setStopAsked(null);
+            }
           }
         }
       }),
@@ -457,7 +476,9 @@ export function useProject(
     state,
     busy,
     activeOperation,
+    stopRequested: stopAsked !== null && stopAsked === activeOperation,
     problem,
+    problemDuring: problem === null ? null : problemDuring,
     cancelled: cancelled !== false,
     cancelledRunRecorded: cancelled === "targetedRun",
     pending,
@@ -474,6 +495,7 @@ export function useProject(
     toggleSelected,
     dismissProblem: useCallback(() => {
       setProblem(null);
+      setProblemDuring(null);
       setCancelled(false);
     }, []),
     createProject: useCallback((name: string) => createProject(name), [createProject]),
@@ -506,6 +528,7 @@ export function useProject(
       // boundary saying it did nothing, which is what a late press deserves.
       const operationId = active.current;
       if (operationId === null) return;
+      setStopAsked(operationId);
       await api.cancelProjectJob(operationId).catch(() => undefined);
     }, [api]),
     capture: useCallback(
@@ -606,6 +629,9 @@ export function useProject(
         const pressedWhile = inspectingNow.current;
         setAnalysisPhase(null);
         setAnalysisBatch(null);
+        // Cleared as a batch's is, so an ending on screen is never an earlier
+        // run's: a run refused before it existed leaves none.
+        setLastTargetedRun(null);
         return runAccepted("analysing", async (operationId) => {
           const end = await api.runTargetedMs1(operationId, planSha256);
           if (mounted.current) {
