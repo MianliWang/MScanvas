@@ -69,6 +69,7 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
     expect(document.activeElement).toBe(convert);
     fireEvent.click(convert);
     expect(api.conversionRequests).toEqual([]);
+    expect(api.beginRequests()).toEqual([]);
   });
 
   it("puts the scope, settings, destination and conflict above the review, and the review directly above Convert (R4, R5)", async () => {

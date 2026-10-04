@@ -787,7 +787,7 @@ describe("starting the conversion the plan describes", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
     await waitFor(() => {
-      expect(convert).toBeEnabled();
+      expect(convert).not.toHaveAttribute("aria-disabled");
     });
 
     // Rust moves on and nothing says so: a refused start creates no queue, so
@@ -797,7 +797,7 @@ describe("starting the conversion the plan describes", () => {
     act(() => {
       api.replaceTheBindingSilently();
     });
-    expect(convert).toBeEnabled();
+    expect(convert).not.toHaveAttribute("aria-disabled");
 
     await act(async () => {
       fireEvent.click(convert);

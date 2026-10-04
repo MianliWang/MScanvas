@@ -162,7 +162,7 @@ describe("M7.4 bilingual conversion composition", () => {
     fireEvent.click(within(row).getByRole("checkbox"));
     const panel = screen.getByRole("region", { name: en.m74CnvTitle });
     const start = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
-    await waitFor(() => expect(start).toBeEnabled());
+    await waitFor(() => expect(start).not.toHaveAttribute("aria-disabled"));
     fireEvent.click(within(panel).getByRole("radio", { name: en.m74CnvDestNamed }));
     const raw = "  原始 name / draft  ";
     fireEvent.change(within(panel).getByRole("textbox", { name: en.m74CnvSubfolderName }), { target: { value: raw } });

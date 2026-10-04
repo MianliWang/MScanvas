@@ -230,7 +230,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     ).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Add converted outputs to workspace" }),
-    ).toBeEnabled();
+    ).not.toHaveAttribute("aria-disabled");
   });
 
   it("adopts ten outputs as ten outcomes of one queue item, and repeats honestly", async () => {

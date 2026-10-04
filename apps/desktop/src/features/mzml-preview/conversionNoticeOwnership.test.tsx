@@ -147,7 +147,7 @@ describe("a failed catalog beside a backend check", () => {
 
     const convert = within(panel).getByRole("button", { name: /^Convert/ });
     await waitFor(() => {
-      expect(convert).toBeDisabled();
+      expect(convert).toHaveAttribute("aria-disabled", "true");
     });
     expect(retry).toBeDisabled();
 
@@ -239,7 +239,7 @@ describe("a configuration probe beside a conversion control", () => {
       expect(owners(id)).toBe(1);
     });
     const convert = within(panel).getByRole("button", { name: /^Convert/ });
-    expect(convert).toBeDisabled();
+    expect(convert).toHaveAttribute("aria-disabled", "true");
     expect(describedBy(convert)).toContain(id);
     expect(duplicateIds()).toEqual([]);
 

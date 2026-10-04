@@ -104,9 +104,9 @@ describe("destination request and queue truth", () => {
 
   it("restores Convert focus even when the plan is momentarily gone", async () => {
     // The commit a cancelled picker returns into does not always have a
-    // pressable button in it. With nothing selected the control reads "Convert
-    // 0 selected…" and is disabled, `focus()` on a disabled button does
-    // nothing, and a restoration that spent itself there left the focus on the
+    // pressable button in it. With nothing checked the control reads "Convert
+    // 0 eligible…" and is refused (aria-disabled since PM9.4 R6), and a
+    // restoration that spent itself on a refused control left the focus on the
     // document body for the rest of the session.
     const picker = deferred<WorkspaceConversionState>();
     const api = createFakePreviewApi({
@@ -564,7 +564,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     // deliberately not its name: it ends the whole queue and undoes nothing
     // already written.
     const stop = within(panel).getByRole("button", { name: "Stop queue" });
-    expect(stop).toBeEnabled();
+    expect(stop).not.toHaveAttribute("aria-disabled");
     expect(
       within(panel).getByText(
         "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
@@ -1114,7 +1114,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     const adopt = within(panel).getByRole("button", {
       name: "Add converted output to workspace",
     });
-    expect(adopt).toBeEnabled();
+    expect(adopt).not.toHaveAttribute("aria-disabled");
     expect(adopt).toHaveAccessibleDescription(
       "MSCanvas verifies that each output is still the exact finalized file before adding it. Outputs are not previewed automatically.",
     );

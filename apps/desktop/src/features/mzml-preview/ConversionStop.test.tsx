@@ -190,7 +190,7 @@ describe("stopping a running conversion queue", () => {
     });
 
     const stop = within(panel).getByRole("button", { name: "Stop queue" });
-    expect(stop).toBeEnabled();
+    expect(stop).not.toHaveAttribute("aria-disabled");
     // Both halves of the promise, before it is pressed. Without the second, a
     // user reads `stop` as `undo` over a file that is already theirs.
     expect(within(panel).getByText(STOP_EXPLANATION)).toBeVisible();
@@ -207,7 +207,7 @@ describe("stopping a running conversion queue", () => {
       "Stop this file",
     ]);
     const cancelItem = within(panel).getByRole("button", { name: "Stop this file" });
-    expect(cancelItem).toBeEnabled();
+    expect(cancelItem).not.toHaveAttribute("aria-disabled");
     expect(cancelItem).toHaveAccessibleDescription(
       `Stop this file ends run-2.raw and carries on with the rest of the queue. ${CANCEL_ITEM_EXPLANATION}`,
     );
@@ -447,7 +447,7 @@ describe("stopping a running conversion queue", () => {
     const control = await within(panel).findByRole("button", {
       name: "Stopping this file…",
     });
-    expect(control).toBeDisabled();
+    expect(control).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).queryByRole("button", { name: "Stop this file" })).toBeNull();
     expect(within(panel).getByText(CANCEL_ITEM_IN_FLIGHT_EXPLANATION)).toBeVisible();
   });
@@ -589,7 +589,7 @@ describe("stopping a running conversion queue", () => {
     const skipping = await within(panel).findByRole("button", {
       name: "Skipping run-3.raw…",
     });
-    expect(skipping).toBeDisabled();
+    expect(skipping).toHaveAttribute("aria-disabled", "true");
     await waitFor(() => {
       expect(liveRegion()).toContain("Skipping run-3.raw.");
     });
@@ -908,7 +908,7 @@ describe("stopping a running conversion queue", () => {
     expect(panel.textContent ?? "").not.toContain("cannot cancel");
     // And it resolves into a stoppable queue without a poll interval passing.
     const stop = await within(panel).findByRole("button", { name: "Stop queue" });
-    expect(stop).toBeEnabled();
+    expect(stop).not.toHaveAttribute("aria-disabled");
     expect(stop).toHaveAccessibleDescription(STOP_EXPLANATION);
   });
 

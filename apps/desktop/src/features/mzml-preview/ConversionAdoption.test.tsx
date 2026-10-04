@@ -147,7 +147,7 @@ describe("adding converted outputs to the workspace", () => {
     const adopt = within(panel).getByRole("button", {
       name: "Add converted outputs to workspace",
     });
-    expect(adopt).toBeEnabled();
+    expect(adopt).not.toHaveAttribute("aria-disabled");
     expect(adopt).toHaveAccessibleDescription(ADOPT_EXPLANATION);
     expect(within(panel).getByText(ADOPT_EXPLANATION)).toBeVisible();
 
@@ -261,7 +261,7 @@ describe("adding converted outputs to the workspace", () => {
     // and the queue still holds what recognises the file.
     expect(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
-    ).toBeEnabled();
+    ).not.toHaveAttribute("aria-disabled");
   });
 
   it("counts added, duplicate and refused apart, and names the bounded few", async () => {
@@ -341,7 +341,7 @@ describe("adding converted outputs to the workspace", () => {
     ).toBeVisible();
     expect(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
-    ).toBeEnabled();
+    ).not.toHaveAttribute("aria-disabled");
   });
 
   it("offers adoption after an unconfirmed stop, because adding launches nothing", async () => {
@@ -365,7 +365,7 @@ describe("adding converted outputs to the workspace", () => {
       name: "Add converted output to workspace",
     });
     // A quarantined session runs no process, and this one does not need to.
-    expect(adopt).toBeEnabled();
+    expect(adopt).not.toHaveAttribute("aria-disabled");
     // Everything that would launch one is still refused.
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     await waitFor(() => {
@@ -438,7 +438,7 @@ describe("adding converted outputs to the workspace", () => {
     const adopting = within(panel).getByRole("button", {
       name: "Add converted output to workspace",
     });
-    expect(adopting).toBeDisabled();
+    expect(adopting).toHaveAttribute("aria-disabled", "true");
     expect(adopting).toBeVisible();
     // And the actions that would fight with it are gone or refused.
     expect(within(panel).queryByRole("button", { name: /^Retry/ })).toBeNull();
@@ -478,7 +478,7 @@ describe("adding converted outputs to the workspace", () => {
     expect(rows()).toHaveLength(2);
     expect(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
-    ).toBeEnabled();
+    ).not.toHaveAttribute("aria-disabled");
   });
 
   it("offers the action again after a partial result", async () => {
@@ -519,7 +519,7 @@ describe("adding converted outputs to the workspace", () => {
     const again = within(panel).getByRole("button", {
       name: "Add converted output to workspace",
     });
-    expect(again).toBeEnabled();
+    expect(again).not.toHaveAttribute("aria-disabled");
     expect(
       within(panel).getByText(
         "You can add them again. Anything already in the workspace is reported rather than added twice.",
@@ -540,7 +540,7 @@ describe("adding converted outputs to the workspace", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     expect(
       await within(panel).findByRole("button", { name: "Add converted outputs to workspace" }),
-    ).toBeEnabled();
+    ).not.toHaveAttribute("aria-disabled");
     expect(api.adoptionRequests).toEqual([]);
   });
 });
