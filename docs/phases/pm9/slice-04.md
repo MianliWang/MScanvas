@@ -309,6 +309,56 @@ Filled at closure. Progress so far, with the evidence it rests on:
   free and 93.9% used at 03:07:03, then 3.45 GiB and 89.1% at 03:14:41. No
   later group started.
 
+**2026-10-04, the review and correction cycle 1, both static.**
+
+- **The review.** One independent reviewer, read-only, read the snapshot
+  `60ed557`: slice-04 §3 and `git diff 5f3caf5 60ed557 -- apps e2e`. It ran
+  nothing. Verdict NO-GO, with six confirmed findings:
+  - **F1, high.** The scope line passed an empty `note` parameter whenever
+    nothing was excluded. `bindUiMessages` rejects empty parameters
+    (`RESOURCE_PARAMETERS`), and with no error boundary the app would blank at
+    start.
+  - **F2, medium.** R11's guard missed the starting window of a press made
+    under a finished queue. Focusing the status line there cancelled the custom
+    picker's return to Convert.
+  - **F3, medium.** Stale `selected` copy and `toBeDisabled`/`toBeEnabled` on
+    Convert. Most were already fixed after the snapshot (`d0bb5ff`); three
+    remained.
+  - **F4, low/medium.** The surface's link buttons were neither sized nor
+    measured (R12).
+  - **F5, low.** The refused-press tests had no current plan, so they could not
+    reach the new guard.
+  - **F6, low.** Copy and markup:
+    - (a) the no-target notice under All;
+    - (b) "check them" with the converted rows still checked;
+    - (c) markers and "below" while an adoption or export holds the panel;
+    - (d) a name on a generic `div`;
+    - (e) zero filled primaries while Add is refused;
+    - (f) plan-side links handing focus to the old queue's status.
+- **Refuted by the reviewer**, each from the code:
+  - the convert-again sentence on a stop-failed queue (its session is always
+    quarantined);
+  - markers when quarantined or stopped;
+  - notice ownership;
+  - the settings refusal while busy;
+  - every command identity;
+  - described-by targets and duplicate ids;
+  - the numeric i18n parameters;
+  - the replaced focus assertion as a weakening;
+  - a weakened product assertion in any m6.x repair.
+- **Correction cycle 1** (the first of two authorized) fixes F1–F6:
+  - F1: the excluded note joins the counts, so no parameter is ever empty.
+  - F2: the guard also covers `converting`, plus a Vitest case for the
+    picker cancelled under a finished queue.
+  - F3: the three remaining assertions.
+  - F4: `.conversion-panel .link-button` at 32 px, plus P4 asserting the
+    running frame's control heights.
+  - F5: a Vitest case where a reviewed Convert is refused by a backend check.
+  - F6: (a) scope-neutral notice copy; (b) "check only those rows"; (c) gated
+    on `!busy`; (d) `role="group"`; (e) keyed on `canAdopt`; (f) only Convert
+    and the queue's own controls are recorded.
+  - Still not compiled or run.
+
 **Resume, in order, each on its own admission:**
 
 1. D1, `pnpm typecheck`.
