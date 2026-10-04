@@ -266,14 +266,25 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   is false while a wheel or drag is in flight. The line follows the pending
   band and the committed range, never a gesture's range: a gesture's frames
   and abandonment change nothing, and neither does its start unless the start
-  discards a pending band (the owners' rule), after which the line reports
-  the committed range. A gesture's commit is announced once, when it settles
-  (UI-34). Decision trail: batch 2 (2026-10-03, `5e4c6ac`) said "the range
-  shown" and accepted it as untrue while a gesture was in flight; the wording
-  continuation (2026-10-03, `b7b8eeb`) superseded that, because a sentence
-  claiming to be the range on screen may not stay visible while it is false.
-  A range line gives way inside its own box (a 12em basis) before the pending
-  actions beside it take a second row (UI-32).
+  discards a pending band (the owners' rule). That discard is a real change
+  of the pending state, so the line changes once, from the band to the
+  committed range as it stands -- not a claim that anything was committed --
+  and says nothing more for that start. Escape does not bring a discarded
+  band back (the owners' rule, kept), and an Escape that changes nothing in
+  the owners changes nothing here. A gesture's commit is announced once, when
+  it settles (UI-34), and a new source keeps nothing of the old one's values.
+  These are DOM contracts, held by a MutationObserver over the line; no
+  screen reader's speech is claimed. Decision trail: batch 2 (2026-10-03,
+  `5e4c6ac`) said "the range shown" and accepted it as untrue while a gesture
+  was in flight; the wording continuation (2026-10-03, `b7b8eeb`) superseded
+  that, because a sentence claiming to be the range on screen may not stay
+  visible while it is false. The owner accepted that wording on 2026-10-04:
+  the line is about the committed range its owner holds, which a wheel, pan
+  or reveal can set without being a selection, and is not called one. The
+  same decision replaced the shorthand "a gesture that commits nothing says
+  nothing" with the pending-band rule above. A range line gives way inside
+  its own box (a 12em basis) before the pending actions beside it take a
+  second row (UI-32).
 - **Details facts.** In the 245 px Details column a digest is one line (the
   whole value in its tooltip, still selected and copied in full), a name at
   most three lines, and each fact is its label over its value, so a long value

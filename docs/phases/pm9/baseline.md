@@ -1046,7 +1046,9 @@ nothing else: a held wheel from a commit (shown 0.1135 to 0.4284, committed
 (shown 0.1267 to 0.2701, committed 0.1000 to 0.3000), and a held m/z pan (shown
 195.9350 to 295.9350, committed 200.0000 to 300.0000). PM9.3-V10 passed every
 timing check and failed the semantic one in en and zh-CN: the held pan showed
-2.0303 to 6.2303 while 1.4000 to 5.6000 was committed. After: each passes.
+2.0303 to 6.2303 while 1.4000 to 5.6000 was committed (erratum 2026-10-04: that
+run is not identity-qualified and carries no claim; see the final validation
+below). After: each passes.
 V10's live line changed exactly twice in each locale, on the pan's release and
 on the wheel's settle, and never at a gesture's start or on Escape. PM9.3-G and
 PM9.3-L give the same range rows, row for row and pixel for pixel, as batch 2's
@@ -1057,7 +1059,8 @@ V10 holds the pan through the DevTools input domain: held across two WebDriver
 action calls, ChromeDriver released the middle button as a button change, a
 pointermove and then an auxclick, instead of a pointerup, so the pan never ended
 (probed on Chrome 154). The before and after runs used the same Chrome,
-154.0.8037.93. A MutationObserver trace proves what the DOM does, not what a
+154.0.8037.93 (erratum 2026-10-04: no retained file records either before-run's
+Chrome). A MutationObserver trace proves what the DOM does, not what a
 screen reader says.
 
 Checks on `b7b8eeb`, each exit 0: `pnpm typecheck`, which is also `pnpm lint`
@@ -1094,7 +1097,8 @@ viewer-r1 specs also commit ranges and render the new sentence; in batch 2 they
 carried only their known harness failures, and their range helpers read the
 captions (`.chromatogram-range`, `#spectrum-viewport-range`), not the line.
 Leaving them at batch 2 departs from the rule that only unchanged inputs are
-inherited, which is the owner's to accept. Any batch 2 frame taken while a range
+inherited, which is the owner's to accept (decided 2026-10-04 below: not rerun,
+and not inherited). Any batch 2 frame taken while a range
 was committed shows the old sentence. The row's geometry where PM9.3 measures it
 (960×640, and the 571 to 928 px columns) is batch 2's. Narrower columns are
 unmeasured; the English sentence is seven characters longer than before and the
@@ -1106,7 +1110,8 @@ The before and after frontend checks, the build and PM9.3 started at 7.19 to
 7.53 GiB free and 76 to 77% used. The consumer reruns' first two groups started
 at 6.47 GiB and 79.6%. The third, the two files found after m7.3, was declined by
 the admission check at 5.74 GiB and then started as a later command at 5.70 GiB
-and 82.0%; that reading of the later-command rule is the owner's to overrule.
+and 82.0%; that reading of the later-command rule is the owner's to overrule
+(recorded 2026-10-04 below as a scheduling-policy deviation).
 m7.3 started at 6.04 GiB and 80.9%. PM9.1 did not start: at 23:00:30 the
 admission check read 5.69 GiB free and 82.0% used, so PM9.1 and m5.7 are
 deferred, with no wait or polling. The read-only design review that chose the
@@ -1131,8 +1136,140 @@ odd, as before. At rest the line no longer says that the caption's numbers are
 the committed ones; the caption prints them, and the export notes give the exact
 bounds.
 
-Status: **PM9 REPORTED UI/UX ISSUES CLEARED — RENDERED ACCEPTANCE PASS**, on the
-evidence rerun here: UI-34's committed line is true throughout the exercised
-transitions and its announcements still pass. Open: the deferred runs of PM9.1
-and m5.7 on this code. PM9.4 is not started. PM9.1 stays PARTIAL for J1–J6 on
-`d56b17b`.
+Status as recorded on 2026-10-03: **PM9 REPORTED UI/UX ISSUES CLEARED —
+RENDERED ACCEPTANCE PASS**, on the evidence rerun here: UI-34's committed line
+is true throughout the exercised transitions and its announcements still pass.
+Open: the deferred runs of PM9.1 and m5.7 on this code. Corrected 2026-10-04 by
+the owner: a pass may not be stated while required runs are deferred, so the
+closeout was **FINAL VALIDATION PENDING** until the final validation below.
+PM9.4 is not started. PM9.1 stays PARTIAL for J1–J6 on `d56b17b`.
+
+**UI-34 final validation (2026-10-04).** The owner accepted the continuation's
+wording and kept the other 41 dispositions on their recorded evidence. No UI-34
+redesign, no new audit and no production change: what remains is validation.
+The rework closeout is **FINAL VALIDATION PENDING** until the runs below pass.
+
+Accepted semantics. The committed line is about the committed range its owner
+holds (`committedDomain`, `committed`), not a selection and not the range on
+screen. The whole run or spectrum is the owner's no-commit state, so "full
+range" needs no commit. A wheel, a pan or a reveal on selection can commit a
+range without being an explicit selection. The caption describes the displayed
+range, a gesture's included. The English and Chinese wording stays as on
+`b7b8eeb`.
+
+Clarified acceptance rule. The shorthand used so far, that a gesture which
+commits nothing announces nothing, was too broad. The rule is:
+
+- A gesture whose start changes neither the committed range nor the pending
+  band restates nothing.
+- A gesture that starts over a pending band discards it (the owners'
+  `gesture-started`), and the line changes once, from the band to the committed
+  range as it stands. That is a real change of the pending state, not a claim
+  that a range was committed, and nothing more is said for that start.
+- Escape does not bring a discarded band back, and that owner behaviour is kept.
+  An Escape that changes nothing in the owners says nothing.
+- A later commit is said once, when it settles, and a new source keeps nothing
+  of the old one's values.
+
+This is a clarification of the rule, not a claim that the broader shorthand
+passed as written. The evidence is a MutationObserver trace of the live line:
+DOM behaviour, not what a screen reader says.
+
+Validation selected, and its groups fixed, before any run:
+
+| Group | What | Admission |
+| --- | --- | --- |
+| A | PM9.1, the whole spec, once | own |
+| B | m5.7, once | own |
+| S | `pnpm e2e:typecheck`, once on the final test content (static, named separately) | emergency floor |
+| C | PM9.3's two closeout samples only, through the reporter's mocha grep | own |
+
+C's cases were added test-only in `a1f61af`, because no existing case reaches
+either state. PM9-B2 commits m/z in English only, V10 starts its gestures from a
+commit rather than a band, and PM9.3-G and -L leave the m/z band pending.
+PM9.3-V11 (en) draws a pending retention-time band inside a committed range,
+holds a middle-button pan over it, presses Escape, releases, then commits with a
+wheel. PM9.3-V12 commits an m/z range in zh-CN at 1920×1080, then reads it at
+the established 960×640 anchor with its row scrolled into view.
+
+The rest of PM9.3 is not rerun: its 17 of 17 and 58 frames on `b7b8eeb` stand.
+
+A group starts only on its own reading: 6 GiB free or more and 85% used or less.
+Inside a group, no heavy command starts below 4 GiB free or at 90% used or more,
+and that limit admits no new group. A refused group stops the sequence there,
+with no waiting or polling. One owned browser session at a time, foreground and
+serial.
+
+The six legacy specs (m4.3, m4.4, m5.2, m5.3, viewer-r1-linked and
+viewer-r1-scale): **HISTORICAL KNOWN FAILURES — NOT RERUN ON THE CURRENT UI-34
+CANDIDATE.**
+
+- They are not current green results, and they are not inherited as unchanged
+  inputs. They commit ranges and render the new sentence, and their old failing
+  setups cannot show that no regression is present today.
+- This is the owner's intentional, bounded selection of validation, not a claim
+  that the inputs are byte-identical.
+- This change's acceptance rests on the fresh component tests, PM9.3's temporal
+  and semantic cases, m7.3, and the runs above.
+- The specs stay, owned by PM9.7.
+
+Component tests on `b7b8eeb`, in two groups of distinct files, counted
+separately and not summed:
+
+- The five focused files (Chromatogram, SpectrumViewport, usePlotInput, i18n,
+  localizationCoverage): 242 tests.
+- The 35 other files that mount the viewer: 656 tests, in three serial groups
+  (17 files and 376 tests, 16 and 265, 2 and 15).
+
+Scheduling-policy deviation. The continuation's third consumer group (the two
+files and 15 tests above) was refused at admission at 5.74 GiB free. It was
+then started, as a later command of the previous group, at 5.70 GiB and 82.0%.
+Relabelling a refused group in this way is a deviation from the admission
+policy. Its output (exit 0) stays in the record, and a rerun would not undo the
+deviation.
+
+Erratum: the V10 before-runs. The continuation's report gave its second V10
+before-run as a run on `164ffb3`. Its retained files, kept unchanged and indexed
+below, support less than that.
+
+- HEAD was `164ffb3`: the reflog commits `4ff3c8c` at 21:28:45, 16 s after the
+  run's last file was written (21:28:29).
+- Its pans released and settled. `164ffb3`'s WebDriver release cannot do that,
+  as the first run shows, so the test content was uncommitted and not
+  `164ffb3`'s spec (blob `4f6186e`). It behaved like `4ff3c8c`'s DevTools-input
+  helper (blob `4e2a6fa`), but nothing retained shows byte identity.
+- The production content is known only from what rendered: batch 2's sentence,
+  "the range shown", with its bounds and no separator, so the line's component
+  and resources were batch 2's (`164ffb3` changes no production file of
+  `5e4c6ac`). The rest of the production tree is not recorded.
+- Neither before-run recorded:
+  - a candidate label (V10 writes none);
+  - the tree, or whether it was clean;
+  - the command;
+  - the Chrome version;
+  - a reporter log.
+
+The run is **NOT IDENTITY-QUALIFIED** and is excluded from every RED and GREEN
+claim. That covers the "failed the semantic one" sentence above, and
+`4ff3c8c`'s commit message, which says the same and is not amended.
+
+Without it, no identity-qualified rendered RED remains for UI-34's wording. The
+unit RED (four cases failing on `164ffb3`'s tests over `5e4c6ac`'s production)
+exists only as this ledger's text, with no retained log. What is
+identity-qualified is current:
+
+- `b7b8eeb`'s accepted GREEN, in which the state that made the old sentence
+  false is exercised and the new one holds. V10's held pan displays 2.0303 to
+  6.2303 while 1.4000 to 5.6000 stays committed, and the closed claim table
+  declares "the range shown" true only when the two are equal.
+- The runs below.
+
+UI-34 evidence index (`test-results/pm9-rework/`, git-ignored; HEAD from the
+reflog, times EDT on 2026-10-03):
+
+| Directory | Run | HEAD | Content identity | Standing |
+| --- | --- | --- | --- | --- |
+| `ui34-before/browser-w0CU6x` | V10, en and zh-CN, 21:24:27–21:24:59 | `164ffb3` | Not recorded. Both cases failed with the pan still held (caption 2.0303 to 6.2303, line 1.4000 to 5.6000) and wrote no V10 entry: `164ffb3`'s WebDriver release | NOT IDENTITY-QUALIFIED; a harness failure, never a RED |
+| `ui34-before/browser-JXepAM` | V10, en and zh-CN, 21:28:25–21:28:29 | `164ffb3` | Tests uncommitted, not `164ffb3`'s, consistent with `4ff3c8c`'s; production known only from the rendered line (batch 2's) | NOT IDENTITY-QUALIFIED; excluded from RED and GREEN claims |
+| `ui34-after/browser-sVQnBS` | PM9.3, 17 cases, 21:30:13–21:30:52 | `b7b8eeb` | Candidate `b7b8eeb` written by the run into its 60 observation entries; clean status not recorded | The accepted GREEN: 17 of 17, 58 frames |
+| `ui34-after/m7.3/browser-jFfW2u` | m7.3, 22:44:55–22:45:33 | `cf36829`, docs only after `b7b8eeb` | No candidate field; clean status not recorded | Accepted as recorded: 16 of 16 |
