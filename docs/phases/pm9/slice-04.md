@@ -1,8 +1,10 @@
 # PM9.4 — conversion journey: scope, configuration, review, queue, recovery, outputs
 
 PM9 | Acceptance: U4, U8 (conversion), U9, U10 | Depends on: PM9.2; after PM9.3 | Serial, one writer
-Status: **IN PROGRESS** (2026-10-04). Expanded from the code of the starting
-point below. The midpoint check ran first and changed nothing
+Status: **PM9.4 CONVERSION JOURNEY COMPLETE — FOCUSED BROWSER/RENDERED
+ACCEPTANCE PASS** (2026-10-04, §10). Production `55d75fb`, tests `7e83ae4`.
+Real-provider and native release qualification are unchanged. Expanded from
+the code of the starting point below. The midpoint check ran first and changed nothing
 ([baseline §13](baseline.md#13-midpoint-check-2026-10-04)).
 
 ## 0. Starting point
@@ -359,7 +361,127 @@ Filled at closure. Progress so far, with the evidence it rests on:
     and the queue's own controls are recorded.
   - Still not compiled or run.
 
-**Resume, in order, each on its own admission:**
+**2026-10-04, validation, repair and closure.**
+
+Every heavy group was admitted on its own reading (6 GiB free or more, 85% used
+or less), and every later command in a group met the emergency floor. Each
+ran in the foreground, serially, with one browser session at a time. Each
+group's `*.meta.txt` under `test-results/pm9.4/` holds:
+
+- its reading;
+- HEAD and tree, with the worktree clean;
+- the launched process tree (pid, creation time, command line);
+- its leftovers, which were none every time.
+
+Chrome was 154.0.8037.93 throughout, headless at DPR 1.
+
+| Group | HEAD | Reading | Result |
+| --- | --- | --- | --- |
+| D1 `pnpm typecheck` | `c29a031` | 8.47 GiB, 73.3% | exit 0 |
+| D2 39 affected Vitest files, `--maxWorkers=1 --no-file-parallelism` | `c29a031` | 8.59 GiB, 72.9% | 568 of 571; the 3 failures were test couplings (below) |
+| D3 the three files again | `55d75fb` | 8.70 GiB, 72.5% | 54 of 54 |
+| S1 `pnpm typecheck` (also `pnpm lint`: both are `tsc -b`), `pnpm e2e:typecheck` | `55d75fb` | 8.67 GiB, 72.6% | typecheck exit 0; e2e typecheck exit 1 (m6.4, below) |
+| S1 again | `5c364db` | 8.63 GiB, 72.8% | both exit 0 |
+| U1 full Vitest, bounded workers | `5c364db` | 8.68 GiB, 72.6% | 112 files, 2237 tests, exit 0 |
+| B0 `pnpm build` | `5c364db` | 7.64 GiB, 75.9% | exit 0 (the existing chunk-size warning) |
+| G1 PM9.4 spec | `5c364db` | 7.62 GiB, 76.0% | 9 of 9 (before: 0 of 9) |
+| G2 m6.1, m6.4, m6.6, m6.7, m6.8, m6.9 | `5c364db` | 7.84 GiB, 75.3% at the start | 9/9, 23/24, 6/8, 7/7, 10/10, 7/7 |
+| S2 `pnpm e2e:typecheck` | `7e83ae4` | 6.71 GiB, 78.8% | exit 0 |
+| G2b m6.4, m6.6 | `7e83ae4` | 6.68 GiB, 78.9% | 24/24, 8/8 |
+| G3 PM9.1 whole, m7.4-conversion-figures | `7e83ae4` | 6.60 GiB, 79.2% | 55/55, 16/16 |
+| Light checks: `python scripts/check_repo.py`, `git diff --check 5f3caf5 HEAD`, scope | `7e83ae4` | — | pass; nothing under any manifest, lock, Rust, `crates` or workflow path changed since `5f3caf5` |
+
+**Failures found by the runs.** All were tests' or specs' couplings, not
+product defects. Each fix is test authoring, except one CSS restatement.
+
+- **D2.** Two CSSOM tests find rules by exact selector text. PM9.4 had added
+  `.conversion-requested-list` and `.conversion-queue-retry` to existing
+  selector lists; each now has a rule of its own, and the original selectors
+  are restored. This restatement is a production CSS edit in `55d75fb`, a
+  commit labelled `test`, and it renders nothing differently. Separately,
+  ConversionDiagnostics read native `disabled` on Add; it now reads
+  `aria-disabled`, and also presses the refused control.
+- **S1.** m6.4 still used the fixed `NOTE_ID` that the static repair had
+  removed. It now reads the id from the refused control and looks it up by
+  attribute (`5c364db`).
+- **G2.** Three failures, all fixed in `7e83ae4`:
+  - m6.4 read a `useId`-minted failure id by its old fixed name; it now
+    matches the suffix.
+  - m6.6 expected a fixture's summary where the panel says the owned,
+    localized message; it now reads that resource.
+  - m6.6's picker cancel: the repair had opened the bound details with a
+    click, a later focus destination that permanently cancels the picker's
+    return. It now opens them by script, and uses focus emulation for headless
+    Chrome, as PM9.1's UI-07 does.
+- **Before the runs, from the single review:** correction cycle 1, above. It
+  is the only substantive cycle used; the second authorized one was not
+  needed.
+
+**Attribution.**
+
+- The final production content is `55d75fb`'s. No production path changed
+  after it.
+- The final test content is `7e83ae4`'s (tree
+  `38002f26c4010309651bb151a494048d99d94d84`). It differs from `5c364db`'s
+  only in the m6.4 and m6.6 specs.
+- U1, B0 and G1 therefore stand for the final content, which was run in full
+  by S2, G2b and G3.
+- PM9.3 and the viewer specs were not rerun. PM9.4 changed no viewer or shell
+  input; the CSS it changed is scoped to the conversion surface. The bundles'
+  shared keys reach the shell pill only through `m74CnvSelected`, which PM9.1's
+  context-line cases ran.
+
+**Acceptance list, final.**
+
+- **R1–R12: pass.**
+  - Each was RED on the unchanged production in G0a and GREEN in G1, and is
+    held by its Vitest case.
+  - R11's focus continuity is checked in Chrome with real key presses
+    (P3, P4, P6).
+  - R12 is measured: every button and summary on the surface is at least
+    32 px in the review, running and finished frames (P4, P8). At 960×640 a
+    CDP wheel inside the surface and Tab both reach Convert, on screen, in
+    en and zh-CN; this was already true before.
+- **V1–V3: hold.** The navigation trip issued no command at all.
+- **Rendered frames.** CSS viewport, surface (inner content) width and DPR,
+  every frame in the language asked for, with no horizontal overflow, no
+  estimate and one filled primary:
+
+  | CSS viewport | Surface width |
+  | --- | --- |
+  | 1920×1080 | 1596 px |
+  | 1366×768 | 1042 px |
+  | 960×640 | 928 px |
+  | 1280×720 | 956 px |
+  | 1536×864 | 1212 px |
+  | 2560×1440 | 2236 px |
+
+  All at DPR 1. Evidence: `test-results/pm9.4/final/browser-fRpMN4`; before:
+  `test-results/pm9.4/G0-before/browser-6Fjcyx`.
+- **Legacy load.** m6.1, m6.4, m6.6, m6.7, m6.8 and m6.9, 57 of 57 failing at
+  setup before, now pass 65 of 65. Each product assertion is kept or updated
+  against its named replacement:
+  - M7.2's surface and checkbox membership;
+  - M7.4's disclosure and `useId` ids;
+  - the owned messages;
+  - PM9.4's `aria-disabled`.
+
+**Limits.**
+
+- Browser evidence is the real frontend over a controlled IPC boundary, with
+  every provider outcome simulated. It is not a file conversion, not output
+  publication, not native WebView2 at 150 % and not a screen reader; focus and
+  live-line traces are DOM evidence.
+- U4's live-provider check stays `BLOCKED_PROVIDER_HOLD` with the qualification
+  after PM9.7.
+- The optional and future rows above (O1–O8, F1–F4) are recorded, not done.
+
+**Status: PM9.4 CONVERSION JOURNEY COMPLETE — FOCUSED BROWSER/RENDERED
+ACCEPTANCE PASS.** Real-provider and native release qualification are
+unchanged. PM9.5 is not started. PM9.1 stays PARTIAL; its historical J1–J6
+baseline on `d56b17b` is still owed before PM9.7.
+
+**Resume plan, as recorded at checkpoint 1 (now done):**
 
 1. D1, `pnpm typecheck`.
 2. D2, the affected Vitest files, bounded workers. Fix what they show, test

@@ -1437,3 +1437,28 @@ history and the retained runs they cite; nothing was run for it.
 
 No decision is needed from the owner, and PM9.4 starts
 ([slice-04](slice-04.md)).
+
+## 14. PM9.4 focused rendered acceptance (2026-10-04)
+
+The full record is in [slice-04 §10](slice-04.md#10-record). This section
+keeps what later slices and PM9.7 read from the baseline.
+
+- **Candidate.**
+  - Production: `55d75fb511cd530b00645374ad5edc493b44db38`.
+  - Tests: `7e83ae4734f500cec96b1adf8dfb17062058c4f4` (tree
+    `38002f26c4010309651bb151a494048d99d94d84`).
+  - Frontend only: no manifest, lock, Rust, schema or workflow path changed.
+- **Passed.**
+  - The PM9.4 spec: 9 of 9, against 0 of 9 on the unchanged production.
+  - Full Vitest: 112 files, 2237 tests, at bounded workers.
+  - `pnpm typecheck` (also `pnpm lint`), `pnpm e2e:typecheck`,
+    `pnpm build`, `check_repo` and `git diff --check`.
+  - PM9.1: 55 of 55. m7.4-conversion-figures: 16 of 16.
+  - m6.1, m6.4, m6.6, m6.7, m6.8 and m6.9: 65 of 65. §2's PM9.4 rows, every
+    case failing at setup before, are now repaired.
+- **For PM9.7.**
+  - The conversion surface was compared and changed in its own slice (§10's
+    "states §3.1 did not capture").
+  - m7.4's active-Clear pair, m7.1, m7.2 and m7.5 are still PM9.7's.
+  - U4's live-provider check stays `BLOCKED_PROVIDER_HOLD`.
+  - PM9.1 stays PARTIAL for J1–J6 on `d56b17b`.
