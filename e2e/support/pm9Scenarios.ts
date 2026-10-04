@@ -8,6 +8,7 @@
  */
 
 import { MZML_ROW, SETTLED_AUTHORITY, VENDOR_ROW, ipcTable } from "./fixtures";
+import { targetedTable } from "./targeted";
 import {
   FAKE_WORKSPACE_CAPACITY,
   collidingFile,
@@ -438,13 +439,16 @@ export const SCENARIOS = [
   "resultSourceAndRuntimeUnavailable",
   "qcCapture",
   "busyInspected",
+  // Browser-only, PM9.5: the targeted-MS1 task (`support/targeted.ts`).
+  "targetedTask",
 ] as const;
 
 export type Scenario = (typeof SCENARIOS)[number];
 
 /**
  * One answer table per state. The first five mirror `pm9Scenarios.tsx` by
- * name; the last three are browser-only variants named in baseline.md §6.
+ * name; the next three are browser-only variants named in baseline.md §6, and
+ * `targetedTask` is PM9.5's (docs/phases/pm9/slice-05.md §8).
  */
 export function scenario(name: Scenario, locale: Locale = "en"): Record<string, unknown> {
   const table: Record<string, unknown> = ipcTable();
@@ -504,5 +508,9 @@ export function scenario(name: Scenario, locale: Locale = "en"): Record<string, 
         modules: ["python313.dll", "site-packages/pyopenms/_pyopenms_1.cp313-win_amd64.pyd"],
       });
       return table;
+    case "targetedTask":
+      // Its own table: three acquisitions with nothing run yet, a ready
+      // review, a run that completes and a batch that ends mixed.
+      return targetedTable(locale);
   }
 }

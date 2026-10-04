@@ -67,10 +67,21 @@ for example, `Remove-Item Env:MSCANVAS_PM9_MANUAL_LOCALE`.
 
 Scenarios: `populated`, `converting`, `projectWithResult`,
 `resultPayloadMissing`, `resultPayloadCorrupt`,
-`resultSourceAndRuntimeUnavailable`, `qcCapture`, `busyInspected`. Each opens
-in its starting state; reaching, say, `busyInspected`'s inspected result is the
-reviewer's own path through the real interface (Project, then the result's
-Inspect).
+`resultSourceAndRuntimeUnavailable`, `qcCapture`, `busyInspected`,
+`targetedTask`. Each opens in its starting state; reaching, say,
+`busyInspected`'s inspected result is the reviewer's own path through the real
+interface (Project, then the result's Inspect).
+
+`targetedTask` is the targeted-MS1 task (PM9.5): a saved project with three
+acquisitions, one with a long name and one with a Chinese name, and nothing
+run yet. Project → **Targeted MS1…** on a layer, type targets (for example
+`Caffeine, C8H10N4O2, 120, 30`), **Review plan**, then **Run**; tick more
+acquisitions for a batch. The answers are fixed, from `support/targeted.ts`:
+a review answers the first acquisition's plan whichever row opened the setup,
+a run completes at once, and a batch ends with one acquisition completed with
+a target found, one failed and one completed with every target not detected.
+States that need a held answer -- a run in progress, a stop -- are in the
+PM9.5 spec's frames, not here.
 
 In the page, hold Alt+Shift and press:
 
