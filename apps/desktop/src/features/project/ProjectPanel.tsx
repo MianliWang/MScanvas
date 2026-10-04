@@ -481,13 +481,14 @@ export function ProjectPanel({
    * persisted, and never carried into another project.
    */
   const [targetedDraft, setTargetedDraft] = useState<TargetedDraft>(EMPTY_TARGETED_DRAFT);
-  // A project replaced under the setup closes it and takes the draft with it,
-  // also when the same project is opened again after a Close. Reset while
-  // rendering the replacement, not in an effect after it: an effect could
-  // land after the reader's first press in the new project and undo it.
-  const [shownProject, setShownProject] = useState(state.projectId);
-  if (shownProject !== state.projectId) {
-    setShownProject(state.projectId);
+  // A project replaced under the setup -- a New, Open or Close, also of
+  // another copy with the same identifiers -- closes it and takes the draft
+  // with it. Reset while rendering the replacement, not in an effect after
+  // it: an effect could land after the reader's first press in the new
+  // project and undo it.
+  const [shownReplacement, setShownReplacement] = useState(session.replacements);
+  if (shownReplacement !== session.replacements) {
+    setShownReplacement(session.replacements);
     setTargeted(null);
     setTargetedDraft(EMPTY_TARGETED_DRAFT);
   }

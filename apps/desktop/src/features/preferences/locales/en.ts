@@ -1432,7 +1432,7 @@ export const en = {
   targetedProblemOutOfRange: "Outside the allowed range",
   targetedProblemDuplicate: "Duplicate",
   targetedProblemTooMany: "Too many targets (at most 200)",
-  targetedPlanCaption: "Plan: {{count}} targets in this order; m/z half-width {{ppm}} ppm, expected peak width {{width}} s",
+  targetedPlanCaption: "Plan: targets in this order ({{count}}); m/z half-width {{ppm}} ppm, expected peak width {{width}} s",
   targetedMassFromFormula: "From formula",
   targetedPlanDigest: "Plan SHA-256 {{digest}}",
   targetedPhasePreparing: "Preparing…",

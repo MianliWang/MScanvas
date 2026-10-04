@@ -198,6 +198,12 @@ export interface ProjectSession {
   readonly lastTargetedBatch: readonly BatchMemberProgress[] | null;
   /** Whether the last operation to settle was that batch, so its end is announced once. */
   readonly targetedBatchJustEnded: boolean;
+  /**
+   * How many times a New, Open or Close has replaced the project this session.
+   * Counted where the inspection is cleared, in the same update: another copy
+   * of the same project, with the same identifiers, is a replacement too.
+   */
+  readonly replacements: number;
 }
 
 /**
@@ -267,6 +273,7 @@ export function useProject(
     readonly BatchMemberProgress[] | null
   >(null);
   const [targetedBatchJustEnded, setTargetedBatchJustEnded] = useState(false);
+  const [replacements, setReplacements] = useState(0);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -333,6 +340,7 @@ export function useProject(
           // be reported as gone rather than silently moving the reader.
           setInspecting(null);
           setSelected([]);
+          setReplacements((count) => count + 1);
         }
         if (mounted.current) setPending(null);
       } catch (error) {
@@ -490,6 +498,7 @@ export function useProject(
     analysisBatch: busy === "analysing" ? analysisBatch : null,
     lastTargetedBatch,
     targetedBatchJustEnded,
+    replacements,
     provenance: provenanceOf(state, inspecting),
     inspect: setInspecting,
     toggleSelected,

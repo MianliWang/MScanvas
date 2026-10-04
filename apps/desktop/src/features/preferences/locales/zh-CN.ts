@@ -1387,7 +1387,7 @@ export const zhCN = {
   targetedProblemOutOfRange: "超出允许范围",
   targetedProblemDuplicate: "重复",
   targetedProblemTooMany: "目标过多（最多 200 个）",
-  targetedPlanCaption: "计划：按此顺序共 {{count}} 个目标；m/z 半宽 {{ppm}} ppm，预期峰宽 {{width}} 秒",
+  targetedPlanCaption: "计划：按此顺序的目标（{{count}} 个）；m/z 半宽 {{ppm}} ppm，预期峰宽 {{width}} 秒",
   targetedMassFromFormula: "由分子式计算",
   targetedPlanDigest: "计划 SHA-256：{{digest}}",
   targetedPhasePreparing: "正在准备…",

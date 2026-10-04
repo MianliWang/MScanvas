@@ -352,8 +352,11 @@ export function TargetedMs1Setup({
   }, [answered]);
 
   // A run refused before it existed takes away the block its press made, with
-  // the keyboard on it: the refusal, said beside Run, has it instead.
-  const runRefused = session.problem !== null && session.problemDuring === "analysing";
+  // the keyboard on it: the refusal, said beside Run, has it instead. Looked
+  // at once the operation has settled, since the block goes only then -- the
+  // refusal arrives before the project is read again.
+  const runRefused =
+    !analysing && session.problem !== null && session.problemDuring === "analysing";
   useEffect(() => {
     if (!runRefused) return;
     const active = document.activeElement;
@@ -765,13 +768,18 @@ export function TargetedMs1Setup({
         </p>
       )}
 
-      {started === "single" && (analysing || lastEnd !== null) ? (
+      {/* An ending only while its run is in the project: what it says is
+          about that record. */}
+      {started === "single" && (analysing || (lastEnd !== null && lastRecord !== undefined)) ? (
         <RunBlock
           key={runs}
           headingId={runTitleId}
           running={analysing}
           phase={session.analysisPhase}
           end={lastEnd}
+          // One filled primary: a new request ready to run takes it from the
+          // last run's result.
+          openPrimary={working || !runnable || again}
           failure={lastRecord?.targetedMs1?.failure ?? null}
           canStop={session.activeOperation !== null}
           stopRequested={session.stopRequested}
@@ -830,6 +838,7 @@ function RunBlock({
   running,
   phase,
   end,
+  openPrimary,
   failure,
   canStop,
   stopRequested,
@@ -841,6 +850,8 @@ function RunBlock({
   readonly running: boolean;
   readonly phase: string | null;
   readonly end: ProjectSession["lastTargetedRun"];
+  /** Whether Open result is the state's one filled primary. */
+  readonly openPrimary: boolean;
   readonly failure: { readonly code: FailureCode } | null;
   /** Whether there is an accepted operation to name, so a cancel can send something. */
   readonly canStop: boolean;
@@ -909,7 +920,7 @@ function RunBlock({
             {artifactId !== null ? (
               <button
                 type="button"
-                className="primary-button"
+                className={openPrimary ? "primary-button" : "secondary-button"}
                 data-targeted-open-result={artifactId}
                 onClick={() => onOpen(artifactId)}
               >
