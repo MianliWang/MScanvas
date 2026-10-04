@@ -6,6 +6,8 @@ import {
   installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeRejection, setInvokeResult,
 } from "../support/harness";
 import { ipcTable, VENDOR_ROW } from "../support/fixtures";
+import { cdp } from "../support/cdp";
+import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion, waitUntilOffered } from "../support/conversion";
 import {
   availableBackend, completeCatalog, queueItem, queueOf, settledAt, shippedIntent,
@@ -83,7 +85,10 @@ async function openWorkspace(overrides: Record<string, unknown> = {}) {
 async function openBoundDetails() {
   const details = '.conversion-running .conversion-bound-details';
   await browser.$(details).waitForExist({ timeout: 15_000 });
-  if ((await browser.$(details).getAttribute("open")) === null) await browser.$(`${details} > summary`).click();
+  await browser.execute((css: string) => {
+    const node = document.querySelector<HTMLDetailsElement>(css);
+    if (node !== null) node.open = true;
+  }, details);
 }
 
 async function requests(command: string) {
@@ -200,7 +205,7 @@ describe("M6.6 destination and conflict review", () => {
     await browser.waitUntil(async () => (await browser.$("#conversion-subfolder-name").getAttribute("aria-invalid")) === "true");
     expect(await isRefused(CONVERT)).toBe(true);
     await scrollNestedIntoView("#conversion-plan-pending");
-    expect(await browser.$("#conversion-plan-pending").getText()).toBe("Use one local subfolder name.");
+    expect(await browser.$("#conversion-plan-pending").getText()).toBe(en.m74CnvErrorSubfolderNameUnusable);
     await captureView("subfolder-refusal", "#conversion-plan-pending");
     expect(await browser.$("#conversion-subfolder-name").getAttribute("aria-describedby")).toContain("conversion-plan-pending");
     expect((await requests(DESCRIBE)).at(-1)?.request).toMatchObject({ destinationPolicy: { kind: "namedSubfolder", name: "../taken " } });
@@ -234,6 +239,11 @@ describe("M6.6 destination and conflict review", () => {
       ...IDLE, sequence: 1, state: { status: "awaitingDestination", operationId: "1", queue },
     });
     await holdInvoke(RESOLVE);
+    // The window the native picker returns focus to. Headless Chrome has no
+    // system focus, so `document.hasFocus()` is false and the return the
+    // panel owes after a cancel would never be paid; PM9.1's UI-07 and the
+    // component suite's picker cases model the foreground the same way.
+    await cdp("Emulation.setFocusEmulationEnabled", { enabled: true });
     await browser.$(CONVERT).click();
     await browser.waitUntil(async () => (await requests(RESOLVE)).length === 1);
     expect(await requests(RESOLVE)).toEqual([{ reservationId: "conversion-1" }]);
@@ -254,6 +264,7 @@ describe("M6.6 destination and conflict review", () => {
     await setInvokeResult(DESCRIBE, planned({ kind: "namedSubfolder", name: "Native QA" }, "skip"));
     await browser.$(destination("namedSubfolder")).click();
     expect(await browser.$("#conversion-subfolder-name").getValue()).toBe("Native QA");
+    await cdp("Emulation.setFocusEmulationEnabled", { enabled: false });
   });
 
   it("keeps a bound queue's destination separate from the next request and explains conflicts", async () => {

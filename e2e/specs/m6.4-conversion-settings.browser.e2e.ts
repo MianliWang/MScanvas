@@ -1130,7 +1130,11 @@ describe("M6.4 — one lane fact, many refused actions, one notice", () => {
       return (control?.getAttribute("aria-describedby") ?? "").split(" ").filter((id) => id !== "");
     });
     // The shared fact, and the read's own failure, which is not shared.
-    expect(retryDescribedBy).toEqual(["conversion-settings-failure", notice]);
+    // The read's own failure id is minted by useId since M7.4 (`e495464`),
+    // so it is matched by its suffix, as the component suite matches it.
+    expect(retryDescribedBy).toHaveLength(2);
+    expect(retryDescribedBy[0]).toMatch(/-failure$/u);
+    expect(retryDescribedBy[1]).toBe(notice);
     // Generic, because the next duplicate will be a different pair.
     expect(await duplicateIds()).toEqual([]);
 
