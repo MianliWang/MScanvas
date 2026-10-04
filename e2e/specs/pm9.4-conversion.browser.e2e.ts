@@ -534,6 +534,9 @@ describe("PM9.4 conversion journey, rendered", () => {
     await browser.$(".conversion-running").waitForExist({ timeout: 15_000 });
     const running = await frame("pm94-p4-running-en-1366x768");
     expect(ESTIMATE.test(running.text)).toBe(false);
+    // R12 in the running queue too: Stop, Skip and the row disclosures at the
+    // compact-control minimum.
+    expect(running.small).toEqual([]);
     expect(await browser.execute(() => document.querySelector('#workbench-conversion [role="progressbar"], #workbench-conversion progress') === null)).toBe(true);
 
     const before = (await ipcCalls()).length;

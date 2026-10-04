@@ -5,15 +5,17 @@
  * behaviour R11 is about is held by the browser spec
  * (`e2e/specs/pm9.4-conversion.browser.e2e.ts`).
  */
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { PreviewApiProvider } from "./api";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { App } from "../../app/App";
+import { showBackendBanner } from "../../test/backendBanner";
 import {
   availableBackend,
   createFakePreviewApi,
+  deferred,
   createFakeWorkspaceDropTransport,
   finalizedAttemptFacts,
   queueItem,
@@ -21,7 +23,7 @@ import {
   selectedFile,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
-import type { SelectedFile } from "./contracts";
+import type { BackendAvailability, SelectedFile, WorkspaceConversionState } from "./contracts";
 
 function acquisition(index: number): SelectedFile {
   return { handle: `file-${String(index)}`, fileName: `run-${String(index)}.raw`, byteLength: 78_309, sourceKind: "thermo_raw", relativeContext: null };
@@ -63,13 +65,41 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
     const convert = await within(panel).findByRole("button", { name: "Convert 0 eligible…" });
     expect(convert).toHaveAttribute("aria-disabled", "true");
     expect(convert).not.toBeDisabled();
-    expect(convert).toHaveAccessibleDescription(/To convert, check supported vendor acquisitions in the list/);
+    expect(convert).toHaveAccessibleDescription(/To convert, this scope needs supported vendor acquisitions/);
     // A refused press reaches nothing.
     convert.focus();
     expect(document.activeElement).toBe(convert);
     fireEvent.click(convert);
     expect(api.conversionRequests).toEqual([]);
     expect(api.beginRequests()).toEqual([]);
+  });
+
+  it("sends nothing when a reviewed Convert is refused by the lane (R6, review F5)", async () => {
+    // A plan on screen, then a backend check that holds the lane. The press
+    // meets the panel's own refusal; the operation's lane guard behind it is
+    // the second line, not the one under test.
+    const held = deferred<BackendAvailability>();
+    let answered = 0;
+    const api = createFakePreviewApi({
+      initialDatasets: [first],
+      availability: () => (answered++ === 0 ? Promise.resolve(availableBackend) : held.promise),
+    });
+    renderApp(api);
+    await check(/run-1\.raw/);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull();
+    });
+    await showBackendBanner();
+    fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+    const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
+    await waitFor(() => {
+      expect(convert).toHaveAttribute("aria-disabled", "true");
+    });
+    expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull();
+    fireEvent.click(convert);
+    expect(api.beginRequests()).toEqual([]);
+    held.resolve(availableBackend);
   });
 
   it("puts the scope, settings, destination and conflict above the review, and the review directly above Convert (R4, R5)", async () => {
@@ -193,9 +223,43 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     await within(panel).findByText("Queue stopped");
     expect(panel.querySelector(".conversion-convert-again")?.textContent).toBe(
-      "Rows that were cancelled, not run or skipped by you are not rerun in place. To convert them, check them in the list and review the next conversion below.",
+      "Rows that were cancelled, not run or skipped by you are not rerun in place. To convert them, check only those rows in the list and review the next conversion below.",
     );
     expect(within(panel).queryByRole("button", { name: /^Retry/ })).toBeNull();
+  });
+
+  it("returns focus to Convert when a picker opened under a finished queue is cancelled (R11, review F2)", async () => {
+    // jsdom has no foreground window; this models the one a cancelled picker
+    // returns to, as ConversionPanel.test's picker cases do.
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const picker = deferred<WorkspaceConversionState>();
+    const api = createFakePreviewApi({
+      initialDatasets: [first, second],
+      availability: availableBackend,
+      initialConversion: {
+        status: "terminal",
+        reason: "completed",
+        operationId: "1",
+        queue: queueOf([queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: false })]),
+      },
+      conversion: () => picker.promise,
+    });
+    renderApp(api);
+    await check(/run-2\.raw/);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const convert = await within(panel).findByRole("button", { name: "Convert 1 eligible…" });
+    await waitFor(() => {
+      expect(convert).not.toHaveAttribute("aria-disabled");
+    });
+    convert.focus();
+    fireEvent.click(convert);
+    // While the picker is open the starting status does not take the focus.
+    expect(document.activeElement?.id).not.toBe("conversion-queue-status");
+    await act(async () => picker.resolve({ status: "idle" }));
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).toHaveFocus();
+    });
+    vi.restoreAllMocks();
   });
 
   it("moves focus to the queue's status line when Convert leaves with the plan (R11)", async () => {

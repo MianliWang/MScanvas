@@ -79,7 +79,7 @@ describe("M6.7 through the production conversion surface", () => {
   });
   it("has no focused fallback, excludes mixed selected rows, and all ignores search", async () => {
     const api = await mount();
-    expect(button()).toHaveTextContent("Convert 0 selected");
+    expect(button()).toHaveTextContent("Convert 0 eligible");
     expect(button()).toHaveAttribute("aria-disabled", "true");
     expect(api.planRequests()).toHaveLength(0);
     select("raw-2"); select("open", true);
@@ -111,7 +111,7 @@ describe("M6.7 through the production conversion surface", () => {
       select("raw-1");
       fireEvent.click(screen.getByRole("radio", { name: "Checked rows" }));
       await ready();
-      expect(button()).toHaveTextContent("Convert 1 selected");
+      expect(button()).toHaveTextContent("Convert 1 eligible");
     }
   });
 
