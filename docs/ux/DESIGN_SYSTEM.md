@@ -273,7 +273,9 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   band back (the owners' rule, kept), and an Escape that changes nothing in
   the owners changes nothing here. A gesture's commit is announced once, when
   it settles (UI-34), and a new source keeps nothing of the old one's values.
-  These are DOM contracts, held by a MutationObserver over the line; no
+  These are DOM contracts, checked with a MutationObserver over the line:
+  Chromatogram's unit cases hold the discard and the later commit, and
+  PM9.3-V11, authored and not yet run, covers Escape after a discard. No
   screen reader's speech is claimed. Decision trail: batch 2 (2026-10-03,
   `5e4c6ac`) said "the range shown" and accepted it as untrue while a gesture
   was in flight; the wording continuation (2026-10-03, `b7b8eeb`) superseded

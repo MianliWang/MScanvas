@@ -1234,9 +1234,11 @@ below, support less than that.
 
 - HEAD was `164ffb3`: the reflog commits `4ff3c8c` at 21:28:45, 16 s after the
   run's last file was written (21:28:29).
-- Its pans released and settled. `164ffb3`'s WebDriver release cannot do that,
-  as the first run shows, so the test content was uncommitted and not
-  `164ffb3`'s spec (blob `4f6186e`). It behaved like `4ff3c8c`'s DevTools-input
+- Its pans released and settled. Under `164ffb3`'s WebDriver release a held
+  pan never ends, because ChromeDriver releases the middle button as a button
+  change (recorded in `4ff3c8c`; w0CU6x is consistent with it). So the test
+  content was uncommitted and not `164ffb3`'s spec (blob `4f6186e`). It
+  behaved like `4ff3c8c`'s DevTools-input
   helper (blob `4e2a6fa`), but nothing retained shows byte identity.
 - The production content is known only from what rendered: batch 2's sentence,
   "the range shown", with its bounds and no separator, so the line's component
@@ -1288,7 +1290,8 @@ stopped at A, with no waiting or polling. Not run:
 
 No process was launched, so none of this task's is left. HEAD was `f4e591b`
 (tree `f8035a12912ba37b204720149c553943ad1d7893`), with a clean worktree and no
-stash. No defect was found and no production code changed. The latest
+stash. Nothing ran, so no defect is claimed or excluded, and no production
+code changed. The latest
 production candidate stays `b7b8eeb5087b755ea6d8b99e6d8d38b848d5103c`. The newer
 test commit is `a1f61af553e2232856abc84d9a1a0c5b140c8829` (tree
 `b170de7abbaac489d41478a562917845fa82c651`), and the commits after it are
