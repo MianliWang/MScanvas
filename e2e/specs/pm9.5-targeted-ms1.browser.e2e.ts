@@ -364,11 +364,13 @@ async function wheelTo(selector: string): Promise<boolean> {
 
 /**
  * Whether the review table `table` names, which scrolls inside the review,
- * shows its last row by a real wheel over it, and again by the keyboard: Tab
- * from Review plan to its scroller, then End (or Page Down). The surface is
- * positioned by script first, which only frames the scroller.
+ * brings its last row on screen by a real wheel over it, and again by the
+ * keyboard: Tab from Review plan to its scroller, then Page Down. Each path
+ * must move that scroller and leave the surface's own scroll where it was.
+ * The surface is positioned by script first, which only frames the scroller.
+ * `label` names the two frames kept, one after each path.
  */
-async function scrollsInside(table: string) {
+async function scrollsInside(table: string, label: string) {
   const place = () =>
     browser.execute((css: string) => {
       const scroller = document.querySelector(css)?.closest<HTMLElement>(".targeted-review-scroll") ?? null;
@@ -383,25 +385,31 @@ async function scrollsInside(table: string) {
         overflows: scroller.scrollHeight > scroller.clientHeight + 1,
       };
     }, table);
+  /** The last row: inside its scroller's box and inside the window; both scroll positions. */
   const lastShown = () =>
     browser.execute((css: string) => {
       const element = document.querySelector(css);
       const scroller = element?.closest<HTMLElement>(".targeted-review-scroll") ?? null;
+      const owner = document.querySelector<HTMLElement>("#workbench-project");
       const last = element?.querySelector("tbody tr:last-child") ?? null;
-      if (scroller === null || last === null) return { shown: false, scrollTop: 0 };
+      if (scroller === null || owner === null || last === null) return { shown: false, inner: 0, outer: -1 };
       const box = last.getBoundingClientRect();
       const bounds = scroller.getBoundingClientRect();
-      return { shown: box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1, scrollTop: scroller.scrollTop };
+      const inScroller = box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1;
+      const onScreen = box.top >= 0 && box.bottom <= innerHeight;
+      return { shown: inScroller && onScreen, inner: scroller.scrollTop, outer: owner.scrollTop };
     }, table);
 
   const point = await place();
   if (point === null) throw new Error(`no scroller holds ${table}`);
-  let wheel = await lastShown();
+  const beforeWheel = await lastShown();
+  let wheel = beforeWheel;
   for (let step = 0; step < 60 && !wheel.shown; step += 1) {
     await cdp("Input.dispatchMouseEvent", { type: "mouseWheel", x: point.x, y: point.y, deltaX: 0, deltaY: 200 });
     await frames();
     wheel = await lastShown();
   }
+  await frame(`${label}-wheel`);
 
   await place();
   await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), REVIEW);
@@ -413,22 +421,21 @@ async function scrollsInside(table: string) {
       return active !== null && active.matches(".targeted-review-scroll") && active.querySelector(css) !== null;
     }, table);
   }
-  let keyboard = { shown: false, scrollTop: 0 };
-  if (tabbed) {
-    await browser.keys(["End"]);
+  // Read once the keyboard is on the scroller: focusing it may bring it into view.
+  const beforeKeys = await lastShown();
+  let keyboard = beforeKeys;
+  for (let step = 0; tabbed && step < 40 && !keyboard.shown; step += 1) {
+    await browser.keys(["PageDown"]);
     await frames();
     keyboard = await lastShown();
-    for (let step = 0; step < 30 && !keyboard.shown; step += 1) {
-      await browser.keys(["PageDown"]);
-      await frames();
-      keyboard = await lastShown();
-    }
   }
+  await frame(`${label}-keyboard`);
   return {
     overflows: point.overflows,
-    wheel: wheel.shown && wheel.scrollTop > 0,
+    wheel: wheel.shown && wheel.inner > 0 && wheel.outer === beforeWheel.outer,
     tabbed,
-    keyboard: keyboard.shown && keyboard.scrollTop > 0,
+    keyboard: keyboard.shown && keyboard.inner > 0 && keyboard.outer === beforeKeys.outer,
+    positions: { beforeWheel, wheel, beforeKeys, keyboard },
   };
 }
 
@@ -941,8 +948,10 @@ describe("PM9.5 targeted-MS1 journey, rendered", () => {
         focusedOnScreen: await onScreen(RUN),
       });
       // The 200th target, inside the plan's own scroller.
-      judged.push({ label: "200-targets inside", ...(await scrollsInside("[data-targeted-plan]")) });
-      await frame(`t9-200-targets-${locale}-960x640-last-row`);
+      judged.push({
+        label: "200-targets inside",
+        ...(await scrollsInside("[data-targeted-plan]", `t9-200-targets-${locale}-960x640-last-row`)),
+      });
 
       const wide = targetedTable(locale, wideProject(MAX_MEMBERS));
       wide.resolve_targeted_ms1_batch = wideBatchReview(MAX_MEMBERS);
@@ -961,8 +970,10 @@ describe("PM9.5 targeted-MS1 journey, rendered", () => {
         focusedOnScreen: await onScreen(RUN),
       });
       // The 16th acquisition, inside the members' own scroller.
-      judged.push({ label: "16-members inside", ...(await scrollsInside("[data-targeted-batch-members]")) });
-      await frame(`t9-16-members-${locale}-960x640-last-row`);
+      judged.push({
+        label: "16-members inside",
+        ...(await scrollsInside("[data-targeted-batch-members]", `t9-16-members-${locale}-960x640-last-row`)),
+      });
 
       evidence.push({ label: `t9-${locale}-judged`, judged });
       const failures = judged.filter((each) =>
