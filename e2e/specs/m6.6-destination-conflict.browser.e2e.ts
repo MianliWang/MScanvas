@@ -6,6 +6,7 @@ import {
   installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeRejection, setInvokeResult,
 } from "../support/harness";
 import { ipcTable, VENDOR_ROW } from "../support/fixtures";
+import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion, waitUntilOffered } from "../support/conversion";
 import {
   availableBackend, completeCatalog, queueItem, queueOf, settledAt, shippedIntent,
 } from "../../apps/desktop/src/test/previewFixtures";
@@ -14,7 +15,6 @@ import type {
 } from "../../apps/desktop/src/features/mzml-preview/contracts";
 
 const PANEL = "section.conversion-panel";
-const CONVERT = `${PANEL} button.primary-button`;
 const DESCRIBE = "describe_workspace_conversion_queue";
 const BEGIN = "begin_workspace_conversion_queue";
 const RESOLVE = "choose_workspace_conversion_destination";
@@ -71,10 +71,19 @@ async function openWorkspace(overrides: Record<string, unknown> = {}) {
   });
   await browser.url("/");
   expect(await innerViewport()).toEqual({ width: 1_366, height: 768 });
-  const row = await browser.$(`li.dataset-row[data-handle="${VENDOR_ROW.handle}"]`);
-  await row.waitForDisplayed({ timeout: 60_000 });
-  await row.click();
-  await browser.$(CONVERT).waitForEnabled({ timeout: 30_000 });
+  // M7.2: the row's checkbox makes it a member, and the Conversion surface is
+  // its own destination (PM9.4, baseline section 2).
+  await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
+  await checkMembers([VENDOR_ROW.handle]);
+  await showConversion();
+  await waitUntilOffered(CONVERT);
+}
+
+/** The bound queue's facts, in their disclosure since M7.4 (`e495464`). */
+async function openBoundDetails() {
+  const details = '.conversion-running .conversion-bound-details';
+  await browser.$(details).waitForExist({ timeout: 15_000 });
+  if ((await browser.$(details).getAttribute("open")) === null) await browser.$(`${details} > summary`).click();
 }
 
 async function requests(command: string) {
@@ -162,7 +171,7 @@ describe("M6.6 destination and conflict review", () => {
     await browser.keys("ArrowDown");
     await browser.waitUntil(async () => (await requests(DESCRIBE)).length === before + 1);
     expect(await browser.$(destination("sourceSibling")).isSelected()).toBe(true);
-    expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+    expect(await isRefused(CONVERT)).toBe(true);
     await scrollNestedIntoView("#conversion-plan-pending");
     expect(await requestedDestination()).toBeNull();
     expect((await requests(DESCRIBE)).at(-1)).toEqual({ request: {
@@ -173,7 +182,7 @@ describe("M6.6 destination and conflict review", () => {
     expect(await requests(RESOLVE)).toEqual([]);
     await setInvokeResult(DESCRIBE, planned({ kind: "sourceSibling" }));
     await releaseInvokeHold(DESCRIBE);
-    await browser.$(CONVERT).waitForEnabled();
+    await waitUntilOffered(CONVERT);
     expect(await requestedDestination()).toContain("Beside each source");
     expect(await browser.$(destination("sourceSibling")).isFocused()).toBe(true);
   });
@@ -189,7 +198,7 @@ describe("M6.6 destination and conflict review", () => {
     });
     await browser.$("#conversion-subfolder-name").setValue("../taken ");
     await browser.waitUntil(async () => (await browser.$("#conversion-subfolder-name").getAttribute("aria-invalid")) === "true");
-    expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+    expect(await isRefused(CONVERT)).toBe(true);
     await scrollNestedIntoView("#conversion-plan-pending");
     expect(await browser.$("#conversion-plan-pending").getText()).toBe("Use one local subfolder name.");
     await captureView("subfolder-refusal", "#conversion-plan-pending");
@@ -198,7 +207,7 @@ describe("M6.6 destination and conflict review", () => {
     expect(await requests(BEGIN)).toEqual([]);
     await setInvokeResult(DESCRIBE, planned({ kind: "namedSubfolder", name: "Results" }));
     await browser.$("#conversion-subfolder-name").setValue("Results");
-    await browser.$(CONVERT).waitForEnabled();
+    await waitUntilOffered(CONVERT);
     expect(await requestedDestination()).toContain("Results");
     expect(await browser.$("#conversion-subfolder-name").getAttribute("aria-invalid")).toBeNull();
     const fields = await browser.$$(`${PANEL} input[type="text"]`);
@@ -215,7 +224,7 @@ describe("M6.6 destination and conflict review", () => {
     await browser.$(destination("customFolder")).click();
     await setInvokeResult(DESCRIBE, planned({ kind: "customFolder" }, "skip"));
     await browser.$('input[name="conversion-conflict-policy"][value="skip"]').click();
-    await browser.$(CONVERT).waitForEnabled();
+    await waitUntilOffered(CONVERT);
     const queue = { ...queueOf([queueItem(VENDOR_ROW.handle, VENDOR_ROW.fileName)]),
       destinationPolicy: { kind: "customFolder" as const }, destinationStatus: "unresolved" as const,
       conflictPolicy: "skip" as const, receipt: null };
@@ -233,12 +242,13 @@ describe("M6.6 destination and conflict review", () => {
       destinationPolicy: { kind: "customFolder" }, expectedReceipt: 1,
     } });
     await browser.$('.conversion-running [aria-label="Queue destination"]').waitForExist();
+    await openBoundDetails();
     expect(await browser.$(".conversion-running").getText()).toContain("No destination bound");
     const cancelled = { ...IDLE, sequence: 2 };
     await setInvokeResult("get_workspace_conversion_state", cancelled);
     await setInvokeResult(RESOLVE, cancelled);
     await releaseInvokeHold(RESOLVE);
-    await browser.$(CONVERT).waitForEnabled();
+    await waitUntilOffered(CONVERT);
     expect(await browser.$(CONVERT).isFocused()).toBe(true);
     expect(await browser.$('input[name="conversion-conflict-policy"][value="skip"]').isSelected()).toBe(true);
     await setInvokeResult(DESCRIBE, planned({ kind: "namedSubfolder", name: "Native QA" }, "skip"));
@@ -253,6 +263,7 @@ describe("M6.6 destination and conflict review", () => {
       ...IDLE, sequence: 1, state: { status: "terminal", reason: "completed", operationId: "1", queue },
     } });
     const actual = await browser.$('.conversion-running [aria-label="Queue destination"]');
+    await openBoundDetails();
     await scrollNestedIntoView('.conversion-running [aria-label="Queue destination"]');
     expect(await actual.getText()).toContain("Original");
     expect(await actual.getText()).toContain("Bound when this queue started; revalidated before each attempt");
@@ -271,14 +282,15 @@ describe("M6.6 destination and conflict review", () => {
     it(`keeps destination controls and long names inside the ${String(width)}x${String(height)} inner viewport`, async () => {
       await openWorkspace();
       await setInnerViewport(width, height);
+      await showConversion();
       const name = "Converted scientific acquisition results with a long descriptive folder name";
       await setInvokeResult(DESCRIBE, planned({ kind: "namedSubfolder", name }));
       await browser.$(destination("namedSubfolder")).click();
       await browser.$("#conversion-subfolder-name").setValue(name);
-      await browser.$(CONVERT).waitForEnabled();
+      await waitUntilOffered(CONVERT);
       const overflow = await horizontalOverflow();
       expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth + 1);
-      expect(await browser.$(PANEL).getCSSProperty("overflow-y")).toMatchObject({ value: "auto" });
+      expect(await browser.$(CONVERSION_SURFACE).getCSSProperty("overflow-y")).toMatchObject({ value: "auto" });
       expect(await browser.execute(() => {
         const group = document.querySelector(".conversion-destination")!.getBoundingClientRect();
         return [...document.querySelectorAll(".conversion-destination input")].every((input) => {

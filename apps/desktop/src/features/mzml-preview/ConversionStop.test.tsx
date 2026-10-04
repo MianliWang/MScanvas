@@ -366,7 +366,7 @@ describe("stopping a running conversion queue", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Skip run-3.raw" })).toBeEnabled();
+      expect(within(panel).getByRole("button", { name: "Skip run-3.raw" })).not.toHaveAttribute("aria-disabled");
     });
     expect(within(panel).queryByRole("button", { name: "Skip run-2.raw" })).toBeNull();
     expect(within(panel).queryByRole("button", { name: "Skip run-4.raw" })).toBeNull();
@@ -518,7 +518,7 @@ describe("stopping a running conversion queue", () => {
       ]),
     });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Stop this file" })).toBeEnabled();
+      expect(within(panel).getByRole("button", { name: "Stop this file" })).not.toHaveAttribute("aria-disabled");
     });
   });
 
@@ -1091,7 +1091,7 @@ describe("stopping a running conversion queue", () => {
     // Every backend control is refused while quarantined.
     expect(within(panel).queryByRole("button", { name: /^retry/i })).toBeNull();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Convert/ })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // And the roster is still readable and searchable.
@@ -1146,7 +1146,7 @@ describe("stopping a running conversion queue", () => {
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
   });
 
-  it("keeps focus where the user left it when a queue settles under them", async () => {
+  it("moves focus to the queue's status line when the pressed stop control leaves (PM9.4 R11)", async () => {
     const api = apiWith(runningQueue(), { stop: () => Promise.resolve(stoppedQueue()) });
     renderApp(api);
 
@@ -1159,12 +1159,12 @@ describe("stopping a running conversion queue", () => {
     await waitFor(() => {
       expect(within(panel).getByText("Queue stopped")).toBeVisible();
     });
-    // The control the user pressed is gone, and nothing stole the keyboard to
-    // somewhere unrelated: focus falls back to the document body rather than
-    // jumping into the roster or the plan below.
-    expect(document.activeElement === document.body || document.activeElement === null).toBe(
-      true,
-    );
+    // The control the user pressed is gone. Replaces the earlier assertion
+    // that focus fell back to the document body (PM9.4 R11): it now lands on
+    // what changed, the queue's own status line -- still never jumping into
+    // the roster or the plan below.
+    expect(document.activeElement).toBe(within(panel).getByText("Queue stopped"));
+    expect(document.activeElement?.id).toBe("conversion-queue-status");
   });
 
   it("keeps queued and converting rows visible while a stop is in flight", async () => {

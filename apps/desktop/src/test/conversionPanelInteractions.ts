@@ -9,7 +9,7 @@
  * reader would find disabled.
  *
  * So the wait is not a workaround: it is the contract. Waiting for the control
- * to be *enabled* rather than for some intermediate sentence also keeps these
+ * to be *offered* rather than for some intermediate sentence also keeps these
  * tests out of the business of knowing which answer arrives last.
  */
 
@@ -34,8 +34,10 @@ export async function awaitPlan(panel: HTMLElement): Promise<void> {
 /** Presses one of the panel's start controls, once it may be pressed. */
 export async function pressConvert(panel: HTMLElement, name: string): Promise<void> {
   const convert = within(panel).getByRole("button", { name });
+  // Refused through `aria-disabled` since PM9.4 (R6), which `toBeEnabled` does
+  // not read: waiting on it would pass the moment the control appeared.
   await waitFor(() => {
-    expect(convert).toBeEnabled();
+    expect(convert).not.toHaveAttribute("aria-disabled");
   });
   fireEvent.click(convert);
 }

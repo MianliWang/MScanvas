@@ -161,7 +161,7 @@ describe("M7.4 bilingual conversion composition", () => {
     const row = await screen.findByRole("row", { name: /长名称 acquisition 空格/ });
     fireEvent.click(within(row).getByRole("checkbox"));
     const panel = screen.getByRole("region", { name: en.m74CnvTitle });
-    const start = within(panel).getByRole("button", { name: "Convert 1 selected…" });
+    const start = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
     await waitFor(() => expect(start).toBeEnabled());
     fireEvent.click(within(panel).getByRole("radio", { name: en.m74CnvDestNamed }));
     const raw = "  原始 name / draft  ";

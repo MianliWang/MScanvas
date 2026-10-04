@@ -92,11 +92,11 @@ describe("destination request and queue truth", () => {
     fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "Native QA" } });
     fireEvent.click(within(panel).getByRole("radio", { name: "Custom local folder" }));
     fireEvent.click(within(panel).getByRole("radio", { name: "Skip if a file of that name already exists" }));
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     expect(api.beginRequests()[0]?.destinationPolicy).toEqual({ kind: "customFolder" });
-    expect(within(panel).queryByRole("button", { name: "Convert 1 selected…" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: "Convert 1 eligible…" })).toBeNull();
     await act(async () => picker.resolve({ status: "idle" }));
-    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus());
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).toHaveFocus());
     expect(within(panel).getByRole("radio", { name: "Skip if a file of that name already exists" })).toBeChecked();
     fireEvent.click(named());
     expect(within(panel).getByLabelText("Subfolder name")).toHaveValue("Native QA");
@@ -126,24 +126,24 @@ describe("destination request and queue truth", () => {
     const row = await screen.findByRole("row", { name: /run-1\.raw/ });
     fireEvent.click(within(row).getByRole("checkbox"));
     fireEvent.click(within(panel).getByRole("radio", { name: "Custom local folder" }));
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
 
     // Controlled scope changes model commits around a native picker; these
     // synthetic click events intentionally do not simulate a newer focus move.
     holdPlan = true;
     fireEvent.click(within(row).getByRole("checkbox"));
     await act(async () => picker.resolve({ status: "idle" }));
-    expect(within(panel).getByRole("button", { name: "Convert 0 selected…" })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: "Convert 0 eligible…" })).toHaveAttribute("aria-disabled", "true");
 
     // The scope returns before its plan. The absent/disabled commits must not
     // consume the return, and a controlled plan answer is the only release.
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await waitFor(() => expect(answeredPlan).toBeDefined());
-    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeDisabled();
-    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).not.toHaveFocus();
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).toHaveAttribute("aria-disabled", "true");
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveFocus();
     await act(async () => restoredPlan.resolve(answeredPlan!));
     await waitFor(() =>
-      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus(),
+      expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).toHaveFocus(),
     );
   });
 
@@ -153,13 +153,13 @@ describe("destination request and queue truth", () => {
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     const settings = screen.getByRole("button", { name: "Settings" });
     settings.focus();
     settings.blur();
     await act(async () => picker.resolve({ status: "idle" }));
-    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled());
-    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).not.toHaveFocus();
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled"));
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveFocus();
   });
 
   it("does not move focus into the background of Settings after a cancelled picker", async () => {
@@ -168,14 +168,14 @@ describe("destination request and queue truth", () => {
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     await act(async () => picker.resolve({ status: "idle" }));
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Settings" })).toHaveFocus());
-    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled();
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("retains return while a native window owns the foreground and pays it on natural return", async () => {
@@ -184,14 +184,14 @@ describe("destination request and queue truth", () => {
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     vi.mocked(document.hasFocus).mockReturnValue(false);
     await act(async () => picker.resolve({ status: "idle" }));
-    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled());
-    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).not.toHaveFocus();
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled"));
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveFocus();
     vi.mocked(document.hasFocus).mockReturnValue(true);
     fireEvent.focus(window);
-    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus();
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).toHaveFocus();
   });
 
   it.each(["return", "newer focus", "settings"] as const)(
@@ -202,10 +202,10 @@ describe("destination request and queue truth", () => {
       renderApp(api);
       const panel = await screen.findByRole("region", { name: "Convert" });
       fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
-      await pressConvert(panel, "Convert 1 selected…");
+      await pressConvert(panel, "Convert 1 eligible…");
       vi.mocked(document.hasFocus).mockReturnValue(false);
       await act(async () => picker.resolve({ status: "idle" }));
-      await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled());
+      await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled"));
 
       // One controlled foreground turn, with no timer inflation or extra React
       // render to pay a return that the focus event otherwise leaves stranded.
@@ -215,14 +215,14 @@ describe("destination request and queue truth", () => {
         return frames.length;
       });
       fireEvent.focus(window);
-      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).not.toHaveFocus();
+      expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveFocus();
       vi.mocked(document.hasFocus).mockReturnValue(true);
       const settings = screen.getByRole("button", { name: "Settings" });
       if (laterIntent === "newer focus") { settings.focus(); settings.blur(); }
       if (laterIntent === "settings") fireEvent.click(settings);
       act(() => { for (const frame of frames.splice(0)) frame(16); });
 
-      const convert = within(panel).getByRole("button", { name: "Convert 1 selected…", hidden: laterIntent === "settings" });
+      const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…", hidden: laterIntent === "settings" });
       if (laterIntent === "return") expect(convert).toHaveFocus();
       else expect(convert).not.toHaveFocus();
       if (laterIntent === "settings") expect(screen.getByRole("dialog", { name: "Settings" })).toContainElement(document.activeElement as HTMLElement);
@@ -236,10 +236,10 @@ describe("destination request and queue truth", () => {
     const view = renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     vi.mocked(document.hasFocus).mockReturnValue(false);
     await act(async () => picker.resolve({ status: "idle" }));
-    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled());
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled"));
     const frames = new Map<number, FrameRequestCallback>();
     let sequence = 0;
     vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { const id = ++sequence; frames.set(id, callback); return id; });
@@ -248,7 +248,7 @@ describe("destination request and queue truth", () => {
     view.rerender(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}><PreviewApiProvider value={api}><App /></PreviewApiProvider></WorkspaceDropTransportProvider>);
     vi.mocked(document.hasFocus).mockReturnValue(true);
     act(() => { for (const frame of [...frames.values()]) frame(16); frames.clear(); });
-    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toHaveFocus();
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).toHaveFocus();
     expect(api.beginRequests()).toHaveLength(1);
   });
 
@@ -315,7 +315,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     expect(within(panel).getByText("sample-7.mzML")).toBeVisible();
     expect(within(panel).getAllByText("Shimadzu LabSolutions LCD").length).toBeGreaterThan(0);
 
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-7"], conflictPolicy: "fail" }]);
     });
@@ -358,7 +358,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
 
     // Scope remains explicit and the empty-state recovery is family-neutral.
     const panel = screen.getByRole("region", { name: "Convert" });
-    expect(within(panel).getByRole("button", { name: "Convert 0 selected…" })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: "Convert 0 eligible…" })).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).getByText("No eligible acquisitions in this scope.")).toBeVisible();
     expect(document.body.textContent).not.toMatch(/Thermo RAW row/);
   });
@@ -439,7 +439,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       ).toBeVisible();
     });
 
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-1"], conflictPolicy: "fail" }]);
     });
@@ -464,11 +464,11 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeVisible();
+      expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).toBeVisible();
     });
     expect(within(panel).queryByRole("button", { name: "Convert focused…" })).toBeNull();
 
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-2"], conflictPolicy: "fail" }]);
     });
@@ -496,7 +496,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       within(panel).getByText(/3 requested · 2 eligible · 1 excluded/),
     ).toBeVisible();
 
-    await pressConvert(panel, "Convert 2 selected…");
+    await pressConvert(panel, "Convert 2 eligible…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([
         { handles: ["file-1", "file-2"], conflictPolicy: "fail" },
@@ -518,10 +518,10 @@ describe("queueing selected Thermo RAW conversions", () => {
     selectAllRows();
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Convert 2 selected…" })).toBeEnabled();
+      expect(within(panel).getByRole("button", { name: "Convert 2 eligible…" })).not.toHaveAttribute("aria-disabled");
     });
 
-    await pressConvert(panel, "Convert 2 selected…");
+    await pressConvert(panel, "Convert 2 eligible…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([
         { handles: ["file-2", "file-1"], conflictPolicy: "fail" },
@@ -553,9 +553,9 @@ describe("queueing selected Thermo RAW conversions", () => {
     selectAllRows();
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Convert 2 selected…" })).toBeEnabled();
+      expect(within(panel).getByRole("button", { name: "Convert 2 eligible…" })).not.toHaveAttribute("aria-disabled");
     });
-    await pressConvert(panel, "Convert 2 selected…");
+    await pressConvert(panel, "Convert 2 eligible…");
 
     await waitFor(() => {
       expect(within(panel).getByText("Converting item 2 of 2…")).toBeVisible();
@@ -1032,9 +1032,9 @@ describe("queueing selected Thermo RAW conversions", () => {
     selectAllRows();
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Convert 2 selected…" })).toBeEnabled();
+      expect(within(panel).getByRole("button", { name: "Convert 2 eligible…" })).not.toHaveAttribute("aria-disabled");
     });
-    await pressConvert(panel, "Convert 2 selected…");
+    await pressConvert(panel, "Convert 2 eligible…");
 
     await waitFor(() => {
       // The code is owned and now has its own resource, so the panel shows
@@ -1100,7 +1100,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     const panel = await screen.findByRole("region", { name: "Convert" });
 
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     await waitFor(() => {
       expect(within(panel).getByText("1 converted, 0 skipped, 0 failed of 1.")).toBeVisible();
     });

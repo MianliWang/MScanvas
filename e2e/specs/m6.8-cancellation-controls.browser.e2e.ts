@@ -3,7 +3,8 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
-import { availableBackend, completeCatalog, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
+import { availableBackend, completeCatalog, queueItem, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
+import { isRefused, showConversion } from "../support/conversion";
 import type { ConversionQueueItem, SelectedFile, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
 
 const STATE = "get_workspace_conversion_state";
@@ -16,11 +17,15 @@ const authority = settledAt(1, 1);
 
 const row = (index: number): SelectedFile => ({ handle: `raw-${index}`, fileName: `sample-${index}.raw`, byteLength: index * 10, sourceKind: "thermo_raw", relativeContext: null });
 
+// Built on the shared `queueItem`, which carries every field the wire has.
+// This spec's own builder left out `stagingRecovery`, `finalizedOutputs` and
+// `stopRequested`; the panel reads the first two on every row, so the
+// application crashed under it and no case here ever ran (PM9.4, baseline
+// section 2: "conversion panel never reached; hook capture threw").
 function item(index: number, state: ConversionQueueItem["state"], attempts: number): ConversionQueueItem {
-  return {
-    datasetHandle: row(index).handle, fileName: row(index).fileName, sourceKind: "thermo_raw",
+  return queueItem(row(index).handle, row(index).fileName, {
     output: { kind: "knownSingle", fileName: `sample-${index}.mzML` },
-    state, attempts, retryable: false, result: null, error: null, cancellation: null,
+    state, attempts,
     // The three facts an attempt establishes about itself, plus the fifth
     // judgement. A finished row renders them, so a fixture that omitted them
     // would be describing a wire Rust does not produce.
@@ -30,7 +35,7 @@ function item(index: number, state: ConversionQueueItem["state"], attempts: numb
     staged: state === "finalized" ? { kind: "published" as const } : { kind: "notCreated" as const },
     runIdentity: state === "finalized" ? `0000000000000001000000000000000${index}` : null,
     adoption: { kind: "nothingToAdopt" as const },
-  } as ConversionQueueItem;
+  });
 }
 
 /** A queue, counted the way Rust counts it: from the item states themselves. */
@@ -96,7 +101,10 @@ async function start(first: WorkspaceConversionUpdate) {
     [STATE]: first,
   });
   await browser.url("/");
-  await browser.$(RUNNING).waitForDisplayed({ timeout: 30_000 });
+  // The Conversion surface is its own destination since M7.2.
+  await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
+  await showConversion();
+  await browser.$(RUNNING).waitForDisplayed({ timeout: 15_000 });
 }
 
 describe("M6.8 cancellation scopes, skip and truthful progress", () => {
@@ -141,8 +149,9 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     const states = await browser.execute(() =>
       [...document.querySelectorAll(".conversion-running .conversion-queue-list > li")].map((node) => node.getAttribute("data-item-state")));
     expect(states).toEqual(["finalized", "cancelled", "running"]);
-    // The control comes back for the next item rather than staying disabled.
-    expect(await (await button("Stop this file")).isEnabled()).toBe(true);
+    // The control comes back for the next item rather than staying refused
+    // (refused through aria-disabled since PM9.4 R11).
+    expect(await isRefused(`${RUNNING} .conversion-actions button:last-child`)).toBe(false);
     await capture("one-file-ended-queue-continues", RUNNING);
   });
 
@@ -228,6 +237,7 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     it(`keeps both stop scopes and the skip control usable at ${width}x${height}`, async () => {
       await start(running(MID_RUN, 1));
       await viewport(width!, height!);
+      await showConversion();
       expect((await horizontalOverflow()).scrollWidth).toBeLessThanOrEqual(width! + 1);
       for (const [name, selector] of [
         ["stop-queue", `${RUNNING} .conversion-actions button:first-child`],

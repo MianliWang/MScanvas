@@ -369,7 +369,7 @@ describe("adding converted outputs to the workspace", () => {
     // Everything that would launch one is still refused.
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Convert/ })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
   });
 

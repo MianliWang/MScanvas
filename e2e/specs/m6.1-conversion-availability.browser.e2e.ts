@@ -35,6 +35,7 @@ import {
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
 import { showBackendBanner } from "../support/backendBanner";
+import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion } from "../support/conversion";
 
 /** The binding every answer in this run describes, as a plan carries it. */
 const SETTLED_RECEIPT = firstBindingReceipt;
@@ -47,8 +48,11 @@ const VIEWPORTS = [
 
 const PANEL = "section.conversion-panel";
 const REGION = '[data-live-region="conversion-availability"]';
-const SIDEBAR = ".workspace-sidebar";
-const VENDOR = `li.dataset-row[data-handle="${VENDOR_ROW.handle}"]`;
+const VENDOR = `.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`;
+// The two controls by their place rather than their weight: the start control
+// is the next conversion's, the rerun the finished queue's (PM9.4).
+const START = CONVERT;
+const RETRY = `${PANEL} .conversion-running .conversion-actions button.secondary-button`;
 const SEARCH = "#dataset-roster-search";
 const SORT = "#dataset-roster-sort";
 
@@ -131,10 +135,12 @@ async function openTheWorkspace(
     get_workspace_conversion_state: RETRYABLE_QUEUE,
   });
   await browser.url("/");
-  await browser.$(VENDOR).waitForDisplayed({ timeout: 60_000 });
-  await browser.$(VENDOR).click();
-  await browser.$(PANEL).waitForDisplayed({ timeout: 60_000 });
-  await browser.$(`${PANEL} button.primary-button`).waitForDisplayed({ timeout: 60_000 });
+  // M7.2: the row's checkbox makes it a member (a click views it), and the
+  // Conversion surface is its own destination (PM9.4, baseline section 2).
+  await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
+  await checkMembers([VENDOR_ROW.handle]);
+  await showConversion();
+  await browser.$(START).waitForDisplayed({ timeout: 15_000 });
 }
 
 /** Every sentence the panel is currently giving as a reason. */
@@ -148,7 +154,7 @@ async function reasons(): Promise<string[]> {
 
 /** How many rows the roster is showing, which search narrows and nothing else does. */
 async function rowCount(): Promise<number> {
-  return browser.execute(() => document.querySelectorAll("li.dataset-row").length);
+  return browser.execute(() => document.querySelectorAll(".grouped-roster [data-handle]").length);
 }
 
 async function describedBy(selector: string): Promise<string | null> {
@@ -206,10 +212,10 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     // when the text arrives rather than arriving with it.
     expect(await browser.$(REGION).isExisting()).toBe(true);
     expect(await reasons()).toEqual([]);
-    expect(await describedBy(`${PANEL} button.primary-button`)).toBe(
+    expect(await describedBy(START)).toBe(
       "conversion-plan-summary conversion-validation-disclosure",
     );
-    expect(await describedBy(`${PANEL} button.secondary-button`)).toBe("conversion-retry-scope");
+    expect(await describedBy(RETRY)).toBe("conversion-retry-scope");
   });
 
   it("explains a closed lane once, and points both controls at that one sentence", async () => {
@@ -226,10 +232,10 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     );
     expect(occurrences).toBe(1);
 
-    expect(await describedBy(`${PANEL} button.primary-button`)).toBe(
+    expect(await describedBy(START)).toBe(
       "conversion-plan-summary conversion-validation-disclosure conversion-availability-backend-unavailable",
     );
-    expect(await describedBy(`${PANEL} button.secondary-button`)).toBe(
+    expect(await describedBy(RETRY)).toBe(
       "conversion-retry-scope conversion-availability-backend-unavailable",
     );
     // Announced politely, by the element that was already there.
@@ -246,15 +252,13 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     await blockTheLane();
     const before = conversionStarts(await ipcCalls());
 
-    for (const selector of [
-      `${PANEL} button.primary-button`,
-      `${PANEL} button.secondary-button`,
-    ]) {
+    for (const selector of [START, RETRY]) {
       const control = await browser.$(selector);
-      expect(await control.isEnabled()).toBe(false);
-      // The pointer, and then both activations from the keyboard. A disabled
-      // control is refused by the platform, and that is the claim: the two are
-      // equivalent because neither reaches the operation.
+      expect(await isRefused(selector)).toBe(true);
+      // The pointer, and then both activations from the keyboard. The start
+      // control is refused through aria-disabled since PM9.4 (R6) and its press
+      // checks the same rule; the rerun is natively disabled. Either way the
+      // claim is the same: neither reaches the operation.
       await control.click({ skipRelease: false }).catch(() => undefined);
       await browser.execute((target: string) => {
         (document.querySelector(target) as HTMLElement | null)?.focus();
@@ -312,11 +316,11 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
       timeoutMsg: "the panel never stopped saying converting was unavailable",
     });
 
-    expect(await describedBy(`${PANEL} button.primary-button`)).toBe(
+    expect(await describedBy(START)).toBe(
       "conversion-plan-summary conversion-validation-disclosure",
     );
     const before = conversionStarts(await ipcCalls());
-    await browser.$(`${PANEL} button.primary-button`).click();
+    await browser.$(START).click();
     await browser.waitUntil(async () => conversionStarts(await ipcCalls()) > before, {
       timeout: 30_000,
       timeoutMsg: "the panel never started a conversion after the lane cleared",
@@ -340,9 +344,9 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     // released -- this test is about the window, not about what closes it.
     await holdInvoke("choose_workspace_conversion_destination");
 
-    await browser.$(`${PANEL} button.primary-button`).click();
+    await browser.$(START).click();
     await browser.waitUntil(
-      async () => !(await browser.$(`${PANEL} button.primary-button`).isExisting()),
+      async () => !(await browser.$(START).isExisting()),
       { timeout: 30_000, timeoutMsg: "the start control stayed on screen after it was pressed" },
     );
     // Read from the block itself, with the panel scrolled to it. `getText`
@@ -360,27 +364,28 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     }, `${PANEL} .conversion-running`);
     const started = await browser.$(`${PANEL} .conversion-running`);
     expect(await started.getText()).toContain("Starting the conversion");
-    expect(await browser.$(`${PANEL} button.secondary-button`).isExisting()).toBe(false);
+    expect(await browser.$(RETRY).isExisting()).toBe(false);
     expect(await reasons()).toEqual([]);
   });
 
   for (const viewport of VIEWPORTS) {
     it(`fits the explanation at ${viewport.name} without hiding a control`, async () => {
       await openTheWorkspace({ width: viewport.width, height: viewport.height });
-      const before = await boxOf(SIDEBAR);
+      const before = await boxOf(CONVERSION_SURFACE);
       await blockTheLane();
 
-      // The sentence is on screen and inside the column it belongs to.
+      // The sentence is on screen and inside the surface it belongs to. Since
+      // M7.2 that is the Conversion surface, not a sidebar.
       const notice = await boxOf(`${REGION} p`);
       expect(notice.height).toBeGreaterThan(0);
-      const sidebar = await boxOf(SIDEBAR);
-      expect(Math.abs(sidebar.width - before.width)).toBeLessThan(1);
-      expect(notice.right).toBeLessThanOrEqual(sidebar.right + 1);
+      const surface = await boxOf(CONVERSION_SURFACE);
+      expect(Math.abs(surface.width - before.width)).toBeLessThan(1);
+      expect(notice.right).toBeLessThanOrEqual(surface.right + 1);
 
       // Both refused controls are still there, said rather than removed: an
       // action that is refused is a different thing from one that is gone.
-      expect(await browser.$(`${PANEL} button.primary-button`).isExisting()).toBe(true);
-      expect(await browser.$(`${PANEL} button.secondary-button`).isExisting()).toBe(true);
+      expect(await browser.$(START).isExisting()).toBe(true);
+      expect(await browser.$(RETRY).isExisting()).toBe(true);
 
       const overflow = await horizontalOverflow();
       expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);

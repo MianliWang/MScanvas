@@ -109,7 +109,7 @@ describe("M6.7 through the production conversion surface", () => {
       expect(api.beginRequests()).toEqual([]);
       expect(api.conversionRequests).toEqual([]);
       select("raw-1");
-      fireEvent.click(screen.getByRole("radio", { name: "Selected rows" }));
+      fireEvent.click(screen.getByRole("radio", { name: "Checked rows" }));
       await ready();
       expect(button()).toHaveTextContent("Convert 1 selected");
     }

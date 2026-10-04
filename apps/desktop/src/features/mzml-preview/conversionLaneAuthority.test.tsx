@@ -367,7 +367,7 @@ describe("the conversion lane's one authority, as it ships", () => {
       expect(retry).toBeEnabled();
     });
     // The explicit empty scope refuses a new start while the bound retry is usable.
-    expect(within(panel).getByRole("button", { name: /^Convert/u })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: /^Convert/u })).toHaveAttribute("aria-disabled", "true");
 
     fireEvent.click(retry);
     await waitFor(() => {
