@@ -1280,7 +1280,9 @@ reflog, times EDT on 2026-10-03):
 Result (2026-10-04). Group A did not start. Its admission reading at 00:07:17
 EDT gave 3.64 GiB free and 88.5% used, against 6 GiB and 85%. An earlier
 reading, at 23:55 EDT before any work, gave 3.98 GiB and 87.4%. The sequence
-stopped at A, with no waiting or polling. Not run:
+stopped at A, with no waiting or polling. On the owner's request to resume, A's
+admission was read once more at 01:27:57 and refused again: 5.90 GiB free and
+81.4% used, below 6 GiB. Not run:
 
 - PM9.1;
 - m5.7;
