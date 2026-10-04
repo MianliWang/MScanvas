@@ -1,10 +1,11 @@
 # PM9.5 — targeted-MS1 journey: request, review, run, stop, result entry
 
 PM9 | Acceptance: U5, U7 (drafts), U9, U10 | Depends on: PM9.2; after PM9.4 | Serial, one writer
-Status: **IMPLEMENTED — QUALIFICATION RESOURCE_DEFERRED** (2026-10-04, §12).
-Production `f877870`, tests `207b441`. On that candidate, C1 (typecheck and
-the targeted Vitest files) was refused at the memory gate; no other static,
-unit, build or browser group was attempted.
+Status: **PM9.5 TARGETED-MS1 JOURNEY COMPLETE — FOCUSED BROWSER/RENDERED
+ACCEPTANCE PASS** (2026-10-04, §12). Production `f877870`, tests `207b441`,
+qualified on the documentation successor `ccb9184`, whose `apps/` and `e2e/`
+equal `207b441`'s. Real-engine and native release qualification are
+unchanged.
 Expanded 2026-10-04 from the code of the starting point below. The midpoint
 check is not repeated; nothing here unfreezes the route.
 
@@ -156,10 +157,10 @@ and not done; **F** belong to a future capability or another owner.
     scenario (existing cases unchanged);
   - `m9.1` and `m9.4` browser specs: test-authoring repairs for the new order
     and copy, logged separately from correction cycles.
-- **Documents:** this file, `slices.md`, the baseline, `e2e/README.md` (manual
-  entry), `docs/product/M9_4_TARGETED_MS1_BATCH.md` and
-  `M9_1_TARGETED_MS1_HANDOFF.md` with dated notes where current behaviour
-  changes.
+- **Documents:** this file, `slices.md`, the baseline, the brief's status,
+  `e2e/README.md` (manual entry), and `docs/product/M9_4_TARGETED_MS1_BATCH.md`,
+  `M9_1_TARGETED_MS1_HANDOFF.md` and `PRIMARY_WORKFLOWS.md` with dated notes
+  where current behaviour changes.
 
 No Rust, DTO, schema, persistence, dependency, lock, workflow or runtime path.
 
@@ -243,9 +244,101 @@ termination, output publication, native WebView2 at 150 % or a screen reader.
 
 ## 12. Record
 
-**2026-10-04, checkpoint 1 (resource deferral).** Not closed. Everything below
-is what exists and what it rests on; nothing here is acceptance of the final
-candidate.
+**2026-10-04, checkpoint 2 (qualification, after the owner reported enough
+memory).** Closed: every group of checkpoint 1's remaining list ran on the
+final candidate and passed.
+
+**Candidate.** HEAD `ccb918480bed9c40475c8f55085c6db4b138d884` (tree
+`c69205780d31ef8d5886b5337c1bbd1d2037e1be`), clean. `git diff 207b441 ccb9184
+-- apps e2e` is empty, so the code under test is production `f877870` and
+tests `207b441`.
+
+| Group | Result |
+| --- | --- |
+| Q1 `pnpm typecheck` (also `pnpm lint`: both `tsc -b`) | exit 0 |
+| Q2 `TargetedMs1.test.tsx`, `TargetedMs1Batch.test.tsx` | 2 files, 73 tests |
+| Q3 `pnpm e2e:typecheck` | exit 0 |
+| U1 full Vitest, `--maxWorkers=1 --no-file-parallelism` | 112 files, 2251 tests (PM9.4: 2237) |
+| B0 `pnpm build` | exit 0; its chunk-size warning predates PM9 (M7.2 and M7.3 logs) |
+| G1 PM9.5 spec | 10 of 10 (0 of 10 in G0) |
+| G2 m9.1 + m9.4 | not started: port 15273 still held a TIME_WAIT connection (owner pid 0) of G1's own closed server. Rerun as G2b on 15274: m9.1 12 of 12, m9.4 5 of 5 |
+| G3 PM9.1 whole (port 15275) | 55 of 55 |
+| `check_repo`, `git diff --check`, scope | pass, clean, nothing outside the frontend, tests and documents |
+
+Each group was admitted on its own reading, between 9.24 GiB free (70.8%
+used) and 7.46 GiB (76.5%), and ran alone in the foreground. Local
+high-memory work ended with G3.
+
+**Acceptance.** R1–R12: pass, each GREEN in G1 and held by Vitest.
+
+| Finding | G1 | Vitest |
+| --- | --- | --- |
+| R1, R2 | T1 | the bundle values in both languages |
+| R3 | T1, T2, T4; T9's 200-target and 16-member reach | order, problems first |
+| R4 | T2, T3, T6, T8 | each reason; refused presses send nothing |
+| R5 | T6 | review and run refusals; another operation's refusal not shown |
+| R6 | T1, T5, T8 | status line, Cancel run, Close's reason |
+| R7 | T5 | requested on all three controls; a stop that arrives after completion |
+| R8 | T1, T4, T5 | Open result and Show run; Run again; the ending survives an edit; one filled primary beside a new request |
+| R9 | T1, T5, T8 | review, run and stop hand-offs; a refused run with a held re-read |
+| R10 | T2 | line selection |
+| R11 | T7 | close and reopen, another row, a different-id and a same-id Open |
+| R12 | T9 | — |
+
+V1–V7 hold. O1–O4 and F1–F3 stay as §4 records them, F1 needing a read-only
+projection of the bounds that this dispatch did not authorize.
+
+**Rendered evidence** (`.tmp/pm95-runs/G1/browser-3HkrFs/`, git-ignored).
+
+- **Frames.** 53, from Chrome 154.0.8037.93 headless at DPR 1. Each records
+  the CSS and outer viewport, the surface's and the setup's widths, the page
+  language, the roster and Details state, and the candidate
+  (`ccb9184`).
+- **Coverage.** Input/error, ready, batch running, batch ended and single
+  ended at 1920×1080, 1366×768 and 960×640, in en and zh-CN. The review and
+  the ended batch at 1280×720, 1536×864 and 2560×1440. The 200-target and
+  16-member reviews at 960×640 in both languages.
+- **Judged in every frame:**
+  - overflow ≤ 1 px;
+  - no estimate;
+  - the expected number of filled primaries;
+  - no setup control under 32 px;
+  - one-line batch actions;
+  - no console entry.
+
+  At 960×640, Run is reached by a real wheel over the surface's own margin and
+  by Tab, and is on screen when focused.
+- **Before evidence.** O0's frames over the same fixture
+  (`.tmp/pm95-observe/out/`) and G0's failure frames.
+- **The manual entry** is §8's; it was not used for acceptance.
+
+**Process custody, checkpoint 2.**
+
+- Every group recorded each launched process's PID, creation time, command and
+  parent, and every launched tree ended.
+- G3's runner listed one leftover, AppleMobileDeviceProcess.exe pid 2472. It
+  was a false match:
+  - it was created at 07:34:42, eleven hours before the group;
+  - its parent pid had been reused by a process of the group's tree.
+
+  It was left untouched. The scratch runner now admits only descendants
+  created after its launch.
+- Chrome again woke Google Updater as its child, and Updater had ended.
+- Nothing was killed by name or port.
+
+**Remaining, outside this slice.**
+
+- A real engine run, mzML consumption, plan persistence, worker termination
+  and output publication are M9's evidence, unchanged.
+- Native WebView2 at the host's 150 % and the provider-positive route belong
+  to the qualification after PM9.7.
+- Announcements are DOM live-region traces, not screen-reader audio.
+- PM9.1's J1–J6 on `d56b17b` is still due before PM9.7.
+- PM9.6 owns the report, history, exports and reopen.
+
+**2026-10-04, checkpoint 1 (resource deferral).** Superseded by checkpoint 2;
+kept as it was found. Everything below is what existed then and what it rested
+on.
 
 **Identities.**
 
@@ -343,7 +436,7 @@ for task hierarchy, not rendered, and none of its science was taken.
 | Log | Task log | — | — (run facts in Details) | Not adopted |
 
 **Remaining under this dispatch** (each its own admission reading; browser
-groups with `-Port 15273`):
+groups with `-Port 15273`; all run in checkpoint 2):
 
 1. S1 on `207b441`: `pnpm typecheck` (= `pnpm lint`, both `tsc -b`) and
    `pnpm e2e:typecheck`.

@@ -1462,3 +1462,35 @@ keeps what later slices and PM9.7 read from the baseline.
   - m7.4's active-Clear pair, m7.1, m7.2 and m7.5 are still PM9.7's.
   - U4's live-provider check stays `BLOCKED_PROVIDER_HOLD`.
   - PM9.1 stays PARTIAL for J1–J6 on `d56b17b`.
+
+## 15. PM9.5 focused rendered acceptance (2026-10-04)
+
+The full record is in [slice-05 §12](slice-05.md#12-record). This section
+keeps what later slices and PM9.7 read from the baseline.
+
+- **Candidate.**
+  - Production: `f877870`.
+  - Tests: `207b441ac32dcf20f962b30f11c448724b96292d` (tree
+    `36150ba77ed1ed3b0bd86934707741eac79b7eb4`), qualified on the
+    documentation successor `ccb9184` with equal `apps/` and `e2e/`.
+  - Frontend only: no manifest, lock, Rust, IPC, schema or workflow path
+    changed.
+- **Passed.**
+  - The PM9.5 spec: 10 of 10, against 0 of 10 on the unchanged production.
+  - Full Vitest: 112 files, 2251 tests, at bounded workers.
+  - `pnpm typecheck` (also `pnpm lint`), `pnpm e2e:typecheck`,
+    `pnpm build`, `check_repo` and `git diff --check`.
+  - m9.1: 12 of 12. m9.4: 5 of 5. PM9.1: 55 of 55.
+- **Shared test inputs.**
+  - `e2e/support/pm9Scenarios.ts` gained the browser-only `targetedTask`
+    scenario, built from `e2e/support/targeted.ts`. It answers the
+    targeted-MS1 task for the manual harness (`pnpm qa:pm9:manual`).
+  - Every existing scenario is unchanged.
+  - §6.3's list of browser-only variants now has a fourth.
+- **For PM9.7.**
+  - The targeted-MS1 task was compared with v5.11 for task hierarchy in its
+    own slice; the stepper stays with PM9.7, as PM9.4's did.
+  - On this host, port 5273 can be taken by another application's ephemeral
+    connection: the dynamic range is 1024–15000. Browser runs can name another
+    port with `MSCANVAS_BROWSER_DEV_PORT`.
+  - PM9.1 stays PARTIAL for J1–J6 on `d56b17b`.

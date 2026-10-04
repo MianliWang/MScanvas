@@ -639,4 +639,15 @@ run (unsaved project, no runtime, no room for a copy, a quarantined session)
 records nothing and says what to change; a failed or cancelled run is kept in
 history with its code and stage and publishes nothing; a stored result whose
 payload is missing or damaged says so and offers nothing it cannot read. The
-current contract is the [M9 closure](M9_CLOSURE.md).
+current contract is the [M9 closure](M9_CLOSURE.md). **PM9.5 (2026-10-04)**
+made this path read in order inside the setup:
+
+- the review sits between **Review plan** and **Run**;
+- a control that cannot act says why, and a refusal is said beside the action
+  it refused;
+- a run is followed and cancelled beside its request, and a stop reads as
+  requested until the run answers;
+- an ending offers **Open result** or **Show run**, and the same plans run
+  again are labelled as new runs.
+
+See [slice-05](../phases/pm9/slice-05.md).

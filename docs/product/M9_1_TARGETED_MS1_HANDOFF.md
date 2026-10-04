@@ -77,6 +77,31 @@ In a **saved** project, on a layer whose source is one mzML file:
    rows and evidence live beside the document and are reported available,
    missing or corrupt on every open.
 
+Update (PM9.5, 2026-10-04): the setup now reads top to bottom as the path,
+with no change to the plan, the run or the record.
+
+- **The review.** **Review plan** answers in a review placed between it and
+  **Run**. In order, it shows:
+  - the problems;
+  - the acquisition, the targets in order with their count, and the two
+    parameters;
+  - the engine and the plan's digest;
+  - any refusal that stops the plan.
+
+  Its tables scroll inside themselves.
+- **Why something waits.** Run and Review say why they cannot act. A refusal
+  of the review or of the run is said beside it, as well as at the top of the
+  surface.
+- **While a run is out.** The setup shows its phase and a **Cancel run**
+  control. After a press it reads "Stop requested…" until the run answers.
+- **When the run ends.** The setup says how it ended and offers **Open
+  result** or **Show run**. The same reviewed plan run again is labelled **Run
+  again**, a new run.
+- **The draft.** The typed request survives closing the setup and opening it
+  from another row; a replaced project discards it.
+
+See [PM9.5](../phases/pm9/slice-05.md).
+
 This is an **experimental, bounded targeted lookup**. It is not identification,
 not a validated quantitative method, not untargeted feature detection, and not
 an admitted XIC. The interface says so on the setup and on every report.
