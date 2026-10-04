@@ -1275,7 +1275,7 @@ reflog, times EDT on 2026-10-03):
 | `ui34-before/browser-JXepAM` | V10, en and zh-CN, 21:28:25–21:28:29 | `164ffb3` | Tests uncommitted, not `164ffb3`'s, consistent with `4ff3c8c`'s; production known only from the rendered line (batch 2's) | NOT IDENTITY-QUALIFIED; excluded from RED and GREEN claims |
 | `ui34-after/browser-sVQnBS` | PM9.3, 17 cases, 21:30:13–21:30:52 | `b7b8eeb` | Candidate `b7b8eeb` written by the run into its 60 observation entries; clean status not recorded | The accepted GREEN: 17 of 17, 58 frames |
 | `ui34-after/m7.3/browser-jFfW2u` | m7.3, 22:44:55–22:45:33 | `cf36829`, docs only after `b7b8eeb` | No candidate field; clean status not recorded | Accepted as recorded: 16 of 16 |
-| `final-val/A/A-pm9.1.meta.txt` | Group A's admission, 2026-10-04 00:07:17 | `f4e591b` | Clean status not reached: the reading came first and refused | Admission record only; nothing ran |
+| `final-val/A/A-pm9.1.meta.txt` | Group A's admission, 2026-10-04 00:07:17 (the file also holds the 01:27:57 refusal and the 01:33:02 run) | `f4e591b` | Clean status not reached: the reading came first and refused | Admission record only; nothing ran |
 | `final-val/A/` (`browser-YURYlR`, `A-pm9.1.log`) | PM9.1, whole, 2026-10-04 01:33:05–01:34:37 | `709c94a` | Tree `38cabbe`, clean, read by the runner; candidate `709c94a` written by the run; reporter log retained | 55 of 55, exit 0 |
 | `final-val/B/B-m5.7.log` | m5.7, 01:35:01–01:35:18 | `709c94a` | As A | 8 of 8, exit 0 |
 | `final-val/S/` | `pnpm e2e:typecheck`, 01:35:39 | `709c94a` | As A | Exit 0; superseded by S2 for the final test content |
