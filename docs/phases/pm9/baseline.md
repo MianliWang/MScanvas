@@ -1079,19 +1079,26 @@ m7.3, the one other browser spec that reads the line, was rerun once: 16 of 16 o
 Chrome 154.0.8037.93, and its confirmed m/z band renders "Committed m/z: part of
 the full range" (frame `range-02-explicit-confirm`).
 
-Inherited from batch 2 on `5e4c6ac`: the other 71 Vitest files, which mount no
-viewer, name neither removed key (the typecheck covers them) and iterate no
-bundle; PM9.1 55 of 55; the Details evidence; and the other 15 of batch 2's 16
-downstream specs. Of those, m7.4, m8.1–m8.5, m9.1 and m9.4 commit no range, so
-any line they render is the unchanged "full range". m5.7's wheel and PM9.1's
-PM9-B2 commit one and render the new sentence without reading it; PM9-B2
-compares the caption. m4.3, m4.4, m5.2, m5.3 and both viewer-r1 specs carried
-only their known harness failures in batch 2, and their range helpers read the
-captions (`.chromatogram-range`, `#spectrum-viewport-range`), not the line. Any
-batch 2 frame taken while a range was committed shows the old sentence. The
-row's geometry where PM9.3 measures it (960×640, and the 571 to 928 px columns)
-is batch 2's. Narrower columns are unmeasured; the English sentence is seven
-characters longer than before and the Chinese one character longer.
+Inherited from batch 2 on `5e4c6ac`, whose inputs for them this change leaves as
+they were: the other 71 Vitest files, which mount no viewer, name neither
+removed key (the typecheck covers them) and iterate no bundle; the Details
+evidence, a panel the line is not in; and m7.4, m8.1–m8.5, m9.1 and m9.4, which
+commit no range, so any line they render is the unchanged "full range".
+
+Not inherited, and not rerun. m5.7's wheel and PM9.1's PM9-B2 commit a range,
+so both specs now render the new sentence, though neither reads it (PM9-B2
+compares the caption). Their inputs changed, so batch 2's m5.7 8 of 8 and PM9.1
+55 of 55 are not evidence for this code; one run of each was due and is
+deferred at the memory checkpoint below. m4.3, m4.4, m5.2, m5.3 and both
+viewer-r1 specs also commit ranges and render the new sentence; in batch 2 they
+carried only their known harness failures, and their range helpers read the
+captions (`.chromatogram-range`, `#spectrum-viewport-range`), not the line.
+Leaving them at batch 2 departs from the rule that only unchanged inputs are
+inherited, which is the owner's to accept. Any batch 2 frame taken while a range
+was committed shows the old sentence. The row's geometry where PM9.3 measures it
+(960×640, and the 571 to 928 px columns) is batch 2's. Narrower columns are
+unmeasured; the English sentence is seven characters longer than before and the
+Chinese one character longer.
 
 The admission gate was the owner's: start a heavy group at 6 GiB free or more
 and 85% used or less, and no later heavy command below 4 GiB or at 90% or more.
@@ -1099,9 +1106,11 @@ The before and after frontend checks, the build and PM9.3 started at 7.19 to
 7.53 GiB free and 76 to 77% used. The consumer reruns' first two groups started
 at 6.47 GiB and 79.6%. The third, the two files found after m7.3, was declined by
 the admission check at 5.74 GiB and then started as a later command at 5.70 GiB
-and 82.0%. m7.3 started at 6.04 GiB and 80.9%. The read-only design review that
-chose the wording ran no build or test; it started at 1.84 GiB free and 94.2%
-used.
+and 82.0%; that reading of the later-command rule is the owner's to overrule.
+m7.3 started at 6.04 GiB and 80.9%. PM9.1 did not start: at 23:00:30 the
+admission check read 5.69 GiB free and 82.0% used, so PM9.1 and m5.7 are
+deferred, with no wait or polling. The read-only design review that chose the
+wording ran no build or test; it started at 1.84 GiB free and 94.2% used.
 
 One narrow review of the truth and timing invariant (one reviewer, a skeptic per
 finding) raised two test-strength findings and refuted both. The claim table's
@@ -1122,7 +1131,8 @@ odd, as before. At rest the line no longer says that the caption's numbers are
 the committed ones; the caption prints them, and the export notes give the exact
 bounds.
 
-Status: **PM9 REPORTED UI/UX ISSUES CLEARED — RENDERED ACCEPTANCE PASS**, confirmed
-after the continuation: UI-34's committed line is true throughout the exercised
-transitions and its announcements still pass. PM9.4 is not started. PM9.1 stays
-PARTIAL for J1–J6 on `d56b17b`.
+Status: **PM9 REPORTED UI/UX ISSUES CLEARED — RENDERED ACCEPTANCE PASS**, on the
+evidence rerun here: UI-34's committed line is true throughout the exercised
+transitions and its announcements still pass. Open: the deferred runs of PM9.1
+and m5.7 on this code. PM9.4 is not started. PM9.1 stays PARTIAL for J1–J6 on
+`d56b17b`.
