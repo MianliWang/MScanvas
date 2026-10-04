@@ -428,7 +428,8 @@ button:disabled,
    time. The marker is suppressed and the position rendered instead, so the
    number is a cell the names can align against rather than a glyph the browser
    places outside the box. */
-.conversion-queue-list {
+.conversion-queue-list,
+.conversion-requested-list {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -439,7 +440,8 @@ button:disabled,
   list-style: none;
 }
 
-.conversion-queue-list > li {
+.conversion-queue-list > li,
+.conversion-requested-list > li {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -516,6 +518,7 @@ button:disabled,
 .conversion-queue-attempts,
 .conversion-queue-facts,
 .conversion-queue-reason,
+.conversion-queue-retry,
 .conversion-queue-residue,
 .conversion-queue-set-result,
 .conversion-queue-set-completeness,
@@ -2154,6 +2157,8 @@ button:disabled,
 }
 
 .conversion-item-detail > summary {
+  min-height: 32px;
+  padding-block: 6px;
   color: var(--color-text-secondary);
   cursor: pointer;
 }
@@ -2253,3 +2258,17 @@ button:disabled,
 .output-open-actions > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .output-open-actions > p { flex-basis: 100%; margin: 0; }
 .output-open-actions button { min-height: 32px; }
+/* Inside a queue row the group is a line of the row, indented with the row's
+   other lines rather than starting at its left edge (PM9.4 R12). */
+.conversion-queue-list > li > .output-open-actions { flex: 1 0 100%; min-width: 0; padding-left: 2.2em; }
+
+/* The next conversion, under a finished queue (PM9.4 R5). */
+.conversion-plan > h3 { margin: 0; font-size: 1rem; }
+
+/* A conversion control refused while its own request runs stays a Tab stop
+   (PM9.4 R11) and reads as refused without fading its focus ring. */
+.conversion-panel .secondary-button[aria-disabled="true"],
+.conversion-panel .link-button[aria-disabled="true"] {
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}

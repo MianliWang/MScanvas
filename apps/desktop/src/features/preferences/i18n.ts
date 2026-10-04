@@ -85,6 +85,9 @@ export interface MessageParameters {
   readonly m74CnvConvertAll: { readonly count: number };
   readonly m74CnvRunningItem: { readonly position: number; readonly total: number };
   readonly m74CnvBetweenItems: { readonly count: number; readonly total: number };
+  readonly m74CnvRerunningItem: { readonly position: number; readonly total: number };
+  readonly m74CnvRerunBetweenItems: { readonly count: number; readonly total: number };
+  readonly m74CnvScopeLine: { readonly counts: string; readonly note: string; readonly help: string };
   readonly m74CnvSkipping: { readonly name: string };
   readonly m74CnvSkip: { readonly name: string };
   readonly m74CnvAttempt: { readonly count: number };

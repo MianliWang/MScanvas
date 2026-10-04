@@ -57,14 +57,26 @@ export function conversionIntentDisclosures(intent: ConversionIntentDescriptor, 
   return result;
 }
 
-export function ConversionSettings({ configuration, onChoose, refusalNoticeId }: {
+export function ConversionSettings({ configuration, onChoose, refusalNoticeId, view, onViewChange }: {
   readonly configuration: ConversionConfigurationView;
   readonly onChoose: (intentId: string) => void;
   readonly refusalNoticeId: string | null;
+  /**
+   * Basic or Advanced, where a parent keeps it. The Conversion panel does, so
+   * the reader's choice survives the settings leaving the screen while a queue
+   * runs (PM9.4 R5); left out, the view is this component's own.
+   */
+  readonly view?: "basic" | "advanced";
+  readonly onViewChange?: (view: "basic" | "advanced") => void;
 }): ReactElement | null {
   const t = useUiMessages();
   const prefix = useId();
-  const [advanced, setAdvanced] = useState(false);
+  const [ownAdvanced, setOwnAdvanced] = useState(false);
+  const advanced = view === undefined ? ownAdvanced : view === "advanced";
+  const setAdvanced = (next: boolean) => {
+    if (onViewChange === undefined) setOwnAdvanced(next);
+    else onViewChange(next ? "advanced" : "basic");
+  };
   const failureId = `${prefix}-failure`;
   const unavailableId = `${prefix}-unavailable`;
   const recoveryId = `${prefix}-recovery`;
