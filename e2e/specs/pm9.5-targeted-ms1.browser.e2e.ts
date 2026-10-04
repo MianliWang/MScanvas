@@ -362,6 +362,76 @@ async function wheelTo(selector: string): Promise<boolean> {
   return onScreen(selector);
 }
 
+/**
+ * Whether the review table `table` names, which scrolls inside the review,
+ * shows its last row by a real wheel over it, and again by the keyboard: Tab
+ * from Review plan to its scroller, then End (or Page Down). The surface is
+ * positioned by script first, which only frames the scroller.
+ */
+async function scrollsInside(table: string) {
+  const place = () =>
+    browser.execute((css: string) => {
+      const scroller = document.querySelector(css)?.closest<HTMLElement>(".targeted-review-scroll") ?? null;
+      const owner = document.querySelector<HTMLElement>("#workbench-project");
+      if (scroller === null || owner === null) return null;
+      scroller.scrollTop = 0;
+      owner.scrollTop += scroller.getBoundingClientRect().top - owner.getBoundingClientRect().top - 40;
+      const box = scroller.getBoundingClientRect();
+      return {
+        x: Math.round(box.left + box.width / 2),
+        y: Math.round(box.top + Math.min(box.height, innerHeight - box.top) / 2),
+        overflows: scroller.scrollHeight > scroller.clientHeight + 1,
+      };
+    }, table);
+  const lastShown = () =>
+    browser.execute((css: string) => {
+      const element = document.querySelector(css);
+      const scroller = element?.closest<HTMLElement>(".targeted-review-scroll") ?? null;
+      const last = element?.querySelector("tbody tr:last-child") ?? null;
+      if (scroller === null || last === null) return { shown: false, scrollTop: 0 };
+      const box = last.getBoundingClientRect();
+      const bounds = scroller.getBoundingClientRect();
+      return { shown: box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1, scrollTop: scroller.scrollTop };
+    }, table);
+
+  const point = await place();
+  if (point === null) throw new Error(`no scroller holds ${table}`);
+  let wheel = await lastShown();
+  for (let step = 0; step < 60 && !wheel.shown; step += 1) {
+    await cdp("Input.dispatchMouseEvent", { type: "mouseWheel", x: point.x, y: point.y, deltaX: 0, deltaY: 200 });
+    await frames();
+    wheel = await lastShown();
+  }
+
+  await place();
+  await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), REVIEW);
+  let tabbed = false;
+  for (let step = 0; step < 40 && !tabbed; step += 1) {
+    await browser.keys(["Tab"]);
+    tabbed = await browser.execute((css: string) => {
+      const active = document.activeElement;
+      return active !== null && active.matches(".targeted-review-scroll") && active.querySelector(css) !== null;
+    }, table);
+  }
+  let keyboard = { shown: false, scrollTop: 0 };
+  if (tabbed) {
+    await browser.keys(["End"]);
+    await frames();
+    keyboard = await lastShown();
+    for (let step = 0; step < 30 && !keyboard.shown; step += 1) {
+      await browser.keys(["PageDown"]);
+      await frames();
+      keyboard = await lastShown();
+    }
+  }
+  return {
+    overflows: point.overflows,
+    wheel: wheel.shown && wheel.scrollTop > 0,
+    tabbed,
+    keyboard: keyboard.shown && keyboard.scrollTop > 0,
+  };
+}
+
 /** Presses Tab from `from` until `to` has focus. */
 async function tabTo(from: string, to: string, limit = 40): Promise<boolean> {
   await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), from);
@@ -793,6 +863,8 @@ describe("PM9.5 targeted-MS1 journey, rendered", () => {
         const size = `${String(width)}x${String(height)}`;
         await open(targetedTable(locale), locale, width, height);
         await openSetup();
+        // The first screen of the task, as the row's control opens it.
+        judge(`opened ${size}`, await frame(`t9-opened-${locale}-${size}`), 0);
         await typeInto("[data-targeted-text]", TYPED);
         await reviewWith(problemsReview([{ row: 2, field: "formula", problem: "invalid" }]));
         judge(`input-error ${size}`, await frame(`t9-input-error-${locale}-${size}`), 0);
@@ -868,6 +940,9 @@ describe("PM9.5 targeted-MS1 journey, rendered", () => {
         tab: await tabTo(REVIEW, RUN),
         focusedOnScreen: await onScreen(RUN),
       });
+      // The 200th target, inside the plan's own scroller.
+      judged.push({ label: "200-targets inside", ...(await scrollsInside("[data-targeted-plan]")) });
+      await frame(`t9-200-targets-${locale}-960x640-last-row`);
 
       const wide = targetedTable(locale, wideProject(MAX_MEMBERS));
       wide.resolve_targeted_ms1_batch = wideBatchReview(MAX_MEMBERS);
@@ -885,6 +960,9 @@ describe("PM9.5 targeted-MS1 journey, rendered", () => {
         tab: await tabTo(REVIEW, RUN),
         focusedOnScreen: await onScreen(RUN),
       });
+      // The 16th acquisition, inside the members' own scroller.
+      judged.push({ label: "16-members inside", ...(await scrollsInside("[data-targeted-batch-members]")) });
+      await frame(`t9-16-members-${locale}-960x640-last-row`);
 
       evidence.push({ label: `t9-${locale}-judged`, judged });
       const failures = judged.filter((each) =>
@@ -892,7 +970,9 @@ describe("PM9.5 targeted-MS1 journey, rendered", () => {
           ? each.lang !== locale || (each.overflow as number) > 1 || each.estimate || each.filled !== each.expectedFilled || (each.small as unknown[]).length > 0
           : "heights" in each
             ? (each.heights as number[]).some((height) => height > 34)
-            : !(each.wheel && each.tab && each.focusedOnScreen),
+            : "keyboard" in each
+              ? !(each.overflows && each.wheel && each.tabbed && each.keyboard)
+              : !(each.wheel && each.tab && each.focusedOnScreen),
       );
       expect(failures).toEqual([]);
       expect(await unexpectedConsole()).toEqual([]);
