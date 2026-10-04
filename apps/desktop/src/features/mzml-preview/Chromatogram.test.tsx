@@ -788,6 +788,7 @@ describe("moving the viewport", () => {
     expect(state().committedDomain).not.toBeNull();
     expect(observer.takeRecords()).not.toEqual([]);
     expectTruthfulLine();
+    expect(spoken()).toBe(`Committed retention time: part of the full range, namely ${fixed(state().committedDomain!)}`);
 
     // Held again from that commit: the plot displays another range than the
     // committed one, and the line has to stay true of both.
@@ -902,6 +903,11 @@ describe("moving the viewport", () => {
       expect(index, `no truth condition is declared for ${key}: "${en[key]!}"`).not.toBe(-1);
       expect(COMMITTED_CLAIMS.findIndex((claim) => claim.zh === zh[key]), `${key} in zh-CN: "${String(zh[key])}"`).toBe(index);
     }
+    // The announced bounds bring their own separator, and stay the line's last words.
+    expect([UI_RESOURCES.en.rangeCommittedBounds, UI_RESOURCES["zh-CN"].rangeCommittedBounds]).toEqual([
+      ", namely {{low}} to {{high}}",
+      "，即 {{low}} 至 {{high}}",
+    ]);
   });
 
   it("lets a selection made mid-wheel win over the settle that arrives later", () => {

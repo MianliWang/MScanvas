@@ -441,7 +441,7 @@ async function rangeLine(panel: string) {
   const [, low, high] = /(-?[\d.]+(?:e[-+]?\d+)?) to (-?[\d.]+(?:e[-+]?\d+)?)$/u.exec(text) ?? [];
   return {
     pending: text.startsWith(prefix(en.rangePending)),
-    committed: text.startsWith(prefix(en.rangeCommittedShown)),
+    committed: text.startsWith(prefix(en.rangeCommittedPart)),
     low: Number(low),
     high: Number(high),
   };
@@ -1526,8 +1526,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
           ...frame.rangeTexts.filter((text) => /\d\.\d{5,}/u.test(text)).map((text) => `${frame.label} raw digits: ${text}`),
           ...(frame.chromatogramUnits !== null && frame.chromatogramUnits !== 2 ? [`${frame.label} unit caveat ${String(frame.chromatogramUnits)} times`] : []),
           ...(/unit not reported|单位未报告/u.test(frame.plotDescription) ? [] : [`${frame.label} plot description without the unit caveat`]),
-          // Settled, the committed range is the one the caption prints: the
-          // line says so and does not repeat its numbers (dispatch item 5).
+          // Settled, the committed range is the one the caption prints; the
+          // line does not repeat its numbers, which stay in its announcement
+          // (dispatch item 5; UI-34).
           ...(/\d/u.test(frame.rangeVisible[0] ?? "") ? [`${frame.label} committed line repeats the caption: ${String(frame.rangeVisible[0])}`] : []),
         ]);
         const entry = defaults[0]!;

@@ -191,8 +191,8 @@ export interface MessageParameters {
   readonly viewerExportCopied: { readonly details: string };
   readonly viewerFigureSize: { readonly width: string; readonly height: string; readonly theme: string };
   readonly rangeCommittedFull: { readonly name: string };
-  readonly rangeCommittedShown: { readonly name: string };
-  readonly rangeBounds: { readonly low: string; readonly high: string };
+  readonly rangeCommittedPart: { readonly name: string };
+  readonly rangeCommittedBounds: { readonly low: string; readonly high: string };
   readonly rangePending: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeConfirmContext: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeEdit: { readonly name: string };
