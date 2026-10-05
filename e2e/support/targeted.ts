@@ -376,6 +376,11 @@ export function manyTargets(count: number) {
   }));
 }
 
+/** A stored page of `count` rows for {@link manyTargets}, in plan order, every other one detected. */
+export function manyRows(count: number) {
+  return { total: count, offset: 0, rows: manyTargets(count).map((target, index) => row(target.targetId, index % 2 === 0)) };
+}
+
 /** The same `count` targets as typed, one per line. */
 export function manyTyped(count: number) {
   return manyTargets(count)
