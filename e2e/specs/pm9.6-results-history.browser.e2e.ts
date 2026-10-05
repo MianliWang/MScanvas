@@ -46,6 +46,7 @@ import {
   TARGETED_LAYER,
   qcProject,
   scenario,
+  storedRow,
   targetedProject,
 } from "../support/pm9Scenarios";
 import {
@@ -345,6 +346,11 @@ async function geometry(artifact: string, target: string) {
       const row = section?.querySelector(`[data-targeted-row="${id}"]`) ?? null;
       const scroller = section?.querySelector<HTMLElement>(".targeted-rows") ?? null;
       const image = section?.querySelector(`[data-targeted-selected="${id}"] [data-targeted-plot] img`) ?? null;
+      // Whatever the panel ended in: the drawing, a refusal, or a row's lack of points.
+      const end =
+        section?.querySelector(`[data-targeted-selected="${id}"]`)?.querySelector(
+          "[data-targeted-plot] img, [data-targeted-figure-refused], [data-targeted-evidence-refused], :scope > [data-targeted-no-points]",
+        ) ?? null;
       if (owner === null || row === null || scroller === null) return null;
       const bounds = owner.getBoundingClientRect();
       const top = Math.max(bounds.top, 0);
@@ -355,6 +361,7 @@ async function geometry(artifact: string, target: string) {
       return {
         rowInside: inside(rowBox),
         plotInside: plotBox !== null && plotBox.height > 0 && inside(plotBox),
+        endInside: end !== null && inside(end.getBoundingClientRect()),
         rowTop: Math.round(rowBox.top - top),
         plotBottom: plotBox === null ? null : Math.round(plotBox.bottom - bottom),
         plotHeight: plotBox === null ? null : Math.round(plotBox.height),
@@ -874,6 +881,23 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     await settledChoice(RESULT, STORED_ABSENT);
     expect(await browser.$(`${report(RESULT)} [data-targeted-selected] img`).getAttribute("data-targeted-figure")).toBe("pm96-absent");
 
+    // An evidence read refused for one target, not as a damaged payload, also
+    // stays in that target's panel: the rows, the table's output and the other
+    // target are untouched. (Asserted by its hook: the identifier, not the
+    // project's general sentence, is what this case is about.)
+    await setInvokeRejection("read_targeted_ms1_evidence", { kind: "unknownRecord", summary: "unknownRecord", detail: null, retryable: false });
+    await keyPress(`${report(RESULT)} ${choose(STORED_CAFFEINE)}`, "Enter");
+    const refusedRead = await settledChoice(RESULT, STORED_CAFFEINE);
+    expect(await exists(`${report(RESULT)} [data-targeted-selected="${STORED_CAFFEINE}"] [data-targeted-evidence-refused="unknownRecord"]`)).toBe(true);
+    expect({ rowInside: refusedRead?.rowInside, endInside: refusedRead?.endInside }).toEqual({ rowInside: true, endInside: true });
+    expect(await browser.$$(`${report(RESULT)} [data-targeted-row]`).length).toBe(2);
+    expect(await exists(`${report(RESULT)} [data-targeted-table-export]`)).toBe(true);
+    expect(await content(`${report(RESULT)} [data-targeted-payload]`)).toBe(en.targetedStatePayloadWhole);
+    await setInvokeResult("read_targeted_ms1_evidence", { targetId: STORED_ABSENT, traces: [] });
+    await keyPress(`${report(RESULT)} ${choose(STORED_ABSENT)}`, "Enter");
+    await settledChoice(RESULT, STORED_ABSENT);
+    expect(await exists(`${report(RESULT)} [data-targeted-selected="${STORED_ABSENT}"] img`)).toBe(true);
+
     // An evidence read that finds the payload damaged takes the rows and outputs away.
     await setInvokeRejection("read_targeted_ms1_evidence", { kind: "payloadCorrupt" });
     await keyPress(`${report(RESULT)} ${choose(STORED_CAFFEINE)}`, "Enter");
@@ -1295,6 +1319,82 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     await frames();
     expect(await exists("[data-targeted-report]")).toBe(false);
     expect(await issued("read_targeted_ms1_rows", loaded)).toBe(0);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("PM9.6-P12 the reveal: only while the keyboard stays, again on a second press, never for a view already whole (R2)", async () => {
+    await open(scenario("projectWithResult", "en"), "en", 1366, 768);
+    await openRecord(RESULT);
+    await browser.$(`${report(RESULT)} [data-targeted-row]`).waitForDisplayed();
+    const surfaceTop = () => browser.execute(() => document.querySelector("#workbench-project")?.scrollTop ?? -1);
+
+    // The reader moves on before the drawing arrives: nothing moves for it.
+    await holdInvoke("preview_targeted_ms1_figure");
+    await keyPress(`${report(RESULT)} ${choose(STORED_CAFFEINE)}`, "Enter");
+    await browser.waitUntil(async () => (await heldCallers("preview_targeted_ms1_figure")) >= 1, {
+      timeoutMsg: "the drawing was never asked for",
+    });
+    await browser.keys(["Tab"]);
+    await frames();
+    expect(await focusedOn(`${report(RESULT)} ${choose(STORED_ABSENT)}`)).toBe(true);
+    const movedOn = await surfaceTop();
+    await releaseInvokeHold("preview_targeted_ms1_figure");
+    const unrevealed = await settledChoice(RESULT, STORED_CAFFEINE);
+    expect(unrevealed?.surface).toBe(movedOn);
+    expect(unrevealed?.plotInside).toBe(false);
+    await frame("p12-moved-on-en-1366x768");
+
+    // Pressed again, with its drawing already there: it comes into view now.
+    const again = await chooseAndReveal(RESULT, STORED_CAFFEINE);
+    expect(fit(STORED_CAFFEINE, again)).toEqual(FITS);
+    expect(again.after?.surface).not.toBe(movedOn);
+
+    // Both already in view, the drawing's end within the reveal's margin of
+    // the bottom: a press moves nothing.
+    await browser.execute(() => {
+      const owner = document.querySelector<HTMLElement>("#workbench-project");
+      if (owner !== null) owner.scrollTop -= 4;
+    });
+    const whole = await chooseAndReveal(RESULT, STORED_CAFFEINE);
+    expect(whole.before?.rowInside && whole.before?.plotInside).toBe(true);
+    expect(whole.before?.plotBottom ?? -100).toBeGreaterThan(-8);
+    expect(whole.after?.surface).toBe(whole.before?.surface);
+    await frame("p12-already-whole-en-1366x768");
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  it("PM9.6-P12b a row with no points: its own note comes into view beside it, and nothing is read (R2)", async () => {
+    const table = scenario("projectWithResult", "en");
+    table.read_targeted_ms1_rows = {
+      total: 2,
+      offset: 0,
+      rows: [
+        storedRow(STORED_CAFFEINE, true),
+        {
+          ...storedRow(STORED_ABSENT, false),
+          outcome: "FAILED",
+          failureReason: "TARGET_UNACCOUNTED",
+          ion: null,
+          windows: null,
+          signal: null,
+          feature: null,
+          candidates: [],
+        },
+      ],
+    };
+    await open(table, "en", 1366, 768);
+    await openRecord(RESULT);
+    await browser.$(`${report(RESULT)} [data-targeted-row]`).waitForDisplayed();
+    const before = await callCount();
+    const reveal = await chooseAndReveal(RESULT, STORED_ABSENT);
+    await frame("p12b-no-points-en-1366x768");
+    expect({
+      rowInside: reveal.after?.rowInside,
+      endInside: reveal.after?.endInside,
+      innerUnchanged: reveal.after?.inner === reveal.before?.inner,
+      focused: reveal.after?.focused,
+    }).toEqual({ rowInside: true, endInside: true, innerUnchanged: true, focused: STORED_ABSENT });
+    expect(await issued("read_targeted_ms1_evidence", before)).toBe(0);
     expect(await unexpectedConsole()).toEqual([]);
   });
 });

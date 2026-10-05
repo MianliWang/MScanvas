@@ -1554,18 +1554,6 @@ describe("a stored result in its report and in the history (PM9.6)", () => {
     expect(precedes(rows, query("[data-targeted-no-selection]"))).toBe(true);
   });
 
-  it("keeps the keyboard on the row it was pressed on once that target is drawn (R2)", async () => {
-    await opened();
-    const control = query(`[data-targeted-choose="${DETECTED}"]`);
-    control.focus();
-    const drawn = appears("[data-targeted-selected] [data-targeted-plot] img");
-    await press(control);
-    await act(async () => {
-      await drawn;
-    });
-    expect(document.activeElement).toBe(control);
-  });
-
   it("keeps the report, its chosen target and its reads while its own run is inspected, and back (R3)", async () => {
     const api = await opened();
     const report = query(`[data-targeted-report="${ARTIFACT}"]`);
