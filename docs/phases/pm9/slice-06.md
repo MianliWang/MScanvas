@@ -1,9 +1,9 @@
 # PM9.6 — results, history, provenance and explicit continuation
 
 PM9 | Acceptance: U6, U7, U8 (stored), U9, U10 | Depends on: PM9.2, PM9.3, PM9.5 | Serial, one writer
-Status: **IN PROGRESS** (expanded 2026-10-05 from the code of the starting
-point below). The midpoint check is not repeated; nothing here unfreezes the
-route.
+Status: **IN PROGRESS — QUALIFICATION RESOURCE_DEFERRED** (checkpoint 1,
+2026-10-05, §13). Expanded the same day from the code of the starting point
+below. The midpoint check is not repeated; nothing here unfreezes the route.
 
 ## 0. Starting point
 
@@ -356,3 +356,147 @@ of its science was taken.
 | Records | A record page: method snapshot, notes, export of the snapshot | History plus Details | History says how each attempt ended (R4, R5) | History adopted; notes and snapshot export not (F3) |
 | Not found | "Not found means no evidence was established" | `targetedMeaning` says the same, after the table | Before the table (R2) | Kept |
 | Reopen and relink | Listed by the demo as missing | Explicit check, Locate, Confirm | Unchanged | No counterpart |
+
+## 13. Record
+
+**2026-10-05, checkpoint 1.** Implemented, reviewed and corrected once. The
+frozen qualification groups (§10) have not run: the first was refused at the
+memory gate.
+
+**Identities.**
+
+| What | Commit | Tree |
+| --- | --- | --- |
+| Start | `9def1bf6d53ffc0e175d9a3ddeecbbf367d27c44` | `4228710baafd36c0a2bd60295abbead24af5b96a` |
+| Expansion (this file) | `798009d7cbc7b210f68ac08c18012052ff173b98` | `0fe68954f229745b5fc78b419f17c341b9fe2130` |
+| PM9.6 spec, test only | `a697cc9a08771b74fa4ed7f0a6c878aee0fa5143` | `343cdac0899ebbb0e06d8569e45d6c02afc5ebb2` |
+| Spec, test-authoring fixes after G0 | `5107c8c7e6adb1e7ee333fa89051c121e52098a5` | `cbde43c426f03edbcf348c0931fca999249f7150` |
+| Production R1–R6 | `157ded3feecb0bc06580967072f204499f6813a9` | `3c7648052d811db8432658e9ce8e390e03f41197` |
+| Tests R1–R6 | `2f1719e67775c2fa8ec0ebad85e950311d55cd23` | `fc2ebeeeb18c965caef0641174a38b61c26d63ef` |
+| Correction cycle 1, production | `6c3508a1b984491504dd20013125b5cb67ce8ab2` | `804c594318d6dcf792035059b5659ad2b81104f9` |
+| Correction cycle 1, tests | `a2a4feab15ec298ce8974b77caedd5f6a2ada311` | `147de2966256e28e1f3fa2a38ff50f4080a5b8a0` |
+| Documentation, the stable candidate | `782bac4254881fc2a99af3190c22869ba7b7b781` | `0f3dbbc643e7ccfba58d77e14f2475378305a0bd` |
+
+Between `a2a4fea` and `782bac4` only documents changed (`e2e/README.md` is one
+of them), so the candidate's code is production `6c3508a` and tests `a2a4fea`.
+
+**What ran, and on what.** Chrome 154.0.8037.93 headless at DPR 1 for every
+browser run. Each run went through the scratch runner, with its own memory
+reading, its own dev port and zero leftover processes.
+
+| Run | On | Admitted at | Result |
+| --- | --- | --- | --- |
+| O6 observation | `9def1bf` | 7.91 GiB free, 75% used | 10 of 10 frames; the before evidence (§0) |
+| S0 `pnpm e2e:typecheck` | `a697cc9` | 7.25 GiB, 77.1% | exit 0 |
+| G0 PM9.6 spec, unchanged production | `a697cc9` | 7.39 GiB, 76.7% | 4 of 30 passing (below) |
+| D0 probe (scratch, not kept) | `a697cc9` | 6.96 GiB, 78% | the dev server mounts under StrictMode: every mount effect runs twice |
+| D1 `pnpm typecheck`; five affected Vitest files | working tree = `157ded3` + `2f1719e`'s tests | 6.37 GiB, 79.9%; 6.39 GiB, 79.8% | exit 0; 138 of 138 |
+| D2 PM9.6 spec | the same | 6.67 GiB, 78.9% | 25 of 30; five test-authoring failures (below) |
+| D3 PM9.6 spec | working tree equal to `2f1719e`'s content | 7.51 GiB, 76.3% | 30 of 30 |
+| D4-red P12 and P12b | `157ded3`'s `TargetedMs1.tsx` with `a2a4fea`'s spec | 6.72 GiB, 78.8% | P12 RED at its last step: a view already whole moved 4 px (504 → 508); P12b passed |
+| D5 both typechecks; five affected Vitest files | working tree equal to `a2a4fea`'s content | 7.04 GiB, 77.8%; 7.05 GiB, 77.8% | exit 0; 137 of 137 |
+
+The D runs are development evidence, not qualification.
+
+**G0 on unchanged production.**
+
+- **RED where the R items said.** Each case below failed at its first finding:
+
+  | Cases | First finding |
+  | --- | --- |
+  | P1, P4, P6 (four), P11 reduced motion | R2: the chosen target's plot not in view |
+  | P2 (two), P1b | R3: the report replaced when its run was inspected |
+  | P5 | R5: no payload state in the history |
+  | P10 (six) | R4: no failure line |
+  | P11 anchors (six) | R1 and R2: the summary and the order |
+  | P11 at 1536×864 | the row only partly in view after a focus scroll |
+
+- **Passed as their V items predicted:** P8 (reopen) and P9 (navigation and
+  replacement). P11 at 1280×720 and 2560×1440 asserted only the row.
+- **P3 and P7 failed on test-authoring faults, fixed in `5107c8c`:**
+  - StrictMode runs a mount's reads twice, so the walks are now measured by
+    what they issue, and a held drawing waits for at least one parked caller;
+  - P7's refusal now carries the boundary's `summary`.
+
+**Test-authoring fixes** (outside the correction-cycle count):
+
+- `5107c8c`, the two G0 faults above;
+- in `2f1719e`, after D2: Shift+Tab sent as m7.1 sends it, and motion's
+  reduced-motion development notice allowed only in the case that asks for
+  reduced motion, as PM9.1 does.
+
+**Focused review.** One read-only reviewer. It ran nothing.
+
+- **No BLOCKER.**
+- **SHOULD-FIX 1, a product defect, taken as correction cycle 1 (`6c3508a`).**
+  The reveal judged visibility against a box shrunk by its 8 px margin, so it
+  moved a view that already showed the row and the drawing.
+- **SHOULD-FIX 2, coverage, closed in cycle 1's tests (`a2a4fea`).**
+  - The reveal's guard, its second-press path and its no-points end state had
+    no test; they now have P12 and P12b.
+  - P5 now also refuses an evidence read `unknownRecord`, as §9 said.
+  - A component case that could not fail is removed.
+- **NITs:**
+  - a dead CSS selector half, dropped;
+  - "Damaged" covers more causes than a digest mismatch, now a known limit in
+    the M9.2 record;
+  - the reveal's guard is focus-only, recorded as O3.
+- **One cycle of the two authorized.**
+
+**Rendered evidence so far** (git-ignored; development, not qualification):
+
+- before: `.tmp/pm96-observe/out/`;
+- after: `.tmp/pm96-runs/D3/browser-sC2Nyu/`, 56 frames from the 30-of-30
+  run, each with the candidate, viewport, DPR, language, panels, surface
+  scroll and focus.
+
+Compared with O6 at 1366×768 (en):
+
+- The summary went from 211 px to one 18 px line.
+- The first target row is now on the first screen.
+- After a choice, the plot sits within the visible bottom (plot bottom 744
+  against 752), with the row in view, where O6 had the panel's top at 934.
+- History names the failure and "No result was stored."
+- No horizontal overflow at any anchor. The frames of the final candidate are
+  G1's, pending.
+
+**Resources.** The S1 group was refused at admission at 01:11:45: 3.2 GiB free
+and 89.9% used. A single reading at 01:12:11 for the light checks gave
+3.33 GiB and 89.5%. No process of this slice was running: every group had
+reported zero leftovers, and the reviewer had finished. Nothing else was
+touched. Nothing waits for memory, and nothing is relaunched by itself.
+
+**Done on the candidate, light.**
+
+- `git diff --check 9def1bf 782bac4` is clean.
+- **Scope.** The range changes only:
+  - `apps/desktop/src/features/project/` (four production files, two test files);
+  - the two locale bundles;
+  - `e2e/specs/pm9.6-results-history.browser.e2e.ts`, `e2e/support/targeted.ts`
+    and `e2e/README.md`;
+  - documents.
+
+  No Rust, IPC or DTO (`projectApi.ts` unchanged), schema, manifest, lock or
+  workflow file.
+- `python scripts/check_repo.py` was deferred with the heavy groups. It is
+  light, but the machine was at the 90% line.
+
+**Remaining, in this order.** Each is admitted on its own reading: at least
+6 GiB free and at most 85% used. A browser group gets a fresh port.
+
+1. S1, from the repository root: `pnpm typecheck` (`pnpm lint` is the same
+   `tsc -b --pretty false`), then `pnpm e2e:typecheck`.
+2. V1, from `apps/desktop`: `pnpm exec vitest run --maxWorkers=1
+   --no-file-parallelism` with `TargetedMs1.test.tsx`,
+   `TargetedMs1Batch.test.tsx`, `ProjectPanel.test.tsx`,
+   `ProvenanceDetails.test.tsx` and `ProjectQcSummary.test.tsx` (under
+   `src/features/project/`). Then U1, the same command over the whole suite.
+3. B0: `pnpm build`.
+4. G1, the PM9.6 spec, port 15286. It includes P12, cycle 1's exact failed
+   scenario, on the fix.
+5. G2, the PM9.5 spec, port 15287.
+6. G3, m9.1 and m9.4, port 15288.
+7. G4, m8.5, m8.1 and m8.2, port 15289.
+8. G5, PM9.1 whole, port 15290.
+9. `python scripts/check_repo.py`; then this record's closure, `slices.md`,
+   the baseline (§16) and the brief.
