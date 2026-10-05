@@ -28,7 +28,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PreviewError } from "../mzml-preview/contracts";
 import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { attachedRow, qcUnavailable, type ViewedPreview } from "./lineage";
+import { attachedRow, provenanceOf, qcUnavailable, type ViewedPreview } from "./lineage";
 import type {
   OutcomeSummary,
   ProjectArtifact,
@@ -41,6 +41,7 @@ import {
   EMPTY_TARGETED_DRAFT,
   FAILURE_KEYS,
   OUTCOME_KEYS,
+  PAYLOAD_STATE_KEYS,
   phaseKey,
   TargetedMs1Report,
   TargetedMs1Setup,
@@ -412,15 +413,47 @@ export function ProjectPanel({
   const layerOf = (input: ProjectInput) =>
     state.layers.find((layer) => layer.sourceInputId === input.id) ?? null;
 
-  /** The QC snapshot being inspected, with what the report needs beside it. */
+  /**
+   * The record whose report the main region shows: the QC snapshot or
+   * targeted result being inspected -- or, while the run that produced the
+   * report on screen is inspected, that same report. So walking from a report
+   * to its run in Details and back keeps the report, the target chosen in it
+   * and whatever was open. Any other selection replaces or removes it, and
+   * inspecting a run never opens a report that was not already shown.
+   *
+   * Kept while rendering, as the replacement reset below is: an effect would
+   * leave one frame showing no report between the two inspections.
+   */
   const provenance = session.provenance;
+  const [shownRecord, setShownRecord] = useState<string | null>(null);
+  const inspectedRecord =
+    provenance?.kind === "artifact" &&
+    (provenance.artifact.qcSnapshot !== null || provenance.artifact.kind === "targetedMs1ResultV1")
+      ? provenance.artifact.id
+      : null;
+  const recordShown =
+    inspectedRecord ??
+    (provenance?.kind === "run" &&
+    shownRecord !== null &&
+    provenance.run.outputArtifactIds.includes(shownRecord)
+      ? shownRecord
+      : null);
+  if (recordShown !== shownRecord) setShownRecord(recordShown);
+  const shown =
+    recordShown === null
+      ? null
+      : provenance?.kind === "artifact"
+        ? provenance
+        : provenanceOf(state, { kind: "artifact", id: recordShown });
+
+  /** The QC snapshot on screen, with what the report needs beside it. */
   const report =
-    provenance?.kind === "artifact" && provenance.artifact.qcSnapshot !== null
+    shown?.kind === "artifact" && shown.artifact.qcSnapshot !== null
       ? {
-          artifact: provenance.artifact,
-          snapshot: provenance.artifact.qcSnapshot,
-          sourceName: provenance.layerSources[0]?.record?.label ?? null,
-          recordedAt: provenance.producedBy?.record?.finishedAt ?? null,
+          artifact: shown.artifact,
+          snapshot: shown.artifact.qcSnapshot,
+          sourceName: shown.layerSources[0]?.record?.label ?? null,
+          recordedAt: shown.producedBy?.record?.finishedAt ?? null,
         }
       : null;
 
@@ -501,15 +534,15 @@ export function ProjectPanel({
       ? undefined
       : state.inputs.find((input) => input.id === targetedLayer.sourceInputId);
 
-  /** The targeted result being inspected, with what its report needs. */
+  /** The targeted result on screen, with what its report needs. */
   const targetedReport =
-    provenance?.kind === "artifact" && provenance.artifact.kind === "targetedMs1ResultV1"
+    shown?.kind === "artifact" && shown.artifact.kind === "targetedMs1ResultV1"
       ? {
-          artifact: provenance.artifact,
-          plan: provenance.targeted?.plan ?? null,
-          sourceName: provenance.layerSources[0]?.record?.label ?? null,
-          source: provenance.layerSources[0]?.record ?? null,
-          recordedAt: provenance.producedBy?.record?.finishedAt ?? null,
+          artifact: shown.artifact,
+          plan: shown.targeted?.plan ?? null,
+          sourceName: shown.layerSources[0]?.record?.label ?? null,
+          source: shown.layerSources[0]?.record ?? null,
+          recordedAt: shown.producedBy?.record?.finishedAt ?? null,
         }
       : null;
   const phase = phaseKey(session.analysisPhase);
@@ -1320,6 +1353,16 @@ export function ProjectPanel({
                           <time dateTime={run.finishedAt}>{recordedAt(run.finishedAt, locale)}</time>
                         </span>
                       </p>
+                      {/* Why a targeted run failed, where the failure is
+                          listed: the run's own sentence, never an absence. */}
+                      {run.outcome === "failed" && run.targetedMs1?.failure != null ? (
+                        <p
+                          className="project-run-failure"
+                          data-project-run-failure={run.targetedMs1.failure.code}
+                        >
+                          {t(FAILURE_KEYS[run.targetedMs1.failure.code])}
+                        </p>
+                      ) : null}
                       <p className="project-run-relationship">
                         {run.layerIds.length > 0
                           ? // A QC capture consumed a layer, and says which by
@@ -1339,7 +1382,9 @@ export function ProjectPanel({
                             })
                           : t("projectRunInputs", { count: run.inputIds.length })}
                         {artifacts.length === 0 ? (
-                          <span data-project-no-artifact="">{t("projectRunNoArtifact")}</span>
+                          <span data-project-no-artifact="">
+                            {t(run.operation === "targetedMs1V1" ? "projectRunNoResult" : "projectRunNoArtifact")}
+                          </span>
                         ) : (
                           // Described from the counts rather than from the
                           // label the document stores: that label is written in
@@ -1387,6 +1432,21 @@ export function ProjectPanel({
                                       }),
                                     )
                                     .join(" · ")}
+                                  {/* A stored result the project found missing
+                                      or damaged says so before it is opened,
+                                      in the report's own words. What the
+                                      project last looked at, not a later read. */}
+                                  {artifact.targetedMs1.availability === "available" ? null : (
+                                    <>
+                                      {" — "}
+                                      <span
+                                        className="project-artifact-unavailable"
+                                        data-project-artifact-availability={artifact.targetedMs1.availability}
+                                      >
+                                        {t(PAYLOAD_STATE_KEYS[artifact.targetedMs1.availability])}
+                                      </span>
+                                    </>
+                                  )}
                                 </>
                               ) : null}
                             </span>

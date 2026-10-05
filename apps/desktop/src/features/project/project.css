@@ -931,3 +931,57 @@
 .targeted-batch td:last-child .link-button {
   white-space: nowrap;
 }
+
+/*
+ * A stored result and its history (PM9.6).
+ *
+ * The outcome counts are one line of label and value, every count kept, so
+ * the rows they summarize start on the first screen. A failed run says why
+ * under its outcome, and a stored result the project found missing or
+ * damaged says so beside its counts; both in the danger tone the run's
+ * border and the report's own refusal already use.
+ */
+.targeted-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+
+.targeted-summary-label {
+  color: var(--color-text-secondary);
+}
+
+.targeted-summary dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+}
+
+.targeted-summary dl > div {
+  display: flex;
+  gap: 4px;
+}
+
+.targeted-summary dt {
+  color: var(--color-text-secondary);
+}
+
+.targeted-summary dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.project-run-failure {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.project-artifact-unavailable {
+  color: var(--color-danger);
+}

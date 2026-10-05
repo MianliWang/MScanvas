@@ -323,7 +323,7 @@ export function ProvenanceDetails({
           <p className="provenance-section-label">{t("provenanceProduced")}</p>
           {provenance.produced.length === 0 ? (
             <p className="provenance-empty" data-provenance-no-artifact="">
-              {t("projectRunNoArtifact")}
+              {t(provenance.run.operation === "targetedMs1V1" ? "projectRunNoResult" : "projectRunNoArtifact")}
             </p>
           ) : (
             <ul className="provenance-list">

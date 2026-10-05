@@ -22,7 +22,7 @@
  * own word and is never drawn as an absence.
  */
 
-import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 import {
   toPreviewError,
@@ -195,6 +195,27 @@ function bringIntoView(element: HTMLElement | null) {
   if (top < bounds.top || top > bounds.bottom - 48) {
     container.scrollTop += top - bounds.top;
   }
+}
+
+/**
+ * Brings a chosen row and the evidence drawn for it on screen together: the
+ * row always, and `evidence` as far as the row allows. Only the project
+ * surface's own position moves -- never the row table's -- and nothing moves
+ * when both are already in view. Instant, as every scroll here is.
+ */
+function revealBeside(row: HTMLElement, evidence: HTMLElement) {
+  const container = row.closest<HTMLElement>(".workbench-project");
+  if (container === null) return;
+  const margin = 8;
+  const bounds = container.getBoundingClientRect();
+  const top = Math.max(bounds.top, 0) + margin;
+  const bottom = Math.min(bounds.bottom, window.innerHeight) - margin;
+  // How far the evidence runs past the bottom, and how far the view can move
+  // down before the row leaves it at the top (negative: it already has).
+  const past = evidence.getBoundingClientRect().bottom - bottom;
+  const room = row.getBoundingClientRect().top - top;
+  const move = past > 0 ? Math.min(past, room) : Math.min(0, room);
+  if (Math.abs(move) >= 1) container.scrollTop += move;
 }
 
 /** Seconds as recorded, without inventing precision. */
@@ -1499,7 +1520,7 @@ const NEW_RUNS_KEYS = {
   unknown: "targetedNewRunsUnknown",
 } as const satisfies Record<NewRuns, string>;
 
-const PAYLOAD_STATE_KEYS = {
+export const PAYLOAD_STATE_KEYS = {
   available: "targetedStatePayloadWhole",
   payloadMissing: "targetedStatePayloadMissing",
   payloadCorrupt: "targetedStatePayloadCorrupt",
@@ -1717,6 +1738,36 @@ export function TargetedMs1Report({
     };
   }, [api, artifact.id, chosen, chosenExtracted, evidenceKey]);
 
+  /**
+   * Shows a chosen target's evidence beside its row, once it is there.
+   *
+   * Armed by the press on a row and spent when that target's panel reaches
+   * its end: the drawing in place, a refusal said, or a row that has no
+   * points. It acts only while the keyboard is still on the control that was
+   * pressed -- a reader who moved on keeps the place they moved to -- and it
+   * moves the surface alone, so the row table stays where the reader left it.
+   */
+  const revealing = useRef<string | null>(null);
+  const settle = useCallback(() => {
+    const target = revealing.current;
+    if (target === null) return;
+    const panel = section.current?.querySelector<HTMLElement>("[data-targeted-selected]") ?? null;
+    if (panel === null || panel.getAttribute("data-targeted-selected") !== target) return;
+    const end = panel.querySelector<HTMLElement>(
+      "[data-targeted-plot] img, [data-targeted-figure-refused], [data-targeted-evidence-refused], :scope > [data-targeted-no-points]",
+    );
+    if (end === null) return;
+    revealing.current = null;
+    const row = section.current?.querySelector<HTMLElement>(`[data-targeted-row="${target}"]`) ?? null;
+    const control = row?.querySelector("[data-targeted-choose]") ?? null;
+    if (row !== null && control !== null && document.activeElement === control) revealBeside(row, end);
+  }, []);
+  // Every render of the report may be the one that ended the panel: a row
+  // with no points, or a refused read. A drawing arriving tells it directly.
+  useLayoutEffect(() => {
+    settle();
+  });
+
   const page: Loaded<{ readonly total: number; readonly rows: readonly PayloadRow[] }> =
     rows !== null && rows.id === artifact.id ? rows.page : { status: "loading" };
   const labels = new Map(plan?.targets.map((target) => [target.targetId, target.label]) ?? []);
@@ -1842,10 +1893,14 @@ export function TargetedMs1Report({
           offers no reading and no output, so the sentence would be false. */}
       {availability === "available" ? <p className="project-note">{t("targetedReuseNote")}</p> : null}
 
+      {/* Every count the project recorded, zeros included, as one line of
+          label and value: the rows are the substance and come next. */}
       {result === null ? null : (
-        <table className="qc-report-table" data-targeted-summary="">
-          <caption>{t("targetedSummary")}</caption>
-          <tbody>
+        <div className="targeted-summary" data-targeted-summary="">
+          <span id={`${ids}-summary`} className="targeted-summary-label">
+            {t("targetedSummary")}
+          </span>
+          <dl aria-labelledby={`${ids}-summary`}>
             {(
               [
                 ["targets", "targetedSummaryTargets", result.summary.targets],
@@ -1857,13 +1912,13 @@ export function TargetedMs1Report({
                 ["failed", "targetedOutcomeFailed", result.summary.failed],
               ] as const
             ).map(([name, label, count]) => (
-              <tr key={name} data-targeted-count={name}>
-                <th scope="row">{t(label)}</th>
-                <td>{formatCount(count)}</td>
-              </tr>
+              <div key={name} data-targeted-count={name}>
+                <dt>{t(label)}</dt>
+                <dd>{formatCount(count)}</dd>
+              </div>
             ))}
-          </tbody>
-        </table>
+          </dl>
+        </div>
       )}
       {/* About the absences the recovery recorded, so only where there are
           some: a batch whose every window held nothing records none. */}
@@ -1895,6 +1950,36 @@ export function TargetedMs1Report({
         </p>
       ) : (
         <>
+          {/* What the outcome words mean, before the rows that use them, and
+              the table's own output beside the table: the chosen target's
+              evidence then follows its row directly. */}
+          <p className="project-note targeted-meaning">{t("targetedMeaning")}</p>
+
+          <details className="targeted-export" data-targeted-table-export="">
+            <summary>{t("targetedTableExports")}</summary>
+            <p className="project-note">{t("targetedTableExportHelp")}</p>
+            <div className="spectrum-export-actions">
+              {(["csv", "tsv"] as const).map((format) => (
+                <button
+                  key={format}
+                  type="button"
+                  className="secondary-button"
+                  // The pressed control keeps focus across the native picker;
+                  // `start` refuses a repeat, keyboard or pointer.
+                  aria-disabled={running || undefined}
+                  disabled={running && !initiated(format, null)}
+                  data-targeted-export={format}
+                  onClick={() => exportTable(format)}
+                >
+                  {t(initiated(format, null) ? "viewerExporting" : "viewerExportFormat", {
+                    name: format.toUpperCase(),
+                  })}
+                </button>
+              ))}
+            </div>
+            {status("table", null)}
+          </details>
+
           <div className="targeted-rows">
             <table className="qc-report-table" data-targeted-rows={page.value.total}>
               <caption>{t("targetedRowsCaption")}</caption>
@@ -1921,7 +2006,12 @@ export function TargetedMs1Report({
                         aria-pressed={row.targetId === chosen}
                         aria-label={t("targetedShowEvidenceNamed", { name: nameOf(row.targetId) })}
                         data-targeted-choose={row.targetId}
-                        onClick={() => setChosen(row.targetId)}
+                        onClick={() => {
+                          revealing.current = row.targetId;
+                          setChosen(row.targetId);
+                          // Pressed again: its evidence may already be in place.
+                          if (row.targetId === chosen) settle();
+                        }}
                       >
                         {nameOf(row.targetId)}
                       </button>
@@ -1950,32 +2040,6 @@ export function TargetedMs1Report({
               })}
             </p>
           ) : null}
-          <p className="project-note">{t("targetedMeaning")}</p>
-
-          <details className="targeted-export" data-targeted-table-export="">
-            <summary>{t("targetedTableExports")}</summary>
-            <p className="project-note">{t("targetedTableExportHelp")}</p>
-            <div className="spectrum-export-actions">
-              {(["csv", "tsv"] as const).map((format) => (
-                <button
-                  key={format}
-                  type="button"
-                  className="secondary-button"
-                  // The pressed control keeps focus across the native picker;
-                  // `start` refuses a repeat, keyboard or pointer.
-                  aria-disabled={running || undefined}
-                  disabled={running && !initiated(format, null)}
-                  data-targeted-export={format}
-                  onClick={() => exportTable(format)}
-                >
-                  {t(initiated(format, null) ? "viewerExporting" : "viewerExportFormat", {
-                    name: format.toUpperCase(),
-                  })}
-                </button>
-              ))}
-            </div>
-            {status("table", null)}
-          </details>
 
           {selectedRow === null ? (
             <p className="project-empty" data-targeted-no-selection="">
@@ -2025,6 +2089,7 @@ export function TargetedMs1Report({
                     settings={drawn}
                     errorText={outputError}
                     onRefused={noteRefusal}
+                    onDrawn={settle}
                   />
                   {/* Open or closed as the user left it, whichever target is shown. */}
                   <details
@@ -2092,6 +2157,7 @@ function EvidenceFigure({
   settings,
   errorText,
   onRefused,
+  onDrawn,
 }: {
   readonly artifactId: string;
   readonly targetId: string;
@@ -2102,6 +2168,8 @@ function EvidenceFigure({
   readonly errorText: (error: PreviewError) => string;
   /** Told a drawing's refusal, so a result found damaged stops being shown. */
   readonly onRefused: (code: string) => void;
+  /** Told once the drawing, or its refusal, is in place. */
+  readonly onDrawn: () => void;
 }) {
   const t = useUiMessages();
   const api = useProjectApi();
@@ -2150,6 +2218,13 @@ function EvidenceFigure({
     setImageUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [figure]);
+
+  // In the commit that shows it, so whatever is brought into view is where
+  // it will stay: the image's box is set by its size before it decodes.
+  const drawnOrRefused = (figure !== null && imageUrl !== null) || current?.status === "failed";
+  useLayoutEffect(() => {
+    if (drawnOrRefused) onDrawn();
+  }, [drawnOrRefused, onDrawn]);
 
   const points = traces.reduce((count, trace) => count + trace.points.length, 0);
   const traceName = (trace: number) => (trace === 0 ? "M" : `M+${trace}`);
