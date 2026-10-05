@@ -630,7 +630,9 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     await openDisclosure(`${report(ARTIFACTS[0])} [data-targeted-figure-export]`);
     await mark(report(ARTIFACTS[0]));
 
-    // To the run that produced it, in Details, and back: the same report.
+    // To the run that produced it, in Details, and back: the same report,
+    // and nothing read again on the way.
+    const beforeWalk = await callCount();
     await showDetails();
     await browser.$(`#workbench-inspector [data-provenance-link="${RUNS[0]}"]`).click();
     await browser.$('#workbench-inspector [data-provenance="run"]').waitForDisplayed();
@@ -645,9 +647,18 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     expect(await marked(report(ARTIFACTS[0]))).toBe(true);
     expect(await exists(`${report(ARTIFACTS[0])} [data-targeted-selected="${CAFFEINE}"]`)).toBe(true);
 
-    // Reading starts nothing; the rows were read once, when the result arrived.
+    // Reading starts nothing, and the walk asked for nothing. (The dev server
+    // mounts under StrictMode, which runs a mount's reads twice; a count of
+    // reads would measure that, not the walk.)
     expect(await work(beforeOpen)).toEqual([]);
-    expect(await issued("read_targeted_ms1_rows", beforeRun)).toBe(1);
+    expect(await issued("read_targeted_ms1_rows", beforeRun)).toBeGreaterThan(0);
+    // Showing Details may save the layout; the walk itself reads no project or result.
+    expect(
+      (await ipcCalls())
+        .slice(beforeWalk)
+        .map((call) => call.command)
+        .filter((command) => /project|targeted/u.test(command)),
+    ).toEqual([]);
     expect(await unexpectedConsole()).toEqual([]);
   });
 
@@ -708,7 +719,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     // A's drawing is asked for and held; B opens before it answers.
     await holdInvoke("preview_targeted_ms1_figure");
     await keyPress(`${report(ARTIFACTS[0])} ${choose(CAFFEINE)}`, "Enter");
-    await browser.waitUntil(async () => (await heldCallers("preview_targeted_ms1_figure")) === 1, {
+    await browser.waitUntil(async () => (await heldCallers("preview_targeted_ms1_figure")) >= 1, {
       timeoutMsg: "A's drawing was never asked for",
     });
     await setInvokeResult("read_targeted_ms1_rows", NEGATIVE_ROWS);
@@ -759,7 +770,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     // B's table export held, A opened, then B's answer: nothing said in A.
     await holdInvoke("export_targeted_ms1_table");
     await browser.$(`${report(ARTIFACTS[1])} [data-targeted-table-export] [data-targeted-export="tsv"]`).click();
-    await browser.waitUntil(async () => (await heldCallers("export_targeted_ms1_table")) === 1, {
+    await browser.waitUntil(async () => (await heldCallers("export_targeted_ms1_table")) >= 1, {
       timeoutMsg: "B's table export was never asked for",
     });
     await setInvokeResult("read_targeted_ms1_rows", DETECTED_ROWS);
@@ -995,7 +1006,12 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     await keyPress(`${report(RESULT)} ${choose(STORED_CAFFEINE)}`, "Enter");
     await settledChoice(RESULT, STORED_CAFFEINE);
     await openDisclosure(figureRegion);
-    await setInvokeRejection("export_targeted_ms1_figure", { kind: "exportInProgress" });
+    await setInvokeRejection("export_targeted_ms1_figure", {
+      kind: "exportInProgress",
+      summary: "Another export of a stored result is in progress.",
+      detail: null,
+      retryable: true,
+    });
     await browser.$(`${figureRegion} [data-targeted-export="svg"]`).click();
     await browser.$(`${figureRegion} [data-targeted-output="failed"]`).waitForDisplayed();
     expect(await content(`${figureRegion} [data-targeted-output]`)).toContain(en.projectRefusedExportInProgress);
@@ -1124,7 +1140,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     // An evidence read held across a replacement answers nothing in the next project.
     await holdInvoke("read_targeted_ms1_evidence");
     await keyPress(`${report(RESULT)} ${choose(STORED_ABSENT)}`, "Enter");
-    await browser.waitUntil(async () => (await heldCallers("read_targeted_ms1_evidence")) === 1);
+    await browser.waitUntil(async () => (await heldCallers("read_targeted_ms1_evidence")) >= 1);
     await pressNamed(".project-header", en.projectOpen);
     await browser.waitUntil(async () => (await content(".project-header h2")) === "Another copy");
     expect(await exists("[data-targeted-report]")).toBe(false);
@@ -1261,6 +1277,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     await openRecord(ARTIFACTS[0]);
     await browser.$(`${report(ARTIFACTS[0])} [data-targeted-row]`).waitForDisplayed();
     await mark(report(ARTIFACTS[0]));
+    const loaded = await callCount();
     await browser.$(`[data-project-inspect-run="${RUNS[0]}"]`).click();
     await frames();
     expect(await marked(report(ARTIFACTS[0]))).toBe(true);
@@ -1272,7 +1289,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     await browser.$(`[data-project-inspect-run="${RUNS[0]}"]`).click();
     await frames();
     expect(await exists("[data-targeted-report]")).toBe(false);
-    expect(await issued("read_targeted_ms1_rows")).toBe(1);
+    expect(await issued("read_targeted_ms1_rows", loaded)).toBe(0);
     expect(await unexpectedConsole()).toEqual([]);
   });
 });
