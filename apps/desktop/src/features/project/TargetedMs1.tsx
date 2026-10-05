@@ -206,15 +206,16 @@ function bringIntoView(element: HTMLElement | null) {
 function revealBeside(row: HTMLElement, evidence: HTMLElement) {
   const container = row.closest<HTMLElement>(".workbench-project");
   if (container === null) return;
-  const margin = 8;
   const bounds = container.getBoundingClientRect();
-  const top = Math.max(bounds.top, 0) + margin;
-  const bottom = Math.min(bounds.bottom, window.innerHeight) - margin;
-  // How far the evidence runs past the bottom, and how far the view can move
-  // down before the row leaves it at the top (negative: it already has).
-  const past = evidence.getBoundingClientRect().bottom - bottom;
-  const room = row.getBoundingClientRect().top - top;
-  const move = past > 0 ? Math.min(past, room) : Math.min(0, room);
+  const top = Math.max(bounds.top, 0);
+  const bottom = Math.min(bounds.bottom, window.innerHeight);
+  const rowTop = row.getBoundingClientRect().top;
+  const end = evidence.getBoundingClientRect().bottom;
+  // Measured against what the reader actually sees: both in view, nothing moves.
+  if (rowTop >= top && end <= bottom) return;
+  // The row first, up to the top edge; then the evidence, as far as the row
+  // allows, with a little air beneath it.
+  const move = rowTop < top ? rowTop - top : Math.min(end - (bottom - 8), rowTop - top);
   if (Math.abs(move) >= 1) container.scrollTop += move;
 }
 

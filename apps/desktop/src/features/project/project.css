@@ -749,8 +749,7 @@
 
 /* A table keeps its label beside its value rather than stretching across the
    section, and the row table fills its own scroller. */
-.targeted-setup .qc-report-table,
-.targeted-report > .qc-report-table {
+.targeted-setup .qc-report-table {
   align-self: flex-start;
 }
 
