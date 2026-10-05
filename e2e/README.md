@@ -83,6 +83,29 @@ a target found, one failed and one completed with every target not detected.
 States that need a held answer -- a run in progress, a stop -- are in the
 PM9.5 spec's frames, not here.
 
+**Stored results, history and reopen (PM9.6).** The existing scenarios reach
+every report; nothing was added for PM9.6. For example, a stored result in
+Chinese at the narrowest anchor:
+
+```powershell
+$env:MSCANVAS_PM9_MANUAL_SCENARIO = "projectWithResult"
+$env:MSCANVAS_PM9_MANUAL_LOCALE = "zh-CN"
+$env:MSCANVAS_PM9_MANUAL_VIEWPORT = "960x640"
+pnpm qa:pm9:manual
+```
+
+| Scenario | Path through the real interface |
+|---|---|
+| `projectWithResult` | Project → under Recorded work, **Targeted MS1 result** → the report; press **Caffeine** → its evidence comes into view beside the row; **Show Details** → the run under "Produced by" (the report stays) → the result under "Produced" |
+| `resultPayloadMissing`, `resultPayloadCorrupt` | Project → the history row already names the payload's state → the record → the report's state line and its next step |
+| `resultSourceAndRuntimeUnavailable` | As `projectWithResult`: the report says the source and the runtime are unavailable, and still reads, draws and offers its outputs |
+| `qcCapture` | Workbench → press **QC_pool_01.mzML** in the roster to view it → Project → **Capture QC summary** on its layer → the report; then the run in Recorded work keeps it |
+| `targetedTask` | Project → **Targeted MS1…** → tick all three → type targets → **Review plan** → **Run 3 analyses** → Recorded work: a completed result, a failed run with its reason, a result with every target not detected |
+
+Reopening a project, a relink and late answers need answers the fixed table
+cannot give; they are in the PM9.6 spec's frames
+(`specs/pm9.6-results-history.browser.e2e.ts`), not here.
+
 In the page, hold Alt+Shift and press:
 
 | Key | Does |

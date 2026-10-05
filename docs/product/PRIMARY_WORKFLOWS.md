@@ -650,4 +650,16 @@ made this path read in order inside the setup:
 - an ending offers **Open result** or **Show run**, and the same plans run
   again are labelled as new runs.
 
-See [slice-05](../phases/pm9/slice-05.md).
+See [slice-05](../phases/pm9/slice-05.md). **PM9.6 (2026-10-05)** made the
+stored result and its history read as one task:
+
+- the outcome counts are one line, and the meaning of the outcome words and
+  the table's export come before the rows;
+- a chosen target's evidence comes into view beside its row;
+- the report stays while the run that produced it is inspected in Details;
+- the history says why a run failed and that no result was stored;
+- a stored result found missing or damaged is named in the history, and a
+  damaged one says how to recover.
+
+Reopening a project still checks, relinks and admits nothing until asked. See
+[slice-06](../phases/pm9/slice-06.md).

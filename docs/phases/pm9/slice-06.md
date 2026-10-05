@@ -147,6 +147,16 @@ L12 is not revived: UI-25 closed it (baseline §12).
 - **O2.** The selected target's heading names the target and formula. Its
   outcome is in the row beside it and in the figure's text alternative, not in
   the heading.
+- **O3.** Added by the focused review. The reveal's guard is the keyboard
+  alone. A reader who wheels the surface during the read, with focus still on
+  the row, is brought back to the row. The read is local and fast, and R2
+  freezes the keyboard guard. Owner: the PM9.7 integrated journey review.
+- **O4.** Added by the focused review. An evidence read refused
+  `unknownRecord` is said in the project's general sentence, which names a
+  reference. Rust answers it only for a target the stored result does not
+  have, and the stored rows and the evidence come from one validated payload,
+  so no press can reach it. Owner: the M9.2 refusal wording, if a reachable
+  path ever appears.
 
 ### FUTURE/EXTERNAL
 
@@ -262,13 +272,15 @@ jsdom has no layout, so the reveal's geometry is browser evidence only.
 | P2 | 2: QC history → snapshot report → its run, en and zh-CN | Report values as recorded, no grade words, no capture or job command. Its run keeps the report (R3); Details shows the run, layer and source |
 | P3 | 3: two results with one label and shared target ids | A drawing held for A's Caffeine is released after B opens: B shows no selection and no figure. B's Caffeine draws with B's outcome in its text. B's exports carry B's artifact. A held table export of B, released after switching to A, leaves no status in A. Details follows the inspected result's run and plan |
 | P4 | 4: source and runtime unavailable | State facts said; rows, evidence, drawing, a CSV and an SVG export all answered; no work |
-| P5 | 5: missing, damaged, and failed evidence reads | Missing and damaged: no rows read, no outputs, the sentences (R6), the history state (R5). `unknownRecord` on one target's evidence: refused in its panel, rows and the table export stay, the other target draws. `payloadCorrupt` on an evidence read: rows and outputs withdrawn, the state line says Damaged, focus not dropped to `body` |
+| P5 | 5: missing, damaged, and failed evidence reads | Missing and damaged: no rows read, no outputs, the sentences (R6), the history state (R5). A drawing refused for one target (`targeted_figure_not_drawable`), then an evidence read refused `unknownRecord`: each said in that target's panel, the row and the refusal in view; the rows, the table export and the whole payload state stay; the other target draws. `payloadCorrupt` on an evidence read: rows and outputs withdrawn, the state line says Damaged, focus not dropped to `body` |
 | P6 | 6: a 200-target result at 960×640 and 1366×768, en and zh-CN | The 200th row reached by a real wheel over the rows scroller with the surface still, and by Shift+Tab from the control after the report. Pressed: the R2 geometry. Settling is read from DOM state |
 | P7 | 7: exports | CSV saved, TSV cancelled and SVG refused, each said in its own region for the requested format and target; exact arguments; PNG saved with its size and DPI |
 | P8 | 8: close and reopen | Close, then Open through the header: history and the report readable, the source "Not checked", no check, relink or admission sent. **Check linked files** sends only its job; the report's source line follows it, and the run's recorded content is unchanged. **Locate…** → Abandon: no commit, the state as before. A Locate the user cancelled changes nothing |
 | P9 | 9: navigation and replacement | Workbench and back: the report, chosen target and open disclosure kept, no new read. A draft in the targeted setup survives inspecting a result. Opening another project with a held evidence read outstanding: the old report goes, and the released answer shows nowhere |
 | P10 | History states and repeated runs, three widths, en and zh-CN | Completed, failed (with its sentence), cancelled and all-negative runs. "No result was stored."; a missing record's state word. Two runs of one plan named apart, each opening its own report |
 | P11 | Rendered anchors | 960×640, 1366×768 and 1920×1080 in en and zh-CN: report first view, chosen target after the reveal, history, QC report. Report and evidence also at 1280×720, 1536×864 and 2560×1440 in en. Missing and damaged at 1366×768. Reduced motion emulated once: the reveal is the same instant scroll |
+| P12 | R2's guard, added by the focused review, 1366×768 en | Focus moved on before the drawing arrives: the surface does not move. The same row pressed again with its drawing in place: the R2 geometry. Row and drawing both in view, the drawing's end within 8 px of the bottom: a press moves nothing |
+| P12b | R2's end state for a row without points, added by the focused review | Its note comes into view beside the row, with no evidence read |
 
 Every frame records the candidate, Chrome, the CSS and outer viewport, DPR,
 the page language, the roster and Details state, overflow, the surface's
