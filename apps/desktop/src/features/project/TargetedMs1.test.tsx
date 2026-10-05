@@ -21,12 +21,14 @@ import { UI_RESOURCES } from "../preferences/i18n";
 import { createFakePreferencesApi, storedRecord } from "../../test/preferenceFixtures";
 import {
   absentRow,
+  appears,
   createFakeProjectApi,
   detectedRow,
   FAKE_ENGINE,
   openProject,
   projectInput,
   projectLayer,
+  projectRun,
   targetedPlan,
   targetedProject,
   type FakeProjectApi,
@@ -1511,5 +1513,151 @@ describe("the task as one path (PM9.5)", () => {
     expect(run.className).toBe("primary-button");
     expect(run.getAttribute("aria-disabled")).toBeNull();
     expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).className).toBe("secondary-button");
+  });
+});
+
+describe("a stored result in its report and in the history (PM9.6)", () => {
+  async function opened(state: ProjectState = targetedProject()) {
+    const api = mount(state);
+    await screen.findByText(en.projectReferences);
+    await press(query(`[data-project-inspect-artifact="${ARTIFACT}"]`));
+    await within(query(`[data-targeted-report="${ARTIFACT}"]`)).findByText(en.targetedRowsCaption);
+    return api;
+  }
+
+  it("keeps every outcome count on one line, zeros included, in the report's order (R1)", async () => {
+    await opened();
+    const summary = query("[data-targeted-summary]");
+    expect(summary.querySelector("table")).toBeNull();
+    expect([...summary.querySelectorAll("[data-targeted-count]")].map((item) => item.getAttribute("data-targeted-count"))).toEqual([
+      "targets",
+      "detected",
+      "detectedAmbiguous",
+      "shared",
+      "suppressedByOverlap",
+      "notDetected",
+      "failed",
+    ]);
+    expect(query('[data-targeted-count="failed"]').textContent).toBe(`${en.targetedOutcomeFailed}0`);
+    expect(within(summary).getByText(en.targetedSummary)).toBeTruthy();
+  });
+
+  it("says what the outcomes mean and offers the table's output before the rows, and the chosen target after them (R2)", async () => {
+    await opened();
+    const report = query(`[data-targeted-report="${ARTIFACT}"]`);
+    const meaning = within(report).getByText(en.targetedMeaning);
+    const output = query("[data-targeted-table-export]");
+    const rows = query(".targeted-rows");
+    expect(precedes(query("[data-targeted-summary]"), meaning)).toBe(true);
+    expect(precedes(meaning, output)).toBe(true);
+    expect(precedes(output, rows)).toBe(true);
+    expect(precedes(rows, query("[data-targeted-no-selection]"))).toBe(true);
+  });
+
+  it("keeps the keyboard on the row it was pressed on once that target is drawn (R2)", async () => {
+    await opened();
+    const control = query(`[data-targeted-choose="${DETECTED}"]`);
+    control.focus();
+    const drawn = appears("[data-targeted-selected] [data-targeted-plot] img");
+    await press(control);
+    await act(async () => {
+      await drawn;
+    });
+    expect(document.activeElement).toBe(control);
+  });
+
+  it("keeps the report, its chosen target and its reads while its own run is inspected, and back (R3)", async () => {
+    const api = await opened();
+    const report = query(`[data-targeted-report="${ARTIFACT}"]`);
+    const drawn = appears("[data-targeted-selected] [data-targeted-plot] img");
+    await press(query(`[data-targeted-choose="${DETECTED}"]`));
+    await act(async () => {
+      await drawn;
+    });
+    const sent = api.calls.length;
+
+    await press(query(`#workbench-inspector [data-provenance-link="${RUN}"]`));
+    expect(details().querySelector("[data-provenance]")?.getAttribute("data-provenance")).toBe("run");
+    expect(query(`[data-targeted-report="${ARTIFACT}"]`)).toBe(report);
+    expect(query(`[data-targeted-selected="${DETECTED}"]`)).toBeTruthy();
+
+    await press(query(`#workbench-inspector [data-provenance-link="${ARTIFACT}"]`));
+    expect(details().querySelector("[data-provenance]")?.getAttribute("data-provenance")).toBe("artifact");
+    expect(query(`[data-targeted-report="${ARTIFACT}"]`)).toBe(report);
+    expect(query(`[data-targeted-selected="${DETECTED}"]`)).toBeTruthy();
+    expect(api.calls.length).toBe(sent);
+    expect(api.readTargetedMs1Rows).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes the report away for any other selection, and opens none from a run (R3)", async () => {
+    await opened();
+    await press(query(`[data-project-inspect-layer="${LAYER}"]`));
+    expect(document.querySelector("[data-targeted-report]")).toBeNull();
+    await press(query(`[data-project-inspect-run="${RUN}"]`));
+    expect(document.querySelector("[data-targeted-report]")).toBeNull();
+  });
+
+  it("says why a targeted run failed, and that no result was stored, in the history and in Details (R4)", async () => {
+    mount(
+      withRun(
+        { outcome: "failed" },
+        { attempt: null, consumedContent: [], failure: { code: "sourceChanged", stage: "source" } },
+      ),
+    );
+    await screen.findByText(en.projectReferences);
+    const row = query(`[data-project-run="${RUN}"]`);
+    expect(query(`[data-project-run="${RUN}"] [data-project-run-failure="sourceChanged"]`).textContent).toBe(
+      en.targetedFailureSourceChanged,
+    );
+    expect(within(row).getByText(en.projectRunNoResult).hasAttribute("data-project-no-artifact")).toBe(true);
+    expect(row.textContent).not.toContain(en.projectRunNoArtifact);
+    await press(query(`[data-project-inspect-run="${RUN}"]`));
+    expect(query("[data-provenance-no-artifact]").textContent).toBe(en.projectRunNoResult);
+  });
+
+  it("says a cancelled targeted run stored nothing, without a failure, and keeps file facts' own words (R4)", async () => {
+    mount(
+      withRun(
+        { outcome: "cancelled" },
+        { failure: null, stop: { reason: "cancelRequested", workerTerminated: true, exitObserved: true } },
+      ),
+    );
+    await screen.findByText(en.projectReferences);
+    expect(document.querySelector(`[data-project-run="${RUN}"] [data-project-run-failure]`)).toBeNull();
+    expect(query(`[data-project-run="${RUN}"] [data-project-no-artifact]`).textContent).toBe(en.projectRunNoResult);
+    cleanup();
+
+    const facts = projectRun({ outcome: "failed", outputArtifactIds: [] });
+    mount(openProject({ runs: [facts] }));
+    await screen.findByText(en.projectReferences);
+    expect(query(`[data-project-run="${facts.id}"] [data-project-no-artifact]`).textContent).toBe(en.projectRunNoArtifact);
+  });
+
+  it("marks a stored result the project found missing or damaged in the history, before it is opened (R5)", async () => {
+    for (const availability of ["payloadMissing", "payloadCorrupt"] as const) {
+      mount(targetedProject(availability));
+      await screen.findByText(en.projectReferences);
+      expect(
+        query(`[data-project-artifact="${ARTIFACT}"] [data-project-artifact-availability="${availability}"]`).textContent,
+      ).toBe(en[availability === "payloadMissing" ? "targetedStatePayloadMissing" : "targetedStatePayloadCorrupt"]);
+      cleanup();
+    }
+    mount(targetedProject());
+    await screen.findByText(en.projectReferences);
+    expect(document.querySelector("[data-project-artifact-availability]")).toBeNull();
+  });
+
+  it("gives a damaged result's next step, as a missing one's (R6)", async () => {
+    mount(targetedProject("payloadCorrupt"));
+    await screen.findByText(en.projectReferences);
+    await press(query(`[data-project-inspect-artifact="${ARTIFACT}"]`));
+    expect(query('[data-targeted-unavailable="payloadCorrupt"]').textContent).toBe(en.targetedPayloadCorrupt);
+    expect(en.targetedPayloadCorrupt).toContain("open the project again");
+    expect(zh.targetedPayloadCorrupt).toContain("重新打开项目");
+  });
+
+  it("names the history's note for targeted runs, in both languages (R4)", () => {
+    expect(en.projectCaptureMeaning).toContain("targeted MS1 run");
+    expect(zh.projectCaptureMeaning).toContain("靶向 MS1 运行");
   });
 });

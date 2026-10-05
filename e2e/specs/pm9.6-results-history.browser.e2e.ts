@@ -131,6 +131,9 @@ function drawing(name: string) {
   };
 }
 
+/** motion's development-build notice when the page asks for reduced motion. */
+const REDUCED_MOTION_NOTICE = "You have Reduced Motion enabled on your device";
+
 const report = (artifact: string) => `[data-targeted-report="${artifact}"]`;
 const choose = (target: string) => `[data-targeted-choose="${target}"]`;
 
@@ -968,7 +971,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
           return following !== undefined && document.activeElement === following;
         }, report(ARTIFACTS[0]));
         expect(after).toBe(true);
-        await browser.action("key").down("Shift").down("Tab").up("Tab").up("Shift").perform();
+        await browser.keys(["Shift", "Tab"]);
         await frames();
         expect(await focusedOn(`${report(ARTIFACTS[0])} ${choose(last)}`)).toBe(true);
         const focusedLast = await settled();
@@ -1269,7 +1272,9 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     } finally {
       await cdp("Emulation.setEmulatedMedia", { features: [] });
     }
-    expect(await unexpectedConsole()).toEqual([]);
+    // motion's development-build notice answers the emulation itself, as in
+    // PM9.1's reduced-motion frames; nothing else may appear.
+    expect((await unexpectedConsole()).filter((entry) => !entry.includes(REDUCED_MOTION_NOTICE))).toEqual([]);
   });
 
   it("PM9.6-P1b the run a record came from, inspected, keeps that record's report and drops any other (R3)", async () => {
