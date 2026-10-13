@@ -13,8 +13,9 @@ reconciled tree has had no new runtime, component or browser run. Superseded
 in part by the 2026-09-26 mid-phase normalization (§10): PM9.1 is **PARTIAL**
 with only J1–J6 left, and native rendering at OS scaling and the provider
 route belong to the qualification after PM9.7. On 2026-10-13 J1–J6 were
-measured on `d56b17b` (§17), and PM9.1 is **COMPLETE — baseline established,
-not accepted**.
+measured on `d56b17b` (§17.2). The draft and viewport legs that §17.1's
+amendment adds (J1b, J4b) have not run yet, so PM9.1 stays **PARTIAL** until
+they do.
 
 ## 1. Ownership map
 
@@ -1726,6 +1727,7 @@ The after side adds a driver for its own candidate and reuses the recorder.
 | M2, J1 (development) | `beacc3a` plus the fix | 7.58 GiB, 76.1% | 1 of 1 |
 | T1 `pnpm e2e:typecheck` | `1cb5ea9` | 7.92 GiB, 75% | exit 0 |
 | **M3, the measurement** | **`1cb5ea9`, clean; extracted `d56b17b`** | 7.57 GiB, 76.1% | **7 of 7** |
+| T2 `pnpm e2e:typecheck`, before the supplements | `c668f05` | 2.19 GiB, 93.1% | refused at the stop line, not started |
 
 M3's evidence is in `.tmp/pm91-j16/runs/M3/journeys-VLJEVj/`, git-ignored:
 `journeys.json` (SHA-256
@@ -1821,7 +1823,19 @@ StrictMode's doubling. Every journey's console ledger is empty.
 **What this establishes.**
 
 - The before side of U1's and U10's comparison on `d56b17b`, by §17.1's
-  rules: **baseline established, not accepted**.
+  rules, **except** drafts and a committed viewport:
+  - J1's preserved m/z range was the default;
+  - no journey carried a draft away and back.
+- The amendment's J1b and J4b add those two legs. They are authored
+  (`c668f05`) and not yet run: T2 was refused at the stop line. Until they
+  run, slice-01 item 4 is not met and PM9.1 is **PARTIAL**.
+- Only M3 and the supplement run count as the baseline. M1 and M2 were
+  development runs, and the probe fix came after them.
+- **Reproducibility.** M1 and M2 agree with M3 on every count but the two
+  that the probe fix changed. J3's main-area changes went from 3 to 4, and
+  J6's at 960×640 from 2 to 4.
+- **Chrome.** September's capture ran Chrome 153.0.8010.53 (its run log,
+  `.tmp/vw-20260925/obs/before.log`); the calibration ran 154.0.8037.98.
 - PM9.7 measures the after side on its own candidate, with a driver of its
   own and the same recorder, fixtures, build mode and anchors.
 - Not measured: native dialogs and files, a provider or engine, native
@@ -1843,5 +1857,6 @@ Neither changes a rule.
 - The checkout, its branch and its worktrees were never changed by the
   extraction.
 - The node_modules junction inside `.tmp/pm91-j16/` was removed after M3
-  with `cmd /c rmdir`, which removes the link and not its target; the script
-  recreates it.
+  with `cmd /c rmdir`, which removes the link and not its target. It was
+  recreated by the script, with the same archive hash, for the supplements,
+  and stays until they run.
