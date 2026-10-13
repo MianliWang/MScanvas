@@ -288,4 +288,30 @@ recommendation:
 
 ## 11. Record
 
-Not started.
+**2026-10-13, authoring.**
+
+- **Test-only commit `bb5f191`** (production unchanged, `6c3508a`'s):
+  - the after-side driver;
+  - the PM9.7 spec;
+  - the legacy repairs and retirements of §7.
+
+  The repairs were made statically, because memory refused every run. Each
+  updated assertion cites the decision that replaced the old one.
+- **m7.2's `metrics()` timeouts are a cascade, not a fault of the helper.**
+  It timed out only right after a failed test whose failure screenshot went
+  through WebDriver, when the next test asked for the same override before
+  navigating. Two pieces of evidence:
+  - in the PM9.2 acceptance run (`.tmp/pm92-accept/run4/`), every other
+    pairing passed;
+  - the same pattern appears in 2026-09-14's `browser-32`, and in
+    `browser-33`'s controlled rerun.
+
+  The helper now clears the override before setting it, and on a timeout
+  reports the page's actual size and ratio. This mechanism is an inference
+  until G-L1 runs.
+- **m7.4's active-Clear pair** was already closed by UI-23 (§7).
+
+| Group | On | Reading at start | Result |
+| --- | --- | --- | --- |
+| T0 `pnpm e2e:typecheck` | `9f3d1b9`, clean | 3.99 GiB free, 87.4% used | refused at admission, not started; it stays refused |
+| C0 `check_repo` and the scoped comparison | `9f3d1b9`, clean | 3.86 GiB, 87.8% (light, not gated) | passed; no Rust, IPC, schema, manifest, lock or workflow change since `57915de` |
