@@ -277,6 +277,29 @@ recommendation:
    pull any into PM9 at the cost of a new candidate.
 7. Any group the memory gate refused.
 
+**The owner's decisions (2026-10-13, "按推荐", on items 1, 2 without the
+integrated states, 4, 5 and 6).** Items 3 and the integrated states were
+put to the owner as provisional. "As recommended" does not decide them;
+they are decided after their runs.
+
+1. **U4** may be accepted with its live-provider check open. That check stays
+   `BLOCKED_PROVIDER_HOLD` and belongs to the qualification after PM9.
+2. **Deviations, final.**
+   - Kept as intentional deviations: L7 at 1920×1080 (280 px against
+     285 px), L11 (the 16 px inset), and L21's one-row navigation at 960×640.
+   - Not adopted: PM9.4's one-line settings summary with an edit action, its
+     three-phase stepper, and PM9.5's stepper.
+3. **ADR 0006's 544 px.** A documentation-only revision after PM9 corrects
+   the breakdown that names the removed sidebar. Nothing changes in PM9.
+4. **The qualification after PM9** is its own dispatch, after PM9 closes.
+   The HOLD is not lifted in PM9.7. Until that dispatch, native rendering at
+   150%, U4's live-provider check and the targeted-MS1 engine path stay
+   `PENDING` or `BLOCKED_PROVIDER_HOLD`.
+5. **The optional rows** (PM9.4 O1–O8, PM9.5 O1–O4) are carried forward
+   after PM9, not into this candidate.
+6. **Memory.** The owner chose neither a waiver nor another admission line,
+   so the standing gate of §8 applies.
+
 ## 10. Evidence boundaries
 
 - **What the browser proves.** It is the real frontend over a controlled IPC
@@ -332,3 +355,4 @@ recommendation:
 | --- | --- | --- | --- |
 | T0 `pnpm e2e:typecheck` | `9f3d1b9`, clean | 3.99 GiB free, 87.4% used | refused at admission, not started; it stays refused |
 | C0 `check_repo` and the scoped comparison | `9f3d1b9`, clean | 3.86 GiB, 87.8% (light, not gated) | passed; no Rust, IPC, schema, manifest, lock or workflow change since `57915de` |
+| T0b `pnpm e2e:typecheck`, after the owner's decisions | `c2eec56`, clean | 3.83 GiB, 87.9% | refused at admission, not started; it stays refused |
