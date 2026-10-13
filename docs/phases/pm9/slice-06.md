@@ -349,7 +349,7 @@ The reference has no Project surface. Its results live in a processing
 workflow's "results" and "export and records" pages over synthetic data; none
 of its science was taken.
 
-| Aspect | v5.11 | Before (O6) | Planned | Disposition |
+| Aspect | v5.11 | Before (O6) | After | Disposition |
 | --- | --- | --- | --- | --- |
 | Result entry | "View results" / "View records" after a run | PM9.5's Open result and Show run; history links | Unchanged | Already adopted (PM9.5) |
 | Table and evidence | A feature table whose selected row links its evidence ("one feature, linked chromatogram … and MS/MS evidence; a candidate is not an identification") | Evidence about a screen below its row | Evidence revealed beside its row (R2) | Adopted in substance |
