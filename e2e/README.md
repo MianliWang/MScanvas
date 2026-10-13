@@ -158,6 +158,30 @@ Remove-Item Env:MSCANVAS_BROWSER_HEADED
 the scenario, walks the whole viewport list and presses one review key. It
 accepts nothing about the pages.
 
+## J1–J6 journeys (PM9.1 before, PM9.7 after)
+
+The six reader journeys of `docs/phases/pm9/baseline.md` §17 are counted by
+one recorder, `baseline/journeys.ts`, on a frontend extracted from one commit.
+That way the checkout's own changes never reach the measurement. The specs
+live in `baseline/`, outside the default glob, and only
+`wdio.baseline.conf.ts` runs them.
+
+```powershell
+# The before side ran on d56b17b; the after side runs on PM9.7's frozen candidate.
+pwsh -File e2e/baseline/prepare-baseline-app.ps1 -Commit <commit> -Root .tmp/pm97-j16
+$env:MSCANVAS_BASELINE_APP_DIR = "<printed>"
+$env:MSCANVAS_BASELINE_VITE_CONFIG = "<printed>"
+$env:MSCANVAS_BROWSER_DEV_PORT = "15300"   # a fresh port per run
+pnpm exec wdio run ./e2e/wdio.baseline.conf.ts --spec ./e2e/baseline/pm9.7-journeys.after.e2e.ts
+```
+
+The script refuses a commit whose lockfile, workspace file or
+`apps/desktop/package.json` differs from the checkout's, because it joins the
+checkout's `node_modules` into the extracted tree. Remove that junction
+afterwards with `cmd /c rmdir`, which removes the link and not its target.
+`journeys.json` and a frame after every step are written under
+`MSCANVAS_PM9_OUTPUT_ROOT`.
+
 ## The `e2e` Cargo feature
 
 Off by default, and never enabled for a release build. It compiles in two

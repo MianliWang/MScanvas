@@ -14,8 +14,8 @@
 
 import {
   ALLOWED_CONSOLE_SUBSTRINGS,
+  type Box,
   boxOf,
-  boxOfButton,
   consoleEntries,
   contains,
   focusedName,
@@ -27,10 +27,17 @@ import {
   setInvokeResult,
 } from "../support/harness";
 import { COMPLETE_POINT_COUNT, MZML_ROW, VENDOR_ROW, ipcTable } from "../support/fixtures";
+import { openTheViewer, revealRosterRow } from "../support/viewer";
 
+/**
+ * Everything below is looked up inside the spectrum panel. Since M7.4 the
+ * chromatogram's header carries figure actions of its own, a visible "Copy
+ * plot" among them, earlier in the document (`PreviewWorkspace.tsx:950`), so a
+ * document-wide lookup by label can land on the other plot's control.
+ */
 const PANEL = "section.spectrum-panel";
-const EXPORT_BLOCK = ".spectrum-export";
-const STATUS = ".spectrum-export-status";
+const EXPORT_BLOCK = `${PANEL} .spectrum-export`;
+const STATUS = `${PANEL} > .spectrum-export-status`;
 const FORMATS = ["SVG", "CSV", "TSV"] as const;
 
 /** Every action the panel offers, in the order a reader meets them. */
@@ -48,17 +55,59 @@ const VIEWPORTS = [
   { name: "960x640", width: 960, height: 640 },
 ] as const;
 
-async function open(options: { readonly emptySpectrum?: boolean } = {}): Promise<void> {
-  await installIpcBoundary(ipcTable(options));
-  await browser.url("/");
-  await browser.$(`li.dataset-row[data-handle="${MZML_ROW.handle}"]`).waitForDisplayed();
+/**
+ * A window, a preview and a viewer, through the shared opener.
+ *
+ * The roster has been `.grouped-roster` rows since M7.2, and one click opens an
+ * mzML row (`DatasetRoster.tsx:748`); the `li.dataset-row` double-click this
+ * was written against no longer exists (PM9 baseline §2, family b). The window
+ * size is passed through because the opener sets it.
+ */
+async function open(
+  options: {
+    readonly width?: number;
+    readonly height?: number;
+    readonly emptySpectrum?: boolean;
+  } = {},
+): Promise<void> {
+  await openTheViewer({
+    width: options.width,
+    height: options.height,
+    answers: ipcTable({ emptySpectrum: options.emptySpectrum }),
+  });
 }
 
-/** Opens the mzML preview and selects one spectrum, through the interface. */
+/**
+ * Commits the first scan from the table.
+ *
+ * Dispatched rather than driven, for the sticky-header reason
+ * `selectTheSpectrum` in `support/viewer.ts` gives. Not that helper itself: it
+ * waits for a drawn plot, and neither a spectrum with no peaks
+ * (`SelectedSpectrumPanel.tsx:172`) nor one that failed to load draws one.
+ */
+async function chooseTheFirstScan(): Promise<void> {
+  await browser.execute(() => {
+    document
+      .querySelector('div.spectrum-table-row[data-row-position="0"]')
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+/**
+ * Selects one spectrum and opens its export, through the interface.
+ *
+ * The export sits in a disclosure in the spectrum's header, which exists only
+ * once a spectrum has loaded and which every viewer opens closed
+ * (`SelectedSpectrumPanel.tsx:45,58`; M7.3), opened as PM9.3's
+ * `openSpectrumExport` opens it.
+ */
 async function loadSpectrum(): Promise<void> {
-  await browser.$(`li.dataset-row[data-handle="${MZML_ROW.handle}"]`).doubleClick();
-  await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForDisplayed();
-  await browser.$('div.spectrum-table-row[data-row-position="0"]').click();
+  await chooseTheFirstScan();
+  const disclosure = browser.$(`${PANEL} .spectrum-export-disclosure`);
+  await disclosure.waitForExist({ timeout: 60_000 });
+  if ((await disclosure.getAttribute("open")) === null) {
+    await browser.$(`${PANEL} .spectrum-export-disclosure > summary`).click();
+  }
   await browser.$(EXPORT_BLOCK).waitForDisplayed();
 }
 
@@ -68,15 +117,14 @@ async function loadSpectrum(): Promise<void> {
  * By label rather than by class, because the label is what a user and an
  * assistive technology both act on -- a control that still matched a selector
  * while saying something else would pass a test nobody could act on.
+ *
+ * Through WebdriverIO's text selector rather than `getText`, which answers only
+ * for what is on screen (m4.3's `rangeNote`); the evidence column scrolls, and
+ * the open export can run below its fold.
  */
 async function buttonLabelled(label: string): Promise<WebdriverIO.Element | undefined> {
-  const buttons = await browser.$$("button").getElements();
-  for (const button of buttons) {
-    if ((await button.getText()).trim() === label) {
-      return button;
-    }
-  }
-  return undefined;
+  const button = await browser.$(PANEL).$(`button=${label}`);
+  return (await button.isExisting()) ? button : undefined;
 }
 
 async function exportButton(
@@ -92,6 +140,10 @@ async function exportButton(
  * reachable. Demanding that every control fit inside the visible rectangle
  * would be demanding that a 640px-tall window show a plot and five actions at
  * once -- which it cannot, and which is why the panel scrolls.
+ *
+ * Since PM9.3 the scrolling is the evidence column's (`#workbench-evidence`)
+ * and the panel is sized to its content (`workbench.css:157`), so its reach is
+ * its own bottom edge -- which is still the edge a control must not pass.
  */
 async function panelReach(): Promise<number> {
   return browser.execute((css: string) => {
@@ -103,37 +155,87 @@ async function panelReach(): Promise<number> {
   }, PANEL);
 }
 
-/** One figure field's box, found by the label a person reads on it. */
+/**
+ * One figure field's box, found by the label a person reads on it.
+ *
+ * Through the label's `for`: the current `SettingField` puts the label beside
+ * its input rather than around it (`components/fields/SettingField.tsx`).
+ */
 async function boxOfField(label: string): Promise<{
   readonly width: number;
   readonly height: number;
   readonly left: number;
   readonly right: number;
 }> {
-  return browser.execute((name: string) => {
-    const field = [...document.querySelectorAll("label")].find((candidate) =>
-      (candidate.textContent ?? "").trim().startsWith(name),
-    );
-    const input = field?.querySelector("input");
-    const box = input?.getBoundingClientRect();
-    return box === undefined
-      ? { width: 0, height: 0, left: 0, right: 0 }
-      : { width: box.width, height: box.height, left: box.left, right: box.right };
-  }, label);
+  return browser.execute(
+    (panel: string, name: string) => {
+      const field = [
+        ...document.querySelectorAll<HTMLLabelElement>(`${panel} label.setting-field-label`),
+      ].find((candidate) => (candidate.textContent ?? "").trim() === name);
+      const input = field === undefined ? null : document.getElementById(field.htmlFor);
+      const box = input?.getBoundingClientRect();
+      return box === undefined
+        ? { width: 0, height: 0, left: 0, right: 0 }
+        : { width: box.width, height: box.height, left: box.left, right: box.right };
+    },
+    PANEL,
+    label,
+  );
+}
+
+/** One action's box, found by its label inside the spectrum panel. */
+async function boxOfControl(label: string): Promise<Box> {
+  return browser.execute(
+    (panel: string, name: string) => {
+      const node = [...document.querySelectorAll(`${panel} button`)].find(
+        (candidate) => candidate.textContent?.trim() === name,
+      );
+      if (node === undefined) {
+        throw new Error(`no button labelled ${name}`);
+      }
+      const rect = node.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      };
+    },
+    PANEL,
+    label,
+  ) as Promise<Box>;
 }
 
 /** Puts the keyboard on one control without activating it. */
 async function focusButton(label: string): Promise<void> {
-  await browser.execute((name: string) => {
-    const button = [...document.querySelectorAll("button")].find(
-      (candidate) => (candidate.textContent ?? "").trim() === name,
-    );
-    button?.focus();
-  }, label);
+  await browser.execute(
+    (panel: string, name: string) => {
+      const button = [...document.querySelectorAll<HTMLButtonElement>(`${panel} button`)].find(
+        (candidate) => (candidate.textContent ?? "").trim() === name,
+      );
+      button?.focus();
+    },
+    PANEL,
+    label,
+  );
+}
+
+/**
+ * One element's text, read from the document rather than through `getText`, as
+ * m4.3's `exportStatus` is and for its reason: the status line sits below the
+ * open export, in a column that scrolls.
+ */
+async function textOf(selector: string): Promise<string> {
+  return browser.execute(
+    (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
+    selector,
+  );
 }
 
 async function statusText(): Promise<string> {
-  return (await browser.$(STATUS).getText()).trim();
+  return textOf(STATUS);
 }
 
 /** Console entries this run is responsible for. */
@@ -148,8 +250,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
   describe("layout", () => {
     for (const viewport of VIEWPORTS) {
       it(`keeps every export control inside the panel at ${viewport.name}`, async () => {
-        await browser.setWindowSize(viewport.width, viewport.height);
-        await open();
+        await open({ width: viewport.width, height: viewport.height });
         await loadSpectrum();
 
         const panel = await boxOf(PANEL);
@@ -172,7 +273,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
         expect(block.bottom).toBeLessThanOrEqual(reach + 0.5);
 
         for (const control of CONTROLS) {
-          const button = await boxOfButton(control);
+          const button = await boxOfControl(control);
           // Every edge, not just the right one. A control pushed above a
           // header's top edge is as unreachable as one pushed past its right --
           // nothing clips it because nothing contains it.
@@ -221,12 +322,11 @@ describe("M4.1 selected-spectrum export, rendered", () => {
     }
 
     it("wraps the export group rather than clipping it at the narrow viewport", async () => {
-      await browser.setWindowSize(960, 640);
-      await open();
+      await open({ width: 960, height: 640 });
       await loadSpectrum();
 
-      const svg = await boxOfButton("Export SVG…");
-      const tsv = await boxOfButton("Export TSV…");
+      const svg = await boxOfControl("Export SVG…");
+      const tsv = await boxOfControl("Export TSV…");
       const heading = await boxOf("#selected-spectrum-heading");
       // Either the three sit on one row beside the heading, or the group has
       // wrapped below it. Both are fine; what is not fine is a control that
@@ -389,7 +489,12 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       });
 
       await (await exportButton("CSV"))?.click();
-      await browser.waitUntil(async () => (await statusText()).includes("already in that folder"), {
+      // Its own words are MSCanvas's sentence for that kind, not the boundary's
+      // summary: since M7.4 a known kind renders its owned resource
+      // (`ownedErrorMessages.ts:19,145-147`, `en.ts:11` "A file of that name
+      // already exists. …"), as SelectedSpectrumExport.test.tsx "localizes a
+      // known typed refusal while retaining recovery" pins.
+      await browser.waitUntil(async () => (await statusText()).includes("already exists"), {
         timeout: 15_000,
       });
 
@@ -456,11 +561,13 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       expect(boundToken).toBeGreaterThan(0);
 
       // Focus moves to the Shimadzu acquisition, which is an ordinary thing to
-      // do while reading a spectrum.
-      await browser.$(`li.dataset-row[data-handle="${VENDOR_ROW.handle}"]`).click();
+      // do while reading a spectrum. A vendor row is selected, not opened
+      // (`DatasetRoster.tsx:748`; `aria-selected` from `GroupedRosterList.tsx:270`).
+      await revealRosterRow(VENDOR_ROW.handle);
+      await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`).click();
       expect(
         await browser
-          .$(`li.dataset-row[data-handle="${VENDOR_ROW.handle}"]`)
+          .$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`)
           .getAttribute("aria-selected"),
       ).toBe("true");
 
@@ -481,15 +588,21 @@ describe("M4.1 selected-spectrum export, rendered", () => {
 
   describe("panel states", () => {
     it("offers nothing before a spectrum has loaded", async () => {
+      // By hand rather than through `open()`, which opens the preview: the
+      // first claim is about the workspace before one is open.
       await browser.setWindowSize(1366, 768);
-      await open();
+      await installIpcBoundary(ipcTable());
+      await browser.url("/");
+      await revealRosterRow(MZML_ROW.handle);
       // No preview, so no spectrum panel at all -- and therefore no export.
       expect(await browser.$(PANEL).isExisting()).toBe(false);
       expect(await browser.$(EXPORT_BLOCK).isExisting()).toBe(false);
 
-      await browser.$(`li.dataset-row[data-handle="${MZML_ROW.handle}"]`).doubleClick();
-      await browser.$(PANEL).waitForDisplayed();
-      await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForDisplayed();
+      await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+      await browser.$(PANEL).waitForDisplayed({ timeout: 60_000 });
+      await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForDisplayed({
+        timeout: 60_000,
+      });
       // A preview is loaded and no spectrum is selected: still nothing.
       expect(await browser.$(EXPORT_BLOCK).isExisting()).toBe(false);
     });
@@ -499,22 +612,22 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       await open({ emptySpectrum: true });
       await loadSpectrum();
 
-      expect(await browser.$(".empty-state").getText()).toContain("This spectrum has no peaks");
+      expect(await textOf(`${PANEL} .empty-state`)).toContain("This spectrum has no peaks");
       for (const format of FORMATS) {
         expect(await (await exportButton(format))?.isEnabled()).toBe(true);
       }
       const panel = await boxOf(PANEL);
       for (const format of FORMATS) {
-        expect(contains(panel, await boxOfButton(`Export ${format}…`))).toBe(true);
+        expect(contains(panel, await boxOfControl(`Export ${format}…`))).toBe(true);
       }
       expect(await unexpectedConsole()).toEqual([]);
     });
 
     it("offers nothing when the spectrum could not be loaded", async () => {
       await browser.setWindowSize(1366, 768);
-      await installIpcBoundary(ipcTable());
-      await browser.url("/");
-      await browser.$(`li.dataset-row[data-handle="${MZML_ROW.handle}"]`).waitForDisplayed();
+      await open();
+      // Set once the preview is open and before a scan is chosen, which is
+      // all the refusal needs: only the spectrum read meets it.
       await setInvokeRejection("load_selected_spectrum", {
         kind: "spectrum_failed",
         summary: "That spectrum could not be read.",
@@ -522,13 +635,10 @@ describe("M4.1 selected-spectrum export, rendered", () => {
         retryable: true,
       });
 
-      await browser.$(`li.dataset-row[data-handle="${MZML_ROW.handle}"]`).doubleClick();
-      await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForDisplayed();
-      await browser.$('div.spectrum-table-row[data-row-position="0"]').click();
-      await browser.waitUntil(
-        async () => (await browser.$(PANEL).getText()).includes("could not be loaded"),
-        { timeout: 15_000 },
-      );
+      await chooseTheFirstScan();
+      await browser.waitUntil(async () => (await textOf(PANEL)).includes("could not be loaded"), {
+        timeout: 15_000,
+      });
 
       expect(await browser.$(EXPORT_BLOCK).isExisting()).toBe(false);
     });

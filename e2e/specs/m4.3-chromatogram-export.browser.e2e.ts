@@ -20,6 +20,7 @@ import {
   openTheViewer,
   pointAt,
   rangeCaption,
+  revealRosterRow,
   revealThePlot,
   visibleSpan,
 } from "../support/viewer";
@@ -408,8 +409,14 @@ describe("exporting the chromatogram, rendered", () => {
     await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
     await openExport();
 
-    await browser.$(PANEL).$("label*=Width").$("input").setValue("");
-    await browser.$(PANEL).$("label*=PNG DPI").$("input").setValue("");
+    // By id: since M7.1 a SettingField's label sits beside its input rather than
+    // around it, so `label*=… input` finds nothing (PM9.7; slice-03 §5 (b)).
+    // Emptied by keys, as m7.4-conversion-figures does, so React sees the edit.
+    for (const field of ["#chromatogram-widthPx", "#chromatogram-pngDpi"]) {
+      await browser.$(field).click();
+      await browser.keys(["Control", "a"]);
+      await browser.keys("Backspace");
+    }
 
     const problems = await browser.execute((css: string) => {
       return Array.from(document.querySelectorAll(css))
@@ -462,25 +469,11 @@ describe("exporting the chromatogram, rendered", () => {
     expect(await unexpectedConsole()).toEqual([]);
   });
 
-  it("says a current range is the whole run until the viewport is committed", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
-    await openExport();
-    await chooseScope("Current range");
-
-    // M7.3's sentence; the copy this first expected predates it (PM9.3).
-    expect(await rangeNote()).toContain("whole run until a range is committed");
-
-    await control("Export CSV…").click();
-    await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
-
-    // Null rather than the run's own bounds: Rust resolves it, and this side
-    // does not invent a subrange to make the option look different.
-    expect(await lastExportRequest().then((request) => request?.["range"])).toEqual({
-      scope: "current",
-      low: null,
-      high: null,
-    });
-  });
+  // Retired at PM9.7 (slice-03 §5, SUPERSEDED copy only): "says a current range
+  // is the whole run until the viewport is committed". Replaced by
+  // apps/desktop/src/app/ChromatogramExport.test.tsx, same title (sentence and
+  // request), and PM9.3-V3 in pm9.3-viewer.browser.e2e.ts (the rendered
+  // `{scope: current, low: null, high: null}` request).
 
   it("sends the committed range once the viewport has been moved", async () => {
     await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
@@ -644,7 +637,10 @@ describe("exporting the chromatogram, rendered", () => {
     await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
     await openExport();
 
-    await browser.$(`li.dataset-row[data-handle="${VENDOR_ROW.handle}"]`).click();
+    // The M7.2 grouped roster's row, revealed where the window folds the roster
+    // (PM9.7; slice-03 §5 (b): `li.dataset-row` no longer exists).
+    await revealRosterRow(VENDOR_ROW.handle);
+    await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`).click();
 
     expect(await browser.$(PLOT).isDisplayed()).toBe(true);
     expect(await control("Export CSV…").isEnabled()).toBe(true);

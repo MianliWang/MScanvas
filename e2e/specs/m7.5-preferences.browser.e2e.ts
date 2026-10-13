@@ -444,14 +444,20 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       outcome: "saved", revision: 2, preferences: record({ locale: "en", density: "comfortable" }),
     });
     await browser.$("[data-layout-reset]").click();
-    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLButtonElement>("[data-layout-reset]")?.disabled === true));
+    // With nothing left to reset the control is refused but reachable:
+    // `aria-disabled`, never `disabled` (WorkbenchHeader.tsx, the reset's
+    // `aria-disabled`; docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
+    // "Acceptance"; the native case in m7.5-preferences.native.e2e.ts).
+    await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-layout-reset]")?.getAttribute("aria-disabled") === "true"));
     const reset = await capture("15-layout-reset");
     expect(reset.layoutRegion).toBe(en.layoutResetDone);
     expect(reset.layoutReset?.insideViewport).toBe(true);
-    // The control stays in the document, and the keyboard goes to the adjacent
-    // durable control rather than to the body -- a browser blurs a control it
-    // has just disabled, so "still mounted" is not on its own enough.
-    expect(await browser.execute(() => (document.activeElement?.textContent ?? "").trim())).toBe(en.rosterToggle);
+    expect(reset.layoutReset?.focusable).toBe(true);
+    // The control stays in the document and keeps the keyboard. The earlier
+    // hand-off to the roster toggle was removed in M7.5's acceptance repair: it
+    // fired for pointer presses too, and moved the reader to a control they had
+    // not touched.
+    expect(await browser.execute(() => document.activeElement?.hasAttribute("data-layout-reset") === true)).toBe(true);
   });
 
   it("reads every backend state, and its offline help, in both languages", async () => {

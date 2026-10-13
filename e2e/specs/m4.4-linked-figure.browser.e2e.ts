@@ -367,8 +367,13 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     await selectAScan();
 
     // A wheel that settles is a committed viewport, and this one is centred
-    // well away from the first scan.
-    const at = await pointAt(0.6);
+    // well away from the first scan. The plot is brought back on screen through
+    // the product's scroll owner first: selecting the scan clicked a table row,
+    // which since M7.3 sits below the spectrum, so the evidence column scrolled
+    // the plot away and a pointer aimed at its layout box was out of bounds
+    // (PM9.7; slice-03 §5 (d)). As in the operable-chromatogram case below.
+    const box = await revealThePlot();
+    const at = { x: (await pointAt(0.6)).x, y: Math.round(box.top + box.height / 2) };
     await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -500 }).perform();
     await browser.waitUntil(
       async () =>
@@ -387,9 +392,12 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
       timeoutMsg: "the linked section never said why it was closed",
     });
 
+    // M7.3's sentence (en.ts `linkedOutside`, c12f45d; LinkedFigureExport.test.tsx
+    // "says the selected scan is outside the current range, and how to fix it").
+    // The copy this first expected predates it (PM9.7).
     expect(await linkedReason()).toBe(
-      "The selected scan is outside the current chromatogram range. Choose Full run or move " +
-        "the current range to include the selected scan.",
+      "The selected scan is outside the current chromatogram range. Choose Full run or " +
+        "include the selected scan in the committed range.",
     );
     expect(await linkedRequests()).toEqual([]);
     // The chromatogram's own exports are untouched: the range holds scans, just
@@ -409,7 +417,9 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     await openTheViewer({ scans: SCANS });
     await selectAScan();
     await openExport();
-    const height = browser.$(PANEL).$("label*=Height").$("input");
+    // By id: since M7.1 a SettingField's label sits beside its input rather than
+    // around it, so `label*=… input` finds nothing (PM9.7; slice-03 §5 (b)).
+    const height = browser.$("#chromatogram-heightPx");
 
     await height.setValue("259");
     await browser.waitUntil(async () => (await linkedReason()).length > 0, {

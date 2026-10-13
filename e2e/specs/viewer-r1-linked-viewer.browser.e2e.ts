@@ -37,11 +37,12 @@ import {
   clickThePlotAt,
   leaveThePlot,
   openTheViewer,
-  plotBox,
   pointAt,
   pointAtRetentionTime,
   rangeCaption,
   readout,
+  revealRosterRow,
+  revealThePlot,
   selectedRowPosition,
   viewerReads,
   visibleDomain,
@@ -355,23 +356,31 @@ describe("the linked viewer, rendered", () => {
     });
   });
 
+  /*
+   * Retired at PM9.7 as SUPERSEDED (docs/phases/pm9/slice-03.md §5), each
+   * against a replacement that exists under this exact title:
+   *
+   * - "draws one path per trace rather than one node per scan" and "goes back
+   *   to a line as soon as there is one to draw" counted every circle; the plot
+   *   now renders hidden point glyphs on purpose. Replacement:
+   *   Chromatogram.test.tsx "draws one path per trace rather than one node per
+   *   scan" (counts visible glyphs); see also its "goes back to one path per
+   *   trace as soon as there is a line to draw".
+   * - "says what the traces are and which units were not reported" and the
+   *   single-scan "puts a visible mark on screen for the one scan it has" read
+   *   a caption M7.3 moved into the Source and drawing details disclosure.
+   *   Replacement: Chromatogram.test.tsx "says the values come from the loaded
+   *   table and are not a stored record"; the single scan's mark is also held
+   *   by Chromatogram.test.tsx "draws the one scan's total ion current as a
+   *   visible mark" and, rendered, by "marks each series, told apart by more
+   *   than colour" below.
+   * - "pans on a real drag without changing the span": since M7.3 a primary
+   *   drag proposes a range and the middle button pans. Replacement:
+   *   Chromatogram.test.tsx "pans on a drag without changing the span, and does
+   *   not select" and m7.3-viewer.browser.e2e.ts "keeps numeric raw text, IME
+   *   and host keys separate and supports wheel and pan with reduced motion".
+   */
   describe("what the plot draws", () => {
-    it("draws one path per trace rather than one node per scan", async () => {
-      await openTheViewer({ scans: SCANS });
-
-      expect((await plotNodeCounts()).paths).toBe(1);
-      await browser.$("//span[normalize-space()='BPC']/preceding-sibling::input").click();
-
-      const both = await plotNodeCounts();
-      expect(both.paths).toBe(2);
-      expect(both.circles).toBe(0);
-      // A small fixed set of elements: axes, labels, a clip and two traces.
-      expect(both.total).toBeLessThan(40);
-
-      await browser.$("//span[normalize-space()='TIC']/preceding-sibling::input").click();
-      expect((await plotNodeCounts()).paths).toBe(1);
-    });
-
     it("says on purpose when both traces are hidden", async () => {
       await openTheViewer({ scans: SCANS });
 
@@ -382,16 +391,6 @@ describe("the linked viewer, rendered", () => {
       expect(await browser.$("text.chromatogram-hidden-note").getText()).toBe(
         "Both traces are hidden.",
       );
-    });
-
-    it("says what the traces are and which units were not reported", async () => {
-      await openTheViewer({ scans: SCANS });
-
-      const caption = await browser.$(AXIS_CAPTION).getText();
-      expect(caption).toContain("Per-scan values from the loaded spectrum table");
-      expect(caption).toContain("Not a stored chromatogram record");
-      expect(caption).toContain("Retention time — unit not reported");
-      expect(caption).toContain("Intensity — unit not reported");
     });
   });
 
@@ -466,35 +465,6 @@ describe("the linked viewer, rendered", () => {
       await browser.pause(300);
       expect(await rangeCaption()).toBe(settled);
       expect(await browser.$("button=Reset range").isEnabled()).toBe(true);
-      expect(await unexpectedConsole()).toEqual([]);
-    });
-
-    it("pans on a real drag without changing the span", async () => {
-      await openTheViewer({ scans: SCANS });
-      await browser.$("button=Zoom in").click();
-      await browser.waitUntil(async () => !(await rangeCaption()).includes("full range"), {
-        timeout: 10_000,
-      });
-      const before = await visibleSpan();
-      const low = (await visibleDomain()).low;
-
-      const from = await pointAt(0.7);
-      const to = await pointAt(0.3);
-      await browser
-        .action("pointer")
-        .move({ x: from.x, y: from.y })
-        .down()
-        .move({ x: to.x, y: to.y, duration: 60 })
-        .up()
-        .perform();
-
-      await browser.waitUntil(async () => (await visibleDomain()).low > low, {
-        timeout: 10_000,
-        timeoutMsg: "the drag did not move the viewport",
-      });
-      // Panned rather than resized, and nothing was selected by the drag.
-      expect(Math.abs((await visibleSpan()) - before)).toBeLessThan(before * 0.02);
-      expect(await selectedRowPosition()).toBeNull();
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -811,7 +781,11 @@ describe("the linked viewer, rendered", () => {
       expect(before.selectedTop).toBeCloseTo(before.headerBottom, 0);
 
       // Commit it again from the plot -- a new commit, and one the reveal acts
-      // on.
+      // on. The driver's click on row 2 can scroll the evidence column down to
+      // the table and leave the plot off screen ("move target out of bounds"),
+      // so the plot is brought back through that column's own scroll first. The
+      // table viewport is not the plot's ancestor, so its scrollTop is untouched.
+      await revealThePlot();
       const at = await pointAtRetentionTime(2 * RT_STEP);
       await clickThePlotAt(at.x, at.y);
       await browser.waitUntil(async () => (await selectedRowPosition()) === 2, {
@@ -937,7 +911,8 @@ describe("the linked viewer, rendered", () => {
       const marker = await readout();
       const before = viewerReads(await ipcCalls());
 
-      await browser.$(`li.dataset-row[data-handle="${VENDOR_ROW.handle}"]`).click();
+      // The grouped roster's row (M7.2); at 1366 the roster is not folded.
+      await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`).click();
 
       expect(await browser.$(PLOT).isDisplayed()).toBe(true);
       expect(await rangeCaption()).toBe(range);
@@ -1476,68 +1451,6 @@ describe("the linked viewer, rendered", () => {
       }, selector) as Promise<Box | null>;
     }
 
-    /** The plot's drawing area in page pixels, from its own viewBox padding. */
-    async function drawingArea(): Promise<Box> {
-      const box = await plotBox();
-      const left = box.left + (64 / 1_000) * box.width;
-      const top = box.top + (12 / 210) * box.height;
-      return {
-        left,
-        top,
-        width: ((1_000 - 64 - 12) / 1_000) * box.width,
-        height: ((180 - 12) / 210) * box.height,
-      };
-    }
-
-    function overlaps(one: Box, other: Box): boolean {
-      return (
-        one.left < other.left + other.width &&
-        one.left + one.width > other.left &&
-        one.top < other.top + other.height &&
-        one.top + one.height > other.top
-      );
-    }
-
-    it("puts a visible mark on screen for the one scan it has", async () => {
-      await openTheViewer({ scans: 1 });
-
-      // Nothing is selected, and nothing needs to be: the trace has to
-      // represent its own measurement.
-      expect(await selectedRowPosition()).toBeNull();
-      expect(
-        await browser.execute(() => document.querySelector("g.chromatogram-selected") !== null),
-      ).toBe(false);
-
-      const marks = await browser.execute(() =>
-        [...document.querySelectorAll("circle.chromatogram-point")].map(
-          (node) => node.getAttribute("class") ?? "",
-        ),
-      );
-      expect(marks).toHaveLength(1);
-      expect(marks[0]).toContain("chromatogram-point-tic");
-
-      const mark = await markBox("circle.chromatogram-point");
-      expect(mark).not.toBeNull();
-      // Paint geometry rather than a point with no size.
-      expect(mark?.width ?? 0).toBeGreaterThan(0);
-      expect(mark?.height ?? 0).toBeGreaterThan(0);
-      // And it is inside the plot rather than somewhere off it.
-      expect(overlaps(mark as Box, await drawingArea())).toBe(true);
-
-      // The axis and the caption are unchanged by any of it.
-      const values = await browser.execute(() =>
-        [...document.querySelectorAll("text.chromatogram-value-label")].map(
-          (node) => node.textContent ?? "",
-        ),
-      );
-      expect(values[0]).toBe("5000");
-      expect(values[1]).toBe("0");
-      const caption = await browser.$(AXIS_CAPTION).getText();
-      expect(caption).toContain("Per-scan values from the loaded spectrum table");
-      expect(caption).toContain("Retention time — unit not reported");
-      expect(await unexpectedConsole()).toEqual([]);
-    });
-
     it("marks each series, told apart by more than colour", async () => {
       await openTheViewer({ scans: 1 });
       await browser.$("//span[normalize-space()='BPC']/preceding-sibling::input").click();
@@ -1590,18 +1503,6 @@ describe("the linked viewer, rendered", () => {
       expect(remaining?.height ?? 0).toBeGreaterThan(0);
       expect(await unexpectedConsole()).toEqual([]);
     });
-
-    it("goes back to a line as soon as there is one to draw", async () => {
-      // The mark is for the case that has no line, and for nothing else.
-      await openTheViewer({ scans: SCANS });
-
-      expect(
-        await browser.execute(
-          () => document.querySelectorAll("circle.chromatogram-point").length,
-        ),
-      ).toBe(0);
-      expect((await plotNodeCounts()).paths).toBe(1);
-    });
   });
 
   describe("when the preview has no chromatogram", () => {
@@ -1609,8 +1510,10 @@ describe("the linked viewer, rendered", () => {
       await browser.setWindowSize(1_366, 768);
       await installIpcBoundary(ipcTable());
       await browser.url("/");
-      const row = `li.dataset-row[data-handle="${MZML_ROW.handle}"]`;
-      await browser.$(row).waitForDisplayed();
+      // The grouped roster (M7.2), and one press activates an mzML row
+      // (`DatasetRoster` handleRowPress); a double press could read it twice.
+      const row = `.grouped-roster [data-handle="${MZML_ROW.handle}"]`;
+      await revealRosterRow(MZML_ROW.handle);
       await browser.execute((tableKey: string) => {
         const answers = (window as unknown as Record<string, Record<string, unknown>>)[tableKey];
         const preview = answers["open_mzml_preview"] as {
@@ -1622,18 +1525,22 @@ describe("the linked viewer, rendered", () => {
           truncated: true,
         };
       }, "__mscanvasIpcTable__");
-      await browser.$(row).doubleClick();
+      await browser.$(row).click();
       await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForDisplayed();
 
       expect(await browser.$(PLOT).isExisting()).toBe(false);
       expect(await browser.$(CHROMATOGRAM).getText()).toContain(
         "TIC and BPC are unavailable for this preview.",
       );
-      expect(await browser.$(CHROMATOGRAM).getText()).toContain("did not load the complete");
+      // Both sentences below are M7.3's wording (c12f45d), which moved the
+      // owner tests with them: Chromatogram.test.tsx "refuses a table the
+      // preview did not load whole, and says why" and SpectrumTable.test.tsx
+      // "does not present the end of a truncated prefix as the end of the run".
+      expect(await browser.$(CHROMATOGRAM).getText()).toContain("loaded table is incomplete");
 
       // The table still works, and says outright that its last row is not the
       // end of the run.
-      expect(await browser.$(TABLE).getText()).toContain("which is not the end of the run");
+      expect(await browser.$(TABLE).getText()).toContain("loaded prefix only");
       // Dispatched rather than driven. WebDriver scrolls an element it thinks
       // is out of view to the container's *top edge* before clicking it, which
       // in this table is underneath the sticky header -- so the click is

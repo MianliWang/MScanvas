@@ -3,24 +3,43 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { installIpcBoundary, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
+import { cdp } from "../support/cdp";
+import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
 import { selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 
 const row = (id: string) => `.grouped-roster [data-handle="${id}"]`;
 let output = "";
 const evidence: unknown[] = [];
-async function cdp(cmd: string, params: Record<string, unknown>) {
-  const { hostname = "127.0.0.1", port, path = "/", protocol = "http" } = browser.options;
-  if (port === undefined) throw Error("Owned ChromeDriver port missing");
-  const root = `${protocol}://${hostname}:${port}${path.endsWith("/") ? path : path + "/"}`;
-  const response = await fetch(new URL(`session/${browser.sessionId}/goog/cdp/execute`, root), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd, params }) });
-  const data = await response.json() as { value?: Record<string, unknown> };
-  if (!response.ok || data.value?.error) throw Error(JSON.stringify(data));
-  return data.value ?? {};
-}
+/**
+ * The CSS viewport at a DPR. Not `support/cdp.ts`'s helper, which fixes DPR at 1.
+ *
+ * Cleared before it is set (PM9.7). Every recorded timeout here was a test
+ * asking, before it navigated, for exactly the override the previous, failed
+ * test had left: run 4's tests 5-8 at 1366x768@1.5 after test 4, and
+ * `.tmp/m72-evidence/browser-32` in M7.2. A different size after a failure, the
+ * same size with no failure between, and the same size after navigating all
+ * passed. The failure's afterEach screenshot goes through WebDriver rather than
+ * this CDP session (its PNGs are CSS-sized, 1366x768, where this session's are
+ * 2049x1152), and the document it leaves keeps the size but not the DPR; Chrome
+ * evidently does not re-apply an override equal to the session's last one.
+ * Clearing makes every call a real change, at the cost of one frame at the
+ * window's own size, which cancels a drag (no caller is in one).
+ */
 async function metrics(width: number, height: number, dpr: number) {
+  await cdp("Emulation.clearDeviceMetricsOverride", {});
   await cdp("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: dpr, mobile: false });
-  await browser.waitUntil(() => browser.execute((w, h, s) => innerWidth === w && innerHeight === h && devicePixelRatio === s, width, height, dpr));
+  await browser.waitUntil(() => browser.execute((w, h, s) => innerWidth === w && innerHeight === h && devicePixelRatio === s, width, height, dpr)).catch(async () => {
+    const seen = await browser.execute(() => `${innerWidth}x${innerHeight}@${devicePixelRatio}`);
+    throw Error(`The viewport never became ${width}x${height}@${dpr}; the page reports ${seen}.`);
+  });
 }
+/**
+ * Calls other than preference saves. Since M7.5, Apply and each panel toggle
+ * commit through `save_ui_preferences` (docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
+ * "Startup, Settings and layout semantics"); organization and pending reads
+ * must still ask the backend for nothing.
+ */
+const besidesPreferenceSaves = <T extends { readonly command: string }>(calls: readonly T[]) => calls.filter(call => call.command !== "save_ui_preferences");
 async function capture(label: string) {
   const measured = await browser.execute(() => {
     const rect = (element: Element) => { const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; };
@@ -57,6 +76,9 @@ async function newGroup(name: string) {
   await browser.$(".group-name-dialog").waitForExist({ reverse: true });
 }
 async function locale(value: "en" | "zh-CN") {
+  // The shared table confirms every save as English, and the shell adopts what
+  // a save confirms (PM9 baseline §11).
+  await readBackSavedPreferences();
   await browser.$("[data-settings-entry]").click();
   await browser.$(`[data-settings-dialog] input[value="${value}"]`).click();
   await browser.$("[data-settings-dialog]").$(value === "en" ? "button=Apply" : "button=应用").click();
@@ -138,6 +160,10 @@ describe("M7.2 workbench shell and grouped roster", () => {
       table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
       await installIpcBoundary(table); await metrics(1920, 1080, 1); await browser.url("/");
       if (language === "zh-CN") await locale(language);
+      // `unexpected_error` has its own resource since M7.5 (ownedErrorMessages.ts,
+      // `errorUnexpected`; docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
+      // "Localization and accessibility coverage"); it was English in both.
+      const backendFailure = language === "en" ? "Something went wrong while talking to the MSCanvas backend." : "与 MSCanvas 后端通信时出现问题。";
       const details = browser.$('[aria-controls="workbench-inspector"]');
       const unavailable = async (state: string) => {
         // Refused but focusable, so its reason is reachable (PM9.2 L20).
@@ -152,7 +178,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await metrics(960, 640, 2);
       await unavailable("empty");
       await holdInvoke("open_mzml_preview");
-      await browser.$('[aria-controls="workbench-roster"]').click();
+      await revealRosterRow(selectedFile.handle);
       await browser.$(row(selectedFile.handle)).click();
       await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
       await browser.$(".workbench-home").click();
@@ -162,7 +188,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       // adapter's retryable protocol failure without modifying the harness.
       await setInvokeResult("open_mzml_preview", { malformedPreview: true });
       await releaseInvokeHold("open_mzml_preview");
-      await browser.$("#workbench-evidence").$("strong=Something went wrong while talking to the MSCanvas backend.").waitForDisplayed();
+      await browser.$("#workbench-evidence").$(`strong=${backendFailure}`).waitForDisplayed();
       await unavailable("failed");
       await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
       await browser.$("#workbench-evidence").$(language === "en" ? "button=Try reading this file again" : "button=重试读取此文件").click();
@@ -173,7 +199,9 @@ describe("M7.2 workbench shell and grouped roster", () => {
       // Re-read with an already requested inspector. Availability must close it
       // immediately, even before a resize folds the constrained layout.
       await metrics(1366, 768, 1.5);
-      await browser.$('[aria-controls="workbench-roster"]').click();
+      // Widening clears the fold, so the roster is already open here and a bare
+      // toggle would close it (panelPresentation.ts: request versus suppression).
+      await revealRosterRow(selectedFile.handle);
       await holdInvoke("open_mzml_preview");
       await browser.$(".dataset-roster-actions button:nth-child(3)").click();
       await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
@@ -182,7 +210,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await unavailable("narrowed-reading");
       await setInvokeResult("open_mzml_preview", { malformedPreview: true });
       await releaseInvokeHold("open_mzml_preview");
-      await browser.$("#workbench-evidence").$("strong=Something went wrong while talking to the MSCanvas backend.").waitForDisplayed();
+      await browser.$("#workbench-evidence").$(`strong=${backendFailure}`).waitForDisplayed();
       await unavailable("narrowed-failed");
       expect(await consoleEntries()).toEqual([]);
     }
@@ -195,7 +223,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await installIpcBoundary(table); await metrics(width, 768, 1.5); await browser.url("/");
       if (language === "zh-CN") await locale(language);
       await browser.$(".workbench-navigation button:nth-child(2)").click();
-      if (width === 960) await browser.$('[aria-controls="workbench-roster"]').click();
+      if (width === 960) await revealRosterRow("unreadable-raw");
       const before = await ipcCalls();
       await browser.$(row("unreadable-raw")).click();
       expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("conversion");
@@ -219,7 +247,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await capture(`review-reveal-${width}-${language}-${activation}`);
       // A subsequent deliberate navigation stays authoritative while reading.
       await browser.$(".workbench-navigation button:nth-child(2)").click();
-      if (width === 960) await browser.$('[aria-controls="workbench-roster"]').click();
+      if (width === 960) await revealRosterRow(selectedFile.handle);
       const pendingCalls = await ipcCalls();
       await browser.$(row(selectedFile.handle)).click();
       expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("conversion");
@@ -503,6 +531,9 @@ describe("M7.2 workbench shell and grouped roster", () => {
       handle: `wide-${index}`, sourceKind: "thermo_raw", fileName: `采集_${index}${index % 9 === 0 ? "_variable_height_very_long_acquisition_label_研究项目重复条件" : ""}.raw`,
     })) };
     await installIpcBoundary(table); await browser.url("/"); await metrics(1920, 1080, 1);
+    // Settings and the 960 roster toggle below must keep what they asked for
+    // rather than the fixture's fixed record (PM9 baseline §11).
+    await readBackSavedPreferences();
     await browser.$(row("wide-0")).waitForDisplayed();
     await newGroup("Offscreen group");
     await browser.$(row("wide-0")).click();
@@ -567,7 +598,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.keys("Escape"); await browser.releaseActions();
     await browser.$('.grouped-roster[data-drag-active="true"]').waitForExist({ reverse: true });
     expect(await browser.$('[data-group-id="group-1"] .group-count').getText()).toBe("0");
-    expect(await ipcCalls()).toEqual(before);
+    expect(besidesPreferenceSaves(await ipcCalls())).toEqual(besidesPreferenceSaves(before));
     expect(await consoleEntries()).toEqual([]);
   });
   it("recovers a refused roster, preserves pending reads, and cancels outside, keyboard, pointer and stale drops", async () => {
@@ -585,7 +616,11 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await installIpcBoundary(table); await browser.url("/"); await metrics(1366, 768, 1.5);
     await browser.$("strong=The workspace list could not be read").waitForDisplayed(); await capture("16-roster-refused");
     await locale("zh-CN");
-    expect(await viewerAnnouncement()).toBe("无法读取工作区列表. Controlled roster refusal 原文");
+    // An unrecognised code keeps the boundary's words, labelled as untranslated
+    // original in zh-CN since M7.5 (ownedErrorMessages.ts, `errorReportedAsSent`;
+    // docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md, "Localization and
+    // accessibility coverage").
+    expect(await viewerAnnouncement()).toBe("无法读取工作区列表. 后端的原始报告（未翻译）：Controlled roster refusal 原文");
     await capture("16a-zh-refused-announcement");
     await locale("en");
     const extra = [0, 1, 2].map(index => ({ ...selectedFile, handle: `async-${index}`, fileName: `异步样本_${index}.raw`, sourceKind: "thermo_raw" }));
@@ -608,12 +643,9 @@ describe("M7.2 workbench shell and grouped roster", () => {
     const readingCalls = await ipcCalls();
     await browser.$(".workbench-navigation button:nth-child(2)").click();
     await newGroup("Async group");
-    await browser.$("[data-settings-entry]").click();
-    await browser.$('[data-settings-dialog] input[value="zh-CN"]').click();
-    await browser.$('[data-settings-dialog]').$("button=应用").click();
-    await browser.$('[data-settings-dialog]').waitForExist({ reverse: true });
+    await locale("zh-CN");
     await browser.$(".workbench-home").click();
-    expect(await ipcCalls()).toEqual(readingCalls);
+    expect(besidesPreferenceSaves(await ipcCalls())).toEqual(besidesPreferenceSaves(readingCalls));
     await releaseInvokeHold("open_mzml_preview");
     await browser.$(".chromatogram-panel").waitForDisplayed();
     await capture("19-zh-home-read-complete");
