@@ -12,7 +12,9 @@ the provider-positive native route is BLOCKED_PROVIDER_HOLD (§7.6). On
 reconciled tree has had no new runtime, component or browser run. Superseded
 in part by the 2026-09-26 mid-phase normalization (§10): PM9.1 is **PARTIAL**
 with only J1–J6 left, and native rendering at OS scaling and the provider
-route belong to the qualification after PM9.7.
+route belong to the qualification after PM9.7. On 2026-10-13 J1–J6 were
+measured on `d56b17b` (§17), and PM9.1 is **COMPLETE — baseline established,
+not accepted**.
 
 ## 1. Ownership map
 
@@ -1677,3 +1679,145 @@ side runs on a different interface.
 - `e2e/wdio.baseline.conf.ts`.
 
 The after side adds a driver for its own candidate and reuses the recorder.
+
+### 17.2 Results (2026-10-13)
+
+**Runs.**
+
+- Every run went through the scratchpad runner, which recorded each launched
+  process's PID, creation time, command and parent. No run left a process
+  behind.
+- Chrome 154.0.8037.98 ran headless at DPR 1, with the host's cached
+  ChromeDriver 154.0.8037.93 (Chrome 155 is staged on the host but not
+  active).
+- The owner waived the admission line for J1–J6 and kept the 4 GiB / 90% stop
+  line.
+
+| Run | On | Started at | Result |
+| --- | --- | --- | --- |
+| K0, calibration | — | 2.84 GiB free, 91% used | refused at the stop line, not started; it stays refused |
+| T0 `pnpm e2e:typecheck` | `beacc3a` | 7.25 GiB, 77.1% | exit 0 |
+| K1, calibration | extracted `d56b17b`, instrument `beacc3a` | 7.26 GiB, 77.1% | 4 of 4; matches §7.4 (below) |
+| M1, journeys (development) | `beacc3a` | 6.33 GiB, 80% | 6 of 7: J1's search typed a prefix two fixture rows share |
+| M2, J1 (development) | `beacc3a` plus the fix | 7.58 GiB, 76.1% | 1 of 1 |
+| T1 `pnpm e2e:typecheck` | `1cb5ea9` | 7.92 GiB, 75% | exit 0 |
+| **M3, the measurement** | **`1cb5ea9`, clean; extracted `d56b17b`** | 7.57 GiB, 76.1% | **7 of 7** |
+
+M3's evidence is in `.tmp/pm91-j16/runs/M3/journeys-VLJEVj/`, git-ignored:
+`journeys.json` (SHA-256
+`06edba36f925ef3b6c40df7af4966bb0d0700b2def572989dd2db3c67edfc007`) and 57
+frames, one at each journey's start and one after every step.
+
+**Calibration (K1)** against the 24 entries of §7.4's before capture:
+
+- All twelve English entries are identical, field for field.
+- In zh-CN the geometry is identical, with one exception: idle zh-CN
+  1366×768. §7.4 already called September's reading of that frame unsettled
+  (a main region 888 px tall at a 768 px viewport). K1 reads 576 px, as
+  English does.
+- Seven keyboard stops read a 2 px outline in one run and 3 px in the other,
+  in both directions. Every one is solid and visible: this samples the
+  moment the focus treatment was read, not the build.
+
+The extraction renders as `d56b17b` did.
+
+**Measurements (M3).** 1366×768 in English unless named.
+
+| Journey | Steps | Decisions (options) | Confirmations | Native dialogs | Context changes | Journey IPC: read / work / other | Mounts (in / out) | Preserved set |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| J1 | 7 | 1 (6 spectra) | 0 | 0 | surface 2, main 4, inspected 1, Details 1 | 3 / 0 / 1 | viewer, chromatogram, spectrum, scan table and Details' panel 1 / 0 each | all 7 kept |
+| J2 | 4 | 2 (4 rows each) | 0 | 1 (destination folder) | surface 1, main 2 | 4 / 2 / 0 | conversion plan 1 / 1 | — |
+| J3 | 6 | 0 | 1 (use the located file) | 2 (open, locate) | surface 1, main 4 | 0 / 6 / 0 | none | — |
+| J4 | 5 | 1 (3 acquisitions) | 0 | 0 | surface 1, main 3, inspected 1 | 5 / 3 / 0 | setup, report, Details' object 1 / 0 each | — |
+| J5 | 8 | 3 (2 targets; 2 table formats; 2 figure formats) | 0 | 2 (two saves) | surface 1, main 3, inspected 2 | 7 / 2 / 0 | targeted report 1 / 1, QC report 1 / 0, Details' object 1 / 0 | — |
+| J6 | 10 | 2 (2 languages each) | 2 (Apply) | 0 | surface 2, main 2, dialog 4, acquisitions 2 | 0 / 0 / 4 | Settings dialog 2 / 2 | acquisitions panel kept |
+| J6, 960×640 | 10 | 2 | 2 | 0 | surface 2, main 4, dialog 4, acquisitions 2 | 0 / 0 / 4 | Settings dialog 2 / 2 | acquisitions panel kept |
+
+Each page also made 13 calls while it mounted (9 read, 4 other), with
+StrictMode's doubling. Every journey's console ledger is empty.
+
+**The paths as walked**, the before side PM9.7 compares against:
+
+- **J1.**
+  1. Search the list for `QC_pool_01`.
+  2. Tick its conversion checkbox.
+  3. View it.
+  4. Choose spectrum 0.
+  5. Show Details.
+  6. Go to Conversion & results.
+  7. Go back to the Workbench.
+
+  On return, everything is as left: the search, membership, viewed row,
+  spectrum, the m/z range ("Showing m/z 300.0000 to 302.5000 (full range)"),
+  Details, and the listed rows. The commands were `open_mzml_preview`,
+  `load_selected_spectrum`, `project_selected_spectrum` and one preference
+  save.
+- **J2.**
+  1. Tick two vendor rows; each tick describes the plan again.
+  2. Go to Conversion & results. The plan is the review; nothing asks for a
+     confirmation.
+  3. Convert, answering the destination folder dialog.
+
+  The commands were two describes, the reservation, the destination and the
+  state reads.
+- **J3.**
+  1. Go to the Project.
+  2. Open project… (a dialog).
+  3. Check linked files.
+  4. Locate… (a dialog).
+  5. Use this file.
+  6. Save.
+
+  That is six work commands and no read. A fresh session asks no
+  unsaved-changes question.
+- **J4.**
+  1. Go to the Project.
+  2. Open Targeted MS1… on one of three layers.
+  3. Type the targets.
+  4. Review plan.
+  5. Run.
+
+  The result's report appears under the setup when the run answers, with no
+  further press.
+- **J5.**
+  1. Go to the Project.
+  2. Open the targeted result.
+  3. Choose Caffeine.
+  4. Open the table's export, and choose CSV (a save dialog).
+  5. Open the figure's export, and choose SVG (a save dialog).
+  6. Open the QC snapshot.
+- **J6.**
+  1. Go to the Project, then Home through the brand.
+  2. Settings, 中文, Apply.
+  3. Settings, English, Apply.
+  4. Acquisitions, twice.
+
+  At 960×640 the open panel covers the main area.
+
+**What this establishes.**
+
+- The before side of U1's and U10's comparison on `d56b17b`, by §17.1's
+  rules: **baseline established, not accepted**.
+- PM9.7 measures the after side on its own candidate, with a driver of its
+  own and the same recorder, fixtures, build mode and anchors.
+- Not measured: native dialogs and files, a provider or engine, native
+  scaling, and screen-reader output.
+
+**Test-authoring fixes** (`1cb5ea9`, between M1 and M3):
+
+- J1's search now types the acquisition's name;
+- the context probe now reads an opened project and a main area that an open
+  panel covers, as §17.1's "which major region occupies the main area"
+  requires.
+
+Neither changes a rule.
+
+**Custody.**
+
+- Ports: 15292 (K0, never started), 15293, 15294, 15295 and 15296.
+- No process was killed by name or port.
+- The checkout, its branch and its worktrees were never changed by the
+  extraction.
+- The node_modules junction inside `.tmp/pm91-j16/` was removed after M3
+  with `cmd /c rmdir`, which removes the link and not its target; the script
+  recreates it.

@@ -2,9 +2,11 @@
 
 PM9 | Acceptance: baseline for U1, U9, U10; repeatable scenarios for U2–U8 |
 Type: experimental / must | Serial, one writer
-Status: **PARTIAL — J1–J6 BASELINE MEASUREMENT OUTSTANDING** (2026-09-26
-mid-phase normalization, [baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)). Every other item of
-the Completion below is met. Established in the browser in the 2026-09-25
+Status: **COMPLETE — BASELINE ESTABLISHED, NOT ACCEPTED** (2026-10-13). J1–J6
+were measured on `d56b17b` ([baseline §17](baseline.md#17-j1j6-measurement-on-d56b17b-pm91-pending-item-4)),
+the last item of the Completion below. Before that: **PARTIAL — J1–J6
+BASELINE MEASUREMENT OUTSTANDING** (2026-09-26 mid-phase normalization,
+[baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)), with every other item of the Completion met. Established in the browser in the 2026-09-25
 window on the production-code candidate `a0783bb`
 ([baseline §7](baseline.md#7-validation-window-2026-09-25)).
 
@@ -68,7 +70,10 @@ is what this slice continues), [screen model](../../product/SCREEN_MODEL.md) and
    L21 are open, and L7 at 1920×1080 has no disposition; and the states in the
    "Not captured" list were not part of the comparison
    ([baseline §3.1](baseline.md#31-rendered-comparison-and-dispositions-2026-09-25)).
-4. **Not done.** Measure journeys J1–J6 before later slices change them — curate and inspect;
+4. **Done (2026-10-13)** on `d56b17b`, which later slices cannot change, by
+   the rules frozen in [baseline §17.1](baseline.md#171-method-frozen-before-any-measuring-run-2026-10-13)
+   and with the results in §17.2. The item as written:
+   Measure journeys J1–J6 before later slices change them — curate and inspect;
    convert; reopen and check a project; targeted setup, review and run; read QC
    and targeted results and export; Home / Settings / folding — recording
    steps, decisions, context changes, required confirmations, preserved IDs,
@@ -125,3 +130,16 @@ Native rendering at OS scaling and the provider route were never in this
 contract; they belong to the M7.6-style qualification after PM9.7's frozen
 candidate. The helper diagnoses (item 5) are not in it either: the
 `openTheViewer` repair is PM9.3's and m7.2's `metrics()` diagnosis PM9.7's.
+
+*Completed 2026-10-13.* J1–J6 are measured on `d56b17b`
+([baseline §17](baseline.md#17-j1j6-measurement-on-d56b17b-pm91-pending-item-4)).
+
+- **How.** The frontend was served from an extraction that a calibration
+  proved renders as §7.4's before capture did. Steps, decisions,
+  confirmations, native dialogs, context changes, preserved sets, IPC calls
+  and mounts were recorded at 1366×768 in English, and J6 also at 960×640.
+- **Status.** Every item of the Completion is met: **COMPLETE — baseline
+  established, not accepted**. U1, U9 and U10 have their baseline. PM9.7
+  measures the after side by the same rules, with the same recorder.
+- **Outside the Completion.** The helper diagnoses (item 5) stay with PM9.3
+  and PM9.7, as §10 routed them.
