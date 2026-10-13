@@ -95,8 +95,13 @@ const driver: Driver = {
         ["[data-qc-report]", "qc-report"],
         ["[data-project-pending]", "unsaved-question"],
         ["[data-project-proposal]", "relink-proposal"],
+        [".project-surface > .project-empty", "no-project"],
+        ["[data-project-input]", "project-records"],
       ];
       const present = markers.filter(([css]) => main?.querySelector(css) !== null && main?.querySelector(css) !== undefined);
+      // Below 1050 px an open panel takes the main area's place: the region
+      // the reader then sees is the panel, whatever the section holds.
+      const covered = main instanceof HTMLElement && main.offsetParent === null;
       const inspector = document.querySelector("#workbench-inspector");
       const described = inspector?.querySelector("[data-provenance]") ?? null;
       const viewed = document.querySelector(".dataset-row.is-active")?.getAttribute("data-handle") ?? null;
@@ -111,7 +116,7 @@ const driver: Driver = {
         roster: shell?.getAttribute("data-roster-open") ?? null,
         details: shell?.getAttribute("data-details-open") ?? null,
         dialog: document.querySelector("[data-settings-dialog]") !== null ? "settings" : null,
-        main: present.length === 0 ? null : present.map(([, name]) => name).join("+"),
+        main: covered ? "covered" : present.length === 0 ? null : present.map(([, name]) => name).join("+"),
       };
     });
   },
@@ -350,8 +355,16 @@ describe("PM9.1 journeys J1–J6 on the candidate the baseline config serves", (
     await until(row);
     const walked = await journey("J1", "1366x768");
     await walked.step("search the list for the acquisition", "step", async () => {
-      await typeInto("#dataset-roster-search", "QC_pool");
-      await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".grouped-roster [data-handle]").length === 1));
+      await typeInto("#dataset-roster-search", MZML_ROW.fileName.replace(/\.mzML$/u, ""));
+      await browser.waitUntil(
+        () =>
+          browser.execute(
+            (handle: string) =>
+              [...document.querySelectorAll(".grouped-roster [data-handle]")].map((each) => each.getAttribute("data-handle")).join() === handle,
+            MZML_ROW.handle,
+          ),
+        { timeoutMsg: "the search did not narrow the list to the one acquisition" },
+      );
     });
     await walked.step("make it a conversion member", "step", async () => {
       await press(`${row} input[type="checkbox"]`);
