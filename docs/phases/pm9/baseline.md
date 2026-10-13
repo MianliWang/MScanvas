@@ -1680,6 +1680,30 @@ side runs on a different interface.
 
 The after side adds a driver for its own candidate and reuses the recorder.
 
+**Amendment, 2026-10-13, written before its run.**
+
+- **The gap.** Slice-01 item 4 names drafts and viewports in what a journey
+  must preserve, and the measurement as first run (M3) shows neither:
+  - J1's preserved m/z range is the default, which nobody had changed;
+  - no journey carries a draft away and back.
+- **The supplements.** Two legs are added. M3's journeys and counts stand as
+  they are.
+  - **J1b, a committed viewport.** J1's path, with one **Zoom in m/z** on the
+    chosen spectrum before leaving. The narrowed range is part of the
+    preserved set.
+  - **J4b, a draft across navigation.** Open Targeted MS1… on one
+    acquisition, type the targets, return Home through the brand, and come
+    back through the Project's navigation button, before any review. The
+    preserved set is:
+    - whether the setup is open;
+    - the typed text;
+    - both parameters.
+
+    This is PM9.1 B3's path, without the context line `d56b17b` does not
+    have.
+- **Counted the same way.** Both legs use §17.1's counting rules and anchor
+  (1366×768, English).
+
 ### 17.2 Results (2026-10-13)
 
 **Runs.**
