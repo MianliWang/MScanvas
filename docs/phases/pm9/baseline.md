@@ -1541,3 +1541,139 @@ keeps what later slices and PM9.7 read from the baseline.
   - **Driver.** Chrome 155 is staged on the host. Until it is active,
     browser runs need `CHROMEDRIVER_PATH` naming a ChromeDriver 154.
   - PM9.1 stays PARTIAL for J1–J6 on `d56b17b`.
+
+## 17. J1–J6 measurement on `d56b17b` (PM9.1 pending item 4)
+
+### 17.1 Method, frozen before any measuring run (2026-10-13)
+
+This is the before side of U1's and U10's before-and-after comparison
+(§10, decision 2). PM9.7 measures the after side by these same rules, so
+the rules are written here rather than in the instrument.
+
+**Candidate and how it is served.**
+
+- `d56b17b6eab8dfdc5e15a85959c971121ee7685c` (tree
+  `a0b237ce11d2bb4b8851feb6ea39f1f180c66a99`).
+- `e2e/baseline/prepare-baseline-app.ps1` extracts the frontend from it with
+  `git archive`: `apps/desktop` without `src-tauri`, archive SHA-256
+  `cfca525e31979a48ebbc9056f2e6f3f1f2b63b9a0b17055ecdbcbf02d4bdf0d9`. The
+  tree goes under `.tmp/pm91-j16/`, git-ignored.
+- It joins the checkout's `apps/desktop/node_modules` into that tree. Since
+  `d56b17b`, the lockfile, the workspace file and `apps/desktop/package.json`
+  are unchanged, and the root manifest gained one script line; the script
+  refuses a commit where the three differ.
+- A wrapper gives the commit's own Vite config a cache of its own.
+- `e2e/wdio.baseline.conf.ts` serves that tree on a fresh port and never
+  reuses a server already there.
+- The checkout, its branch and its worktrees are not touched.
+- The app needs no Tailwind utility: none of the 37 utilities Tailwind
+  generates appears as a class in `d56b17b`'s markup. So the extraction's
+  being git-ignored, which Tailwind's source scan honours, changes no style.
+- `d56b17b` mounts under React StrictMode, as the checkout does. The dev
+  server therefore runs each mount's effects twice, and mount-time reads are
+  dev-server counts.
+
+**Calibration first.** The archived PM9.1 observation block
+(`.tmp/vw-20260925/obs/pm9-observe.browser.e2e.ts`, SHA-256
+`fea4ceaf…6a5c`) runs against the extracted tree, with `d56b17b`'s own
+`e2e/support` beside it. It must reproduce §7.4's before capture
+(`test-results/pm9.1/compare-d56b17b/browser-53Dmo0/`) in every frame:
+
+- the header at 75 px;
+- the notices band at 89 px;
+- the regions and their widths;
+- zero horizontal overflow;
+- the same keyboard stops.
+
+Heights that depend on text are compared too, and any difference beyond
+2 px is diagnosed before anything is measured. Chrome's patch build differs
+from September's, and is recorded.
+
+**Journeys, by goal and end state.** They are not click scripts: the after
+side runs on a different interface.
+
+| Journey | Goal | End state |
+| --- | --- | --- |
+| J1 curate and inspect | In a populated workspace, narrow the list to one acquisition, make it a conversion member, and inspect it: its chromatogram, one chosen spectrum and its summary in Details. Then visit another surface and come back | The same row viewed, the same spectrum chosen with the same range, membership and search kept, Details showing its summary |
+| J2 convert | Convert two vendor acquisitions to mzML with the shipped settings into a chosen folder, and see how each ended | The queue's terminal state, each item's outcome on screen |
+| J3 reopen and check a project | From a session with no project, open a saved one, check its linked files, relink the one that moved, and save | Every reference checked, the moved one relinked, no unsaved changes |
+| J4 targeted setup, review and run | In a saved project, look up two targets in one acquisition and reach the stored result | That run's result report on screen |
+| J5 read QC and targeted results and export | In a saved project holding a targeted result and a QC snapshot, read the result, draw one target, export the table as CSV and the figure as SVG, then read the snapshot | Both exports saved; the snapshot's report on screen |
+| J6 Home / Settings / folding | Change the interface language in Settings and back, fold and unfold the acquisitions panel, and return Home | English applied, the panels as the reader left them, the Workbench surface |
+
+**Path rule.**
+
+- Take the most direct path the candidate offers to the end state.
+- Keep every required confirmation.
+- Never tune a path toward a lower count.
+- Record the path step by step, with a frame after each step.
+
+**Counting rules.**
+
+- **Step.** One input the path needs from the reader:
+  - a press (pointer or key) on a control;
+  - one completed text entry in one field;
+  - the answer of a native dialog, which the browser fixture stands in for.
+    These are counted separately as dialogs.
+- **Decision.** A step that chooses among at least two options offered at that
+  point. The number of options is recorded.
+- **Required confirmation.** A step the product requires to accept an action
+  already chosen: a confirm button after a proposal, an Apply, or an
+  unsaved-changes answer.
+- **Context change.** A change, between consecutive samples, in any of:
+  - the current surface;
+  - the inspected object;
+  - whether the acquisitions panel or Details is open;
+  - an open dialog;
+  - which major region occupies the main area.
+
+  Each kind is counted separately.
+- **Preserved set.** For a journey that leaves and returns, everything it set
+  up, read before leaving and after returning, each recorded as kept or
+  changed: rows, membership, search text, viewed row, chosen spectrum and its
+  range, inspected object, draft text, chosen target, open disclosures.
+- **IPC.** Every call made after the journey's first step and before its end,
+  by command, in three classes:
+  - **read:** `get_`, `read_`, `preview_`, `inspect_`, `load_` and
+    `describe_` commands, `project_selected_spectrum`, `open_mzml_preview`;
+  - **other:** `save_ui_preferences`, subscriptions;
+  - **work:** everything else.
+
+  Calls made while the page mounts are recorded apart. Raw per-command counts
+  are kept, so a later reclassification needs no rerun.
+- **Mounts.** For each named region, the insertions of a new DOM node for it
+  during the journey, by node identity (a MutationObserver), and the removals.
+  The regions are:
+  - the viewer, chromatogram, spectrum and scan table;
+  - Details' panel and its described object;
+  - the Project surface, the targeted setup, the targeted report and the QC
+    report;
+  - the conversion panel and plan;
+  - the Settings dialog.
+
+  The selectors are the candidate's; the names are the contract.
+- **Anchors.** 1366×768 in English for every count. J6 also at 960×640, where
+  the panels fold differently. Chrome headless at DPR 1.
+
+**Fixtures and boundaries.**
+
+- The answers are the controlled ones the PM9 specs use, at the IPC boundary:
+  - `e2e/support/fixtures.ts`, unchanged since `d56b17b`;
+  - `pm9Scenarios.ts`, `targeted.ts` and PM9.4's conversion answers, all
+    DTO-level; no IPC or DTO changed in PM9.
+- Saved preferences are read back as saved (`readBackSavedPreferences`), as
+  a real store does.
+- **Not proved here:** native dialogs, real files, a provider or engine,
+  native scaling, or a screen reader.
+- The after side needs the same fixture semantics, the same build mode and
+  the same anchors.
+
+**Instrument.** In `e2e/baseline/`, outside the default spec glob:
+
+- `journeys.ts`, the recorder;
+- `pm9.1-journeys.d56b17b.e2e.ts`, the drivers and the six journeys for this
+  candidate;
+- `prepare-baseline-app.ps1`;
+- `e2e/wdio.baseline.conf.ts`.
+
+The after side adds a driver for its own candidate and reuses the recorder.
