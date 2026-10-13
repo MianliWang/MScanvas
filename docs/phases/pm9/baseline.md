@@ -13,9 +13,9 @@ reconciled tree has had no new runtime, component or browser run. Superseded
 in part by the 2026-09-26 mid-phase normalization (§10): PM9.1 is **PARTIAL**
 with only J1–J6 left, and native rendering at OS scaling and the provider
 route belong to the qualification after PM9.7. On 2026-10-13 J1–J6 were
-measured on `d56b17b` (§17.2). The draft and viewport legs that §17.1's
-amendment adds (J1b, J4b) have not run yet, so PM9.1 stays **PARTIAL** until
-they do.
+measured on `d56b17b` (§17.2), with the draft and viewport legs that
+§17.1's amendment adds (J1b, J4b). PM9.1 is **COMPLETE — baseline
+established, not accepted**.
 
 ## 1. Ownership map
 
@@ -1727,12 +1727,18 @@ The after side adds a driver for its own candidate and reuses the recorder.
 | M2, J1 (development) | `beacc3a` plus the fix | 7.58 GiB, 76.1% | 1 of 1 |
 | T1 `pnpm e2e:typecheck` | `1cb5ea9` | 7.92 GiB, 75% | exit 0 |
 | **M3, the measurement** | **`1cb5ea9`, clean; extracted `d56b17b`** | 7.57 GiB, 76.1% | **7 of 7** |
-| T2 `pnpm e2e:typecheck`, before the supplements | `c668f05` | 2.19 GiB, 93.1% | refused at the stop line, not started |
+| T2 `pnpm e2e:typecheck`, before the supplements | `c668f05` | 2.19 GiB, 93.1% | refused at the stop line, not started; it stays refused |
+| T3 `pnpm e2e:typecheck` | `32dfedd`, clean | 5.58 GiB, 82.4% | exit 0 |
+| **M4, the supplements** | **`32dfedd`, clean (instrument as `c668f05`); extracted `d56b17b`** | 6.05 GiB, 80.9% | **2 of 2** |
 
-M3's evidence is in `.tmp/pm91-j16/runs/M3/journeys-VLJEVj/`, git-ignored:
-`journeys.json` (SHA-256
-`06edba36f925ef3b6c40df7af4966bb0d0700b2def572989dd2db3c67edfc007`) and 57
-frames, one at each journey's start and one after every step.
+The evidence is git-ignored:
+
+- **M3:** `.tmp/pm91-j16/runs/M3/journeys-VLJEVj/`, holding `journeys.json`
+  (SHA-256 `06edba36f925ef3b6c40df7af4966bb0d0700b2def572989dd2db3c67edfc007`)
+  and 57 frames, one at each journey's start and one after every step.
+- **M4:** `.tmp/pm91-j16/runs/M4/journeys-ojLhI3/`, holding `journeys.json`
+  (SHA-256 `aac47a9454254b29a045157de11dbd679e75aba0238b95ac0966e5856d2a007b`)
+  and 15 frames.
 
 **Calibration (K1)** against the 24 entries of §7.4's before capture:
 
@@ -1758,6 +1764,8 @@ The extraction renders as `d56b17b` did.
 | J5 | 8 | 3 (2 targets; 2 table formats; 2 figure formats) | 0 | 2 (two saves) | surface 1, main 3, inspected 2 | 7 / 2 / 0 | targeted report 1 / 1, QC report 1 / 0, Details' object 1 / 0 | — |
 | J6 | 10 | 2 (2 languages each) | 2 (Apply) | 0 | surface 2, main 2, dialog 4, acquisitions 2 | 0 / 0 / 4 | Settings dialog 2 / 2 | acquisitions panel kept |
 | J6, 960×640 | 10 | 2 | 2 | 0 | surface 2, main 4, dialog 4, acquisitions 2 | 0 / 0 / 4 | Settings dialog 2 / 2 | acquisitions panel kept |
+| J1b (M4) | 8 | 1 (6 spectra) | 0 | 0 | surface 2, main 4, inspected 1, Details 1 | 4 / 0 / 1 | as J1 | all 7 kept, the committed range "Showing m/z 300.5000 to 302.0000" included |
+| J4b (M4) | 5 | 1 (3 acquisitions) | 0 | 0 | surface 3, main 4 | 0 / 0 / 0 | targeted setup 1 / 0 | the open setup, the typed text and both parameters (5, 6) kept |
 
 Each page also made 13 calls while it mounted (9 read, 4 other), with
 StrictMode's doubling. Every journey's console ledger is empty.
@@ -1812,6 +1820,20 @@ StrictMode's doubling. Every journey's console ledger is empty.
   4. Open the table's export, and choose CSV (a save dialog).
   5. Open the figure's export, and choose SVG (a save dialog).
   6. Open the QC snapshot.
+- **J1b.** J1's path, with one **Zoom in m/z** after choosing the spectrum.
+  - The zoom costs one projection read and remounts nothing.
+  - After Conversion & results and back, the narrowed range is still the one
+    committed.
+- **J4b.**
+  1. Go to the Project.
+  2. Open Targeted MS1… on one of three layers.
+  3. Type the targets.
+  4. Return Home through the brand.
+  5. Come back through the Project's navigation button.
+
+  The setup is still open, with the text and both parameters as typed. The
+  leg asks nothing of the backend and mounts the setup once: the Project
+  surface stays mounted while hidden.
 - **J6.**
   1. Go to the Project, then Home through the brand.
   2. Settings, 中文, Apply.
@@ -1823,14 +1845,12 @@ StrictMode's doubling. Every journey's console ledger is empty.
 **What this establishes.**
 
 - The before side of U1's and U10's comparison on `d56b17b`, by §17.1's
-  rules, **except** drafts and a committed viewport:
-  - J1's preserved m/z range was the default;
-  - no journey carried a draft away and back.
-- The amendment's J1b and J4b add those two legs. They are authored
-  (`c668f05`) and not yet run: T2 was refused at the stop line. Until they
-  run, slice-01 item 4 is not met and PM9.1 is **PARTIAL**.
-- Only M3 and the supplement run count as the baseline. M1 and M2 were
-  development runs, and the probe fix came after them.
+  rules and its amendment: **baseline established, not accepted**.
+- M3 alone showed neither drafts nor a committed viewport: J1's preserved
+  m/z range was the default, and no journey carried a draft away and back.
+  The amendment's J1b and J4b add those two legs, and M4 measured them.
+- Only M3 and M4 count as the baseline. M1 and M2 were development runs, and
+  the probe fix came after them.
 - **Reproducibility.** M1 and M2 agree with M3 on every count but the two
   that the probe fix changed. J3's main-area changes went from 3 to 4, and
   J6's at 960×640 from 2 to 4.
@@ -1859,4 +1879,5 @@ Neither changes a rule.
 - The node_modules junction inside `.tmp/pm91-j16/` was removed after M3
   with `cmd /c rmdir`, which removes the link and not its target. It was
   recreated by the script, with the same archive hash, for the supplements,
-  and stays until they run.
+  and removed again after M4 the same way.
+- Ports: 15297 for M4.
