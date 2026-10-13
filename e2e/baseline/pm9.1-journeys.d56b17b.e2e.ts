@@ -349,11 +349,12 @@ describe("PM9.1 journeys J1–J6 on the candidate the baseline config serves", (
     writeFileSync(join(output, "journeys.json"), JSON.stringify({ candidate: CANDIDATE, records }, null, 2));
   });
 
-  it("J1 curate and inspect, 1366x768 en", async () => {
+  /** J1's path; `zoom` adds J1b's committed Zoom in m/z before it leaves (§17.1's amendment). */
+  async function curateAndInspect(name: "J1" | "J1b", zoom: boolean) {
     const row = ROW(MZML_ROW.handle);
     await open(scenario("populated", "en"), 1366, 768);
     await until(row);
-    const walked = await journey("J1", "1366x768");
+    const walked = await journey(name, "1366x768");
     await walked.step("search the list for the acquisition", "step", async () => {
       await typeInto("#dataset-roster-search", MZML_ROW.fileName.replace(/\.mzML$/u, ""));
       await browser.waitUntil(
@@ -381,6 +382,15 @@ describe("PM9.1 journeys J1–J6 on the candidate the baseline config serves", (
       await until("svg.spectrum-plot");
       await browser.waitUntil(() => browser.execute(() => (document.querySelector("#spectrum-viewport-range")?.textContent ?? "").trim() !== ""));
     }, { options: scans });
+    if (zoom) {
+      await walked.step("zoom the spectrum in once", "step", async () => {
+        await pressNamed(".spectrum-viewport-actions", "Zoom in m/z");
+        await browser.waitUntil(
+          () => browser.execute(() => !(document.querySelector("#spectrum-viewport-range")?.textContent ?? "").includes("full range")),
+          { timeoutMsg: "Zoom in m/z did not narrow the range" },
+        );
+      });
+    }
     await walked.step("show its summary in Details", "step", async () => {
       await press(DETAILS_TOGGLE);
       await until("#workbench-inspector .inspector-panel");
@@ -409,6 +419,47 @@ describe("PM9.1 journeys J1–J6 on the candidate the baseline config serves", (
     for (const key of Object.keys(before) as (keyof typeof before)[]) walked.keep(key, before[key], after[key]);
     records.push(await walked.finish(after));
     expect(after.viewed).toBe(MZML_ROW.handle);
+    if (zoom) expect(before.range).not.toContain("full range");
+  }
+
+  it("J1 curate and inspect, 1366x768 en", () => curateAndInspect("J1", false));
+
+  it("J1b supplement: J1 with a committed m/z zoom, 1366x768 en", () => curateAndInspect("J1b", true));
+
+  it("J4b supplement: a targeted draft across navigation, 1366x768 en", async () => {
+    await open(targetedTable("en", targetedTaskProject()), 1366, 768);
+    const walked = await journey("J4b", "1366x768");
+    await walked.step("go to the Project", "step", async () => {
+      await press(NAV(3));
+      await until(`[data-project-targeted="${LAYERS[0]}"]`);
+    });
+    await walked.step("open the targeted setup on one acquisition", "decision", async () => {
+      await press(`[data-project-targeted="${LAYERS[0]}"]`);
+      await until("[data-targeted-setup]");
+    }, { options: LAYERS.length });
+    await walked.step("type the two targets", "step", async () => {
+      await typeInto("[data-targeted-text]", TYPED);
+    });
+    const draft = () =>
+      browser.execute(() => ({
+        setup: document.querySelector("[data-targeted-setup]") !== null,
+        text: document.querySelector<HTMLTextAreaElement>("[data-targeted-text]")?.value ?? null,
+        ppm: document.querySelector<HTMLInputElement>("[data-targeted-ppm]")?.value ?? null,
+        width: document.querySelector<HTMLInputElement>("[data-targeted-width]")?.value ?? null,
+      }));
+    const before = await draft();
+    await walked.step("return Home", "step", async () => {
+      await press(".workbench-home");
+      await until('.workbench-shell[data-surface="workbench"]');
+    });
+    await walked.step("come back to the Project", "step", async () => {
+      await press(NAV(3));
+      await until('.workbench-shell[data-surface="project"]');
+    });
+    const after = await draft();
+    for (const key of Object.keys(before) as (keyof typeof before)[]) walked.keep(key, before[key], after[key]);
+    records.push(await walked.finish(after));
+    expect(before.text).toBe(TYPED);
   });
 
   it("J2 convert, 1366x768 en", async () => {
