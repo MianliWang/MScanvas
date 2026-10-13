@@ -1,9 +1,11 @@
 # PM9.6 — results, history, provenance and explicit continuation
 
 PM9 | Acceptance: U6, U7, U8 (stored), U9, U10 | Depends on: PM9.2, PM9.3, PM9.5 | Serial, one writer
-Status: **IN PROGRESS — QUALIFICATION RESOURCE_DEFERRED** (checkpoint 1,
-2026-10-05, §13). Expanded the same day from the code of the starting point
-below. The midpoint check is not repeated; nothing here unfreezes the route.
+Status: **PM9.6 RESULTS / HISTORY / EXPLICIT CONTINUATION COMPLETE — FOCUSED
+BROWSER/RENDERED ACCEPTANCE PASS** (2026-10-13, §13). Production `6c3508a`,
+tests `a2a4fea`. Real-engine, filesystem and native release qualification are
+unchanged. Expanded 2026-10-05 from the code of the starting point below; the
+midpoint check is not repeated, and nothing here unfroze the route.
 
 ## 0. Starting point
 
@@ -500,3 +502,107 @@ touched. Nothing waits for memory, and nothing is relaunched by itself.
 8. G5, PM9.1 whole, port 15290.
 9. `python scripts/check_repo.py`; then this record's closure, `slices.md`,
    the baseline (§16) and the brief.
+
+**2026-10-13, checkpoint 2 (qualification).** Closed: every frozen group of
+checkpoint 1's remaining list ran on the final candidate and passed.
+
+**Candidate.** HEAD `5fd09b8f96da7231644c3268bc2e7f0ed3560266` (tree
+`ce66cc5b6b443291a52fd894d457913b741dbe2a`), clean. Between `a2a4fea` and it
+only documents changed, so the code under test is production `6c3508a` and
+tests `a2a4fea`.
+
+**The memory gate, waived once.** On 2026-10-13 the owner authorized, once,
+running the remaining tests regardless of memory. The runner still read
+memory before each group and recorded the waiver; it refused nothing. Several
+groups started below the admission line (lowest: 4.64 GiB free; highest:
+85.4% used). The S1 refused on 2026-10-05 stays refused; the S1 below is a new
+run.
+
+**The browser driver.** Chrome 155 was staged on the host but not active, and
+the running Chrome was 154.0.8037.98. For G1, WebdriverIO resolved and
+downloaded ChromeDriver 155.0.8059.40, and no session was created: G1 ran
+nothing and is recorded as not run. From G1b on, `CHROMEDRIVER_PATH` named the
+ChromeDriver 154.0.8037.93 already cached on the host. No repository file,
+browser or package was changed for this.
+
+| Group | Started at | Result |
+| --- | --- | --- |
+| S1 `pnpm typecheck` (`pnpm lint` is the same `tsc -b --pretty false`), `pnpm e2e:typecheck` | 5.97 GiB free, 81.2% used | exit 0 |
+| V1, the five affected Vitest files | 6.03 GiB, 81% | 137 of 137 |
+| U1, full Vitest at bounded workers | 6.06 GiB, 80.9% | 112 files, 2260 tests |
+| B0 `pnpm build` | 5.32 GiB, 83.2% | exit 0; the existing chunk-size warning |
+| G1, PM9.6 spec, port 15286 | 5.0 GiB, 84.2% | not run: no session (above) |
+| G1b, PM9.6 spec, port 15291 | 4.64 GiB, 85.4% | 32 of 32 |
+| G2, PM9.5 spec, port 15287 | 5.94 GiB, 81.2% | 10 of 10 |
+| G3, m9.1 and m9.4, port 15288 | 5.66 GiB, 82.1% | 12 of 12; 5 of 5 |
+| G4, m8.5, m8.1 and m8.2, port 15289 | 4.75 GiB, 85% | 3 of 3; 8 of 8; 4 of 4 |
+| G5, PM9.1, port 15290 | 5.56 GiB, 82.4% | 55 of 55 |
+| `python scripts/check_repo.py` | 5.2 GiB, 83.6% | passed |
+
+Every browser group ran Chrome 154.0.8037.98, headless, at DPR 1.
+
+**Correction cycle 1, closed.** P12, the review's scenario, was RED on
+`157ded3` (D4-red: a view already whole moved 4 px) and passed on the fix in
+G1b, with P12b and P5's refused evidence read. One of the two authorized
+cycles was used.
+
+**Findings.**
+
+- **R1–R6: FIXED AND RENDER-VERIFIED** on the candidate, by G1b and the
+  component cases, in en and zh-CN at the anchors.
+- **V1–V14:** no defect. V9–V12 are shown by P1, P2, P4 and P8–P10. V14's
+  Rust case is historical and not rerun.
+- **O1–O4:** optional, each with its owner (§4).
+- **F1–F4:** another capability or owner (§4).
+- **L12:** not revived (UI-25).
+
+**Rendered evidence** (`.tmp/pm96-runs/Q2/G1b/browser-uWhslV/`, git-ignored).
+
+- **Frames.** 59, each with the candidate (`5fd09b8`), Chrome, the CSS and
+  outer viewport, DPR, the page language, the roster and Details state, the
+  surface's scroll position, focus and overflow.
+- **Coverage.**
+  - At 960×640, 1366×768 and 1920×1080 in en and zh-CN: the report's first
+    view, the chosen target after the reveal, the history and the QC report.
+  - At 1280×720, 1536×864 and 2560×1440 in en: the report and its evidence.
+  - Missing, damaged, refused and reopened states, outputs and replacement
+    at 1366×768.
+  - The 200th target at 960×640 and 1366×768 in both languages.
+  - Reduced motion, once.
+- **Observed.**
+  - No horizontal overflow in any frame.
+  - The console ledger is empty but for motion's reduced-motion development
+    notice, in the one case that asks for reduced motion.
+  - No framework overlay is in the frames. There is no dedicated overlay
+    assertion.
+
+**Before and after.** O6 was rendered on `9def1bf` with Chrome 154.0.8037.93;
+G1b on `5fd09b8` with Chrome 154.0.8037.98. Both were headless at DPR 1, with
+Details folded at 1366×768.
+
+| State | O6 frame | G1b frame | Change |
+| --- | --- | --- | --- |
+| Report, first view, 1366×768 en | `en-1366-01-report` | `p11-report-en-1366x768` | the summary from a 211 px table to one 18 px line; the first target row on the first screen |
+| A chosen target, 1366×768 en | `en-1366-02-chosen` | `p11-evidence-en-1366x768` | the panel's top at 934 against a 752 bottom; now the row in view and the plot at 359–744 |
+| A chosen target, 960×640 en | `en-960-02-chosen` | `p11-evidence-en-960x640` | the panel's top at 806 against 624; now the plot's bottom at 616 |
+| History, 1366×768 en | `batch-00-history` | `p10-history-en-1366x768` | "No file-facts record was produced." for a failed targeted run; now its failure sentence and "No result was stored." |
+| Damaged payload, 1366×768 en | `resultPayloadCorrupt-01-report` | `p5-payloadCorrupt-en-1366x768` | the sentence now gives the next step, and the history names the state |
+
+**Process custody, checkpoint 2.**
+
+- Every group was launched by the scratchpad runner. It recorded each
+  process's PID, creation time, command and parent, and every launched tree
+  had zero leftovers.
+- Each browser group had its own unused dev port.
+- Nothing was killed by name or port. WSL, Examsoft and the user's Chrome
+  were not touched.
+- Local high-memory work ended with the last group.
+
+**Remaining, outside this slice.**
+
+- PM9.1's historical J1–J6, on `d56b17b`, before PM9.7: the checklist is
+  [slice-01](slice-01.md) pending item 4, with baseline §10's row and §7.4's
+  before capture.
+- PM9.7.
+- Native rendering at the host's scaling, and real engine, filesystem and
+  dialog qualification.

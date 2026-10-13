@@ -1495,3 +1495,49 @@ keeps what later slices and PM9.7 read from the baseline.
     connection: the dynamic range is 1024–15000. Browser runs can name another
     port with `MSCANVAS_BROWSER_DEV_PORT`.
   - PM9.1 stays PARTIAL for J1–J6 on `d56b17b`.
+
+## 16. PM9.6 focused rendered acceptance (2026-10-13)
+
+The full record is in [slice-06 §13](slice-06.md#13-record). This section
+keeps what later slices and PM9.7 read from the baseline.
+
+- **Candidate.**
+  - Production: `6c3508a1b984491504dd20013125b5cb67ce8ab2`.
+  - Tests: `a2a4feab15ec298ce8974b77caedd5f6a2ada311` (tree
+    `147de2966256e28e1f3fa2a38ff50f4080a5b8a0`).
+  - Every group ran on `5fd09b8`, whose code equals these; only documents
+    differ.
+  - Frontend only: no manifest, lock, Rust, IPC, DTO, schema or workflow
+    path changed.
+- **Passed.**
+  - The PM9.6 spec: 32 of 32. On the unchanged production every R case
+    failed at its first finding.
+  - Full Vitest: 112 files, 2260 tests, at bounded workers.
+  - `pnpm typecheck` (also `pnpm lint`), `pnpm e2e:typecheck`,
+    `pnpm build`, `check_repo` and `git diff --check`.
+  - PM9.5: 10 of 10. m9.1: 12 of 12. m9.4: 5 of 5. m8.5: 3 of 3. m8.1: 8 of
+    8. m8.2: 4 of 4. PM9.1: 55 of 55.
+  - The memory gate was waived once by the owner for these runs. Each
+    reading is recorded.
+- **Shared test inputs.**
+  - `e2e/support/targeted.ts` gained `manyRows`, a stored page for many
+    targets.
+  - Every existing export and scenario is unchanged, and the manual harness
+    has no new scenario: the existing ones reach every report
+    (`e2e/README.md`).
+- **For PM9.7.**
+  - **Behaviour that changed.**
+    - A report stays while its own run is inspected.
+    - A chosen target's evidence is brought into view beside its row, while
+      the keyboard stays there.
+    - History names a run's failure, "No result was stored." and a non-whole
+      payload.
+  - **Open, with owners** (slice-06 §4):
+    - O1: opening a record from history leaves focus in history (the M8.5
+      model);
+    - O3: the reveal's guard is focus-only.
+  - **The dev server mounts under React StrictMode,** so a browser count of
+    mount reads measures two mounts. PM9.6's specs count what a walk issues.
+  - **Driver.** Chrome 155 is staged on the host. Until it is active,
+    browser runs need `CHROMEDRIVER_PATH` naming a ChromeDriver 154.
+  - PM9.1 stays PARTIAL for J1–J6 on `d56b17b`.
