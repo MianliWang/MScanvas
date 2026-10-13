@@ -78,7 +78,7 @@ this slice finds, and it voids every measurement taken before it (§8).
 | A3 | Legacy residue (§7) | baseline §10, decision 3; slice-03 §0.5 | Repair, retire against a named replacement, or diagnose | G-L groups |
 | A4 | Regression | brief, Regression | The whole browser corpus, full Vitest, static checks and build on the frozen candidate | §8 |
 | A5 | Final reference-deviation disposition | baseline §3.1, §10; slice-04 §10; slice-05 §12 | Table with a recommendation per row; the owner decides | §9 |
-| A6 | PM9.6 O1 and O3 | slice-06 §4 | Recommend from J5's after side; the owner decides. O2 needs no action. O4 stays with the M9.2 wording owner, being unreachable | §9 |
+| A6 | PM9.6 O1 and O3 | slice-06 §4 | Recommend from PM9.6's own evidence (P1, P2, P12 and `ProjectQcSummary.test.tsx`), since the J1–J6 recorder reads no focus; the owner decides. O2 needs no action. O4 stays with the M9.2 wording owner, being unreachable | §9 |
 | A7 | Candidate freeze | brief, decision 1 | Record the identity, the checks and the decision sheet | §10 |
 
 Not in this slice:
@@ -185,7 +185,8 @@ The classes are those of slice-03 §5. Each case ends in exactly one of:
 | m5.3 | 13 | 12 × (b), 1 × (a) | Repair setup |
 | m4.3, m4.4, viewer-r1 | 2, 1, 2 | (b) | Repair setup |
 | m4.4, viewer-r1 | 1, 1 | (d) driver geometry | Repair if the target can be brought into view first without changing the assertion; otherwise diagnose |
-| m4.3, m5.2, viewer-r1, viewer-r1-scale | 1, 5, 5, 1 | SUPERSEDED | Retire against slice-03 §5's replacements, after they pass in U1 |
+| m5.2, viewer-r1, viewer-r1-scale | 5, 5, 1 | SUPERSEDED | Retire against slice-03 §5's replacements, after they pass in U1 |
+| m4.3 | none | slice-03 §5 calls one case SUPERSEDED (copy only), but PM9.3's `266088d` already updated its copy, and it passes (slice-03 §0.5, 21 of 23) | UPDATED by `266088d`; kept, not retired |
 
 The repairs are test-only. They are authored statically, because memory
 refused every run at the time, and qualified by their groups in §8.
@@ -258,7 +259,9 @@ recommendation:
    - PM9.5's stepper;
    - the integrated states (§6).
 3. **The keyboard model** for opening a record from history: PM9.6's O1,
-   keep M8.5's model, and O3, keep the keyboard-only guard.
+   keep M8.5's model, and O3, keep the keyboard-only guard. Both
+   recommendations rest on PM9.6's evidence. They stay provisional until G-PM9
+   and G-M run on the frozen candidate.
 4. **ADR 0006's 544 px.** Its breakdown names a sidebar that M7.2's fold
    removed (baseline §11).
 5. **The qualification after PM9.** Lifting the ProteoWizard HOLD, or
@@ -310,6 +313,20 @@ recommendation:
   reports the page's actual size and ratio. This mechanism is an inference
   until G-L1 runs.
 - **m7.4's active-Clear pair** was already closed by UI-23 (§7).
+- **m4.3's "says a current range is the whole run until the viewport is
+  committed"** was removed in `bb5f191` and restored unchanged after review.
+  It passes on the current contract (`266088d`), so it is no SUPERSEDED case.
+- **The eleven retirements are provisional.** §7 retires a case only after
+  its replacement passes in U1, but they were removed before U1 ran. A
+  replacement that fails in U1 puts its retired case back.
+- **Coverage the retirements give up.** Retiring viewer-r1's single-scan
+  mark case drops a browser-level check that the mark lies inside the
+  drawing area, and its axis labels. What remains:
+  - the mark's drawn size, in viewer-r1's own "marks each series, told apart
+    by more than colour", which stays;
+  - its position and axis, at attribute level only, in
+    `Chromatogram.test.tsx` "draws the one scan's total ion current as a
+    visible mark".
 
 | Group | On | Reading at start | Result |
 | --- | --- | --- | --- |

@@ -469,11 +469,25 @@ describe("exporting the chromatogram, rendered", () => {
     expect(await unexpectedConsole()).toEqual([]);
   });
 
-  // Retired at PM9.7 (slice-03 §5, SUPERSEDED copy only): "says a current range
-  // is the whole run until the viewport is committed". Replaced by
-  // apps/desktop/src/app/ChromatogramExport.test.tsx, same title (sentence and
-  // request), and PM9.3-V3 in pm9.3-viewer.browser.e2e.ts (the rendered
-  // `{scope: current, low: null, high: null}` request).
+  it("says a current range is the whole run until the viewport is committed", async () => {
+    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openExport();
+    await chooseScope("Current range");
+
+    // M7.3's sentence; the copy this first expected predates it (PM9.3).
+    expect(await rangeNote()).toContain("whole run until a range is committed");
+
+    await control("Export CSV…").click();
+    await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
+
+    // Null rather than the run's own bounds: Rust resolves it, and this side
+    // does not invent a subrange to make the option look different.
+    expect(await lastExportRequest().then((request) => request?.["range"])).toEqual({
+      scope: "current",
+      low: null,
+      high: null,
+    });
+  });
 
   it("sends the committed range once the viewport has been moved", async () => {
     await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
