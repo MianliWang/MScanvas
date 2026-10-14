@@ -345,6 +345,30 @@ they are decided after their runs.
 6. **Memory.** The owner chose neither a waiver nor another admission line,
    so the standing gate of §8 applies.
 
+**The owner's decisions at the freeze (2026-10-14).** These were taken after
+the first candidate's runs (§11), on the findings put to the owner.
+
+1. **F15, fixed now.** A focus ring must be DESIGN_SYSTEM's 2 px `#1769d1`
+   ring with its offset (UI-46). The viewer's disclosure summaries and the
+   scan table's MS-level select drew Chrome's thin ring instead.
+2. **F1, fixed now, look and reason both.** With no project open, Save,
+   Save As… and Close were refused but looked live and said nothing. Capture
+   QC summary looked live when refused too.
+3. **O1 and O3, kept.**
+   - Opening a record from history leaves the keyboard in history (M8.5's
+     model).
+   - The evidence reveal waits for the keyboard alone.
+4. **The integrated states, accepted.**
+   - F6, the zh-CN terms for the roster and for vendor acquisitions, is fixed
+     now.
+   - F2 (no emphasised next action on the empty Project) and F3 (at
+     960×640, the copy does not name the folded Acquisitions) are carried
+     forward with the optional rows.
+
+F1, F15 and F6 change production. By §8's freeze rule they make a new
+candidate, candidate 2, and every group runs again on it. All three were in
+the product before PM9 (`d56b17b`, `57915de`). None is a PM9 regression.
+
 ## 10. Evidence boundaries
 
 - **What the browser proves.** It is the real frontend over a controlled IPC
