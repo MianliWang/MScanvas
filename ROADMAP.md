@@ -898,8 +898,9 @@ Its closing slice, PM9.7, froze a new product candidate on 2026-10-14
 (production `30b855f`), accepted at the browser/rendered and component
 layers. Not started and not promised after it: M7.6-style
 installed, native, provider and release qualification against that
-candidate, which owns the native acceptance at OS scaling and the
-provider-positive checks that PM9 records but does not run; then a decision
+candidate, which owns the native acceptance at OS scaling, the
+provider-positive checks and the real targeted-MS1 engine path that PM9
+records but does not run; then a decision
 between a public beta and M10. See the
 [M9 closure](docs/product/M9_CLOSURE.md#15-after-m9).
 

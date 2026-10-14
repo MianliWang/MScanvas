@@ -24,6 +24,8 @@ CANDIDATE FROZEN** (2026-10-14, §11).
 - **Since the accepted main `57915de`** (an ancestor):
   - the frontend changed: 67 files under `apps/desktop/src`;
   - the root `package.json` gained one script line (`qa:pm9:manual`);
+  - the e2e tests changed under `e2e/`, and `scripts/check_repo.py` one
+    docstring (`859eaf0`);
   - no Rust, IPC, DTO, schema, manifest, lock or workflow path changed.
 - **Slices.** PM9.1 is complete, its baseline established and not accepted
   ([baseline §17](baseline.md#17-j1j6-measurement-on-d56b17b-pm91-pending-item-4)).
@@ -294,7 +296,9 @@ D2, a development typecheck, had been refused at the standing admission line
 - **Cargo** (fmt, clippy, test). No Rust or manifest has changed since
   `57915de`, so Rust's evidence is the accepted main's. A Cargo rebuild
   belongs to the qualification.
-- **Native, Tauri and provider specs**: §9's item 5.
+- **Native, Tauri and provider specs**: §9's item 5. Their setup still
+  selects the pre-M7.2 roster in places (baseline §2, §18); that repair goes
+  with them.
 
 ## 9. Owner decisions at the freeze
 
@@ -435,17 +439,23 @@ the product before PM9 (`d56b17b`, `57915de`). None is a PM9 regression.
 
 **2026-10-13 to 2026-10-14, candidate 1: production `6c3508a` (PM9.6's).**
 
-Every run went through the scratchpad runner, which recorded its memory
-reading, HEAD, port, process tree and leftovers. Browser runs used Chrome
-154.0.8037.98 headless at DPR 1, with ChromeDriver 154.0.8037.93 through
-`CHROMEDRIVER_PATH`. Shards ran under the owner's stop-line gate (§8's
-amendments), at most five at once, each on its own port (15300–15346 over
-the whole slice). No run left a process behind. Evidence:
-`.tmp/pm97-runs/<group>/`, git-ignored.
+Every gated run went through the scratchpad runner, which recorded its
+memory reading, HEAD, port, process tree and leftovers. No run left a
+process behind.
+
+- **Browser runs.** Chrome 154.0.8037.98, headless, at DPR 1, with
+  ChromeDriver 154.0.8037.93 through `CHROMEDRIVER_PATH`.
+- **Shards.** They ran under the owner's stop-line gate (§8's amendments), at
+  most five at once, each on its own port (15300–15346 over the whole slice).
+- **Evidence** for the gated runs: `.tmp/pm97-runs/<group>/`, git-ignored.
+- **The light checks.** C0, C1 and C2 (`check_repo`, `git diff --check` and
+  the scoped comparison) are not gated. They ran directly and left no runner
+  record, so their results rest on this record.
 
 | Group | On | Reading at start | Result |
 | --- | --- | --- | --- |
 | T0c `pnpm e2e:typecheck` | `d2539e9` | 10.18 GiB free, 67.9% used | exit 1: two TS2322 errors in `bb5f191`'s m4.1/m4.2 helpers, fixed test-only in `d0a97b2` |
+| D1, the same typecheck over that fix (development) | `d2539e9`, dirty | 9.79 GiB, 69.1% | exit 0 |
 | T1 e2e typecheck, S1 `pnpm typecheck` | `d0a97b2` | 9.87 / 9.78 GiB | exit 0 |
 | U1 full Vitest, bounded | `d0a97b2` | 9.77 GiB, 69.2% | 112 files, 2260 tests passed |
 | G-L2a, G-L2b, G-PM9a, G-L3, G-L4, G-PM9b, G-M, G-L1, I1, B0 (parallel) | `2891f90` (docs only after `d0a97b2`) | lowest 6.29 GiB, 80.1% (G-L3) | all exit 0; per spec below |
@@ -453,7 +463,7 @@ the whole slice). No run left a process behind. Evidence:
 | D2 development typecheck | dirty | 7.28 GiB, 77% | refused at the standing admission line; it stays refused |
 | I1b extended PM9.7 spec, V2 replacements by title, T2 (parallel) | `0b021af` | lowest 7.00 GiB | 12 of 12; 5 files, 382 tests; exit 0 |
 | M6, J4 and J4b again, alone | extracted `6c3508a` | 9.11 GiB, 71.2% | 2 of 2; `journeys.json` `243179c1…f239` |
-| C1 `check_repo`, `git diff --check`, scoped comparison | `0b021af` | light | passed; nothing outside the frontend since `57915de` |
+| C1 `check_repo`, `git diff --check`, scoped comparison | `0b021af` | light | passed; since `57915de`, outside `apps/desktop/src`, the e2e tests and the documents, only the root `package.json`'s `qa:pm9:manual` line and a docstring in `scripts/check_repo.py` (`859eaf0`) changed; no Rust, IPC, DTO, schema, manifest, lock or workflow path changed |
 
 Browser outcomes on candidate 1, every spec passing:
 
@@ -520,8 +530,10 @@ against a named replacement.
     inspected object and its report on screen. The step is off the most
     direct path, so the driver now ends at Run, and M6 measured J4 at 5, equal
     to the before side.
-- **An analysis anomaly, recorded.** U1 overlapped the first four shards: it
-  is not a declared shard, but at most five heavy runs ran at once.
+- **An analysis anomaly, recorded.** U1 is not a declared shard, but it
+  overlapped seven of them: G-L2b, G-L2a, G-PM9a, G-L3, G-L4, G-PM9b and G-M.
+  The pool held at most four at once, so at most five heavy runs ran
+  together: U1 with the first four, from 23:42:20 to 23:42:28.
 - **The integrated states (I1, I1b), reviewed against DESIGN_SYSTEM.**
   - **F1, defect, pre-existing.** With no project open, the Project's refused
     Save, Save As… and Close looked live and gave no reason. Capture QC
@@ -553,12 +565,19 @@ added three fixes, F1, F6 and F15.
 
 - **One focus ring (F15).** The shared rule covers `select` and `summary` at
   `:where()` specificity, so component rings win. This also restores the
-  rows' inset rings. The shared `[tabindex]` arm, there since the
-  repository's first commit (`37fc35d`), had always overridden them. The roster help summary draws its ring inset. Roster menu items keep
-  theirs. Every focusable control has a 4 px `scroll-margin`, the ring's
-  reach.
-- **Refused secondaries read as refused (F1).** They fade, except while they
-  hold the focus ring, and say why. The new key is `projectNeedsProject`.
+  rows' inset rings. The shared `[tabindex]` arm, there since
+  `index.css` was added in `37fc35d`, had always overridden them. The roster help summary draws its ring inset. Roster menu items keep
+  theirs. Every control the shared rule covers (buttons, inputs, selects,
+  summaries and anything with a `tabindex`) has a 4 px `scroll-margin`, the
+  ring's reach.
+- **Refused secondaries read as refused (F1).** They fade, except while
+  they hold the focus ring.
+  - With no project open, Save, Save As… and Close say why: they are
+    described by the visible no-project sentence, and their tooltip carries
+    the new key `projectNeedsProject`.
+  - Other refused actions keep the reason they already gave. Capture QC
+    summary, Add to Workbench and Create layer give their own; during an
+    operation, the busy line gives it.
 - **One zh-CN term each (F6).**
 
 Before commit:
@@ -571,7 +590,8 @@ Before commit:
   It refuted seven others as pre-existing and not worsened. One of them, the
   targeted setup's refused buttons fading their own ring, was fixed anyway
   under F1.
-- **The development runs D3 to D5** found two more things:
+- **The development runs D3 to D5, with the solo probes P1 and P2,** found
+  two more things:
   - **A test-timing effect.** Under reduced motion every property
     transitions for 0.01 ms (`app.css`), so a ring read in the Tab's own
     frame is half-way. The spec now waits a frame.
@@ -583,14 +603,40 @@ Before commit:
 | Group | On | Reading at start | Result |
 | --- | --- | --- | --- |
 | D3a, D3b; D4a–D4d; D5a–D5d (development, dirty tree) | over `0b021af` | lowest 7.10 GiB, 77.6% | D4b failed 5 cases (the two causes above); D5 all green: PM9.7 12, PM9.1 55, viewer-r1 49, PM9.3 19, m7.3 16, PM9.6 32, m7.2 11 |
+| P1, P2, scratch probes (`.tmp/pm97-probe/`, not kept), each alone between the D4 and D5 pools | over `0b021af`, dirty | 9.25 GiB, 70.8%; 9.06 GiB, 71.4% | P1 reproduced D4b's `3px solid rgb(255, 255, 255) 0px` only in zh-CN with reduced motion; P2 found the focused button's outline transitions still running in the Tab's frame, and the 2 px `#1769d1` ring 0.8 s later |
 | U1-2 full Vitest (parallel) | `a4616de` | 10.81 GiB, 65.9% | 111 of 112 files, 2260 of 2261 tests: M73Viewer's "exports only committed axis ranges while drawing or pending, then the newly confirmed range from retained tokens" timed out at 5175 ms against its 5000 ms limit |
 | U1-2r that file, alone | `cfeb758` | 8.18 GiB, 74.2% | 4 of 4; the case in 2057 ms. Contention, not a fault |
-| G-PM9b-2 | — | 10.00 GiB, 68.4% | refused: a document was edited while the pool ran, so the tree was dirty. It stays refused |
-| G-L1-2, G-L2b-2, G-PM9a-2, G-L3-2, G-L4-2, G-L2a-2, G-M-2, I1-2, B0-2, S1-2, T-2 (parallel) | `a4616de`/`cfeb758` (docs only after `30b855f`'s tests `e94fb16`) | lowest 5.61 GiB, 82.3% (G-L3-2) | all exit 0, every spec passing, with the same counts as candidate 1; PM9.7 12 of 12 under the strict ring assertions |
+| G-PM9b-2 | `a4616de`, dirty (`slice-07.md`) | 10.00 GiB, 68.4% | refused: `slice-07.md` was being edited while the pool ran (the owner's decisions, committed 12 s later as `cfeb758`). It stays refused |
+| G-L1-2, G-L2b-2, G-PM9a-2, G-L3-2, G-L4-2, G-L2a-2, G-M-2, I1-2, B0-2, S1-2, T-2 (parallel) | `cfeb758` (docs only after `30b855f`'s tests `e94fb16`) | lowest 5.61 GiB, 82.3% (G-L3-2) | all exit 0, every spec passing, with the same counts as candidate 1; PM9.7 12 of 12 under the strict ring assertions |
 | G-PM9b-3, G-PM9b-2's run under a new name | `cfeb758` | 7.91 GiB, 75% | PM9.6 32, PM9.3 19, PM9.4 9, PM9.5 10 |
 | M7, J1–J6 after side, alone | extracted `30b855f` (archive `34a89246…bc12`) | 7.47 GiB, 76.4% | 9 of 9; every journey identical to the before side on every counted field; `journeys.json` `3ad72b8a…d5d3` |
 | U1-3 full Vitest, alone | `cfeb758` | 7.64 GiB, 75.9% | 112 files, 2261 tests passed (one more than candidate 1: F6's guard) |
-| C2 `check_repo`, `git diff --check`, scoped comparison | the record's own tree | light | passed; since `57915de` nothing changed outside the frontend but the one root script line |
+| C2 `check_repo`, `git diff --check`, scoped comparison | the record's own tree | light | passed; since `57915de`, outside `apps/desktop/src`, the e2e tests and the documents, only the root `package.json`'s `qa:pm9:manual` line and a docstring in `scripts/check_repo.py` (`859eaf0`) changed; no Rust, IPC, DTO, schema, manifest, lock or workflow path changed |
+
+Deviations from §8, recorded rather than amended after the fact:
+
+- **The stagger.** §8 staggers launches by 30 seconds.
+  - Candidate 1's two pools kept to it.
+  - Candidate 2's pool (`pool-20261014T004514`) launched 20 s apart.
+  - The development pools launched 5 s apart (D3) and 15 s apart (D4, D5).
+
+  No owner decision changed the stagger. Every start reading still met the
+  stop line: the lowest was 5.61 GiB free and 82.3% used (G-L3-2).
+- **The gate.** Candidate 2's groups, the development runs and the probes all
+  started under the stop line alone.
+  - For the browser groups, B0, M7 and the groups the second amendment names,
+    that is §8's amendments.
+  - No written amendment covers U1-3, the full Vitest run, or the
+    development runs.
+  - Four of these started below the standing 8 GiB admission line, which
+    refused D2 at 7.28 GiB: U1-3 (7.64 GiB, 75.9%), D4a (7.10 GiB, 77.6%), D4c
+    (7.66 GiB, 75.8%) and D5d (7.40 GiB, 76.6%).
+  - Their results stand as recorded.
+- **V2 was not rerun on candidate 2.**
+  - Its five files are unchanged since `0b021af`, so its Vitest replacements
+    pass within U1-3's 2261 tests, which report totals only.
+  - The browser replacements, m7.3's wheel-and-pan case and PM9.3-V7, pass by
+    title in G-L4-2 and G-PM9b-3.
 
 **What PM9.7 establishes.**
 

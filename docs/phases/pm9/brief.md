@@ -42,7 +42,7 @@ scientific history kept separate from current-session authority.
 
 ## Acceptance (three layers per ID)
 
-On 2026-10-14 every ID is **ACCEPTED** at the browser/rendered and component layers on the frozen candidate `30b855f` ([baseline §18](baseline.md#18-pm97-the-after-side-the-regression-and-the-frozen-candidate-2026-10-14)). The native, provider and engine checks named below stay `PENDING` or `BLOCKED_PROVIDER_HOLD`; the owner accepted U4 with its live-provider check open. Until PM9.7 every ID was **PLANNED**. Status words: `PLANNED`, `IMPLEMENTED_UNVALIDATED`,
+On 2026-10-14 every ID is **ACCEPTED** at the browser/rendered and component layers on the frozen candidate `30b855f` ([baseline §18](baseline.md#18-pm97-the-after-side-the-regression-and-the-frozen-candidate-2026-10-14)). Native rendering at OS scaling and the provider-positive checks named below, and the targeted-MS1 engine path ([slice-07 §9](slice-07.md#9-owner-decisions-at-the-freeze), decision 4), stay `PENDING` or `BLOCKED_PROVIDER_HOLD`; the owner accepted U4 with its live-provider check open. Until PM9.7 every ID was **PLANNED**. Status words: `PLANNED`, `IMPLEMENTED_UNVALIDATED`,
 `ACCEPTED`; an unexecuted check is `PENDING`, and a written test is not a run.
 Evidence types are kept apart: static reading, component test (Vitest/jsdom),
 controlled-IPC browser rendering (real frontend, real Vite, real Chrome, only the
@@ -71,7 +71,9 @@ provider and release qualification of PM9.7's frozen candidate, as the
 [roadmap](../../../ROADMAP.md) orders after M9. PM9 records them as `PENDING`
 or `BLOCKED_PROVIDER_HOLD`, never as passed. Whether U4 can be accepted with
 its live-provider check open is the owner's decision at PM9.7's candidate
-freeze.
+freeze. The owner took it on 2026-10-13, accepting U4 with the check open.
+The owner placed the real targeted-MS1 engine path with the same
+qualification ([slice-07 §9](slice-07.md#9-owner-decisions-at-the-freeze)).
 
 ## Regression (must still hold at the end)
 

@@ -1893,9 +1893,11 @@ keeps what the baseline's readers need.
     (`apps/desktop` tree `39d6557887a10b10dc60a9b00901160bf93a9c02`).
   - Tests: `e94fb168482a59cc701bec68af613bd74780a383`. The rest is
     documents.
-  - Since the accepted main `57915de`, only the frontend and one root script
-    line have changed. No Rust, IPC, DTO, schema, manifest, lock or workflow
-    path changed.
+  - Since the accepted main `57915de`, outside the e2e tests and the
+    documents, only the frontend (`apps/desktop/src`), one root script line
+    (`qa:pm9:manual`) and a docstring in `scripts/check_repo.py` (`859eaf0`)
+    have changed. No Rust, IPC, DTO, schema, manifest, lock or workflow path
+    changed.
 - **J1–J6 after side.** Measured by §17.1's rules, with the same recorder,
   fixtures, build mode and anchors, on a `git archive` extraction of
   `30b855f` (M7, alone).
@@ -1924,7 +1926,11 @@ keeps what the baseline's readers need.
 - **Regression.** Every browser spec in the corpus passes on candidate 2:
   487 cases in nine groups, besides M7's nine journeys.
   - §2's 174 known failures of 2026-09-25 all pass, or are retired against
-    a named replacement. The replacement passes by title.
+    a named replacement.
+  - The browser replacements, m7.3's wheel-and-pan case and PM9.3-V7, pass
+    by title on candidate 2.
+  - The Vitest replacements passed by title on candidate 1 (V2). They pass
+    within candidate 2's 2261 tests, and their files are unchanged since.
   - Retired: m5.2 five, viewer-r1 five, viewer-r1-scale one.
   - Full Vitest, alone: 112 files, 2261 tests. In the parallel run, one
     case timed out under five shards; it passes alone.
@@ -1952,3 +1958,13 @@ keeps what the baseline's readers need.
   - the real targeted-MS1 engine (`PENDING`).
 
   All three are the owner's own qualification dispatch after PM9.
+- **Not repaired in PM9.** Some Tauri and native siblings still select the
+  pre-M7.2 roster:
+  - `li.dataset-row` in `e2e/support/tauriPanel.ts`, and in m4.1's and
+    viewer-r1-linked-viewer's Tauri specs;
+  - `[role="option"]` rows in m6.6–m6.9's Tauri specs and in m7.1's native
+    spec (§2).
+
+  They fail at setup on any candidate since M7.2, not because of `30b855f`.
+  They go to the same qualification as the native runs, and are repaired
+  before their results count.
