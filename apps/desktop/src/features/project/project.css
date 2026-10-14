@@ -753,11 +753,20 @@
   align-self: flex-start;
 }
 
+/* A refused action on the Project surface reads as refused, as the header's
+   panel toggles do: it fades, but never while it holds the focus ring, so the
+   ring keeps full contrast (PM9.7 F1). Its reason is reachable from the
+   control itself: a description, and a tooltip. */
+.project-surface .secondary-button[aria-disabled="true"]:not(:focus-visible) {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 /* Run is the one control here whose unavailability decides the next step, so
    an inert control reads as inert: Run through the refused-primary treatment
    every primary shares (PM9 UI-24), the rest here by fading. Scoped to this
    setup: the rest of the surface keeps its own treatment. */
-.targeted-setup button[aria-disabled="true"]:not(.primary-button) {
+.targeted-setup button[aria-disabled="true"]:not(.primary-button):not(:focus-visible) {
   cursor: not-allowed;
   opacity: 0.48;
 }

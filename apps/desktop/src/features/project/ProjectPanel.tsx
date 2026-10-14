@@ -328,6 +328,12 @@ export interface ProjectPanelProps {
   readonly viewedPreview?: ViewedPreview | null;
 }
 
+/**
+ * The no-project sentence, which is also why Save, Save As and Close are
+ * refused while nothing is open: they point at it rather than repeating it.
+ */
+const NONE_HINT_ID = "project-none-hint";
+
 export function ProjectPanel({
   session,
   detailsPresent = false,
@@ -652,7 +658,8 @@ export function ProjectPanel({
             type="button"
             className="secondary-button"
             aria-disabled={working || !state.open || !state.published || undefined}
-            title={state.open && !state.published ? t("projectSaveNeedsLocation") : undefined}
+            aria-describedby={state.open ? undefined : NONE_HINT_ID}
+            title={!state.open ? t("projectNeedsProject") : !state.published ? t("projectSaveNeedsLocation") : undefined}
             onClick={() => {
               if (!working && state.open && state.published) void session.saveProject();
             }}
@@ -663,6 +670,8 @@ export function ProjectPanel({
             type="button"
             className="secondary-button"
             aria-disabled={working || !state.open || undefined}
+            aria-describedby={state.open ? undefined : NONE_HINT_ID}
+            title={state.open ? undefined : t("projectNeedsProject")}
             onClick={() => {
               if (!working && state.open) void session.saveProjectAs();
             }}
@@ -673,6 +682,8 @@ export function ProjectPanel({
             type="button"
             className="secondary-button"
             aria-disabled={working || !state.open || undefined}
+            aria-describedby={state.open ? undefined : NONE_HINT_ID}
+            title={state.open ? undefined : t("projectNeedsProject")}
             onClick={() => {
               if (!working && state.open) void session.closeProject();
             }}
@@ -1464,7 +1475,9 @@ export function ProjectPanel({
           </section>
         </>
       ) : (
-        <p className="project-empty">{t("projectNoneHint")}</p>
+        <p className="project-empty" id={NONE_HINT_ID}>
+          {t("projectNoneHint")}
+        </p>
       )}
     </div>
   );

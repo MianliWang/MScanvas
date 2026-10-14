@@ -14,7 +14,7 @@ describe("render-time workbench messages", () => {
     expect(zh("dragPicked", { count })).toBe(`已拾起 ${count} 个采集。`);
     const notice = describeClear(count), snapshot = structuredClone(notice);
     expect(formatWorkspaceNotice(notice, en).message).toContain(`Cleared ${count} file${count === 1 ? "" : "s"}`);
-    expect(formatWorkspaceNotice(notice, zh).message).toContain(`已从名单清除 ${count} 个文件`);
+    expect(formatWorkspaceNotice(notice, zh).message).toContain(`已从采集列表清除 ${count} 个文件`);
     expect(notice).toEqual(snapshot);
   });
   it("retains raw labels and provider prose while changing the surrounding language", () => {

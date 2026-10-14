@@ -1148,6 +1148,7 @@ export const en = {
   projectSaveAs: "Save As…",
   projectClose: "Close",
   projectSaveNeedsLocation: "This project has not been saved anywhere yet. Use Save As to choose where.",
+  projectNeedsProject: "No project is open. Create a new project or open one first.",
   projectUnsaved: "This project has changes that have not been saved.",
   projectRefused: "That action was refused and nothing was changed.",
   projectDismiss: "Dismiss",

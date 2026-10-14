@@ -130,6 +130,16 @@ describe("the Simplified Chinese bundle", () => {
     expect(zh.backendHelpTarget).toContain("Windows 11 25H2 x64");
   });
 
+  it("no longer calls the roster 名单 or vendor acquisitions 供应商 (PM9.7 F6)", () => {
+    // The roster panel is 采集列表, as its title and toggle say, and vendor
+    // acquisitions are 厂商采集 wherever conversion speaks of them. The
+    // workspace's own list keeps 工作区列表, as English keeps "workspace list".
+    const values = Object.values(zh).join("\n");
+    expect(zh.rosterTitle).toBe("采集列表");
+    expect(values).not.toContain("名单");
+    expect(values).not.toContain("供应商");
+  });
+
   it("names the preference file's own prefix identically, so a residue can be found", () => {
     // A reader told to look for a file has to be told the name it really has.
     expect(en.saveTemporaryLeftBehind).toContain(".mscanvas-ui-preferences-");

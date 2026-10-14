@@ -45,9 +45,20 @@ button {
   cursor: pointer;
 }
 
-button:focus-visible,
-input:focus-visible,
-[tabindex]:focus-visible {
+/* Every control a keyboard reaches draws the one focus ring (DESIGN_SYSTEM,
+   UI-46): disclosures and selects too, which otherwise kept the browser's own
+   thin ring (PM9.7 F15). At the lowest specificity, so a component's own ring
+   wins -- an inset ring on a row in a clipping scroller, for one -- even
+   though this file's rules come after every stylesheet it imports. */
+:where(button, input, select, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
+}
+
+/* Focus scrolls a control only until its own box is in view, which leaves a
+   ring drawn outside it under the scroller's edge -- the spectrum plot at the
+   foot of the evidence column, for one. The margin is the ring's reach: its
+   2px offset and 2px width (PM9.7 F15). A component's own margin wins. */
+:where(button, input, select, summary, [tabindex]) {
+  scroll-margin: 4px;
 }

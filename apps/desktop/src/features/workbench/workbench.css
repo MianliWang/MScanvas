@@ -122,7 +122,7 @@
 .organization-notice:empty { padding: 0; }
 .roster-empty { padding: 16px 10px; font-size: 13px; }
 .roster-menu { z-index: 100; min-width: 170px; max-width: min(340px, calc(100vw - 24px)); max-height: min(420px, var(--radix-dropdown-menu-content-available-height)); overflow: auto; padding: 5px; border: 1px solid var(--color-border); border-radius: 8px; background: white; color: var(--color-text-primary); box-shadow: 0 6px 20px rgb(23 35 55 / 0.14); font-family: var(--font-ui); font-size: 13px; }
-.roster-menu [role="menuitem"] { padding: 7px 9px; min-height: 32px; border-radius: 4px; overflow-wrap: anywhere; outline: none; cursor: pointer; }
+.roster-menu [role="menuitem"] { padding: 7px 9px; min-height: 32px; border-radius: 4px; overflow-wrap: anywhere; cursor: pointer; }
 .roster-menu [data-highlighted] { background: var(--color-surface-selected); }
 .roster-menu [data-disabled] { opacity: 0.5; cursor: default; }
 .roster-menu [role="separator"] { height: 1px; background: var(--color-border); margin: 5px; }
@@ -233,6 +233,9 @@
 .roster-help { font-size: 12px; color: var(--color-text-secondary); }
 /* A compact control's 32 px, as every other disclosure summary here (PM9 UI-45). */
 .roster-help summary { min-height: 32px; padding-block: 6px; cursor: pointer; }
+/* The summary spans the clipping roster panel edge to edge, so its ring is
+   drawn inside it, as the context line's are (PM9.7 F15). */
+.roster-help summary:focus-visible { outline-offset: -2px; }
 .roster-help p { margin: 6px 0; }
 
 /* The panel arrangement is on screen either way; this says it will not survive
