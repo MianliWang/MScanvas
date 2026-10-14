@@ -212,6 +212,26 @@ refused every run at the time, and qualified by their groups in §8.
 - Every launched process is recorded with its PID, creation time and parent,
   and no process is killed by name or port.
 
+**Amendment, 2026-10-13, at the owner's request, written before any browser
+run.** The owner asked for the groups to run in parallel as far as
+possible, and chose up to five at once with only the stop line as their
+gate. This replaces "serially, one browser session at a time" and the
+admission line for the browser groups and B0:
+
+- **M5 still runs alone**, with no other group running, so its counts are
+  taken as the before side's were.
+- **The others run as parallel shards**, at most five at once. A new shard
+  starts only at 4 GiB free or more and below 90% used, read once at its
+  start. Below that line no new shard starts; shards already running finish.
+  A shard the line refuses is recorded as refused. A later run of it is a
+  new group, under a new name.
+- **Launches are staggered by 30 seconds**, so each reading includes the
+  shards already started.
+- **Each shard** gets its own dev server on its own fresh port, its own
+  Chrome session and its own output directory.
+- **A case that fails in a parallel shard** is run again alone before it is
+  diagnosed, to tell contention from a fault. Both outcomes are recorded.
+
 **Freeze and repair rule.**
 
 - The production candidate is frozen before M5 and the G groups. At
