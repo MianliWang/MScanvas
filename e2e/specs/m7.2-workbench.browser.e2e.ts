@@ -629,7 +629,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$("#workbench-roster").$("button=Try reading it again").click();
     await browser.$("strong=Reading the workspace list…").waitForDisplayed(); await capture("17-roster-loading");
     await locale("zh-CN");
-    expect(await viewerAnnouncement()).toBe("正在读取工作区名单。");
+    expect(await viewerAnnouncement()).toBe("正在读取工作区列表。");
     await capture("17a-zh-loading-announcement");
     await releaseInvokeHold("get_workspace_roster");
     await browser.$(row(selectedFile.handle)).waitForDisplayed();
