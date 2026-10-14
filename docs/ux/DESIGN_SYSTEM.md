@@ -237,6 +237,12 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   cursor. It does not fade, so its focus ring keeps full contrast, and it stays
   a Tab stop. Its reason is visible text beside it, not only a tooltip
   (UI-24).
+- **Refused secondaries on the Project surface.** A refused secondary
+  (`aria-disabled`) fades to 0.48 with a not-allowed cursor, but not while it
+  holds the focus ring, which keeps full contrast. This follows the header's
+  panel toggles. It names its reason through `aria-describedby`, pointing to a
+  visible sentence, and also through its tooltip. With no project open, Save,
+  Save As… and Close point to the no-project sentence (PM9.7 F1).
 - **One primary per state.** While the evidence pane offers the retained
   acquisition again beside the roster, that is the filled action; `Add
   files…` stays offered as a secondary. In the constrained layout, where an
@@ -244,6 +250,18 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
 - **Focus colour.** One colour, the reference's `#1769d1`, for every focus
   ring (UI-46). Settings no longer declares its own, and the lighter `#2a7fff`
   token is gone.
+- **One ring for every stop** (PM9.7 F15).
+  - The shared rule in `index.css` covers buttons, inputs, selects,
+    disclosure summaries and anything with a `tabindex`.
+  - It sits at the lowest specificity (`:where()`), so a component's own
+    ring wins.
+  - A control flush against a clipping edge draws its ring inset
+    (`outline-offset: -2px`): the roster's and scan table's rows, the
+    context line's items, the roster's help disclosure.
+  - Roster menu items keep the ring beside their highlight.
+  - Every such control has a 4 px `scroll-margin`, the ring's reach. Focus
+    scrolling then brings the ring into view, not only the control: the
+    spectrum plot at the foot of the evidence column, for one.
 - **Plot headers.** A figure caption names plot, range and size; each part is
   kept whole and the caption reflows only at its separators (UI-26). A plot
   header's actions keep the heading's row wherever their buttons fit beside
