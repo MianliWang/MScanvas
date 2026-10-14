@@ -100,7 +100,7 @@ async function fieldOf(label: string): Promise<WebdriverIO.Element> {
   if (id === "") {
     throw new Error(`no figure field labelled ${label}`);
   }
-  return await browser.$(`#${id}`);
+  return browser.$(`#${id}`).getElement();
 }
 
 /** One of the spectrum panel's actions, by its label, as m4.3's `control`. */

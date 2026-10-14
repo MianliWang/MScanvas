@@ -123,8 +123,8 @@ async function loadSpectrum(): Promise<void> {
  * the open export can run below its fold.
  */
 async function buttonLabelled(label: string): Promise<WebdriverIO.Element | undefined> {
-  const button = await browser.$(PANEL).$(`button=${label}`);
-  return (await button.isExisting()) ? button : undefined;
+  const button = browser.$(PANEL).$(`button=${label}`);
+  return (await button.isExisting()) ? button.getElement() : undefined;
 }
 
 async function exportButton(
