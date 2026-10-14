@@ -1,9 +1,16 @@
 # PM9.7 — integrated journey acceptance, regression, reference-deviation disposition and candidate freeze
 
 PM9 | Acceptance: U1–U10, integrated | Depends on: PM9.1–PM9.6 | Serial, one writer
-Status: **IN PROGRESS** (expanded 2026-10-13). Native rendering at OS scaling,
-the real engine and every provider-positive check stay with the qualification
-after PM9.7 (§9).
+Status: **PM9.7 COMPLETE — INTEGRATED BROWSER/RENDERED ACCEPTANCE PASS;
+CANDIDATE FROZEN** (2026-10-14, §11).
+
+- **Production:** `30b855f23fc8b391e10221954dfa1278a9863db5`
+  (`apps/desktop` tree `39d6557887a10b10dc60a9b00901160bf93a9c02`).
+- **Measured:** J1–J6 equal the before side on every counted field.
+- **Outside the slice:** native rendering at OS scaling, the real engine and
+  every provider-positive check stay **PENDING** or
+  **BLOCKED_PROVIDER_HOLD**. They belong to the owner's own qualification
+  dispatch after PM9 (§9).
 
 ## 0. Starting point
 
@@ -425,3 +432,187 @@ the product before PM9 (`d56b17b`, `57915de`). None is a PM9 regression.
 | T0 `pnpm e2e:typecheck` | `9f3d1b9`, clean | 3.99 GiB free, 87.4% used | refused at admission, not started; it stays refused |
 | C0 `check_repo` and the scoped comparison | `9f3d1b9`, clean | 3.86 GiB, 87.8% (light, not gated) | passed; no Rust, IPC, schema, manifest, lock or workflow change since `57915de` |
 | T0b `pnpm e2e:typecheck`, after the owner's decisions | `c2eec56`, clean | 3.83 GiB, 87.9% | refused at admission, not started; it stays refused |
+
+**2026-10-13 to 2026-10-14, candidate 1: production `6c3508a` (PM9.6's).**
+
+Every run went through the scratchpad runner, which recorded its memory
+reading, HEAD, port, process tree and leftovers. Browser runs used Chrome
+154.0.8037.98 headless at DPR 1, with ChromeDriver 154.0.8037.93 through
+`CHROMEDRIVER_PATH`. Shards ran under the owner's stop-line gate (§8's
+amendments), at most five at once, each on its own port (15300–15346 over
+the whole slice). No run left a process behind. Evidence:
+`.tmp/pm97-runs/<group>/`, git-ignored.
+
+| Group | On | Reading at start | Result |
+| --- | --- | --- | --- |
+| T0c `pnpm e2e:typecheck` | `d2539e9` | 10.18 GiB free, 67.9% used | exit 1: two TS2322 errors in `bb5f191`'s m4.1/m4.2 helpers, fixed test-only in `d0a97b2` |
+| T1 e2e typecheck, S1 `pnpm typecheck` | `d0a97b2` | 9.87 / 9.78 GiB | exit 0 |
+| U1 full Vitest, bounded | `d0a97b2` | 9.77 GiB, 69.2% | 112 files, 2260 tests passed |
+| G-L2a, G-L2b, G-PM9a, G-L3, G-L4, G-PM9b, G-M, G-L1, I1, B0 (parallel) | `2891f90` (docs only after `d0a97b2`) | lowest 6.29 GiB, 80.1% (G-L3) | all exit 0; per spec below |
+| M5, J1–J6 after side, alone | extracted `6c3508a` (archive `7239bf7b…604b`) | 10.63 GiB, 66.4% | 9 of 9; `journeys.json` `2e994027…d173` |
+| D2 development typecheck | dirty | 7.28 GiB, 77% | refused at the standing admission line; it stays refused |
+| I1b extended PM9.7 spec, V2 replacements by title, T2 (parallel) | `0b021af` | lowest 7.00 GiB | 12 of 12; 5 files, 382 tests; exit 0 |
+| M6, J4 and J4b again, alone | extracted `6c3508a` | 9.11 GiB, 71.2% | 2 of 2; `journeys.json` `243179c1…f239` |
+| C1 `check_repo`, `git diff --check`, scoped comparison | `0b021af` | light | passed; nothing outside the frontend since `57915de` |
+
+Browser outcomes on candidate 1, every spec passing:
+
+- PM9 specs:
+  - PM9.1: 55.
+  - PM9.3: 19.
+  - PM9.4: 9.
+  - PM9.5: 10.
+  - PM9.6: 32.
+- M8 and M9 specs:
+  - m8.1: 8.
+  - m8.2: 4.
+  - m8.3: 2.
+  - m8.4: 2.
+  - m8.5: 3.
+  - m9.1: 12.
+  - m9.4: 5.
+- Legacy specs:
+  - m4.1: 17, against 17 failing before PM9.7.
+  - m4.2: 15, against 15 failing.
+  - m4.3: 23, against 2 failing.
+  - m4.4: 18, against 2 failing.
+  - m5.2: 43, after five retirements.
+  - m5.3: 13, against 13 failing.
+  - m5.7: 8.
+  - m6.1, m6.4, m6.6, m6.7, m6.8 and m6.9: 65.
+  - m7.1: 3, against 3 failing.
+  - m7.2: 11, against 10 failing.
+  - m7.3: 16.
+  - m7.4: 16, and its preview observer 7.
+  - m7.5: 8, against 1 failing.
+  - viewer-r1: 49, after five retirements.
+  - viewer-r1-scale: 2, after one retirement.
+
+So every legacy failure §2 and slice-03 §0.5 handed to PM9.7 is either
+repaired, updated with a cited decision, or retired. None of the 2026-09-25
+campaign's 174 known failures still fails: each now passes or is retired
+against a named replacement.
+
+- **m7.2's `metrics()`.** Its 11 cases pass with the clear-then-set helper.
+  The cascade diagnosis stands, now in a run.
+- **The eleven retirements are final.** V2 shows every named replacement
+  passing by title:
+  - in `Chromatogram.test.tsx`, `SpectrumViewport.test.tsx`,
+    `LinkedViewer.test.tsx`, `App.test.tsx` and `ChromatogramExport.test.tsx`;
+  - m7.3's wheel-and-pan case and PM9.3-V7 pass in their browser groups.
+
+  The retired m5.2 drag case's request half is now also named against
+  `SpectrumViewport.test.tsx`'s "keeps moving the drawing while a drag
+  publishes nothing" and "commits the pan when the press is released,
+  keeping the window's width".
+- **J1–J6 (M5, with the J4 correction measured in M6).** Every journey equals
+  the before side (baseline §17.2) on every counted field:
+  - steps, decisions and their options, confirmations, native dialogs;
+  - context changes by kind;
+  - journey IPC by class, by command and by step;
+  - mounts in and out per region, the preserved set, the end state;
+  - the 13 mount-time calls (9 read, 4 other) and the console ledger.
+
+  No navigation-only step sends a work-class command, and every preserved
+  entry is kept, the committed m/z range and the targeted draft included.
+  - **J4's method correction (§5).** M5 measured J4 at 6 steps. Its sixth,
+    "open its result", changed nothing: after Run the result is already the
+    inspected object and its report on screen. The step is off the most
+    direct path, so the driver now ends at Run, and M6 measured J4 at 5, equal
+    to the before side.
+- **An analysis anomaly, recorded.** U1 overlapped the first four shards: it
+  is not a declared shard, but at most five heavy runs ran at once.
+- **The integrated states (I1, I1b), reviewed against DESIGN_SYSTEM.**
+  - **F1, defect, pre-existing.** With no project open, the Project's refused
+    Save, Save As… and Close looked live and gave no reason. Capture QC
+    summary had the same look when refused.
+  - **F2, weakness.** The empty Project emphasises no next action.
+  - **F3, weakness.** At 960×640 the empty Workbench's and Conversion's next
+    action sits behind the folded Acquisitions, which their copy does not
+    name.
+  - **F4 and F5.** Evidence gaps, closed test-only by I1b: a frame of every
+    eighth stop, each stop's treatment, Conversion's next action reached by
+    keyboard, and the roster unfolded by Tab and Enter.
+  - **F6, weakness.** zh-CN called the roster 名单 beside 采集列表, and
+    vendor acquisitions 供应商格式的采集 beside 厂商采集.
+  - **F7–F14, observations, no action:**
+    - zh-CN line breaks;
+    - the empty roster's Ungrouped row;
+    - the full Conversion form when empty;
+    - frame artefacts;
+    - the scan-table header spacing in English;
+    - a history label's baseline offset;
+    - relation buttons that read as text.
+  - **F15, defect, pre-existing.** I1b's per-stop treatment showed 20 of 150
+    stops on Chrome's own `1px auto` ring rather than DESIGN_SYSTEM's 2 px
+    `#1769d1`: every viewer disclosure summary and the scan table's MS-level
+    select.
+
+**2026-10-14, candidate 2: production `30b855f`.** The owner's decisions (§9)
+added three fixes, F1, F6 and F15.
+
+- **One focus ring (F15).** The shared rule covers `select` and `summary` at
+  `:where()` specificity, so component rings win. This also restores the
+  rows' inset rings. The shared `[tabindex]` arm, there since the
+  repository's first commit (`37fc35d`), had always overridden them. The roster help summary draws its ring inset. Roster menu items keep
+  theirs. Every focusable control has a 4 px `scroll-margin`, the ring's
+  reach.
+- **Refused secondaries read as refused (F1).** They fade, except while they
+  hold the focus ring, and say why. The new key is `projectNeedsProject`.
+- **One zh-CN term each (F6).**
+
+Before commit:
+
+- **An adversarial review** (14 agents over three lenses, each finding
+  independently refuted or kept) confirmed two problems, both fixed:
+  - the roster help summary's new ring was clipped by its panel;
+  - the zh-CN loading announcement disagreed with the visible line.
+
+  It refuted seven others as pre-existing and not worsened. One of them, the
+  targeted setup's refused buttons fading their own ring, was fixed anyway
+  under F1.
+- **The development runs D3 to D5** found two more things:
+  - **A test-timing effect.** Under reduced motion every property
+    transitions for 0.01 ms (`app.css`), so a ring read in the Tab's own
+    frame is half-way. The spec now waits a frame.
+  - **A clipped ring, now the scroll margin's job.** The I3 walk's new
+    reach-aware clip check found the spectrum plot's ring cut by the
+    evidence column at 960×640. This is pre-existing: the plot is scrolled
+    into view without its ring.
+
+| Group | On | Reading at start | Result |
+| --- | --- | --- | --- |
+| D3a, D3b; D4a–D4d; D5a–D5d (development, dirty tree) | over `0b021af` | lowest 7.10 GiB, 77.6% | D4b failed 5 cases (the two causes above); D5 all green: PM9.7 12, PM9.1 55, viewer-r1 49, PM9.3 19, m7.3 16, PM9.6 32, m7.2 11 |
+| U1-2 full Vitest (parallel) | `a4616de` | 10.81 GiB, 65.9% | 111 of 112 files, 2260 of 2261 tests: M73Viewer's "exports only committed axis ranges while drawing or pending, then the newly confirmed range from retained tokens" timed out at 5175 ms against its 5000 ms limit |
+| U1-2r that file, alone | `cfeb758` | 8.18 GiB, 74.2% | 4 of 4; the case in 2057 ms. Contention, not a fault |
+| G-PM9b-2 | — | 10.00 GiB, 68.4% | refused: a document was edited while the pool ran, so the tree was dirty. It stays refused |
+| G-L1-2, G-L2b-2, G-PM9a-2, G-L3-2, G-L4-2, G-L2a-2, G-M-2, I1-2, B0-2, S1-2, T-2 (parallel) | `a4616de`/`cfeb758` (docs only after `30b855f`'s tests `e94fb16`) | lowest 5.61 GiB, 82.3% (G-L3-2) | all exit 0, every spec passing, with the same counts as candidate 1; PM9.7 12 of 12 under the strict ring assertions |
+| G-PM9b-3, G-PM9b-2's run under a new name | `cfeb758` | 7.91 GiB, 75% | PM9.6 32, PM9.3 19, PM9.4 9, PM9.5 10 |
+| M7, J1–J6 after side, alone | extracted `30b855f` (archive `34a89246…bc12`) | 7.47 GiB, 76.4% | 9 of 9; every journey identical to the before side on every counted field; `journeys.json` `3ad72b8a…d5d3` |
+| U1-3 full Vitest, alone | `cfeb758` | 7.64 GiB, 75.9% | 112 files, 2261 tests passed (one more than candidate 1: F6's guard) |
+| C2 `check_repo`, `git diff --check`, scoped comparison | the record's own tree | light | passed; since `57915de` nothing changed outside the frontend but the one root script line |
+
+**What PM9.7 establishes.**
+
+- **U1 and U10.** The integrated journeys keep every context, draft and view
+  across navigation, and send no background work. Against PM9.1's baseline
+  they cost exactly what they did on `d56b17b`.
+  - No step, confirmation, call or mount is added.
+  - The presentation changed: the context line in place of the 89 px notice
+    band (PM9.2), the evidence-first viewer (PM9.3), the review leading to its
+    action (PM9.4, PM9.5), and results beside their evidence (PM9.6).
+- **U2–U8.** Each slice's focused acceptance holds on the frozen candidate in
+  its own spec and in the legacy specs that cover the same surfaces.
+  - **U4's live-provider check** stays `BLOCKED_PROVIDER_HOLD`; the owner
+    accepted U4 with it open.
+  - **The real engine and real files behind U5–U7** stay `PENDING`.
+- **U9.** The surfaces render in both languages at the anchors.
+  - Every keyboard stop walked is on screen, uncovered and unclipped with its
+    ring, and draws the design system's ring.
+  - Native rendering at the host's 150% stays `PENDING`.
+- **Regression.** The brief's list holds in every tested scope. Every
+  browser spec in the corpus passes on the frozen candidate.
+- **Not proved:**
+  - native dialogs, real files, a provider or engine run;
+  - native WebView2 at 150%;
+  - a screen reader.

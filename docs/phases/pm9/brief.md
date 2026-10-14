@@ -4,7 +4,7 @@ Stage: after M9, the concentrated real-workflow UI/UX cleanup that precedes a
 new product candidate ([ROADMAP](../../../ROADMAP.md), [M9 closure §15](../../product/M9_CLOSURE.md#15-after-m9)).
 Budget: seven slices, including the opening baseline (PM9.1) and the closing
 acceptance (PM9.7). No uncounted planning or cleanup slice.
-Status: **IN PROGRESS** since the 2026-09-26 mid-phase normalization
+Status: **COMPLETE** (2026-10-14): PM9.7 accepted the integrated product at the browser/rendered and component layers and froze the candidate, production `30b855f` ([slice-07 §11](slice-07.md#11-record), [baseline §18](baseline.md#18-pm97-the-after-side-the-regression-and-the-frozen-candidate-2026-10-14)). Native rendering at OS scaling, U4's live-provider check and the real engine stay `PENDING` or `BLOCKED_PROVIDER_HOLD`, for the owner's qualification dispatch after PM9. Before that, **IN PROGRESS** since the 2026-09-26 mid-phase normalization
 ([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)): PM9.1 is complete since 2026-10-13, baseline established, not accepted: its J1–J6 were measured on `d56b17b`, with the draft and viewport legs ([baseline §17](baseline.md#17-j1j6-measurement-on-d56b17b-pm91-pending-item-4)); before that it was partial, with only J1–J6 left;
 PM9.2 is complete; PM9.3 is complete (2026-09-28, [slice-03 §0.5](slice-03.md#05-validation-repair-and-closure-2026-09-28)); the midpoint check ran on 2026-10-04 ([baseline §13](baseline.md#13-midpoint-check-2026-10-04)); PM9.4 is complete (2026-10-04, [slice-04 §10](slice-04.md#10-record)); PM9.5 is complete (2026-10-04, [slice-05 §12](slice-05.md#12-record)); PM9.6 is complete (2026-10-13, [slice-06 §13](slice-06.md#13-record)); PM9.7 has not started. The known UI/UX rework (2026-09-28 to 2026-10-03, [baseline §12](baseline.md#12-known-uiux-rework-2026-09-28)) ran in two batches and a UI-34 wording continuation, production candidate `b7b8eeb`, whose wording the owner accepted on 2026-10-04: **PM9 REPORTED UI/UX ISSUES CLEARED — REQUIRED FINAL VALIDATION COMPLETE**. PM9.1 55/55, m5.7 8/8, the e2e typecheck and two PM9.3 samples (final test content `1a6d887`) passed on 2026-10-04. PM9.4 is not started. Before that:
 the 2026-09-25 validation window established PM9.1's browser rendered
@@ -42,7 +42,7 @@ scientific history kept separate from current-session authority.
 
 ## Acceptance (three layers per ID)
 
-Every ID is **PLANNED**. Status words: `PLANNED`, `IMPLEMENTED_UNVALIDATED`,
+On 2026-10-14 every ID is **ACCEPTED** at the browser/rendered and component layers on the frozen candidate `30b855f` ([baseline §18](baseline.md#18-pm97-the-after-side-the-regression-and-the-frozen-candidate-2026-10-14)). The native, provider and engine checks named below stay `PENDING` or `BLOCKED_PROVIDER_HOLD`; the owner accepted U4 with its live-provider check open. Until PM9.7 every ID was **PLANNED**. Status words: `PLANNED`, `IMPLEMENTED_UNVALIDATED`,
 `ACCEPTED`; an unexecuted check is `PENDING`, and a written test is not a run.
 Evidence types are kept apart: static reading, component test (Vitest/jsdom),
 controlled-IPC browser rendering (real frontend, real Vite, real Chrome, only the

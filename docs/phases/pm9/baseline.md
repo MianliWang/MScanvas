@@ -15,7 +15,8 @@ with only J1–J6 left, and native rendering at OS scaling and the provider
 route belong to the qualification after PM9.7. On 2026-10-13 J1–J6 were
 measured on `d56b17b` (§17.2), with the draft and viewport legs that
 §17.1's amendment adds (J1b, J4b). PM9.1 is **COMPLETE — baseline
-established, not accepted**.
+established, not accepted**. On 2026-10-14 PM9.7 measured the after side on
+its frozen candidate. It equals this baseline on every counted field (§18).
 
 ## 1. Ownership map
 
@@ -1881,3 +1882,73 @@ Neither changes a rule.
   recreated by the script, with the same archive hash, for the supplements,
   and removed again after M4 the same way.
 - Ports: 15297 for M4.
+
+## 18. PM9.7: the after side, the regression and the frozen candidate (2026-10-14)
+
+The full record is in [slice-07 §11](slice-07.md#11-record). This section
+keeps what the baseline's readers need.
+
+- **Frozen candidate.**
+  - Production: `30b855f23fc8b391e10221954dfa1278a9863db5`, candidate 2
+    (`apps/desktop` tree `39d6557887a10b10dc60a9b00901160bf93a9c02`).
+  - Tests: `e94fb168482a59cc701bec68af613bd74780a383`. The rest is
+    documents.
+  - Since the accepted main `57915de`, only the frontend and one root script
+    line have changed. No Rust, IPC, DTO, schema, manifest, lock or workflow
+    path changed.
+- **J1–J6 after side.** Measured by §17.1's rules, with the same recorder,
+  fixtures, build mode and anchors, on a `git archive` extraction of
+  `30b855f` (M7, alone).
+  - All nine journeys equal the before side (M3, M4) on every counted field.
+    That covers steps, decisions and their options, confirmations and
+    dialogs; context changes by kind; IPC by class, command and step;
+    mounts per region; the preserved set; the end state; the 13 mount-time
+    calls; and the console.
+  - So PM9 changed the presentation along every journey, but no journey's
+    cost.
+  - The after driver's first J4 premise was false: Open result is not on the
+    direct path. It was corrected after M5 and measured again in M6, as
+    slice-07 §5 records.
+
+| Journey | Steps (before → after) | IPC read / work / other | Preserved |
+| --- | --- | --- | --- |
+| J1 | 7 → 7 | 3 / 0 / 1 → same | 7 of 7 → same |
+| J1b | 8 → 8 | 4 / 0 / 1 → same | 7 of 7, committed range included → same |
+| J2 | 4 → 4 | 4 / 2 / 0 → same | — |
+| J3 | 6 → 6 | 0 / 6 / 0 → same | — |
+| J4 | 5 → 5 | 5 / 3 / 0 → same | — |
+| J4b | 5 → 5 | 0 / 0 / 0 → same | draft and parameters → same |
+| J5 | 8 → 8 | 7 / 2 / 0 → same | — |
+| J6, 1366×768 and 960×640 | 10 → 10 | 0 / 0 / 4 → same | roster → same |
+
+- **Regression.** Every browser spec in the corpus passes on candidate 2:
+  487 cases in nine groups, besides M7's nine journeys.
+  - §2's 174 known failures of 2026-09-25 all pass, or are retired against
+    a named replacement. The replacement passes by title.
+  - Retired: m5.2 five, viewer-r1 five, viewer-r1-scale one.
+  - Full Vitest, alone: 112 files, 2261 tests. In the parallel run, one
+    case timed out under five shards; it passes alone.
+  - Typecheck, build and `check_repo` pass.
+- **The states §3.1 did not capture.**
+  - Rendered and asserted by `pm9.7-integrated.browser.e2e.ts`: the empty and
+    entry states, scrolled positions, and a keyboard walk at 960×640 and
+    1366×768 in both languages.
+  - The owner accepted them on 2026-10-14. F2 and F3 are carried forward
+    with the optional rows.
+- **Deviation dispositions, final (the owner, 2026-10-13).**
+  - Kept as intentional: L7 at 1920×1080, L11 and L21's one-row navigation.
+  - Not adopted: PM9.4's one-line settings summary and stepper, and PM9.5's
+    stepper.
+  - Every other §3.1 row is as its slice recorded it.
+- **Candidate 2's fixes (the owner, 2026-10-14).** None is a PM9
+  regression; each was already present at `d56b17b`.
+  - **F15:** one focus ring for every stop, with room to be seen.
+  - **F1:** refused Project actions that read as refused and say why.
+  - **F6:** one zh-CN term for the roster and one for vendor acquisitions.
+- **Still outside PM9:**
+  - native rendering at the host's 150% (`PENDING`);
+  - U4's live-provider check (`BLOCKED_PROVIDER_HOLD`; the owner accepted U4
+    with it open);
+  - the real targeted-MS1 engine (`PENDING`).
+
+  All three are the owner's own qualification dispatch after PM9.
