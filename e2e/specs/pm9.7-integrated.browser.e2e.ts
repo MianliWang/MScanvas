@@ -36,6 +36,7 @@ const ANCHORS = [
 /** motion's development-build notice when the page asks for reduced motion. */
 const REDUCED_MOTION_NOTICE = "You have Reduced Motion enabled on your device";
 const CONVERT = ".conversion-plan button.primary-button, .conversion-plan .conversion-start";
+const ROSTER_TOGGLE = '[aria-controls="workbench-roster"]';
 
 async function frames() {
   await browser.execute(
@@ -117,11 +118,18 @@ async function sample(label: string) {
               scrollHeight: owner.scrollHeight,
             },
       focus: focus === null ? null : { tag: active!.tagName, text: (active!.textContent ?? "").trim().slice(0, 60), top: focus.top, bottom: focus.bottom },
-      text: (owner?.innerText ?? "").slice(0, 2_000),
+      text: (owner?.innerText ?? "").slice(0, 4_000),
     };
   });
   evidence.push({ label, candidate: process.env["MSCANVAS_PM9_CANDIDATE"] ?? "unlabelled", ...measured });
   return measured;
+}
+
+/** A frame only, for the moments a keyboard stop is what the frame is for. */
+async function shot(label: string) {
+  await frames();
+  const capture = await cdp("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
+  if (typeof capture.data === "string") writeFileSync(join(output, `${label}.png`), Buffer.from(capture.data, "base64"));
 }
 
 /** The button inside `scope` whose trimmed text is `name`, marked so WebDriver can address it. */
@@ -160,6 +168,24 @@ async function tabsTo(selector: string, limit = 60): Promise<number | null> {
   return null;
 }
 
+/** `tabsTo`, with the number of presses kept in the evidence. */
+async function reach(selector: string, label: string): Promise<number | null> {
+  const presses = await tabsTo(selector);
+  evidence.push({ reach: label, selector, presses });
+  return presses;
+}
+
+/** Unfolds a folded roster the way a keyboard user does: Tab to Acquisitions, then Enter. */
+async function unfoldRoster(label: string) {
+  expect(await reach(ROSTER_TOGGLE, `${label} acquisitions`)).not.toBeNull();
+  await browser.keys(["Enter"]);
+  await browser.waitUntil(
+    () => browser.execute(() => document.querySelector(".workbench-shell")?.getAttribute("data-roster-open") === "true"),
+    { timeoutMsg: `${label}: Enter on Acquisitions did not unfold the roster` },
+  );
+  await frames();
+}
+
 /**
  * Where the focused control is: inside the viewport and inside every
  * scrolling ancestor's visible box, not covered (the point at its centre hits
@@ -190,9 +216,20 @@ function focusFacts() {
     const style = getComputedStyle(active);
     const ring =
       (style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) >= 1) || (style.boxShadow !== "none" && style.boxShadow !== "");
+    // The accessible name as a reader hears it, a field's label included.
+    const labelledBy = (active.getAttribute("aria-labelledby") ?? "")
+      .split(/\s+/u)
+      .filter(Boolean)
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ");
+    const fieldLabel = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement ? (active.labels?.[0]?.textContent ?? "") : "";
+    const name = active.getAttribute("aria-label") ?? (labelledBy || fieldLabel || (active.textContent ?? ""));
     return {
       onBody: false,
-      name: `${active.tagName} ${(active.getAttribute("aria-label") ?? active.textContent ?? "").trim().slice(0, 50)}`,
+      name: `${active.tagName} ${name.trim().slice(0, 50)}`,
+      // What the treatment is, beside whether there is one: DESIGN_SYSTEM's
+      // 2 px outline with an offset, in the focus colour.
+      treatment: { outline: `${style.outlineWidth} ${style.outlineStyle} ${style.outlineColor}`, offset: style.outlineOffset, shadow: style.boxShadow },
       zeroSize: rect.width === 0 || rect.height === 0,
       inViewport: inside(new DOMRect(0, 0, innerWidth, innerHeight)),
       clippedBy: clippers,
@@ -229,16 +266,17 @@ describe("PM9.7 integrated states, rendered", () => {
         const workbench = await sample(`i1-workbench-${at}`);
         expect(workbench.surface).toBe("workbench");
         expect(workbench.text).toContain(words.emptyEvidence);
-        if ((await mark(".workbench-shell", words.addFiles, "data-pm97-add")) === null) {
+        let add = await mark(".workbench-shell", words.addFiles, "data-pm97-add");
+        if (add === null) {
           // Folded below 1050 px: the header's Acquisitions action unfolds it.
-          await browser.$('[aria-controls="workbench-roster"]').click();
-          await frames();
+          await unfoldRoster(`i1-workbench-${at}`);
+          add = await mark(".workbench-shell", words.addFiles, "data-pm97-add");
         }
-        const add = await mark(".workbench-shell", words.addFiles, "data-pm97-add");
         expect(add).not.toBeNull();
         expect(await offered(add!)).toBe(true);
-        expect(await tabsTo(add!)).not.toBeNull();
+        expect(await reach(add!, `i1-workbench-${at} add files`)).not.toBeNull();
         expect(await focusFacts()).toMatchObject({ onBody: false, inViewport: true, covered: false, ring: true });
+        await shot(`i1-workbench-${at}-add-focused`);
         expect(workbench.overflow.x).toBeLessThanOrEqual(0);
         expect(workbench.overflow.y).toBeLessThanOrEqual(0);
 
@@ -250,6 +288,17 @@ describe("PM9.7 integrated states, rendered", () => {
         if (await browser.$(CONVERT).isExisting()) expect(await offered(CONVERT)).toBe(false);
         expect(conversion.overflow.x).toBeLessThanOrEqual(0);
         expect(conversion.overflow.y).toBeLessThanOrEqual(0);
+        // Its next action is to add acquisitions: the same Add files…, reached by
+        // keyboard from this surface, through Acquisitions where it is folded.
+        let more = await mark(".workbench-shell", words.addFiles, "data-pm97-add");
+        if (more === null) {
+          await unfoldRoster(`i1-conversion-${at}`);
+          more = await mark(".workbench-shell", words.addFiles, "data-pm97-add");
+        }
+        expect(more).not.toBeNull();
+        expect(await reach(more!, `i1-conversion-${at} add files`)).not.toBeNull();
+        expect(await focusFacts()).toMatchObject({ onBody: false, inViewport: true, covered: false, ring: true });
+        await shot(`i1-conversion-${at}-add-focused`);
 
         // Project: no project, and New project / Open project… are the next actions.
         await navigate(words.projectSurface);
@@ -260,8 +309,9 @@ describe("PM9.7 integrated states, rendered", () => {
         const reopen = await mark(".project-header", words.projectOpen, "data-pm97-open");
         expect([create, reopen].every((selector) => selector !== null)).toBe(true);
         expect([await offered(create!), await offered(reopen!)]).toEqual([true, true]);
-        expect(await tabsTo(create!)).not.toBeNull();
+        expect(await reach(create!, `i1-project-${at} new project`)).not.toBeNull();
         expect(await focusFacts()).toMatchObject({ onBody: false, inViewport: true, covered: false, ring: true });
+        await shot(`i1-project-${at}-new-focused`);
         expect(project.overflow.x).toBeLessThanOrEqual(0);
         expect(project.overflow.y).toBeLessThanOrEqual(0);
         expect(await unexpectedConsole(locale)).toEqual([]);
@@ -335,6 +385,8 @@ describe("PM9.7 integrated states, rendered", () => {
           const facts = await focusFacts();
           if (facts.onBody) break;
           stops.push(facts);
+          // A frame of every eighth stop, so the treatment is seen, not only computed.
+          if (stops.length % 8 === 1) await shot(`i3-${label}-${locale}-960x640-stop-${String(stops.length).padStart(2, "0")}`);
           // Every stop is a real, visible place: not hidden by a scroll owner
           // or the header, and drawn as focused.
           expect({ label, press, facts }).toMatchObject({

@@ -136,6 +136,19 @@ Not in this slice:
   - **J4's Open result.** PM9.5 made a finished run offer its result: the
     report opens on that press (slice-05 R9). That is one step more, on the
     most direct path the candidate offers.
+
+    **Correction, 2026-10-14, after M5 and before M6.** M5 showed this
+    premise to be false on the frozen candidate:
+    - after Run, the run's result is already the inspected object and its
+      report is on screen (`useProject.ts` inspects a result when it arrives);
+    - the "open its result" step changed no context, sent no command and
+      mounted nothing; Open result only moves the keyboard to the report's
+      heading (`TargetedMs1.tsx`).
+
+    So the step is not on the most direct path, which §17.1's path rule
+    requires. The driver now ends J4 at Run once the report's rows are
+    there, as the before side did. M6 measures J4 again alone. M5's J4 record
+    stays as it ran.
 - **Fixtures.** The same ones: `fixtures.ts`, `pm9Scenarios.ts`,
   `targeted.ts` and the copied PM9.4 answers, with `readBackSavedPreferences`.
 - **Each run records** Chrome's version, the port, the memory reading, the
@@ -231,6 +244,18 @@ admission line for the browser groups and B0:
   Chrome session and its own output directory.
 - **A case that fails in a parallel shard** is run again alone before it is
   diagnosed, to tell contention from a fault. Both outcomes are recorded.
+
+**Second amendment, 2026-10-14, written before the runs it governs.** The
+owner then asked for everything left to be done in parallel ("并行把还没做的都做完").
+The remaining groups therefore run under the same stop-line-only gate:
+- **T2**, the e2e typecheck;
+- **V2**, the replacements' Vitest files with a per-test reporter;
+- **I1b**, the extended PM9.7 spec;
+- **M6**, J4 again, alone;
+- **C1**, the light checks.
+
+D2, a development typecheck, had been refused at the standing admission line
+(7.28 GiB free, 77% used) just before. It stays refused.
 
 **Freeze and repair rule.**
 

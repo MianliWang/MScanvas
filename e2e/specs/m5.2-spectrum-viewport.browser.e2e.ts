@@ -460,6 +460,10 @@ async function stackOverflow(): Promise<{
  *     a failure"
  *   - "still draws the spectrum's own points and says why there is no range"
  *   - "asks for the whole retained range rather than the transferred prefix"
+ *   The first of these also counted requests during a drag. That half is
+ *   SpectrumViewport.test.tsx's "keeps moving the drawing while a drag
+ *   publishes nothing" and "commits the pan when the press is released,
+ *   keeping the window's width", for the middle-button pan M7.3 left.
  */
 describe("the visible m/z viewport", () => {
   describe("the range a selected spectrum opens at", () => {

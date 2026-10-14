@@ -8,9 +8,8 @@
  * Derived from the before side's driver (`pm9.1-journeys.d56b17b.e2e.ts`),
  * which stays as it ran. The two differ only where the candidate does: J2's
  * start control and the queue state Rust answers once it starts (as the PM9.4
- * spec answers it), and J4's Open result, which PM9.5 made the way from a
- * finished run to its report. The regions and the counting are
- * `journeys.ts`'s, unchanged. Every answer is a controlled fixture at the IPC boundary, at the DTO
+ * spec answers it), and J4's wait for the run's end before its report. The
+ * regions and the counting are `journeys.ts`'s, unchanged. Every answer is a controlled fixture at the IPC boundary, at the DTO
  * level (no IPC or DTO changed in PM9): nothing was read from a file, no
  * dialog opened, no converter or engine ran. The browser stands in for every
  * native dialog with its answer.
@@ -561,13 +560,12 @@ describe("PM9.1 journeys J1–J6 on the candidate the baseline config serves", (
       await press("[data-targeted-review]");
       await until("[data-targeted-plan]");
     });
+    // The run's result is inspected when it arrives (useProject), so its report
+    // is on screen with no further press: Open result only moves the keyboard
+    // to it (slice-07 §5's correction after M5).
     await walked.step("run it", "step", async () => {
       await press("[data-targeted-run]");
       await until('[data-targeted-run-block="completed"]');
-    });
-    // PM9.5: a finished run offers its result; the report opens on that press.
-    await walked.step("open its result", "step", async () => {
-      await press(`[data-targeted-open-result="${ARTIFACTS[0]}"]`);
       await until(`[data-targeted-report="${ARTIFACTS[0]}"] [data-targeted-row]`);
     });
     records.push(await walked.finish({ report: ARTIFACTS[0] }));
