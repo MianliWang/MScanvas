@@ -15,8 +15,8 @@ What is proved is the script's own control flow: that a build records the
 frontend the build produced rather than whatever was on disk before it, that a
 failed or frontend-less build publishes no manifest, that `-ManifestOnly`
 refuses without a retained manifest whose source identity and artifacts match,
-and that it carries the build's toolchain and environment forward rather than
-probing the ones present at re-derivation.
+and that it carries the build's toolchain, environment and bundler tooling
+forward rather than probing the ones present at re-derivation.
 Whether `apps/desktop/dist` after a real build is what the bundler embedded is
 a claim about the bundler, and nothing here makes it.
 
@@ -341,6 +341,17 @@ class BuildCandidate(unittest.TestCase):
             "task environment not a list": (
                 edited(taskEnvironment="MSCANVAS_X=1"), "does not record the build's task environment",
             ),
+            "task environment holds a number": (
+                edited(taskEnvironment=[0]), "does not record the build's task environment",
+            ),
+            "task environment holds a null": (
+                edited(taskEnvironment=["MSCANVAS_X=1", None]), "does not record the build's task environment",
+            ),
+            "no bundler tooling": (edited(tooling=None), "does not record the build's bundler tooling"),
+            "bundler tooling lacks the compiler": (
+                edited(tooling={"cacheDirectory": "x", "webview2Bootstrapper": None}),
+                "does not record the build's bundler tooling",
+            ),
             "no installer identity": (edited(installer=None), "does not record the installer"),
             "no executable identity": (edited(executable=None), "does not record the executable"),
             "installer on disk differs": (other_installer, "does not match the retained manifest"),
@@ -380,14 +391,20 @@ class BuildCandidate(unittest.TestCase):
 
     def test_h_manifest_only_keeps_the_toolchain_and_environment_that_built_the_artifacts(self) -> None:
         root = self.fixture("h-upgraded-toolchain")
+        makensis = root / "localappdata" / "tauri" / "NSIS" / "makensis.exe"
+        makensis.parent.mkdir(parents=True)
+        makensis.write_bytes(b"makensis-at-build")
         code, output = self.run_script(root, extra_env={"MSCANVAS_FIXTURE": "at-build"})
         self.assertEqual(code, 0, output)
         built = self.manifest(root)
         self.assertEqual(built["toolchain"]["node"], "v22.13.0")
         self.assertEqual(built["taskEnvironment"], ["MSCANVAS_FIXTURE=at-build"])
+        self.assertEqual(built["tooling"]["nsisMakensis"]["sha256"], sha256(makensis))
 
-        # Every tool upgraded and the environment changed since the build: the
-        # re-derived manifest must still name what built the installer.
+        # Every tool upgraded, the bundler cache refreshed and the environment
+        # changed since the build: the re-derived manifest must still name what
+        # built the installer.
+        makensis.write_bytes(b"makensis-refreshed-later")
         code, output = self.run_script(
             root, "-ManifestOnly", extra_env={"STUB_VERSION_SUFFIX": "-upgraded", "MSCANVAS_FIXTURE": "later"}
         )
@@ -395,6 +412,7 @@ class BuildCandidate(unittest.TestCase):
         record = self.manifest(root)
         self.assertEqual(record["toolchain"], built["toolchain"])
         self.assertEqual(record["taskEnvironment"], built["taskEnvironment"])
+        self.assertEqual(record["tooling"], built["tooling"])
         self.assertIn("before the build", built["toolchainMeasured"])
         self.assertIn("not re-probed", record["toolchainMeasured"])
 
@@ -404,6 +422,7 @@ class BuildCandidate(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertEqual(self.manifest(root)["toolchain"], built["toolchain"])
         self.assertEqual(self.manifest(root)["taskEnvironment"], built["taskEnvironment"])
+        self.assertEqual(self.manifest(root)["tooling"], built["tooling"])
 
 
 if __name__ == "__main__":

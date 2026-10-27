@@ -137,12 +137,22 @@ try {
         }
         # Read without Get-RetainedField, which would unroll an empty list into
         # nothing; an empty list is a valid record of a clean environment.
+        # Counted, not negated: `-not` of one emitted $null, 0 or $false is true.
         if (-not ($previous.PSObject.Properties.Name -contains "taskEnvironment" -and
                 $previous.taskEnvironment -is [array] -and
-                -not ($previous.taskEnvironment | Where-Object { $_ -isnot [string] }))) {
+                @($previous.taskEnvironment | Where-Object { $_ -isnot [string] }).Count -eq 0)) {
             throw "The retained candidate manifest does not record the build's task environment; rebuild instead."
         }
         $retainedEnvironment = $previous.taskEnvironment
+        # The bundler cache is shared per user and refreshed by any later build,
+        # so the NSIS compiler and bootstrapper are the build's, carried forward
+        # too. Either may be recorded as null: the build found none cached.
+        $retainedTooling = Get-RetainedField $previous "tooling"
+        if (-not ($retainedTooling -is [pscustomobject] -and
+                $retainedTooling.PSObject.Properties.Name -contains "nsisMakensis" -and
+                $retainedTooling.PSObject.Properties.Name -contains "webview2Bootstrapper")) {
+            throw "The retained candidate manifest does not record the build's bundler tooling; rebuild instead."
+        }
     }
 
     $configuration = Get-Content -LiteralPath "apps/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
@@ -185,7 +195,7 @@ try {
     if ($ManifestOnly) {
         $toolchain = $retainedToolchain
         $taskEnvironment = $retainedEnvironment
-        $toolchainMeasured = "carried from the retained manifest; not re-probed at re-derivation"
+        $toolchainMeasured = "toolchain, task environment and bundler tooling carried from the retained manifest; not re-probed at re-derivation"
     }
     else {
         $toolchain = [ordered]@{
@@ -290,32 +300,38 @@ try {
     }
 
     # The bundler fetches these and checks them against its own pinned hashes.
-    # Recorded because they are shipped or run, not merely consulted.
-    $bundlerCache = Join-Path $env:LOCALAPPDATA "tauri"
-    $webview2Setup = Join-Path $bundlerCache "MicrosoftEdgeWebview2Setup.exe"
-    $tooling = [ordered]@{
-        cacheDirectory = $bundlerCache
-        webview2Bootstrapper = if (Test-Path -LiteralPath $webview2Setup) {
-            $identity = [ordered]@{
-                bytes       = (Get-Item -LiteralPath $webview2Setup).Length
-                sha256      = (Get-FileHash -LiteralPath $webview2Setup -Algorithm SHA256).Hash.ToLowerInvariant()
-                fileVersion = (Get-Item -LiteralPath $webview2Setup).VersionInfo.FileVersion
-                company     = (Get-Item -LiteralPath $webview2Setup).VersionInfo.CompanyName
-            }
-            $signature = Get-AuthenticodeSignature -LiteralPath $webview2Setup
-            $identity.authenticodeStatus = $signature.Status.ToString()
-            $identity.signer = $signature.SignerCertificate.Subject
-            $identity
-        } else { $null }
-        nsisMakensis = $(
-            $makensis = Join-Path $bundlerCache "NSIS/makensis.exe"
-            if (Test-Path -LiteralPath $makensis) {
-                [ordered]@{
-                    bytes  = (Get-Item -LiteralPath $makensis).Length
-                    sha256 = (Get-FileHash -LiteralPath $makensis -Algorithm SHA256).Hash.ToLowerInvariant()
+    # Recorded because they are shipped or run, not merely consulted. A
+    # re-derivation carries the build's record: the cache may hold newer ones.
+    if ($ManifestOnly) {
+        $tooling = $retainedTooling
+    }
+    else {
+        $bundlerCache = Join-Path $env:LOCALAPPDATA "tauri"
+        $webview2Setup = Join-Path $bundlerCache "MicrosoftEdgeWebview2Setup.exe"
+        $tooling = [ordered]@{
+            cacheDirectory = $bundlerCache
+            webview2Bootstrapper = if (Test-Path -LiteralPath $webview2Setup) {
+                $identity = [ordered]@{
+                    bytes       = (Get-Item -LiteralPath $webview2Setup).Length
+                    sha256      = (Get-FileHash -LiteralPath $webview2Setup -Algorithm SHA256).Hash.ToLowerInvariant()
+                    fileVersion = (Get-Item -LiteralPath $webview2Setup).VersionInfo.FileVersion
+                    company     = (Get-Item -LiteralPath $webview2Setup).VersionInfo.CompanyName
                 }
+                $signature = Get-AuthenticodeSignature -LiteralPath $webview2Setup
+                $identity.authenticodeStatus = $signature.Status.ToString()
+                $identity.signer = $signature.SignerCertificate.Subject
+                $identity
             } else { $null }
-        )
+            nsisMakensis = $(
+                $makensis = Join-Path $bundlerCache "NSIS/makensis.exe"
+                if (Test-Path -LiteralPath $makensis) {
+                    [ordered]@{
+                        bytes  = (Get-Item -LiteralPath $makensis).Length
+                        sha256 = (Get-FileHash -LiteralPath $makensis -Algorithm SHA256).Hash.ToLowerInvariant()
+                    }
+                } else { $null }
+            )
+        }
     }
 
     $manifest = [ordered]@{

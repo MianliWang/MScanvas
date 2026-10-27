@@ -626,6 +626,31 @@ and changing the workflows was outside this repair.
 
 The review's fixes were checked by the runs above; no second review ran.
 
+**Later repair (2026-10-27): a re-derivation keeps the build's toolchain.**
+Review comment 4110202616 on PR #127, deferred by PM9, found that
+`-ManifestOnly` re-probed `node`, `pnpm`, `cargo`, `rustc` and `tauri` and the
+`MSCANVAS_*`/`TAURI_*` environment, so after an upgrade a re-derived manifest
+named tools that never built the installer. The bundler `tooling` record (the
+cached NSIS compiler and WebView2 bootstrapper) was re-read the same way. Now:
+
+- `-ManifestOnly` probes none of them. It carries `toolchain`,
+  `taskEnvironment` and `tooling` from the retained manifest, and refuses,
+  before anything is written, when any tool version is missing or not a
+  string, when `taskEnvironment` is not a list of strings (an empty list is
+  valid), or when `tooling` does not record `nsisMakensis` and
+  `webview2Bootstrapper` (either may be null).
+- A new `toolchainMeasured` field says which: probed immediately before the
+  build, or carried from the retained manifest and not re-probed.
+- A retained re-derivation without `toolchainMeasured` was made by the older
+  script, which re-probed, so it is refused; rebuild instead.
+
+The frontend is still re-measured, as the table above says. The harness gained
+`test_h` (a build, then re-derivations after the stub tools are upgraded, the
+environment and cached compiler change, and with no tool on PATH) and
+nine `test_f` subcases, one for each refusal. It passes 8 of 8 on the repaired
+script, and fails exactly those nine subcases and `test_h` on `23425af`'s
+script, before the repair. No installer was built or inspected for this repair.
+
 ## 13. Found at publication: three project-integrity repairs (PR #127)
 
 **What was found.** After the required checks had passed on `cd7ec23`, the
