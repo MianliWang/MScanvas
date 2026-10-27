@@ -37,6 +37,20 @@ import { toPreviewError } from "./contracts";
 const POLL_INTERVAL_MS = 2_000;
 
 /**
+ * A request that failed before Rust's slot answered it, and which request it was.
+ *
+ * Recorded where that request's own promise rejects, never read off the last
+ * press: a late rejection names its own request rather than whatever was
+ * pressed since (PM9.4 O4). Skip and Retry carry what their controls are
+ * named by.
+ */
+export type ConversionRequestFailure = { readonly error: PreviewError } & (
+  | { readonly request: "convert" | "stop" | "stopFile" | "adopt" | "exportDiagnostics" }
+  | { readonly request: "skip"; readonly name: string }
+  | { readonly request: "retry"; readonly count: number }
+);
+
+/**
  * How often the slot is re-read while a dispatched retry has not been seen to
  * move it.
  *
@@ -115,7 +129,7 @@ export interface ConversionOperation {
   readonly reclaimingStagingRef: { readonly current: boolean };
   readonly reclaimStaging: (recoveryId: string) => Promise<StagingReclaimOutcome>;
   /** A request that never reached Rust's slot, kept apart from a conversion's own outcome. */
-  readonly error: PreviewError | null;
+  readonly failure: ConversionRequestFailure | null;
   readonly conflictPolicy: ConversionConflictPolicy;
   readonly setConflictPolicy: (policy: ConversionConflictPolicy) => void;
   readonly destinationPolicy: DestinationPolicy;
@@ -472,7 +486,7 @@ export function useConversionOperation(
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
-  const [error, setError] = useState<PreviewError | null>(null);
+  const [failure, setFailure] = useState<ConversionRequestFailure | null>(null);
   const [planOptions, setPlanOptions] = useState<ConversionPlanOptions>({
     conflictPolicy: "fail",
     destinationPolicy: { kind: "customFolder" },
@@ -945,7 +959,7 @@ export function useConversionOperation(
         replacing: stateRef.current.status === "idle" ? null : stateRef.current.operationId,
         reported: false,
       });
-      setError(null);
+      setFailure(null);
       api
         .convertDatasets(
           {
@@ -983,7 +997,7 @@ export function useConversionOperation(
             // Rust refused before anything was created. The claim was never
             // Rust's to hold, and the refusal is the reader's answer.
             claimLane(null);
-            setError(started.outcome.error);
+            setFailure({ request: "convert", error: started.outcome.error });
             return;
           }
           // The state first, the claim second. This is the reply to the very
@@ -999,7 +1013,7 @@ export function useConversionOperation(
             return;
           }
           claimLane(null);
-          setError(toPreviewError(cause));
+          setFailure({ request: "convert", error: toPreviewError(cause) });
           // The request failed on the way to the slot, so what the slot holds
           // is still authoritative and this document has to go and look.
           readState();
@@ -1106,7 +1120,7 @@ export function useConversionOperation(
     // stop, but a button that stayed live until the reply came back would
     // invite a user to press it at something already under way.
     setStopRequested(true);
-    setError(null);
+    setFailure(null);
     const { operationId } = state;
     api
       .stopConversion(operationId)
@@ -1121,7 +1135,7 @@ export function useConversionOperation(
         // document must not go on saying it was. What the slot holds is still
         // authoritative, so it asks.
         setStopRequested(false);
-        setError(toPreviewError(cause));
+        setFailure({ request: "stop", error: toPreviewError(cause) });
         readState();
       });
   }, [api, applyUpdate, readState, state]);
@@ -1204,7 +1218,7 @@ export function useConversionOperation(
     // Termination takes as long as it takes and a control that stayed live
     // would invite a second press at something already under way.
     setItemStopRequested(key);
-    setError(null);
+    setFailure(null);
     api
       .cancelCurrentConversionItem(operationId, index, item.attempts)
       .then((update) => {
@@ -1219,10 +1233,10 @@ export function useConversionOperation(
           itemStopRequestedRef.current = null;
         }
         setItemStopRequested((requested) => (requested === key ? null : requested));
-        setError(toPreviewError(cause));
+        setFailure({ request: "stopFile", error: toPreviewError(cause) });
         readState();
       });
-  }, [api, applyUpdate, readState, setError]);
+  }, [api, applyUpdate, readState]);
 
   // Which rows have a skip in flight, keyed by the exact item this document
   // asked about.
@@ -1279,9 +1293,11 @@ export function useConversionOperation(
       // against a state that may have moved, and Rust refuses a skip that
       // raced a start rather than turning it into a cancellation -- this keeps
       // the interface from asking for one it already knows is not available.
-      if (current.queue.items[index]?.state !== "pending") {
+      const item = current.queue.items[index];
+      if (item?.state !== "pending") {
         return;
       }
+      const name = item.fileName;
       const key = `${current.operationId}:${String(index)}`;
       // Claimed before the request leaves, and lowered only by its own outcome.
       // A second press inside that window is this document asking again for
@@ -1295,7 +1311,7 @@ export function useConversionOperation(
         skipsInFlightRef.current = skipsInFlightRef.current.filter((held) => held !== key);
         setSkipsInFlight(skipsInFlightRef.current);
       };
-      setError(null);
+      setFailure(null);
       api
         .skipPendingConversionItem(current.operationId, index)
         .then((update) => {
@@ -1309,11 +1325,11 @@ export function useConversionOperation(
             return;
           }
           release();
-          setError(toPreviewError(cause));
+          setFailure({ request: "skip", name, error: toPreviewError(cause) });
           readState();
         });
     },
-    [api, applyUpdate, readState, setError],
+    [api, applyUpdate, readState],
   );
 
   const retry = useCallback(() => {
@@ -1326,7 +1342,7 @@ export function useConversionOperation(
       return;
     }
     claimLane({ kind: "retry", fromRound: retryRoundOf(stateRef.current) });
-    setError(null);
+    setFailure(null);
     api
       .retryConversions()
       .then((update) => {
@@ -1340,7 +1356,7 @@ export function useConversionOperation(
           return;
         }
         claimLane(null);
-        setError(toPreviewError(cause));
+        setFailure({ request: "retry", count: target.retryableFailureCount, error: toPreviewError(cause) });
         readState();
       });
   }, [api, applyUpdate, claimLane, readLane, readState]);
@@ -1422,7 +1438,7 @@ export function useConversionOperation(
     // Marked before the request leaves, like every other gate here: the actions
     // this closes must close on the press rather than on the reply.
     setAdopting(true);
-    setError(null);
+    setFailure(null);
     const { operationId } = state;
     // Taken at dispatch. A drop or an import accepted after Rust commits this
     // and before the reply is applied would otherwise install its newer roster
@@ -1459,12 +1475,12 @@ export function useConversionOperation(
           return;
         }
         setAdopting(false);
-        setError(toPreviewError(cause));
+        setFailure({ request: "adopt", error: toPreviewError(cause) });
       });
   }, [api, onOutputsAdopted, readState, state]);
 
   const dismissError = useCallback(() => {
-    setError(null);
+    setFailure(null);
   }, []);
 
   const exportDiagnostics = useCallback(() => {
@@ -1487,7 +1503,7 @@ export function useConversionOperation(
     // exclusion; writing it would take something else away.
     exportRequestedRef.current = true;
     setExportRequested(true);
-    setError(null);
+    setFailure(null);
     const { operationId } = state;
     api
       .exportConversionDiagnostics(operationId, () => {
@@ -1505,7 +1521,7 @@ export function useConversionOperation(
           return;
         }
         setExportRequested(false);
-        setError(toPreviewError(cause));
+        setFailure({ request: "exportDiagnostics", error: toPreviewError(cause) });
         // The request failed somewhere on the way, so what the slot holds is
         // still authoritative and this document has to go and look.
         readState();
@@ -1537,7 +1553,7 @@ export function useConversionOperation(
     retry,
     retrying,
     converting,
-    error,
+    failure,
     conflictPolicy: planOptions.conflictPolicy,
     setConflictPolicy,
     destinationPolicy: planOptions.destinationPolicy,
