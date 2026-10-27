@@ -485,8 +485,9 @@ The [open-ms-data README](../../../fixtures/open-ms-data/README.md) also
 describes two third-party inputs that are **not tracked**: ProteoWizard's
 synthetic `tiny.pwiz.1.1.mzML` (Apache-2.0) and the public PRIDE `PXD081190`
 acquisition (CC0). Neither is redistributed by beta 1; adding a third-party
-file, even one whose licence would permit it, needs a new decision. Vendor
-RAW, LCD and WIFF files are excluded by `.gitignore` and never tracked.
+file, even one whose licence would permit it, needs a new decision. No vendor
+RAW, LCD or WIFF file is tracked (`git ls-files` lists none); `.gitignore`
+excludes `*.raw` and `*.wiff`/`*.wiff2`, but not `*.lcd` or `*.wiff.scan`.
 
 Outside `fixtures/`, `e2e/support/m73NativeFixture.ts` and
 `e2e/support/m74NativeFixture.ts` write explicitly synthetic mzML at run time.
@@ -511,7 +512,8 @@ a release that ships the runtime.
 
 Feedback goes to **GitHub Issues** on this repository through the existing bug,
 feature and UX-research templates; security reports follow `SECURITY.md`, not a
-public issue. Diagnostics remain explicit local redacted exports that the user
+public issue. That private route did not exist yet on 2026-10-27; see the open
+item below. Diagnostics remain explicit local redacted exports that the user
 reviews and attaches. Nothing is uploaded automatically and no telemetry is
 added, as the release exits above already require.
 
@@ -528,6 +530,12 @@ obligation.
 ### Still open after these decisions
 
 - The signing provider and identity (owner).
+- A private security-reporting channel (owner), before publishing.
+  `SECURITY.md` points to GitHub private vulnerability reporting "when
+  available", and the repository API reported it disabled on 2026-10-27. The
+  owner either enables it or names another private contact in `SECURITY.md`,
+  whose "pre-alpha" support statement is due for the same review. Until then,
+  the beta-1 drafts' private-reporting steps stay unconfirmed.
 - Installed, native and provider qualification of the frozen beta-1 candidate
   on Windows 11 25H2 x64.
 - Per-artifact release consent: exact candidate hashes, notices and the

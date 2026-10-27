@@ -65,7 +65,8 @@ not chemical identification, not a validated quantitative assay, and
 
 - Not a vendor-file viewer. Vendor files are converted, not previewed.
 - No XIC, peak detection, alignment, statistics or identification.
-- A research tool. It makes no clinical or regulatory claim.
+- Not a clinical or regulatory tool. It is for research use and makes no
+  clinical or regulatory claim.
 - No automatic updates, no telemetry and no cloud service. A new beta is a new
   download.
 - ProteoWizard and vendor readers are not bundled. You install and license
@@ -126,7 +127,8 @@ and figure export. The window needs at least 960 × 640.
 - A project records absolute paths of referenced files outside its own folder.
   It is not anonymous; check it before you share it.
 - Reopening a project restores no workspace session. Whether its sources are
-  still where the project says reads *Not checked* until you run **Check links**.
+  still where the project says reads *Not checked* until you run **Check linked
+  files** (Chinese interface: **检查已链接的文件**).
 - Leftovers are not removed for you. A payload store's `.staging/` folder left
   by a crash stays in place. A Save As whose document could not be written
   leaves its result store beside the destination, and a later Save As to that
@@ -178,8 +180,9 @@ them for spreadsheets. Open these files knowingly.
 ## Reporting problems
 
 Use GitHub Issues on this repository, with its bug, feature or UX-research
-template. Security problems go through the [security policy](../../../SECURITY.md),
-not a public issue. [Install and support](INSTALL_AND_SUPPORT.md#report-a-problem)
+template. Security problems are reported privately, not in a public issue:
+_private channel confirmed in the [security policy](../../../SECURITY.md) at
+candidate acceptance_. [Install and support](INSTALL_AND_SUPPORT.md#report-a-problem)
 explains what to include and how to attach redacted conversion diagnostics.
 
 ## Licences

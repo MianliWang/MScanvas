@@ -2,8 +2,10 @@
 
 Status: **DRAFT; NOT RELEASED.** Download links, the installer name, its
 SHA-256 and the signer are placeholders, filled at candidate acceptance. No
-beta-1 installer had been installed or qualified when this was written; steps
-that depend on installed behaviour say so. What beta 1 does and does not do is
+beta-1 installer had been installed or qualified when this was written. The
+install, first-run and uninstall steps describe the configured installer
+(`apps/desktop/src-tauri/tauri.conf.json`) and are confirmed on the installed
+candidate at acceptance. What beta 1 does and does not do is
 in the [release notes](RELEASE_NOTES.md).
 
 ## Before you install
@@ -40,8 +42,9 @@ in the [release notes](RELEASE_NOTES.md).
    `Valid` and the same signer.
 
 If the hash differs, the signature is missing or invalid, or it names anyone
-else, do not run the file. Report it privately through the
-[security policy](../../../SECURITY.md).
+else, do not run the file. Report it privately, not in a public issue:
+_private channel confirmed in the [security policy](../../../SECURITY.md) at
+candidate acceptance_.
 
 A correctly signed installer can still show a SmartScreen warning, because a
 new signature has no reputation yet. Nothing here asks you to turn a protection
@@ -100,7 +103,8 @@ Open **Settings → Apps → Installed apps**, choose **MSCanvas**, then
 **Uninstall**. Uninstalling removes the application's own files. It does not
 remove your source acquisitions, converted outputs, exported figures and data,
 saved diagnostics, project files or their payload folders: anything whose
-location you chose stays where it is.
+location you chose stays where it is. That list is confirmed by the installed
+uninstall check at candidate acceptance.
 
 What happens to the interface preference file at uninstall: _recorded from the
 installed candidate at acceptance_.
@@ -125,8 +129,8 @@ choose a template:
 
 Blank issues are turned off. A security problem, such as path traversal, a
 change to source data, or an installer whose hash or signature does not match,
-goes through the [security policy](../../../SECURITY.md) instead of a public
-issue.
+is reported privately instead of in a public issue: _private channel confirmed
+in the [security policy](../../../SECURITY.md) at candidate acceptance_.
 
 For the environment, give:
 
