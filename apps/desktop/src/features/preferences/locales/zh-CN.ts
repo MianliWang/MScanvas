@@ -71,7 +71,7 @@ export const zhCN = {
   m74CnvNoticeAdoptionRunning: "正在将转换输出添加到工作区。",
   m74CnvNoticeDiagnosticsExporting: "正在保存失败诊断。",
   m74CnvNoticeWorkspaceSettling: "文件列表正在更改。",
-  m74CnvNoticeNoConvertibleTarget: "要转换，此范围需要受支持的厂商采集：请在“{{toggle}}”中用“{{add}}”添加（若该列表已隐藏，请先点按窗口顶部的“{{toggle}}”）；使用“勾选的行”时还需勾选它们。",
+  m74CnvNoticeNoConvertibleTarget: "要转换，此范围需要受支持的厂商采集：请在“{{toggle}}”中用“{{add}}”添加（若该列表已隐藏，请先点击窗口顶部的“{{toggle}}”）；使用“勾选的行”时还需勾选它们。",
   m74CnvNoticePlanCapacityExceeded: "请减少可转换行的数量后再转换。",
   m74CnvNoticePlanReading: "正在生成此转换的计划。",
   m74CnvNoticePlanFailed: "无法生成此转换的计划。请重新生成计划。",

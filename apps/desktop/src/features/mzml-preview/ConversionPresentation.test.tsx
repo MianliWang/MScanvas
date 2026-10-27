@@ -444,6 +444,14 @@ describe("PM9.4 O8: a refused finished-queue action points at what holds it", ()
     expect(add).toHaveAccessibleDescription(`${en.m74CnvAdoptExplanation} ${en.stagingRecoveryWorking}`);
     fireEvent.click(add);
     expect(api.calls()).not.toContain("adoptConversionOutputs");
+    // The failed row makes diagnostics available, and the export is refused
+    // for the same reason, as a Tab stop rather than a natively disabled one.
+    const diagnostics = within(panel).getByRole("button", { name: en.m74CnvDiagnosticsAction });
+    expect(diagnostics).toHaveAttribute("aria-disabled", "true");
+    expect(diagnostics).not.toBeDisabled();
+    expect(diagnostics).toHaveAccessibleDescription(`${en.m74CnvDiagnosticsExplanation} ${en.stagingRecoveryWorking}`);
+    fireEvent.click(diagnostics);
+    expect(api.diagnosticsExportRequests).toEqual([]);
     await act(async () => reclaim.resolve({ status: "cleaned" }));
     await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
     expect(add).toHaveAccessibleDescription(en.m74CnvAdoptExplanation);

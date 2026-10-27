@@ -71,7 +71,7 @@ export const en = {
   m74CnvNoticeAdoptionRunning: "Converted outputs are being added to the workspace.",
   m74CnvNoticeDiagnosticsExporting: "Failure diagnostics are being saved.",
   m74CnvNoticeWorkspaceSettling: "The file list is being changed.",
-  m74CnvNoticeNoConvertibleTarget: "To convert, this scope needs supported vendor acquisitions: add them with {{add}} in {{toggle}} (if that list is hidden, press {{toggle}} at the top of the window first) and, under Checked rows, check them.",
+  m74CnvNoticeNoConvertibleTarget: "To convert, this scope needs supported vendor acquisitions: add them with {{add}} in {{toggle}} (if that list is hidden, press {{toggle}} at the top of the window first) and, under Checked rows, they must be checked.",
   m74CnvNoticePlanCapacityExceeded: "Choose fewer eligible rows before converting.",
   m74CnvNoticePlanReading: "MSCanvas is working out what this conversion would do.",
   m74CnvNoticePlanFailed: "MSCanvas could not work out what this conversion would do. Try describing it again.",

@@ -365,7 +365,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     expect(convert).toHaveAttribute("aria-disabled", "true");
     const route =
       "To convert, this scope needs supported vendor acquisitions: add them with Add files… in Acquisitions " +
-      "(if that list is hidden, press Acquisitions at the top of the window first) and, under Checked rows, check them.";
+      "(if that list is hidden, press Acquisitions at the top of the window first) and, under Checked rows, they must be checked.";
     expect(within(panel).getByText(route)).toBeVisible();
     expect(convert).toHaveAccessibleDescription(route);
     expect(within(panel).queryByText("No eligible acquisitions in this scope.")).toBeNull();
