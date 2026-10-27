@@ -38,8 +38,9 @@ product. Everything runs on your computer; nothing is uploaded.
 - **Convert vendor files to mzML.** Thermo RAW, Shimadzu LabSolutions LCD and
   SCIEX WIFF (with its `.wiff.scan`), through your own ProteoWizard
   installation. Up to 16 acquisitions per queue, converted one at a time, with
-  Fail or Skip for names already taken. A result shows what was checked, opens
-  its file or folder, and joins the workspace only when you adopt it.
+  Fail or Skip for names already taken. A result reports what was measured of
+  its output, opens its file or folder, and joins the workspace only when you
+  adopt it.
 - **Export figures and data.** SVG and PNG figures with a preview of the export,
   a quick PNG, Copy plot to the clipboard, and the underlying data as CSV or TSV.
 - **Projects.** Save a local `.mscanvas` document that records the files you
@@ -83,8 +84,8 @@ Qualification on that target: _recorded at candidate acceptance_. When this
 draft was written, no beta-1 candidate had been installed or qualified.
 
 You also need the Microsoft Edge WebView2 Runtime, which most Windows 11
-installations already have, and ProteoWizard for previewing mzML and for
-conversion. The window needs at least 960 × 640.
+installations already have, and ProteoWizard for reading mzML runs, conversion
+and figure export. The window needs at least 960 × 640.
 
 ## Known limits
 
