@@ -66,7 +66,7 @@ try {
     Assert-NativeSuccess -Step "Read HEAD tree" -ExitCode $LASTEXITCODE
 
     if ($ManifestOnly) {
-        # Every identity field of a re-derived manifest is read now, while the
+        # A re-derived manifest's source identity is read now, while the
         # installer was built earlier. Refuse when they cannot belong together,
         # so a re-derivation cannot confidently attribute yesterday's installer
         # to today's HEAD. The manifest retained from that build is what links
@@ -119,6 +119,30 @@ try {
             }
             $retainedArtifacts[$field] = $digest
         }
+        # The toolchain and environment are the build's, carried forward, never
+        # probed now: after an upgrade a probe would attribute the installer to
+        # tools that never built it. A re-derivation older than this rule
+        # recorded a probe, so it cannot vouch for them.
+        if ($checkedRederivation -and $null -eq (Get-RetainedField $previous "toolchainMeasured")) {
+            throw ("The retained candidate manifest is a re-derivation that re-probed the toolchain, so it cannot " +
+                "establish which toolchain built the artifacts; rebuild instead.")
+        }
+        $retainedToolchain = [ordered]@{}
+        foreach ($tool in "node", "pnpm", "cargo", "rustc", "tauri") {
+            $version = Get-RetainedField $previous @("toolchain", $tool)
+            if (-not ($version -is [string] -and $version)) {
+                throw "The retained candidate manifest does not record the $tool version that built the artifacts; rebuild instead."
+            }
+            $retainedToolchain[$tool] = $version
+        }
+        # Read without Get-RetainedField, which would unroll an empty list into
+        # nothing; an empty list is a valid record of a clean environment.
+        if (-not ($previous.PSObject.Properties.Name -contains "taskEnvironment" -and
+                $previous.taskEnvironment -is [array] -and
+                -not ($previous.taskEnvironment | Where-Object { $_ -isnot [string] }))) {
+            throw "The retained candidate manifest does not record the build's task environment; rebuild instead."
+        }
+        $retainedEnvironment = $previous.taskEnvironment
     }
 
     $configuration = Get-Content -LiteralPath "apps/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
@@ -158,19 +182,27 @@ try {
     $iconInputs = Get-ChildItem -LiteralPath "apps/desktop/src-tauri/icons" -File |
         ForEach-Object { Get-FileIdentity -Path $_.FullName }
 
-    $toolchain = [ordered]@{
-        node   = (& node --version).Trim()
-        pnpm   = (& pnpm --version).Trim()
-        cargo  = (& cargo --version).Trim()
-        rustc  = (& rustc --version).Trim()
-        tauri  = (& pnpm --silent tauri --version).Trim()
+    if ($ManifestOnly) {
+        $toolchain = $retainedToolchain
+        $taskEnvironment = $retainedEnvironment
+        $toolchainMeasured = "carried from the retained manifest; not re-probed at re-derivation"
     }
+    else {
+        $toolchain = [ordered]@{
+            node   = (& node --version).Trim()
+            pnpm   = (& pnpm --version).Trim()
+            cargo  = (& cargo --version).Trim()
+            rustc  = (& rustc --version).Trim()
+            tauri  = (& pnpm --silent tauri --version).Trim()
+        }
 
-    # `MSCANVAS_*` would reach the build; record that none of them are set
-    # rather than assuming a clean shell.
-    $taskEnvironment = Get-ChildItem Env: |
-        Where-Object { $_.Name -like "MSCANVAS_*" -or $_.Name -like "TAURI_*" } |
-        ForEach-Object { "$($_.Name)=$($_.Value)" }
+        # `MSCANVAS_*` would reach the build; record that none of them are set
+        # rather than assuming a clean shell.
+        $taskEnvironment = Get-ChildItem Env: |
+            Where-Object { $_.Name -like "MSCANVAS_*" -or $_.Name -like "TAURI_*" } |
+            ForEach-Object { "$($_.Name)=$($_.Value)" }
+        $toolchainMeasured = "probed by this script immediately before the build"
+    }
 
     # One shared workspace target directory at the repository root, so the
     # bundle lands here rather than under src-tauri.
@@ -296,6 +328,7 @@ try {
         startedUtc       = $startedUtc
         toolchain        = $toolchain
         taskEnvironment  = @($taskEnvironment)
+        toolchainMeasured = $toolchainMeasured
         featureGraph     = $featureGraph
         buildInputs      = @($buildInputs)
         shippedResources = @($shippedResources | ForEach-Object { [IO.Path]::GetRelativePath($RepositoryRoot, $_) -replace '\\', '/' })
