@@ -79,3 +79,11 @@ their own implementation authority. A beta-release-ready candidate is not a
 published beta; actual distribution requires consent for its exact artifacts.
 No automatic updater or cloud telemetry is required. Do not publish npm
 packages, Cargo crates or a GitHub Release from this planning task.
+
+Update, 2026-10-27: the owner chose a GitHub prerelease on this repository as
+the first beta's channel, with a signed installer; see
+[ADR 0047's owner decisions](../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27).
+The tester-facing drafts are in [`docs/release/beta-1/`](../release/beta-1/RELEASE_NOTES.md);
+their version, hashes and links are filled at candidate acceptance. Publishing
+still needs the owner's consent for the exact artifacts and the ADR's other
+open items, including a private security-reporting channel.

@@ -7,6 +7,17 @@ that contains M8/M9, not against the candidate this record describes (see the
 [M9 closure](../product/M9_CLOSURE.md#15-after-m9)). The sections below are
 this slice's record as it stopped.
 
+Amendment, 2026-10-27: the owner's
+[decisions of that date](../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27)
+supersede this record's unsigned posture. Beta 1 is signed, its signing
+provider and identity are pending the owner's choice, and no unsigned installer
+is published; the *Signature* row, the *Unsigned* limit and setup step 3 of the
+release packet below describe the record as it stopped. The name is accepted
+for the prerelease by explicit owner risk acceptance, without the formal review.
+The release packet's tester-facing successors are the beta-1
+[release notes](../release/beta-1/RELEASE_NOTES.md) and
+[install and support](../release/beta-1/INSTALL_AND_SUPPORT.md) drafts.
+
 This slice does not add a user-visible feature. It turns the application M7.1 to
 M7.5 built into something a person can install, run and remove on a machine that
 has never seen a compiler, and it assembles the evidence a release would need.
