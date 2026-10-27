@@ -171,7 +171,7 @@ export const en = {
   m74CnvTitle: "Convert",
   m74CnvSourceUnchanged: "One acquisition at a time. The original file is never changed.",
   m74CnvDismiss: "Dismiss",
-  m74CnvRequestFailed: "{{action}}:",
+  m74CnvRequestFailed: "{{action}}: ",
   m74CnvAllAlreadyAdded: "All finalized outputs from this queue are already in the workspace.",
   m74CnvFilesRemain: "Finalized files remain on disk. If this queue is replaced, they can still be added later with Add files….",
   m74CnvDiagnosticsAction: "Export failure diagnostics…",

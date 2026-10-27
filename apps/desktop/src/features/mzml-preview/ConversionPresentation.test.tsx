@@ -243,13 +243,16 @@ describe("PM9.4 O3 and PM9.7 F3: one actionable reason per refused state", () =>
     await waitFor(() => expect(convert).toHaveAccessibleDescription(route));
     // Saying the route moves nothing: the fold is the reader's.
     expect(toggle.getAttribute("aria-expanded")).toBe(before);
-    // True folded and open, and the named action is there under its label
-    // once the named toggle has shown the list.
+    // True folded and open: folded, the list the toggle controls is hidden;
+    // open, the named action is in that list under its label.
+    const roster = document.getElementById(toggle.getAttribute("aria-controls")!)!;
     for (let press = 0; press < 2; press += 1) {
       // A settings read may briefly outrank it; the route is what remains.
       await waitFor(() => expect(within(panel).getByText(route)).toBeVisible());
       if (toggle.getAttribute("aria-expanded") === "true") {
-        expect(screen.getAllByRole("button", { name: en.addFiles }).length).toBeGreaterThan(0);
+        expect(within(roster).getAllByRole("button", { name: en.addFiles }).length).toBeGreaterThan(0);
+      } else {
+        expect(roster).not.toBeVisible();
       }
       fireEvent.click(toggle);
     }
@@ -322,6 +325,22 @@ describe("PM9.4 O4: a failed request names its own control", () => {
     // No retry control appears for either.
     expect(within(panel).queryByRole("button", { name: /try again|retry/i })).toBeNull();
   });
+
+  it("names a failed single-output Add as its button reads", async () => {
+    const panel = await panelOf(createFakePreviewApi({
+      initialDatasets: [raw(1)], availability: availableBackend,
+      initialConversion: terminal([converted("file-1", "run-1.raw")]),
+      adoption: () => Promise.reject(previewError()),
+    }));
+    fireEvent.click(await within(panel).findByRole("button", { name: en.m74CnvAddOne }));
+    expect(await within(panel).findByText(`${en.m74CnvAddOne}:`, { selector: "strong" })).toBeVisible();
+  });
+
+  it("separates the name from the message as each language writes it", () => {
+    // The space is the English resource's; a full-width colon takes none.
+    expect(en.m74CnvRequestFailed).toBe("{{action}}: ");
+    expect(zh.m74CnvRequestFailed).toBe("{{action}}：");
+  });
 });
 
 describe("PM9.4 O5: the ellipsis only where a picker follows", () => {
@@ -380,7 +399,7 @@ describe("PM9.4 O6: Stop and Skip explained where they are offered", () => {
 });
 
 describe("PM9.4 O7: validation extent from the Rust-projected mode", () => {
-  it("says output-only for an output-only plan and the stated scope otherwise", async () => {
+  it("says output-only for an output-only plan and claims no check for another", async () => {
     const api = createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend });
     const planned = api.describeConversion;
     let mode: "output_only" | "source_comparison" = "output_only";
@@ -392,8 +411,18 @@ describe("PM9.4 O7: validation extent from the Rust-projected mode", () => {
     await waitFor(() => expect(panel.querySelector("#conversion-validation-disclosure")).toHaveTextContent(en.m74CnvOutputOnly));
     mode = "source_comparison";
     fireEvent.click(within(panel).getByRole("radio", { name: "Beside each source" }));
-    await waitFor(() => expect(panel.querySelector("#conversion-validation-disclosure")).toHaveTextContent(en.cnvIntegritySource));
-    expect(panel.querySelector("#conversion-validation-disclosure")).not.toHaveTextContent(/Output-only/);
+    // The judgement resources for that mode report a finished comparison,
+    // which a plan has not run: the review says nothing of it.
+    await waitFor(() => {
+      expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull();
+      expect(panel.querySelector("#conversion-validation-disclosure")).toBeNull();
+    });
+    const convert = within(panel).getByRole("button", { name: "Convert 1 eligible" });
+    for (const id of convert.getAttribute("aria-describedby")!.split(" ")) {
+      expect(document.getElementById(id), id).not.toBeNull();
+    }
+    expect(convert).not.toHaveAccessibleDescription(/Output-only/);
+    expect(convert).not.toHaveAccessibleDescription(new RegExp(en.cnvIntegritySource));
   });
 
   it("does not call a source-compared result output-only", async () => {

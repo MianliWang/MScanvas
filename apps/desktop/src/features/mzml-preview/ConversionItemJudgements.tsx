@@ -86,14 +86,9 @@ export function finalizedSentence(item: ConversionQueueItem, t: UiMessage): stri
   return single?.outputFileName != null ? t("cnvFinalOne", { name: single.outputFileName }) : t("cnvFinalNone");
 }
 
-/** What a Rust-projected validation mode says was checked, and nothing more. */
-export function validationScope(mode: string, t: UiMessage): string {
-  return mode === "source_comparison" ? t("cnvIntegritySource") : mode === "output_only" ? t("cnvIntegrityOutput") : t("cnvIntegrityModeUnknown", { code: mode });
-}
-
 export function integritySentence(validation: ConversionValidation | null, perOutput = false, refused = false, passedThenUnpublished = false, reportedMode: string | null = null, t: UiMessage): string {
   const mode = validation?.mode ?? reportedMode;
-  const scope = mode === null ? null : validationScope(mode, t);
+  const scope = mode === null ? null : mode === "source_comparison" ? t("cnvIntegritySource") : mode === "output_only" ? t("cnvIntegrityOutput") : t("cnvIntegrityModeUnknown", { code: mode });
   if (refused) {
     if (perOutput) return (scope === null ? "" : `${scope}. `) + t("cnvIntegritySetRefused");
     return scope === null ? t("cnvIntegrityRefusedUnknown") : t("cnvIntegrityRefused", { scope });

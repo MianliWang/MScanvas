@@ -41,13 +41,13 @@ const POLL_INTERVAL_MS = 2_000;
  *
  * Recorded where that request's own promise rejects, never read off the last
  * press: a late rejection names its own request rather than whatever was
- * pressed since (PM9.4 O4). Skip and Retry carry what their controls are
+ * pressed since (PM9.4 O4). Skip, Retry and Add carry what their controls are
  * named by.
  */
 export type ConversionRequestFailure = { readonly error: PreviewError } & (
-  | { readonly request: "convert" | "stop" | "stopFile" | "adopt" | "exportDiagnostics" }
+  | { readonly request: "convert" | "stop" | "stopFile" | "exportDiagnostics" }
   | { readonly request: "skip"; readonly name: string }
-  | { readonly request: "retry"; readonly count: number }
+  | { readonly request: "retry" | "adopt"; readonly count: number }
 );
 
 /**
@@ -1440,6 +1440,7 @@ export function useConversionOperation(
     setAdopting(true);
     setFailure(null);
     const { operationId } = state;
+    const count = state.queue.adoptableOutputCount;
     // Taken at dispatch. A drop or an import accepted after Rust commits this
     // and before the reply is applied would otherwise install its newer roster
     // first and have this one installed over it.
@@ -1475,7 +1476,7 @@ export function useConversionOperation(
           return;
         }
         setAdopting(false);
-        setFailure({ request: "adopt", error: toPreviewError(cause) });
+        setFailure({ request: "adopt", count, error: toPreviewError(cause) });
       });
   }, [api, onOutputsAdopted, readState, state]);
 

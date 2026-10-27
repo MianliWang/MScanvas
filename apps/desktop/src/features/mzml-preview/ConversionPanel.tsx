@@ -19,7 +19,7 @@ import { ConversionSettings, conversionIntentDisclosures, CONVERSION_VALUE_LABEL
 import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
 import { OutputOpenActions } from "./OutputOpenActions";
 import { STAGING_STATUS_ID, StagingRecoveryActions } from "./StagingRecoveryActions";
-import { ConversionItemJudgements, validationScope } from "./ConversionItemJudgements";
+import { ConversionItemJudgements } from "./ConversionItemJudgements";
 import type { ConversionRefusal } from "./conversionNoticeRegistry";
 import { conversionNotices, conversionRefusalNoticeId } from "./conversionNoticeRegistry";
 import { formatByteLength, formatCount, formatDuration } from "./format";
@@ -529,7 +529,7 @@ export function ConversionPanel({
               Led by the name of the control whose request failed, because this
               sits above all of them (PM9.4 O4). */}
           <span>
-            <strong>{t("m74CnvRequestFailed", { action: requestLabel(conversion.failure, t) })}</strong>{" "}
+            <strong>{t("m74CnvRequestFailed", { action: requestLabel(conversion.failure, t) })}</strong>
             {conversionErrorMessage(conversion.failure.error, t)}
             {conversion.failure.error.detail === null ? null : (
               <span className="notice-detail">{ownedErrorDetail(conversion.failure.error, t)}</span>
@@ -641,7 +641,7 @@ function requestLabel(failure: ConversionRequestFailure, t: UiMessage): string {
     case "stopFile": return t("m74CnvStopFile");
     case "skip": return t("m74CnvSkip", { name: failure.name });
     case "retry": return t("m74CnvRetry", { count: failure.count });
-    case "adopt": return t("m74CnvAddMany");
+    case "adopt": return t(failure.count === 1 ? "m74CnvAddOne" : "m74CnvAddMany");
     case "exportDiagnostics": return t("m74CnvDiagnosticsAction");
   }
 }
@@ -1140,12 +1140,15 @@ function PlanState({
             </div>
           </dl>
 
-          {/* What validation this plan's outputs will get, from the mode Rust
-              projects for it rather than assumed (PM9.4 O7). Stop and Skip are
+          {/* Said only when the mode Rust projects for this plan is output-only
+              (PM9.4 O7). The judgement resources for other modes report a
+              finished check, which a plan has not run. Stop and Skip are
               explained where they are offered, while the queue runs (O6). */}
-          <p className="quiet-text" id="conversion-validation-disclosure" role="note">
-            {summary.validationMode === "output_only" ? t("m74CnvOutputOnly") : validationScope(summary.validationMode, t)}
-          </p>
+          {summary.validationMode === "output_only" ? (
+            <p className="quiet-text" id={VALIDATION_DISCLOSURE_ID} role="note">
+              {t("m74CnvOutputOnly")}
+            </p>
+          ) : null}
 
           {/* What this combination reduces, and only that. A combination that
               reduces nothing produces no list and therefore no reassuring
@@ -1164,7 +1167,7 @@ function PlanState({
           ref={convertButton}
           aria-describedby={describedBy(
             summary !== null
-              ? "conversion-plan-summary conversion-validation-disclosure"
+              ? summary.validationMode === "output_only" ? `conversion-plan-summary ${VALIDATION_DISCLOSURE_ID}` : "conversion-plan-summary"
               : pendingSaid ? PLAN_PENDING_ID
               : plan.capacityRefusal !== null ? CAPACITY_REFUSAL_ID : "",
             startAvailability,
@@ -1215,6 +1218,9 @@ const PLAN_PENDING_ID = "conversion-plan-pending";
 
 /** Where an over-capacity scope's counts are named, for Convert to point at. */
 const CAPACITY_REFUSAL_ID = "conversion-capacity-refusal";
+
+/** Where an output-only plan says what its validation does not compare. */
+const VALIDATION_DISCLOSURE_ID = "conversion-validation-disclosure";
 
 /**
  * How many excluded rows are named before the rest are only counted. The
