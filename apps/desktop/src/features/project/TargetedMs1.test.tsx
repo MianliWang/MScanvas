@@ -241,6 +241,11 @@ describe("the setup", () => {
     expect(en.targetedDomain).toContain(`${en.targetedOutcomeNotDetected} is not proof`);
     expect(en.targetedDomain).toContain("positive-mode, centroided MS1");
     expect(en.targetedDomain).toContain("[M+H]+");
+    // The same caveats, in the words zh-CN already uses for them.
+    expect(zh.targetedDomain).toContain("这不是鉴定");
+    expect(zh.targetedDomain).toContain(`${zh.targetedOutcomeNotDetected}并不证明`);
+    expect(zh.targetedDomain).toContain("正离子模式、已质心化的 MS1");
+    expect(zh.targetedDomain).toContain("[M+H]+");
 
     // How the source is read is a closed native disclosure: a Tab stop of its
     // own, opened by the reader, with the read path's whole sentence inside.
@@ -711,6 +716,11 @@ describe("a stored result", () => {
     }
     const control = query(`[data-project-targeted="${LAYER}"]`);
     expect(control.getAttribute("aria-label")).toBe(`对 ${projectInput().label} 做靶向 MS1`);
+    // The zh-CN caveats are read before Run too, not folded away (PM9.5 O1).
+    const domain = within(query("[data-targeted-setup]")).getByText(zh.targetedDomain);
+    expect(domain.closest("details")).toBeNull();
+    expect(precedes(domain, query("[data-targeted-run]"))).toBe(true);
+    expect(within(query("[data-targeted-read-path]")).getByText(zh.targetedReadPath)).toBeTruthy();
   });
 });
 
