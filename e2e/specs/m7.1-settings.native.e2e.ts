@@ -12,8 +12,8 @@ import { activateFigureFieldByLabel } from "../support/figureLabelActivation";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../..");
 const DIALOG = "[data-settings-dialog]";
-const ROW = '.dataset-roster-list [role="option"]';
-const CONVERT = ".conversion-plan button.primary-button";
+const ROW = '.dataset-roster-list[role="treegrid"] [role="row"][data-handle]';
+const CONVERT = ".conversion-panel .conversion-start";
 const MZML_SHA = "a1228c104790670515f948f523dfe43caa7085cedb7d57d19ed07cbca5775ea7";
 const RAW_SHA = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
 const evidence: unknown[] = [];
@@ -89,8 +89,8 @@ async function capture(label: string) {
     locale: document.documentElement.lang, density: document.querySelector("[data-density]")?.getAttribute("data-density"),
     documentHasFocus: document.hasFocus(), activeId: document.activeElement?.id,
     activeTag: document.activeElement?.tagName, activeText: document.activeElement?.textContent,
-    activeIsConvert: document.activeElement?.matches(".conversion-plan button.primary-button"),
-    rows: [...document.querySelectorAll<HTMLElement>('.dataset-roster-list [role="option"]')].map(row => ({ handle: row.dataset.handle, height: row.getBoundingClientRect().height, name: row.textContent })),
+    activeIsConvert: document.activeElement?.matches(".conversion-panel .conversion-start"),
+    rows: [...document.querySelectorAll<HTMLElement>('.dataset-roster-list[role="treegrid"] [role="row"][data-handle]')].map(row => ({ handle: row.dataset.handle, height: row.getBoundingClientRect().height, name: row.textContent })),
     applicationOrigin: location.origin,
     resourceUrls: performance.getEntriesByType("resource").map(entry => entry.name),
   }));
@@ -113,17 +113,54 @@ async function openSettings(observe = false) {
   await browser.$(DIALOG).waitForDisplayed();
   if (observe) await observeWindow("figure draft: after Settings opener click");
 }
-async function choose(value: string) { await browser.$(`${DIALOG} input[value="${value}"]`).click(); }
+async function choose(value: string) {
+  const control = browser.$(`${DIALOG} input[value="${value}"]`);
+  await control.waitForEnabled();
+  await control.scrollIntoView({ block: "center" });
+  await control.click();
+}
 async function press(name: string) {
-  await browser.$(DIALOG).$(name === en.close || name === zh.close ? `button[aria-label="${name}"]` : `button=${name}`).click();
+  const control = browser.$(DIALOG).$(name === en.close || name === zh.close ? `button[aria-label="${name}"]` : `button=${name}`);
+  await control.waitForEnabled();
+  await control.scrollIntoView({ block: "center" });
+  await control.click();
 }
 async function returned() {
   await browser.$(DIALOG).waitForExist({ reverse: true });
   await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches("[data-settings-entry]") === true), { timeoutMsg: "Settings did not return natural foreground focus to its opener." });
 }
+async function messages() { return await browser.execute(() => document.documentElement.lang) === "zh-CN" ? zh : en; }
+async function workbench() {
+  const control = browser.$(".workbench-navigation").$(`button=${(await messages()).workbench}`);
+  await control.scrollIntoView({ block: "center" });
+  await control.click();
+}
+async function showRoster() {
+  const toggle = browser.$('[aria-controls="workbench-roster"]');
+  await browser.waitUntil(async () => await toggle.getAttribute("aria-disabled") !== "true");
+  if (await toggle.getAttribute("aria-expanded") !== "true") {
+    await toggle.scrollIntoView({ block: "center" });
+    await toggle.click();
+  }
+  await browser.$("#workbench-roster").waitForDisplayed();
+}
+async function conversion() {
+  const control = browser.$(".workbench-navigation").$(`button=${(await messages()).conversionTask}`);
+  await control.scrollIntoView({ block: "center" });
+  await control.click();
+  await browser.$(".conversion-panel").waitForDisplayed();
+}
+async function conversionReady() {
+  await browser.$(CONVERT).waitForDisplayed();
+  await browser.waitUntil(async () => await browser.$(CONVERT).isEnabled() && await browser.$(CONVERT).getAttribute("aria-disabled") !== "true", {
+    timeout: 60_000, timeoutMsg: "The reviewed conversion did not become available.",
+  });
+}
 async function add(path: string) {
+  await workbench();
+  await showRoster();
   const before = await browser.$$(ROW).length;
-  const button = browser.$("button=Add files…");
+  const button = browser.$("#workbench-roster").$(`button=${(await messages()).addFiles}`);
   await button.waitForEnabled();
   await button.scrollIntoView({ block: "center" });
   const handler = native("choose-workspace-files", ["-ApplicationProcessId", String(processId), "-Action", "choose", "-Path", path, "-TimeoutSeconds", "35"]);
@@ -223,9 +260,17 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
 
   it("reads retained lawful mzML and exports a real PNG from the shared numeric fields", async () => {
     await add(mzml);
+    await browser.$(ROW).scrollIntoView({ block: "center" });
+    await browser.$(ROW).click();
     await browser.$('.spectrum-table[role="grid"]').waitForDisplayed({ timeout: 60_000 });
+    await browser.$('[role="grid"] [role="row"][aria-rowindex="2"]').scrollIntoView({ block: "center" });
     await browser.$('[role="grid"] [role="row"][aria-rowindex="2"]').click();
+    const disclosure = ".spectrum-panel details.spectrum-export-disclosure";
+    await browser.$(`${disclosure} summary`).scrollIntoView({ block: "center" });
+    await browser.$(`${disclosure} summary`).click();
+    await browser.waitUntil(() => browser.execute(css => document.querySelector<HTMLDetailsElement>(css)?.open === true, disclosure));
     await browser.$('.spectrum-panel input[id$="-widthPx"]').waitForDisplayed({ timeout: 60_000 });
+    await browser.$("#chromatogram-export-toggle").scrollIntoView({ block: "center" });
     await browser.$("#chromatogram-export-toggle").click();
     const before = await capture("02-native-real-roster-figure");
     async function activateLabel(field: "widthPx" | "heightPx" | "pngDpi", locale: string) {
@@ -255,7 +300,7 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
     for (const field of ["widthPx", "heightPx", "pngDpi"] as const) await activateLabel(field, "zh-CN");
     const figure = join(output, "m71-shared-fields-640x480-144dpi.png");
     expect(existsSync(figure)).toBe(false);
-    const button = browser.$('.spectrum-panel').$('button=Export PNG…');
+    const button = browser.$('.spectrum-panel').$(`button=${(await messages()).viewerExportFormat.replace("{{name}}", "PNG")}`);
     await button.scrollIntoView({ block: "center" });
     await button.waitForEnabled();
     const handler = native("save-dialog", ["-ApplicationProcessId", String(processId), "-Title", "Export spectrum figure", "-Action", "save", "-Path", figure, "-TimeoutSeconds", "35"]);
@@ -281,14 +326,23 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
 
   it("naturally returns from the affected real cancelled destination picker", async () => {
     await add(raw);
-    await browser.$(".dataset-roster-list").$("li*=FT-HCD-MSX.raw").click();
-    await browser.$(CONVERT).waitForEnabled({ timeout: 60_000 });
+    const handle = await browser.execute(selector => [...document.querySelectorAll<HTMLElement>(selector)]
+      .find(row => row.querySelector(".dataset-row-name")?.textContent === "FT-HCD-MSX.raw")?.dataset.handle, ROW);
+    if (!handle) throw new Error("The retained RAW acquisition is not in the native roster.");
+    const rawRow = `${ROW}[data-handle="${handle}"]`;
+    await browser.$(rawRow).scrollIntoView({ block: "center" });
+    await browser.$(rawRow).click();
+    const member = browser.$(`${rawRow} input[type="checkbox"]`);
+    if (!await member.isSelected()) await member.click();
+    expect(await member.isSelected()).toBe(true);
+    await conversion();
+    await conversionReady();
     await browser.$(CONVERT).scrollIntoView({ block: "center" });
     const handler = native("choose-conversion-folder", ["-ApplicationProcessId", String(processId), "-Action", "escape", "-TimeoutSeconds", "35"]);
     const [result] = await Promise.all([handler, browser.$(CONVERT).click()]);
     expect(result.closed).toBe(true);
-    await browser.$(CONVERT).waitForEnabled();
-    await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches(".conversion-plan button.primary-button") === true), { timeoutMsg: "Cancelled native picker did not naturally return focus to Convert." });
+    await conversionReady();
+    await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches(".conversion-panel .conversion-start") === true), { timeoutMsg: "Cancelled native picker did not naturally return focus to Convert." });
     expect(windowMetrics().foregroundProcessId).toBe(processId);
     await capture("05-native-cancelled-picker-natural-return");
     await openSettings();
@@ -296,5 +350,6 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
     await press(en.cancel);
     await returned();
     expect(await browser.$(CONVERT).isEnabled()).toBe(true);
+    expect(await browser.$(CONVERT).getAttribute("aria-disabled")).not.toBe("true");
   });
 });

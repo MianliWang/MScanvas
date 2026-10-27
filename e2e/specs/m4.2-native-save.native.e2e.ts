@@ -26,9 +26,10 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -42,11 +43,12 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DRIVER = resolve(HERE, "..", "native", "save-dialog.ps1");
-
-
+const EVIDENCE_PARENT = resolve(HERE, "../..", ".tmp/native-save-evidence");
+const OUTPUT_NAMES = ["figure.png", "figure.svg", "chromatogram.csv", "chromatogram.svg"] as const;
 
 /** The titles the application gives its own save dialogs. */
 const FIGURE_DIALOG = "Export spectrum figure";
+let lastDialogTitle = FIGURE_DIALOG;
 
 interface DialogResult {
   readonly found: boolean;
@@ -55,6 +57,47 @@ interface DialogResult {
   readonly detail: string;
   /** Which top-level windows were on screen, when none matched. */
   readonly seen?: string[];
+}
+
+interface DialogOutcome { readonly code: number; readonly result: DialogResult | null }
+interface Scenario { readonly index: number; readonly title: string; readonly directory: string }
+
+let evidenceRoot = "", scenarioIndex = 0, helperIndex = 0;
+let scenario: Scenario | null = null;
+let pendingHelpers: Promise<DialogOutcome>[] = [];
+const evidence: unknown[] = [];
+const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+/** Synchronous persistence finishes before a helper answer reaches an assertion. */
+function record(value: unknown): void {
+  evidence.push(value);
+  writeFileSync(join(evidenceRoot, "evidence.json"), JSON.stringify(evidence, null, 2));
+}
+
+async function retainedOutcome(timeout = 120_000, panel = ".spectrum-panel"): Promise<string> {
+  const current = scenario;
+  if (current === null) throw new Error("An export outcome requires an attributable scenario.");
+  const status = await waitForOutcome(timeout, panel);
+  record({ kind: "export outcome", scenario: current.index, panel, status });
+  return status;
+}
+
+/** Copy only the suite's named save targets, never the workspace or source data. */
+function retainOutputs(workspace: string, current: Scenario): void {
+  const directory = join(current.directory, "outputs");
+  mkdirSync(directory);
+  for (const name of OUTPUT_NAMES) {
+    const original = join(workspace, name);
+    if (!existsSync(original)) {
+      record({ kind: "output", scenario: current.index, name, original, exists: false });
+      continue;
+    }
+    const bytes = readFileSync(original), copy = join(directory, name);
+    writeFileSync(copy, bytes, { flag: "wx" });
+    record({ kind: "output", scenario: current.index, name, original, exists: true,
+      byteLength: bytes.length, sha256: digest(bytes), evidenceCopy: copy,
+      evidenceCopySha256: digest(readFileSync(copy)) });
+  }
 }
 
 /**
@@ -66,7 +109,11 @@ function handleDialog(
   action: "save" | "cancel",
   path?: string,
   timeoutSeconds = 90,
-): Promise<{ readonly code: number; readonly result: DialogResult | null }> {
+  title = FIGURE_DIALOG,
+): Promise<DialogOutcome> {
+  const current = scenario;
+  if (current === null) throw new Error("A native save helper requires an attributable scenario.");
+  lastDialogTitle = title;
   const args = [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -74,7 +121,7 @@ function handleDialog(
     "-File",
     DRIVER,
     "-Title",
-    FIGURE_DIALOG,
+    title,
     "-Action",
     action,
     "-TimeoutSeconds",
@@ -83,20 +130,42 @@ function handleDialog(
   if (path !== undefined) {
     args.push("-Path", path);
   }
+  const helper = ++helperIndex, startedAt = new Date().toISOString();
   const child = spawn("powershell.exe", args, { windowsHide: true });
-  let stdout = "";
-  child.stdout.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString("utf8");
-  });
-  return new Promise((settle) => {
-    child.on("close", (code) => {
-      const match = /\{.*\}/su.exec(stdout);
-      settle({
-        code: code ?? -1,
-        result: match === null ? null : (JSON.parse(match[0]) as DialogResult),
-      });
+  const stdoutChunks: Buffer[] = [], stderrChunks: Buffer[] = [];
+  let spawnError: string | null = null;
+  child.stdout.on("data", (chunk: Buffer) => { stdoutChunks.push(chunk); });
+  child.stderr.on("data", (chunk: Buffer) => { stderrChunks.push(chunk); });
+  child.once("error", error => { spawnError = String(error); });
+  const answer = new Promise<DialogOutcome>((settle, reject) => {
+    child.once("close", (code, signal) => {
+      try {
+        const stdoutBytes = Buffer.concat(stdoutChunks), stderrBytes = Buffer.concat(stderrChunks);
+        const stdout = stdoutBytes.toString("utf8"), stderr = stderrBytes.toString("utf8");
+        const match = /\{.*\}/su.exec(stdout);
+        let result: DialogResult | null = null, parseError: string | null = null;
+        try { if (match !== null) result = JSON.parse(match[0]) as DialogResult; }
+        catch (error) { parseError = String(error); }
+        const prefix = join(current.directory, `helper-${String(helper).padStart(2, "0")}`);
+        writeFileSync(prefix + ".stdout.log", stdoutBytes, { flag: "wx" });
+        writeFileSync(prefix + ".stderr.log", stderrBytes, { flag: "wx" });
+        record({ kind: "native helper", scenario: current.index, scenarioTitle: current.title,
+          helper, script: DRIVER, args, pid: child.pid, parentPid: process.pid, startedAt, endedAt: new Date().toISOString(),
+          action, title, requestedPath: path ?? null, requestedName: path === undefined ? null : basename(path),
+          exitCode: code, signal, spawnError, stdout, stderr, result, parseError,
+          stdoutFile: prefix + ".stdout.log", stderrFile: prefix + ".stderr.log" });
+        if (spawnError !== null || parseError !== null) {
+          throw new Error(`The native save helper failed after retaining its evidence: ${spawnError ?? parseError}`);
+        }
+        settle({ code: code ?? -1, result });
+      } catch (error) { reject(error); }
     });
   });
+  pendingHelpers.push(answer);
+  // If the initiating click fails, afterEach still waits for and records this
+  // owned helper. Observe a retention rejection until that hook can report it.
+  void answer.catch(() => undefined);
+  return answer;
 }
 
 /** What a PNG says about itself, read out of the bytes rather than assumed. */
@@ -146,8 +215,20 @@ function readPng(bytes: Buffer): {
 describe("M4.2 saving a figure through the real dialog", () => {
   let workspace = "";
 
-  beforeEach(async () => {
+  before(() => {
+    mkdirSync(EVIDENCE_PARENT, { recursive: true });
+    evidenceRoot = mkdtempSync(join(EVIDENCE_PARENT, "run-"));
+    console.log(`M4.2 native save evidence: ${evidenceRoot}`);
+  });
+
+  beforeEach(async function () {
+    scenarioIndex += 1;
+    const directory = join(evidenceRoot, `scenario-${String(scenarioIndex).padStart(2, "0")}`);
+    mkdirSync(directory);
+    scenario = { index: scenarioIndex, title: this.currentTest?.fullTitle() ?? "unknown scenario", directory };
+    pendingHelpers = [];
     workspace = mkdtempSync(join(tmpdir(), "mscanvas-native-"));
+    record({ kind: "scenario start", ...scenario, workspace, startedAt: new Date().toISOString() });
     await loadWith(
       tauriTable({
         real: [
@@ -163,24 +244,43 @@ describe("M4.2 saving a figure through the real dialog", () => {
     await selectFirstSpectrum();
   });
 
-  afterEach(async () => {
+  afterEach(async function () {
     // A dialog left standing holds the WebView and the export slot, and every
     // later test in this file would fail on a modal window nobody can see. So
     // whatever happened, anything still open is dismissed before moving on.
-    const stray = await handleDialog("cancel", undefined, 3);
-    if (stray.result?.invoked === true) {
-      console.log("NOTE: a stray save dialog was left open and has been dismissed");
+    const current = scenario;
+    if (current === null) return;
+    let cleanupHelperError: unknown;
+    try {
+      const stray = await handleDialog("cancel", undefined, 3, lastDialogTitle);
+      if (stray.result?.invoked === true) {
+        console.log("NOTE: a stray save dialog was left open and has been dismissed");
+      }
+    } catch (error) { cleanupHelperError = error; }
+    const helpers = await Promise.allSettled(pendingHelpers);
+    try {
+      record({ kind: "scenario ending", scenario: current.index, title: current.title,
+        state: this.currentTest?.state ?? null, failure: this.currentTest?.err?.message ?? null,
+        cleanupHelperError: cleanupHelperError === undefined ? null : String(cleanupHelperError),
+        helperRetentions: helpers.map(result => result.status === "fulfilled" ? "retained" : String(result.reason)) });
+      if (workspace !== "") retainOutputs(workspace, current);
+    } finally {
+      // Evidence copies are separate from the actual save targets. The original
+      // temporary workspace is still removed even after a failed assertion.
+      const original = workspace;
+      try {
+        if (workspace !== "") rmSync(workspace, { recursive: true, force: true });
+      } finally {
+        workspace = "";
+        record({ kind: "workspace cleanup", scenario: current.index, original,
+          existsAfterCleanup: original !== "" && existsSync(original), endedAt: new Date().toISOString() });
+        scenario = null;
+        pendingHelpers = [];
+      }
     }
-  });
-
-  afterEach(() => {
-    // Nothing this suite writes survives it. A stray PNG in a temporary
-    // directory is the kind of residue that makes the next run's assertions
-    // ambiguous.
-    if (workspace !== "") {
-      rmSync(workspace, { recursive: true, force: true });
-      workspace = "";
-    }
+    if (cleanupHelperError !== undefined) throw cleanupHelperError;
+    const failedRetention = helpers.find(result => result.status === "rejected");
+    if (failedRetention?.status === "rejected") throw failedRetention.reason;
   });
 
   it("writes a PNG of exactly the requested size and resolution", async () => {
@@ -188,7 +288,7 @@ describe("M4.2 saving a figure through the real dialog", () => {
     await chooseFigure({ width: "500", height: "400", dpi: "600" });
 
     const dialog = handleDialog("save", destination);
-    await browser.$("button=Export PNG…").click();
+    await browser.$(".spectrum-panel").$("button=Export PNG…").click();
     const handled = await dialog;
 
     if (handled.result?.found !== true) {
@@ -203,7 +303,7 @@ describe("M4.2 saving a figure through the real dialog", () => {
     expect(handled.result?.named).toBe(true);
     expect(handled.result?.invoked).toBe(true);
 
-    expect(await waitForOutcome()).toContain("Saved");
+    expect(await retainedOutcome()).toContain("Saved");
 
     // The file itself, read from disk and parsed rather than trusted.
     expect(existsSync(destination)).toBe(true);
@@ -232,10 +332,10 @@ describe("M4.2 saving a figure through the real dialog", () => {
     await chooseFigure({ width: "900", height: "500", dpi: "300" });
 
     const dialog = handleDialog("save", destination);
-    await browser.$("button=Export SVG…").click();
+    await browser.$(".spectrum-panel").$("button=Export SVG…").click();
     await dialog;
 
-    expect(await waitForOutcome()).toContain("Saved");
+    expect(await retainedOutcome()).toContain("Saved");
 
     expect(existsSync(destination)).toBe(true);
     const svg = readFileSync(destination, "utf8");
@@ -260,14 +360,14 @@ describe("M4.2 saving a figure through the real dialog", () => {
     await browser.$("button#chromatogram-export-toggle").click();
     await browser.$("#chromatogram-export-panel").waitForDisplayed({ timeout: 30_000 });
 
-    const dialog = handleDialog("save", destination);
+    const dialog = handleDialog("save", destination, 90, "Export chromatogram data");
     await browser.$("#chromatogram-export-panel").$("button=Export CSV…").click();
     const handled = await dialog;
 
     expect(handled.result?.found).toBe(true);
     expect(handled.result?.invoked).toBe(true);
 
-    const status = await waitForOutcome();
+    const status = await retainedOutcome(120_000, "#chromatogram-export-panel");
     expect(status).toContain("Saved");
     expect(existsSync(destination)).toBe(true);
 
@@ -298,14 +398,14 @@ describe("M4.2 saving a figure through the real dialog", () => {
     await browser.$("button#chromatogram-export-toggle").click();
     await browser.$("#chromatogram-export-panel").waitForDisplayed({ timeout: 30_000 });
 
-    const dialog = handleDialog("cancel");
+    const dialog = handleDialog("cancel", undefined, 90, "Export chromatogram figure");
     await browser.$("#chromatogram-export-panel").$("button=Export SVG…").click();
     const handled = await dialog;
 
     expect(handled.result?.found).toBe(true);
     expect(handled.result?.invoked).toBe(true);
 
-    const status = await waitForOutcome();
+    const status = await retainedOutcome(120_000, "#chromatogram-export-panel");
     expect(status).toContain("cancelled");
     expect(status).not.toContain("Saved");
     expect(existsSync(join(workspace, "chromatogram.svg"))).toBe(false);
@@ -313,13 +413,13 @@ describe("M4.2 saving a figure through the real dialog", () => {
 
   it("treats a dismissed dialog as an outcome and writes nothing", async () => {
     const dialog = handleDialog("cancel");
-    await browser.$("button=Export PNG…").click();
+    await browser.$(".spectrum-panel").$("button=Export PNG…").click();
     const handled = await dialog;
 
     expect(handled.result?.found).toBe(true);
     expect(handled.result?.invoked).toBe(true);
 
-    const status = await waitForOutcome();
+    const status = await retainedOutcome();
     expect(status).toContain("cancelled");
     expect(status).not.toContain("Saved");
     // Nothing was created anywhere this test could have written to.

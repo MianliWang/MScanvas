@@ -1,7 +1,7 @@
 /**
  * Driving the real application to a loaded spectrum, once, for every suite.
  *
- * Four rendered suites need the same thing: a document whose answers are known,
+ * Rendered suites need the same thing: a document whose answers are known,
  * a preview open, and a spectrum selected. Written four times it drifted four
  * ways -- and one of those ways cost a hundred seconds a test.
  */
@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { StoredPreferences } from "../../apps/desktop/src/features/preferences/storedPreferences";
 import { MZML_ROW, ipcTable, spectrumWithPeaks } from "./fixtures";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -37,8 +38,19 @@ export function focusApplicationWindow(): void {
   );
 }
 
-export const EXPORT_BLOCK = ".spectrum-export";
-export const STATUS = ".spectrum-export-status";
+export const EXPORT_BLOCK = ".spectrum-panel .spectrum-export";
+export const STATUS = ".spectrum-panel .spectrum-export-status";
+
+/**
+ * A controlled viewer session starts with its roster explicitly shown, even
+ * below the automatic breakpoint. This is fixture state, not evidence about
+ * the real preference store. Preview activation folds it through navigation.
+ */
+export const TAURI_VIEWER_PREFERENCES: StoredPreferences = {
+  schemaVersion: 1,
+  appearance: { locale: "en", density: "comfortable" },
+  layout: { roster: "shown", details: "automatic" },
+};
 
 /**
  * The token Rust's seeded snapshot carries.
@@ -116,6 +128,13 @@ export function tauriTable(options: {
   const base = ipcTable();
   const table = {
     ...base,
+    load_ui_preferences: {
+      outcome: "loaded",
+      revision: 0,
+      preferences: TAURI_VIEWER_PREFERENCES,
+    },
+    // These viewer setups make no layout choice after this read. The base
+    // table's fixed save response is not a preference-persistence fixture.
     // The preview is answered from the table, so the token it carries has to be
     // the one Rust's seeded snapshot actually holds -- otherwise the production
     // command would refuse it as stale, which is the right answer to the wrong
@@ -156,27 +175,60 @@ export async function ipcCalls(): Promise<IpcCall[]> {
 }
 
 /**
- * Drives the shipped interface from a cold document to a selected spectrum.
+ * Reveals the roster using its shipped header toggle, without replacing IPC.
  *
- * The preview is opened with the keyboard, which is what the roster documents:
- * "Reading one is `Preview focused` or Enter, and nothing else." A double-click
- * opens one too, and this suite used to use it -- but WebDriver's synthetic
- * double-click does not reliably become a `dblclick` in WebView2, so the retry
- * loop around it spent a hundred seconds a test failing to open a preview that
- * one keypress opens immediately.
+ * A refused toggle is waited out, never pressed repeatedly or bypassed
+ * by changing the hidden attribute or installing a preference read-back mock.
  */
-export async function selectFirstSpectrum(): Promise<void> {
-  const row = `li.dataset-row[data-handle="${MZML_ROW.handle}"]`;
-  const firstSpectrum = 'div.spectrum-table-row[data-row-position="0"]';
+export async function revealTauriRoster(): Promise<void> {
+  const roster = browser.$("#workbench-roster");
+  const toggle = browser.$('[aria-controls="workbench-roster"]');
+  await roster.waitForExist({ timeout: 60_000 });
+  await toggle.waitForDisplayed({ timeout: 60_000 });
+  await browser.waitUntil(async () =>
+    await toggle.isEnabled() && (await toggle.getAttribute("aria-disabled")) !== "true", {
+    timeout: 60_000,
+    timeoutMsg: "the roster toggle never became operable",
+  });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.scrollIntoView({ block: "nearest" });
+    await toggle.click();
+  }
+  await roster.waitForDisplayed({ timeout: 60_000 });
+}
 
-  await browser.$(row).waitForDisplayed({ timeout: 60_000 });
-  // Clicked to focus and select, then activated. Two separate things the roster
-  // deliberately keeps separate: selecting a row is not reading it.
+/** Opens one mzML row once, then waits for its linked viewer to be visible. */
+export async function openTauriPreview(handle: string): Promise<void> {
+  const row = `.grouped-roster [role="row"][data-handle="${handle}"]`;
+  await browser.$(row).waitForExist({ timeout: 60_000 });
+  await revealTauriRoster();
+  await browser.$(row).scrollIntoView({ block: "nearest" });
+  await browser.$(row).waitForClickable({ timeout: 60_000 });
+  // Since M7.2 a plain row click previews mzML. Enter or a double-click retry
+  // would activate it again and can discard the selected-spectrum state.
   await browser.$(row).click();
-  await browser.keys(["Enter"]);
-  await browser.$(firstSpectrum).waitForDisplayed({ timeout: 60_000 });
+  await browser.$("#workbench-evidence").waitForDisplayed({ timeout: 60_000 });
+  await browser.$("svg.chromatogram-svg").waitForDisplayed({ timeout: 60_000 });
+  await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForDisplayed({
+    timeout: 60_000,
+  });
+}
 
+/** Drives the shipped interface to a loaded spectrum and its export controls. */
+export async function selectFirstSpectrum(): Promise<void> {
+  const firstSpectrum = 'div.spectrum-table-row[data-row-position="0"]';
+  await openTauriPreview(MZML_ROW.handle);
+  await browser.$(firstSpectrum).scrollIntoView({ block: "center" });
   await browser.$(firstSpectrum).click();
+  await browser.$("#selected-spectrum-summary").waitForDisplayed({ timeout: 60_000 });
+  // PM9.3 keeps export controls behind their own disclosure. Opening it is
+  // presentation only and preserves the selected spectrum and export token.
+  const disclosure = browser.$(".spectrum-panel .spectrum-export-disclosure");
+  if ((await disclosure.getAttribute("open")) === null) {
+    const summary = browser.$(".spectrum-panel .spectrum-export-disclosure > summary");
+    await summary.scrollIntoView({ block: "nearest" });
+    await summary.click();
+  }
   await browser.$(EXPORT_BLOCK).waitForDisplayed({ timeout: 30_000 });
 }
 
@@ -194,21 +246,26 @@ export async function chooseFigure(values: {
   // says nothing about what the test was doing.
   await browser.execute(
     (fields: (string | null)[]) => {
-      const inputs = [...document.querySelectorAll("label.spectrum-figure-field input")];
+      const panel = document.querySelector(".spectrum-panel");
+      if (panel === null) throw new Error("the spectrum panel is missing");
+      // SettingField places labels beside their inputs. Use the stable panel
+      // ids, shared across locales, rather than the retired wrapping labels.
+      const ids = ["spectrum-widthPx", "spectrum-heightPx", "spectrum-pngDpi"];
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      if (setter === undefined) throw new Error("the native input value setter is missing");
       fields.slice(0, 3).forEach((value, index) => {
-        const input = inputs[index];
-        if (value !== null && input instanceof HTMLInputElement) {
-          setter?.call(input, value);
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-        }
+        if (value === null) return;
+        const input = panel.querySelector(`#${ids[index]}`);
+        if (!(input instanceof HTMLInputElement)) throw new Error(`the figure field ${ids[index]} is missing`);
+        setter.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
       });
       const theme = fields[3];
       if (theme !== null && theme !== undefined) {
-        const chosen = document.querySelector(`input[type='radio'][value='${theme}']`);
-        if (chosen instanceof HTMLInputElement) {
-          chosen.click();
-        }
+        const chosen = [...panel.querySelectorAll<HTMLInputElement>('.spectrum-figure-settings input[type="radio"]')]
+          .find(input => input.value === theme);
+        if (chosen === undefined) throw new Error(`the spectrum figure theme ${theme} is missing`);
+        chosen.click();
       }
     },
     [values.width ?? null, values.height ?? null, values.dpi ?? null, values.theme ?? null],
@@ -246,9 +303,9 @@ export function clipboardIsUsable(): boolean {
   return probe.stdout.includes("usable") && !probe.stdout.includes("unusable");
 }
 
-/** What the export status region currently says. */
-export async function statusText(): Promise<string> {
-  return (await browser.$(STATUS).getText()).trim();
+/** What this panel's own export status says, excluding its linked-figure lane. */
+export async function statusText(panel = ".spectrum-panel"): Promise<string> {
+  return (await browser.$(panel).$(".spectrum-export-status:not(.linked-figure-status)").getText()).trim();
 }
 
 /**
@@ -260,10 +317,13 @@ export async function statusText(): Promise<string> {
  * middle of the work. The dismissal offer is the terminal signal -- it appears
  * for a saved, copied, cancelled or failed result and for nothing else.
  */
-export async function waitForOutcome(timeout = 120_000): Promise<string> {
-  await browser.$("button=Dismiss export message").waitForDisplayed({
+export async function waitForOutcome(timeout = 120_000, panel = ".spectrum-panel"): Promise<string> {
+  // Spectrum's dismissal is beside its status; chromatogram's is inside it.
+  // Both are terminal controls, with the linked-figure dismissal excluded.
+  const dismiss = `${panel} > button.link-button, ${panel} > .spectrum-export-status:not(.linked-figure-status) button.link-button`;
+  await browser.$(dismiss).waitForDisplayed({
     timeout,
     timeoutMsg: "the operation never reported a finished outcome",
   });
-  return statusText();
+  return statusText(panel);
 }

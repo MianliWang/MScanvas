@@ -17,6 +17,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath } from "node:url";
 
 import type { DestinationPolicy, WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { waitUntilOffered } from "../support/conversion";
+import { revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(HERE, "..", "..");
@@ -24,8 +26,8 @@ const FIXTURE = process.env["MSCANVAS_THERMO_FIXTURE"];
 const OUTPUT_ROOT = process.env["MSCANVAS_M67_NATIVE_OUTPUT_ROOT"];
 const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
 const PANEL = "section.conversion-panel";
-const CONVERT = `${PANEL} .conversion-plan button.primary-button`;
-const ROWS = 'ul.dataset-roster-list[role="listbox"] [role="option"]';
+const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
+const ROWS = '.grouped-roster [role="row"][data-handle]';
 const runNative = FIXTURE !== undefined && OUTPUT_ROOT !== undefined ? describe : describe.skip;
 
 interface DialogResult {
@@ -103,6 +105,7 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
     applicationProcessId = Number(capabilities["goog:processID"]);
     if (!Number.isSafeInteger(applicationProcessId) || applicationProcessId <= 0) throw new Error("WebDriver did not identify its application process.");
     expect(capabilities["browserName"]).toBe("webview2");
+    await showRoster();
     await browser.$("button=Add files…").waitForDisplayed();
     expect(await browser.execute(() => Object.keys((window as unknown as { __mscanvasIpcTable__: object }).__mscanvasIpcTable__))).toEqual([]);
     evidence.push({ kind: "identity", binarySha256: sha256(resolve(REPOSITORY, "target/e2e/release/mscanvas-desktop.exe")), fixtureSha256: FIXTURE_SHA256, browserName: capabilities["browserName"], browserVersion: capabilities["browserVersion"], driver: capabilities["msedge"] });
@@ -112,8 +115,10 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
   beforeEach(async () => {
     scenario += 1;
     await browser.setWindowSize(1366, 768);
+    await showRoster();
     const clear = browser.$("button=Clear list");
     if (await clear.isExisting()) {
+      await reveal("#workbench-roster .dataset-roster-actions");
       await clear.click();
       await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
     }
@@ -145,39 +150,46 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
   }
 
   async function add(path: string): Promise<void> {
+    await showRoster();
     const before = await browser.$$(ROWS).length;
     await browser.$("button=Add files…").waitForEnabled({ timeout: 60_000 });
+    await reveal("#workbench-roster [data-add-files]");
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);
     const [handled] = await Promise.all([handler, browser.$("button=Add files…").click()]);
     evidence.push({ kind: "native-picker", scenario, result: handled });
     expect(handled.entered).toBe(true);
     await browser.waitUntil(async () => (await browser.$$(ROWS).length) === before + 1);
+    await showConversion();
     // Admission only. A previous draft or a multi-source custom destination
     // may truthfully refuse Convert; each scenario chooses its policy below.
     await browser.$('input[name="conversion-destination-policy"]').waitForDisplayed({ timeout: 60_000 });
   }
 
   async function policy(kind: DestinationPolicy["kind"]): Promise<void> {
+    await showConversion();
     const selector = `input[name="conversion-destination-policy"][value="${kind}"]`;
     await reveal(selector);
     await browser.$(selector).click();
   }
 
   async function conflict(value: "fail" | "skip"): Promise<void> {
+    await showConversion();
     const selector = `input[name="conversion-conflict-policy"][value="${value}"]`;
     await reveal(selector);
     await browser.$(selector).click();
   }
 
   async function subfolderName(value: string): Promise<void> {
+    await showConversion();
     await reveal("#conversion-subfolder-name");
     await browser.$("#conversion-subfolder-name").setValue(value);
   }
 
   async function selectAll(): Promise<void> {
+    await showConversion();
     await reveal('input[name="conversion-scope"][value="all"]');
     await browser.$('input[name="conversion-scope"][value="all"]').click();
-    await browser.$(CONVERT).waitForEnabled();
+    await waitUntilOffered(CONVERT);
   }
 
   async function terminal(previousId: string | null): Promise<Extract<WorkspaceConversionState, { status: "terminal" }>> {
@@ -194,7 +206,8 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
   }
 
   async function convert(destination?: string): Promise<Extract<WorkspaceConversionState, { status: "terminal" }>> {
-    await browser.$(CONVERT).waitForEnabled();
+    await showConversion();
+    await waitUntilOffered(CONVERT);
     await reveal(CONVERT);
     const previous = await conversionState();
     const previousId = previous.status === "idle" ? null : previous.operationId;
@@ -242,21 +255,43 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
   }
 
 
-  async function select(name: string, extend = false): Promise<void> {
-    const matches = await browser.$$(ROWS);
-    for (const item of matches) {
-      if ((await item.getText()).includes(name)) {
-        if (extend) await browser.action("key").down("\uE009").perform(true);
-        await item.click();
-        if (extend) await browser.action("key").up("\uE009").perform();
-        return;
+  async function showRoster(): Promise<void> {
+    await browser.$(".workbench-home").waitForDisplayed({ timeout: 30_000 });
+    await browser.$(".workbench-home").click();
+    await revealTauriRoster();
+  }
+
+  async function showConversion(): Promise<void> {
+    await browser.$("button=Conversion & results").click();
+    await browser.$("#workbench-conversion").waitForDisplayed();
+  }
+
+  /** Conversion membership is independent of the roster's highlighted rows. */
+  async function selectMembers(names: readonly string[]): Promise<void> {
+    await showRoster();
+    const checkedNames: string[] = [];
+    for (const row of await browser.$$(ROWS)) {
+      const name = await row.$(".dataset-row-name").getText();
+      const handle = await row.getAttribute("data-handle");
+      const checkbox = browser.$(`${ROWS}[data-handle="${handle}"] input[type="checkbox"]`);
+      const checked = names.includes(name);
+      if (await checkbox.isSelected() !== checked) {
+        await reveal(`${ROWS}[data-handle="${handle}"]`);
+        await checkbox.click();
       }
+      await browser.waitUntil(async () => await checkbox.isSelected() === checked);
+      if (checked) checkedNames.push(name);
     }
-    throw new Error(`Workspace row not found: ${name}`);
+    expect(checkedNames.sort()).toEqual([...names].sort());
+    await showConversion();
+    const scope = 'input[name="conversion-scope"][value="selected"]';
+    await reveal(scope);
+    await browser.$(scope).click();
   }
 
   async function reviewed(): Promise<readonly string[]> {
-    await browser.$(CONVERT).waitForEnabled();
+    await showConversion();
+    await waitUntilOffered(CONVERT);
     return browser.execute(() => [...document.querySelectorAll('[aria-label="Reviewed conversion order"] .conversion-queue-name')].map((node) => node.textContent ?? ""));
   }
 
@@ -285,8 +320,9 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
     const untouchedTarget = join(dirname(unrelated), "unrelated.mzML");
     writeFileSync(untouchedTarget, "M6.7 unrelated existing target");
     const unchanged = [openFormat, untouchedTarget].map((path) => ({ path, hash: sha256(path) }));
-    await select("beta.raw"); await select("alpha.raw", true); await select("unrelated.mzML", true);
+    await selectMembers(["beta.raw", "alpha.raw", "unrelated.mzML"]);
     await policy("sourceSibling"); await conflict("fail");
+    await showRoster();
     await browser.$("#dataset-roster-sort").selectByAttribute("value", "name-asc");
     await measuredViewport(1366, 768);
     expect(await reviewed()).toEqual(["alpha.raw", "beta.raw"]);
@@ -309,9 +345,9 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
     const openFormat = unrelatedOpenFormat();
     const openHash = sha256(openFormat);
     for (const path of [beta, alpha, gamma, openFormat]) await add(path);
-    // Clear the import's selection explicitly, so search really hides members.
-    await browser.$(ROWS).click();
-    await browser.keys(" ");
+    // Clear conversion membership explicitly, so search has no checked rows to retain.
+    await selectMembers([]);
+    await showRoster();
     await browser.$("#dataset-roster-search").setValue("alpha");
     await browser.$("#dataset-roster-sort").selectByAttribute("value", "name-desc");
     await policy("namedSubfolder"); await subfolderName("M67 results"); await conflict("fail");

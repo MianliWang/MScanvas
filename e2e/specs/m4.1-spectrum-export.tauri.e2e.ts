@@ -28,7 +28,8 @@
  * See `e2e/native/README.md` for what that leaves open.
  */
 
-import { MZML_ROW, ipcTable } from "../support/fixtures";
+import { ipcTable } from "../support/fixtures";
+import { TAURI_VIEWER_PREFERENCES, selectFirstSpectrum } from "../support/tauriPanel";
 
 const PANEL = "section.spectrum-panel";
 const EXPORT_BLOCK = ".spectrum-export";
@@ -70,6 +71,13 @@ async function loadWith(table: Record<string, unknown>): Promise<void> {
 function tauriTable(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     ...ipcTable(),
+    // The controlled viewer starts with the roster shown at every native size;
+    // this does not stand in for a real preference-store check.
+    load_ui_preferences: {
+      outcome: "loaded",
+      revision: 0,
+      preferences: TAURI_VIEWER_PREFERENCES,
+    },
     begin_selected_spectrum_export: "reservation-1",
     save_selected_spectrum_export: { status: "cancelled" },
     ...extra,
@@ -96,38 +104,14 @@ function buttonLabelled(label: string): ReturnType<typeof browser.$> {
   return browser.$(`button=${label}`);
 }
 
-/** Drives the shipped interface from a cold document to a selected spectrum. */
-async function selectFirstSpectrum(): Promise<void> {
-  const row = `li.dataset-row[data-handle="${MZML_ROW.handle}"]`;
-  const firstSpectrum = 'div.spectrum-table-row[data-row-position="0"]';
-  await browser.$(row).waitForDisplayed({ timeout: 60_000 });
-
-  // Re-queried on every attempt, because selecting a row re-renders the roster:
-  // the first click of a double-click can replace the very node the second
-  // click is aimed at, and the gesture is then delivered to an element that is
-  // no longer in the document. Nothing is asked of the application twice --
-  // double-clicking a row whose preview is already open is what a user does by
-  // accident anyway -- and a preview that genuinely will not open still fails
-  // here, on the same condition, once the attempts run out.
-  await browser.waitUntil(
-    async () => {
-      await browser.$(row).doubleClick();
-      return await browser.$(firstSpectrum).isDisplayed();
-    },
-    { timeout: 90_000, interval: 2_000, timeoutMsg: "the mzML preview never opened" },
-  );
-
-  await browser.$(firstSpectrum).click();
-  await browser.$(EXPORT_BLOCK).waitForDisplayed();
-}
-
 describe("M4.1 on the real Tauri WebView, cold", () => {
   it("launches and renders the workspace over real IPC", async () => {
     // Nothing is seeded, so every command this document issues reaches Rust.
-    // The application's own heading, not merely "some h1" -- a platform error
-    // page has one of those too, and an assertion it could satisfy would make a
-    // failed launch look like a passing test.
-    await browser.$("#dataset-roster-heading").waitForDisplayed({ timeout: 60_000 });
+    // The application's own shell and mounted roster heading distinguish it
+    // from a platform error page, including when the roster is folded.
+    await browser.$(".workbench-header").waitForDisplayed({ timeout: 60_000 });
+    // The roster remains mounted when the native viewport folds it away.
+    await browser.$("#dataset-roster-heading").waitForExist({ timeout: 60_000 });
     expect(await browser.getTitle()).toBe("MSCanvas");
 
     // The real roster answered the real mount effect.
