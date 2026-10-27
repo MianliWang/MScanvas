@@ -402,6 +402,11 @@ describe("saving conversion diagnostics", () => {
         within(panel).getByRole("button", { name: "Add converted output to workspace" }),
       ).toHaveAttribute("aria-disabled", "true");
     });
+    // And says why: the export's own status line, not a second sentence for
+    // the same moment (PM9.4 O8).
+    expect(
+      within(panel).getByRole("button", { name: "Add converted output to workspace" }),
+    ).toHaveAccessibleDescription(/Saving diagnostics…$/);
     // Pressed while refused, it still adds nothing.
     fireEvent.click(within(panel).getByRole("button", { name: "Add converted output to workspace" }));
     expect(api.calls()).not.toContain("adoptConversionOutputs");
@@ -441,9 +446,17 @@ describe("saving conversion diagnostics", () => {
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
     );
 
+    // Refused as a Tab stop whose reason is the adoption's own status line
+    // (PM9.4 O8), and pressing it still exports nothing.
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: EXPORT_LABEL })).toBeDisabled();
+      expect(within(panel).getByRole("button", { name: EXPORT_LABEL })).toHaveAttribute("aria-disabled", "true");
     });
+    const refused = within(panel).getByRole("button", { name: EXPORT_LABEL });
+    expect(refused).not.toBeDisabled();
+    expect(refused).toHaveAccessibleDescription(/Adding converted outputs…$/);
+    refused.focus();
+    expect(refused).toHaveFocus();
+    fireEvent.click(refused);
     expect(api.diagnosticsExportRequests).toEqual([]);
 
     release!();
@@ -593,7 +606,11 @@ describe("saving conversion diagnostics", () => {
     await waitFor(() => {
       expect(within(panel).getByText("Saving diagnostics…")).toBeVisible();
     });
-    expect(within(panel).getByRole("button", { name: EXPORT_LABEL })).toBeDisabled();
+    // Refused through aria-disabled, and described by the export's own line.
+    const action = within(panel).getByRole("button", { name: EXPORT_LABEL });
+    expect(action).toHaveAttribute("aria-disabled", "true");
+    expect(action).toHaveAccessibleDescription(/Saving diagnostics…$/);
+    fireEvent.click(action);
     // Recovered by reading, not by dispatching. This document asked for
     // nothing and must not retry an export it did not start.
     expect(api.diagnosticsExportRequests).toEqual(["1"]);

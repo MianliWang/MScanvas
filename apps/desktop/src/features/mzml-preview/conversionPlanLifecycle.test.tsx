@@ -738,14 +738,15 @@ describe("starting the conversion the plan describes", () => {
       plans.fail(2, previewError({ kind: "subfolder_name_unusable", summary: "Use one local subfolder name." }));
       plans.answer(1); // A valid answer for the old name cannot erase the refusal.
     });
-    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).toHaveAttribute("aria-disabled", "true");
+    // A named subfolder opens no picker, so Convert carries no ellipsis (PM9.4 O5).
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible" })).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).getByText("That is not a folder name MSCanvas can create beside your acquisitions. Use a single name with no slashes.")).toBeVisible();
     expect(within(panel).getByLabelText("Subfolder name")).toHaveAttribute("aria-invalid", "true");
     expect(api.beginRequests()).toHaveLength(0);
     fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "Results" } });
     await waitFor(() => expect(plans.asked).toHaveLength(4));
     await act(async () => plans.answer(3));
-    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled");
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible" })).not.toHaveAttribute("aria-disabled");
     expect(within(panel).getByText("Requested destination").nextElementSibling?.textContent).toContain("Results");
   });
 

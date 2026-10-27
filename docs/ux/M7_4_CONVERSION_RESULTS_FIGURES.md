@@ -176,6 +176,11 @@ from the browser focus path. This is distinct from the earlier foreground loss.
 The repair keeps only a locally initiated in-flight diagnostics button natively
 focusable. `aria-disabled` and the activation guard refuse repeated requests.
 Recovered exports started by another document retain native disabled behavior.
+(PM9.4 O8, 2026-10-27: superseded for that case. A non-initiating Diagnostics
+button is now `aria-disabled` behind the same activation guard and points with
+`aria-describedby` at the status of the lane action holding it; the
+initiator's natural focus is unchanged. Component-tested only; rendered and
+native acceptance are pending.)
 The existing App-level focus test now checks duplicate rejection as well;
 52 focused tests in two files pass. One new real-Chrome browser regression checks
 focus through the held synthetic IPC save, repeated click/Enter rejection and
