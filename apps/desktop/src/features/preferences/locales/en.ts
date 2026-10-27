@@ -746,7 +746,9 @@ export const en = {
   previewRetained: "Preview {{name}}",
   conversionMembershipHelp: "Checked rows are the conversion members ticked in the list, including hidden rows. Highlighting and virtual groups do not change this execution order.",
   emptyEvidence: "Inspect an acquisition",
-  emptyEvidenceHelp: "Add local data, then activate an mzML row to inspect its plots and scans. Vendor acquisitions remain available for conversion.",
+  // The two labels are nested rather than retyped, so the route names the
+  // header toggle and the roster action in the words they carry (PM9.7 F3).
+  emptyEvidenceHelp: "To add local data, choose $t(addFiles) in $t(rosterToggle). If $t(rosterToggle) is not open, open it with the $t(rosterToggle) button in the header. Then activate an mzML row to inspect its plots and scans. Vendor acquisitions are not previewed; they remain available for conversion.",
   readingEvidence: "Reading the acquisition…",
   readingEvidenceHelp: "Loading retained metadata and scans through the installed backend.",
   retryEvidence: "Try reading this file again",

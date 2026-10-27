@@ -745,7 +745,7 @@ export const zhCN = {
   previewRetained: "预览 {{name}}",
   conversionMembershipHelp: "“勾选的行”指在列表中勾选的转换成员，包括隐藏行。高亮与虚拟分组不会改变此执行顺序。",
   emptyEvidence: "查看采集数据",
-  emptyEvidenceHelp: "添加本地数据后，激活 mzML 行即可查看图形与扫描。厂商采集仍可用于转换。",
+  emptyEvidenceHelp: "要添加本地数据，请在“$t(rosterToggle)”中选择“$t(addFiles)”。如果“$t(rosterToggle)”未展开，请用顶栏中的“$t(rosterToggle)”按钮将其展开。之后激活 mzML 行即可查看图形与扫描。厂商采集不提供预览，仍可用于转换。",
   readingEvidence: "正在读取采集…",
   readingEvidenceHelp: "正在通过已安装的后端读取元数据与扫描。",
   retryEvidence: "重试读取此文件",
