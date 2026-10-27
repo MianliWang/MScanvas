@@ -1,9 +1,9 @@
 # MSCanvas beta 1 — release notes
 
-Status: **DRAFT; NOT RELEASED.** The version, tag, download links, hashes and
-signer below are placeholders, filled from the retained candidate manifest at
+Status: **DRAFT; NOT RELEASED.** The version, tag, download links and hashes
+below are placeholders, filled from the retained candidate manifest at
 candidate acceptance. Nothing in this draft says that a candidate has been
-built, signed, installed or qualified. The decisions behind it are the
+built, installed or qualified. The decisions behind it are the
 [owner decisions of 2026-10-27](../../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27).
 
 Installation, first run, uninstall and how to report a problem are in
@@ -18,7 +18,8 @@ Installation, first run, uninstall and how to report a problem are in
 | Source commit | _filled at candidate acceptance_ |
 | Installer file | _filled at candidate acceptance_ |
 | Installer SHA-256 | _filled at candidate acceptance_ |
-| Signed by | _pending the owner's choice of signing identity_ |
+| Code signature | **None.** Beta 1 is not code-signed |
+| Build provenance | GitHub build-provenance attestation of the installer, from the workflow run: _filled at candidate acceptance_ |
 | Qualification record | _filled at candidate acceptance_ |
 
 A rebuilt installer is a new candidate even when its code is unchanged. Check
@@ -151,7 +152,9 @@ and figure export. The window needs at least 960 × 640.
   labelled as untranslated.
 - One light appearance; there is no dark theme.
 - A first installation on a machine without WebView2 needs the Internet.
-- A signed installer can still trigger a SmartScreen warning.
+- The installer is not code-signed: Windows names an unknown publisher,
+  SmartScreen is expected to warn, and an organisation that blocks unsigned
+  software will block it.
 
 ## CSV and TSV files
 
@@ -180,9 +183,9 @@ them for spreadsheets. Open these files knowingly.
 ## Reporting problems
 
 Use GitHub Issues on this repository, with its bug, feature or UX-research
-template. Security problems are reported privately, not in a public issue:
-_private channel confirmed in the [security policy](../../../SECURITY.md) at
-candidate acceptance_. [Install and support](INSTALL_AND_SUPPORT.md#report-a-problem)
+template. Security problems are reported privately, not in a public issue,
+through GitHub's private vulnerability reporting, as the
+[security policy](../../../SECURITY.md) describes. [Install and support](INSTALL_AND_SUPPORT.md#report-a-problem)
 explains what to include and how to attach redacted conversion diagnostics.
 
 ## Licences

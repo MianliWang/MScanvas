@@ -1,7 +1,7 @@
 # MSCanvas beta 1 — install and support
 
-Status: **DRAFT; NOT RELEASED.** Download links, the installer name, its
-SHA-256 and the signer are placeholders, filled at candidate acceptance. No
+Status: **DRAFT; NOT RELEASED.** Download links, the installer name and its
+SHA-256 are placeholders, filled at candidate acceptance. No
 beta-1 installer had been installed or qualified when this was written. The
 install, first-run and uninstall steps describe the configured installer
 (`apps/desktop/src-tauri/tauri.conf.json`) and are confirmed on the installed
@@ -36,20 +36,26 @@ in the [release notes](RELEASE_NOTES.md).
    Get-FileHash .\<installer>.exe -Algorithm SHA256
    ```
 
-3. Check its signature: right-click the file, choose **Properties**, then
-   **Digital Signatures**. The signer must be _filled at candidate acceptance_.
-   In PowerShell, `Get-AuthenticodeSignature .\<installer>.exe` should report
-   `Valid` and the same signer.
+3. Optionally, check where it was built. Each candidate is built on a
+   GitHub-hosted runner and carries a build-provenance attestation that ties
+   the installer's bytes to the repository commit and workflow run that built
+   it. With the GitHub CLI installed:
 
-If the hash differs, the signature is missing or invalid, or it names anyone
-else, do not run the file. Report it privately, not in a public issue:
-_private channel confirmed in the [security policy](../../../SECURITY.md) at
-candidate acceptance_.
+   ```powershell
+   gh attestation verify .\<installer>.exe --repo MianliWang/MScanvas
+   ```
 
-A correctly signed installer can still show a SmartScreen warning, because a
-new signature has no reputation yet. Nothing here asks you to turn a protection
-off or to override your organisation's policy. If your policy blocks the
-installer, this beta is not for that machine.
+If the hash differs or the attestation does not verify, do not run the file.
+Report it privately, not in a public issue, through GitHub's private
+vulnerability reporting:
+<https://github.com/MianliWang/MScanvas/security/advisories/new>.
+
+**Beta 1 is not code-signed.** Windows shows it as coming from an unknown
+publisher, and SmartScreen is expected to warn with "Windows protected your
+PC". If the SHA-256 matched, you can choose **More info**, then **Run
+anyway**. Nothing here asks you to turn a protection off or to override your
+organisation's policy: if your organisation blocks unsigned software, this
+beta is not for that machine.
 
 ## Install
 
@@ -128,9 +134,9 @@ choose a template:
   identifiers.
 
 Blank issues are turned off. A security problem, such as path traversal, a
-change to source data, or an installer whose hash or signature does not match,
-is reported privately instead of in a public issue: _private channel confirmed
-in the [security policy](../../../SECURITY.md) at candidate acceptance_.
+change to source data, or an installer whose hash or attestation does not
+match, is reported privately instead of in a public issue, as the
+[security policy](../../../SECURITY.md) describes.
 
 For the environment, give:
 

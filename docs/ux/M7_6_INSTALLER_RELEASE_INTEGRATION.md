@@ -9,10 +9,11 @@ this slice's record as it stopped.
 
 Amendment, 2026-10-27: the owner's
 [decisions of that date](../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27)
-supersede this record's unsigned posture. Beta 1 is signed, its signing
-provider and identity are pending the owner's choice, and no unsigned installer
-is published; the *Signature* row, the *Unsigned* limit and setup step 3 of the
-release packet below describe the record as it stopped. The name is accepted
+keep this record's unsigned posture for beta 1, now as an explicit owner
+approval, with published SHA-256 checksums and a GitHub build-provenance
+attestation from the `Release candidate` workflow; signing is reconsidered
+after beta 1. Candidates are built by that workflow on a GitHub-hosted runner
+with this record's `build_candidate.ps1`. The name is accepted
 for the prerelease by explicit owner risk acceptance, without the formal review.
 The release packet's tester-facing successors are the beta-1
 [release notes](../release/beta-1/RELEASE_NOTES.md) and

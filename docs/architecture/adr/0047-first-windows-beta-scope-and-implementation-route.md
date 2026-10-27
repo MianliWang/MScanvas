@@ -365,7 +365,7 @@ for each row; M7.6 implements and records the answer, not an agent guessing it.
 
 | Decision | Recommendation, not approval | Blocks / latest decision point | Status, 2026-10-27 |
 | --- | --- | --- | --- |
-| Signing identity/certificate or unsigned posture | Owner chooses an identity and budget, or explicitly approves an unsigned beta with accurate warning/setup guidance; do not promise warning-free signing | Signing configuration and final-candidate trust tests; before M7.6 candidate production | **Posture decided: signed; no unsigned installer is published.** Provider and identity **pending the owner's choice**, so this row still blocks candidate production. See [Signing](#signing) |
+| Signing identity/certificate or unsigned posture | Owner chooses an identity and budget, or explicitly approves an unsigned beta with accurate warning/setup guidance; do not promise warning-free signing | Signing configuration and final-candidate trust tests; before M7.6 candidate production | **Decided for beta 1: an explicitly approved unsigned posture**, with published SHA-256 checksums, a GitHub build-provenance attestation and accurate SmartScreen guidance. Signing through SignPath Foundation is to be evaluated after beta 1. See [Signing](#signing) |
 | Distribution host/audience | Owner-approved beta channel and stated audience; GitHub prerelease is a possible host. Live repository API on 2026-09-12 reports public, superseding the request/preflight's private assumption; visibility was not changed here | Download/support instructions and access tests; before M7.6 candidate acceptance. Public source is not release consent | **Decided:** a GitHub prerelease on this repository for early testers. Access tests remain candidate work. See [Distribution](#distribution) |
 | Lawful redistributable samples | Minimal licensed samples with attributable permission; maintainer-only vendor inputs remain local and unbundled | Shareable sample pack and reproducible public smoke instructions; decide before M7.6 release-fixture freeze | **Decided:** only repository-owned synthetic fixtures may be redistributed; vendor inputs stay local and unbundled. See [Samples](#samples) |
 | Actual public release consent and existing name review | Owner accepts the documented trademark, package-name and domain review required by [Proposal section 2](../../../PROJECT_PROPOSAL.md#2-name-and-positioning), then explicitly approves exact candidate hashes, audience/host, notices and feedback/rollback record | M7.6 assembles the name-review result before candidate acceptance; an unresolved result blocks release-ready status. Final consent follows validation and precedes every binary upload/tag/release | **Name decided** for the prerelease by explicit owner risk acceptance, without the formal review, which is still owed before a stable branded release; see [Name](#name). **Release consent pending:** it still follows validation and precedes every upload, tag and release |
@@ -460,14 +460,41 @@ one. The application identifier stays as configured (`org.mscanvas.desktop`).
 
 ### Signing
 
-Beta 1 is **signed**, and no unsigned installer is published. This supersedes
-the unsigned posture the [M7.6 record](../../ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)
-configured and described. The signing provider and identity are **pending the
-owner's choice**; until one is chosen and configured, signing configuration and
-the final-candidate trust tests stay blocked and no candidate can be
-release-ready. Tauri's signing guidance, cited above, still applies: a newly
-signed release can trigger SmartScreen, so no warning-free installation is
-promised.
+Beta 1 is **unsigned, by the owner's explicit approval**, which is the
+unsigned posture the decision table allows and the
+[M7.6 record](../../ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md) configured.
+
+The owner first asked for a signed beta, then, the same day and after weighing
+what signing buys a small non-commercial open-source project, approved the
+unsigned posture for beta 1. The reasons recorded with that choice:
+
+- Since 2024 no certificate type bypasses SmartScreen on its own; a new
+  publisher, signed or not, builds reputation by downloads. Testers of a first
+  prerelease see a warning either way.
+- The free open-source route, SignPath Foundation, requires a project already
+  released in the form to be signed and an automated build from the
+  repository; it issues the certificate to SignPath Foundation as publisher.
+  Beta 1 is therefore also what makes that route available.
+- Paid routes (Azure Artifact Signing, a traditional OV certificate) cost
+  money and identity validation that a test prerelease does not need.
+
+What stands in for a signature for beta 1:
+
+- the installer's SHA-256, published with the release and checked before
+  running it;
+- a GitHub build-provenance attestation of the installer, produced by the
+  `Release candidate` workflow on a GitHub-hosted runner, which ties the bytes
+  to the commit and workflow run that built them;
+- install guidance that says the installer is unsigned, what SmartScreen
+  shows, and that a machine whose organisation blocks unsigned software is not
+  a beta-1 machine.
+
+These establish integrity and origin, not a Windows publisher identity.
+Signing is reconsidered after beta 1, starting with SignPath Foundation, whose
+build requirement the `Release candidate` workflow already meets. The
+final-candidate trust tests for this posture are the unsigned ones: the
+SmartScreen and organisational-policy behaviour the install guidance
+describes, observed on the installed candidate.
 
 ### Samples
 
@@ -512,8 +539,9 @@ a release that ships the runtime.
 
 Feedback goes to **GitHub Issues** on this repository through the existing bug,
 feature and UX-research templates; security reports follow `SECURITY.md`, not a
-public issue. That private route did not exist yet on 2026-10-27; see the open
-item below. Diagnostics remain explicit local redacted exports that the user
+public issue. GitHub private vulnerability reporting, Dependabot alerts and
+Dependabot security updates were enabled on the repository on 2026-10-27 with
+the owner's approval, and `SECURITY.md` names that private route. Diagnostics remain explicit local redacted exports that the user
 reviews and attaches. Nothing is uploaded automatically and no telemetry is
 added, as the release exits above already require.
 
@@ -529,13 +557,7 @@ obligation.
 
 ### Still open after these decisions
 
-- The signing provider and identity (owner).
-- A private security-reporting channel (owner), before publishing.
-  `SECURITY.md` points to GitHub private vulnerability reporting "when
-  available", and the repository API reported it disabled on 2026-10-27. The
-  owner either enables it or names another private contact in `SECURITY.md`,
-  whose "pre-alpha" support statement is due for the same review. Until then,
-  the beta-1 drafts' private-reporting steps stay unconfirmed.
+- Signing for releases after beta 1 (owner).
 - Installed, native and provider qualification of the frozen beta-1 candidate
   on Windows 11 25H2 x64.
 - Per-artifact release consent: exact candidate hashes, notices and the
