@@ -10,7 +10,7 @@
  */
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, type Mock } from "vitest";
 
 import { SessionPreferencesProvider } from "../preferences/SessionPreferencesProvider";
 import { PreferencesApiProvider } from "../preferences/preferencesApi";
@@ -23,7 +23,7 @@ import {
   projectInput,
   type FakeProjectApi,
 } from "../../test/projectFixtures";
-import { ProjectApiProvider, type ProjectState } from "./projectApi";
+import { NO_PROJECT, ProjectApiProvider, type ProjectState } from "./projectApi";
 import { ProjectPanel } from "./ProjectPanel";
 import { useProject } from "./useProject";
 
@@ -549,6 +549,113 @@ describe("the project surface", () => {
     expect(screen.getByText(input.label)).toBeTruthy();
   });
 
+  it("keeps a cancelled check requested until its own answer, and not past it (PM9.5 O4)", async () => {
+    const input = projectInput();
+    const api = mount(openProject({ inputs: [input] }));
+    await waitFor(() => expect(screen.getByText(input.label)).toBeTruthy());
+
+    const release = api.holdOnce("checkProjectLinks");
+    await press(screen.getByRole("button", { name: en.projectCheckLinks }));
+    const cancel = await screen.findByRole("button", { name: en.projectCancel });
+    await press(cancel);
+
+    // A request about the accepted operation, not an outcome: the check is
+    // still running, and nothing says it was cancelled.
+    expect(api.cancelled).toEqual(["project-job-1"]);
+    expect(cancel.getAttribute("data-project-cancel")).toBe("project-job-1");
+    expect(cancel.textContent).toBe(en.projectCancelRequested);
+    expect(cancel.getAttribute("aria-disabled")).toBe("true");
+    expect(announced()).toBe(en.projectCancelRequested);
+    expect(document.querySelector("[data-project-busy='checking']")).toBeTruthy();
+    expect(document.querySelector("[data-project-cancelled]")).toBeNull();
+    // Inert while requested: a second press sends nothing.
+    await press(cancel);
+    expect(api.cancelled).toEqual(["project-job-1"]);
+
+    // The check's own answer ends the request. It completed after all, so it
+    // is not said to have been cancelled.
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(document.querySelector("[data-project-busy]")).toBeNull());
+    expect(document.querySelector("[data-project-cancel]")).toBeNull();
+    expect(document.querySelector("[data-project-cancelled]")).toBeNull();
+    expect(announced()).not.toBe(en.projectCancelRequested);
+
+    // The next operation is its own: unrequested, under its own identifier,
+    // and its Cancel sends one request for it.
+    const releaseNext = api.holdOnce("checkProjectLinks");
+    await press(screen.getByRole("button", { name: en.projectCheckLinks }));
+    const next = await screen.findByRole("button", { name: en.projectCancel });
+    expect(next.getAttribute("data-project-cancel")).toBe("project-job-2");
+    expect(next.getAttribute("aria-disabled")).toBeNull();
+    await press(next);
+    expect(api.cancelled).toEqual(["project-job-1", "project-job-2"]);
+    expect(next.textContent).toBe(en.projectCancelRequested);
+    await act(async () => {
+      releaseNext();
+    });
+    await waitFor(() => expect(document.querySelector("[data-project-cancel]")).toBeNull());
+  });
+
+  it("keeps a cancelled capture requested until its own answer, in Simplified Chinese (PM9.5 O4)", async () => {
+    const input = projectInput();
+    const api = mount(openProject({ inputs: [input] }), "zh-CN");
+    await waitFor(() => expect(screen.getByText(input.label)).toBeTruthy());
+
+    await press(document.querySelector<HTMLElement>(`[data-project-input="${input.id}"] input[type="checkbox"]`)!);
+    const release = api.holdOnce("captureProjectFileFacts");
+    await press(screen.getByRole("button", { name: zh.projectCapture }));
+    const cancel = await screen.findByRole("button", { name: zh.projectCancel });
+    await press(cancel);
+    await press(cancel);
+
+    expect(api.cancelled).toEqual(["project-job-1"]);
+    expect(cancel.textContent).toBe(zh.projectCancelRequested);
+    expect(cancel.getAttribute("aria-disabled")).toBe("true");
+    expect(announced()).toBe(zh.projectCancelRequested);
+    expect(document.querySelector("[data-project-busy='capturing']")).toBeTruthy();
+
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(document.querySelector("[data-project-cancel]")).toBeNull());
+    expect(zh.projectCancelRequested).not.toEqual(en.projectCancelRequested);
+  });
+
+  it("stays requested through the re-read after a cancelled capture answers (PM9.5 O4)", async () => {
+    const input = projectInput();
+    const api = mount(openProject({ inputs: [input] }));
+    await waitFor(() => expect(screen.getByText(input.label)).toBeTruthy());
+
+    await press(row(input.id).querySelector<HTMLElement>("input[type='checkbox']")!);
+    let refuse: (refusal: unknown) => void = () => undefined;
+    (api.captureProjectFileFacts as Mock).mockImplementationOnce(
+      () => new Promise((_, reject) => (refuse = reject)),
+    );
+    await press(screen.getByRole("button", { name: en.projectCapture }));
+    await press(await screen.findByRole("button", { name: en.projectCancel }));
+
+    // The capture answers as cancelled, and the surface re-reads the project
+    // to show the run Rust recorded. Until that re-read is in, the surface is
+    // still the capture's, and still says only that a cancel was requested --
+    // never the busy text again, as if the work had resumed.
+    const releaseReread = api.holdOnce("getProjectState");
+    await act(async () => {
+      refuse({ kind: "cancelled", summary: "cancelled", detail: null, retryable: false });
+    });
+    await waitFor(() => expect(document.querySelector("[data-project-cancel]")).toBeNull());
+    expect(document.querySelector("[data-project-busy='capturing']")).toBeTruthy();
+    expect(announced()).toBe(en.projectCancelRequested);
+    expect(api.cancelled).toEqual(["project-job-1"]);
+
+    await act(async () => {
+      releaseReread();
+    });
+    await waitFor(() => expect(document.querySelector("[data-project-busy]")).toBeNull());
+    expect(announced()).toBe(en.projectCancelled);
+  });
+
   it("offers Save only once the project has somewhere to go", async () => {
     mount(openProject({ published: false }));
     await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
@@ -708,22 +815,26 @@ describe("the project surface", () => {
   });
 
   it("is usable with nothing open and offers the two ways in", async () => {
-    mount({
-      open: false,
-      projectId: null,
-      name: "",
-      dirty: false,
-      published: false,
-      inputs: [],
-      artifacts: [],
-      runs: [],
-      layers: [],
-    });
+    const api = mount(NO_PROJECT);
 
     await waitFor(() => expect(screen.getByText(en.projectNone)).toBeTruthy());
     expect(screen.getByText(en.projectNoneHint)).toBeTruthy();
-    expect(screen.getByRole("button", { name: en.projectNew })).toBeTruthy();
-    expect(screen.getByRole("button", { name: en.projectOpen })).toBeTruthy();
+    // New project is the one emphasised next action; Open project… stays
+    // offered beside it, live and reachable (PM9.7 F2).
+    const create = screen.getByRole("button", { name: en.projectNew });
+    const reopen = screen.getByRole("button", { name: en.projectOpen });
+    expect(create.className).toBe("primary-button");
+    expect(reopen.className).toBe("secondary-button");
+    expect(document.querySelectorAll("[data-project-surface] .primary-button")).toHaveLength(1);
+    for (const offered of [create, reopen]) {
+      expect(offered.getAttribute("aria-disabled")).toBeNull();
+      expect((offered as HTMLButtonElement).disabled).toBe(false);
+      offered.focus();
+      expect(document.activeElement).toBe(offered);
+    }
+    // Emphasis only: showing the empty surface creates nothing, opens no
+    // picker and starts no work.
+    expect(api.calls).toEqual(["getProjectState"]);
     // Save, Save As and Close are refused but reachable, and each says why:
     // its description is the no-project sentence, its tooltip the reason
     // (PM9.7 F1).
@@ -737,5 +848,46 @@ describe("the project surface", () => {
     }
     // Nothing claims a project that is not there.
     expect(screen.queryByText(en.projectReferences)).toBeNull();
+  });
+
+  it("emphasises New project with nothing open in Simplified Chinese too (PM9.7 F2)", async () => {
+    const api = mount(NO_PROJECT, "zh-CN");
+
+    await waitFor(() => expect(screen.getByText(zh.projectNone)).toBeTruthy());
+    expect(screen.getByText(zh.projectNoneHint)).toBeTruthy();
+    expect(screen.getByRole("button", { name: zh.projectNew }).className).toBe("primary-button");
+    expect(screen.getByRole("button", { name: zh.projectOpen }).className).toBe("secondary-button");
+    expect(document.querySelectorAll("[data-project-surface] .primary-button")).toHaveLength(1);
+    expect(api.calls).toEqual(["getProjectState"]);
+  });
+
+  it("keeps New project emphasised but refused while the surface is busy, and sends nothing", async () => {
+    const api = mount(NO_PROJECT);
+    await waitFor(() => expect(screen.getByText(en.projectNone)).toBeTruthy());
+
+    const release = api.holdOnce("openProject");
+    await press(screen.getByRole("button", { name: en.projectOpen }));
+    await waitFor(() => expect(document.querySelector("[data-project-busy='opening']")).toBeTruthy());
+
+    // A refused primary keeps its place and its Tab stop; the busy line is
+    // its reason, and a press sends nothing.
+    const create = screen.getByRole("button", { name: en.projectNew });
+    expect(create.className).toBe("primary-button");
+    expect(create.getAttribute("aria-disabled")).toBe("true");
+    await press(create);
+    expect(api.createProject).not.toHaveBeenCalled();
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(document.querySelector("[data-project-busy]")).toBeNull());
+  });
+
+  it("gives New project back its secondary place once a project is open", async () => {
+    mount(openProject({ inputs: [projectInput()], dirty: true }));
+    await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+    expect(screen.getByRole("button", { name: en.projectNew }).className).toBe("secondary-button");
+    expect(screen.getByRole("button", { name: en.projectOpen }).className).toBe("secondary-button");
+    expect(document.querySelector(".project-header .primary-button")).toBeNull();
   });
 });

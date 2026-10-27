@@ -1161,6 +1161,7 @@ export const en = {
   projectCheckLinks: "Check linked files",
   projectCapture: "Capture file facts",
   projectCancel: "Cancel",
+  projectCancelRequested: "Cancel requested…",
   projectStateNotChecked: "Not checked",
   projectStateMatching: "Matches the recorded content",
   projectStateDifferent: "Content has changed",
