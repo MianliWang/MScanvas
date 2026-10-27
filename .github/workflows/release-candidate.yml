@@ -1,0 +1,64 @@
+name: Release candidate
+
+# Builds one unsigned Windows x64 release candidate from the dispatched ref on a
+# clean GitHub-hosted runner, inspects it, and attests where it came from. It
+# publishes nothing: a candidate becomes a prerelease only by a separate,
+# owner-approved step on its exact hashes (ADR 0047, release custody).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Install pinned pnpm
+        shell: pwsh
+        run: |
+          npm install --global --no-audit --no-fund pnpm@11.15.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --version
+          exit $LASTEXITCODE
+      - name: Install Rust
+        shell: pwsh
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - run: pnpm install --frozen-lockfile
+      # Refuses a dirty tree and records the manifest from the tree it built.
+      - name: Build candidate
+        shell: pwsh
+        run: ./scripts/build_candidate.ps1 -EvidenceRoot candidate-evidence
+      # The QA build is only the inspection's positive control; it is not shipped.
+      - name: Build QA control executable
+        run: pnpm e2e:build
+      - name: Inspect candidate
+        shell: pwsh
+        run: ./scripts/inspect_candidate.ps1 -EvidenceRoot candidate-evidence
+      - name: Record checksums
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem target/release/bundle/nsis -Filter *-setup.exe -File)
+          $files | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content -LiteralPath candidate-evidence/SHA256SUMS.txt -Encoding utf8NoBOM
+          Get-Content candidate-evidence/SHA256SUMS.txt
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: target/release/bundle/nsis/*-setup.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mscanvas-candidate-${{ github.sha }}
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            candidate-evidence/
+          if-no-files-found: error
