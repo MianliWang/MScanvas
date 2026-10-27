@@ -33,6 +33,7 @@ import {
   targetedProject,
   type FakeProjectApi,
 } from "../../test/projectFixtures";
+import projectStyles from "./project.css?raw";
 import { ProjectApiProvider, type ProjectState } from "./projectApi";
 import { ProjectPanel } from "./ProjectPanel";
 import { ProvenanceDetails } from "./ProvenanceDetails";
@@ -80,11 +81,12 @@ function withRun(
   };
 }
 
-function Harness() {
+/** With `reveal`, Details is folded and `reveal` is the header's control that shows it. */
+function Harness({ reveal }: { readonly reveal?: () => void }) {
   const session = useProject();
   return (
     <>
-      <ProjectPanel session={session} detailsPresent />
+      <ProjectPanel session={session} detailsPresent={reveal === undefined} onRevealDetails={reveal} />
       <aside id="workbench-inspector">
         <ProvenanceDetails provenance={session.provenance} onSelect={session.inspect} />
       </aside>
@@ -96,6 +98,7 @@ function mount(
   state: ProjectState,
   locale: "en" | "zh-CN" = "en",
   prepare: (api: FakeProjectApi) => void = () => undefined,
+  reveal?: () => void,
 ) {
   const api = createFakeProjectApi(state);
   prepare(api);
@@ -105,7 +108,7 @@ function mount(
     >
       <SessionPreferencesProvider>
         <ProjectApiProvider value={api}>
-          <Harness />
+          <Harness reveal={reveal} />
         </ProjectApiProvider>
       </SessionPreferencesProvider>
     </PreferencesApiProvider>,
@@ -219,6 +222,67 @@ describe("the setup", () => {
     await press(query("[data-targeted-close]"));
     expect(document.querySelector("[data-targeted-setup]")).toBeNull();
     expect(document.activeElement).toBe(control);
+  });
+
+  it("keeps the recipe's scope and caveats before Run and its read path one disclosure away (PM9.5 O1)", async () => {
+    mount(layered());
+    const setup = await openSetup();
+    const run = query("[data-targeted-run]");
+
+    // Experimental, not a validated method, not identification, Not detected
+    // not an absence, positive-mode centroided MS1 and [M+H]+: all read before
+    // Run, none of it folded away.
+    for (const text of [en.targetedExperimental, en.targetedDomain]) {
+      const shown = within(setup).getByText(text);
+      expect(shown.closest("details")).toBeNull();
+      expect(precedes(shown, run)).toBe(true);
+    }
+    expect(en.targetedDomain).toContain("not identification");
+    expect(en.targetedDomain).toContain(`${en.targetedOutcomeNotDetected} is not proof`);
+    expect(en.targetedDomain).toContain("positive-mode, centroided MS1");
+    expect(en.targetedDomain).toContain("[M+H]+");
+
+    // How the source is read is a closed native disclosure: a Tab stop of its
+    // own, opened by the reader, with the read path's whole sentence inside.
+    const disclosure = query<HTMLDetailsElement>("[data-targeted-read-path]");
+    expect(disclosure.open).toBe(false);
+    expect(within(disclosure).getByText(en.targetedReadPath)).toBeTruthy();
+    const summary = disclosure.querySelector("summary");
+    expect(summary?.textContent).toBe(en.targetedReadPathSummary);
+    expect(precedes(disclosure, run)).toBe(true);
+  });
+
+  it("sets the open setup apart from the project's sections at the same heading level (PM9.5 O3)", async () => {
+    mount(layered());
+    const setup = await openSetup();
+    const heading = within(setup).getAllByRole("heading")[0];
+    expect(heading.tagName).toBe("H3");
+    expect(heading.textContent).toBe(en.targetedSetupTitle);
+    expect(heading.parentElement?.className).toBe("project-section-head");
+    expect(setup.className).toContain("targeted-setup");
+
+    // jsdom lays nothing out, so the stylesheet is held to its word: the setup
+    // carries the accent bar and a heading in primary text above a section's
+    // quiet 13px, still below the surface's 16px h2.
+    const style = document.createElement("style");
+    style.textContent = projectStyles;
+    document.head.append(style);
+    try {
+      const rules = Array.from(style.sheet?.cssRules ?? []).filter(
+        (rule): rule is CSSStyleRule => "selectorText" in rule,
+      );
+      const rule = (selector: string) => rules.find((each) => each.selectorText === selector);
+      expect(rule(".targeted-setup")?.style.getPropertyValue("box-shadow")).toContain(
+        "var(--color-accent)",
+      );
+      const setupHeading = rule(".targeted-setup > .project-section-head h3")?.style;
+      expect(setupHeading?.getPropertyValue("font-size")).toBe("14px");
+      expect(setupHeading?.getPropertyValue("color")).toBe("var(--color-text-primary)");
+      expect(rule(".project-section h3")?.style.getPropertyValue("font-size")).toBe("13px");
+      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("16px");
+    } finally {
+      style.remove();
+    }
   });
 
   it("sends the layer and the typed text exactly, and shows the plan Rust answered", async () => {
@@ -406,7 +470,12 @@ describe("a run", () => {
     expect(details().textContent).toContain(
       en.targetedFailureStage.replace("{{stage}}", en.targetedStageSource),
     );
-    expect(document.body.textContent).not.toContain(en.targetedOutcomeNotDetected);
+    // Not detected is on the page only in the setup's standing caveat about
+    // what that outcome means (PM9.5 O1), never about this run.
+    expect(within(query("[data-targeted-setup]")).getAllByText(en.targetedDomain)).toHaveLength(1);
+    expect(document.body.textContent?.replace(en.targetedDomain, "")).not.toContain(
+      en.targetedOutcomeNotDetected,
+    );
     expect(document.querySelector("[data-targeted-report]")).toBeNull();
     // Said to a reader who cannot see the paragraph, too.
     expect(liveRegion()).toBe(`${en.targetedLastFailed} ${en.targetedFailureSourceRtRepeated}`);
@@ -617,6 +686,8 @@ describe("a stored result", () => {
       "targetedSetupTitle",
       "targetedExperimental",
       "targetedDomain",
+      "targetedReadPathSummary",
+      "targetedReadPath",
       "targetedReportTitle",
       "targetedMeaning",
       "targetedIntensityNote",
@@ -1404,6 +1475,39 @@ describe("the task as one path (PM9.5)", () => {
     await press(query(`[data-project-inspect-layer="${LAYER}"]`));
     await press(query(`[data-targeted-show-run="${RUN}"]`));
     expect(query(`[data-project-inspect-run="${RUN}"]`).getAttribute("aria-current")).toBe("true");
+    // Details is on screen: nothing beside the press points at it.
+    expect(document.querySelector("[data-targeted-details-hint]")).toBeNull();
+  });
+
+  it("says beside Show run where the run went while Details is folded, and unfolds nothing itself (PM9.5 O2)", async () => {
+    const reveal = vi.fn();
+    const api = mount(layered(), "en", () => undefined, reveal);
+    await reviewed(api);
+    api.set(withRun({ outcome: "failed" }, { failure: { code: "sourceChanged", stage: "source" } }));
+    await press(query("[data-targeted-run]"));
+    // The ended run is what Details inspects, so the hint already says so.
+    expect(query("[data-targeted-run-block] [data-targeted-details-hint]")).toBeTruthy();
+    expect(reveal).not.toHaveBeenCalled();
+    // Inspecting anything else withdraws it: it names only this run's answer.
+    await press(query(`[data-project-inspect-layer="${LAYER}"]`));
+    expect(document.querySelector("[data-targeted-details-hint]")).toBeNull();
+
+    const show = query(`[data-targeted-show-run="${RUN}"]`);
+    show.focus();
+    await press(show);
+    const hint = within(query("[data-targeted-run-block]")).getByText(en.provenanceInDetails)
+      .parentElement!;
+    expect(hint.hasAttribute("data-targeted-details-hint")).toBe(true);
+    expect(precedes(show, hint)).toBe(true);
+    // The press only inspects: the keyboard stays on it, Details stays folded
+    // and the run is the one inspected.
+    expect(document.activeElement).toBe(show);
+    expect(reveal).not.toHaveBeenCalled();
+    expect(query(`[data-project-inspect-run="${RUN}"]`).getAttribute("aria-current")).toBe("true");
+
+    // The hint's control is the header's own toggle, asked once.
+    await press(within(hint).getByRole("button", { name: en.provenanceShowDetails }));
+    expect(reveal).toHaveBeenCalledTimes(1);
   });
 
   it("leads a problem back to the line it was typed on (R10)", async () => {
