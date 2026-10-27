@@ -150,11 +150,12 @@ function afterBatch(): ProjectState {
   };
 }
 
-function Harness() {
+/** With `reveal`, Details is folded and `reveal` is the header's control that shows it. */
+function Harness({ reveal }: { readonly reveal?: () => void }) {
   const session = useProject();
   return (
     <>
-      <ProjectPanel session={session} detailsPresent />
+      <ProjectPanel session={session} detailsPresent={reveal === undefined} onRevealDetails={reveal} />
       <aside id="workbench-inspector">
         <ProvenanceDetails provenance={session.provenance} onSelect={session.inspect} />
       </aside>
@@ -162,7 +163,7 @@ function Harness() {
   );
 }
 
-function mount(state: ProjectState, locale: "en" | "zh-CN" = "en") {
+function mount(state: ProjectState, locale: "en" | "zh-CN" = "en", reveal?: () => void) {
   const api = createFakeProjectApi(state);
   render(
     <PreferencesApiProvider
@@ -170,7 +171,7 @@ function mount(state: ProjectState, locale: "en" | "zh-CN" = "en") {
     >
       <SessionPreferencesProvider>
         <ProjectApiProvider value={api}>
-          <Harness />
+          <Harness reveal={reveal} />
         </ProjectApiProvider>
       </SessionPreferencesProvider>
     </PreferencesApiProvider>,
@@ -538,6 +539,39 @@ describe("a batch run", () => {
     // A failed member shows its own run in Details.
     await press(query(`[data-targeted-batch-run="${RUN_B}"]`));
     expect(query("#workbench-inspector").textContent).toContain(en.targetedFailureSourceChanged);
+    // Details is on screen: nothing beside the press points at it.
+    expect(document.querySelector("[data-targeted-details-hint]")).toBeNull();
+  });
+
+  it("says under the members where a Show run went while Details is folded (PM9.5 O2)", async () => {
+    const reveal = vi.fn();
+    const api = mount(three(), "en", reveal);
+    api.setTargeted({
+      batchResolution: reviewOf(),
+      batchMembers: [
+        member(0, "completed", { runId: RUN_A, artifactId: ARTIFACT_A }),
+        member(1, "failed", { runId: RUN_B }),
+        member(2, "refused", { reason: "insufficientWorkAreaSpace" }),
+      ],
+    });
+    await reviewAll(api);
+    api.set(afterBatch());
+    await press(query("[data-targeted-run]"));
+    await screen.findByText(en.targetedBatchEndedTitle);
+    expect(document.querySelector("[data-targeted-details-hint]")).toBeNull();
+
+    const show = query(`[data-targeted-batch-run="${RUN_B}"]`);
+    show.focus();
+    await press(show);
+    const panel = query('[data-targeted-batch="ended"]');
+    const hint = query("[data-targeted-details-hint]");
+    expect(panel.contains(hint)).toBe(true);
+    expect(hint.textContent).toContain(en.provenanceInDetails);
+    expect(document.activeElement).toBe(show);
+    expect(reveal).not.toHaveBeenCalled();
+
+    await press(within(hint).getByRole("button", { name: en.provenanceShowDetails }));
+    expect(reveal).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -822,6 +822,7 @@ export function ProjectPanel({
               onDraft={setTargetedDraft}
               busyText={busyText}
               refusalText={(code) => t(refusalKey(code))}
+              onRevealDetails={detailsPresent ? undefined : onRevealDetails}
               onClose={() => {
                 const layerId = targetedLayer.id;
                 setTargeted(null);
