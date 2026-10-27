@@ -366,8 +366,10 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     const route =
       "To convert, this scope needs supported vendor acquisitions: add them with Add files… in Acquisitions " +
       "(if that list is hidden, press Acquisitions at the top of the window first) and, under Checked rows, they must be checked.";
-    expect(within(panel).getByText(route)).toBeVisible();
-    expect(convert).toHaveAccessibleDescription(route);
+    // The notice follows the scope's plan answer, so it is awaited rather than
+    // read synchronously; under a loaded full suite it can land a tick later.
+    expect(await within(panel).findByText(route)).toBeVisible();
+    await waitFor(() => expect(convert).toHaveAccessibleDescription(route));
     expect(within(panel).queryByText("No eligible acquisitions in this scope.")).toBeNull();
     expect(document.body.textContent).not.toMatch(/Thermo RAW row/);
   });
