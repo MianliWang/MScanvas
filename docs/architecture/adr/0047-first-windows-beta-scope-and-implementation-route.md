@@ -17,6 +17,12 @@ accessibility closure over every delivered surface; see
 publication, implementation had not started. M7.6 is next/not started, and
 there is no public beta build or release from M7.4 or M7.5.
 
+Owner decision update, 2026-10-27: the repository/product owner decided the
+open external release questions for the first public beta (beta 1): channel,
+name posture, signing, samples, targeted-MS1 runtime scope, feedback and CSV/TSV
+handling. See [Owner decisions, 2026-10-27](#owner-decisions-2026-10-27). They
+are not consent to release any artifact, and they qualify nothing.
+
 ## Goal and fixed boundary
 
 M7 delivers an **installable, release-validated Windows x64 desktop beta** for
@@ -357,12 +363,12 @@ M7.0 may close with the following decisions scheduled; M7's release exit cannot
 waive them. **MianliWang, repository/product owner**, is the exact decision owner
 for each row; M7.6 implements and records the answer, not an agent guessing it.
 
-| Decision | Recommendation, not approval | Blocks / latest decision point |
-| --- | --- | --- |
-| Signing identity/certificate or unsigned posture | Owner chooses an identity and budget, or explicitly approves an unsigned beta with accurate warning/setup guidance; do not promise warning-free signing | Signing configuration and final-candidate trust tests; before M7.6 candidate production |
-| Distribution host/audience | Owner-approved beta channel and stated audience; GitHub prerelease is a possible host. Live repository API on 2026-09-12 reports public, superseding the request/preflight's private assumption; visibility was not changed here | Download/support instructions and access tests; before M7.6 candidate acceptance. Public source is not release consent |
-| Lawful redistributable samples | Minimal licensed samples with attributable permission; maintainer-only vendor inputs remain local and unbundled | Shareable sample pack and reproducible public smoke instructions; decide before M7.6 release-fixture freeze |
-| Actual public release consent and existing name review | Owner accepts the documented trademark, package-name and domain review required by [Proposal section 2](../../../PROJECT_PROPOSAL.md#2-name-and-positioning), then explicitly approves exact candidate hashes, audience/host, notices and feedback/rollback record | M7.6 assembles the name-review result before candidate acceptance; an unresolved result blocks release-ready status. Final consent follows validation and precedes every binary upload/tag/release |
+| Decision | Recommendation, not approval | Blocks / latest decision point | Status, 2026-10-27 |
+| --- | --- | --- | --- |
+| Signing identity/certificate or unsigned posture | Owner chooses an identity and budget, or explicitly approves an unsigned beta with accurate warning/setup guidance; do not promise warning-free signing | Signing configuration and final-candidate trust tests; before M7.6 candidate production | **Posture decided: signed; no unsigned installer is published.** Provider and identity **pending the owner's choice**, so this row still blocks candidate production. See [Signing](#signing) |
+| Distribution host/audience | Owner-approved beta channel and stated audience; GitHub prerelease is a possible host. Live repository API on 2026-09-12 reports public, superseding the request/preflight's private assumption; visibility was not changed here | Download/support instructions and access tests; before M7.6 candidate acceptance. Public source is not release consent | **Decided:** a GitHub prerelease on this repository for early testers. Access tests remain candidate work. See [Distribution](#distribution) |
+| Lawful redistributable samples | Minimal licensed samples with attributable permission; maintainer-only vendor inputs remain local and unbundled | Shareable sample pack and reproducible public smoke instructions; decide before M7.6 release-fixture freeze | **Decided:** only repository-owned synthetic fixtures may be redistributed; vendor inputs stay local and unbundled. See [Samples](#samples) |
+| Actual public release consent and existing name review | Owner accepts the documented trademark, package-name and domain review required by [Proposal section 2](../../../PROJECT_PROPOSAL.md#2-name-and-positioning), then explicitly approves exact candidate hashes, audience/host, notices and feedback/rollback record | M7.6 assembles the name-review result before candidate acceptance; an unresolved result blocks release-ready status. Final consent follows validation and precedes every binary upload/tag/release | **Name decided** for the prerelease by explicit owner risk acceptance, without the formal review, which is still owed before a stable branded release; see [Name](#name). **Release consent pending:** it still follows validation and precedes every upload, tag and release |
 
 Recommend one per-user NSIS installer built on Windows, with an explicit
 WebView2 setup choice and offline prerequisite instructions. This is a proposed
@@ -400,3 +406,130 @@ and local closeout evidence rather than committing a follow-up SHA insertion.
 Stop after M7.0: **M7 IN PROGRESS; M7 IMPLEMENTATION NOT STARTED; M7.1 —
 Localized settings and shared controls — NEXT / NOT STARTED; M7.1 REQUIRES ITS
 OWN IMPLEMENTATION AUTHORIZATION; PUBLIC BETA NOT BUILT / NOT RELEASED.**
+
+## Owner decisions, 2026-10-27
+
+**Decisions, 2026-10-27, by MianliWang, repository/product owner, for the
+first public beta (beta 1).** The owner stated the channel, the name and the
+signing requirement directly, and for every other point below adopted the
+recommendation presented with them. Each is recorded as the owner's decision,
+not an agent's guess. The text above is kept as written; where a decision
+changes it, this section says which part.
+
+None of this is consent to release an artifact. It qualifies nothing, and it
+authorizes no certificate purchase, signing-key access, tag, upload, visibility
+change or telemetry. M7.6-style installed, native and provider qualification
+still runs against the beta-1 product candidate once it is frozen, the M8/M9
+product named by the [M9 closure](../../product/M9_CLOSURE.md#15-after-m9), and
+per-artifact consent in the [decision table](#external-release-decisions) still
+follows it.
+
+### Order: public beta before M10
+
+The M9 closure's open choice between a public beta and M10 is decided: the
+public beta comes first. M10 is not started by this decision.
+
+### Distribution
+
+Beta 1 is distributed as a **GitHub prerelease on this repository**
+(`MianliWang/MScanvas`), for early testers. Other channels were considered and
+are not used now:
+
+| Channel | Disposition |
+| --- | --- |
+| winget | Later, after a stable signed release; not for a prerelease |
+| Microsoft Store / MSIX | Not now |
+| Scoop, Chocolatey | Not now |
+
+Public source visibility still does not authorize a binary. The tester-facing
+drafts are [the beta-1 release notes](../../release/beta-1/RELEASE_NOTES.md) and
+[install and support](../../release/beta-1/INSTALL_AND_SUPPORT.md); their
+version, hashes and download links are filled at candidate acceptance.
+
+### Name
+
+The product is released as **MSCanvas**. The owner accepts the name without the
+formal trademark, package-name and domain review that
+[Proposal section 2](../../../PROJECT_PROPOSAL.md#2-name-and-positioning) and the
+*Release custody and recovery* exit call for, as an **explicit owner risk
+acceptance for the prerelease**. That acceptance neither performs nor replaces
+the review, which is still owed before any stable branded release. For beta 1
+only, it stands in for that exit's "documented name-review result accepted by
+the owner". The bounded review in the M7.6 evidence is not promoted to a formal
+one. The application identifier stays as configured (`org.mscanvas.desktop`).
+
+### Signing
+
+Beta 1 is **signed**, and no unsigned installer is published. This supersedes
+the unsigned posture the [M7.6 record](../../ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)
+configured and described. The signing provider and identity are **pending the
+owner's choice**; until one is chosen and configured, signing configuration and
+the final-candidate trust tests stay blocked and no candidate can be
+release-ready. Tauri's signing guidance, cited above, still applies: a newly
+signed release can trigger SmartScreen, so no warning-free installation is
+promised.
+
+### Samples
+
+Only **repository-owned synthetic fixtures** may be redistributed. Vendor
+inputs, and every acquisition a maintainer uses for qualification, stay local
+and unbundled. The tracked files under `fixtures/`, classified from their
+READMEs on 2026-10-27:
+
+| Path | Origin | Under this decision |
+| --- | --- | --- |
+| `fixtures/plot-golden/spectrum-full-source.svg`, `chromatogram-full-run.svg`, `chromatogram-current-range.svg` | Repository-generated: the renderer's exact output for the synthetic `golden_spectrum()` and `golden_chromatogram()` test inputs ([README](../../../fixtures/plot-golden/README.md)) | Redistributable |
+| `fixtures/plot-golden/README.md`, `fixtures/open-ms-data/README.md`, `fixtures/mock-backend/README.md` | Repository documentation; `mock-backend` holds no data | Redistributable as documentation |
+
+The [open-ms-data README](../../../fixtures/open-ms-data/README.md) also
+describes two third-party inputs that are **not tracked**: ProteoWizard's
+synthetic `tiny.pwiz.1.1.mzML` (Apache-2.0) and the public PRIDE `PXD081190`
+acquisition (CC0). Neither is redistributed by beta 1; adding a third-party
+file, even one whose licence would permit it, needs a new decision. Vendor
+RAW, LCD and WIFF files are excluded by `.gitignore` and never tracked.
+
+Outside `fixtures/`, `e2e/support/m73NativeFixture.ts` and
+`e2e/support/m74NativeFixture.ts` write explicitly synthetic mzML at run time.
+They are repository-owned and fall under the same rule, but nothing they write
+is tracked. No tracked redistributable file is an input a tester can open, so
+beta 1 carries no sample pack, and its public instructions use the tester's own
+lawful data.
+
+### Targeted-MS1 runtime
+
+Beta 1 ships **without** the Python/pyOpenMS runtime. A release build answers
+every plan review with `recipeUnavailable`; a stored result still reopens,
+draws and exports from its payload alone, as the
+[M9 closure](../../product/M9_CLOSURE.md#35-result-consumption) states. Runtime
+packaging, the runtime's redistribution and licence qualification, and the
+worker's filesystem and network confinement are therefore **not beta-1
+obligations**. Their rows in the M9 closure's
+[remaining limits](../../product/M9_CLOSURE.md#13-remaining-limits) stay open for
+a release that ships the runtime.
+
+### Feedback and diagnostics
+
+Feedback goes to **GitHub Issues** on this repository through the existing bug,
+feature and UX-research templates; security reports follow `SECURITY.md`, not a
+public issue. Diagnostics remain explicit local redacted exports that the user
+reviews and attaches. Nothing is uploaded automatically and no telemetry is
+added, as the release exits above already require.
+
+### CSV and TSV
+
+CSV/TSV exports are **not transformed**: no formula neutralization, no
+byte-order mark and no change of delimiter or numeric convention. This settles
+the M9 closure's spreadsheet row as *document*: the release notes describe
+spreadsheet formula interpretation and the missing byte-order mark, which lets
+a spreadsheet that assumes a legacy code page misread non-ASCII text. A
+separate spreadsheet-safe export stays a possible later feature, not a beta-1
+obligation.
+
+### Still open after these decisions
+
+- The signing provider and identity (owner).
+- Installed, native and provider qualification of the frozen beta-1 candidate
+  on Windows 11 25H2 x64.
+- Per-artifact release consent: exact candidate hashes, notices and the
+  feedback and rollback record (owner), after that qualification.
+- The formal name review, before any stable branded release.
