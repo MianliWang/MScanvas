@@ -113,7 +113,8 @@ describe("M7.3 through the delivered application", () => {
     expect(preview.spectrumTable.rows).toEqual(sourceRows);
   });
 
-  it("exports only committed axis ranges while drawing or pending, then the newly confirmed range from retained tokens", async () => {
+  // Its own allowance: ~2 s alone, but 5175 ms against the 5 s default in a loaded whole-suite run (PM9 slice-07 U1-2).
+  it("exports only committed axis ranges while drawing or pending, then the newly confirmed range from retained tokens", { timeout: 15_000 }, async () => {
     const { api } = await mount(); selectRow(4);
     await screen.findByRole("img", { name: /^Spectrum 4,/u });
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(1));
