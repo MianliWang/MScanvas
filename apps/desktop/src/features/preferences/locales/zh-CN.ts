@@ -1131,6 +1131,7 @@ export const zhCN = {
   projectCheckLinks: "检查已链接的文件",
   projectCapture: "记录文件事实",
   projectCancel: "取消",
+  projectCancelRequested: "已请求取消…",
   projectStateNotChecked: "尚未检查",
   projectStateMatching: "与记录的内容一致",
   projectStateDifferent: "内容已更改",
