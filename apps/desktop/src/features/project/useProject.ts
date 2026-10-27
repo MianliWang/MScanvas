@@ -73,7 +73,9 @@ export interface ProjectSession {
   readonly activeOperation: string | null;
   /**
    * Whether this session has asked to cancel `activeOperation`. A request,
-   * not an outcome: what ended is said only once the operation answers.
+   * not an outcome: what ended is said only once the operation answers. It
+   * holds until the surface has taken that answer in, re-read included, so it
+   * can outlast `activeOperation` but never carries over to a newer one.
    */
   readonly stopRequested: boolean;
   /** The stable identifier of the last refusal, or `null`. */
@@ -311,6 +313,12 @@ export function useProject(
       .catch(() => undefined);
   }, [api, settle]);
 
+  /** The operation this session accepted and has not yet seen finish. */
+  const [activeOperation, setActiveOperation] = useState<string | null>(null);
+  const active = useRef<string | null>(null);
+  /** The accepted operation this session has asked to cancel, if any. */
+  const [stopAsked, setStopAsked] = useState<string | null>(null);
+
   const run = useCallback(
     async (
       kind: ProjectBusy,
@@ -371,17 +379,17 @@ export function useProject(
           /* The refusal above is what there is to report. */
         }
       } finally {
-        if (mounted.current) setBusy("idle");
+        if (mounted.current) {
+          setBusy("idle");
+          // A cancel stays requested until the surface has taken in the
+          // operation's answer, re-read included: cleared with `busy`, so no
+          // frame between the answer and the re-read says the work resumed.
+          setStopAsked(null);
+        }
       }
     },
     [api, settle],
   );
-
-  /** The operation this session accepted and has not yet seen finish. */
-  const [activeOperation, setActiveOperation] = useState<string | null>(null);
-  const active = useRef<string | null>(null);
-  /** The accepted operation this session has asked to cancel, if any. */
-  const [stopAsked, setStopAsked] = useState<string | null>(null);
 
   /**
    * Accepts an operation, then runs it under the identifier it was accepted
@@ -405,12 +413,11 @@ export function useProject(
         try {
           return await work(operationId);
         } finally {
+          // The control goes as the answer arrives; the request it sent is
+          // cleared by `run` once the answer has been taken in.
           if (active.current === operationId) {
             active.current = null;
-            if (mounted.current) {
-              setActiveOperation(null);
-              setStopAsked(null);
-            }
+            if (mounted.current) setActiveOperation(null);
           }
         }
       }),
@@ -484,7 +491,11 @@ export function useProject(
     state,
     busy,
     activeOperation,
-    stopRequested: stopAsked !== null && stopAsked === activeOperation,
+    // Still the requested operation's until `run` has settled it: once its
+    // answer is in there is no active operation, and a newer one is never
+    // accepted before then.
+    stopRequested:
+      stopAsked !== null && (stopAsked === activeOperation || activeOperation === null),
     problem,
     problemDuring: problem === null ? null : problemDuring,
     cancelled: cancelled !== false,

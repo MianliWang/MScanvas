@@ -10,7 +10,7 @@
  */
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, type Mock } from "vitest";
 
 import { SessionPreferencesProvider } from "../preferences/SessionPreferencesProvider";
 import { PreferencesApiProvider } from "../preferences/preferencesApi";
@@ -621,6 +621,39 @@ describe("the project surface", () => {
     });
     await waitFor(() => expect(document.querySelector("[data-project-cancel]")).toBeNull());
     expect(zh.projectCancelRequested).not.toEqual(en.projectCancelRequested);
+  });
+
+  it("stays requested through the re-read after a cancelled capture answers (PM9.5 O4)", async () => {
+    const input = projectInput();
+    const api = mount(openProject({ inputs: [input] }));
+    await waitFor(() => expect(screen.getByText(input.label)).toBeTruthy());
+
+    await press(row(input.id).querySelector<HTMLElement>("input[type='checkbox']")!);
+    let refuse: (refusal: unknown) => void = () => undefined;
+    (api.captureProjectFileFacts as Mock).mockImplementationOnce(
+      () => new Promise((_, reject) => (refuse = reject)),
+    );
+    await press(screen.getByRole("button", { name: en.projectCapture }));
+    await press(await screen.findByRole("button", { name: en.projectCancel }));
+
+    // The capture answers as cancelled, and the surface re-reads the project
+    // to show the run Rust recorded. Until that re-read is in, the surface is
+    // still the capture's, and still says only that a cancel was requested --
+    // never the busy text again, as if the work had resumed.
+    const releaseReread = api.holdOnce("getProjectState");
+    await act(async () => {
+      refuse({ kind: "cancelled", summary: "cancelled", detail: null, retryable: false });
+    });
+    await waitFor(() => expect(document.querySelector("[data-project-cancel]")).toBeNull());
+    expect(document.querySelector("[data-project-busy='capturing']")).toBeTruthy();
+    expect(announced()).toBe(en.projectCancelRequested);
+    expect(api.cancelled).toEqual(["project-job-1"]);
+
+    await act(async () => {
+      releaseReread();
+    });
+    await waitFor(() => expect(document.querySelector("[data-project-busy]")).toBeNull());
+    expect(announced()).toBe(en.projectCancelled);
   });
 
   it("offers Save only once the project has somewhere to go", async () => {

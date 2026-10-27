@@ -584,9 +584,10 @@ export function ProjectPanel({
         ? t("projectBusyBatch", { position: batchPosition, total: batch.length })
         : t(busyKey(busy) as "projectBusySaving");
   // A cancel of any accepted operation -- a targeted run, a links check, a
-  // capture or an admission -- is a request until that operation answers:
-  // every control that could send it says so, and none sends it twice. A
-  // targeted run's controls say "stop", the rest keep their own "cancel".
+  // capture or an admission -- is a request until that operation's answer is
+  // in and shown: every control that could send it says so, and none sends it
+  // twice. A targeted run's controls say "stop", the rest keep their own
+  // "cancel".
   const stopping = session.stopRequested;
   const requestedKey = busy === "analysing" ? "targetedStopRequested" : "projectCancelRequested";
   const announcement =
