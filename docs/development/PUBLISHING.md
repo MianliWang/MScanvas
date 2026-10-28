@@ -90,4 +90,6 @@ and publishes nothing. The tester-facing drafts are in
 [`docs/release/beta-1/`](../release/beta-1/RELEASE_NOTES.md); they carry the
 first candidate's version, hashes and download link, and its checks are
 recorded in the [installed check](../release/beta-1/INSTALLED_CHECK.md).
-Publishing still needs the owner's consent for the exact artifacts.
+Publishing needs the owner's consent for the exact artifacts; beta 1 was
+published with it on 2026-10-28 as
+[`v0.1.0-beta.1`](https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1).

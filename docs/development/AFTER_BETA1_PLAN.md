@@ -36,10 +36,10 @@ its only marker matches are three message-table keys every build carries
 | Not covered, put to the owner with the report | No run on the 25H2 support target; the installed runtime's configuration observed but not logged; the installer's own pages and Run anyway; the organisational-policy trust test; G18 installed fault, missing backend, Open file/folder, Copy plot, WebView2 missing/offline, FAT/exFAT/network work areas, stored-result native save/reopen |
 | Release notes and ADR 0047 2026-10-28 record | Merged (PR #139); check results, values and support-target statements filled after the checks |
 | Release documents on `main` | The records and the filled release documents merge to `main` on the owner's go, before publication; the release body links to them at that commit |
-| Draft prerelease `v0.1.0-beta.1`, report, owner's go | Draft and report prepared; publication waits for the owner's go |
+| Prerelease `v0.1.0-beta.1` | **Published 2026-10-28** on the owner's go; tag on `e6d2a49`; public assets downloaded back, hash and attestation verified |
 
-**Freeze until publication:** no production, dependency or toolchain merge
-that would rebuild the installer. Test-only and docs-only changes may merge.
+**The freeze ended at publication.** Production, dependency and toolchain
+changes may merge again, each with the owner's approval as before.
 
 ## 2. Owner decisions, 2026-10-28
 
@@ -70,6 +70,30 @@ that would rebuild the installer. Test-only and docs-only changes may merge.
     formula protection in help or release text only after it is checked in
     Excel, LibreOffice and WPS;
   - every other design default below is accepted as recommended.
+- **At publication** (later the same day; [ADR 0047](../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-at-publication-2026-10-28)):
+  - beta 1 is published as it was checked, with the gaps the release notes
+    state;
+  - **msconvert parity, option C:** MSCanvas is to be no less capable than
+    msconvert. Verified settings stay the default; every other msconvert
+    option is offered in an advanced set labelled as not verified by
+    MSCanvas, through typed arguments (never a free-text argument box), with
+    private staging, no overwrite and the output checks kept, and combinations
+    known to lose data still blocked. This reverses the evidence-bound catalog
+    rule for that advanced set and needs its own ADR, a general filter chain in
+    place of the nine fixed rows, and a capture of the full msconvert help text
+    (a ProteoWizard hold release the owner grants);
+  - **frontend:** the owner is not satisfied with either the execution or the
+    scope of the current interface; the target is to be defined with the
+    owner before a redesign;
+  - **secondary explanations:** remove them from the interface first, because
+    good design should explain itself. The inventory of 2026-10-28 (1,587
+    strings; about 29% of the words shown by default) is applied as proposed,
+    keeping recovery paths, no-overwrite and irreversible-action warnings,
+    the scientific-honesty statements and accessible names;
+  - **design reference:** where earlier UX records are unclear,
+    [lieflat-charts](https://github.com/larashero3-dotcom/lieflat-charts) is a
+    reference for chart design, not a dependency: its licence (PolyForm
+    Noncommercial) does not allow copying it into this Apache-2.0 project.
 
 ## 3. Parallel execution rules
 
@@ -393,10 +417,12 @@ None can be delivered by engineering alone; each waits for one input.
 
 ## 9. Open owner decisions
 
-- At the beta-1 report: the exported-values FAIL (keep and state, or rebuild),
-  no run on 25H2, the exits the installed check did not cover, and the
-  post-run `msaccess` scan-table read that no recorded approval covers
-  (installed check, item 5).
+- The frontend's target: what "meets requirements" means in execution and
+  scope, before any redesign.
+- The capture of the full msconvert help text for option C (a ProteoWizard
+  hold release).
+- Whether to write a project-owned mzML reader in place of `msaccess` for
+  viewing (a written decision and dependency approval).
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted.

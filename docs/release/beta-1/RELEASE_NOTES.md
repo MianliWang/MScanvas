@@ -15,7 +15,7 @@ Installation, first run, uninstall and how to report a problem are in
 | Field | Value |
 | --- | --- |
 | Version | 0.1.0 (beta 1) |
-| GitHub prerelease and tag | `v0.1.0-beta.1`, created when the prerelease is published |
+| GitHub prerelease and tag | [`v0.1.0-beta.1`](https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1), published 2026-10-28; the tag points at the source commit |
 | Source commit | `e6d2a49e5061398c0ed2a374b2efa90d3d1c4c0e` on `main` |
 | Installer file | `MSCanvas_0.1.0_x64-setup.exe`, 6,469,906 bytes |
 | Installer SHA-256 | `4bf752addff63c489df440814efbd2adb9f445cb41ce406bdf6d9a035c657ee8` |

@@ -1,7 +1,7 @@
 # MSCanvas beta 1 — install and support
 
-Status: guide for the `v0.1.0-beta.1` prerelease; the download link works once
-it is published. The [installed check](INSTALLED_CHECK.md) of this installer,
+Status: guide for the `v0.1.0-beta.1` prerelease, published 2026-10-28. The
+[installed check](INSTALLED_CHECK.md) of this installer,
 in a maintainer's administrator account, confirmed a silent install, a launch
 of the installed program with ProteoWizard found, the interface language kept
 across a restart, and uninstall through the program's own uninstaller. It did
