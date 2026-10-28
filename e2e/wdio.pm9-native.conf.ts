@@ -19,8 +19,11 @@ import { PREFERENCE_ROOT_VARIABLE, requireOwnedPreferenceRoot } from "./support/
 const REPOSITORY = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BINARY = resolve(REPOSITORY, "target/e2e/release/mscanvas-desktop.exe");
 const SPEC = resolve(REPOSITORY, "e2e/specs/pm9.7-integrated.native.e2e.ts");
-const FROZEN_PRODUCTION = "30b855f23fc8b391e10221954dfa1278a9863db5";
-const FROZEN_DESKTOP_TREE = "39d6557887a10b10dc60a9b00901160bf93a9c02";
+// The candidate under test: beta-1 readiness HEAD 7cf4c74 (PR #134), whose
+// apps/desktop differs from PM9's frozen 30b855f (tree 39d65578). The guard
+// still refuses any binary/source mismatch against this pinned candidate.
+const FROZEN_PRODUCTION = "7cf4c7408dabfe53ccbc7d03c85892a5f01d0e7e";
+const FROZEN_DESKTOP_TREE = "83d2e69ecb28d5e605bba178c62790e65d3db4da";
 const PRODUCTION_PATHS = ["apps/desktop", "crates", "Cargo.toml", "Cargo.lock", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".github"];
 const RUN_ROOT_VARIABLE = "MSCANVAS_PM9_NATIVE_RUN_ROOT";
 let driver: ChildProcess | undefined;

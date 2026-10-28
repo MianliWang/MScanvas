@@ -28,6 +28,7 @@ const ANCHORS = [[1920, 1080], [1366, 768], [960, 640]] as const;
 const RING = "2px solid rgb(23, 105, 209)";
 const CONVERT = ".conversion-panel .conversion-start";
 const ROSTER_TOGGLE = '[aria-controls="workbench-roster"]';
+const TAURI_RELOAD_NOTICE = /^\[TAURI\] Couldn't find callback id \d+\. This might happen when the app is reloaded while Rust is running an asynchronous operation\.$/u;
 const evidence: unknown[] = [];
 let output = "", processId = 0;
 let expectedCss: { width: number; height: number } = { width: 0, height: 0 };
@@ -204,7 +205,12 @@ async function sample(label: string) {
   expect(raster).toEqual({ width: expectedCss.width * 1.5, height: expectedCss.height * 1.5 });
   expect(raster).toEqual({ width: metrics.bounds.client.right - metrics.bounds.client.left, height: metrics.bounds.client.bottom - metrics.bounds.client.top });
   expect(resources.externalResources).toEqual([]);
-  expect(console).toEqual([]);
+  // loadWith reloads the document while Rust may still answer a real request
+  // of the previous document (the cold mount issues several). Tauri's own
+  // IPC layer then reports the orphaned callback in the new document. The
+  // harness reloads; the application never does. That exact notice stays in
+  // the evidence above and is excluded here; any other entry fails.
+  expect(console.filter(entry => !(entry.level === "warn" && TAURI_RELOAD_NOTICE.test(entry.text)))).toEqual([]);
   // Tauri event transport may pass through. Scientific/application commands
   // in these states must all be answered by the recorded scenario table.
   expect(passThrough.filter(call => !call.command.startsWith("plugin:event|"))).toEqual([]);

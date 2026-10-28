@@ -346,3 +346,357 @@ exact tracked repair patch. Earlier artifacts remain unchanged. The title
 comparison is a static aid; it does not establish
 assertion equivalence or test success. The working tree intentionally contains
 the uncommitted test migration and this record.
+
+## Execution, 2026-10-27/28 (beta-1 candidate)
+
+Run window: 2026-10-27 22:02 to 23:57 America/Toronto
+(2026-10-28T02:02Z to 03:57Z).
+Status: **PARTIAL. NQ-T, NQ-B1/B2, NQ-V, NQ-E1/E2, NQ-C1..C4 and NQ-N1 PASS
+after test-only repairs; NQ-N2 and NQ-I NOT QUALIFIED (host foreground owned
+by the operator's active applications).**
+
+This section records an execution of the prepared matrix against a newer
+candidate than the one the preparation above names. The preparation record,
+its admission refusals and PM9's dispositions are unchanged.
+
+### Candidate, binary and driver
+
+- Checkout `feat/beta1-readiness`, HEAD
+  `7cf4c7408dabfe53ccbc7d03c85892a5f01d0e7e` (PR #134), tree
+  `766bf9dc088f55d6b01265410514e198e0f176b6`, `HEAD:apps/desktop`
+  `83d2e69ecb28d5e605bba178c62790e65d3db4da`. Against PM9's `30b855f`, 31
+  files under `apps/desktop` differ (frontend, plus two `windows` crate
+  features in `src-tauri/Cargo.toml`) and `.github` differs; `crates`,
+  `Cargo.lock`, the root package files and the lockfile do not. This is the
+  beta-1 candidate, not PM9's frozen production.
+- Ordered step 1: the committed migration reproduces the reviewed preparation
+  byte for byte. `git diff --binary 959a74f HEAD` over the eleven repaired
+  files hashes to `3b50a1cb...845a`, the patch recorded above. After `23425af`
+  only browser specs changed under `e2e/`. Before this run's guard edit the NQ-I
+  spec and config still matched the prepared `A1D2D2A5...` and `44AF6B11...`.
+- Ordered step 2: `python scripts/check_repo.py` exit 0
+  (`Repository validation passed.`), `git diff --check` exit 0, no changed
+  production/dependency path.
+- Binary, built by NQ-B1 then NQ-B2 with only `e2e/wdio.pm9-native.conf.ts`
+  changed in the working tree: `target/e2e/release/mscanvas-desktop.exe`,
+  19,571,712 bytes, written 2026-10-28T02:08:45Z, SHA-256
+  `e98ae5d2d7e41083919fade8b3ace04cc3f26c0e0d53b4602024fb018eb7f811`.
+  Toolchain: cargo 1.97.1 (c980f4866 2026-06-30), rustc 1.97.1 (8bab26f4f
+  2026-07-14, x86_64-pc-windows-msvc, LLVM 22.1.6), Node v22.15.1, pnpm 11.15.1.
+  Frontend bundle: `index.html` `e89dd250...`, `index-DMxk1d8J.css`
+  `59dabbb6...`, `index-gbwyn1IL.js` `fa2bab7b...`. It replaced the unattributed
+  2026-09-17 binary (16,776,704 bytes, `f2791ab8...`). It carries the `e2e`
+  feature (controlled-IPC support and the synthetic seed) and is not
+  installed-release evidence.
+- Driver: Microsoft Edge WebDriver 155.0.4283.62
+  (aa3a7406ba8c53a83536df539f07124d73c899bd) from
+  `https://msedgedriver.microsoft.com/155.0.4283.62/edgedriver_win64.zip`
+  (11,715,108 bytes, SHA-256
+  `00dd7fbc6fc4bd68e6e86badbe76e6570513414085f476e73d3787ba3410d562`), extracted
+  into the new directory `D:\tmp\beta1-native-20261028T015831Z\edgedriver`.
+  `msedgedriver.exe`: 23,858,088 bytes, SHA-256
+  `01ce0daa683e5ea874e2e2439e4a162db11b0d40228d37cce1efc990294464f6`,
+  Authenticode `Valid`, signer `CN=Microsoft Corporation`, issuer
+  `Microsoft Windows Code Signing PCA 2024`, thumbprint
+  `544CC93B75A99BB07FBC194114BB3D3A3764BA15`. It was first on `PATH` for every
+  launch, and every sampled `msedgedriver.exe` ran from that path.
+  `tauri-driver.exe` SHA-256 `6e768e8a...9e66`. WebView2 runtime and session
+  `browserVersion`: 155.0.4283.62.
+- Host: primary display 3840x2160 at 144 DPI (150%). Measured on the actual
+  test window by NQ-I attempt a01 (DPI 144, DPR 1.5, 1920x1080 CSS rasterized
+  to 2880x1620, equal to the client rectangle) and by the M7.1 identity record
+  (DPI 144). The other Tauri specs ran on this host but do not measure DPI.
+- Fixtures, unchanged before and after every group that read them: Thermo
+  `FT-HCD-MSX.raw` 78,309 bytes `b3d97b38...6dd7b`; the M7.1 mzML
+  `D:\tmp\mscanvas-m69-final6\regress\m68\m68-native-kqC3nd\scenario-2\converted-0\FT-HCD-MSX-0.mzML`,
+  28,616 bytes, `a1228c10...75ea7`. M7.1's own `native-run-04.launch.json`
+  names this path and digest.
+
+### Isolation, ports and process accounting
+
+Each spec ran alone as `pnpm e2e:tauri --spec ./e2e/specs/<file>` (NQ-I:
+`pnpm exec wdio run ./e2e/wdio.pm9-native.conf.ts`) through a campaign runner
+that read memory, refused a busy port, created a fresh `preference-root-*`
+under `.tmp/m75-evidence` through `createOwnedPreferenceRoot`, bound
+`MSCANVAS_E2E_PREFERENCE_ROOT` before the driver started, and sampled the
+process tree by parent chain and creation time. `MSCANVAS_M75_NATIVE_READY` was
+not set. This host's TCP dynamic port range is 1024-15000, so the first 95xx
+pairs could collide with other programs' client connections: one launch was
+refused before start because an unrelated process held 9520. Later launches
+used 15500-15617, outside the dynamic and excluded ranges. Every run's
+`tauri-driver -> msedgedriver -> mscanvas-desktop -> msedgewebview2` chain is
+recorded with PID, parent and creation time in its `result.json`. One owned
+residue was found and stopped after PID and creation-time verification
+(NQ-I a03: `conhost.exe` PID 47168, child of the owned `tauri-driver`); its
+WebView2 processes exited by themselves during cleanup. Nothing was stopped by
+name or port. A first NQ-V invocation failed in argument parsing before any
+driver or application started (runner fault, retained as
+`NQ-V/tooling-false-start-01`). Evidence lives under
+`.tmp/beta1-native/<group>/<label>/` (`command.txt`, `output.log`,
+`result.json`, `titles.json`) with the ledger `.tmp/beta1-native/ledger.jsonl`.
+
+### Admission and outcomes
+
+Every heavy group was admitted at >= 8 GiB free and <= 80% used. The lowest
+reading during any run was 20.30 GiB free and the highest 68.11% used; the
+4 GiB / 90% stop line was never approached.
+
+| Group | Command or specs (literal titles) | Admission, free GiB / used % | Final result | Earlier attempts |
+| --- | --- | --- | --- | --- |
+| NQ-T | `pnpm e2e:typecheck` | 29.26 / 54.1 | exit 0 | Repeated after each test edit, every one exit 0 |
+| NQ-B1 | `pnpm build` | 29.07 / 54.4 | exit 0 | - |
+| NQ-B2 | `cargo build --locked --release --features e2e --features tauri/custom-protocol --bin mscanvas-desktop --target-dir target/e2e` | 29.01 / 54.4 | exit 0, 1 min 29 s | - |
+| NQ-V | m4.1 (5), viewer-r1 (8) | 29.59 / 53.5 | 13 passed | First 12/13; single case 0/1; rerun1 12/13; rerun2 13/13 |
+| NQ-E1 | m4.2-clipboard (2), m4.2-figure-export (7), m4.3 (4), m4.4 (12) | 32.01 / 49.7 | 25 passed, 0 skipped | First: both M4.2 setup hooks failed (no case ran), m4.3 refused on port 9520, m4.4 not started; single 0/1; rerun1 22/25 |
+| NQ-E2 | m5.2 (11), m5.3 (7), m5.7 (4) | 32.34 / 49.2 | 22 passed | First 10/22; rerun1 17/22; single m5.3 lane case 0/1 |
+| NQ-C1 | m6.6 (5) | 28.99 / 54.5 | 5 passed | First 3/5; each failing case alone 0/1 |
+| NQ-C2 | m6.7 (2) | 28.62 / 55.1 | 2 passed | - |
+| NQ-C3 | m6.8 (3) | 28.62 / 55.1 | 3 passed | - |
+| NQ-C4 | m6.9 (1) | 28.41 / 55.4 | 1 passed | - |
+| NQ-N1 | m4.2-native-save (5) | 33.00 / 48.2 | 5 passed | First 0/5 (dialog not found); rerun1 4/5 |
+| NQ-N2 | m7.1-settings (3) | 31.79 / 50.1 and 27.93 / 56.1 | **None executed**: before-all refused on foreground, twice | - |
+| NQ-I | `pm9.7-integrated.native.e2e.ts` (18) | 27.72 / 56.5; 21.54 / 66.2; 26.74 / 58.0 | **None passed**: a01 ran 1 case (failed, repaired), 17 never started; a02 and a03 refused in before-all on foreground | - |
+
+The admission column is the final attempt's first reading (both or all three
+for NQ-N2 and NQ-I). The titles and outcome of every attempt are in the
+`titles.json` beside its log. In their final runs 76 of the 79 literal titles of
+NQ-V..NQ-N2 executed and passed; NQ-N2's 3 never executed. Nothing was skipped:
+the clipboard was usable, so m4.2-clipboard and m4.4's conditional copy case ran,
+and the M6 fixture variables were set, so no M6 suite fell back to
+`describe.skip`. Four campaign diagnostics under `.tmp/beta1-native/diag/`
+(ignored, not repository tests) observed states to classify failures and
+assert nothing.
+
+### Executed titles
+
+Final-run outcome of every literal title, generated from the retained
+`titles.json` files. A script compared each executed set with the static
+inventory (`native-spec-inventory-after-evidence.json`, `1691DD3C...DD67`):
+the 14 executed specs ran exactly their inventoried titles, none missing and
+none extra. The consolidated record, including NQ-I and every earlier
+failure, is `.tmp/beta1-native/title-outcomes.json`, SHA-256
+`7d197e663264f8f2759fd4da0aef171a448eabdee1c846f6e376f55cffce1535`.
+
+- `m4.1-spectrum-export.tauri.e2e.ts` (NQ-V, 5/5 passed): launches and renders the workspace over real IPC; carries a real IPC round trip; renders the export controls; reaches the export controls from the keyboard; invokes the export commands through the real transport.
+- `viewer-r1-linked-viewer.tauri.e2e.ts` (NQ-V, 8/8 passed): draws the chromatogram from the preview the document was given; shows and hides each trace on the real WebView; crosses the real transport into the production selected-spectrum command; steps scans through the production selection transport; moves the viewport in WebView2 without asking the backend anything; hands a wheel it cannot use back to the WebView; leaves ctrl-modified input to the WebView that ships around it; reads how far the wheel turned, not merely which way.
+- `m4.2-clipboard.tauri.e2e.ts` (NQ-E1, 2/2 passed): puts an image of exactly the chosen size on the clipboard; copies the theme the user chose.
+- `m4.2-figure-export.tauri.e2e.ts` (NQ-E1, 7/7 passed): renders every figure control and the settings it starts at; carries the chosen settings into the real export command; refuses a figure the settings could not describe, without asking Rust; draws and copies the plot through the production path; refuses a copy of a figure too large to hold as pixels, before allocating any; still exports that figure as a vector, and refuses it as a raster; refuses a resolution no PNG records, and lets every other output through.
+- `m4.2-native-save.native.e2e.ts` (NQ-N1, 5/5 passed): writes a PNG of exactly the requested size and resolution; writes an SVG through the same path; writes a chromatogram data file through the same real dialog; treats a dismissed chromatogram dialog as an outcome and writes nothing; treats a dismissed dialog as an outcome and writes nothing.
+- `m4.3-chromatogram-export.tauri.e2e.ts` (NQ-E1, 4/4 passed): names the chromatogram Rust retained and comes back with a reservation; carries the visible traces and the figure settings into the real command; refuses a token this session no longer holds; refuses a range the run does not have.
+- `m4.4-linked-figure.tauri.e2e.ts` (NQ-E1, 12/12 passed): binds the pair the session holds and opens a real reservation; places the marker at a retention time only Rust has; reports the retained run and the marked scan when a copy can be made; refuses a chromatogram token this session no longer holds; refuses a spectrum token this session no longer holds; refuses a current range the selected scan is outside; accepts a current range that still holds the selected scan; refuses a range the run does not have, rather than clamping it; refuses a figure one pixel short of two panels, and draws one at 260; refuses a figure with no visible trace; takes the one scientific lane the chromatogram was holding; does not wedge the lane when a linked reservation is handed to the wrong save.
+- `m5.2-spectrum-viewport.tauri.e2e.ts` (NQ-E2, 11/11 passed): opens at the whole admitted domain and draws what Rust answered; draws real sticks, one node, from the retained source; asks the real boundary once for a committed window, and reads nothing else; asks for nothing while a drag is in flight, and once when it settles; leaves a full-source export carrying no window; is refused rather than clamped, and says so without offering a retry; is refused as stale, and that one is worth trying again; claims no wheel, offers no action, and asks Rust for nothing; keeps the drawing out of the real WebView tab order, and asks for nothing; takes no ctrl-modified wheel or key, and asks Rust for nothing; runs no backend operation for a wheel, a drag or a button.
+- `m5.3-spectrum-range-export.tauri.e2e.ts` (NQ-E2, 7/7 passed): carries a full-source request with no window at all; carries the committed window once the current range is chosen; reports the range Rust resolved for a real copy; holds one scientific lane, whichever range is chosen; is refused rather than clamped, in this surface's own m/z words; offers no range chooser, and says so; still accepts a full-source export of the same spectrum.
+- `m5.7-selection-availability.tauri.e2e.ts` (NQ-E2, 4/4 passed): says nothing while a scan can be selected, from a region that already exists; explains a closed lane once, and sends nothing from either surface; keeps the run readable while the lane is closed; commits again as soon as the lane clears.
+- `m6.6-destination-conflict.tauri.e2e.ts` (NQ-C1, 5/5 passed): preserves editable drafts and keyboard focus after Escape cancels the real custom picker; writes a real validated mzML to the chosen custom folder; binds equal output names to two different source parents; rejects a path-like name without BEGIN or folder creation, then creates valid named subfolders; preserves existing target bytes through real Fail and Skip attempts.
+- `m6.7-conversion-scope.tauri.e2e.ts` (NQ-C2, 2/2 passed): converts only the selected eligible subset in reviewed order and preserves unrelated sources/targets; converts every eligible workspace row under search and keeps Fail/Skip target bytes.
+- `m6.8-cancellation-controls.tauri.e2e.ts` (NQ-C3, 3/3 passed): ends the file the provider is actually converting, and the queue carries on; settles a waiting item without launching it, and keeps its place in the plan; stops the whole queue while the provider runs, and starts nothing after it.
+- `m6.9-output-completion.tauri.e2e.ts` (NQ-C4, 1/1 passed): completes output-only, shows the manifest, and adopts only when asked.
+- `m7.1-settings.native.e2e.ts` (NQ-N2, 0/3 executed): applies, cancels, resets and dismisses Settings in the actual app; reads retained lawful mzML and exports a real PNG from the shared numeric fields; naturally returns from the affected real cancelled destination picker.
+- `pm9.7-integrated.native.e2e.ts` (NQ-I, 0/18 passed): `PM9.7 native I1 empty
+  entry and refused Project actions, <at>`, `PM9.7 native I2 scrolled evidence
+  and Project history, <at>` and `PM9.7 native I3 Tab ring reach and ancestor
+  clipping, <at>` for `<at>` in en and zh-CN at 1920x1080, 1366x768 and
+  960x640. Only `PM9.7 native I1 empty entry and refused Project actions,
+  en-1920x1080` executed (a01, failed on the console assertion); the other 17
+  never started.
+
+Titles that failed in an earlier attempt, before the repair named in the next
+table:
+
+- NQ-V: viewer-r1 "draws the chromatogram from the preview the document was
+  given" (hidden point glyph, then the moved source sentence).
+- NQ-E1: the `beforeEach` hooks of m4.2-clipboard and m4.2-figure-export, so
+  none of their cases ran (`tauriPanel` answer shape); then m4.2-figure-export
+  "refuses a copy of a figure too large to hold as pixels, before allocating
+  any", "still exports that figure as a vector, and refuses it as a raster"
+  and "refuses a resolution no PNG records, and lets every other output
+  through" (M7.4 wording).
+- NQ-E2: m5.2 "opens at the whole admitted domain and draws what Rust
+  answered", "draws real sticks, one node, from the retained source", "asks
+  the real boundary once for a committed window, and reads nothing else",
+  "asks for nothing while a drag is in flight, and once when it settles",
+  "leaves a full-source export carrying no window", "claims no wheel, offers
+  no action, and asks Rust for nothing", "keeps the drawing out of the real
+  WebView tab order, and asks for nothing", "takes no ctrl-modified wheel or
+  key, and asks Rust for nothing" and "runs no backend operation for a wheel,
+  a drag or a button" (caption read); in rerun1 "asks for nothing while a drag
+  is in flight, and once when it settles" (pan button), "is refused rather
+  than clamped, and says so without offering a retry" and "is refused as
+  stale, and that one is worth trying again" (whole caption) and "keeps the
+  drawing out of the real WebView tab order, and asks for nothing"
+  (`tabindex`). m5.3 "reports the range Rust resolved for a real copy"
+  (button scope), "is refused rather than clamped, in this surface's own m/z
+  words" (wording) and "holds one scientific lane, whichever range is
+  chosen" (held save).
+- NQ-C1: m6.6 "preserves editable drafts and keyboard focus after Escape
+  cancels the real custom picker" (group names) and "writes a real validated
+  mzML to the chosen custom folder" (closed disclosure).
+- NQ-N1: all five cases (dialog not found); in rerun1 "writes an SVG through
+  the same path" (fixed precision).
+- NQ-I: a01 "PM9.7 native I1 empty entry and refused Project actions,
+  en-1920x1080" (console notice).
+
+### Test-only changes
+
+No production file changed. Every repair keeps the original assertion's
+subject. Failures were classified before any repair: the viewer-r1 case, the
+first M4.2 figure case, the M5.3 lane case and both M6.6 cases were each re-run
+alone once and failed the same way; NQ-N2 and NQ-I were re-run as whole specs.
+The other failures were fixed-string or fixed-shape mismatches that the logs,
+the saved files or a diagnostic showed directly, and their groups were re-run
+after the repair. The unrepaired NQ-N1 run was deliberately not repeated: each
+of its cases leaves a modal dialog on the operator's desktop for 90 s.
+
+| File | Why |
+| --- | --- |
+| `e2e/wdio.pm9-native.conf.ts` | Owner-directed: pins the candidate under test (`7cf4c74`, `apps/desktop` tree `83d2e69e`) instead of `30b855f`/`39d65578`. The guard still refuses a source or binary mismatch. File SHA-256 `df5508ab...a1d2`. |
+| `e2e/support/tauriPanel.ts` | `tauriTable()` answered `load_selected_spectrum` with the bare outcome. Since `8590adb` the command answers `{ authority, outcome }`, as `fixtures.ts` already does, so the viewer correctly reported "Spectrum 0 could not be loaded" and every setup waiting for the selected spectrum timed out (diagnostic `m42-select2`: bare fails, wrapped loads). Wrapped once for every caller. |
+| `e2e/specs/viewer-r1-linked-viewer.tauri.e2e.ts` | Counts visible point glyphs only (one hidden glyph per trace on purpose since `c12f45d`; PM9.7 retirement, same selector as `Chromatogram.test.tsx`); reads the per-scan source sentence from the caption's "Source and drawing details" disclosure, where it moved. |
+| `e2e/specs/m4.2-figure-export.tauri.e2e.ts` | The panel shows M7.4's localized owned-error messages instead of Rust's English text; the assertions name the same 32,000,000-pixel budget and 72-1200 DPI range. |
+| `e2e/specs/m5.2-spectrum-viewport.tauri.e2e.ts` | Reads the caption as text (the drawing statement moved into the disclosure) and waits for it to contain "Drawn as"; the in-flight pan uses the middle button (since M7.3 a primary drag proposes a range); the immovable plot carries `tabindex="-1"`, which is never a sequential stop (the browser spec asserts the same attribute for an unnavigable plot), and the case's Tab traversal still checks the order. |
+| `e2e/specs/m5.3-spectrum-range-export.tauri.e2e.ts` | `press()` scoped to the spectrum panel (the chromatogram's own "Copy plot" comes first; the copy had gone to `copy_chromatogram_plot`, diagnostic `m53-lane`); M7.4 messages from the `en` bundle; the save half held open with a never-settling answer so the reservation is outstanding when the lane is read (the table answered it at once and released the lane first, deterministically). |
+| `e2e/specs/m6.6-destination-conflict.tauri.e2e.ts` | Drafts compared by stable group suffix and value (React `useId` group names changed, values did not); "Bound queue details" opened before reading the queue destination (a closed disclosure since M7.4). |
+| `e2e/specs/m4.2-native-save.native.e2e.ts` | Passes the WebDriver application PID to `save-dialog.ps1` (see the NQ-N1 incident below); figure description wording since `c12f45d`; SVG dimensions at the renderer's adaptive fixed precision (`width="900.000"`). |
+| `e2e/specs/pm9.7-integrated.native.e2e.ts` | Excludes only Tauri's exact "Couldn't find callback id ... app is reloaded" warning from the console assertion: the harness reloads the cold document while Rust may still answer one of its real requests. The entry stays in the evidence. |
+
+Final test patch: 9 files, 115 insertions, 33 deletions;
+`git diff --binary HEAD -- e2e/` SHA-256
+`63669676652d17e5299ba2e79e13cb08297614be3d5efbae1ee4bd8b0c66ae2d`. NQ-I a02 and
+a03 recorded change patch `3e72ade9...bbe3`. Comment-only edits followed: one in
+the NQ-I spec after those attempts, and one in the m5.2 spec after its last
+passing run.
+
+### NQ-N1 incident: unattributed dialog lookup
+
+In the first NQ-N1 run the helper was called without `-ApplicationProcessId`,
+so it searched UI Automation root children. It found no dialog in any of the five
+scenarios (`no top-level window named '...' appeared within 90s`). The helper
+itself records that a native common dialog need not be a UIA root child on this
+host and provides an exact PID/title/class path, which M7.1 uses. While those
+dialogs stood on the operator's active desktop, three were accepted by input
+from outside the campaign's process tree (no sampled owned process acted on
+them; most likely the operator's keystrokes reached a modal that took the
+foreground). They saved, under their default names, into the dialogs'
+last-visited folder, which was the campaign's own M6.9 output folder:
+`mscanvas-spectrum-0.png` (8,542 bytes, 03:22:19Z), `mscanvas-spectrum-0.svg`
+(3,726 bytes, 03:23:00Z) and `mscanvas-chromatogram-full.csv` (984 bytes,
+03:25:17Z). They are byte-identical to the later controlled outputs
+(`ce595c87...`, `891ee933...`, `1ff55c7e...`). No source or operator file was
+touched. In the repaired runs every dialog was found by exact PID/title/class,
+named through `WM_SETTEXT` with exact readback and pressed through `BM_CLICK`;
+both cancel cases reported "Export cancelled. Nothing was saved." Evidence:
+`.tmp/native-save-evidence/run-O8X9b4` (0/5), `run-IbiMwq` (4/5) and
+`run-yk2MGL` (5/5).
+
+### U4: live-provider conversions
+
+The four M6 suites drove the real UI, native pickers, Rust queue and the
+installed ProteoWizard (outputs name `pwiz` 3.0.26013) on campaign copies of the
+admitted Thermo fixture. They wrote only under
+`D:\tmp\beta1-native-20261028T015831Z\m66-output` ... `m69-output`. Across all
+attempts they produced 32 converted mzML files (the other five `.mzML` names
+there are files of 30-137 bytes that the suites planted as existing targets
+or unrelated neighbours). Every finalized conversion reported backend exit code
+0 and output-only validation (`fullyVerified: false`; verified items include
+`source_unchanged`). The two M6.8 conversions stopped on request ended with
+`-1073741510` (`0xC000013A`), as a terminated provider should.
+
+- Sizes are 28,597-28,687 bytes and every digest differs, because each output
+  records its own source path.
+- Line comparison of this run's M6.8 `FT-HCD-MSX-0.mzML` (28,625 bytes) with the
+  historical admitted M7.1 mzML (28,616 bytes, `a1228c10...`): 210 lines each.
+  They differ only in the `sourceFile` location, the three index offsets that
+  path shifts, and `fileChecksum`. The spectrum and chromatogram content is
+  identical.
+- M6.6 and M6.7 preserved existing target bytes through Fail and Skip. M6.8
+  ended the file the provider was converting while the queue continued,
+  settled a waiting item without launching it, and stopped the whole queue with
+  nothing started afterwards. M6.9 completed output-only, showed the manifest
+  and adopted only on request.
+
+This is the first execution of U4's positive provider check, on this host and
+candidate. It runs the `e2e`-feature binary, not an installed release, and
+output-only validation does not compare converted data with a vendor-source
+spectrum model.
+
+### NQ-N2 and NQ-I: what ran and what remains
+
+NQ-N2 was refused in its before-all hook both times, on foreground ownership.
+In attempt 1, `focus-window` activated the application (`focused: true`; the
+identity record shows the application PID 17104 in the foreground), but by the
+next check the operator's VS Code (PID 9760) owned the foreground. In attempt 2
+the application never received the foreground (`focused: false`; VS Code still
+owned it). No Settings, figure or picker case executed and no M7.1 capture
+exists. The spec rightly forbids focus rescue, and
+`MSCANVAS_M71_MANUAL_FOREGROUND=1` needs a person.
+
+NQ-I a01 passed its before-all hook: identity, DPI 144, foreground, neither
+maximized nor minimized, document focus. Its first frame
+(`i1-workbench-en-1920x1080`) met every native measurement: PID and executable,
+DPI 144, foreground, frame inside the work area, CSS 1920x1080, DPR 1.5, zoom 1,
+visual scale 1, raster 2880x1620 equal to the client, comfortable density, no
+overflow, no external resource, no unanswered application command. It then
+failed only on the console assertion, one Tauri reload-callback warning (repaired
+above). a02 and a03 were refused in before-all because the operator's VS Code
+(PID 9760) and Task Manager (PID 11176) owned the foreground. `bail(true)` ended
+each attempt; the repaired `sample()` never ran to completion.
+
+Covered natively: one English empty-Workbench frame at 1920x1080 CSS under a
+measured 144 DPI. Not covered: the rest of I1-I3, including the 1366x768 and
+960x640 anchors, all zh-CN, the refused Project actions, the scrolled
+viewer/history, the Tab walks and the 2 px `#1769d1` ring's reach and clipping.
+Also not covered: every state family the prepared driver never addressed (held
+loading/errors, running conversion and targeted-task outcomes, damaged and
+stored-result recovery, expanded figure controls). This run produced no zh-CN
+and no focus-ring capture anywhere. PM9 integrated native acceptance remains
+open.
+
+Captures inspected directly (150%):
+
+- NQ-I `i1-workbench-en-1920x1080.png`: empty Workbench with the roster shown,
+  the "No acquisitions yet" entry and the centred guidance, intact header
+  chips, no clipping or overlap. No focus ring: not a keyboard sample.
+- M6.6 `1-draft-960x640.png`: Conversion at 960x640 CSS, with a two-row header
+  and readable stacked destination and conflict groups inside the scrolled
+  panel. The spec measured no horizontal overflow.
+- M6.6 `2-custom-finalized.png` and M6.8 `1-item-stop.png` (1366x768): queue
+  results, "Bound queue details" open on "Chosen local folder", per-item
+  Converted or Cancelled with Open file and Open folder.
+- Diagnostic `d2-wrapped.png` (viewer, 1440x900 CSS): chromatogram, selected
+  spectrum and export actions. Its red "Explorer drag-and-drop is unavailable"
+  notice comes from the shared Tauri fixture answering
+  `subscribe_workspace_drop_updates` with `null`; the real-IPC M6 captures show
+  the normal drop hint.
+
+All inspected captures are English.
+
+### Product observations
+
+No functional product defect was found. Every failure traced to a stale or
+harness-side test, the host, or the operator's activity. Two minor English copy
+defects were visible in native evidence; they are reported here, not fixed:
+
+- `apps/desktop/src/features/preferences/locales/en.ts:262`
+  (`m74CnvOutputMetrics`, used at `ConversionPanel.tsx:1574`) renders "1 spectra,
+  1 chromatograms" with no singular form. Evidence: M6.6 `2-custom-finalized.png`,
+  M6.8 `1-item-stop.png`. Present since M7.4 (`e495464`), not specific to beta-1.
+- `en.ts:36` (`m74ErrorRasterBudget`, filled at `ownedErrorMessages.ts:138`)
+  renders "The image is limited to 32000000 pixels" without digit grouping.
+  Evidence: the NQ-E1 `m4.2-figure-export` logs.
+
+### Not run and remaining
+
+- NQ-N2 and NQ-I need an idle interactive desktop on which the launched
+  application keeps the foreground for the whole run, or a person for M7.1's
+  manual-foreground mode. They were not retried further: more attempts against
+  an operator in active use would be polling, not qualification.
+- Before that rerun, close or retitle every other window whose title contains
+  "MSCanvas", such as a VS Code window titled "MScanvas - Visual Studio Code".
+  `focus-window.ps1` matches `*MSCanvas*` case-insensitively against each
+  process's main-window title and takes the first match, and `Get-Process` lists
+  `Code` before `mscanvas-desktop`. Both M7.1 records show that it chose the
+  application this time. `focusApplicationWindow()` (M4.2 copy cases) discards
+  the helper's answer, so which window it activated in this run is not recorded.
+- No installer, release-binary, new-provider, engine or publication work was
+  done. The controlled-IPC layers (NQ-V, NQ-E, NQ-N1's fixtures, NQ-I) are not
+  installed-release evidence.
