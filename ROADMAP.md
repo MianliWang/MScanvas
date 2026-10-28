@@ -765,8 +765,10 @@ local closeout identities belong to PR #125. The first
 beta's support target is decided: **Windows 11 25H2 x64**, with other Windows
 versions and ARM64 not promised supported. M7.6 is **partially implemented
 and not qualified** — an NSIS per-user candidate configuration, generated
-third-party notices and inspection scripts, with installed qualification not started
-([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)) — and its
+third-party notices and inspection scripts
+([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)); the first beta-1
+candidate's installed check ran on 2026-10-28 in the owner's account
+([record](docs/release/beta-1/INSTALLED_CHECK.md)) — and its
 release qualification is **deferred / incomplete**: it resumes against a later
 product candidate that contains M8/M9, not the M7.6 one (see the
 [M9 closure](docs/product/M9_CLOSURE.md#15-after-m9)). M8 and M9 are implemented

@@ -10,9 +10,11 @@ the beta-1 readiness code the whole browser suite passes (34 spec files, 487
 tests). The owner's 2026-10-27 decisions in
 [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27)
 make beta 1 an unsigned GitHub prerelease with checksums and a build-provenance
-attestation, built by the `Release candidate` workflow. No beta-1 candidate is
-built, installed or qualified, and M10 is not started. The 2026-09-24 paragraph
-below is kept as written.
+attestation, built by the `Release candidate` workflow. The first beta-1
+candidate was built from `e6d2a49` and checked natively and installed on
+2026-10-28 ([installed check](docs/release/beta-1/INSTALLED_CHECK.md)); it is
+not published, and M10 is not started. The 2026-09-24 paragraph below is kept
+as written.
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 

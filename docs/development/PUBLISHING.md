@@ -87,6 +87,7 @@ published SHA-256 checksums and a build-provenance attestation; see
 Candidates are built by the manually dispatched `Release candidate` workflow
 (`.github/workflows/release-candidate.yml`), which uploads a workflow artifact
 and publishes nothing. The tester-facing drafts are in
-[`docs/release/beta-1/`](../release/beta-1/RELEASE_NOTES.md); their version,
-hashes and links are filled at candidate acceptance. Publishing still needs the
-candidate's qualification and the owner's consent for the exact artifacts.
+[`docs/release/beta-1/`](../release/beta-1/RELEASE_NOTES.md); they carry the
+first candidate's version, hashes and download link, and its checks are
+recorded in the [installed check](../release/beta-1/INSTALLED_CHECK.md).
+Publishing still needs the owner's consent for the exact artifacts.

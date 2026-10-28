@@ -1,9 +1,10 @@
 # MSCanvas beta 1 — release notes
 
-Status: **DRAFT; NOT RELEASED.** The candidate identity below is the first
-beta-1 candidate, built by the `Release candidate` workflow; a rebuild is a new
-candidate and replaces every value in the table. The download link is filled
-when the prerelease is published. The decisions behind it are the
+Status: notes for the `v0.1.0-beta.1` prerelease. The candidate identity below
+is the first beta-1 candidate, built by the `Release candidate` workflow; a
+rebuild is a new candidate and replaces every value in the table. The download
+link is in [Install and support](INSTALL_AND_SUPPORT.md#download-and-verify).
+The decisions behind it are the
 [owner decisions of 2026-10-27](../../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27).
 
 Installation, first run, uninstall and how to report a problem are in
@@ -28,30 +29,90 @@ it; [Install and support](INSTALL_AND_SUPPORT.md#download-and-verify) shows how.
 
 ## How beta 1 was checked
 
-_Results are filled from the qualification records before publication._
+The records are the
+[beta-1 readiness record](../../development/POST_PM9_DEFERRED_WORK.md#beta-1-readiness-2026-10-27),
+the native qualification
+([first run](../../development/POST_PM9_NATIVE_QUALIFICATION.md#execution-2026-10-2728-beta-1-candidate)
+and [idle-desktop run](../../development/POST_PM9_NATIVE_QUALIFICATION.md#nq-n2-and-nq-i-on-an-idle-desktop-2026-10-28))
+and the [installed check](INSTALLED_CHECK.md).
 
-- Automated: the whole frontend unit suite, the whole browser suite and a
-  rendered check of every presentation change in beta 1, in English and
-  Simplified Chinese, on the source above.
-- Native: the Tauri and native suites against a QA build of the same source
-  at real 150% Windows scaling, including real ProteoWizard conversions of a
-  Thermo RAW test acquisition.
-- Installed: this installer, installed, used and uninstalled on a
-  maintainer's machine.
+- **Automated.** On the source above, continuous integration passed the
+  TypeScript checks of the application and of the end-to-end specs, the whole
+  frontend unit suite, the production build, and the Rust and repository
+  checks. The whole browser suite (34 spec files, 487 tests) passed in Chrome
+  one presentation change earlier; after that change, which adds disclosure
+  markers, the rendered check of every beta-1 presentation change and the
+  specs beside it (6 files, 87 tests) passed. Fourteen of the rendered check's
+  16 cases are seven states, each in English and in Simplified Chinese; the
+  other two ran in English only.
+- **Native.** Against a QA build of the same application source, whose
+  interface is compiled for a different browser target from the installer's, at
+  real 150% Windows scaling, the 79 tests of the native qualification matrix
+  (15 of the repository's Tauri and native spec files) passed in their final
+  runs, several after test-only repairs. The repository's four other native
+  specs, which cover the workbench, the viewer, conversion and figures, and
+  preferences, were not run. The conversion suites drove the
+  installed ProteoWizard and made 32 real conversions of a Thermo RAW test
+  acquisition across all their runs, and the Settings suite read a real mzML
+  file; most other tests used the QA build's controlled backend answers. The
+  18 integrated native cases, also on controlled answers (three scenarios,
+  each in both languages at 1920 × 1080, 1366 × 768 and 960 × 640), passed.
+- **Installed.** This installer, with its hash and provenance attestation
+  verified, was installed for one user, used and uninstalled in a maintainer's
+  own administrator account, without elevation. SmartScreen warned on a copy
+  marked as downloaded, as [Install and support](INSTALL_AND_SUPPORT.md#download-and-verify)
+  describes; the installed program matched the build record; it loaded its
+  bundled interface, kept its language across a restart, added a Thermo RAW
+  and an mzML file, previewed, exported PNG, SVG, CSV and a quick PNG,
+  converted the RAW file and adopted the result, and refused to overwrite an
+  existing file. Source files were unchanged and uninstall removed the
+  program. One check failed: exported values are not the file's stored binary
+  values; see [Values](#csv-and-tsv-files).
 
 What was **not** done for beta 1, accepted by the owner on 2026-10-28 and
 stated here rather than hidden:
 
-- No installation on a clean machine or a fresh standard-user account. The
-  installed check ran in a maintainer's own account, on a machine that already
-  had ProteoWizard and earlier MSCanvas development builds.
-- Some states have no native check: loading and error states held open,
-  running conversions and targeted runs, damaged or missing stored results,
-  and expanded figure controls. They are covered by the browser and unit
-  suites only.
+- No installation on a clean machine or in a standard-user account. The
+  installed check ran in a maintainer's own administrator account, without
+  elevation, on a machine that already had ProteoWizard and earlier MSCanvas
+  development builds.
+- Some states are not among the 18 integrated native cases: loading and error
+  states held open, running conversions and targeted runs, damaged or missing
+  stored results, and expanded figure controls. Their presentation is checked
+  by the browser and unit suites. Outside the integrated cases, the native
+  conversion tests ran and stopped real conversions, and the native
+  figure-export tests used the figure controls. No native test checks the
+  beta-1 presentation changes themselves, whose native acceptance the
+  readiness record lists as owed; they are checked in Chrome and by component
+  tests.
 - No formal trademark, package-name or domain review of the name MSCanvas.
 - The installer is not code-signed; see
   [Install and support](INSTALL_AND_SUPPORT.md#download-and-verify).
+
+Also not done, as the [installed check](INSTALLED_CHECK.md) records:
+
+- No run on Windows 11 25H2, the support target. Every native and installed
+  check ran on Windows 11 26H2, build 26300.
+- The installer's own pages. It was installed silently, which skips its
+  language choice and pages, from a file without the downloaded-file mark.
+  Neither warning was passed: on a marked copy, SmartScreen was dismissed with
+  **Don't run** and **Open File - Security Warning** with **Cancel**, so
+  **Run anyway** and **Run** were never pressed. No test on a machine whose
+  organisation blocks unsigned software.
+- No display scaling other than 150%, and no install path or user name with
+  non-ASCII characters or spaces, and no denied permissions.
+- In the installed program: Copy plot, Open file and Open folder, a missing
+  ProteoWizard, a missing or offline WebView2, the stranded-staging fault,
+  picker cancellation and write failures, keyboard-only use, other window
+  sizes and reduced motion. Several of these are covered on the QA build only.
+- That the installed program loads only its bundled interface, with no QA
+  hooks, was observed during the check but not kept as a log. The package
+  inspection found none of its QA markers in the candidate's executable and no
+  development origin in its production content-security policy. The interface
+  files the build recorded before bundling, rebuilt byte for byte from the
+  source above, hold no development origin; their only marker matches are
+  three message keys that every build carries. The interface inside the
+  installer was not read back.
 
 ## What beta 1 is
 
@@ -109,8 +170,8 @@ not chemical identification, not a validated quantitative assay, and
 **Windows 11 25H2 x64** is the support target. Other Windows versions and ARM64
 are not promised supported. A support target is not a compatibility claim.
 
-Qualification on that target: _recorded at candidate acceptance_. When this
-draft was written, no beta-1 candidate had been installed or qualified.
+Beta 1 was **not** run on 25H2. Its native and installed checks ran on Windows
+11 26H2, build 26300; see [How beta 1 was checked](#how-beta-1-was-checked).
 
 You also need the Microsoft Edge WebView2 Runtime, which most Windows 11
 installations already have, and ProteoWizard for reading mzML runs, conversion
@@ -177,17 +238,40 @@ and figure export. The window needs at least 960 × 640.
 
 - A few rare internal errors are shown in the backend's original English,
   labelled as untranslated.
-- One light appearance; there is no dark theme.
+- The interface has one light appearance and no dark mode. Exported and
+  copied figures have their own Light or Dark theme setting.
+- Known cosmetic slips: English counts such as "1 spectra, 1 chromatograms"
+  have no singular; a pixel limit is shown without digit grouping; the caption
+  beside a plot's Quick PNG and Copy plot buttons repeats the typed size as
+  entered ("00640 × 480 px") although the export uses 640; in the Chinese
+  Settings dialog, the workspace-entry count sits close to the row-spacing
+  options.
 - A first installation on a machine without WebView2 needs the Internet.
+- Uninstalling keeps your interface preferences, the WebView2 data and a
+  registry key unless you select **Delete the application data**, which beta 1
+  did not check; see [Install and support](INSTALL_AND_SUPPORT.md#uninstall).
 - The installer is not code-signed: Windows names an unknown publisher,
   SmartScreen is expected to warn, and an organisation that blocks unsigned
   software will block it.
 
 ## CSV and TSV files
 
-MSCanvas writes exported values exactly as they are stored and does not change
-them for spreadsheets. Open these files knowingly.
+MSCanvas does not change exported values for spreadsheets. Open these files
+knowingly.
 
+- **Values.** Spectrum and chromatogram values are read through ProteoWizard's
+  `msaccess`, which reports them as text, and are written as read, with no
+  further rounding. They are therefore not always the file's stored binary
+  values.
+  - A spectrum's m/z and intensity are reported to 8 decimal places, so an
+    exported value can differ from the stored one by up to 5 × 10⁻⁹. In the
+    installed check, 1,499 of the 1,504 points of one spectrum had an m/z or
+    intensity that differed by that rounding, at most 6.75 × 10⁻¹¹ relative to
+    the value; values close to zero differ relatively more.
+  - A chromatogram's retention time, total ion current and base peak intensity
+    come from `msaccess`'s scan table, which prints them rounded: in the test
+    file, a retention time stored as 26.688152 min (1601.28912 s) was read as
+    1601.29. Chromatogram exports were not compared value by value for beta 1.
 - **Formulas.** A text value that begins with `=`, `+`, `-` or `@` may be
   evaluated as a formula when a spreadsheet opens the file. The text values come
   from stored targeted-MS1 results: target labels and formulas that a person

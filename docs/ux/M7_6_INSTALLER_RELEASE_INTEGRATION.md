@@ -19,6 +19,13 @@ The release packet's tester-facing successors are the beta-1
 [release notes](../release/beta-1/RELEASE_NOTES.md) and
 [install and support](../release/beta-1/INSTALL_AND_SUPPORT.md) drafts.
 
+Amendment, 2026-10-28: the first beta-1 candidate (`e6d2a49`, installer
+`4bf752ad…`) was installed, used and uninstalled in the owner's own account by
+the owner's decision of that date, recorded as that and not as the clean
+standard-user qualification below; see the
+[installed check](../release/beta-1/INSTALLED_CHECK.md). The "Not started"
+statements in this record describe the candidate it was written for.
+
 This slice does not add a user-visible feature. It turns the application M7.1 to
 M7.5 built into something a person can install, run and remove on a machine that
 has never seen a compiler, and it assembles the evidence a release would need.

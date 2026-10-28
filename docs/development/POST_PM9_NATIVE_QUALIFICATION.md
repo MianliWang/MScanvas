@@ -3,6 +3,12 @@
 Date: 2026-10-20.
 Status: **TEST MIGRATION PREPARED; EXECUTION NOT ADMITTED; TYPECHECK AND NATIVE QUALIFICATION NOT RUN**.
 
+Later execution (the preparation status above is kept as written): the matrix
+ran against the beta-1 candidate in
+[Execution, 2026-10-27/28](#execution-2026-10-2728-beta-1-candidate), and its
+two foreground groups passed in
+[NQ-N2 and NQ-I on an idle desktop, 2026-10-28](#nq-n2-and-nq-i-on-an-idle-desktop-2026-10-28).
+
 The owner selected 150% native rendering qualification and repair of the related
 Tauri/native selectors after PM9 closed. This record continues that dispatch;
 it does not reopen PM9 or qualify an installer, provider or analysis engine.
@@ -353,7 +359,8 @@ Run window: 2026-10-27 22:02 to 23:57 America/Toronto
 (2026-10-28T02:02Z to 03:57Z).
 Status: **PARTIAL. NQ-T, NQ-B1/B2, NQ-V, NQ-E1/E2, NQ-C1..C4 and NQ-N1 PASS
 after test-only repairs; NQ-N2 and NQ-I NOT QUALIFIED (host foreground owned
-by the operator's active applications).**
+by the operator's active applications).** Both passed later, in
+[NQ-N2 and NQ-I on an idle desktop](#nq-n2-and-nq-i-on-an-idle-desktop-2026-10-28).
 
 This section records an execution of the prepared matrix against a newer
 candidate than the one the preparation above names. The preparation record,
@@ -387,7 +394,11 @@ its admission refusals and PM9's dispositions are unchanged.
   `59dabbb6...`, `index-gbwyn1IL.js` `fa2bab7b...`. It replaced the unattributed
   2026-09-17 binary (16,776,704 bytes, `f2791ab8...`). It carries the `e2e`
   feature (controlled-IPC support and the synthetic seed) and is not
-  installed-release evidence.
+  installed-release evidence. Its frontend was built by a plain `pnpm build`,
+  without the Tauri hook's environment, so Vite targeted `safari13`; the
+  installer's frontend (`index-BixDYNVf.js`, `index-tOgbBjKb.css`) targets
+  `chrome105`. These runs cover the shipped frontend's source, not its files
+  ([installed check](../release/beta-1/INSTALLED_CHECK.md#adr-0047-release-exits-and-other-beta-1-items)).
 - Driver: Microsoft Edge WebDriver 155.0.4283.62
   (aa3a7406ba8c53a83536df539f07124d73c899bd) from
   `https://msedgedriver.microsoft.com/155.0.4283.62/edgedriver_win64.zip`
@@ -402,7 +413,11 @@ its admission refusals and PM9's dispositions are unchanged.
   launch, and every sampled `msedgedriver.exe` ran from that path.
   `tauri-driver.exe` SHA-256 `6e768e8a...9e66`. WebView2 runtime and session
   `browserVersion`: 155.0.4283.62.
-- Host: primary display 3840x2160 at 144 DPI (150%). Measured on the actual
+- Host: the development host whose identity the
+  [installed check](../release/beta-1/INSTALLED_CHECK.md#environment) records
+  (Windows 11 Home China, version 26H2, build 26300, x64), not the 25H2 support
+  target; this campaign did not capture the OS identity itself. Primary display
+  3840x2160 at 144 DPI (150%). Measured on the actual
   test window by NQ-I attempt a01 (DPI 144, DPR 1.5, 1920x1080 CSS rasterized
   to 2880x1620, equal to the client rectangle) and by the M7.1 identity record
   (DPI 144). The other Tauri specs ran on this host but do not measure DPI.
@@ -700,3 +715,289 @@ defects were visible in native evidence; they are reported here, not fixed:
 - No installer, release-binary, new-provider, engine or publication work was
   done. The controlled-IPC layers (NQ-V, NQ-E, NQ-N1's fixtures, NQ-I) are not
   installed-release evidence.
+
+### NQ-N2 and NQ-I on an idle desktop, 2026-10-28
+
+Run window: 2026-10-28 04:49 to 05:12 America/Toronto (08:49Z to 09:12Z).
+Status: **NQ-N2 3/3 and NQ-I 18/18 PASS on the first attempt in this
+window, with no test change.** This closes the "NOT QUALIFIED" rows above for
+these two groups. The earlier text stays as the record of the refused
+attempts. Nothing was re-run, and no test or production file changed.
+
+Inputs:
+
+- Checkout `qual/beta1-final` at `0b50d11c1c40010e8d6f6d146d1e2776e4c6ad7c`
+  (equal to `origin/main`), tree `31aed0aff8adac4d3c517dff6e6fa3c5abb49a5d`. The
+  test repairs listed above are committed (`84ba3f4`). `git diff 7cf4c74 HEAD`
+  over `apps/desktop`, `crates`, `Cargo.toml`, `Cargo.lock`, `package.json`,
+  `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `.github` is empty, and
+  `HEAD:apps/desktop` is `83d2e69e`, the same as `7cf4c74`. The working tree was
+  clean at both launches. The NQ-I dispatch records `committed: true` with the
+  empty-patch digest `e3b0c442...b855`.
+- Binary: the existing `target/e2e/release/mscanvas-desktop.exe`, 19,571,712
+  bytes, SHA-256 `e98ae5d2...f811`, written 2026-10-28T02:08:45Z. It was not
+  rebuilt. Its hash was checked before NQ-N2 (M7.1's `identity` record) and
+  after NQ-I (the `final binary identity` record). NQ-I's `dispatchIdentity()`
+  in the launcher and the worker, and the spec's `before()` digest assertion,
+  matched it. NQ-I's worker `beforeSession` guard did not complete; see "Harness
+  defect" below. The production tree it was built from equals this HEAD's.
+  `MSCANVAS_M71_SOURCE_HEAD` was set to `0b50d11` and recorded, but M7.1 does
+  not compare it. NQ-I's `dispatchIdentity()` checks its source head against
+  `HEAD`. Driver: the same Edge WebDriver 155.0.4283.62 (`01ce0daa...64f6`),
+  first on `PATH`.
+- Fixtures: campaign copies in the new directory
+  `D:\tmp\beta1-native-20261028T015831Z\idle-20261028T0852Z\fixtures\`. Thermo
+  `FT-HCD-MSX.raw` 78,309 bytes `b3d97b38...6dd7b`; mzML `FT-HCD-MSX-0.mzML`
+  28,616 bytes `a1228c10...75ea7`. The copies' hashes are in M7.1's `identity`
+  record, and the spec asserts them against its pinned constants in its
+  before-all and after every case. That originals and copies hashed identically
+  before NQ-N2, between the groups and after NQ-I was observed during the
+  session and not retained. No other file appeared beside the copies; the
+  directory still holds only these two.
+- NQ-N2: `pnpm e2e:tauri --spec ./e2e/specs/m7.1-settings.native.e2e.ts`.
+  Settings: `MSCANVAS_M71_MZML` and `MSCANVAS_THERMO_FIXTURE` pointed at the
+  copies, `MSCANVAS_M71_OUTPUT_ROOT` was the pre-created
+  `...\idle-20261028T0852Z\m71-output` (outside Git), and
+  `MSCANVAS_M71_EXPECTED_DPI=144`. Ports 15620/15621. Preference root
+  `.tmp/m75-evidence/preference-root-beta1-NQ-N2-idle-m7.1-settings.native-n06Kej`.
+- NQ-I: `pnpm exec wdio run ./e2e/wdio.pm9-native.conf.ts` with dispatch ID
+  `beta1-nqi-20261028-idle-a04`, source head `0b50d11...`, binary SHA-256 as
+  above and output root `.tmp/pm9-native-evidence/beta1-idle-20261028T0852Z`.
+  Ports 15622/15623. Preference root
+  `.tmp/m75-evidence/preference-root-beta1-nqi-idle-a04-Uw0k0G`.
+- Both groups ran through the campaign runner. Evidence:
+  `.tmp/beta1-native/NQ-N2-idle/m7.1-settings.native/` and
+  `.tmp/beta1-native/NQ-I-idle/attempt-a04/`, with ledger entries.
+
+Admission and host state:
+
+| Group | Host snapshot before launch, free GiB / used % | Runner admission | Lowest free / highest used during run | Host at launch |
+| --- | --- | --- | --- | --- |
+| NQ-N2 | 25.7 / 59.64 (08:56:40Z) | 25.59 / 59.81 | 24.71 / 61.19 | Foreground: Photos showing a full-screen black image; last input 0.9 s earlier |
+| NQ-I | 25.27 / 60.31 (09:00:16Z) | 25.31 / 60.25 | 24.37 / 61.73 | Foreground: the same Photos window; 139 s without input |
+
+Host snapshots: `.tmp/beta1-native/tooling/host-NQ-N2-idle.json` and
+`host-NQ-I-idle-a04.json`. Runner values: each run's `result.json` and the
+ledger. The memory-gate readings taken just before each launch (24.94 / 61 and
+25.35 / 60) were observed during the session and not retained.
+The 4 GiB / 90% stop line was never approached.
+`SPI_GETFOREGROUNDLOCKTIMEOUT` reads 2147483647 ms on this host.
+
+Each launched application nevertheless held the foreground at its first
+measurement:
+
+- M7.1 identity: PID 35660 was in the foreground before `focus-window` ran,
+  and the helper then answered `{"focused":true,"process":"mscanvas-desktop"}`.
+- NQ-I's before-all: PID 32272 in the foreground, not maximized or minimized,
+  with document focus. No focus helper was used.
+
+The NQ-I host snapshot (09:00:16Z, 139.0 s idle) puts the last OS input before
+NQ-I at about 08:57:57Z, around NQ-N2's own `SendKeys` Escape into the owned
+conversion-folder picker. The rest was observed during the session and not
+retained: idle time kept rising through NQ-I and read 835 s at 09:11:52Z, so no
+owner input followed NQ-N2, and WebDriver's Tab input did not register as OS
+input, since idle time kept rising during the I3 walks.
+
+Since `84ba3f4`, `focus-window.ps1` filters on process name
+`mscanvas-desktop`, so a VS Code window titled "MScanvas - Visual Studio Code"
+can no longer be chosen. This replaces the retitling advice under "Not run and
+remaining".
+
+Process accounting:
+
+- Each run's `tauri-driver -> msedgedriver -> mscanvas-desktop -> msedgewebview2`
+  chain is in its `result.json`.
+- Both runs ended with no recorded descendant alive (`leftovers: 0`). The
+  runner checks ports only before launch and never checks windows, so "no
+  listener on 15620-15623 and no MSCanvas, driver or dialog window left" was
+  observed during the session and not retained. Nothing was stopped by name or
+  port.
+- NQ-N2's sampled tree also shows three `msaccess.exe` (path unreadable) and
+  `TSVNCache.exe` as children of the application. `msaccess` is the
+  application's own ProteoWizard preview provider
+  (`apps/desktop/src-tauri/src/preview/backend.rs`). PID 47368 started at
+  08:57:06Z, about 4 s after launch and before any picker, consistent with the
+  mount-time `inspect_backend`. PIDs 36584 (08:57:24Z) and 34328 (08:57:27Z)
+  followed the mzML `choose_workspace_files`, consistent with
+  `open_mzml_preview` and `load_selected_spectrum` in the IPC log, which has no
+  timestamps. Only `TSVNCache.exe` (08:57:21Z, while the first picker was open)
+  fits a shell extension loaded by the common dialog. All of them had exited.
+- NQ-I's tree shows one `msconvert.exe` child of the application at startup:
+  the backend discovery probe that its dispatch boundary permits.
+
+Runner fault, found and fixed between the groups: during NQ-N2 the campaign
+sampler adopted four `python.exe` processes of an unrelated user workload. Two
+recorded parent PIDs (finished `cvtres.exe` 2624 and 10812) had been reused,
+and each child passed the creation-time check (`result.json`,
+`PID-REUSE-NOTE.txt`). They had exited before cleanup, so nothing was stopped,
+but the runner would have stopped them had they still been alive. Before NQ-I,
+`run-step.ps1` was changed to adopt a child only while its parent is alive with
+the recorded creation time (within 1 s). NQ-I's tree contains its launch chain,
+helpers, WebView2, the `msconvert.exe` probe above, two `git.exe` (one under the
+launcher, one under the worker) and the worker's `esbuild.exe`. Nothing
+unrelated was adopted.
+
+Harness defect, found and not fixed: NQ-I's worker `beforeSession` guard threw
+`The PM9 native session must use exactly its approved binary and dedicated
+spec.` at `e2e/wdio.pm9-native.conf.ts:201` (`attempt-a04/output.log`,
+09:00:37Z). WDIO's `executeHooksWithArgs` logs a throwing hook and resolves, so
+the session went on. The same error is in the `output.log` of a01, a02 and a03,
+so the defect predates this run. Which clause failed is not recorded. The
+suspected one is the spec check: the worker logs its spec as a `file:///` URL,
+which `resolve(specs[0])` would not turn back into the spec path. As a result,
+the guard did not establish the session's application path or spec, and the
+checks after it did not run: the inherited run-root containment and
+`dispatch.json` existence checks, and the worker-versus-launcher comparison of
+`dispatchId`, `head`, `binarySha256` and `changes`. The worker's
+`dispatchIdentity()` at `:197` had returned before the throw, so its HEAD,
+frozen-tree and binary-digest checks did pass. Binary identity rests on that,
+on the launcher's `dispatchIdentity()` recorded in `dispatch.json`, on the
+spec's `before()` (digest assertion, and the launched executable resolving to
+`dispatch.binary`), and on the `final binary identity` record
+`e98ae5d2...f811`. Follow-up: make the guard compare a resolved file path, and
+make a throwing hook fail the session instead of being logged.
+
+Outcomes:
+
+| Group | Exit | Executed | Passed | Failed | Skipped | Duration |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| NQ-N2 `m7.1-settings.native.e2e.ts` | 0 | 3 | 3 | 0 | 0 | 08:56:49Z-08:58:02Z (cases 58 s) |
+| NQ-I `pm9.7-integrated.native.e2e.ts` | 0 | 18 | 18 | 0 | 0 | 09:00:23Z-09:06:43Z |
+
+- NQ-N2 passed "applies, cancels, resets and dismisses Settings in the actual
+  app", "reads retained lawful mzML and exports a real PNG from the shared
+  numeric fields" and "naturally returns from the affected real cancelled
+  destination picker".
+- NQ-I passed `PM9.7 native I1 empty entry and refused Project actions, <at>`,
+  `PM9.7 native I2 scrolled evidence and Project history, <at>` and `PM9.7
+  native I3 Tab ring reach and ancestor clipping, <at>` for every `<at>` in
+  en and zh-CN at 1920x1080, 1366x768 and 960x640.
+
+NQ-N2 facts:
+
+- Real IPC throughout (the controlled-IPC table stayed empty) and no external
+  resource.
+- `m7.1-size-window` set the client to 2049x1152 physical pixels, which is
+  1366x768 CSS at DPR 1.5.
+- The workspace picker took both copies, found by PID, title and class and
+  pressed through `BM_CLICK`.
+- `save-dialog.ps1 -ApplicationProcessId 35660` found "Export spectrum figure",
+  named the target and saved `m71-shared-fields-640x480-144dpi.png`: 12,353
+  bytes, SHA-256 `4cf1c300...70f9`, IHDR 640x480, `pHYs` 5669 px/m (144 DPI),
+  from request settings `{widthPx: 640, heightPx: 480, pngDpi: 144, theme:
+  "light"}`.
+- The conversion-folder picker was found by PID and closed with Escape. Focus
+  returned on its own to Convert while the application kept the foreground. The
+  conversion flow began (`begin_workspace_conversion_queue`,
+  `choose_workspace_conversion_destination`) and ended at the cancelled folder
+  step; no `msconvert.exe` appears in NQ-N2's sampled tree.
+- Console empty in all three cases.
+- Evidence (five captures, `evidence.json` and the PNG):
+  `D:\tmp\beta1-native-20261028T015831Z\idle-20261028T0852Z\m71-output\native-PIkxat\`.
+
+NQ-I facts, run root
+`.tmp/pm9-native-evidence/beta1-idle-20261028T0852Z/beta1-nqi-20261028-idle-a04-RP55xs/`.
+The `preparationStatus: "UNRUN"` fields in `dispatch.json` and
+`integrated-evidence.json`, and "(prepared UNRUN)" in the describe title, are
+fixed strings in the prepared spec and config. They do not report this run's
+outcome.
+
+- 138 frames and 138 captures, 69 en and 69 zh-CN, all comfortable density.
+  Every frame: DPI 144, DPR 1.5, zoom 1, visual scale 1, application PID in the
+  foreground, document focus, overflow 0/0, no external resource. Rasters equal
+  the client: 2880x1620, 2049x1152 and 1440x960.
+- 558 focus-geometry records, every one a `2px solid rgb(23, 105, 209)`
+  (`#1769d1`) outline: none clipped by an ancestor, covered, outside the
+  viewport or zero-size. Offsets were 2px (454), -2px inset (96: header chips,
+  scan-table sort headers and rows, roster row, disclosure summaries) and
+  0.666667px (8: search field and execution-order select).
+- 12 real Tab walks. Viewer: 61 stops at 1920 and 1366 (minimum 20) and 46 at
+  960 (minimum 13), each ending on the body. Project: 35, 35 and 29 stops
+  (minimum 8), each returning to the brand.
+- In all six I1 runs Save, Save As… and Close (保存, 另存为…, 关闭) were
+  `aria-disabled="true"`, not `disabled`, at opacity 0.48, carrying the required
+  title and description. Focused Save rendered at opacity 1.
+- One distinct console message in the whole run: Tauri's "Couldn't find
+  callback id 3947071267 ... app is reloaded" warning in I1 en-1920x1080,
+  recorded eight times (that case's seven frames and its test outcome). It is
+  the warning excluded above and is retained in the evidence. All other cases
+  were empty.
+
+Captures inspected directly: 17, all five of M7.1 and 12 of NQ-I's 138,
+covering both locales and all three anchors. Nine show a focus ring (M7.1 01
+and 03, and seven NQ-I captures).
+
+- M7.1 `01-native-chinese-preview` (zh-CN, 1366x768): Settings in Chinese
+  preview with 简体中文 and 紧凑 selected. The focused 紧凑 radio shows the
+  blue ring. The "0 个工作区条目" count sits directly under the density options
+  and touches the ring's lower edge: crowded but readable.
+- M7.1 `02-native-real-roster-figure` (en): the real roster row
+  "FT-HCD-MSX-0.mzML, mzML 27.9 KiB, Viewed acquisition" and the chromatogram
+  export controls open.
+- M7.1 `03-native-real-compact-preview` (zh-CN, compact): Settings open again
+  with the ring on 紧凑 and "1 个工作区条目" touching its lower edge, as in 01.
+  The dialog covers the spectrum figure fields; only the spectrum panel header
+  "00640 × 480 px" shows.
+- M7.1 `04-native-real-png-result` (zh-CN, compact): the spectrum figure fields
+  read 00640 / 480 / 144, and the spectrum panel header echoes the draft as
+  "00640 × 480 px", although the request carried 640. The chromatogram header is
+  scrolled out of view; its text "色谱图 · 完整运行 · 00640 × 480 px" is in
+  capture 04's page text in `evidence.json`.
+- M7.1 `05-native-cancelled-picker-natural-return` (zh-CN): Conversion with one
+  Thermo RAW mapped to `FT-HCD-MSX.mzML` and "转换 1 个可转换项…". No ring is
+  drawn on the button. Focus came back from the closing picker rather than from
+  the keyboard, and the spec asserts the active element, not a ring.
+- NQ-I en-1920x1080:
+  - `i1-add-focused`: ring on "Add files…".
+  - `i2-viewer-end`: scrolled to the scan table's last row with the header
+    intact.
+  - `i3-viewer-...-stop-17`: ring on "Preview focused".
+- NQ-I en-1366x768:
+  - `i1-workbench`: empty Workbench, no clipping.
+  - `i1-save-refused-focused`: ringed full-opacity Save, with Save As… and
+    Close dimmed.
+  - `i3-viewer-...-stop-09`: inset ring on the "Project: Test project" header
+    chip.
+- NQ-I en-960x640:
+  - `i1-conversion`: single-pane Conversion with the vendor-scope notice.
+  - `i1-conversion-add-focused`: roster unfolded full width, ring on "Add
+    files…".
+- NQ-I zh-CN-1920x1080 `i1-save-refused-focused`: ring on 保存.
+- NQ-I zh-CN-1366x768 `i2-viewer-end`: 扫描列表 scrolled to its end.
+- NQ-I zh-CN-960x640:
+  - `i3-viewer-...-stop-25`: ring on the spectrum panel's 复制图像.
+  - `i2-project-end`: history end with "由 MSCanvas 0.1.0 记录" above the
+    bottom edge.
+- No capture shows a cut-off control or untranslated chrome. The only overlap
+  is the density count touching the focus ring in M7.1 01 and 03. In the
+  controlled-IPC fixture, the selected spectrum reads "Spectrum 0, MS2" while
+  scan row 0 and the chromatogram caption say MS1. That is the synthetic table's
+  data, not a product claim.
+
+Product observations, reported and not fixed:
+
+- No functional defect.
+- One minor presentation issue: the figure context in the spectrum and
+  chromatogram headers interpolates the raw draft field text
+  (`SelectedSpectrumPanel.tsx:54`, `PreviewWorkspace.tsx:955`), so a typed
+  "00640" shows as "00640 × 480 px" while the export uses 640. Evidence: the
+  spectrum header in M7.1 captures 03 and 04, and the chromatogram header in
+  capture 04's page text in `evidence.json`.
+- The zh-CN density-count crowding above (M7.1 01 and 03) is cosmetic.
+
+Still uncovered:
+
+- Installed-release behaviour. Both groups ran the `e2e`-feature binary, and
+  NQ-I used controlled IPC.
+- Any DPI other than 144. M7.1 ran only its 144-DPI anchor, 1366x768.
+- Compact density inside NQ-I, and motion settings.
+- The PM9 state families the prepared driver never addresses: held
+  loading/errors, running conversion and targeted-task outcomes,
+  damaged/stored-result recovery and expanded figure controls.
+- Conversion and engine outcomes: none was produced in this window. The only
+  provider work was discovery probes and NQ-N2's preview reads of the mzML copy
+  (sampled: three `msaccess.exe` in NQ-N2, one `msconvert.exe` in NQ-I).
+
+With I1-I3 passing natively in both locales at all three anchors, the prepared
+NQ-I matrix is qualified. PM9 integrated native acceptance stays open for those
+state families.

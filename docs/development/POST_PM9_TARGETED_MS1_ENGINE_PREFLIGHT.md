@@ -192,8 +192,8 @@ The current source's write surfaces are:
 | Project-adjacent `<name>.mscanvas.payloads/` | Managed result payloads and the project documents are test-owned beneath the directories above, not user projects. Their rows/evidence are the assertions' inputs. |
 | Future evidence directory | Use a new run/group name under the qualification's owned evidence root. Keep stdout/stderr, exact argv and filters, exit codes, per-test outcomes, source/binary/runtime identities, process tree, admission/refusal and cleanup observations. No such executed evidence was created here. |
 
-At inspection, `TEMP` and `TMP` both named
-`C:\Users\rough\AppData\Local\Temp`, while the checkout/work area is on `D:`.
+At inspection, `TEMP` and `TMP` both named the per-user temp directory on `C:`
+(`C:\Users\<user>\AppData\Local\Temp`), while the checkout/work area is on `D:`.
 Drive letters alone are not proof of distinct volume identities. The
 cross-volume cases call `directory_volume` and `object_identity` and assert
 that the measured IDs differ (`tests.rs:3012–3019`); those checks were not run.

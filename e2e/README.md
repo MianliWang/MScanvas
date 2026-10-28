@@ -135,7 +135,7 @@ and not in the repository. Open it on its own, in any browser, beside the
 review window:
 
 ```powershell
-Start-Process "C:\Users\rough\Downloads\mscanvas_unified_demo_v5_11.html"
+Start-Process "$env:USERPROFILE\Downloads\mscanvas_unified_demo_v5_11.html"
 ```
 
 Its recorded identity is in `docs/phases/pm9/baseline.md` §3 (490,253 bytes and
