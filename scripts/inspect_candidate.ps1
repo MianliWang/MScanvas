@@ -104,7 +104,7 @@ try {
             path   = $ControlExecutable
             bytes  = (Get-Item -LiteralPath $ControlExecutable).Length
             sha256 = (Get-FileHash -LiteralPath $ControlExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
-            note   = "a QA build from an earlier milestone, at a different source revision; used only to show the derived markers are findable"
+            note   = "a QA build, used only to show the derived markers are findable; this inspection does not establish which source revision built it"
         }
     } else { $null }
     $findings = @()
