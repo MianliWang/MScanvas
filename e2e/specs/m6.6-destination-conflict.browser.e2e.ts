@@ -177,7 +177,10 @@ describe("M6.6 destination and conflict review", () => {
     await browser.waitUntil(async () => (await requests(DESCRIBE)).length === before + 1);
     expect(await browser.$(destination("sourceSibling")).isSelected()).toBe(true);
     expect(await isRefused(CONVERT)).toBe(true);
-    await scrollNestedIntoView("#conversion-plan-pending");
+    // The wait is said once, by the lane notice Convert points at.
+    await scrollNestedIntoView("#conversion-availability-plan-reading");
+    expect(await browser.$("#conversion-availability-plan-reading").getText()).toBe(en.m74CnvNoticePlanReading);
+    expect(await browser.$(CONVERT).getAttribute("aria-describedby")).toContain("conversion-availability-plan-reading");
     expect(await requestedDestination()).toBeNull();
     expect((await requests(DESCRIBE)).at(-1)).toEqual({ request: {
       handles: [VENDOR_ROW.handle], intentId: shippedIntent.id, conflictPolicy: "fail",
@@ -277,12 +280,11 @@ describe("M6.6 destination and conflict review", () => {
     await openBoundDetails();
     await scrollNestedIntoView('.conversion-running [aria-label="Queue destination"]');
     expect(await actual.getText()).toContain("Original");
-    expect(await actual.getText()).toContain("Bound when this queue started; revalidated before each attempt");
+    expect(await actual.getText()).toContain("Fixed when the queue started");
     await captureView("bound-queue", '.conversion-running [aria-label="Queue destination"]');
     expect(await requestedDestination()).toBe("One local folder, chosen after Convert");
     await scrollNestedIntoView("#conversion-conflict-scope");
-    expect(await browser.$("#conversion-conflict-scope").getText()).toContain("a partial collision fails that item");
-    expect(await browser.$("#conversion-conflict-scope").getText()).toContain("never overwritten or automatically renamed");
+    expect(await browser.$("#conversion-conflict-scope").getText()).toContain("never overwritten or renamed");
     expect(await browser.$$(`${PANEL} input[type="checkbox"]`)).toHaveLength(0);
   });
 

@@ -46,8 +46,7 @@ const PLOT_PIXELS = 1_000;
 const SETTLING = { timeout: 15_000 } as const;
 const VENDOR_ROW = shimadzuDataset(1);
 
-const CHECKING =
-  "Selecting a scan is unavailable while the installed ProteoWizard backend is being checked.";
+const CHECKING = "Scan selection is paused while ProteoWizard is checked.";
 
 afterEach(() => {
   cleanup();
@@ -227,7 +226,7 @@ describe("the viewer's selection availability", () => {
 
     held.resolve(unavailableBackend);
     await waitFor(() => {
-      expect(notice()?.textContent).toContain("no usable backend");
+      expect(notice()?.textContent).toContain("Scan selection needs ProteoWizard, which is unavailable.");
     }, SETTLING);
 
     // The run stays on screen and stays readable: nothing about the reading

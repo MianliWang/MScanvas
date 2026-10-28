@@ -340,7 +340,8 @@ describe("M7.2 workbench shell and grouped roster", () => {
       const before = await ipcCalls();
       await browser.$("#dataset-roster-search").setValue(selectedFile.fileName);
       expect(await browser.$(".roster-empty strong").getText()).toBe(language === "en" ? "No matching rows are visible" : "没有可见的匹配行");
-      expect(await browser.$(".roster-empty span").getText()).toBe(language === "en" ? "Clear the search or expand a group. Hidden highlighted rows remain selected." : "请清除搜索或展开分组。隐藏的高亮行仍保持选中。");
+      // The heading and Clear search say it; no help sentence restates them.
+      expect(await browser.$(".roster-empty span").isExisting()).toBe(false);
       expect(await browser.$(`${group} .group-count`).getText()).toBe("1");
       await capture(`review-collapsed-match-${language}`);
       await browser.$(`${group} .group-disclosure`).click();
@@ -620,7 +621,8 @@ describe("M7.2 workbench shell and grouped roster", () => {
     // original in zh-CN since M7.5 (ownedErrorMessages.ts, `errorReportedAsSent`;
     // docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md, "Localization and
     // accessibility coverage").
-    expect(await viewerAnnouncement()).toBe("无法读取工作区列表. 后端的原始报告（未翻译）：Controlled roster refusal 原文");
+    // The message and its detail are joined in the locale's own punctuation.
+    expect(await viewerAnnouncement()).toBe("无法读取工作区列表。后端的原始报告（未翻译）：Controlled roster refusal 原文");
     await capture("16a-zh-refused-announcement");
     await locale("en");
     const extra = [0, 1, 2].map(index => ({ ...selectedFile, handle: `async-${index}`, fileName: `异步样本_${index}.raw`, sourceKind: "thermo_raw" }));

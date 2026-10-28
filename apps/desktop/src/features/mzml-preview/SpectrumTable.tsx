@@ -292,9 +292,13 @@ export const SpectrumTable = memo(function SpectrumTable({
       <header className="panel-header compact">
         <div>
           <h2 id="spectrum-table-heading">{t("scansTitle")}</h2>
-          <p className="scan-result-count" aria-live="polite">{t("scanCounts", {
+          {/* One number while every row is loaded and none is filtered out;
+              the three counts, and the loaded-prefix disclosure, only where
+              they differ. */}
+          <p className="scan-result-count" aria-live="polite">{!table.truncated && view.options.query.trim() === "" &&
+            view.options.msLevel === null ? t("scanCountAll", { count: table.totalRowCount }) : t("scanCounts", {
             visible: rowCount, total: table.totalRowCount, count: table.rows.length,
-          })}{" · "}{t(table.truncated ? "scanPrefix" : "scanComplete")}</p>
+          }) + (table.truncated ? ` · ${t("scanPrefix")}` : "")}</p>
         </div>
         {/* Beside the heading rather than under the plot: these step through
             this table's order, and they stay available for a preview whose

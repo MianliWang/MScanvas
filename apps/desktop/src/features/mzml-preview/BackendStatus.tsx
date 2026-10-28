@@ -207,9 +207,10 @@ export function BackendStatus({
    * The offline setup help.
    *
    * Reachable in every state, including the states with no reading and no
-   * installation at all, and it explains the three things a reader actually
-   * needs: that ProteoWizard is theirs to install, that a folder they choose
-   * lasts for this session only, and which control does what.
+   * installation at all. It holds only what no control says: that ProteoWizard
+   * is theirs to install, that a folder they choose lasts for this session
+   * only, the support target and what needs a backend. The buttons name their
+   * own actions.
    */
   const help = (
     <details
@@ -228,11 +229,6 @@ export function BackendStatus({
       <summary>{t("backendHelpTitle")}</summary>
       <p>{t("backendHelpProvider")}</p>
       <p>{t("backendHelpSessionScope")}</p>
-      <ul>
-        <li>{t("backendHelpChoose")}</li>
-        <li>{t("backendHelpAutomatic")}</li>
-        <li>{t("backendHelpRecheck")}</li>
-      </ul>
       <p>{t("backendHelpTarget")}</p>
       <p>{t("backendHelpWithoutBackend")}</p>
     </details>

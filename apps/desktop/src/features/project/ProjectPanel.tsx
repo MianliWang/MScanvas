@@ -233,9 +233,9 @@ export function busyKey(busy: ProjectBusy) {
  *
  * Keyed on the same current state the row already displays, because that is
  * what decides it: the Workbench takes the file the project recorded, and
- * "which file is that" is a question only a check answers. Every state gets
- * its own sentence, since "check it first", "it changed" and "it is not there"
- * need three different things from the reader.
+ * "which file is that" is a question only a check answers. "It changed" and
+ * "it is not there" are said by the row's own state text; only "check it
+ * first" and "the Workbench is busy" have a sentence of their own here.
  */
 function unavailableToAddKey(input: ProjectInput, workspaceBusy: boolean) {
   if (input.verification !== "matchingRecordedContent") {
@@ -629,8 +629,9 @@ export function ProjectPanel({
           <h2>{state.open ? state.name : t("projectNone")}</h2>
           {/* The one disclosure this document needs, and it is not hidden in a
               tooltip: a project records file names, locations and content
-              digests, so it can reveal what someone was working on. */}
-          <p className="project-privacy">{t("projectPrivacy")}</p>
+              digests, so it can reveal what someone was working on. Said while
+              a project is open, which is before Save As can write one. */}
+          {state.open ? <p className="project-privacy">{t("projectPrivacy")}</p> : null}
         </div>
         <div className="project-actions">
           {/* With nothing open, New project is the one emphasised next action
@@ -666,7 +667,7 @@ export function ProjectPanel({
             className="secondary-button"
             aria-disabled={working || !state.open || !state.published || undefined}
             aria-describedby={state.open ? undefined : NONE_HINT_ID}
-            title={!state.open ? t("projectNeedsProject") : !state.published ? t("projectSaveNeedsLocation") : undefined}
+            title={state.open && !state.published ? t("projectSaveNeedsLocation") : undefined}
             onClick={() => {
               if (!working && state.open && state.published) void session.saveProject();
             }}
@@ -678,7 +679,6 @@ export function ProjectPanel({
             className="secondary-button"
             aria-disabled={working || !state.open || undefined}
             aria-describedby={state.open ? undefined : NONE_HINT_ID}
-            title={state.open ? undefined : t("projectNeedsProject")}
             onClick={() => {
               if (!working && state.open) void session.saveProjectAs();
             }}
@@ -690,7 +690,6 @@ export function ProjectPanel({
             className="secondary-button"
             aria-disabled={working || !state.open || undefined}
             aria-describedby={state.open ? undefined : NONE_HINT_ID}
-            title={state.open ? undefined : t("projectNeedsProject")}
             onClick={() => {
               if (!working && state.open) void session.closeProject();
             }}
@@ -786,12 +785,11 @@ export function ProjectPanel({
 
       {/* Below 1700px the contextual region is closed unless the user asked
           for it, and a narrow window folds it away entirely. Inspecting an
-          object would then appear to do nothing, so this says where the answer
-          went and offers the one control that brings it back -- the same
-          toggle the header owns, not a second mechanism. */}
+          object would then appear to do nothing, so this offers the one control
+          that brings the answer back -- the same toggle the header owns, not a
+          second mechanism. */}
       {inspecting !== null && !detailsPresent && onRevealDetails !== undefined ? (
         <p className="project-inspect-hint" data-project-inspect-hint="">
-          <span>{t("provenanceInDetails")}</span>
           <button type="button" className="link-button" onClick={onRevealDetails}>
             {t("provenanceShowDetails")}
           </button>
@@ -941,6 +939,7 @@ export function ProjectPanel({
                   const layer = layerOf(input);
                   const attached = inWorkbench(input) !== null;
                   const reasonId = `project-layer-reason-${input.id}`;
+                  const addRefused = unavailableToAddKey(input, workspaceBusy);
                   return (
                     <li
                       key={input.id}
@@ -1033,9 +1032,10 @@ export function ProjectPanel({
                                 : `project-state-${input.id}`
                             }
                             title={
-                              unavailableToAddKey(input, workspaceBusy) === null
-                                ? undefined
-                                : t(unavailableToAddKey(input, workspaceBusy) as "projectAddNeedsCheck")
+                              addRefused === "projectAddNeedsCheck" ||
+                              addRefused === "projectAddWorkspaceBusy"
+                                ? t(addRefused)
+                                : undefined
                             }
                             aria-label={t("projectAddToWorkbenchNamed", { name: input.label })}
                             data-project-add-to-workbench={input.id}

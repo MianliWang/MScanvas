@@ -87,7 +87,8 @@ describe("session Settings in the real application composition", () => {
     expect(dialog).toHaveAccessibleName(zh.settings);
     expect(document.documentElement.lang).toBe("zh-CN");
     expect(density()).toBe("compact");
-    expect(within(dialog).getByText(zh.storageSaved)).toBeVisible();
+    // The normal saved state says nothing; only a problem earns a footer note.
+    expect(dialog.querySelector("[data-storage-note]")).toBeEmptyDOMElement();
     press(dialog, zh.apply);
     await waitFor(() => expect(screen.getByRole("button", { name: zh.settings })).toHaveFocus());
     expect(screen.queryByRole("dialog")).toBeNull();

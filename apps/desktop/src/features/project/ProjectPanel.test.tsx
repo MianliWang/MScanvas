@@ -836,18 +836,19 @@ describe("the project surface", () => {
     // picker and starts no work.
     expect(api.calls).toEqual(["getProjectState"]);
     // Save, Save As and Close are refused but reachable, and each says why:
-    // its description is the no-project sentence, its tooltip the reason
-    // (PM9.7 F1).
+    // its description is the visible no-project sentence, with no tooltip
+    // repeating it (PM9.7 F1).
     for (const name of [en.projectSave, en.projectSaveAs, en.projectClose]) {
       const refused = screen.getByRole("button", { name });
       expect(refused.getAttribute("aria-disabled")).toBe("true");
       expect((refused as HTMLButtonElement).disabled).toBe(false);
-      expect(refused.getAttribute("title")).toBe(en.projectNeedsProject);
+      expect(refused.getAttribute("title")).toBeNull();
       const described = document.getElementById(refused.getAttribute("aria-describedby") ?? "");
       expect(described?.textContent).toBe(en.projectNoneHint);
     }
-    // Nothing claims a project that is not there.
+    // Nothing claims a project that is not there, nor describes one.
     expect(screen.queryByText(en.projectReferences)).toBeNull();
+    expect(screen.queryByText(en.projectPrivacy)).toBeNull();
   });
 
   it("emphasises New project with nothing open in Simplified Chinese too (PM9.7 F2)", async () => {

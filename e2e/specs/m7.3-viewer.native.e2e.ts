@@ -201,7 +201,7 @@ describe("M7.3 real native viewer and committed exports", function () {
     await browser.$(SCANS).waitForExist(); await browser.$(RT).waitForDisplayed();
     await browser.$(".workbench-home").click();
     await capture("01-native-source-entry");
-    expect(await browser.$(SCANS).getText()).toContain("12 matches / 12 loaded rows / 12 reported spectra");
+    expect(await browser.$(SCANS).getText()).toContain("12 spectra");
     const header = browser.$(SCANS + ' [role="columnheader"]:nth-child(8) button'); await header.click(); await header.click();
     // Current msaccess emits this raw native identifier and RT in multiples of
     // 60 from the fixture's minute CV values; the UI still reports units unknown.
@@ -216,7 +216,7 @@ describe("M7.3 real native viewer and committed exports", function () {
     await browser.$(SCANS + " input[type=search]").click();
     await browser.keys(["Control", "a"]); await browser.keys("Backspace");
     await browser.waitUntil(async () => await browser.$(SCANS + " input[type=search]").getValue() === "" &&
-      (await browser.$(SCANS).getText()).includes("12 matches / 12 loaded rows / 12 reported spectra"));
+      (await browser.$(SCANS).getText()).includes("12 spectra"));
     await browser.$(row(7) + ' [role="gridcell"]:nth-child(6)').click();
     await browser.waitUntil(async () => await browser.$("#selected-spectrum-summary").getText() === "Spectrum 7, MS2, 12 points.");
     const before = (await reads()).filter(call => call.command === "load_selected_spectrum").length;

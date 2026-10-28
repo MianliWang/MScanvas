@@ -110,7 +110,7 @@ describe("mzML preview workspace", () => {
     expect(
       screen.getByText("ProteoWizard was not found on this computer."),
     ).toBeVisible();
-    expect(screen.getByText("Install or repair ProteoWizard yourself, or point MSCanvas at a folder that holds it.")).toBeVisible();
+    expect(screen.getByText("Install or repair ProteoWizard, or choose its folder.")).toBeVisible();
     // Reading a file cannot succeed without a backend, so it is not offered.
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // Curating the workspace is not backend work, so it stays available: the
@@ -300,7 +300,7 @@ describe("mzML preview workspace", () => {
     const identifier = "controllerType=0 controllerNumber=1 scan=1";
     selectRowByIdentifier(identifier);
 
-    const retry = await screen.findByRole("button", { name: "Try loading this spectrum again" });
+    const retry = await screen.findByRole("button", { name: "Reload spectrum" });
     const panel = retry.closest("section")!;
     // The failure, in the panel it happened to, beside the selection it was for.
     expect(within(panel).getByText(/could not be loaded/u)).toBeVisible();
@@ -455,7 +455,7 @@ describe("mzML preview workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
 
     expect(await screen.findByText(/has neither msconvert.exe nor msaccess.exe/)).toBeVisible();
-    expect(screen.getByText(/Install or repair ProteoWizard yourself/)).toBeVisible();
+    expect(screen.getByText(/Install or repair ProteoWizard, or choose its folder/)).toBeVisible();
     // Both ways out, and nothing that asks for an executable path.
     expect(screen.getByRole("button", { name: "Search automatically" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Choose a different folder…" })).toBeEnabled();
@@ -693,9 +693,7 @@ describe("mzML preview workspace", () => {
     // negative signal in it.
     //
     // All four points are drawn; none is dropped for being below zero.
-    await screen.findByText(
-      /Drawn as 4 sticks of the 4 observations this spectrum has between m\/z 300\.0000 and 301\.5000\. Every one of them is drawn\./,
-    );
+    await screen.findByText(/4 sticks · 4 source observations in this range/);
     expect(
       screen.getByText(
         /2 points carry negative intensity\./,
@@ -730,12 +728,10 @@ describe("mzML preview workspace", () => {
     expect(await findSpectrumPlot()).toHaveAccessibleName(
       "Spectrum 2, MS2, 12 points.",
     );
-    // The drawing names the window it answers and how many observations the
-    // retained spectrum holds there -- which is the number a reader needs, and
-    // is not the length of the array this document received.
-    await screen.findByText(
-      /Drawn as 12 sticks of the 12 observations this spectrum has between m\/z 300\.0000 and 305\.5000\./,
-    );
+    // The drawing says how many observations the retained spectrum holds in
+    // the window it answers -- which is the number a reader needs, and is not
+    // the length of the array this document received.
+    await screen.findByText(/12 sticks · 12 source observations in this range/);
     expect(api.requestedSpectra).toEqual([2]);
     // One drawing for one committed window, asked for the whole domain.
     expect(api.spectrumProjectionRequests).toEqual([
@@ -789,21 +785,21 @@ describe("mzML preview workspace", () => {
 
     const plot = await findSpectrumPlot();
     expect(plot).toHaveAccessibleName("Spectrum 0, MS2, 900,000 points.");
-    fireEvent.click(screen.getByText("Spectrum details and identifiers"));
+    fireEvent.click(screen.getByText("Spectrum details"));
     expect(screen.getByText("Base peak").nextElementSibling).toHaveTextContent("812.5000 at 4.200e+6");
     // What the drawing covers, now that this spectrum has a viewport. The
     // sentence this replaces -- "the drawing covers the first 8 of those
     // points" -- described the transferred prefix, and since M5.2 the drawing
     // is not taken from it: each committed range is drawn from the complete
     // spectrum Rust retained.
-    expect(screen.getByRole("note")).toHaveTextContent("8 transferred points; drawing and source facts use the complete retained spectrum.");
+    expect(screen.getByRole("note")).toHaveTextContent("8 points transferred; the drawing and details use the full retained spectrum.");
     // The tallest point in the prefix is never presented as the spectrum's.
     expect(plot).not.toHaveAccessibleName(/359\.00/);
     // The notice says what the transfer bound still costs -- which is not the
     // drawing any more -- so it cannot contradict the whole-spectrum facts
     // stated beside it.
     expect(screen.getByRole("note")).toHaveTextContent(
-      "8 transferred points; drawing and source facts use the complete retained spectrum.",
+      "8 points transferred; the drawing and details use the full retained spectrum.",
     );
   });
 
@@ -817,10 +813,9 @@ describe("mzML preview workspace", () => {
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
 
-    expect(await within(screen.getByRole("region", { name: "Selected spectrum" })).findByText("No spectrum at index 1")).toBeVisible();
-    expect(screen.getByText(/The backend reported no spectrum at that index\./)).toBeVisible();
+    expect(await within(screen.getByRole("region", { name: "Selected spectrum" })).findByText("Spectrum 1 is not in this run")).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "Try loading this spectrum again" }),
+      screen.queryByRole("button", { name: "Reload spectrum" }),
     ).not.toBeInTheDocument();
   });
 
@@ -935,7 +930,7 @@ describe("mzML preview workspace", () => {
     // Two separate reads of one file. MSCanvas shows both rather than picking
     // one and presenting a single acquisition with a single size.
     expect(await screen.findByRole("note")).toHaveTextContent(
-      "The run summary reports 9 spectra and the spectrum list contains 6.",
+      "The run summary reports 9 spectra; the spectrum list contains 6.",
     );
   });
 
@@ -993,7 +988,7 @@ describe("mzML preview workspace", () => {
     // spectrum looks exactly like a centroided one.
     fireEvent.click(within(screen.getByRole("region", { name: "Selected spectrum" })).getByText("Source and drawing details"));
     expect(
-      screen.getByText(/does not report whether these are profile samples or centroided peaks; each stick/),
+      screen.getByText(/Profile or centroid is not reported; each stick is a measured point\./),
     ).toBeVisible();
     // No chromatogram count is emitted, so none is shown as zero.
     expect(screen.getByText("Chromatograms").nextElementSibling).toHaveTextContent("Not reported");
@@ -1267,16 +1262,18 @@ describe("native Explorer drop presentation", () => {
     fireEvent.click(retry, { detail: 0 });
     expect(addFiles).toHaveFocus();
     expect(screen.queryByText("Explorer drag-and-drop is unavailable")).toBeNull();
-    expect(document.querySelector(".workspace-drop-hint")).toHaveTextContent("Connecting native file drop…");
+    // Nothing is said about a gesture that cannot work yet.
+    expect(document.querySelector(".workspace-drop-hint")).toBeNull();
 
     await act(async () => {
       retryRegistration.resolve(() => undefined);
       await retryRegistration.promise;
     });
     await waitFor(() => {
-      expect(screen.getByText("Drop mzML files or folders to import")).toBeVisible();
       expect(api.rosterReads()).toBe(2);
     });
+    // Live drop needs no standing hint.
+    expect(document.querySelector(".workspace-drop-hint")).toBeNull();
 
     act(() => {
       recoveredListener?.({ sequence: 1, state: { status: "hovering", itemCount: 1 } });
@@ -3049,7 +3046,7 @@ describe("adding a folder of mzML files", () => {
       ),
     ).toBeVisible();
     expect(screen.queryByText("The folder could not be added")).toBeNull();
-    expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
+    expect(screen.queryByText(/workspace changed during the folder scan/)).toBeNull();
     // Awaited, because focus is restored by an effect that runs after the
     // import settles rather than in the same commit. Asserting it
     // synchronously passed whenever that effect had already flushed and failed
@@ -3090,9 +3087,9 @@ describe("adding a folder of mzML files", () => {
 
     expect(await screen.findByText("The folder could not be added")).toBeVisible();
     // The code's owned sentence, not the boundary's English (PM9 UI-44).
-    expect(screen.getByText(/MSCanvas stopped scanning that folder/u)).toBeVisible();
+    expect(screen.getByText(/That folder could not be fully read, so the scan stopped/u)).toBeVisible();
     expect(rosterRows()).toHaveLength(0);
-    expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
+    expect(screen.queryByText(/workspace changed during the folder scan/)).toBeNull();
   });
 
   it("keeps a committed first import hidden while Clear list is still pending", async () => {
@@ -3259,7 +3256,7 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
     expect(await screen.findByText("The folder could not be added")).toBeVisible();
-    expect(screen.getByText(/MSCanvas does not follow links when scanning/)).toBeVisible();
+    expect(screen.getByText(/That is a shortcut or link, not a folder/)).toBeVisible();
     expect(rosterRows()).toHaveLength(1);
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
     // Its own channel: nothing about the workspace was changed, so saying the
@@ -3285,7 +3282,7 @@ describe("adding a folder of mzML files", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
-    expect(await screen.findByText(/none of its files were added/)).toBeVisible();
+    expect(await screen.findByText(/so no files were added/)).toBeVisible();
     expect(rosterRows()).toHaveLength(1);
   });
 
@@ -3372,7 +3369,7 @@ describe("adding a folder of mzML files", () => {
     ).toBeVisible();
     expect(screen.queryByText(/No mzML files were found/)).toBeNull();
     expect(
-      screen.getByText(/skipped 2 linked or special filesystem entries/, VISIBLE),
+      screen.getByText(/Skipped 2 linked or special entries/, VISIBLE),
     ).toBeVisible();
     expect(
       screen.getByText(/nested deeper than MSCanvas walks in one scan/, VISIBLE),
@@ -3921,9 +3918,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
 });
 
 describe("saying what a folder import is doing", () => {
-  const STATUS =
-    "Folder import in progress. MSCanvas is waiting for a folder selection or " +
-    "scanning the chosen folder. The duration is not known.";
+  const STATUS = "Folder import in progress.";
 
   function spoken(): string {
     return document.querySelector("[data-live-region='folder']")?.textContent ?? "";

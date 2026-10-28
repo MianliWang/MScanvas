@@ -477,11 +477,6 @@ export function PreviewWorkspace() {
                 ? t("dropRelease", { count: workspace.dropPresentation.itemCount })
                 : t("dropAdding")}
             </strong>
-            {workspace.dropPresentation.status === "importing" ? (
-              <span>
-                {t("dropInspecting")}
-              </span>
-            ) : null}
           </div>
         </div>
       )}
@@ -952,7 +947,7 @@ export function PreviewWorkspace() {
                 exportToggle={
                   workspace.chromatogramExportToken === null ? null : (
                     <div className="figure-quick-actions"><QuickFigureActions busy={workspace.scientificExportBusy} quickVisible={!chromatogramExportOpen}
-                      context={[t("viewerChromatogram"), t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun"), `${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} px`]}
+                      context={[t("viewerChromatogram"), t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun"), `${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} ${t("pixels")}`]}
                       figureUnavailable={workspace.renderSettingsProblem !== null || (!workspace.chromatogramTraces.tic && !workspace.chromatogramTraces.bpc)}
                       pngUnavailable={workspace.pngDpiProblem !== null} onPreview={() => openFigure("chromatogram")}
                       onPng={() => workspace.exportChromatogram("png")} onCopy={workspace.copyChromatogramPlot} />
@@ -1022,9 +1017,6 @@ export function PreviewWorkspace() {
             {preview.status === "opening" ? (
               <div className="empty-state">
                 <strong>{t("readingEvidence")}</strong>
-                <span>
-                  {t("readingEvidenceHelp")}
-                </span>
               </div>
             ) : preview.status === "failed" ? (
               <div className="empty-state">
@@ -1099,10 +1091,15 @@ function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
  * percentage: nothing measures one.
  */
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessage): string {
-  if (workspace.dropSubscriptionStatus === "unavailable") return `${t("dropUnavailable")}. ${workspace.dropSubscriptionError === null ? t("addFiles") : ownedErrorMessage(workspace.dropSubscriptionError, t)}`;
-  if (workspace.dropSubscriptionStatus === "connecting") return t("shellDropConnecting");
+  if (workspace.dropSubscriptionStatus === "unavailable") {
+    return workspace.dropSubscriptionError === null
+      ? t("shellDropUnavailable")
+      : t("messageWithDetail", { message: t("dropUnavailable"), detail: ownedErrorMessage(workspace.dropSubscriptionError, t) });
+  }
+  // Nothing to say until drop is live: a hint about a gesture that cannot work yet is noise.
+  if (workspace.dropSubscriptionStatus === "connecting") return "";
   if (workspace.dropRejectedToken > 0) return `${t(workspace.dropRejectedReason === "drop_busy" ? "dropBusy" : "dropConversionBusy")}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
-  if (workspace.dropError !== null) return `${t("dropFailed")}. ${ownedErrorMessage(workspace.dropError, t)}`;
+  if (workspace.dropError !== null) return t("messageWithDetail", { message: t("dropFailed"), detail: ownedErrorMessage(workspace.dropError, t) });
   switch (workspace.dropPresentation.status) {
     case "idle": return "";
     case "hovering": return t("dropRelease", { count: workspace.dropPresentation.itemCount });
@@ -1128,7 +1125,7 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     if (rosterLoad.status === "failed" && roster.datasets.length === 0) {
       // Nor after the read failed, which is the same ignorance by another
       // route -- and the failure itself is worth hearing.
-      return `${t("rosterFailed")}. ${ownedErrorMessage(rosterLoad.error, t)}`;
+      return t("messageWithDetail", { message: t("rosterFailed"), detail: ownedErrorMessage(rosterLoad.error, t) });
     }
     return roster.datasets.length === 0
       ? t("rosterEmptyAnnouncement")
@@ -1147,8 +1144,8 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
       // the same spectrum is worse than either of them saying less.
       return t("viewerSpectrumLoaded", { index: String(spectrum.spectrum.index), count: spectrum.spectrum.pointCount });
     case "unavailable":
-      return t("viewerSpectrumUnavailable", { index: String(spectrum.requestedIndex) });
+      return t("viewerSpectrumAbsent", { index: String(spectrum.requestedIndex) });
     case "failed":
-      return `${t("viewerSpectrumFailed", { index: String(spectrum.index) })}. ${ownedErrorMessage(spectrum.error, t)}`;
+      return t("messageWithDetail", { message: t("viewerSpectrumFailed", { index: String(spectrum.index) }), detail: ownedErrorMessage(spectrum.error, t) });
   }
 }

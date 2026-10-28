@@ -127,7 +127,9 @@ describe("M6.7 explicit selected/all review", () => {
     expect(await isRefused(CONVERT)).toBe(true);
     expect(await names()).toEqual([]);
     expect(await requests(BEGIN)).toEqual([]);
-    await capture("order-review-withdrawn", "#conversion-plan-pending");
+    // The withdrawn review is said by the lane notice Convert points at.
+    expect(await browser.$(CONVERT).getAttribute("aria-describedby")).toContain("conversion-availability-plan-reading");
+    await capture("order-review-withdrawn", "#conversion-availability-plan-reading");
     await setInvokeResult(DESCRIBE, planned([3, 2, 1], { kind: "namedSubfolder", name: "Converted" }, "skip"));
     await releaseInvokeHold(DESCRIBE); await ready();
     expect(await names()).toEqual(["sample-3.raw", "sample-2.raw", "sample-1.raw"]);

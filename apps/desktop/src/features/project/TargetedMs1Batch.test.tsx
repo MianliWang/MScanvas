@@ -566,7 +566,7 @@ describe("a batch run", () => {
     const panel = query('[data-targeted-batch="ended"]');
     const hint = query("[data-targeted-details-hint]");
     expect(panel.contains(hint)).toBe(true);
-    expect(hint.textContent).toContain(en.provenanceInDetails);
+    expect(hint.textContent).toBe(en.provenanceShowDetails);
     expect(document.activeElement).toBe(show);
     expect(reveal).not.toHaveBeenCalled();
 

@@ -332,7 +332,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     // One added, one refused, and the refusal did not stop the other.
     expect(await browser.$(`${PANEL} .conversion-adoption-summary`).getText())
       .toBe("1 added, 0 already in the workspace, 1 not added.");
-    expect(await browser.$(PANEL).getText()).toContain(`${changedName} was not added: changed since it was converted.`);
+    expect(await browser.$(PANEL).getText()).toContain(`${changedName} was not added: it changed since it was converted.`);
     expect(await rosterNames()).toHaveLength(QUEUE_SIZE + 1);
 
     // The rows say what the adoption did with their own outputs. Waited for:

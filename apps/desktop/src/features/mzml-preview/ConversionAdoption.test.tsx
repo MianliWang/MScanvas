@@ -34,9 +34,6 @@ import type {
  * and disabled, selection and focus, and that no read is launched.
  */
 
-const ADOPT_EXPLANATION =
-  "MSCanvas verifies that each output is still the exact finalized file before adding it. Outputs are not previewed automatically.";
-
 function acquisition(index: number): SelectedFile {
   return {
     handle: `file-${String(index)}`,
@@ -142,19 +139,19 @@ describe("adding converted outputs to the workspace", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     expect(
-      await within(panel).findByText("2 converted mzML outputs are ready to add to this workspace."),
+      await within(panel).findByText("2 mzML outputs ready to add."),
     ).toBeVisible();
     const adopt = within(panel).getByRole("button", {
       name: "Add converted outputs to workspace",
     });
     expect(adopt).not.toHaveAttribute("aria-disabled");
-    expect(adopt).toHaveAccessibleDescription(ADOPT_EXPLANATION);
-    expect(within(panel).getByText(ADOPT_EXPLANATION)).toBeVisible();
+    // The action names itself; nothing describes it until it is refused.
+    expect(adopt).not.toHaveAttribute("aria-describedby");
 
     // The honest fallback, said before it is needed rather than after.
     expect(
       within(panel).getByText(
-        "Finalized files remain on disk. If this queue is replaced, they can still be added later with Add files….",
+        "If this queue is replaced, add its converted files with Add files….",
       ),
     ).toBeVisible();
   });
@@ -164,7 +161,7 @@ describe("adding converted outputs to the workspace", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     expect(
-      await within(panel).findByText("1 converted mzML output is ready to add to this workspace."),
+      await within(panel).findByText("1 mzML output ready to add."),
     ).toBeVisible();
     expect(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
@@ -252,9 +249,7 @@ describe("adding converted outputs to the workspace", () => {
     );
 
     expect(
-      await within(panel).findByText(
-        "All finalized outputs from this queue are already in the workspace.",
-      ),
+      await within(panel).findByText("0 added, 1 already in the workspace, 0 not added."),
     ).toBeVisible();
     expect(rows()).toHaveLength(2);
     // Still offered. A duplicate today can be a row the user removes tomorrow,
@@ -306,7 +301,7 @@ describe("adding converted outputs to the workspace", () => {
       await within(panel).findByText("1 added, 0 already in the workspace, 1 not added."),
     ).toBeVisible();
     expect(
-      within(panel).getByText("run-2.mzML was not added: changed since it was converted."),
+      within(panel).getByText("run-2.mzML was not added: it changed since it was converted."),
     ).toBeVisible();
     // No path anywhere. A bare "/" is no longer the test: `m/z` is scientific
     // notation and appears in the settings labels, so what must be absent is a
@@ -337,7 +332,7 @@ describe("adding converted outputs to the workspace", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     // The one finalized output, and only it. A cancelled item produced nothing.
     expect(
-      await within(panel).findByText("1 converted mzML output is ready to add to this workspace."),
+      await within(panel).findByText("1 mzML output ready to add."),
     ).toBeVisible();
     expect(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
@@ -387,11 +382,10 @@ describe("adding converted outputs to the workspace", () => {
     );
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    expect(
-      await within(panel).findByText(
-        "Nothing was converted, so there is nothing to add to the workspace.",
-      ),
-    ).toBeVisible();
+    // Nothing to add, so nothing is offered: each row and the queue's counts
+    // already say why.
+    await waitFor(() => expect(panel.querySelector('[data-item-state="failed"]')).not.toBeNull());
+    expect(panel.querySelector(".conversion-adoption")).toBeNull();
     expect(within(panel).queryByRole("button", { name: /Add converted/ })).toBeNull();
   });
 
@@ -515,16 +509,11 @@ describe("adding converted outputs to the workspace", () => {
     expect(
       within(panel).getByText("run-1.mzML was not added: the workspace is full."),
     ).toBeVisible();
-    // Reported and still offered, with copy that says what a second press does.
+    // Reported and still offered.
     const again = within(panel).getByRole("button", {
       name: "Add converted output to workspace",
     });
     expect(again).not.toHaveAttribute("aria-disabled");
-    expect(
-      within(panel).getByText(
-        "You can add them again. Anything already in the workspace is reported rather than added twice.",
-      ),
-    ).toBeVisible();
     fireEvent.click(again);
     await waitFor(() => {
       expect(api.adoptionRequests).toEqual(["1", "1"]);

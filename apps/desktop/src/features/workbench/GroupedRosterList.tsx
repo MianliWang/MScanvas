@@ -168,11 +168,12 @@ export function GroupedRosterList(props: Props) {
         line -- the English count, or Undo beside New group -- the count takes
         the band's second line, whole (PM9 UI-15). New group stays this row's
         first button: a row or group menu whose own trigger has left the
-        document returns focus to it. */}
+        document returns focus to it. The count says nothing while nothing is
+        highlighted or checked; it stays mounted because it is a live region. */}
     <div className="organization-toolbar">
       <button type="button" className="secondary-button" onClick={event => setEditing({ id: null, name: "", returnTo: event.currentTarget })}>{t("newGroup")}</button>
       {state.organization.history.length ? <button type="button" className="link-button" onClick={() => dispatch({ type: "organization", action: { type: "undo" } })}>{t("undoOrganization")}</button> : null}
-      <p className="roster-selection-context" aria-live="polite">{t("selectionContext", { total: state.selected.size, hidden: selectedHidden, checked: state.conversionMembership.size })}</p>
+      <p className="roster-selection-context" aria-live="polite">{state.selected.size === 0 && state.conversionMembership.size === 0 ? "" : t("selectionContext", { total: state.selected.size, hidden: selectedHidden, checked: state.conversionMembership.size })}</p>
     </div>
     <p id="roster-drag-instructions" className="visually-hidden">{t("dragInstructions")}</p>
     <div aria-labelledby="dataset-roster-heading" aria-multiselectable="true" aria-describedby="roster-keyboard-help" role="treegrid" className="dataset-roster-list grouped-roster" ref={rootRef}

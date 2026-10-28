@@ -224,37 +224,36 @@ describe("the setup", () => {
     expect(document.activeElement).toBe(control);
   });
 
-  it("keeps the recipe's scope and caveats before Run and its read path one disclosure away (PM9.5 O1)", async () => {
+  it("keeps the recipe's scope and caveats before Run, with no read-path narration (PM9.5 O1)", async () => {
     mount(layered());
     const setup = await openSetup();
     const run = query("[data-targeted-run]");
 
     // Experimental, not a validated method, not identification, Not detected
     // not an absence, positive-mode centroided MS1 and [M+H]+: all read before
-    // Run, none of it folded away.
+    // Run, none of it folded away. Which of the two lines carries a caveat is
+    // wording; that the pair carries every one of them is the rule.
     for (const text of [en.targetedExperimental, en.targetedDomain]) {
       const shown = within(setup).getByText(text);
       expect(shown.closest("details")).toBeNull();
       expect(precedes(shown, run)).toBe(true);
     }
-    expect(en.targetedDomain).toContain("not identification");
-    expect(en.targetedDomain).toContain(`${en.targetedOutcomeNotDetected} is not proof`);
-    expect(en.targetedDomain).toContain("positive-mode, centroided MS1");
-    expect(en.targetedDomain).toContain("[M+H]+");
+    const caveats = `${en.targetedExperimental} ${en.targetedDomain}`;
+    expect(caveats).toContain("not identification");
+    expect(caveats).toMatch(/not a validated quantitative method/i);
+    expect(caveats).toContain(`${en.targetedOutcomeNotDetected} is not proof`);
+    expect(caveats).toContain("positive-mode, centroided MS1");
+    expect(caveats).toContain("[M+H]+");
     // The same caveats, in the words zh-CN already uses for them.
-    expect(zh.targetedDomain).toContain("这不是鉴定");
-    expect(zh.targetedDomain).toContain(`${zh.targetedOutcomeNotDetected}并不证明`);
-    expect(zh.targetedDomain).toContain("正离子模式、已质心化的 MS1");
-    expect(zh.targetedDomain).toContain("[M+H]+");
+    const zhCaveats = `${zh.targetedExperimental} ${zh.targetedDomain}`;
+    expect(zhCaveats).toContain("这不是鉴定");
+    expect(zhCaveats).toContain(`${zh.targetedOutcomeNotDetected}并不证明`);
+    expect(zhCaveats).toContain("正离子模式、已质心化的 MS1");
+    expect(zhCaveats).toContain("[M+H]+");
 
-    // How the source is read is a closed native disclosure: a Tab stop of its
-    // own, opened by the reader, with the read path's whole sentence inside.
-    const disclosure = query<HTMLDetailsElement>("[data-targeted-read-path]");
-    expect(disclosure.open).toBe(false);
-    expect(within(disclosure).getByText(en.targetedReadPath)).toBeTruthy();
-    const summary = disclosure.querySelector("summary");
-    expect(summary?.textContent).toBe(en.targetedReadPathSummary);
-    expect(precedes(disclosure, run)).toBe(true);
+    // How the source is read is not narrated in the setup; the run's Details
+    // records the source view it actually used.
+    expect(document.querySelector("[data-targeted-read-path]")).toBeNull();
   });
 
   it("sets the open setup apart from the project's sections at the same heading level (PM9.5 O3)", async () => {
@@ -691,8 +690,6 @@ describe("a stored result", () => {
       "targetedSetupTitle",
       "targetedExperimental",
       "targetedDomain",
-      "targetedReadPathSummary",
-      "targetedReadPath",
       "targetedReportTitle",
       "targetedMeaning",
       "targetedIntensityNote",
@@ -709,7 +706,6 @@ describe("a stored result", () => {
       "targetedTableExports",
       "targetedTableExportHelp",
       "targetedFigureExports",
-      "targetedFigureExportHelp",
     ] as const) {
       expect(document.body.textContent, key).toContain(zh[key]);
       expect(document.body.textContent, key).not.toContain(en[key]);
@@ -720,7 +716,6 @@ describe("a stored result", () => {
     const domain = within(query("[data-targeted-setup]")).getByText(zh.targetedDomain);
     expect(domain.closest("details")).toBeNull();
     expect(precedes(domain, query("[data-targeted-run]"))).toBe(true);
-    expect(within(query("[data-targeted-read-path]")).getByText(zh.targetedReadPath)).toBeTruthy();
   });
 });
 
@@ -1505,9 +1500,9 @@ describe("the task as one path (PM9.5)", () => {
     const show = query(`[data-targeted-show-run="${RUN}"]`);
     show.focus();
     await press(show);
-    const hint = within(query("[data-targeted-run-block]")).getByText(en.provenanceInDetails)
-      .parentElement!;
-    expect(hint.hasAttribute("data-targeted-details-hint")).toBe(true);
+    const hint = query("[data-targeted-run-block] [data-targeted-details-hint]");
+    // The button says where the answer went; no sentence restates it.
+    expect(hint.textContent).toBe(en.provenanceShowDetails);
     expect(precedes(show, hint)).toBe(true);
     // The press only inspects: the keyboard stays on it, Details stays folded
     // and the run is the one inspected.

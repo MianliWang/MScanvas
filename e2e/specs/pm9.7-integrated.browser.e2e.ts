@@ -349,7 +349,8 @@ describe("PM9.7 integrated states, rendered", () => {
             refused: "true",
             disabled: false,
             opacity: "0.48",
-            title: words.projectNeedsProject,
+            // The visible hint is the reason; no tooltip repeats it.
+            title: "",
             describedBy: words.projectNoneHint,
           });
         }

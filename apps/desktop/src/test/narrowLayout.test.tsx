@@ -344,7 +344,7 @@ describe("narrow desktop layout markup", () => {
 
     expect(
       await screen.findByText(
-        "To add local data, choose Add files… in Acquisitions. If Acquisitions is not open, open it with the Acquisitions button in the header. Then activate an mzML row to inspect its plots and scans. Vendor acquisitions are not previewed; they remain available for conversion.",
+        "Open Acquisitions in the header if it is closed, choose Add files…, then activate an mzML row. Vendor acquisitions are not previewed; they remain available for conversion.",
       ),
     ).toBeVisible();
   });

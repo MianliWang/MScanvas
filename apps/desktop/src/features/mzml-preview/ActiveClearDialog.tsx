@@ -82,7 +82,6 @@ export function ActiveClearDialog({ returnTo, onClose, onEmptyRosterClosed, onEx
       <div aria-live="polite" role="status">
         {reading ? t("clearReading") : executing ? t("clearStopping") : problem ? t(problem) : plan ? t("clearCounts", { count: plan.removableCount, total: plan.totalCount, protected: String(plan.protectedCount) }) : ""}
       </div>
-      {plan?.removableCount === 0 ? <p>{t("clearNothing")}</p> : null}
       <div className="group-dialog-actions">
         <button ref={returnButton} className="secondary-button" type="button" disabled={executing} onClick={onClose}>{t("clearReturn")}</button>
         {plan === null && !reading ? <button ref={reevaluateButton} className="secondary-button" type="button" disabled={executing} onClick={() => setRevision(value => value + 1)}>{t("clearReevaluate")}</button> : null}

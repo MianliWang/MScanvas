@@ -154,8 +154,9 @@ export const PreviewSummary = memo(function PreviewSummary({
         </div>
       ))}
 
-      <div className="inspector-section">
-        <h3>{t("summaryTiming")}</h3>
+      {/* Session measurements, on demand: they describe this session, not the run. */}
+      <details className="inspector-section">
+        <summary>{t("summaryTiming")}</summary>
         <p className="quiet-text">{t("summaryTimingHelp")}</p>
         <dl className="metadata-list">
           <MeasurementRow
@@ -174,7 +175,7 @@ export const PreviewSummary = memo(function PreviewSummary({
             t={t}
           />
         </dl>
-      </div>
+      </details>
     </section>
   );
 })

@@ -1536,7 +1536,9 @@ describe("the linked viewer, rendered", () => {
       // owner tests with them: Chromatogram.test.tsx "refuses a table the
       // preview did not load whole, and says why" and SpectrumTable.test.tsx
       // "does not present the end of a truncated prefix as the end of the run".
-      expect(await browser.$(CHROMATOGRAM).getText()).toContain("loaded table is incomplete");
+      expect(await browser.$(CHROMATOGRAM).getText()).toContain(
+        "Only part of the scan table is loaded; TIC/BPC need the complete table.",
+      );
 
       // The table still works, and says outright that its last row is not the
       // end of the run.

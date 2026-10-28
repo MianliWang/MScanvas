@@ -65,7 +65,7 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
     const convert = await within(panel).findByRole("button", { name: "Convert 0 eligible…" });
     expect(convert).toHaveAttribute("aria-disabled", "true");
     expect(convert).not.toBeDisabled();
-    expect(convert).toHaveAccessibleDescription(/To convert, this scope needs supported vendor acquisitions/);
+    expect(convert).toHaveAccessibleDescription(/No supported vendor acquisitions in this scope/);
     // A refused press reaches nothing.
     convert.focus();
     expect(document.activeElement).toBe(convert);
@@ -190,13 +190,13 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
     expect(await within(panel).findByRole("heading", { name: "Next conversion" })).toBeVisible();
     const failed = [...panel.querySelectorAll('li[data-item-state="failed"]')];
     expect(failed.map((row) => row.querySelector(".conversion-queue-retry")?.textContent)).toEqual([
-      "Rerun by Retry",
-      "Not rerun: another attempt would not change it",
+      "Retryable",
+      "Not retryable",
     ]);
     const scope = panel.querySelector("#conversion-retry-scope");
     expect(scope).not.toBeNull();
     expect(scope!.closest(".visually-hidden")).toBeNull();
-    expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAccessibleDescription(/Reruns only the failures/);
+    expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAccessibleDescription(/original folder, conflict setting and order/);
 
     // The outputs are the primary; the next conversion's start is not.
     const convert = await within(panel).findByRole("button", { name: "Convert 1 eligible…" });
@@ -223,7 +223,7 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     await within(panel).findByText("Queue stopped");
     expect(panel.querySelector(".conversion-convert-again")?.textContent).toBe(
-      "Rows that were cancelled, not run or skipped by you are not rerun in place. To convert them, check only those rows in the list and review the next conversion below.",
+      "To convert rows that were cancelled, not run or skipped by you, check only those rows and use Next conversion below.",
     );
     expect(within(panel).queryByRole("button", { name: /^Retry/ })).toBeNull();
   });

@@ -99,7 +99,7 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
     </p>
     <Dialog.Portal>
       <Dialog.Overlay className="settings-overlay" />
-      <Dialog.Content className="settings-dialog" data-settings-dialog=""
+      <Dialog.Content className="settings-dialog" data-settings-dialog="" aria-describedby={undefined}
         ref={(node) => { if (node !== null) content.current = node; }}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
@@ -110,7 +110,7 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
           // radio is disabled, and `focus()` on a disabled control does
           // nothing -- so the dialog itself takes the keyboard rather than
           // leaving it on a trigger that is now inside an `aria-hidden`
-          // subtree, with the title and description never announced.
+          // subtree, with the title never announced.
           const checked = content.current?.querySelector<HTMLInputElement>('input[type="radio"]:checked');
           if (checked !== null && checked !== undefined && !checked.disabled) checked.focus();
           else content.current?.focus({ preventScroll: true });
@@ -149,7 +149,6 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
         <header className="settings-dialog-header">
           <div>
             <Dialog.Title>{message("settings")}</Dialog.Title>
-            <Dialog.Description>{message("description")}</Dialog.Description>
           </div>
           <Dialog.Close asChild>
             <button className="settings-close" type="button" disabled={saving} aria-label={message("close")}>
@@ -160,17 +159,16 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
         <div className="settings-dialog-body">
           <div className="settings-category">
             <strong>{message("appearance")}</strong>
-            <span>{message("appearanceHelp")}</span>
           </div>
           <div className="settings-fields">
-            <SettingField labelId={languageId} label={message("language")} help={message("languageHelp")}>
-              <ChoiceField labelledBy={languageId} describedBy={`${languageId}-help`} value={preferences.effective.locale}
+            <SettingField labelId={languageId} label={message("language")}>
+              <ChoiceField labelledBy={languageId} value={preferences.effective.locale}
                 disabled={frozen}
                 options={[{ value: "en", label: message("english") }, { value: "zh-CN", label: message("simplifiedChinese") }]}
                 onChange={(locale) => preferences.preview({ ...preferences.effective, locale })} />
             </SettingField>
-            <SettingField labelId={densityId} label={message("density")} help={message("densityHelp")}>
-              <ChoiceField labelledBy={densityId} describedBy={`${densityId}-help`} value={preferences.effective.density}
+            <SettingField labelId={densityId} label={message("density")}>
+              <ChoiceField labelledBy={densityId} value={preferences.effective.density}
                 disabled={frozen}
                 options={[{ value: "comfortable", label: message("comfortable") }, { value: "compact", label: message("compact") }]}
                 onChange={(density) => preferences.preview({ ...preferences.effective, density })} />
@@ -250,7 +248,7 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
                 : save.status === "failed" || save.status === "storedRecordUnusable" ? message("storageNotSaving")
                   : storage.status === "unavailable" || save.status === "unavailable" ? message("storageSessionOnly")
                     : storage.status === "unusable" || storage.status === "readFailed" ? message("storageNotSaving")
-                      : message("storageSaved")
+                      : ""
           }</p>
           <div className="settings-dialog-actions">
             <button className="secondary-button settings-reset" type="button" disabled={frozen} onClick={preferences.reset}>{message("reset")}</button>

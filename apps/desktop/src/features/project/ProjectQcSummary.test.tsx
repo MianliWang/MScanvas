@@ -348,7 +348,7 @@ describe("the recorded report", () => {
       "123.456",
     ]);
     for (const row of positions) {
-      expect(row.querySelector("[data-qc-unit]")?.textContent).toBe(en.qcReportUnitNotReported);
+      expect(row.querySelector("[data-qc-unit]")?.textContent).toBe(en.qcReportNotReported);
     }
     // No grade and no verdict anywhere in the report.
     expect(surface.textContent?.toLowerCase()).not.toMatch(/pass|fail|good|poor|grade/);
@@ -664,7 +664,9 @@ describe("in Simplified Chinese", () => {
       expect(surface.getAllByText(zh[key]).length, key).toBeGreaterThan(0);
       expect(zh[key], key).not.toEqual(en[key]);
     }
-    expect(surface.getAllByText(zh.qcReportUnitNotReported)).toHaveLength(5);
+    expect(Array.from(report().querySelectorAll("[data-qc-unit]"), (cell) => cell.textContent)).toEqual(
+      Array.from({ length: 5 }, () => zh.qcReportNotReported),
+    );
     const region = within(details());
     expect(region.getByText(zh.projectArtifactQcSummary)).toBeTruthy();
     expect(region.getByText(zh.provenanceProducer)).toBeTruthy();
@@ -673,7 +675,7 @@ describe("in Simplified Chinese", () => {
     for (const key of [
       "qcReportTitle",
       "qcReportMeaning",
-      "qcReportUnitNotReported",
+      "qcReportNotReported",
       "projectCaptureQc",
       "provenanceProducer",
       "provenanceSourceLayer",

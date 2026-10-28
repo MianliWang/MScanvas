@@ -234,14 +234,14 @@ describe("the linked chromatogram and spectrum section", () => {
     // act: the reason while the section is closed, what it draws once it opens.
     expect(linkedReason()).toBe("Select a scan and wait for its spectrum to load.");
     expect(
-      within(linkedSection()).queryByText(/The upper panel shows this chromatogram over the chosen range/u),
+      within(linkedSection()).queryByText(/^Top: chromatogram/u),
     ).toBeNull();
 
     await selectAScan();
     expect(linkedReason()).toBeNull();
     expect(
       within(linkedSection()).getByText(
-        /The upper panel shows this chromatogram over the chosen range and marks the selected scan/u,
+        /^Top: chromatogram over the chosen range, selected scan marked\./u,
       ),
     ).toBeVisible();
   });
@@ -338,7 +338,7 @@ describe("the linked chromatogram and spectrum section", () => {
     // offered -- and the sentence names the thing the reader can change.
     fireEvent.click(screen.getByRole("checkbox", { name: "BPC" }));
     await waitFor(() => {
-      expect(linkedReason()).toBe("Show at least one chromatogram trace to create a linked figure.");
+      expect(linkedReason()).toBe("Show at least one trace to export the linked figure.");
     });
     pressEveryLinkedAction();
     expect(preview.linkedFigureRequests).toHaveLength(2);
@@ -381,11 +381,11 @@ describe("the linked chromatogram and spectrum section", () => {
     openExport();
     fireEvent.click(radio("Current range"));
     await waitFor(() => {
-      expect(within(panel()).getByText(/^Current range is [\d.]/u)).toBeDefined();
+      expect(within(panel()).getByText(/^Current range: [\d.]/u)).toBeDefined();
     });
 
     expect(linkedReason()).toBe(
-      "The selected scan is outside the current chromatogram range. Choose Full run or include the selected scan in the committed range.",
+      "The selected scan is outside the current range. Choose Full run or widen the range to include it.",
     );
     pressEveryLinkedAction();
     expect(preview.linkedFigureRequests).toEqual([]);
@@ -457,13 +457,13 @@ describe("the linked chromatogram and spectrum section", () => {
     // AVAILABLE: the description is visible, and nothing is announced.
     expect(linkedReason()).toBeNull();
     expect(
-      within(linkedSection()).getByText(/^The upper panel shows this chromatogram/u),
+      within(linkedSection()).getByText(/^Top: chromatogram/u),
     ).toBeVisible();
     const announcement = linkedAnnouncement();
     expect(announcement.getAttribute("aria-live")).toBe("polite");
     expect(announcement.textContent).toBe("");
     // The visible sentence is not the announcement, so it cannot read itself out.
-    expect(within(linkedSection()).getByText(/^The upper panel shows this chromatogram/u)).not.toBe(
+    expect(within(linkedSection()).getByText(/^Top: chromatogram/u)).not.toBe(
       announcement,
     );
 
@@ -490,7 +490,7 @@ describe("the linked chromatogram and spectrum section", () => {
     expect(linkedAnnouncement()).toBe(announcement);
     expect(announcement.textContent).toBe("");
     expect(
-      within(linkedSection()).getByText(/^The upper panel shows this chromatogram/u),
+      within(linkedSection()).getByText(/^Top: chromatogram/u),
     ).toBeVisible();
     expect(linkedButton("Export linked SVG…").disabled).toBe(false);
   });
@@ -520,7 +520,7 @@ describe("the linked chromatogram and spectrum section", () => {
 
     // AVAILABLE: one sentence, and it is the description rather than a refusal.
     expect(sentences()).toHaveLength(1);
-    expect(sentences()[0]?.textContent).toMatch(/^The upper panel shows this chromatogram/u);
+    expect(sentences()[0]?.textContent).toMatch(/^Top: chromatogram/u);
     // The live region is there, empty, and carries no layout while it is.
     expect(linkedAnnouncement().textContent).toBe("");
     expect(sentences()).not.toContain(linkedAnnouncement());
@@ -540,7 +540,7 @@ describe("the linked chromatogram and spectrum section", () => {
     expect(occurrences).toBe(1);
     // And the description is not underneath it.
     expect(
-      within(linkedSection()).queryByText(/^The upper panel shows this chromatogram/u),
+      within(linkedSection()).queryByText(/^Top: chromatogram/u),
     ).toBeNull();
   });
 
@@ -730,7 +730,7 @@ describe("what a finished linked export says", () => {
     fireEvent.click(linkedButton("Export linked PNG…"));
 
     await waitFor(() => {
-      expect(linkedStatus()).toContain("Linked export cancelled. Nothing was saved.");
+      expect(linkedStatus()).toContain("Export cancelled. Nothing was saved.");
     });
   });
 
@@ -799,9 +799,9 @@ describe("what a finished linked export says", () => {
     fireEvent.click(linkedButton("Copy linked plot"));
 
     await waitFor(() => {
-      expect(linkedStatus()).toContain("Copied the linked figure at 1200×640 in the Light theme");
+      expect(linkedStatus()).toContain("Copied linked figure: 1200×640, Light theme");
     });
-    expect(linkedStatus()).toContain("marking spectrum 0");
+    expect(linkedStatus()).toContain("spectrum 0 marked");
     expect(preview.linkedFigureCopyRequests).toHaveLength(1);
     // A copy chooses no destination, so no save was begun for it.
     expect(preview.linkedFigureRequests).toEqual([]);

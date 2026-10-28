@@ -117,9 +117,8 @@ export type SpectrumDrawing =
    * numbers.
    *
    * The reason is carried because the two are not the same thing to a reader. A
-   * drawing that has not arrived is on its way; one that failed is not, and
-   * captioning a failure as "waiting" leaves a non-retryable refusal describing
-   * itself as an outstanding request for as long as it is on screen.
+   * drawing that has not arrived is on its way; one that failed is not. The
+   * status line beside the plot says which, so the caption names neither.
    */
   | {
       readonly kind: "viewport-blank";
@@ -422,67 +421,23 @@ function describeNegativeDrawing(reduction: Reduction, t: UiMessage): string {
 }
 
 /**
- * The drawn count, in agreement with itself. A reduction that yields one column
- * drew one stick, and saying `1 sticks` reads as a defect in the number.
- */
-function formatSticks(count: number, t: UiMessage): string {
-  return count === 1 ? t("plotSticksOne") : t("plotSticks", { count });
-}
-
-/**
- * What the drawing is, in the words it is allowed to use.
+ * Whether the drawing collapsed points, said only when it did.
  *
- * The two drawings make different claims and the difference is the milestone.
- * A transferred prefix can only say how many of *its own* points went into how
- * many sticks. A viewport window can say how many observations the retained
- * source holds there -- which is a fact about the spectrum rather than about
- * this document, and is the number that makes panning past the transferred
- * prefix legible instead of mysterious.
+ * The counts are the caption's, and the m/z bounds the axis's; this sentence
+ * says only what neither of them can: that sticks are not one per point. A
+ * drawing that is one stick per point says nothing here.
  *
  * Neither sentence calls the drawing the measurement. A screen projection is a
  * bounded drawing of the science and never the science.
  */
-function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing, t: UiMessage): string {
-  const drawn = formatSticks(reduction.sticks.length, t);
+function describeDrawing(
+  reduction: Reduction,
+  drawing: Extract<SpectrumDrawing, { readonly kind: "transfer" | "viewport" }>,
+  t: UiMessage,
+): string {
   if (drawing.kind === "transfer") {
-    // The count is written plainly, not grouped. The sentence has said
-    // `from 200000 points` since M4.1 and a reader comparing it with the
-    // grouped `Points` fact beside it is comparing the same number twice; what
-    // is not worth doing is changing a shipped sentence while moving it.
-    return reduction.sticks.length < reduction.drawnFrom
-      ? t("plotTransferReduced", { sticks: drawn, count: reduction.drawnFrom })
-      : t("plotTransferExact", { sticks: drawn });
+    return reduction.sticks.length < reduction.drawnFrom ? t("plotTransferReduced") : "";
   }
-  if (drawing.kind === "viewport-blank") {
-    /*
-     * No claim about points, and none about a window either.
-     *
-     * "This range" is the range beneath the caption, which is the only one this
-     * component can speak for. Naming the window a request is outstanding for
-     * would be naming a different range whenever a gesture is in flight -- the
-     * axis follows the pointer while the request does not -- and the status
-     * region beside the plot is where that window is already said.
-     */
-    return drawing.reason === "failed"
-      ? t("plotFailed")
-      : t("plotWaiting");
-  }
-  if (drawing.kind === "viewport-transient") {
-    /*
-     * Said plainly rather than hidden, because it is the one moment the picture
-     * is not an answer about the range beneath it: the drawing in hand is being
-     * stretched for feedback, and the range is asked for when the gesture stops.
-     *
-     * It names no range, and that is not vagueness. A gesture is drawn between
-     * two React renders -- the one that starts it and the one that settles it --
-     * so any number written here would be the range the gesture *began* at,
-     * sitting under a plot that has since moved. The range line beside the plot
-     * carries the live numbers, and is kept current for exactly that reason.
-     */
-    return t("plotTransient");
-  }
-  const opening = t("plotObservations", { sticks: drawn, count: drawing.sourcePoints,
-    low: formatMz(drawing.low), high: formatMz(drawing.high) });
   /*
    * Whether anything was collapsed, decided by what this drawing did rather
    * than by who did it.
@@ -511,9 +466,7 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing, t: UiMe
    * that column's extremes, which is the same rule on both sides of the boundary
    * and says nothing about how many columns there were.
    */
-  return reduction.sticks.length < drawing.sourcePoints
-    ? `${opening} ${t("plotReduced")}`
-    : `${opening} ${t("plotExact")}`;
+  return reduction.sticks.length < drawing.sourcePoints ? t("plotReduced") : "";
 }
 
 /**
@@ -573,8 +526,24 @@ export function StickSpectrum({
   );
 
   const flat = reduction.intensityHigh === reduction.intensityLow;
-  /** Whether this plot has anything on it, which several sentences depend on. */
+  /** Whether this plot has anything on it, which the value axis depends on. */
   const nothingDrawn = reduction.sticks.length === 0;
+  // A blank plot's caption names no drawing: the status line beside the plot
+  // already says whether one is on its way or failed.
+  const caption = [
+    drawing.kind === "viewport" ? t("plotCaption", { count: reduction.sticks.length, total: drawing.sourcePoints }) :
+      drawing.kind === "transfer" ? t("plotTransferCaption", { count: reduction.sticks.length, total: reduction.drawnFrom }) :
+        drawing.kind === "viewport-transient" ? t("plotTransient") : "",
+    t(valueUnitsKnown ? "plotUnitsReported" : "plotUnits"),
+    reduction.negativeCount > 0 ? t("plotNegativeCount", { count: reduction.negativeCount }) : "",
+  ].filter(part => part !== "").join(" · ");
+  // Only what the caption and the axes cannot say; with nothing to add, the
+  // disclosure is hidden rather than opening onto nothing.
+  const sourceDetails = [
+    drawing.kind === "viewport" || drawing.kind === "transfer" ? describeDrawing(reduction, drawing, t) : "",
+    reduction.negativeCount > 0 ? describeNegativeDrawing(reduction, t) : "",
+    representationKnown ? "" : t("plotUnknownRepresentation"),
+  ].filter(part => part !== "").join(" ");
 
   return (
     <figure className="spectrum-figure">
@@ -663,17 +632,9 @@ export function StickSpectrum({
         ) : null}
       </svg>
       <figcaption className="spectrum-caption">
-        <p>{drawing.kind === "viewport" ? t("plotCaption", { count: reduction.sticks.length, total: drawing.sourcePoints }) :
-          drawing.kind === "transfer" ? t("plotTransferCaption", { count: reduction.sticks.length, total: reduction.drawnFrom }) :
-          drawing.kind === "viewport-transient" ? t("plotTransient") : t(drawing.reason === "failed" ? "plotFailed" : "plotWaiting")}
-          {" · "}{t(valueUnitsKnown ? "plotUnitsReported" : "plotUnits")}
-          {reduction.negativeCount > 0 ? ` · ${t("plotNegativeCount", { count: reduction.negativeCount })}` : ""}
-        </p>
-        <details className="plot-source-details"><summary>{t("viewerSourceDetails")}</summary>
-          <p>{drawing.kind === "viewport-blank" || drawing.kind === "viewport-transient" ? "" : describeDrawing(reduction, drawing, t)} {nothingDrawn ? "m/z" : t("plotAxes")}
-            {reduction.negativeCount > 0 ? ` ${describeNegativeDrawing(reduction, t)}` : ""}
-            {representationKnown ? "" : ` ${t("plotUnknownRepresentation")}`}
-          </p>
+        <p>{caption}</p>
+        <details className="plot-source-details" hidden={sourceDetails === ""}><summary>{t("viewerSourceDetails")}</summary>
+          <p>{sourceDetails}</p>
         </details>
       </figcaption>
     </figure>

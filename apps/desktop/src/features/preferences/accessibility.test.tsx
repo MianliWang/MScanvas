@@ -58,7 +58,7 @@ describe("Settings, by keyboard and by screen reader", () => {
   beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it("associates each group with its label and its help, in both locales", async () => {
+  it("associates each group with its label, in both locales", async () => {
     mount();
     await screen.findByText(en.backendMissing);
     for (const [locale, bundle] of [["en", en], ["zh-CN", zh]] as const) {
@@ -68,12 +68,12 @@ describe("Settings, by keyboard and by screen reader", () => {
       }
       const groups = within(dialog).getAllByRole("radiogroup");
       expect(groups).toHaveLength(2);
-      // A group names itself from its own label element, and describes itself
-      // from the help beside it. Neither is a placeholder or a title.
+      // A group names itself from its own label element, not a placeholder or
+      // a title. The choices explain themselves, so nothing describes them.
       expect(groups[0]).toHaveAccessibleName(bundle.language);
-      expect(groups[0]).toHaveAccessibleDescription(bundle.languageHelp);
+      expect(groups[0]).not.toHaveAttribute("aria-describedby");
       expect(groups[1]).toHaveAccessibleName(bundle.density);
-      expect(groups[1]?.getAttribute("aria-describedby")).not.toBeNull();
+      expect(groups[1]).not.toHaveAttribute("aria-describedby");
       // Every option is a real radio with a real name, so the arrow keys and
       // the form semantics are the platform's rather than this dialog's.
       for (const name of [bundle.english, bundle.simplifiedChinese, bundle.comfortable, bundle.compact]) {
@@ -82,12 +82,12 @@ describe("Settings, by keyboard and by screen reader", () => {
     }
   });
 
-  it("names the dialog, describes it, and traps and returns the keyboard", async () => {
+  it("names the dialog, adds no description, and traps and returns the keyboard", async () => {
     mount();
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     expect(dialog).toHaveAccessibleName(en.settings);
-    expect(dialog).toHaveAccessibleDescription(en.description);
+    expect(dialog).not.toHaveAttribute("aria-describedby");
     // Opened onto the current value rather than onto the first control, so the
     // keyboard starts where the reader's attention is.
     expect(within(dialog).getByRole("radio", { name: en.english })).toHaveFocus();

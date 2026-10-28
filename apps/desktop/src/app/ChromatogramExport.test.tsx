@@ -272,7 +272,7 @@ describe("what the chromatogram can be exported as", () => {
 
     expect(
       within(panel()).getByText(
-        "Current range is the whole run until a range is committed.",
+        "Current range: full run. Selections being drawn or pending are not exported.",
       ),
     ).toBeDefined();
 
@@ -309,7 +309,7 @@ describe("what the chromatogram can be exported as", () => {
     // The gesture settles 120ms after the last event, and only then is there a
     // committed range. The panel says which one, so that is what to wait for.
     await waitFor(() => {
-      expect(within(panel()).getByText(/^Current range is [\d.]/u)).toBeDefined();
+      expect(within(panel()).getByText(/^Current range: [\d.]/u)).toBeDefined();
     });
 
     fireEvent.click(button("Export CSV…"));
@@ -350,7 +350,7 @@ describe("what the chromatogram can be exported as", () => {
     openExport();
     fireEvent.click(radio("Current range"));
     await waitFor(() => {
-      expect(within(panel()).getByText(/^Current range is [\d.]/u)).toBeDefined();
+      expect(within(panel()).getByText(/^Current range: [\d.]/u)).toBeDefined();
     });
     const committed = document.querySelector(".chromatogram-range")?.textContent ?? "";
 
@@ -411,9 +411,6 @@ describe("what the chromatogram can be exported as", () => {
     expect(button("Copy plot").disabled).toBe(true);
     expect(button("Export CSV…").disabled).toBe(false);
     expect(button("Export TSV…").disabled).toBe(false);
-    expect(
-      within(panel()).getByText("Data exports always include both TIC and BPC source columns."),
-    ).toBeDefined();
 
     fireEvent.click(button("Export TSV…"));
     await waitFor(() => {

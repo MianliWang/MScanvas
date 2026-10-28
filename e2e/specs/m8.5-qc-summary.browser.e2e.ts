@@ -396,15 +396,15 @@ function expectTheRecordedValues(report: Awaited<ReturnType<typeof capture>>["re
   expect(report?.chromatograms).toBe("Not reported");
   expect(report?.buckets).toEqual([
     ["ms2", "MS2", "4,000"],
-    ["other", "Other (not attributed to a level)", "345"],
+    ["other", "Other (no level)", "345"],
     ["ms1", "MS1", "8,000"],
   ]);
   expect(report?.retention).toEqual([
-    ["minimum", "0.1", "Unit not reported"],
-    ["at25", "12.345678901234567", "Unit not reported"],
-    ["at50", "0.30000000000000004", "Unit not reported"],
-    ["at75", "7.7", "Unit not reported"],
-    ["maximum", "123.456", "Unit not reported"],
+    ["minimum", "0.1", "Not reported"],
+    ["at25", "12.345678901234567", "Not reported"],
+    ["at50", "0.30000000000000004", "Not reported"],
+    ["at75", "7.7", "Not reported"],
+    ["maximum", "123.456", "Not reported"],
   ]);
   // A description, not a verdict.
   expect(report?.text.toLowerCase()).not.toMatch(/\b(pass|fail|good|poor|grade)\b/u);
@@ -464,8 +464,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
       disabled: "true",
       hardDisabled: false,
       unavailable: "qcNeedsPreview",
-      reason:
-        "View this layer's source in the Workbench first. The QC summary is copied from the preview on screen.",
+      reason: "View this layer's source in the Workbench first.",
       reasonVisible: true,
     });
     const idle = await ipcCalls();

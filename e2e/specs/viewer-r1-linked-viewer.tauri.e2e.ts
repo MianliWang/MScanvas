@@ -219,7 +219,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
     // slice-03 §5). Read there, closed or open, with the same meaning.
     const source = await browser.execute(() =>
       document.querySelector(".chromatogram-axis-caption + details.plot-source-details")?.textContent ?? "");
-    expect(source).toContain("Per-scan values from the complete loaded table");
+    expect(source).toContain("Per-scan TIC/BPC from the complete scan table");
     expect(source).toContain("Not a stored chromatogram record");
     // Nothing was asked of the backend to draw it.
     expect(await spectrumReads()).toEqual([]);

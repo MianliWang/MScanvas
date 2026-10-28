@@ -10,7 +10,7 @@
  * tests; nothing here reads a file or runs a provider.
  */
 
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "../../app/App";
@@ -92,10 +92,15 @@ function currentSurface(): string | null {
 }
 
 describe("the context line in the application shell", () => {
-  it("says no project is open, and takes the reader to the Project surface without asking anything", async () => {
-    const projects = renderShell(NO_PROJECT);
-    const group = await screen.findByRole("group", { name: en.shellContextRegion });
-    await waitFor(() => expect(within(group).getByText("Project: none open")).toBeTruthy());
+  it("says nothing about a project while none is open", async () => {
+    renderShell(NO_PROJECT);
+    await screen.findByRole("button", { name: en.projectSurface });
+    expect(document.querySelector('[data-shell-context="project"]')).toBeNull();
+  });
+
+  it("takes the reader to the Project surface without asking anything", async () => {
+    const projects = renderShell(capturedProject());
+    await waitFor(() => expect(contextItem("project").textContent).toBe("Project: Test project"));
     expect(currentSurface()).toBe("workbench");
 
     const before = [...projects.calls];

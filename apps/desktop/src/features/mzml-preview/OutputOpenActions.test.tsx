@@ -19,7 +19,7 @@ describe("opening retained output identities", () => {
     expect(file).toHaveFocus();
     expect(screen.getByRole("button", { name: "Open folder" })).toBeDisabled();
     await act(async () => pending.resolve({ status: "accepted" }));
-    expect(screen.getByRole("status")).toHaveTextContent(/does not confirm what an external application displayed/);
+    expect(screen.getByRole("status")).toHaveTextContent("Windows accepted the request.");
     expect(api.conversionRequests).toHaveLength(0);
     expect(api.adoptionRequests).toHaveLength(0);
   });

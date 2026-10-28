@@ -334,7 +334,7 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     });
     expect(await linkedRequests()).toEqual([]);
     await browser.waitUntil(
-      async () => (await linkedStatus()).includes("Copied the linked figure"),
+      async () => (await linkedStatus()).includes("Copied linked figure"),
       { timeout: 30_000, timeoutMsg: "the linked copy never reported an outcome" },
     );
     expect(await unexpectedConsole()).toEqual([]);
@@ -396,8 +396,7 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     // "says the selected scan is outside the current range, and how to fix it").
     // The copy this first expected predates it (PM9.7).
     expect(await linkedReason()).toBe(
-      "The selected scan is outside the current chromatogram range. Choose Full run or " +
-        "include the selected scan in the committed range.",
+      "The selected scan is outside the current range. Choose Full run or widen the range to include it.",
     );
     expect(await linkedRequests()).toEqual([]);
     // The chromatogram's own exports are untouched: the range holds scans, just

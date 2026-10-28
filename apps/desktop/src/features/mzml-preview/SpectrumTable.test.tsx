@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import appStyles from "../../app/app.css?raw";
 import { buildRows } from "../../test/previewFixtures";
+import { UI_RESOURCES } from "../preferences/i18n";
 import { SpectrumTable, type SpectrumTableProps } from "./SpectrumTable";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { useScanTableView } from "./viewer/useScanTableView";
@@ -396,9 +397,24 @@ describe("stepping through scans from the table", () => {
   it("does not present the end of a truncated prefix as the end of the run", () => {
     renderTable({ rowCount: 40, truncated: true });
 
-    expect(
-      screen.getByText(/loaded prefix only/),
-    ).toBeVisible();
+    const count = document.querySelector(".scan-result-count");
+    expect(count).toHaveTextContent(UI_RESOURCES.en.scanPrefix);
+    expect(count).toHaveTextContent("400");
+    expect(count).toBeVisible();
+  });
+
+  it("gives one number while every row is loaded and none is filtered out", () => {
+    renderTable({ rowCount: 40 });
+    const count = () => document.querySelector(".scan-result-count")?.textContent ?? "";
+    // `scanCountAll` is new with this change; the cast keeps the test readable before the bundle has it.
+    const all = (UI_RESOURCES.en as Record<string, string>)["scanCountAll"]?.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "40");
+
+    expect(count()).toBe(all);
+
+    // Filtering is when matches and loaded rows differ, so both are said.
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "scan=1" } });
+    expect(count()).not.toBe(all);
+    expect(count()).toMatch(/40/u);
   });
 });
 
@@ -518,7 +534,7 @@ describe("the spectrum table while selection is unavailable", () => {
     // The sentence itself lives once, in the viewer. Not here.
     expect(screen.queryByText(/conversion is running/u)).toBeNull();
     // Navigation help stays reachable; the row names the one current refusal.
-    expect(screen.getByText(/Enter\/Space opens once/u)).toBeInTheDocument();
+    expect(screen.getByText(/Enter\/Space opens\./u)).toBeInTheDocument();
   });
 
   it("says nothing about availability, and describes nothing, once selection returns", () => {
@@ -528,7 +544,7 @@ describe("the spectrum table while selection is unavailable", () => {
     for (const row of container.querySelectorAll('[role="row"]:not(.spectrum-table-head)')) {
       expect(row.getAttribute("aria-disabled")).toBeNull();
     }
-    expect(screen.getByText(/Enter\/Space opens once/u)).toBeInTheDocument();
+    expect(screen.getByText(/Enter\/Space opens\./u)).toBeInTheDocument();
   });
 
   it("commits again as soon as the lane clears, without being remounted", () => {

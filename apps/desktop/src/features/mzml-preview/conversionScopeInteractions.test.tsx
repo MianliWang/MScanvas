@@ -100,11 +100,13 @@ describe("M6.7 through the production conversion surface", () => {
   for (const count of [1, 5, 6]) it(`reads a Rust-authored capacity of 5 for ${count} eligible plus an excluded row`, async () => {
     const api = await mount(count, async (request) => plan(request, 5));
     scopeAll();
-    await waitFor(() => expect(screen.getByTestId("conversion-capacity")).toHaveTextContent("5"));
-    if (count <= 5) { await ready(); expect(button()).not.toHaveAttribute("aria-disabled"); }
-    else {
+    // The capacity is said only when it refuses; within it, there is nothing to say.
+    if (count <= 5) {
+      await ready(); expect(button()).not.toHaveAttribute("aria-disabled");
+      expect(screen.queryByTestId("conversion-capacity")).toBeNull();
+    } else {
+      await waitFor(() => expect(screen.getByTestId("conversion-capacity")).toHaveTextContent("6 eligible acquisitions exceed the queue capacity of 5"));
       expect(button()).toHaveAttribute("aria-disabled", "true");
-      expect(screen.getByTestId("conversion-capacity")).toHaveTextContent("6 eligible acquisitions exceed the queue capacity of 5");
       fireEvent.click(button());
       expect(api.beginRequests()).toEqual([]);
       expect(api.conversionRequests).toEqual([]);
@@ -179,7 +181,6 @@ describe("M6.7 through the production conversion surface", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "size-desc" } });
     const queue = queueOf([queueItem("raw-2", "sample-2.raw")]);
     await act(async () => drain.resolve({ status: "terminal", reason: "completed", operationId: "1", queue }));
-    expect(screen.getByTestId("conversion-bound-membership")).toHaveTextContent("Later workspace rows are outside this queue and its retry");
     expect(api.beginRequests()).toHaveLength(1);
     expect(document.querySelectorAll(".conversion-running .conversion-queue-name")).toHaveLength(1);
   });

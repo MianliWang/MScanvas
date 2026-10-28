@@ -85,17 +85,17 @@ function named(value: string, fallback: string): string {
 export function shellContextItems(facts: ShellContextFacts, t: UiMessage): readonly ShellContextItem[] {
   const items: ShellContextItem[] = [];
 
+  // No project is no fact: the navigation already offers the Project surface.
   const project = facts.project;
-  items.push({
-    id: "project",
-    target: "project",
-    text:
-      project === null
-        ? t("shellContextProjectNone")
-        : t(project.unsaved ? "shellContextProjectUnsaved" : "shellContextProject", {
-            name: named(project.name, t("projectDefaultName")),
-          }),
-  });
+  if (project !== null) {
+    items.push({
+      id: "project",
+      target: "project",
+      text: t(project.unsaved ? "shellContextProjectUnsaved" : "shellContextProject", {
+        name: named(project.name, t("projectDefaultName")),
+      }),
+    });
+  }
 
   const viewing = facts.viewing;
   if (viewing !== null) {
@@ -113,8 +113,9 @@ export function shellContextItems(facts: ShellContextFacts, t: UiMessage): reado
     });
   }
 
+  // A scope with nothing eligible says nothing the Conversion surface does not.
   const scope = facts.conversionScope;
-  if (scope !== null) {
+  if (scope !== null && scope.eligible > 0) {
     items.push({
       id: "conversionScope",
       target: "conversion",
@@ -186,9 +187,9 @@ const LINE_ORDER: readonly ShellContextItemId[] = [
  * never moves a button -- a focused item stays where the reader left it. Rank
  * decides only which item gives way first when a long name leaves too little
  * room. The scope is left out on the Project surface, where no conversion is
- * set up. Nothing else is dropped: the project and the scope have no place in
- * Details to be read from instead, and an item that shrinks still carries its
- * whole sentence as its accessible name.
+ * set up. Nothing else is dropped here (`shellContextItems` already leaves out
+ * an absent project and an empty scope), and an item that shrinks still
+ * carries its whole sentence as its accessible name.
  */
 export function prioritizeShellContext(
   items: readonly ShellContextItem[],

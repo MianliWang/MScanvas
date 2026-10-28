@@ -616,11 +616,11 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
 
     // And Settings no longer has anything to recover from: the alert is gone,
     // and the note -- which is always there, and has to agree with whatever is
-    // above it -- now says the preferences are saved.
+    // above it -- now says nothing, which is the normal saved state.
     await openSettings();
     const settled = await capture("16-recovered-state-cleared");
     expect(settled.storedRecordAlert).toBeNull();
-    expect(settled.storageNote?.text).toBe(en.storageSaved);
+    expect(settled.storageNote?.text).toBe("");
     await press(en.cancel);
     await returned();
     expect(sameBytes(replacement, noted("after confirming the recovery cleared"))).toBe(true);

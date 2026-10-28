@@ -344,8 +344,8 @@ describe("M8.1 project records, rendered", () => {
     // And what a capture is is stated where it is displayed, so nobody reads
     // it as analysis -- nor as something a later press can take back.
     const note = await browser.$(".project-note").getText();
-    expect(note).toContain("Neither converts, analyses or judges quality");
-    expect(note).toContain("Recorded work is kept");
+    expect(note).toContain("they do not convert, analyse, judge quality");
+    expect(note).toContain("cannot be removed yet");
     // Unsaved, because a capture changed the project and nothing saved it.
     expect(await browser.$("[data-project-unsaved]").isDisplayed()).toBe(true);
   });
@@ -581,7 +581,7 @@ describe("M8.1 project records, rendered", () => {
     // Translated, not copied: the outcome vocabulary is Chinese.
     expect(measured.references.map((row) => row.outcomeText)).toEqual([
       "与记录的内容一致",
-      "正被其他程序占用，无法可靠读取",
+      "正被其他程序占用",
     ]);
   });
 });

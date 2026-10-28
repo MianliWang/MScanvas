@@ -499,8 +499,7 @@ describe("M6.4 — E2: one axis moves, and only that axis", () => {
     // The sentence is about the combination the choice would produce. A refusal
     // that said "MS1 spectra only is not supported" would be false: it appears
     // in rows this build runs perfectly well.
-    expect(note).toContain("Not available with the other settings you have chosen");
-    expect(note).toContain("has not qualified that combination");
+    expect(note).toContain("Not qualified with your other settings.");
   });
 });
 
@@ -548,7 +547,7 @@ describe("M6.4 — E3: the selected row survives a replacement and is told the t
     const statement = await browser.execute(
       () =>
         (document.body.textContent ?? "").split(
-          "The conversion settings you chose cannot run with this ProteoWizard installation.",
+          "These settings cannot run with this ProteoWizard installation.",
         ).length - 1,
     );
     expect(statement).toBe(1);
@@ -615,12 +614,15 @@ describe("M6.4 — E4: a genuine dead end offers one explicit way out", () => {
     expect(await axisStates("processing")).toMatchObject({
       unscoped_default_centroiding: "selected",
     });
-    const reason = await browser.execute(
-      () => document.querySelector(".conversion-settings-recovery p")?.textContent ?? "",
-    );
-    expect(reason).toBe(
-      "No single change to one of these settings reaches a combination this build can run.",
-    );
+    // The recovery is its own labelled control; no paragraph restates it.
+    const recovery = await browser.execute(() => {
+      const root = document.querySelector(".conversion-settings-recovery");
+      return {
+        paragraph: root?.querySelector("p") != null,
+        control: root?.querySelector("button")?.textContent?.trim() ?? null,
+      };
+    });
+    expect(recovery).toEqual({ paragraph: false, control: "Use the settings MSCanvas ships" });
 
     // Activated from the keyboard, because a recovery only a pointer can reach
     // is not a recovery.
@@ -1211,9 +1213,8 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
     // reader told the installed build does not offer this would go looking for
     // another ProteoWizard release and find one that behaves identically.
     const note = await refusalNote();
-    expect(note).toContain("Not available with the other settings you have chosen");
-    expect(note).toContain("MSCanvas has not measured that combination");
-    expect(note).not.toContain("installed ProteoWizard build");
+    expect(note).toContain("Not measured with your other settings");
+    expect(note).not.toContain("ProteoWizard build");
 
     // Nothing else moved, and no other axis is blamed for it. 64-bit intensity,
     // all spectra and zlib all appear in rows this catalog runs.
@@ -1316,7 +1317,7 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
       // The note is still the source-evidence one, still laid out rather than
       // clipped, still inside the panel, and still not a cause of sideways
       // scrolling.
-      expect(await refusalNote()).toContain("MSCanvas has not measured that combination");
+      expect(await refusalNote()).toContain("Not measured with your other settings");
       const NOTE_ID = await noteId();
       const noteBox = await boxOf(`[id="${NOTE_ID}"]`);
       const panelBox = await boxOf(SETTINGS);
@@ -1408,14 +1409,14 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
         const text = (node: Element | null) => node?.textContent?.trim() ?? "";
         return {
           banner: text(document.querySelector(selector)),
-          plan: text(document.querySelector(".empty-state")),
+          plan: text(document.querySelector("#conversion-plan-pending")),
           body: document.body.textContent ?? "",
         };
       }, banner);
-      expect(sentences.banner).toContain("has not measured the conversion settings you chose");
+      expect(sentences.banner).toContain("have not been measured");
       expect(sentences.banner).not.toContain("ProteoWizard installation");
-      expect(sentences.plan).toContain("has not measured the conversion settings you chose");
-      expect(sentences.plan).not.toContain("installed ProteoWizard does not offer");
+      // Said once, in the notice Convert points at, not again as the plan.
+      expect(sentences.plan).toBe("");
       expect(sentences.body).not.toContain(
         "The installed ProteoWizard does not offer the conversion settings you chose",
       );
@@ -1432,7 +1433,7 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
           (id: string) => document.getElementById(id)?.textContent ?? "",
           noticeId,
         ),
-      ).toContain("has not measured the conversion settings you chose");
+      ).toContain("has not measured these settings");
       expect(await describedBy(CONVERT)).toContain(noticeId);
 
       // Laid out rather than clipped, inside the panel, and not a cause of

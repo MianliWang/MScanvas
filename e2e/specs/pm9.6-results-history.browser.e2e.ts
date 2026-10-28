@@ -853,9 +853,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
       expect(await work(before)).toEqual([]);
     }
     // The damaged sentence gives its next step (R6).
-    expect(en.targetedPayloadCorrupt).not.toBe(
-      "The stored rows and evidence do not match the digests the project records, so they are not shown.",
-    );
+    expect(en.targetedPayloadCorrupt).toContain("put it back and open the project again");
 
     // A drawing refused for one target stays in that target's panel.
     const table = scenario("projectWithResult", "en");

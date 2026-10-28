@@ -72,8 +72,8 @@ describe("spectrum table at acquisition scale", () => {
     expect(grid).toHaveAttribute("aria-rowcount", String(REPRESENTATIVE_ROW_COUNT + 1));
     // Header plus one window. The bound is what matters, not the exact number.
     expect(within(grid).getAllByRole("row").length).toBeLessThan(100);
-    expect(screen.getByText(/36,319 reported spectra/)).toBeVisible();
-    expect(screen.getByText(/all rows loaded/)).toBeVisible();
+    // Every row loaded and nothing filtered: one count, the real total.
+    expect(screen.getByText("36,319 spectra")).toBeVisible();
 
     const [renderedRowCount] = onRendered.mock.calls.at(-1) ?? [];
     expect(renderedRowCount).toBeLessThan(100);
@@ -152,8 +152,9 @@ describe("stick spectrum at profile-scale point counts", () => {
     // 900 columns, and at most one stick per sign in each.
     expect(commands).toBeLessThanOrEqual(1_800);
 
+    expect(screen.getByText(/[\d,]+ sticks · 200,000 transferred points/)).toBeVisible();
     fireEvent.click(screen.getByText("Source and drawing details"));
-    expect(screen.getByText(/Drawn as [\d,]+ sticks from 200,000 points/)).toBeVisible();
+    expect(screen.getByText(/nearby points can merge into one stick/)).toBeVisible();
     // The spike survives the reduction: it is the axis maximum.
     expect(screen.getByText("5.000e+6")).toBeInTheDocument();
   });

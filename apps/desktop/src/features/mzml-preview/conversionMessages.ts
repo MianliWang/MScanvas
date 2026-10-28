@@ -20,7 +20,7 @@ const ERROR_MESSAGE = {
   conversion_not_stoppable: "m74CnvErrorConversionNotStoppable",
   conversion_item_not_cancellable: "m74CnvErrorConversionItemNotCancellable",
   conversion_item_not_skippable: "m74CnvErrorConversionItemNotSkippable",
-  backend_quarantined: "m74CnvErrorBackendQuarantined",
+  backend_quarantined: "m74CnvNoticeBackendQuarantined",
   dataset_not_convertible: "m74CnvErrorDatasetNotConvertible",
   conversion_settings_not_evidenced_for_source: "m74CnvErrorConversionSettingsNotEvidencedForSource",
   destination_not_resolvable: "m74CnvErrorDestinationNotResolvable",

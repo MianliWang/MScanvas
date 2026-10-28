@@ -56,9 +56,7 @@ const VIEWER_STACK = ".viewer-stack";
 const GRID = "div.spectrum-table";
 const FIRST_ROW = 'div.spectrum-table-row[data-row-position="0"]';
 
-const BACKEND_REASON =
-  "Selecting a scan needs ProteoWizard, and this session has no usable backend. " +
-  "See the backend status above.";
+const BACKEND_REASON = "Scan selection needs ProteoWizard, which is unavailable. See backend status.";
 
 /**
  * Closes the lane the way a reader can actually close it here.

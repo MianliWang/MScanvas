@@ -147,8 +147,9 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
         to the shell's grid, and it never wraps into a second one: each item
         gives way by its rank instead (`prioritizeShellContext`, `fitContextLine`). Not a live
         region: each fact here is announced, where it is announced at all, by
-        the surface that owns it. */}
-    <div className="workbench-context-bar" ref={contextBar}>
+        the surface that owns it. Its height is held when it has nothing to
+        say, so the first item to arrive does not push the workspace down. */}
+    <div className="workbench-context-bar" ref={contextBar} style={{ minHeight: 32 }}>
       {contextItems.length === 0 ? null : (
         <div className="shell-context" role="group" aria-label={t("shellContextRegion")}>
           {contextItems.map(item => <button type="button" key={item.id} className="shell-context-item"
@@ -162,7 +163,9 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
         <button type="button" ref={backendToggle} className="shell-backend-toggle" data-backend-toggle="" data-line-rank="1"
           aria-expanded={backend.expanded} aria-controls="backend-status" onClick={backend.onToggle}>{t("backendReadyShort")}</button>
       )}
-      <p className="workspace-drop-hint" data-line-rank="6" data-line-removable="">{t(dropStatus === "available" ? "shellDropHint" : dropStatus === "connecting" ? "shellDropConnecting" : "shellDropUnavailable")}</p>
+      {/* Only when drop cannot work: the overlay speaks for itself while a
+          drop is under way, and an idle hint is one more line to read. */}
+      {dropStatus === "unavailable" ? <p className="workspace-drop-hint" data-line-rank="6" data-line-removable="">{t("shellDropUnavailable")}</p> : null}
     </div>
   </header>;
 }

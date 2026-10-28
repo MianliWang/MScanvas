@@ -1235,10 +1235,10 @@ describe("the workspace roster as an accessible list", () => {
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    // Said where the actions are, not only in a confirmation nobody has to
-    // read: removing a row is not deleting a file.
+    // On demand: that organization is session-only. That removing a row
+    // leaves the file on disk is said by the removal notices themselves.
     fireEvent.click(screen.getByText("Roster help"));
-    expect(screen.getByText(/Removing rows leaves source files unchanged/)).toBeVisible();
+    expect(screen.getByText("Groups and arrangement last for this session only.")).toBeVisible();
   });
 
   it("offers adding files and nothing else when the session holds none", () => {

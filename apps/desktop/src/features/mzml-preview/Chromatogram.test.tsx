@@ -257,22 +257,24 @@ function spoken(): string {
 }
 
 /**
- * The committed row is true of the interaction now (PM9 UI-34): the visible
+ * The committed row is true of the interaction now (PM9 UI-34): the committed
  * sentence has a declared truth condition and meets it against the reducer's
- * own state, the caption prints the range the plot displays, the committed
+ * own state, the caption prints the range the plot displays, and the committed
  * bounds stay the live line's last words (PM9.3's rangeLine and LONG_RANGE read
- * them there), and at rest the line does not repeat the caption's numbers.
+ * them there). At rest nothing of it is printed: the caption already says the
+ * range, so the sentence is announced only.
  */
 function expectTruthfulLine(): void {
   const now = state();
   expect(now.rangeSelection).toBeNull();
   const displayed = fixed(shown());
   const committed = now.committedDomain === null ? null : fixed(now.committedDomain);
-  const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
-  expect(untrue(visible, "retention time", { committed, shown: displayed })).toBeNull();
+  expect(liveLine()).toHaveClass("visually-hidden");
+  expect(textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details")).toBe("");
+  const sentence = textOutside(liveLine(), "span.visually-hidden");
+  expect(untrue(sentence, "retention time", { committed, shown: displayed })).toBeNull();
   expect(document.querySelector(".chromatogram-range")?.textContent).toContain(displayed);
   if (committed !== null) expect(spoken().endsWith(committed), `"${spoken()}" does not end with ${committed}`).toBe(true);
-  if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
 }
 
 /**
@@ -390,16 +392,14 @@ describe("what the traces are made of", () => {
     renderChromatogram();
 
     fireEvent.click(screen.getByText("Source and drawing details"));
-    expect(screen.getByText(/Per-scan values from the complete loaded table/u)).toBeVisible();
-    expect(screen.getByText(/Not a stored chromatogram record\./u)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.viewerScanSource.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "50"))).toBeVisible();
   });
 
   it("says neither axis carries a unit", () => {
     renderChromatogram();
 
-    expect(
-      screen.getByText(/Retention time — unit not reported · Intensity — unit not reported/u),
-    ).toBeVisible();
+    expect(document.querySelector("#chromatogram-units")).toHaveTextContent(UI_RESOURCES.en.viewerRtUnits);
+    expect(document.querySelector("#chromatogram-units")).toBeVisible();
   });
 });
 
@@ -873,6 +873,8 @@ describe("moving the viewport", () => {
     send({ type: "range-released", transaction: state().rangeSelection!.transaction });
     expect(state().rangeSelection?.phase).toBe("pending");
     expect(spoken()).toBe("Pending retention time: 0.1500 to 0.2500");
+    // A pending band is the one state the line is printed in.
+    expect(liveLine()).not.toHaveClass("visually-hidden");
     const observer = observeLine();
 
     // A gesture's start discards a pending band (interactionState's
@@ -1031,8 +1033,8 @@ describe("when there is no chromatogram", () => {
   it("refuses a table the preview did not load whole, and says why", () => {
     renderChromatogram({ model: runOfRows(20, true) });
 
-    expect(screen.getByText("TIC and BPC are unavailable for this preview.")).toBeVisible();
-    expect(screen.getByText(/loaded table is incomplete/u)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.viewerTicUnavailable)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.viewerTicPrefix)).toBeVisible();
     expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
     expect(tracePaths()).toHaveLength(0);
     // And no controls for a range that does not exist.
@@ -1049,15 +1051,18 @@ describe("when there is no chromatogram", () => {
       model: buildPreviewScanModel({ rows, totalRowCount: rows.length, truncated: false }),
     });
 
-    expect(screen.getByText("TIC and BPC are unavailable for this preview.")).toBeVisible();
-    expect(screen.getByText(/does not name it/u)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.viewerTicUnavailable)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.viewerTicUnit)).toBeVisible();
     expect(screen.queryByText(/malformed|corrupt|invalid file/iu)).toBeNull();
   });
 
-  it("says a run with no spectra has nothing to draw", () => {
+  it("says a run with no spectra has nothing to draw, once", () => {
     renderChromatogram({ model: runOf([]) });
 
-    expect(screen.getByText("This run has no spectra.")).toBeVisible();
+    const heading = screen.getByText(UI_RESOURCES.en.viewerNoSpectra);
+    expect(heading).toBeVisible();
+    // The heading is the whole statement; no second sentence repeats it.
+    expect(heading.closest(".empty-state")?.children).toHaveLength(1);
   });
 });
 

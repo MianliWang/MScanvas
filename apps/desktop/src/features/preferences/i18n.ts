@@ -18,8 +18,6 @@ export interface MessageParameters {
   readonly projectAddToWorkbenchNamed: { readonly name: string };
   readonly projectShowInWorkbenchNamed: { readonly name: string };
   readonly provenanceInspectInput: { readonly name: string };
-  readonly provenanceInspectRun: { readonly name: string };
-  readonly provenanceInspectArtifact: { readonly name: string };
   readonly provenanceInspectRunAt: { readonly when: string };
   readonly provenanceInspectArtifactOf: { readonly when: string };
   readonly projectCreateLayerNamed: { readonly name: string };
@@ -107,7 +105,6 @@ export interface MessageParameters {
   readonly m74CnvDiagnosticItems: { readonly count: number };
   readonly m74CnvScopeCounts: { readonly requested: string; readonly eligible: string; readonly excluded: string };
   readonly m74CnvOrder: { readonly order: string };
-  readonly m74CnvCapacity: { readonly count: number };
   readonly m74CnvCapacityExceeded: { readonly count: number; readonly capacity: number };
   readonly m74CnvCancelNamed: { readonly name: string };
   readonly m74CnvOutputMetrics: { readonly bytes: string; readonly spectra: string; readonly chromatograms: string };
@@ -151,7 +148,6 @@ export interface MessageParameters {
   readonly cnvAdvisoryMany: { readonly codes: string; readonly n: string };
   readonly cnvManifestTitle: { readonly name: string };
   readonly outputOpenGroup: { readonly name: string };
-  readonly figurePreviewRefused: { readonly code: string };
   readonly stagingRecoveryOwned: { readonly count: number };
   readonly clearCounts: { readonly count: number; readonly total: number; readonly protected: string };
   readonly linkedHeight: { readonly value: string };
@@ -164,10 +160,6 @@ export interface MessageParameters {
   readonly viewerChromSource: { readonly count: number };
   readonly viewerChromRows: { readonly count: number; readonly total: number };
   readonly viewerChromSaved: { readonly name: string; readonly details: string };
-  readonly plotSticks: { readonly count: number };
-  readonly plotTransferReduced: { readonly sticks: string; readonly count: number };
-  readonly plotTransferExact: { readonly sticks: string };
-  readonly plotObservations: { readonly sticks: string; readonly count: number; readonly low: string; readonly high: string };
   readonly plotNegativeMixed: { readonly count: number };
   readonly plotNegativeCount: { readonly count: number };
   readonly plotCaption: { readonly count: number; readonly total: number };
@@ -183,7 +175,6 @@ export interface MessageParameters {
   readonly viewerSpectrumIndex: { readonly index: string };
   readonly viewerSpectrumAbsent: { readonly index: string };
   readonly viewerSpectrumFailed: { readonly index: string };
-  readonly viewerSpectrumUnavailable: { readonly index: string };
   readonly viewerSpectrumSummary: { readonly index: string; readonly level: string; readonly count: number };
   readonly viewerSpectrumPrefixRetained: { readonly count: number };
   readonly viewerSpectrumPrefix: { readonly count: number };
@@ -207,6 +198,7 @@ export interface MessageParameters {
   readonly rangePending: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeConfirmContext: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeEdit: { readonly name: string };
+  readonly scanCountAll: { readonly count: number };
   readonly scanCounts: { readonly visible: number; readonly count: number; readonly total: number };
   readonly scanSelectedOutside: { readonly name: string };
   readonly rosterRetainedAnnouncement: { readonly count: number };
@@ -228,6 +220,7 @@ export interface MessageParameters {
   readonly noticeDropInaccessibleEntry: { readonly count: number };
   readonly moreNotListed: { readonly count: number };
   readonly workspaceAnnouncement: { readonly message: string };
+  readonly messageWithDetail: { readonly message: string; readonly detail: string };
   readonly noticeDuplicate: { readonly name: string };
   readonly noticeRejected: { readonly name: string; readonly summary: string };
   readonly noticeFolderLimit: { readonly reasons: string };

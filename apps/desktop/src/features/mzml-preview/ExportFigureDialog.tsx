@@ -105,7 +105,7 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
   };
   return <Dialog.Root open onOpenChange={open => { if (!open) props.onClose(); }}>
     <Dialog.Portal><Dialog.Overlay className="settings-overlay" />
-      <Dialog.Content className="figure-export-dialog" ref={content}
+      <Dialog.Content className="figure-export-dialog" ref={content} aria-describedby={undefined}
         onOpenAutoFocus={event => { event.preventDefault(); close.current?.focus(); }}
         onCloseAutoFocus={event => {
           event.preventDefault(); const active = document.activeElement;
@@ -113,7 +113,6 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
         }} onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => event.stopImmediatePropagation()}>
         <header className="figure-export-header"><Dialog.Title>{t("figureExportTitle")}</Dialog.Title>
           <button ref={close} type="button" className="secondary-button" onClick={props.onClose}>{t("figureExportReturn")}</button></header>
-        <Dialog.Description>{t("figurePreviewHelp")}</Dialog.Description>
         <p className="figure-export-source">{props.sourceLabel}</p>
         <div className="figure-export-body"><fieldset className="figure-export-options" disabled={sourceChanged}>
           <legend className="visually-hidden">{t("figure")}</legend>
