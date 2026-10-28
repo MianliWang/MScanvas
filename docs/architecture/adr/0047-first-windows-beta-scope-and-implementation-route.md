@@ -563,3 +563,25 @@ obligation.
 - Per-artifact release consent: exact candidate hashes, notices and the
   feedback and rollback record (owner), after that qualification.
 - The formal name review, before any stable branded release.
+
+### Owner decisions, 2026-10-28
+
+Made by the owner after the first beta-1 candidate was built by the
+`Release candidate` workflow (`e6d2a49`, installer SHA-256
+`4bf752addff63c489df440814efbd2adb9f445cb41ce406bdf6d9a035c657ee8`):
+
+- **Installed check without a clean guest.** No virtual machine is available.
+  The installed check runs in the owner's own Windows account on the
+  development machine, per-user and without administrator rights, with the
+  ProteoWizard already installed there, and ends with an uninstall that
+  records what remains. It is recorded as that, not as a clean standard-user
+  qualification.
+- **Accepted gaps for beta 1**, stated in the
+  [release notes](../../release/beta-1/RELEASE_NOTES.md#how-beta-1-was-checked):
+  no clean-machine installation, the native state families no prepared case
+  covers, no formal name review and no code signature.
+- **Version and tag.** The installer keeps version `0.1.0`; the prerelease is
+  tagged `v0.1.0-beta.1` and titled "MSCanvas 0.1.0 beta 1".
+- **Consent.** After the checks, a draft prerelease holding the exact
+  installer is prepared and the evidence reported; the owner's explicit go on
+  that report publishes it. A rebuilt installer needs a new go.

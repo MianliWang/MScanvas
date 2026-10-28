@@ -1,9 +1,9 @@
 # MSCanvas beta 1 — release notes
 
-Status: **DRAFT; NOT RELEASED.** The version, tag, download links and hashes
-below are placeholders, filled from the retained candidate manifest at
-candidate acceptance. Nothing in this draft says that a candidate has been
-built, installed or qualified. The decisions behind it are the
+Status: **DRAFT; NOT RELEASED.** The candidate identity below is the first
+beta-1 candidate, built by the `Release candidate` workflow; a rebuild is a new
+candidate and replaces every value in the table. The download link is filled
+when the prerelease is published. The decisions behind it are the
 [owner decisions of 2026-10-27](../../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27).
 
 Installation, first run, uninstall and how to report a problem are in
@@ -13,18 +13,45 @@ Installation, first run, uninstall and how to report a problem are in
 
 | Field | Value |
 | --- | --- |
-| Version | _filled at candidate acceptance_ |
-| GitHub prerelease and tag | _filled at candidate acceptance_ |
-| Source commit | _filled at candidate acceptance_ |
-| Installer file | _filled at candidate acceptance_ |
-| Installer SHA-256 | _filled at candidate acceptance_ |
+| Version | 0.1.0 (beta 1) |
+| GitHub prerelease and tag | `v0.1.0-beta.1`, created when the prerelease is published |
+| Source commit | `e6d2a49e5061398c0ed2a374b2efa90d3d1c4c0e` on `main` |
+| Installer file | `MSCanvas_0.1.0_x64-setup.exe`, 6,469,906 bytes |
+| Installer SHA-256 | `4bf752addff63c489df440814efbd2adb9f445cb41ce406bdf6d9a035c657ee8` |
 | Code signature | **None.** Beta 1 is not code-signed |
-| Build provenance | GitHub build-provenance attestation of the installer, from the workflow run: _filled at candidate acceptance_ |
-| Qualification record | _filled at candidate acceptance_ |
+| Build provenance | GitHub build-provenance attestation of the installer, from [workflow run 40618719468](https://github.com/MianliWang/MScanvas/actions/runs/40618719468) of `release-candidate.yml` on `main` |
+| Qualification record | [How beta 1 was checked](#how-beta-1-was-checked) |
 
 A rebuilt installer is a new candidate even when its code is unchanged. Check
 that the SHA-256 of the file you downloaded matches the table before you run
 it; [Install and support](INSTALL_AND_SUPPORT.md#download-and-verify) shows how.
+
+## How beta 1 was checked
+
+_Results are filled from the qualification records before publication._
+
+- Automated: the whole frontend unit suite, the whole browser suite and a
+  rendered check of every presentation change in beta 1, in English and
+  Simplified Chinese, on the source above.
+- Native: the Tauri and native suites against a QA build of the same source
+  at real 150% Windows scaling, including real ProteoWizard conversions of a
+  Thermo RAW test acquisition.
+- Installed: this installer, installed, used and uninstalled on a
+  maintainer's machine.
+
+What was **not** done for beta 1, accepted by the owner on 2026-10-28 and
+stated here rather than hidden:
+
+- No installation on a clean machine or a fresh standard-user account. The
+  installed check ran in a maintainer's own account, on a machine that already
+  had ProteoWizard and earlier MSCanvas development builds.
+- Some states have no native check: loading and error states held open,
+  running conversions and targeted runs, damaged or missing stored results,
+  and expanded figure controls. They are covered by the browser and unit
+  suites only.
+- No formal trademark, package-name or domain review of the name MSCanvas.
+- The installer is not code-signed; see
+  [Install and support](INSTALL_AND_SUPPORT.md#download-and-verify).
 
 ## What beta 1 is
 
