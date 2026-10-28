@@ -724,6 +724,17 @@ describe("the project surface", () => {
     expect(screen.getByText(en.projectNoneHint)).toBeTruthy();
     expect(screen.getByRole("button", { name: en.projectNew })).toBeTruthy();
     expect(screen.getByRole("button", { name: en.projectOpen })).toBeTruthy();
+    // Save, Save As and Close are refused but reachable, and each says why:
+    // its description is the no-project sentence, its tooltip the reason
+    // (PM9.7 F1).
+    for (const name of [en.projectSave, en.projectSaveAs, en.projectClose]) {
+      const refused = screen.getByRole("button", { name });
+      expect(refused.getAttribute("aria-disabled")).toBe("true");
+      expect((refused as HTMLButtonElement).disabled).toBe(false);
+      expect(refused.getAttribute("title")).toBe(en.projectNeedsProject);
+      const described = document.getElementById(refused.getAttribute("aria-describedby") ?? "");
+      expect(described?.textContent).toBe(en.projectNoneHint);
+    }
     // Nothing claims a project that is not there.
     expect(screen.queryByText(en.projectReferences)).toBeNull();
   });

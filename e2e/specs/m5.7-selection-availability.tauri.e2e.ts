@@ -19,6 +19,7 @@ import {
   availableBackend,
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
+import { showBackendBanner } from "../support/backendBanner";
 
 const PLOT = "svg.chromatogram-svg";
 const GRID = "div.spectrum-table";
@@ -66,6 +67,7 @@ async function recheckTheBackend(verdict: unknown): Promise<void> {
       table["inspect_backend"] = { kind: "resolve", value: answer };
     }
   }, verdict);
+  await showBackendBanner();
   const recheck = await browser.$('[data-backend-action="recheck"]');
   if (!(await recheck.isExisting())) {
     throw new Error("the backend banner offers no recheck action");
@@ -83,7 +85,8 @@ describe("M5.7 — selection availability in the real shell", () => {
     expect(await browser.$(REGION).isExisting()).toBe(true);
     expect(await noticeText()).toBe(null);
     expect(await attributeOf(GRID, "aria-describedby")).toBe(null);
-    expect(await attributeOf(PLOT, "aria-describedby")).toBe("chromatogram-readout");
+    // The readout, then each axis's unit state (PM9 UI-33).
+    expect(await attributeOf(PLOT, "aria-describedby")).toBe("chromatogram-readout chromatogram-units");
   });
 
   it("explains a closed lane once, and sends nothing from either surface", async () => {
@@ -102,7 +105,7 @@ describe("M5.7 — selection availability in the real shell", () => {
     ).toBe(1);
     expect(await attributeOf(GRID, "aria-describedby")).toBe("viewer-selection-availability");
     expect(await attributeOf(PLOT, "aria-describedby")).toBe(
-      "chromatogram-readout viewer-selection-availability",
+      "chromatogram-readout chromatogram-units viewer-selection-availability",
     );
     expect(await attributeOf(NOTICE, "aria-live")).toBe("polite");
 

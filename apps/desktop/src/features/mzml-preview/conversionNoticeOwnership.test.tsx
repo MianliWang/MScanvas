@@ -23,6 +23,7 @@ import type {
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { PreviewApiProvider } from "./api";
 import { App } from "../../app/App";
+import { showBackendBanner } from "../../test/backendBanner";
 import type { Deferred, FakePreviewApi, FakePreviewApiOptions } from "../../test/previewFixtures";
 import {
   availableBackend,
@@ -126,6 +127,7 @@ function heldRecheck(): {
 
 /** Presses the banner's own recheck, which is not a conversion action. */
 async function pressCheckAgain(): Promise<void> {
+  await showBackendBanner();
   const control = await screen.findByRole("button", { name: "Check again" });
   fireEvent.click(control);
 }
@@ -145,7 +147,7 @@ describe("a failed catalog beside a backend check", () => {
 
     const convert = within(panel).getByRole("button", { name: /^Convert/ });
     await waitFor(() => {
-      expect(convert).toBeDisabled();
+      expect(convert).toHaveAttribute("aria-disabled", "true");
     });
     expect(retry).toBeDisabled();
 
@@ -237,7 +239,7 @@ describe("a configuration probe beside a conversion control", () => {
       expect(owners(id)).toBe(1);
     });
     const convert = within(panel).getByRole("button", { name: /^Convert/ });
-    expect(convert).toBeDisabled();
+    expect(convert).toHaveAttribute("aria-disabled", "true");
     expect(describedBy(convert)).toContain(id);
     expect(duplicateIds()).toEqual([]);
 

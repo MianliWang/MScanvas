@@ -563,7 +563,15 @@ describe("durable UI preferences", () => {
     await waitFor(() => expect(shell()).toHaveAttribute("data-roster-open", "false"));
     // Asked for, nothing to show, and nothing loaded to make it showable.
     expect(shell()).toHaveAttribute("data-details-open", "false");
-    expect(screen.getByRole("button", { name: en.inspectorToggle })).toBeDisabled();
+    // Refused but reachable (PM9 L20): pressing it requests nothing. A toggle
+    // that got through would store "hidden" -- the open state here says
+    // nothing, since there is nothing loaded to show either way.
+    const details = screen.getByRole("button", { name: en.inspectorToggle });
+    expect(details).toHaveAttribute("aria-disabled", "true");
+    const before = preferences.requests.length;
+    await act(async () => { fireEvent.click(details); });
+    await act(async () => { await Promise.resolve(); });
+    expect(preferences.requests).toHaveLength(before);
     expect(preferences.stored()?.layout.details).toBe("shown");
 
     // The reset is reachable from here, with no dataset and no backend.

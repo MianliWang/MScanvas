@@ -49,6 +49,13 @@ layer, source reference and the build that produced the preview. No global
 route is added. See the
 [M8 record](M8_1_FIRST_CLOSED_LOOP.md#what-m85-added-on-top-of-this).
 
+Since PM9.6 (2026-10-05), a report already on screen -- a QC summary snapshot
+or a targeted MS1 result -- stays while the run that produced it is inspected.
+Walking to that run in Details and back keeps the report and what the reader
+chose in it. Any other selection replaces or removes it, and inspecting a run
+never opens a report that was not already shown. See
+[slice-06](../phases/pm9/slice-06.md).
+
 ## Historical M0 structural candidate
 
 The first structural prototype uses a resizable workbench:

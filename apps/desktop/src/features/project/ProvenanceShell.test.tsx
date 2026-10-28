@@ -107,22 +107,27 @@ describe("provenance in the application shell", () => {
 
     // On the Workbench with no acquisition read there is nothing contextual to
     // show, and the control says so.
+    // Refused with `aria-disabled`, so the one Details control stays in the
+    // tab order on every surface (PM9 L20).
     const toggle = screen.getByRole("button", { name: en.inspectorToggle });
-    expect(toggle.hasAttribute("disabled")).toBe(true);
+    expect(toggle.getAttribute("aria-disabled")).toBe("true");
+    expect(toggle.hasAttribute("disabled")).toBe(false);
 
     await press(screen.getByRole("button", { name: en.projectSurface }));
     await screen.findByText(en.projectReferences);
-    // Still nothing selected, so still nothing to describe.
-    expect(screen.getByRole("button", { name: en.inspectorToggle }).hasAttribute("disabled")).toBe(
-      true,
-    );
+    // Still nothing selected, so still nothing to describe -- said in the
+    // Project surface's own terms.
+    const onProject = screen.getByRole("button", { name: en.inspectorToggle });
+    expect(onProject).toBe(toggle);
+    expect(onProject.getAttribute("aria-disabled")).toBe("true");
+    expect(onProject.getAttribute("title")).toBe(en.provenanceNothingSelected);
 
     await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
 
     // Now there is, and the region is reachable.
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: en.inspectorToggle }).hasAttribute("disabled"),
+        screen.getByRole("button", { name: en.inspectorToggle }).hasAttribute("aria-disabled"),
       ).toBe(false),
     );
   });

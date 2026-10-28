@@ -11,7 +11,11 @@ export function useRosterWindow<T extends RosterWindowItem>(items: readonly T[],
   const [version, setVersion] = useState(0);
   const [viewport, setViewport] = useState({ top: 0, height: 600 });
   const revealFocus = useRef<string | null>(null);
-  useLayoutEffect(() => { revealFocus.current = focusedHandle; }, [focusedHandle]);
+  // Focus a press gives a row is where the pointer already is: revealing it
+  // would scroll the list between press and release, and the release could
+  // land on another row (PM9 UI-21). Only other focus changes are revealed.
+  const pressing = useRef(false);
+  useLayoutEffect(() => { revealFocus.current = pressing.current ? null : focusedHandle; }, [focusedHandle]);
   const refresh = useCallback(() => {
     if (frame.current !== null) return;
     frame.current = requestAnimationFrame(() => {
@@ -51,12 +55,16 @@ export function useRosterWindow<T extends RosterWindowItem>(items: readonly T[],
     const element = root.current;
     // Deliberate pointer/wheel scrolling supersedes a pending keyboard reveal.
     const userScroll = () => { revealFocus.current = null; };
+    const press = () => { userScroll(); pressing.current = true; };
+    const release = () => { pressing.current = false; };
     element?.addEventListener("wheel", userScroll, { passive: true });
-    element?.addEventListener("pointerdown", userScroll, { passive: true });
+    element?.addEventListener("pointerdown", press, { passive: true });
     element?.addEventListener("touchstart", userScroll, { passive: true });
+    window.addEventListener("pointerup", release, true); window.addEventListener("pointercancel", release, true);
     refresh();
     return () => {
-      element?.removeEventListener("wheel", userScroll); element?.removeEventListener("pointerdown", userScroll); element?.removeEventListener("touchstart", userScroll);
+      element?.removeEventListener("wheel", userScroll); element?.removeEventListener("pointerdown", press); element?.removeEventListener("touchstart", userScroll);
+      window.removeEventListener("pointerup", release, true); window.removeEventListener("pointercancel", release, true);
       instance.disconnect(); observer.current = null; if (frame.current !== null) cancelAnimationFrame(frame.current); frame.current = null;
     };
   }, [refresh]);

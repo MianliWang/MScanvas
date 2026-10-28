@@ -102,7 +102,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     expect((output?.textContent ?? "").trim()).not.toBe("");
 
     // And the action takes the row.
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     await waitFor(() => {
       expect(api.conversionRequests).toEqual([{ handles: ["file-9"], conflictPolicy: "fail" }]);
     });
@@ -230,7 +230,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     ).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Add converted outputs to workspace" }),
-    ).toBeEnabled();
+    ).not.toHaveAttribute("aria-disabled");
   });
 
   it("adopts ten outputs as ten outcomes of one queue item, and repeats honestly", async () => {
@@ -423,7 +423,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
         screen.getByText("1 converted mzML output is ready to add to this workspace.", VISIBLE),
       ).toBeVisible();
     });
-    expect(screen.getByRole("button", { name: "Add converted output to workspace" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add converted output to workspace" })).not.toHaveAttribute("aria-disabled");
     // And the partial acquisition is still explained beside it.
     expect(screen.getAllByText(/the complete output set was not produced/i).length).toBeGreaterThan(
       0,

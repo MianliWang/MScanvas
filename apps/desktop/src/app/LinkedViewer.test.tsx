@@ -34,6 +34,7 @@ import {
   unavailableBackend,
 } from "../test/previewFixtures";
 import { App } from "./App";
+import { showBackendBanner } from "../test/backendBanner";
 
 /**
  * How many times the workspace handed the scan table a different set of props.
@@ -437,6 +438,7 @@ describe("the linked viewer", () => {
     expect(screen.getByRole("button", { name: "Previous scan" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Next scan" })).toBeEnabled();
 
+    await showBackendBanner();
     fireEvent.click(screen.getAllByRole("button", { name: "Check again" })[0] as HTMLElement);
 
     await waitFor(() => {

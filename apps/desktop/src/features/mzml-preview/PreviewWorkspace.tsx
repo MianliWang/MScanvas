@@ -2,10 +2,11 @@ import { announceConversion } from "./conversionMessages";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
-import { ProjectPanel } from "../project/ProjectPanel";
+import { ProjectPanel, busyKey } from "../project/ProjectPanel";
 import { ProvenanceDetails } from "../project/ProvenanceDetails";
 import { useProject } from "../project/useProject";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
+import type { ShellContextFacts } from "../workbench/shellContext";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 import { ActiveClearDialog } from "./ActiveClearDialog";
@@ -271,6 +272,15 @@ export function PreviewWorkspace() {
   const backendUnavailable =
     workspace.backend.status === "resolved" &&
     workspace.backend.availability.state === "unavailable";
+  // The banner has nothing to act on only while a usable installation stands
+  // and nothing is being checked, superseded or held back by the conversion
+  // lane; then it folds to a phrase in the header and costs the workspace no
+  // height (PM9 L10). Every other state keeps it on screen. Whether the reader
+  // opened it again is presentation for this session and stored nowhere.
+  const [backendExpanded, setBackendExpanded] = useState(false);
+  const backendQuiet =
+    backendUsable && !workspace.backendReadingStale && !workspace.conversion.backendQuarantined;
+  const backendCollapsed = backendQuiet && !workspace.backendBusy && !backendExpanded;
 
   // Curating the workspace is not backend work, so it stays available when no
   // ProteoWizard is installed. What it waits for is a picker already on screen,
@@ -370,6 +380,18 @@ export function PreviewWorkspace() {
     !workspace.previewBackendBusy &&
     (!workspace.conversion.busy || workspace.conversion.adopting) &&
     !workspace.conversion.backendQuarantined;
+  // The evidence pane's one next step, reading the retained acquisition again,
+  // holds the filled accent while it is on screen; `Add files…` gives it up
+  // rather than offer a second (PM9 UI-19). In the constrained layout the two
+  // are never on screen together -- an open roster takes the pane's place --
+  // so there it keeps the accent.
+  const reopenOffered =
+    !constrained &&
+    surface === "workbench" &&
+    workspace.activeDataset !== null &&
+    preview.status !== "loaded" &&
+    preview.status !== "opening" &&
+    preview.status !== "failed";
   // There is deliberately no `canConvert` here any more. Converting had an
   // expression of its own on this line, strictly wider than the guard the
   // operation applied, and the panel's `Retry` answered to it as well -- three
@@ -391,6 +413,32 @@ export function PreviewWorkspace() {
     describeConversion(resolvedScope.handles, resolvedScope.scope);
   }, [describeConversion, describeKey]);
 
+  /**
+   * What the header's context line describes.
+   *
+   * Every field is read from the owner that already holds it -- the project
+   * session, the viewer, the scope the Conversion surface resolves and the
+   * conversion lane -- so the line cannot come to disagree with the surface it
+   * points at. A stop that was asked for reads as stopping, as the Conversion
+   * surface reads it, before the lane itself says so.
+   */
+  const shellContext: ShellContextFacts = {
+    project: project.state.open ? { name: project.state.name, unsaved: project.state.dirty } : null,
+    projectActivity: busyKey(project.busy),
+    viewing: previewFile === null ? null : {
+      name: previewFile.fileName,
+      context: previewFile.relativeContext,
+      spectrumIndex: spectrum.status === "loaded" ? spectrum.spectrum.index : null,
+    },
+    conversionScope: roster.datasets.length === 0
+      ? null
+      : { scope: resolvedScope.scope, eligible: resolvedScope.handles.length },
+    conversionStatus: workspace.conversion.state.status === "running" && workspace.conversion.stopping
+      ? "stopping"
+      : workspace.conversion.state.status,
+    inspecting: project.provenance,
+  };
+
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
       recordMeasurement(
@@ -409,7 +457,9 @@ export function PreviewWorkspace() {
       <WorkbenchHeader surface={surface} onNavigate={setSurface}
         detailsAvailable={detailsAvailable} rowCount={roster.datasets.length}
         busy={workspace.conversion.busy}
-        retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus} />
+        retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus}
+        projectBusy={project.busy !== "idle"} context={shellContext}
+        backend={backendQuiet ? { expanded: !backendCollapsed, onToggle: () => setBackendExpanded(backendCollapsed) } : null} />
 
       {workspace.dropPresentation.status === "idle" ? null : (
         <div
@@ -442,6 +492,8 @@ export function PreviewWorkspace() {
           onUseAutomaticDiscovery={workspace.useAutomaticDiscovery}
           readingSuperseded={workspace.backendReadingStale}
           state={workspace.backend}
+          collapsed={backendCollapsed}
+          onEngage={() => setBackendExpanded(true)}
         />
 
         {/* A picker that would not open is its own problem. It never replaces
@@ -747,6 +799,7 @@ export function PreviewWorkspace() {
               panels.navigate();
             }}
             onAddFiles={workspace.addFiles}
+            addFilesQuiet={reopenOffered}
             onAddFolder={workspace.addFolder}
             canRemove={canRemove}
             onClearList={() => {
@@ -771,7 +824,11 @@ export function PreviewWorkspace() {
             admits them, and the two collections are not the same list. It needs
             no provider, so it is reachable on a machine with no converter
             installed. */}
-        <section id="workbench-project" className="workbench-project" hidden={surface !== "project" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("projectSurface")}>
+        {/* Each surface names itself (PM9 L1) in the navigation's own words, so
+            the title and the tab that leads here cannot disagree; the region's
+            accessible name is the title, unchanged from the label it replaces. */}
+        <section id="workbench-project" className="workbench-project" hidden={surface !== "project" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-project">
+          <h1 id="surface-title-project" className="surface-title">{t("projectSurface")}</h1>
           <ProjectPanel
             session={project}
             liveDatasetHandles={liveDatasetHandles}
@@ -796,7 +853,8 @@ export function PreviewWorkspace() {
             }}
           />
         </section>
-        <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("conversionTask")}>
+        <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-conversion">
+          <h1 id="surface-title-conversion" className="surface-title">{t("conversionTask")}</h1>
           <ConversionPanel
             configuration={workspace.conversionConfiguration}
             conversion={workspace.conversion}
@@ -825,7 +883,8 @@ export function PreviewWorkspace() {
               spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
             />
           ) : null}        </aside>
-        <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-label={t("workbench")}>
+        <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-workbench">
+        <h1 id="surface-title-workbench" className="surface-title">{t("workbench")}</h1>
 
         {preview.status === "loaded" ? (
           <div className="viewer-column">
@@ -889,7 +948,7 @@ export function PreviewWorkspace() {
                 exportToggle={
                   workspace.chromatogramExportToken === null ? null : (
                     <div className="figure-quick-actions"><QuickFigureActions busy={workspace.scientificExportBusy} quickVisible={!chromatogramExportOpen}
-                      context={`${t("viewerChromatogram")} · ${t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun")} · ${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} px`}
+                      context={[t("viewerChromatogram"), t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun"), `${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} px`]}
                       figureUnavailable={workspace.renderSettingsProblem !== null || (!workspace.chromatogramTraces.tic && !workspace.chromatogramTraces.bpc)}
                       pngUnavailable={workspace.pngDpiProblem !== null} onPreview={() => openFigure("chromatogram")}
                       onPng={() => workspace.exportChromatogram("png")} onCopy={workspace.copyChromatogramPlot} />
@@ -987,7 +1046,11 @@ export function PreviewWorkspace() {
               <div className="empty-state">
                 <strong>{t("emptyEvidence")}</strong>
                 <span>{backendUnavailable ? t("previewBackendRequired") : t("emptyEvidenceHelp")}</span>
-                {workspace.activeDataset !== null ? <button type="button" className="secondary-button" disabled={!canPreview} onClick={workspace.previewActiveAgain}>
+                {/* The one owned next step in this state -- the acquisition that
+                    was being read, one click from being read again -- so it is
+                    this surface's primary action (PM9 L1). No other state gets
+                    one invented for it. */}
+                {workspace.activeDataset !== null ? <button type="button" className="primary-button" disabled={!canPreview} onClick={workspace.previewActiveAgain}>
                   {t("previewRetained", { name: formatDatasetLabel(workspace.activeDataset) })}
                 </button> : null}
               </div>

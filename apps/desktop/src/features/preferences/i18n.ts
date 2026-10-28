@@ -39,7 +39,10 @@ export interface MessageParameters {
   readonly targetedLineOverfull: { readonly line: string };
   readonly targetedEngine: { readonly engine: string };
   readonly targetedWhereLine: { readonly line: string };
-  readonly targetedPlanCaption: { readonly ppm: string; readonly width: string };
+  readonly targetedPlanCaption: { readonly count: number; readonly ppm: string; readonly width: string };
+  readonly targetedPlanFor: { readonly name: string };
+  readonly targetedGoToLine: { readonly line: string };
+  readonly targetedRunBatchAgain: { readonly count: number };
   readonly targetedPlanDigest: { readonly digest: string };
   readonly targetedRowsBounded: { readonly count: number; readonly total: number };
   readonly targetedShowEvidenceNamed: { readonly name: string };
@@ -85,6 +88,9 @@ export interface MessageParameters {
   readonly m74CnvConvertAll: { readonly count: number };
   readonly m74CnvRunningItem: { readonly position: number; readonly total: number };
   readonly m74CnvBetweenItems: { readonly count: number; readonly total: number };
+  readonly m74CnvRerunningItem: { readonly position: number; readonly total: number };
+  readonly m74CnvRerunBetweenItems: { readonly count: number; readonly total: number };
+  readonly m74CnvScopeLine: { readonly counts: string; readonly help: string };
   readonly m74CnvSkipping: { readonly name: string };
   readonly m74CnvSkip: { readonly name: string };
   readonly m74CnvAttempt: { readonly count: number };
@@ -190,7 +196,9 @@ export interface MessageParameters {
   readonly viewerExportSaved: { readonly name: string; readonly details: string };
   readonly viewerExportCopied: { readonly details: string };
   readonly viewerFigureSize: { readonly width: string; readonly height: string; readonly theme: string };
-  readonly rangeCommitted: { readonly name: string; readonly low: string; readonly high: string };
+  readonly rangeCommittedFull: { readonly name: string };
+  readonly rangeCommittedPart: { readonly name: string };
+  readonly rangeCommittedBounds: { readonly low: string; readonly high: string };
   readonly rangePending: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeConfirmContext: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeEdit: { readonly name: string };
@@ -251,6 +259,13 @@ export interface MessageParameters {
   readonly measureRowDetail: { readonly index: string };
   readonly measureTableDetail: { readonly rows: string };
   readonly unknownFigureProblem: { readonly code: string };
+  readonly shellContextProject: { readonly name: string };
+  readonly shellContextProjectUnsaved: { readonly name: string };
+  readonly shellContextViewing: { readonly name: string };
+  readonly shellContextViewingSpectrum: { readonly name: string; readonly index: string };
+  readonly shellContextScope: { readonly scope: string; readonly eligible: string };
+  readonly shellContextActivity: { readonly activity: string };
+  readonly shellContextInspecting: { readonly name: string };
 }
 export type MessageArguments<K extends MessageKey> = K extends keyof MessageParameters
   ? [parameters: MessageParameters[K]] : [];

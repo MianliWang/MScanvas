@@ -13,7 +13,10 @@ Each workflow is a testable product contract, not a screen description.
    ProteoWizard there meant it to be found; a folder chosen through the picker
    is narrower than that, not wider, because it applies to one session only.
 2. If available, it reports the ProteoWizard release and build and enters the
-   workspace. The report states which installation it describes.
+   workspace. The report states which installation it describes. Since PM9.2
+   (L10, `b81fc78`) the available report takes no band of its own while
+   nothing needs acting on: it folds to a `ProteoWizard ready` control in the header, which
+   opens the full report, and the report is still announced as it arrives.
 3. If unavailable, it offers installation guidance, retry, and `Choose folder…`
    for an installation somewhere it does not search. That choice lasts for the
    session only and names a folder, never an executable: naming one binary
@@ -272,9 +275,10 @@ availability, queue, adoption and export contracts.
    missing, is not a file, or is not the companion MSCanvas expects, the
    acquisition is refused with a sentence saying which file to put beside it —
    and choosing the `.wiff.scan` on its own says to choose the `.wiff` instead.
-2. Choose `Selected rows` or `All workspace rows`. Selected uses the curated
+2. Choose `Checked rows` or `All workspace rows`. Checked uses the curated
    checkbox membership even when it contains just one row; focus is viewer/keyboard state
-   only. All uses every eligible row in the workspace, regardless of search.
+   only. (PM9.4, 2026-10-04: called `Selected rows` until then, which since M7.2
+   collided with the roster's highlighted "selected" rows.) All uses every eligible row in the workspace, regardless of search.
    Both scopes exclude unsupported rows and show requested/eligible/excluded
    counts. The three families may be mixed. Vendor rows cannot be previewed,
    and say so. There is no `Convert visible` scope: search changes presentation
@@ -340,7 +344,12 @@ availability, queue, adoption and export contracts.
    in [ADR 0043, CNV-D4](../architecture/adr/0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite),
    not a pending checkbox or provider experiment.
 6. Read the exact ordered member list and the Rust-authored capacity, then use
-   `Convert N selected…` or `Convert all N eligible…` when that plan is ready.
+   `Convert N eligible…` or `Convert all N eligible…` when that plan is ready. N is
+   the eligible count the scope line states (PM9.4, 2026-10-04: `Convert N
+   selected…` until then, which read "Convert 0 selected…" beside one checked
+   mzML row). The review sits directly above the action, after the scope,
+   settings, destination and conflict it answers; a refused Convert stays a Tab
+   stop whose reason can be reached.
    The existing roster sort applies to the full workspace before scope selection;
    ties keep Rust's added order. Search does not alter either scope's membership
    or order. Over-capacity means too many eligible items, not too many requested
@@ -630,4 +639,27 @@ run (unsaved project, no runtime, no room for a copy, a quarantined session)
 records nothing and says what to change; a failed or cancelled run is kept in
 history with its code and stage and publishes nothing; a stored result whose
 payload is missing or damaged says so and offers nothing it cannot read. The
-current contract is the [M9 closure](M9_CLOSURE.md).
+current contract is the [M9 closure](M9_CLOSURE.md). **PM9.5 (2026-10-04)**
+made this path read in order inside the setup:
+
+- the review sits between **Review plan** and **Run**;
+- a control that cannot act says why, and a refusal is said beside the action
+  it refused;
+- a run is followed and cancelled beside its request, and a stop reads as
+  requested until the run answers;
+- an ending offers **Open result** or **Show run**, and the same plans run
+  again are labelled as new runs.
+
+See [slice-05](../phases/pm9/slice-05.md). **PM9.6 (2026-10-05)** made the
+stored result and its history read as one task:
+
+- the outcome counts are one line, and the meaning of the outcome words and
+  the table's export come before the rows;
+- a chosen target's evidence comes into view beside its row;
+- the report stays while the run that produced it is inspected in Details;
+- the history says why a run failed and that no result was stored;
+- a stored result found missing or damaged is named in the history, and a
+  damaged one says how to recover.
+
+Reopening a project still checks, relinks and admits nothing until asked. See
+[slice-06](../phases/pm9/slice-06.md).

@@ -13,7 +13,7 @@
  */
 
 import { MZML_ROW } from "../support/fixtures";
-import { ipcCalls, loadWith, tauriTable } from "../support/tauriPanel";
+import { ipcCalls, loadWith, openTauriPreview, tauriTable } from "../support/tauriPanel";
 
 const PLOT = "svg.chromatogram-svg";
 const READOUT = "#chromatogram-readout";
@@ -44,21 +44,6 @@ async function spectrumReads(): Promise<number[]> {
   return (await ipcCalls())
     .filter((call) => call.command === "load_selected_spectrum")
     .map((call) => Number(call.args["index"]));
-}
-
-/** Opens the seeded preview through the interface, as the roster documents. */
-async function openThePreview(): Promise<void> {
-  const row = `li.dataset-row[data-handle="${MZML_ROW.handle}"]`;
-  await browser.$(row).waitForDisplayed({ timeout: 60_000 });
-  // Clicked to focus and select, then activated. A double click opens one too,
-  // but WebDriver's synthetic one does not reliably become a `dblclick` in
-  // WebView2.
-  await browser.$(row).click();
-  await browser.keys(["Enter"]);
-  await browser.$(PLOT).waitForDisplayed({ timeout: 60_000 });
-  await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForDisplayed({
-    timeout: 60_000,
-  });
 }
 
 /** Where a fraction of the plot's drawing area falls, in page pixels. */
@@ -207,7 +192,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
     // The selected-spectrum command is left real, so a click in the plot runs
     // the production command over the production transport.
     await loadWith(tauriTable({ real: ["load_selected_spectrum"] }));
-    await openThePreview();
+    await openTauriPreview(MZML_ROW.handle);
   });
 
   it("draws the chromatogram from the preview the document was given", async () => {

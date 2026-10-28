@@ -40,8 +40,6 @@ import {
 import {
   SPECTRUM_MZ_HIGH,
   SPECTRUM_MZ_LOW,
-  TRUNCATED_MZ_HIGH,
-  TRUNCATED_MZ_LOW,
   fullSpectrumProjection,
   ipcTable,
 } from "../support/fixtures";
@@ -385,19 +383,6 @@ async function waitForTheAxis(low: string, high: string): Promise<void> {
   );
 }
 
-/**
- * The transform a gesture has put on the sticks, if one is in flight.
- *
- * `null` at rest: React owns the drawing then, and a transform left behind would
- * mean the layer had not been handed back.
- */
-async function stickTransform(): Promise<string | null> {
-  return browser.execute((css: string) => {
-    const layer = document.querySelector(css)?.querySelector("g.spectrum-sticks-layer");
-    return layer?.getAttribute("transform") ?? null;
-  }, SPECTRUM_PLOT) as Promise<string | null>;
-}
-
 /** Every drawing this session has asked Rust for, as the windows it asked for. */
 async function projectionsAskedFor(): Promise<readonly { low: number; high: number }[]> {
   return spectrumProjections(await ipcCalls());
@@ -447,7 +432,8 @@ async function stackOverflow(): Promise<{
   readonly overflowY: string;
 }> {
   return browser.execute(() => {
-    const stack = document.querySelector<HTMLElement>("div.viewer-stack");
+    // The evidence column, the scroll owner since M7.2/M7.3 (PM9.3).
+    const stack = document.querySelector<HTMLElement>("#workbench-evidence");
     return {
       scrollHeight: stack?.scrollHeight ?? 0,
       clientHeight: stack?.clientHeight ?? 0,
@@ -456,6 +442,29 @@ async function stackOverflow(): Promise<{
   });
 }
 
+/*
+ * Retired at PM9.7 against named replacements (slice-03 §5, SUPERSEDED):
+ *
+ * - "pans from where the press began, keeping the width the reader chose":
+ *   since M7.3 a primary drag proposes a band and middle or Space drag pans.
+ *   Replaced by SpectrumViewport.test.tsx "pans from where the press began
+ *   rather than from the previous frame" and m7.3-viewer.browser.e2e.ts "keeps
+ *   numeric raw text, IME and host keys separate and supports wheel and pan
+ *   with reduced motion".
+ * - Copy only, replaced by SpectrumViewport.test.tsx "tells an empty window, a
+ *   drawing not yet arrived, a failure and a refusal apart", its "a spectrum
+ *   with no m/z range to navigate" group, and App.test.tsx "describes a
+ *   truncated spectrum by its whole-spectrum peak, not the prefix":
+ *   - "asks for nothing while a drag is in flight, and once when it is released"
+ *   - "says a window truthfully holds no point rather than calling it loading or
+ *     a failure"
+ *   - "still draws the spectrum's own points and says why there is no range"
+ *   - "asks for the whole retained range rather than the transferred prefix"
+ *   The first of these also counted requests during a drag. That half is
+ *   SpectrumViewport.test.tsx's "keeps moving the drawing while a drag
+ *   publishes nothing" and "commits the pan when the press is released,
+ *   keeping the window's width", for the middle-button pan M7.3 left.
+ */
 describe("the visible m/z viewport", () => {
   describe("the range a selected spectrum opens at", () => {
     it("draws the whole spectrum, says so, and asks Rust for exactly that window", async () => {
@@ -627,36 +636,6 @@ describe("the visible m/z viewport", () => {
       await browser.pause(400);
       expect(await spectrumRangeCaption()).toBe(before);
       expect(await projectionsAskedFor()).toHaveLength(asked);
-      expect(await unexpectedConsole()).toEqual([]);
-    });
-
-    it("pans from where the press began, keeping the width the reader chose", async () => {
-      await openTheSpectrum();
-      await waitForTheDrawing();
-      await press("Zoom in m/z");
-      await waitForTheDrawing();
-      const span = await spectrumSpan();
-      const before = await spectrumDomain();
-
-      await revealTheSpectrum();
-      const from = await spectrumPointAt(0.6);
-      const to = await spectrumPointAt(0.45);
-      await browser
-        .action("pointer")
-        .move({ x: from.x, y: from.y })
-        .down()
-        .move({ x: to.x, y: to.y })
-        .up()
-        .perform();
-
-      await browser.waitUntil(async () => (await spectrumDomain()).low > before.low, {
-        timeout: 15_000,
-        timeoutMsg: "the drag did not move the m/z viewport",
-      });
-      await waitForTheDrawing();
-      // Panned rather than resized. Compared at the caption's own four-decimal
-      // resolution, which is what a reader can actually distinguish.
-      expect(Math.abs((await spectrumSpan()) - span)).toBeLessThan(0.001);
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -1002,60 +981,6 @@ describe("the visible m/z viewport", () => {
   });
 
   describe("how often Rust is asked for a drawing", () => {
-    it("asks for nothing while a drag is in flight, and once when it is released", async () => {
-      await openTheSpectrum();
-      await waitForTheDrawing();
-      await press("Zoom in m/z");
-      await waitForTheDrawing();
-      const asked = (await projectionsAskedFor()).length;
-
-      await revealTheSpectrum();
-      const from = await spectrumPointAt(0.6);
-      const to = await spectrumPointAt(0.45);
-      const restingRange = await spectrumRangeCaption();
-      // The release is skipped explicitly. `perform()` releases the pointer when
-      // the sequence ends, so "has not been released" would otherwise be true
-      // only for the 120ms the settle had left to run -- an assertion about
-      // scheduling rather than about the gesture.
-      // Two moves, not one, and the difference is the repair. The first crosses
-      // the slop and *starts* the gesture, which is a semantic transition and is
-      // published -- so React draws that range itself and the layer is untouched.
-      // Every frame after it is frame data, publishes nothing, and is drawn by
-      // the adapter moving the layer instead.
-      const midway = await spectrumPointAt(0.52);
-      await browser
-        .action("pointer")
-        .move({ x: from.x, y: from.y })
-        .down()
-        .move({ x: midway.x, y: midway.y })
-        .move({ x: to.x, y: to.y })
-        .perform(true);
-
-      // The range on screen has moved and the drawing says outright that it is
-      // the one already in hand, which is exactly the state that must cost no
-      // request: a range still being dragged is a drawing, not a decision.
-      const during = await whatIsDrawn();
-      expect(during.caption).toContain(
-        "Showing the drawing already in hand while the range is being changed",
-      );
-      // The caption names no range, and the range line beside it does. A drag is
-      // drawn between two renders, so a number written into the caption would be
-      // the range the gesture began at, sitting under a plot that has moved.
-      expect(during.caption).toContain("Release to draw the range under it");
-      expect(await spectrumRangeCaption()).not.toBe(restingRange);
-      // And the drawing really did move with the pointer, without a render: the
-      // adapter transforms the layer it already has rather than asking React for
-      // a new one per frame.
-      expect(await stickTransform()).toMatch(/translate/u);
-      expect(await projectionsAskedFor()).toHaveLength(asked);
-
-      await browser.action("pointer").up().perform();
-
-      await waitForTheDrawing();
-      expect(await projectionsAskedFor()).toHaveLength(asked + 1);
-      expect(await unexpectedConsole()).toEqual([]);
-    });
-
     it("asks once for a stream of wheel events belonging to one gesture", async () => {
       await openTheSpectrum();
       await waitForTheDrawing();
@@ -1189,60 +1114,10 @@ describe("the visible m/z viewport", () => {
       expect((await controlStates())["Zoom in m/z"]).toBe(true);
       expect(await unexpectedConsole()).toEqual([]);
     });
-
-    it("says a window truthfully holds no point rather than calling it loading or a failure", async () => {
-      await openTheSpectrum();
-      await waitForTheDrawing();
-
-      await setInvokeResult("project_selected_spectrum", {
-        low: ZOOMED_LOW,
-        high: ZOOMED_HIGH,
-        mz: [],
-        intensity: [],
-        sourcePoints: 0,
-        reduced: false,
-      });
-      await press("Zoom in m/z");
-
-      await browser.waitUntil(
-        async () => (await spectrumStatus()).includes("no measured point"),
-        { timeout: 15_000, timeoutMsg: "the empty window was never described" },
-      );
-      const status = await spectrumStatus();
-      expect(status).toContain(
-        "This spectrum reports no measured point between m/z 300.5000 and 302.0000",
-      );
-      expect(status).toContain("That is what the file says about this range");
-      // Told apart from the two states it could be mistaken for, in both
-      // directions: it is not waiting, and it is not a failure.
-      expect(status).not.toContain("Nothing is drawn here until it arrives");
-      expect(await browser.$(`button=${RETRY}`).isExisting()).toBe(false);
-      expect((await whatIsDrawn()).sticks).toBe(0);
-      expect(await unexpectedConsole()).toEqual([]);
-    });
   });
 
   describe("a spectrum whose m/z range cannot be navigated", () => {
     const REFUSED_TABLE = () => ipcTable({ refusedViewport: true });
-
-    it("still draws the spectrum's own points and says why there is no range", async () => {
-      await openTheSpectrum({ answers: REFUSED_TABLE() });
-
-      // Selected, loaded and drawn. A refusal is a fact about drawability, not
-      // about the spectrum being unusable.
-      expect(await browser.$(SPECTRUM).getText()).toContain("Spectrum 0");
-      await waitForTheAxis("300.0000", "302.5000");
-      const drawn = await whatIsDrawn();
-      expect(drawn.sticks).toBe(6);
-      expect(drawn.caption).toContain("Drawn as 6 sticks, one per point.");
-
-      expect(await spectrumRangeCaption()).toBe("No m/z range to navigate.");
-      const status = await spectrumStatus();
-      expect(status).toContain("The m/z range of this spectrum cannot be navigated.");
-      expect(status).toContain("do not increase from one point to the next");
-      expect(status).toContain("a sorted copy would be a different measurement");
-      expect(await unexpectedConsole()).toEqual([]);
-    });
 
     it("offers no action, takes no key, and asks Rust for no drawing", async () => {
       await openTheSpectrum({ answers: REFUSED_TABLE() });
@@ -1358,21 +1233,6 @@ describe("the visible m/z viewport", () => {
      * spectrum's, and that a window beginning far past the end of the prefix
      * comes back with observations and draws them.
      */
-
-    it("asks for the whole retained range rather than the transferred prefix", async () => {
-      await openTheSpectrum({ answers: ipcTable({ truncatedSource: true }) });
-      await waitForTheDrawing();
-
-      expect(await projectionsAskedFor()).toEqual([
-        { low: TRUNCATED_MZ_LOW, high: TRUNCATED_MZ_HIGH },
-      ]);
-      expect(await spectrumRangeCaption()).toBe("Showing m/z 300.0000 to 900.0000 (full range)");
-      // And the panel says the bound applies to the arrays rather than to the
-      // drawing, which is the sentence that stopped being true before M5.2.
-      const panel = await browser.$(SPECTRUM).getText();
-      expect(panel).toContain("The drawing is not limited to them");
-      expect(await unexpectedConsole()).toEqual([]);
-    });
 
     it("draws the retained observations of a window that begins past the prefix", async () => {
       await openTheSpectrum({ answers: ipcTable({ truncatedSource: true }) });

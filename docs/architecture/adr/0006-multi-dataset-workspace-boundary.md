@@ -9,6 +9,20 @@
   bundle. Duplicate identity is correspondingly the whole acquisition's
   identity rather than a single object's; for every family described here that
   is the same value it always was.
+- Amended: 2026-10-20 (post-PM9, documentation only) — distinguish the original
+  544px stacked-layout budget from the current folded workbench. The owner
+  assigned this correction after PM9 in
+  [PM9.7's freeze decisions](../../phases/pm9/slice-07.md#9-owner-decisions-at-the-freeze).
+  The evidence remains reachable through the current layout's own scroll;
+  no replacement pixel floor or new rendered measurement is introduced.
+- Amended: 2026-09-26 (PM9.2, final candidate `b81fc78`) — the backend notice
+  is persistent only while it has something to act on. With a usable, current
+  reading it folds into the header and takes no height, so the 960x640 budget
+  below is no longer shortened by it in that state; see *Path and diagnostic
+  privacy* below and
+  [PM9.2](../../phases/pm9/slice-02.md#focused-rendered-acceptance-2026-09-26).
+  The contract that a shown notice never moves or collapses to fit is
+  unchanged.
 - Amended: 2026-07-30 (M1.1.5) — identity lifetime. Every registered dataset now
   holds a live handle on its file, so a filesystem identity cannot be recycled
   while a row still names it. See *Identity lifetime* below; the paragraphs this
@@ -511,24 +525,46 @@ without deriving any location in the frontend. The Run identity alone uses the
 secondary text token because this context can be the only visible distinction
 between two acquisitions; the generic panel-header note rule remains unchanged.
 
-That identity is semantic evidence rather than optional inspector detail. At
-the constrained stacked viewport it remains fully contained while the roster
-keeps two complete rows. The Run details may scroll, but not the identity
-header; the viewer below keeps both panel headers and a table viewport tall
-enough to contain its sticky header and one complete data row. A layout rect
-that exists only outside a clipped ancestor does not satisfy this contract.
+That identity is semantic evidence rather than optional inspector detail. The
+original constrained stacked layout kept it fully contained alongside two
+complete roster rows, both viewer headers and a table viewport containing its
+sticky header and one complete data row. A layout rect that exists only outside
+a clipped ancestor does not satisfy the evidence-reachability contract.
 
-The recovery owner is explicit when in-flow shell notices shorten that viewport.
-At 960x640, the narrow workspace's complete internal budget is 544px: 16px of
-padding, a 342px sidebar, the 8px row gap and a 178px loaded-viewer row. The
-viewer row is itself 116px for the spectrum table, an 8px gap and 54px for the
-Selected spectrum panel. If the persistent backend notice and a transient
-folder-import notice leave less than that budget, neither notice moves or
-collapses and the document and body still do not scroll. The narrow workspace
-alone owns the bounded vertical overflow, so one internal scroll reaches the
-complete Selected spectrum header while the table header and one complete data
-row remain available. Shrinking the viewer row to fit instead is not recovery:
-it recreates the clipped evidence this contract refuses.
+The original M1.4.1 layout's complete internal budget at 960x640 was 544px:
+16px of padding, a 342px stacked sidebar, the 8px row gap and a 178px
+loaded-viewer row. That viewer row was 116px for the spectrum table, an 8px gap
+and 54px for the Selected spectrum panel. These numbers describe that layout;
+they are not a minimum height for the current workbench.
+
+The M7.2 fold removed the stacked sidebar at this width: Acquisitions and
+Details swap with the evidence rather than taking height above it. M7.3's
+viewer is a natural-height stack. The current task contract is the
+[PM9.3 acceptance in task terms](../../phases/pm9/slice-03.md#01-acceptance-in-task-terms):
+the viewed acquisition stays identifiable; each panel's controls remain whole;
+both viewer headers and the table's sticky header plus one complete row are
+reachable. At the evidence column's top the chromatogram plot is fully visible
+and the selected spectrum begins inside the viewport. The evidence column's
+own scroll reaches the remaining spectrum controls and scan-table evidence,
+without document or body overflow or shrinking or hiding controls to fit.
+Reopening a folded context panel is separate from this evidence scroll.
+
+The recovery owner remains explicit when in-flow shell notices shorten the
+available area. A notice that is shown does not move or collapse to make room;
+the current `#workbench-evidence` owns the evidence-recovery scroll. Reaching a
+clipped rectangle or shrinking controls is not recovery. No replacement pixel
+budget is inferred from the old stacked layout.
+
+Since PM9.2 (see the amendment above) the backend notice is on screen only
+while it has something to act on; a usable, current reading folds into the
+header. The rule for a notice that is shown still applies; the 544px breakdown
+above remains the historical stacked-layout budget.
+Measured in the browser at 960x640: the quiet state's notices band was 89 px
+at `a0783bb` and is 0 px on `b81fc78`.
+The accepted PM9.3 browser observations are recorded in
+[its focused acceptance](../../phases/pm9/slice-03.md#05-validation-repair-and-closure-2026-09-28).
+This documentation correction reruns no browser or native check and does not
+claim a new combined backend/folder-notice measurement.
 
 The registry's own origin record stays private and stays out of identity: two
 names for one acquisition are one row whichever route each arrived by, and a
@@ -687,13 +723,16 @@ mutation-concurrency section for the complete state machine.
 - direct-add duplicate feedback names the existing row with that same supplied
   roster label, rather than dropping its collision context or deriving one from
   a path the webview does not have;
-- at the constrained stacked viewport, that Run identity remains fully visible
-  alongside two complete roster rows, both viewer headers and one complete
-  spectrum-table row beneath its sticky header;
+- at the current constrained folded viewport, the viewed acquisition remains
+  identifiable, the roster and Details are reachable through their controls,
+  and the evidence column reaches both viewer headers and one complete
+  spectrum-table row beneath its sticky header without clipping controls;
 - with persistent backend and transient folder-import notices both present at
-  960x640, the narrow workspace reserves its 544px internal budget and owns the
-  resulting bounded vertical scroll; recovery reaches the complete 178px
-  viewer without document/body overflow or a clipped Selected spectrum panel;
+  960x640, shown notices stay in flow and the evidence column owns the recovery
+  scroll; complete spectrum controls and scan-table evidence remain reachable
+  without document/body overflow or a clipped Selected spectrum panel. The
+  historical 544px/178px stacked-layout arithmetic is not a current layout
+  assertion;
 - folder begin is current-generation-idempotent in one bounded pending slot,
   exact claim is single-use and advances before the picker, and wrong or
   replayed claims do not consume the live slot;

@@ -10,6 +10,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
+import { showBackendBanner } from "../../test/backendBanner";
 import type { PreviewApi } from "./api";
 import { PreviewApiProvider } from "./api";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
@@ -53,6 +54,11 @@ describe("offline setup help", () => {
       const view = renderWorkspace(createFakePreviewApi({ availability }));
       await waitFor(() => expect(help()).not.toBeNull());
       const disclosure = help()!;
+      // With nothing to act on the banner is folded, and its help is one
+      // press away in the header (PM9 L10); in every other state it shows.
+      if (availability === availableBackend) {
+        await showBackendBanner();
+      }
       // Closed to begin with: it is help, not an interruption.
       expect(disclosure.open).toBe(false);
       expect(within(disclosure).getByText(en.backendHelpTitle)).toBeVisible();

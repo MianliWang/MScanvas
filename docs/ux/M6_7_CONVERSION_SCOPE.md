@@ -1,6 +1,12 @@
 # M6.7 conversion scope
 
 Status: implemented and validated; release record [PR #100](https://github.com/MianliWang/MScanvas/pull/100).
+
+PM9.4 note (2026-10-04): the scope's label is now `Checked rows`, and the
+selected-scope action `Convert N eligible…`. The selected/all contract below is
+unchanged; since M7.2 its membership is the roster checkboxes, and "selected"
+had come to name the highlighted rows instead
+([slice-04](../phases/pm9/slice-04.md) R1).
 Baseline: `5b91f6c5ab1c3013eb9556ddf83b76217a56f249` (published M6.6).
 
 ## Outcome and interaction

@@ -498,19 +498,22 @@ describe("the recorded report", () => {
     expect(details().textContent).not.toContain("12,345");
     expect(details().textContent).not.toMatch(/[A-Za-z]:\\|\/Users\/|msaccess\.exe/);
 
-    // Report -> run.
+    // Report -> run. The run that produced the report keeps it on screen.
+    const shown = report();
     await press(region.getByRole("button", { name: /Show what the Capture QC summary run of/ }));
     expect(details().querySelector("[data-provenance]")?.getAttribute("data-provenance")).toBe(
       "run",
     );
     expect(within(details()).getByRole("heading", { name: en.projectOperationCaptureQc })).toBeTruthy();
-    // Run -> layer.
+    expect(report()).toBe(shown);
+    // Run -> layer: another object, so the report goes.
     await press(
       within(details()).getByRole("button", { name: `Show what the layer of ${LABEL} is related to` }),
     );
     expect(details().querySelector("[data-provenance]")?.getAttribute("data-provenance")).toBe(
       "layer",
     );
+    expect(document.querySelector("[data-qc-report]")).toBeNull();
     // The layer's own history names this run; its source's is separate.
     expect(within(details()).getByText(en.provenanceLayerUsedBy)).toBeTruthy();
     expect(within(details()).getByText(en.provenanceLayerSourceUsedByNothing)).toBeTruthy();

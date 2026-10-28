@@ -41,7 +41,7 @@ function select(handle: string, additive = false) {
 
 function scopeAll() { fireEvent.click(screen.getByRole("radio", { name: "All workspace rows" })); }
 function button() { return document.querySelector<HTMLButtonElement>(".conversion-plan .primary-button")!; }
-async function ready() { await waitFor(() => expect(button()).toBeEnabled()); }
+async function ready() { await waitFor(() => expect(button()).not.toHaveAttribute("aria-disabled")); }
 
 async function organizeRow(handle: string) {
   fireEvent.click(screen.getByRole("button", { name: "New group" }));
@@ -69,7 +69,7 @@ describe("M6.7 through the production conversion surface", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
-    expect(button()).toBeEnabled();
+    expect(button()).not.toHaveAttribute("aria-disabled");
     expect(api.planRequests()).toEqual(before);
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-3"]);
     expect(reads).not.toHaveBeenCalled(); expect(opens).not.toHaveBeenCalled();
@@ -79,8 +79,8 @@ describe("M6.7 through the production conversion surface", () => {
   });
   it("has no focused fallback, excludes mixed selected rows, and all ignores search", async () => {
     const api = await mount();
-    expect(button()).toHaveTextContent("Convert 0 selected");
-    expect(button()).toBeDisabled();
+    expect(button()).toHaveTextContent("Convert 0 eligible");
+    expect(button()).toHaveAttribute("aria-disabled", "true");
     expect(api.planRequests()).toHaveLength(0);
     select("raw-2"); select("open", true);
     await ready();
@@ -88,7 +88,7 @@ describe("M6.7 through the production conversion surface", () => {
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-2"]);
     const beforeSearch = api.planRequests().length;
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no matches" } });
-    expect(button()).toBeEnabled();
+    expect(button()).not.toHaveAttribute("aria-disabled");
     expect(api.planRequests()).toHaveLength(beforeSearch);
     scopeAll(); await ready();
     expect(screen.getByText(/4 requested · 3 eligible · 1 excluded/)).toBeVisible();
@@ -101,17 +101,17 @@ describe("M6.7 through the production conversion surface", () => {
     const api = await mount(count, async (request) => plan(request, 5));
     scopeAll();
     await waitFor(() => expect(screen.getByTestId("conversion-capacity")).toHaveTextContent("5"));
-    if (count <= 5) { await ready(); expect(button()).toBeEnabled(); }
+    if (count <= 5) { await ready(); expect(button()).not.toHaveAttribute("aria-disabled"); }
     else {
-      expect(button()).toBeDisabled();
+      expect(button()).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByTestId("conversion-capacity")).toHaveTextContent("6 eligible acquisitions exceed the queue capacity of 5");
       fireEvent.click(button());
       expect(api.beginRequests()).toEqual([]);
       expect(api.conversionRequests).toEqual([]);
       select("raw-1");
-      fireEvent.click(screen.getByRole("radio", { name: "Selected rows" }));
+      fireEvent.click(screen.getByRole("radio", { name: "Checked rows" }));
       await ready();
-      expect(button()).toHaveTextContent("Convert 1 selected");
+      expect(button()).toHaveTextContent("Convert 1 eligible");
     }
   });
 
@@ -127,7 +127,7 @@ describe("M6.7 through the production conversion surface", () => {
     scopeAll(); await ready();
     expect(api.planRequests()).toHaveLength(2);
     await act(async () => old.resolve({ outcome: "capacityExceeded", capacity: 0, requestedCount: 999 }));
-    expect(button()).toBeEnabled();
+    expect(button()).not.toHaveAttribute("aria-disabled");
     expect(button()).toHaveTextContent("Convert all 1 eligible");
   });
 

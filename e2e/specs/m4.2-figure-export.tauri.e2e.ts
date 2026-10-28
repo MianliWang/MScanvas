@@ -46,14 +46,15 @@ async function panelFacts(): Promise<{
   return browser.execute(() => {
     const panel = document.querySelector("section.spectrum-panel");
     const fields: Record<string, string> = {};
-    for (const label of panel?.querySelectorAll("label.spectrum-figure-field") ?? []) {
-      const input = label.querySelector("input");
-      const name = (label.textContent ?? "").trim().split(" ")[0] ?? "";
+    for (const field of panel?.querySelectorAll(".spectrum-figure-settings .spectrum-figure-field") ?? []) {
+      const input = field.querySelector("input.spectrum-figure-input");
+      const label = field.querySelector("label.setting-field-label");
+      const name = (label?.textContent ?? "").trim().split(" ")[0] ?? "";
       if (input instanceof HTMLInputElement && name !== "") {
         fields[name] = input.value;
       }
     }
-    const checked = panel?.querySelector("input[type='radio']:checked");
+    const checked = panel?.querySelector(".spectrum-figure-settings input[type='radio']:checked");
     return {
       actions: [...(panel?.querySelectorAll(".spectrum-export-actions button") ?? [])].map(
         (button) => (button.textContent ?? "").trim(),
@@ -102,7 +103,7 @@ describe("M4.2 on the real Tauri WebView", () => {
     // could be drawn at would have been refused instead.
     await chooseFigure({ width: "820", height: "540", dpi: "600", theme: "dark" });
 
-    await browser.$("button=Export PNG…").click();
+    await browser.$(".spectrum-panel").$("button=Export PNG…").click();
     await waitForOutcome(60_000);
 
     const begun = (await ipcCalls()).filter(
@@ -124,9 +125,9 @@ describe("M4.2 on the real Tauri WebView", () => {
 
   it("refuses a figure the settings could not describe, without asking Rust", async () => {
     await browser.execute(() => {
-      const input = document.querySelector("label.spectrum-figure-field input");
+      const input = document.querySelector(".spectrum-panel .spectrum-figure-field input[id='spectrum-widthPx']");
       if (!(input instanceof HTMLInputElement)) {
-        return;
+        throw new Error("The spectrum width field is missing from the current shared controls.");
       }
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setter?.call(input, "0");
@@ -134,7 +135,7 @@ describe("M4.2 on the real Tauri WebView", () => {
     });
 
     const blocked = await browser.execute(() =>
-      [...document.querySelectorAll(".spectrum-export-actions button")]
+      [...document.querySelectorAll(".spectrum-panel .spectrum-export-actions button")]
         .filter((button) => button instanceof HTMLButtonElement && button.disabled)
         .map((button) => (button.textContent ?? "").trim()),
     );
@@ -156,7 +157,7 @@ describe("M4.2 on the real Tauri WebView", () => {
     // never acceptable is a third outcome: a crash, a wrong token, or a success
     // claimed without one.
     focusApplicationWindow();
-    await browser.$("button=Copy plot").click();
+    await browser.$(".spectrum-panel").$("button=Copy plot").click();
     const status = await waitForOutcome();
 
     const copied = (await ipcCalls()).filter(
@@ -192,7 +193,7 @@ describe("M4.2 on the real Tauri WebView", () => {
     await chooseFigure({ width: "20000", height: "20000" });
 
     focusApplicationWindow();
-    await browser.$("button=Copy plot").click();
+    await browser.$(".spectrum-panel").$("button=Copy plot").click();
     const status = await waitForOutcome();
 
     expect(status).toContain("too large to turn into an image");
@@ -217,11 +218,11 @@ describe("M4.2 on the real Tauri WebView", () => {
     // so the size that stopped the copy must not stop it.
     await chooseFigure({ width: "20000", height: "20000" });
 
-    await browser.$("button=Export SVG…").click();
+    await browser.$(".spectrum-panel").$("button=Export SVG…").click();
     expect(await waitForOutcome(60_000)).toContain("cancelled");
-    await browser.$("button=Dismiss export message").click();
+    await browser.$(".spectrum-panel").$("button=Dismiss export message").click();
 
-    await browser.$("button=Export PNG…").click();
+    await browser.$(".spectrum-panel").$("button=Export PNG…").click();
     expect(await waitForOutcome(60_000)).toContain("32 million pixels");
 
     const begun = (await ipcCalls()).filter(
@@ -237,17 +238,17 @@ describe("M4.2 on the real Tauri WebView", () => {
     // `Copy plot`, neither of which has a `pHYs` chunk to put it in.
     await chooseFigure({ dpi: "50" });
 
-    await browser.$("button=Export SVG…").click();
+    await browser.$(".spectrum-panel").$("button=Export SVG…").click();
     expect(await waitForOutcome(60_000)).toContain("cancelled");
-    await browser.$("button=Dismiss export message").click();
+    await browser.$(".spectrum-panel").$("button=Dismiss export message").click();
 
-    await browser.$("button=Export PNG…").click();
+    await browser.$(".spectrum-panel").$("button=Export PNG…").click();
     const refusal = await waitForOutcome(60_000);
     expect(refusal).toContain("between 72 and 1200");
-    await browser.$("button=Dismiss export message").click();
+    await browser.$(".spectrum-panel").$("button=Dismiss export message").click();
 
     focusApplicationWindow();
-    await browser.$("button=Copy plot").click();
+    await browser.$(".spectrum-panel").$("button=Copy plot").click();
     const copied = await waitForOutcome();
     expect(copied).not.toContain("between 72 and 1200");
     // And whatever the clipboard did, the confirmation names no resolution:

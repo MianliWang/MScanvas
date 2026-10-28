@@ -22,6 +22,13 @@ export interface DatasetRosterProps {
   readonly onReloadRoster: () => void;
   readonly dispatch: (action: RosterAction) => void;
   readonly onAddFiles: () => void;
+  /**
+   * Whether another surface's next step holds the filled accent on screen
+   * beside this one: the evidence pane offering to read the retained
+   * acquisition again. `Add files…` stays offered, as a secondary action (PM9
+   * UI-19).
+   */
+  readonly addFilesQuiet?: boolean;
   readonly onAddFolder: () => void;
   readonly onRemoveSelected: () => void;
   /** Starts Clear and reports whether this activation acquired the mutation gate. */
@@ -135,6 +142,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   onReloadRoster,
   dispatch,
   onAddFiles,
+  addFilesQuiet = false,
   onAddFolder,
   onRemoveSelected,
   onClearList,
@@ -899,7 +907,8 @@ export const DatasetRoster = memo(function DatasetRoster({
       <details className="roster-help"><summary>{t("rosterHelp")}</summary><p>{t("rosterLifetime")}</p><p>{t("rosterKeyboardHelp")}</p></details>
       <div className="dataset-roster-actions">
         <button
-          className="primary-button"
+          className={addFilesQuiet ? "secondary-button" : "primary-button"}
+          data-add-files=""
           disabled={!canAddFiles}
           onClick={(event) => {
             startPicking(event, onAddFiles);
@@ -938,6 +947,7 @@ export const DatasetRoster = memo(function DatasetRoster({
             focusedIsConvertible ? "preview-needs-conversion-description" : undefined
           }
           className="secondary-button"
+          data-contextual=""
           disabled={!canPreview || state.focused === null || focusedIsConvertible}
           onClick={() => {
             if (state.focused !== null && !focusedIsConvertible) {
@@ -957,8 +967,13 @@ export const DatasetRoster = memo(function DatasetRoster({
             {t("needsConversion")}
           </span>
         ) : null}
+        {/* Preview focused and Remove highlighted act on a row the reader has
+            picked, so they stand out only while one is picked (PM9 L9): quiet
+            while disabled, ordinary buttons otherwise, and never moved -- their
+            place, name and focus handling stay as they are. */}
         <button
           className="secondary-button"
+          data-contextual=""
           disabled={!canRemove || state.selected.size === 0}
           onClick={(event) => {
             const control = event.currentTarget;
@@ -993,6 +1008,9 @@ export const DatasetRoster = memo(function DatasetRoster({
                 .join(" ") || undefined
             }
             className="secondary-button"
+            // Presentation only: the block's list-wide action, kept quieter
+            // than the rest (PM9 L9).
+            data-list-wide=""
             disabled={!canMutate}
             onBlur={(event) => {
               if (event.relatedTarget instanceof Node) {

@@ -190,7 +190,7 @@ describe("stopping a running conversion queue", () => {
     });
 
     const stop = within(panel).getByRole("button", { name: "Stop queue" });
-    expect(stop).toBeEnabled();
+    expect(stop).not.toHaveAttribute("aria-disabled");
     // Both halves of the promise, before it is pressed. Without the second, a
     // user reads `stop` as `undo` over a file that is already theirs.
     expect(within(panel).getByText(STOP_EXPLANATION)).toBeVisible();
@@ -207,7 +207,7 @@ describe("stopping a running conversion queue", () => {
       "Stop this file",
     ]);
     const cancelItem = within(panel).getByRole("button", { name: "Stop this file" });
-    expect(cancelItem).toBeEnabled();
+    expect(cancelItem).not.toHaveAttribute("aria-disabled");
     expect(cancelItem).toHaveAccessibleDescription(
       `Stop this file ends run-2.raw and carries on with the rest of the queue. ${CANCEL_ITEM_EXPLANATION}`,
     );
@@ -366,7 +366,7 @@ describe("stopping a running conversion queue", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Skip run-3.raw" })).toBeEnabled();
+      expect(within(panel).getByRole("button", { name: "Skip run-3.raw" })).not.toHaveAttribute("aria-disabled");
     });
     expect(within(panel).queryByRole("button", { name: "Skip run-2.raw" })).toBeNull();
     expect(within(panel).queryByRole("button", { name: "Skip run-4.raw" })).toBeNull();
@@ -447,7 +447,7 @@ describe("stopping a running conversion queue", () => {
     const control = await within(panel).findByRole("button", {
       name: "Stopping this file…",
     });
-    expect(control).toBeDisabled();
+    expect(control).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).queryByRole("button", { name: "Stop this file" })).toBeNull();
     expect(within(panel).getByText(CANCEL_ITEM_IN_FLIGHT_EXPLANATION)).toBeVisible();
   });
@@ -518,7 +518,7 @@ describe("stopping a running conversion queue", () => {
       ]),
     });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Stop this file" })).toBeEnabled();
+      expect(within(panel).getByRole("button", { name: "Stop this file" })).not.toHaveAttribute("aria-disabled");
     });
   });
 
@@ -589,7 +589,7 @@ describe("stopping a running conversion queue", () => {
     const skipping = await within(panel).findByRole("button", {
       name: "Skipping run-3.raw…",
     });
-    expect(skipping).toBeDisabled();
+    expect(skipping).toHaveAttribute("aria-disabled", "true");
     await waitFor(() => {
       expect(liveRegion()).toContain("Skipping run-3.raw.");
     });
@@ -908,7 +908,7 @@ describe("stopping a running conversion queue", () => {
     expect(panel.textContent ?? "").not.toContain("cannot cancel");
     // And it resolves into a stoppable queue without a poll interval passing.
     const stop = await within(panel).findByRole("button", { name: "Stop queue" });
-    expect(stop).toBeEnabled();
+    expect(stop).not.toHaveAttribute("aria-disabled");
     expect(stop).toHaveAccessibleDescription(STOP_EXPLANATION);
   });
 
@@ -1091,7 +1091,7 @@ describe("stopping a running conversion queue", () => {
     // Every backend control is refused while quarantined.
     expect(within(panel).queryByRole("button", { name: /^retry/i })).toBeNull();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Convert/ })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // And the roster is still readable and searchable.
@@ -1146,7 +1146,7 @@ describe("stopping a running conversion queue", () => {
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
   });
 
-  it("keeps focus where the user left it when a queue settles under them", async () => {
+  it("moves focus to the queue's status line when the pressed stop control leaves (PM9.4 R11)", async () => {
     const api = apiWith(runningQueue(), { stop: () => Promise.resolve(stoppedQueue()) });
     renderApp(api);
 
@@ -1159,12 +1159,12 @@ describe("stopping a running conversion queue", () => {
     await waitFor(() => {
       expect(within(panel).getByText("Queue stopped")).toBeVisible();
     });
-    // The control the user pressed is gone, and nothing stole the keyboard to
-    // somewhere unrelated: focus falls back to the document body rather than
-    // jumping into the roster or the plan below.
-    expect(document.activeElement === document.body || document.activeElement === null).toBe(
-      true,
-    );
+    // The control the user pressed is gone. Replaces the earlier assertion
+    // that focus fell back to the document body (PM9.4 R11): it now lands on
+    // what changed, the queue's own status line -- still never jumping into
+    // the roster or the plan below.
+    expect(document.activeElement).toBe(within(panel).getByText("Queue stopped"));
+    expect(document.activeElement?.id).toBe("conversion-queue-status");
   });
 
   it("keeps queued and converting rows visible while a stop is in flight", async () => {

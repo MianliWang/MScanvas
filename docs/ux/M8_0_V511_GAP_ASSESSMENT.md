@@ -96,6 +96,13 @@ distinction mattered: one is missing code and the other is a gate. M8.2 widened
 availability to be a property of the surface and put the provenance consumer in
 that region. The remaining items below are still unobserved.
 
+**Changed by PM9.2 (2026-09-26, L20; final candidate `b81fc78`).** Where there
+is nothing to show, the `Details` control is now refused with `aria-disabled` rather than `disabled`:
+it stays focusable and says why, and the Inspector stays closed as before
+([slice-02](../phases/pm9/slice-02.md#focused-rendered-acceptance-2026-09-26)).
+The paragraphs above, and every measurement in this record, describe the build
+this window observed.
+
 Roster width measured 278px against a ~1410px content width. Against the
 implemented 280px mapping that is a match, not a deviation; the ~240px figure is
 the v5.11 reference the mapping deliberately departed from, with its reason

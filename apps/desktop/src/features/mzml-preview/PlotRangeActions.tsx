@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { RawTextField } from "../../components/fields/RawTextField";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { formatMz } from "./format";
 import type { PlotInputPort, PlotInputSnapshot } from "./viewer/plotInputAdapters";
 import { sameRange, usableRange } from "./viewer/rangeSelection";
 import { validateRangeDraft } from "./viewer/rangeDraft";
@@ -19,17 +20,38 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
   if (current === null) return null;
   const pending = current.range?.phase === "pending" ? current.range : null;
   const axis = t(port.axis === "rt" ? "rangeRtAxis" : "rangeMzAxis");
-  const committed = current.committed ?? current.full;
+  // At the plot's own precision, as its axis and caption print it; the exact
+  // values are the editor's and the export note's (PM9 UI-31).
+  const format = (value: number) => (port.axis === "mz" ? formatMz(value) : value.toFixed(4));
   const id = `plot-range-${port.axis}`;
   const close = () => { setDraft(null); setProblem(null); if (details.current) details.current.open = false; summary.current?.focus(); };
   const focusPlot = () => root.current?.parentElement?.querySelector<SVGSVGElement>('svg[role="img"]')?.focus({ preventScroll: true });
   return <div className="plot-range-actions" ref={root}>
-    <p className="plot-committed-range" aria-live="polite">{t(pending === null ? "rangeCommitted" : "rangePending", {
-      name: axis, low: String((pending?.domain ?? committed).low), high: String((pending?.domain ?? committed).high),
-    })}</p>
+    {/* The plot's caption prints the range on screen, a gesture's included.
+        This line says what is pending or committed: a pending band's bounds,
+        else "full range" while nothing narrower is committed and "part of the
+        full range" once a range is. The owners store the whole run or
+        spectrum as no commit, so a committed range is always a proper part of
+        it, and neither committed sentence claims to be the range on screen:
+        both stay true before, during and after a wheel or drag (PM9 UI-34).
+        The line follows the pending band and the committed range, never a
+        gesture's range: a gesture's frames and its abandonment change nothing
+        here, and neither does its start unless that start discards a pending
+        band (the owners' rule), after which the line reports the committed
+        range. A gesture's commit is announced once, when it settles. The
+        committed bounds are announced rather than printed, so the caption's
+        numbers are not repeated at rest; the hidden part brings its own
+        separator. Atomic, so a reader hears the whole line, not only the
+        numbers that changed. */}
+    <p className="plot-committed-range" aria-live="polite" aria-atomic="true">{pending !== null
+      ? t("rangePending", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })
+      : current.committed === null
+        ? t("rangeCommittedFull", { name: axis })
+        : <>{t("rangeCommittedPart", { name: axis })}<span className="visually-hidden">{t("rangeCommittedBounds", {
+          low: format(current.committed.low), high: format(current.committed.high) })}</span></>}</p>
     {pending === null ? null : <div className="plot-pending-actions">
       <button type="button" className="secondary-button" onClick={() => { port.confirm(pending); focusPlot(); }}
-        aria-label={t("rangeConfirmContext", { name: axis, low: String(pending.domain.low), high: String(pending.domain.high) })}>
+        aria-label={t("rangeConfirmContext", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })}>
         {t("rangeConfirm")}
       </button>
       <button type="button" className="secondary-button" onClick={() => { port.cancel(pending.transaction); focusPlot(); }}>{t("rangeCancel")}</button>

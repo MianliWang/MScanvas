@@ -11,7 +11,12 @@
  * carries it for anything reading the state rather than looking at it.
  */
 
+/* Like the other surfaces: the containing block of its own out-of-flow
+   accessible text (PM9 L22), and a column of its title and the surface. */
 .workbench-project {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   grid-area: main;
   min-width: 0;
   min-height: 0;
@@ -38,7 +43,7 @@
   border-radius: var(--radius-md);
   box-shadow: 0 1px 2px rgb(23 35 55 / 0.03);
   padding: 16px;
-  min-height: 100%;
+  flex: 1 0 auto;
 }
 
 .project-header {
@@ -115,6 +120,14 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+/* A refused action's reason, under the actions it belongs to (PM9 UI-24). */
+.project-action-reason {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-align: end;
 }
 
 .project-note,
@@ -341,6 +354,17 @@
   text-align: left;
 }
 
+/* In Details (245 px) a long name is bounded to three lines rather than
+   running down the column; the whole name is its tooltip and, for a link, its
+   accessible name (PM9 UI-25). Wider surfaces keep it whole. */
+.workbench-inspector .provenance-name,
+.workbench-inspector .provenance-link-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
 .provenance-link.is-gone {
   font-size: 12px;
   color: var(--color-text-tertiary);
@@ -503,6 +527,38 @@
 
 .provenance-digest {
   font-family: var(--font-mono);
+}
+
+/* In Details, a digest is one line: a prefix to scan and compare, the whole
+   value in its tooltip and still selected, copied and read in full (PM9
+   UI-25). Wider surfaces keep it whole. */
+.workbench-inspector .provenance-digest {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* In the 245 px Details column a fact is its label over its value. Beside a
+   column as wide as the list's longest label, a long value had 41-64 px and a
+   real module path left its digest none (PM9 UI-25). A label breaks anywhere,
+   as a module path must. At 1050 px and below Details takes the surface's
+   place and keeps label and value side by side. */
+@media (width > 1050px) {
+  .workbench-inspector .provenance-facts {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0;
+  }
+
+  .workbench-inspector .provenance-facts dt {
+    overflow-wrap: anywhere;
+  }
+
+  /* Facts are set apart from one another, not from the section label above. */
+  .workbench-inspector .provenance-facts dd + dt,
+  .workbench-inspector .targeted-member + .targeted-member > dt {
+    margin-top: 6px;
+  }
 }
 
 /*
@@ -693,15 +749,24 @@
 
 /* A table keeps its label beside its value rather than stretching across the
    section, and the row table fills its own scroller. */
-.targeted-setup .qc-report-table,
-.targeted-report > .qc-report-table {
+.targeted-setup .qc-report-table {
   align-self: flex-start;
 }
 
+/* A refused action on the Project surface reads as refused, as the header's
+   panel toggles do: it fades, but never while it holds the focus ring, so the
+   ring keeps full contrast (PM9.7 F1). Its reason is reachable from the
+   control itself: a description, and a tooltip. */
+.project-surface .secondary-button[aria-disabled="true"]:not(:focus-visible) {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 /* Run is the one control here whose unavailability decides the next step, so
-   an inert control reads as inert. Scoped to this setup: the rest of the
-   surface keeps its own treatment. */
-.targeted-setup button[aria-disabled="true"] {
+   an inert control reads as inert: Run through the refused-primary treatment
+   every primary shares (PM9 UI-24), the rest here by fading. Scoped to this
+   setup: the rest of the surface keeps its own treatment. */
+.targeted-setup button[aria-disabled="true"]:not(.primary-button):not(:focus-visible) {
   cursor: not-allowed;
   opacity: 0.48;
 }
@@ -824,4 +889,107 @@
 /* A member's position never wraps, however long the sentence beside it. */
 :is([data-targeted-batch-members], [data-targeted-batch-progress]) :is(th, td):first-child {
   white-space: nowrap;
+}
+
+/*
+ * The targeted task as one path (PM9.5): the request, its review, Run, then
+ * the run or batch it started, each under its own heading.
+ */
+.targeted-review-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.targeted-review-area h4,
+.targeted-run h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+/* A review's tables scroll inside themselves: 200 targets or 16 acquisitions
+   never push Run out of reach. */
+.targeted-review-scroll {
+  align-self: flex-start;
+  max-width: 100%;
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* One run's own block, in the batch panel's quiet tones. */
+.targeted-run {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+/* The setup's text controls meet the 32 px compact minimum (DESIGN_SYSTEM). */
+.targeted-setup .link-button {
+  min-height: 32px;
+}
+
+/* A member's action stays on one line beside its name. */
+.targeted-batch td:last-child .link-button {
+  white-space: nowrap;
+}
+
+/*
+ * A stored result and its history (PM9.6).
+ *
+ * The outcome counts are one line of label and value, every count kept, so
+ * the rows they summarize start on the first screen. A failed run says why
+ * under its outcome, and a stored result the project found missing or
+ * damaged says so beside its counts; both in the danger tone the run's
+ * border and the report's own refusal already use.
+ */
+.targeted-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+
+.targeted-summary-label {
+  color: var(--color-text-secondary);
+}
+
+.targeted-summary dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+}
+
+.targeted-summary dl > div {
+  display: flex;
+  gap: 4px;
+}
+
+.targeted-summary dt {
+  color: var(--color-text-secondary);
+}
+
+.targeted-summary dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.project-run-failure {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.project-artifact-unavailable {
+  color: var(--color-danger);
 }

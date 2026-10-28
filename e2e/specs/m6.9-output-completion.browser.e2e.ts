@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
 import { availableBackend, completeCatalog, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
+import { showConversion } from "../support/conversion";
 import type { ConversionOutputMember, ConversionQueueItem, SelectedFile, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
 
 const STATE = "get_workspace_conversion_state";
@@ -208,7 +209,11 @@ async function start(first: WorkspaceConversionUpdate, datasets: readonly Select
     [STATE]: first,
   });
   await browser.url("/");
-  await browser.$(RUNNING).waitForDisplayed({ timeout: 30_000 });
+  // The Conversion surface is its own destination since M7.2 (PM9.4,
+  // baseline section 2: "conversion panel never reached").
+  await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
+  await showConversion();
+  await browser.$(RUNNING).waitForDisplayed({ timeout: 15_000 });
 }
 
 describe("M6.9 output completion, the five judgements and adoption", () => {
@@ -391,6 +396,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
 
     for (const [width, height] of VIEWPORTS) {
       await viewport(width, height);
+      await showConversion();
       await details(1);
       await details(2);
       // One pixel of tolerance, as every other responsive case here uses: a

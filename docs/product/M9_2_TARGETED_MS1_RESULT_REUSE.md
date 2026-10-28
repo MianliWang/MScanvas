@@ -140,3 +140,47 @@ regenerated, re-run or replaced.
 - Interval roles are drawn but not labelled in the image or its legend; their
   names are in the SVG's description, and the caption explains each.
 - The whole table is built in memory, bounded by the 200-target limit.
+
+## What PM9.6 changed on top of this (2026-10-05)
+
+Presentation and wiring only. The commands, the payload, the figure, the table
+format and every refusal above are unchanged. See
+[slice-06](../phases/pm9/slice-06.md).
+
+- **The report reads in task order.** The outcome counts are one line, every
+  count kept, zeros included. The meaning of the outcome words and **Export
+  the results table** now sit above the rows, so a chosen target's evidence
+  follows its row directly.
+- **Evidence comes into view beside its row.** Once a chosen target's evidence
+  is drawn, or refused, or the row has no points, the project surface moves
+  just enough to show it. The row stays on screen, and the row table's own
+  scroll position is left alone. Nothing moves if the reader has already moved
+  the keyboard elsewhere.
+- **A report stays while its run is inspected.** Walking from a result to the
+  run that produced it in Details, and back, keeps the report, the chosen
+  target and whatever was open, and reads nothing again. Any other selection
+  takes the report away. A run never opens a report that was not already
+  shown. The same holds for a QC summary snapshot.
+- **Payload damaged** now says how to recover, as **Payload missing** does:
+  the record and its digests are kept, so put back an intact copy of the
+  results folder, if there is one, and open the project again. Rust looks at
+  the payload again on open.
+- **The history says what each attempt left.**
+  - A targeted run with no result says "No result was stored.", where it said
+    "No file-facts record was produced." File-facts captures keep that
+    sentence.
+  - A failed run gives its failure sentence in its row.
+  - A record whose payload the project found missing or damaged says so
+    beside its counts, in the report's state words.
+  - The history's note now covers targeted runs.
+- **What the history's payload state is.** It is the project's last look, at
+  open, at a save elsewhere or at production. A read in this session that
+  finds a payload missing or damaged changes that report, not the history
+  row, until the project is opened again.
+- **Limit: "Damaged" covers more than a digest mismatch.** Rust also reports
+  a results folder as damaged when it cannot be read for a reason other than
+  its absence (access denied, or not a plain folder), and when its manifest
+  names another plan or result, as a re-attributed copy does. The sentence
+  still names the digests; "an intact copy" then means a readable copy of
+  this project's own folder. Opening the project again is still what looks
+  at it anew.

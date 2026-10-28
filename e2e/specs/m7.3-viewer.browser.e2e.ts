@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 import { ipcTable } from "../support/fixtures";
-import { seedARunOf } from "../support/viewer";
+import { readBackSavedPreferences, revealRosterRow, seedARunOf } from "../support/viewer";
 import { installIpcBoundary, IPC_TABLE_KEY, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult, setInvokeRejection } from "../support/harness";
 
 const RT = "svg.chromatogram-svg";
@@ -29,6 +29,8 @@ async function metrics(width: number, height: number, dpr: number) {
   await browser.waitUntil(() => browser.execute((w, h, s) => innerWidth === w && innerHeight === h && devicePixelRatio === s, width, height, dpr));
 }
 async function preferences(language: "en" | "zh-CN", density: "comfortable" | "compact") {
+  // Settings saves the choice and the shell adopts what the save confirms.
+  await readBackSavedPreferences();
   await browser.$("[data-settings-entry]").click();
   await browser.$('[data-settings-dialog] input[value="' + language + '"]').click();
   await browser.$('[data-settings-dialog] input[value="' + density + '"]').click();
@@ -95,7 +97,7 @@ async function open(kind: Parameters<typeof answers>[0] = "complete", options = 
   if (count !== undefined) await seedARunOf(count);
   if (kind === "complete" || kind === "prefix") await sourceBoundary(count === undefined ? 1 : .0125);
   const rosterToggle = browser.$('[aria-controls="workbench-roster"]');
-  if (!await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').isDisplayed()) await rosterToggle.click();
+  await revealRosterRow(selectedFile.handle);
   await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').click();
   await browser.$(SCANS).waitForExist();
   if (await rosterToggle.getAttribute("aria-expanded") === "true") await browser.$(".workbench-home").click();
@@ -257,6 +259,9 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.keys("Enter");
     await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum" && call.args.index === 99999));
     await metrics(1366, 768, 1.5);
+    // Each toggle is saved, and the shell adopts the layout the save confirms;
+    // the shared table's fixed record would fold Details again (PM9.3).
+    await readBackSavedPreferences();
     for (const id of ["workbench-roster", "workbench-inspector"]) {
       const toggle = browser.$('[aria-controls="' + id + '"]');
       if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();

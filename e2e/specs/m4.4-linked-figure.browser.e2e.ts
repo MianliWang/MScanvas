@@ -44,8 +44,8 @@ const EXPORT_ACTIONS = [
 /** Everything the open surface has to keep within reach, all of it at once. */
 const EVERY_ACTION = [...EXPORT_ACTIONS, ...LINKED_ACTIONS] as const;
 
-/** The viewer column, which is one of the two scroll owners in play. */
-const VIEWER_STACK = ".viewer-stack";
+/** The evidence column, the viewer's scroll owner since M7.2/M7.3. */
+const EVIDENCE = "#workbench-evidence";
 
 async function unexpectedConsole(): Promise<string[]> {
   return (await consoleEntries())
@@ -367,8 +367,13 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     await selectAScan();
 
     // A wheel that settles is a committed viewport, and this one is centred
-    // well away from the first scan.
-    const at = await pointAt(0.6);
+    // well away from the first scan. The plot is brought back on screen through
+    // the product's scroll owner first: selecting the scan clicked a table row,
+    // which since M7.3 sits below the spectrum, so the evidence column scrolled
+    // the plot away and a pointer aimed at its layout box was out of bounds
+    // (PM9.7; slice-03 §5 (d)). As in the operable-chromatogram case below.
+    const box = await revealThePlot();
+    const at = { x: (await pointAt(0.6)).x, y: Math.round(box.top + box.height / 2) };
     await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -500 }).perform();
     await browser.waitUntil(
       async () =>
@@ -387,9 +392,12 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
       timeoutMsg: "the linked section never said why it was closed",
     });
 
+    // M7.3's sentence (en.ts `linkedOutside`, c12f45d; LinkedFigureExport.test.tsx
+    // "says the selected scan is outside the current range, and how to fix it").
+    // The copy this first expected predates it (PM9.7).
     expect(await linkedReason()).toBe(
-      "The selected scan is outside the current chromatogram range. Choose Full run or move " +
-        "the current range to include the selected scan.",
+      "The selected scan is outside the current chromatogram range. Choose Full run or " +
+        "include the selected scan in the committed range.",
     );
     expect(await linkedRequests()).toEqual([]);
     // The chromatogram's own exports are untouched: the range holds scans, just
@@ -409,7 +417,9 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     await openTheViewer({ scans: SCANS });
     await selectAScan();
     await openExport();
-    const height = browser.$(PANEL).$("label*=Height").$("input");
+    // By id: since M7.1 a SettingField's label sits beside its input rather than
+    // around it, so `label*=… input` finds nothing (PM9.7; slice-03 §5 (b)).
+    const height = browser.$("#chromatogram-heightPx");
 
     await height.setValue("259");
     await browser.waitUntil(async () => (await linkedReason()).length > 0, {
@@ -459,12 +469,14 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
        */
       await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
       await selectAScan();
-      const closed = await scrollExtent(CHROMATOGRAM);
+      // The evidence column is the scroll owner that grows when the surface
+      // opens, not the chromatogram panel of the three-row grid this first
+      // measured (PM9.3).
+      const closed = await scrollExtent(EVIDENCE);
       await openExport();
 
-      const opened = await scrollExtent(CHROMATOGRAM);
+      const opened = await scrollExtent(EVIDENCE);
       expect(opened.extent).toBeGreaterThan(closed.extent);
-      expect(opened.extent).toBeGreaterThan(opened.height);
 
       for (const label of EVERY_ACTION) {
         const reach = await bringIntoView(label);
@@ -558,22 +570,24 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     it(`keeps the three views apart with the linked section open at ${viewport.name}`, async () => {
       // The surface must not buy its extra room by covering the views beside
       // it. Each panel keeps its own band, and nothing the linked section draws
-      // is painted over the scan table below.
+      // is painted over the view below: in M7.3's order, chromatogram, selected
+      // spectrum, then scans (this was written for chromatogram, scans,
+      // spectrum; PM9.3).
       await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
       await selectAScan();
       await openExport();
-      await scrollTo(VIEWER_STACK, 0);
+      await scrollTo(EVIDENCE, 0);
 
       const chromatogram = await panelBox(CHROMATOGRAM);
       const table = await panelBox("section.spectrum-table-panel");
       const spectrum = await panelBox("section.spectrum-panel");
-      expect(chromatogram.bottom).toBeLessThanOrEqual(table.top + 1);
-      expect(table.bottom).toBeLessThanOrEqual(spectrum.top + 1);
+      expect(chromatogram.bottom).toBeLessThanOrEqual(spectrum.top + 1);
+      expect(spectrum.bottom).toBeLessThanOrEqual(table.top + 1);
 
       const intruding = await browser.execute((labels: readonly string[]) => {
-        const below = document.querySelector("section.spectrum-table-panel");
+        const below = document.querySelector("section.spectrum-panel");
         if (below === null) {
-          return ["the scan table is not on screen"];
+          return ["the selected spectrum is not on screen"];
         }
         const bounds = below.getBoundingClientRect();
         // Only what is actually painted there. A control scrolled out of its

@@ -565,7 +565,8 @@ describe("M9.4 targeted MS1 batch: choose, review, run, stop and follow, rendere
       { command: "cancel_project_job", args: { operationId: OPERATION } },
     ]);
     const stopping = await capture("m94-03-stopping-1920");
-    expect(stopping.batch?.text).toContain(en.targetedBatchStopping);
+    // PM9.5 R7: a stop is a request until the batch answers how it ended.
+    expect(stopping.batch?.text).toContain(en.targetedStopRequested);
 
     await releaseInvokeHold("run_targeted_ms1_batch");
     await browser.$('[data-targeted-batch="ended"]').waitForDisplayed();

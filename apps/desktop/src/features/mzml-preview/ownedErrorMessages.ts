@@ -111,6 +111,15 @@ const MESSAGE = {
   incomplete_preview_result: "errIncompletePreviewResult",
   unexpected_preview_result: "errUnexpectedPreviewResult",
   non_finite_value: "errNonFiniteValue",
+  // Fixed sentences once declared as interpolating evidence, which they do
+  // not (PM9 UI-44). `queue_too_large` is worded without its bound.
+  backend_supervision_failed: "errBackendSupervisionFailed",
+  file_picker_selection_unreadable: "errFilePickerSelectionUnreadable",
+  file_picker_selection_too_large: "errFilePickerSelectionTooLarge",
+  folder_scan_unreadable: "errFolderScanUnreadable",
+  folder_scan_failed: "errFolderScanFailed",
+  file_unreadable: "errFileUnreadable",
+  queue_too_large: "errQueueTooLarge",
   // A stored targeted MS1 result's figure and table (M9.2).
   targeted_evidence_absent: "m92ErrorEvidenceAbsent",
   targeted_figure_not_drawable: "m92ErrorFigureNotDrawable",

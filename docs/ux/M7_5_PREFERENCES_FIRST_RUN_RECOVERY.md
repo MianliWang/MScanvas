@@ -245,6 +245,18 @@ without a usable backend can still add, group and organise acquisitions. It is
 not a wizard, it gates nothing, and there is no stored "setup complete"
 authority.
 
+*Changed by PM9.2 (2026-09-26, L10; final candidate `b81fc78`,
+[slice-02](../phases/pm9/slice-02.md#focused-rendered-acceptance-2026-09-26)).*
+While a usable, current reading leaves nothing to act on, the banner folds to a
+`ProteoWizard ready` control in the header's context bar and takes no height;
+its reading stays the one live region, and the help and the actions are one
+press away through that control. Every other state -- checking, missing,
+unsupported, failed, superseded, held back by the conversion lane -- keeps the
+banner, its actions and this help on screen. Focus inside the banner keeps it
+open, and a focused control that leaves hands its place to the banner. The
+paragraphs above and M7.5's captures describe M7.5's build, where the banner
+was always shown.
+
 ## Localization and accessibility coverage
 
 Every surface M7.5 delivers or touches is localized in `en` and `zh-CN`, bundled
@@ -417,3 +429,26 @@ Retained, ignored and local under `.tmp/m75-evidence/`: the checkpoint, the
 per-unit gate records with their serial reversion controls, the localization
 inventory, the source-review findings, and the browser and native acceptance
 records with their own bytes, runs, screenshots and attribution.
+
+## Correction (PM9 known UI/UX rework, 2026-09-28)
+
+Appended; the record above is unchanged. Its reason for the eleven declared
+boundary codes was wrong for most of them (PM9 baseline §12, UI-44):
+
+- Six are fixed English sentences with nothing interpolated:
+  `backend_supervision_failed`, `file_picker_selection_unreadable`,
+  `file_picker_selection_too_large`, `folder_scan_unreadable`,
+  `folder_scan_failed` and `file_unreadable`. Each now has an owned en and
+  zh-CN resource.
+- `queue_too_large` embeds only the bound, 16. Its resource is worded without
+  the number, so it cannot go stale when the constant moves.
+- `spectrum_failed` is produced only in `preview/tests.rs` and is reclassified
+  as a test seam.
+- `conversion_not_plannable` carries two fixed sentences under one code, and
+  which one applies is the part a reader acts on. It stays declared.
+
+Four codes remain declared: `conversion_not_plannable` and the three test
+seams. The change is frontend only: no DTO, no Rust, no retry or
+classification change. `ownedErrorMessages.test.ts` holds each new resource in
+both locales, and `check_repo.py`'s boundary-code check still accounts for
+every code.

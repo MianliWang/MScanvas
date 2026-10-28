@@ -6,6 +6,7 @@ import { availableBackend, finalizedAttemptFacts, outputSetReport, queueItem, qu
 import type { FigurePreviewRequest, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { ipcTable } from "../support/fixtures";
 import { consoleEntries, heldCallers, holdInvoke, installIpcBoundary, IPC_TABLE_KEY, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
+import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
 
 const authority = availableBackend.authority;
 const names = ["Synthetic sample 空格 very-long-member-0001.mzML", "Synthetic sample 空格 very-long-member-0002.mzML"];
@@ -78,6 +79,8 @@ async function open(width = 1366, height = 768, dpr = 1, running = false, empty 
   expect(await browser.execute(() => [innerWidth, innerHeight, devicePixelRatio])).toEqual([width, height, dpr]);
 }
 async function preferences(language: "en" | "zh-CN", density: "comfortable" | "compact") {
+  // Settings saves the choice and the shell adopts what the save confirms.
+  await readBackSavedPreferences();
   await browser.$("[data-settings-entry]").click();
   await browser.$('[data-settings-dialog] input[value="' + language + '"]').click();
   await browser.$('[data-settings-dialog] input[value="' + density + '"]').click();
@@ -91,7 +94,7 @@ async function conversion() {
 async function viewer(selectSpectrum = true) {
   await browser.$(".workbench-home").click();
   const row = browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]');
-  if (!await row.isDisplayed()) await browser.$('[aria-controls="workbench-roster"]').click();
+  await revealRosterRow(selectedFile.handle);
   await row.click();
   if (await browser.$('[aria-controls="workbench-roster"]').getAttribute("aria-expanded") === "true") await browser.$(".workbench-home").click();
   await browser.$('.spectrum-table-panel [data-source-index="0"]').waitForDisplayed();
@@ -364,7 +367,9 @@ describe("M7.4 conversion, recovery and export composition", () => {
     it(`active Clear focus returns to Add files when conversion settles ${timing} close`, async () => {
       await open(960, 640, 1.25, true);
       const clear = browser.$("#workbench-roster").$("button=" + UI_RESOURCES.en.clearList);
-      if (!await clear.isDisplayed()) await browser.$('[aria-controls="workbench-roster"]').click();
+      // The roster is folded at 960 px; opened the way the store confirms it
+      // (PM9 UI-23), so it does not fold again before Clear is pressed.
+      await revealRosterRow(selectedFile.handle);
       await clear.click();
       const cancel = browser.$('[role="dialog"]').$("button=Cancel and clear");
       await expect(cancel).toBeEnabled();

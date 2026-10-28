@@ -44,29 +44,51 @@ describe("owned errors and original evidence", () => {
  * The list below is the declared remainder, and it is the point of this test:
  * a code that reaches a reader without a resource shows English in a Chinese
  * session, and that is a thing to count rather than to discover. Every entry is
- * a code whose message interpolates evidence -- a folder, a count, a process
- * detail -- or is produced only by a test seam. Paraphrasing one of those would
- * lose the part a reader can act on, which is why the wrapper keeps the words
- * whole and labels them instead.
+ * a code that carries more than one sentence a resource would have to merge,
+ * or is produced only by a test seam. Merging those would lose the part a
+ * reader can act on, which is why the wrapper keeps the words whole and labels
+ * them instead.
  *
  * Adding a resource for one of these means deleting it from here. Adding a new
  * boundary code without either fails this test.
  */
 const SHOWN_AS_UNTRANSLATED_ORIGINAL: readonly string[] = [
-  // Interpolates the evidence it is about.
-  "backend_supervision_failed",
+  // Two fixed sentences under one code -- an output name that could not be
+  // derived, a destination that could not be used -- and which one applies is
+  // the part a reader acts on. One resource would have to merge them.
   "conversion_not_plannable",
-  "queue_too_large",
-  "file_picker_selection_too_large",
-  "file_picker_selection_unreadable",
-  "folder_scan_failed",
-  "folder_scan_unreadable",
-  "file_unreadable",
+  // Test seams. Not reachable from any shipped path; `spectrum_failed` is
+  // produced only in `preview/tests.rs` (PM9 UI-44).
   "spectrum_failed",
-  // Test seams. Not reachable from any shipped path.
   "synthetic_drop_failure",
   "test_exhausted",
 ];
+
+describe("the boundary's fixed sentences (PM9 UI-44)", () => {
+  // Once declared as interpolating evidence; each is one fixed sentence, now
+  // an owned resource in both bundles.
+  const OWNED = {
+    backend_supervision_failed: "errBackendSupervisionFailed",
+    file_picker_selection_unreadable: "errFilePickerSelectionUnreadable",
+    file_picker_selection_too_large: "errFilePickerSelectionTooLarge",
+    folder_scan_unreadable: "errFolderScanUnreadable",
+    folder_scan_failed: "errFolderScanFailed",
+    file_unreadable: "errFileUnreadable",
+    queue_too_large: "errQueueTooLarge",
+  } as const;
+  it.each(["en", "zh-CN"] as const)("says each in %s, never the boundary's English", locale => {
+    const t = bindUiMessages(createUiRuntime().instance.getFixedT(locale, "ui"));
+    for (const [kind, key] of Object.entries(OWNED)) {
+      const summary = `boundary words for ${kind}`;
+      expect(ownedErrorMessage({ kind, summary, detail: null, retryable: true }, t)).toBe(t(key));
+      expect(UI_RESOURCES[locale][key]).not.toBe("");
+    }
+  });
+  it("keeps the bound out of the queue sentence, so it cannot go stale", () => {
+    expect(UI_RESOURCES.en.errQueueTooLarge).not.toMatch(/\d/u);
+    expect(UI_RESOURCES["zh-CN"].errQueueTooLarge).not.toMatch(/\d/u);
+  });
+});
 
 describe("the declared remainder", () => {
   it("names every code without a resource, and nothing that has one", () => {

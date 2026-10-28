@@ -173,7 +173,7 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     const convert = await convertControl();
     await waitFor(() => {
-      expect(convert).toBeEnabled();
+      expect(convert).not.toHaveAttribute("aria-disabled");
     });
 
     // Two native activations inside one batch. Nothing commits between them.
@@ -223,7 +223,7 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     const convert = await convertControl();
     await waitFor(() => {
-      expect(convert).toBeEnabled();
+      expect(convert).not.toHaveAttribute("aria-disabled");
     });
     fireEvent.click(convert);
 
@@ -330,7 +330,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     await within(panel).findByRole("button", { name: "Retry 1 failed" });
     const convert = await convertControl();
     await waitFor(() => {
-      expect(convert).toBeEnabled();
+      expect(convert).not.toHaveAttribute("aria-disabled");
     });
 
     fireEvent.click(convert);
@@ -367,7 +367,7 @@ describe("the conversion lane's one authority, as it ships", () => {
       expect(retry).toBeEnabled();
     });
     // The explicit empty scope refuses a new start while the bound retry is usable.
-    expect(within(panel).getByRole("button", { name: /^Convert/u })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: /^Convert/u })).toHaveAttribute("aria-disabled", "true");
 
     fireEvent.click(retry);
     await waitFor(() => {
@@ -441,7 +441,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     const panel = await conversionPanel();
     const convert = await convertControl();
     await waitFor(() => {
-      expect(convert).toBeEnabled();
+      expect(convert).not.toHaveAttribute("aria-disabled");
     });
     expect(within(panel).queryByRole("button", { name: /^Retry/u })).toBeNull();
     expect(
@@ -490,7 +490,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     const panel = await conversionPanel();
     const convert = await convertControl();
     await waitFor(() => {
-      expect(convert).toBeEnabled();
+      expect(convert).not.toHaveAttribute("aria-disabled");
     });
     fireEvent.click(convert);
 
@@ -591,7 +591,7 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     const convert = await convertControl();
     await waitFor(() => {
-      expect(convert).toBeDisabled();
+      expect(convert).toHaveAttribute("aria-disabled", "true");
     });
     expect(reasonsOnScreen()).toEqual([BACKEND_REASON]);
     // Once in the document. Not a visible sentence plus a hidden copy, and not
@@ -617,7 +617,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
     const convert = await convertControl();
     await waitFor(() => {
-      expect(convert).toBeDisabled();
+      expect(convert).toHaveAttribute("aria-disabled", "true");
     });
     expect(retry).toBeDisabled();
     expect(reasonsOnScreen()).toEqual([BACKEND_REASON]);
@@ -637,7 +637,7 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     const convert = await convertControl();
     await waitFor(() => {
-      expect(convert).toBeDisabled();
+      expect(convert).toHaveAttribute("aria-disabled", "true");
     });
 
     const search = screen.getByRole("searchbox", { name: "Search files" });

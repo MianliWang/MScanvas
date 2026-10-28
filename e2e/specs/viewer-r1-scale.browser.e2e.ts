@@ -62,46 +62,13 @@ async function counts(): Promise<{
 }
 
 describe(`the linked viewer at ${String(REPRESENTATIVE_SCANS)} scans`, () => {
-  it("windows the table and bounds the trace instead of drawing every scan", async () => {
-    const startedAt = Date.now();
-    await openTheViewer({ scans: REPRESENTATIVE_SCANS });
-    const openMs = Date.now() - startedAt;
-
-    const measured = await counts();
-
-    // The table is still windowed: tens of rows in the document, not tens of
-    // thousands.
-    expect(measured.rows).toBeGreaterThan(0);
-    expect(measured.rows).toBeLessThan(200);
-    // One path for the one visible trace, and no node per scan. The point glyph
-    // belongs to a trace whose *visible geometry* is a single vertex; a run of
-    // 36,319 scans has a line, and must not become a scatter plot.
-    expect(measured.paths).toBe(1);
-    expect(measured.circles).toBe(0);
-    expect(
-      await browser.execute(
-        () => document.querySelectorAll("circle.chromatogram-point").length,
-      ),
-    ).toBe(0);
-    // A screen budget rather than the run's size: at most four vertices per
-    // column, over 900 columns.
-    expect(measured.vertices).toBeLessThanOrEqual(3_600);
-    expect(measured.svgNodes).toBeLessThan(40);
-
-    // Both traces, and it is still one path each.
-    await browser.$("//span[normalize-space()='BPC']/preceding-sibling::input").click();
-    const both = await counts();
-    expect(both.paths).toBe(2);
-    expect(both.vertices).toBeLessThanOrEqual(7_200);
-
-    console.log(
-      `SCALE ${String(REPRESENTATIVE_SCANS)} scans: open ${String(openMs)}ms, ` +
-        `${String(measured.rows)} rendered rows, ${String(measured.paths)} trace path, ` +
-        `${String(measured.vertices)} drawn vertices, ${String(measured.svgNodes)} svg nodes.`,
-    );
-    expect(await unexpectedConsole()).toEqual([]);
-  });
-
+  /*
+   * "windows the table and bounds the trace instead of drawing every scan" is
+   * retired at PM9.7 as SUPERSEDED (docs/phases/pm9/slice-03.md §5): it counted
+   * every circle, and the plot now renders hidden point glyphs on purpose.
+   * Replacement: app/LinkedViewer.test.tsx "keeps the table windowed and the
+   * trace bounded at acquisition scale".
+   */
   it("resolves a click against every scan rather than the vertices it drew", async () => {
     await openTheViewer({ scans: REPRESENTATIVE_SCANS });
 

@@ -40,6 +40,7 @@ import {
   viewerReads,
   visibleSpan,
 } from "../support/viewer";
+import { showBackendBanner } from "../support/backendBanner";
 
 const VIEWPORTS = [
   { name: "1920x1080", width: 1_920, height: 1_080 },
@@ -71,6 +72,7 @@ async function recheckTheBackend(verdict: unknown): Promise<void> {
   await setInvokeResult("inspect_backend", verdict);
   // By the action's own identity: a label is not an identity once the
   // interface has two languages, and the banner carries the identity.
+  await showBackendBanner();
   const recheck = await browser.$('[data-backend-action="recheck"]');
   if (!(await recheck.isExisting())) {
     throw new Error("the backend banner offers no recheck action");
@@ -123,7 +125,7 @@ async function unexpectedConsole(): Promise<string[]> {
 }
 
 describe("M5.7 — selection availability, rendered", () => {
-  it("says nothing, and describes nothing, while a scan can be selected", async () => {
+  it("says nothing, and describes only the readout and the units, while a scan can be selected", async () => {
     await openTheViewer({ answers: ipcTable() });
 
     // The region exists before it has anything to say, so it is being watched
@@ -131,7 +133,8 @@ describe("M5.7 — selection availability, rendered", () => {
     expect(await browser.$(REGION).isExisting()).toBe(true);
     expect(await noticeText()).toBe(null);
     expect(await describedBy(GRID)).toBe(null);
-    expect(await describedBy(PLOT)).toBe("chromatogram-readout");
+    // The readout, then each axis's unit state (PM9 UI-33).
+    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units");
   });
 
   it("explains a closed lane once, and points both surfaces at that one sentence", async () => {
@@ -149,7 +152,7 @@ describe("M5.7 — selection availability, rendered", () => {
     expect(await browser.$$(NOTICE).length).toBe(1);
 
     expect(await describedBy(GRID)).toBe("viewer-selection-availability");
-    expect(await describedBy(PLOT)).toBe("chromatogram-readout viewer-selection-availability");
+    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units viewer-selection-availability");
     // Announced politely, by the element that was already there.
     expect(
       await browser.execute(

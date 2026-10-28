@@ -1,0 +1,147 @@
+# PM9 — real-workflow product integration
+
+Stage: after M9, the concentrated real-workflow UI/UX cleanup that precedes a
+new product candidate ([ROADMAP](../../../ROADMAP.md), [M9 closure §15](../../product/M9_CLOSURE.md#15-after-m9)).
+Budget: seven slices, including the opening baseline (PM9.1) and the closing
+acceptance (PM9.7). No uncounted planning or cleanup slice.
+Status: **COMPLETE** (2026-10-14): PM9.7 accepted the integrated product at the browser/rendered and component layers and froze the candidate, production `30b855f` ([slice-07 §11](slice-07.md#11-record), [baseline §18](baseline.md#18-pm97-the-after-side-the-regression-and-the-frozen-candidate-2026-10-14)). Native rendering at OS scaling, U4's live-provider check and the real engine stay `PENDING` or `BLOCKED_PROVIDER_HOLD`, for the owner's qualification dispatch after PM9. Before that, **IN PROGRESS** since the 2026-09-26 mid-phase normalization
+([baseline §10](baseline.md#10-mid-phase-normalization-2026-09-26)): PM9.1 is complete since 2026-10-13, baseline established, not accepted: its J1–J6 were measured on `d56b17b`, with the draft and viewport legs ([baseline §17](baseline.md#17-j1j6-measurement-on-d56b17b-pm91-pending-item-4)); before that it was partial, with only J1–J6 left;
+PM9.2 is complete; PM9.3 is complete (2026-09-28, [slice-03 §0.5](slice-03.md#05-validation-repair-and-closure-2026-09-28)); the midpoint check ran on 2026-10-04 ([baseline §13](baseline.md#13-midpoint-check-2026-10-04)); PM9.4 is complete (2026-10-04, [slice-04 §10](slice-04.md#10-record)); PM9.5 is complete (2026-10-04, [slice-05 §12](slice-05.md#12-record)); PM9.6 is complete (2026-10-13, [slice-06 §13](slice-06.md#13-record)); PM9.7 has not started. The known UI/UX rework (2026-09-28 to 2026-10-03, [baseline §12](baseline.md#12-known-uiux-rework-2026-09-28)) ran in two batches and a UI-34 wording continuation, production candidate `b7b8eeb`, whose wording the owner accepted on 2026-10-04: **PM9 REPORTED UI/UX ISSUES CLEARED — REQUIRED FINAL VALIDATION COMPLETE**. PM9.1 55/55, m5.7 8/8, the e2e typecheck and two PM9.3 samples (final test content `1a6d887`) passed on 2026-10-04. PM9.4 is not started. Before that:
+the 2026-09-25 validation window established PM9.1's browser rendered
+baseline, which is not complete, and passed PM9.2's browser functional
+acceptance on the production-code candidate `a0783bb`. PM9.3 has static
+preparation and a passing contract spec only. The provisional base is resolved: on 2026-09-26 the
+branch merged the accepted main `57915de` (merge `052db1f`), with no new
+runtime validation of the combined tree
+([baseline §8](baseline.md#8-reconciliation-with-the-accepted-main-2026-09-26));
+see [slices.md](slices.md). Nothing here is accepted.
+
+## Mission
+
+Make the existing viewer, conversion, Project, descriptive QC and targeted-MS1
+capabilities one understandable workflow — from data and evidence, through
+configuration, review and execution, to results and output — with persistent
+scientific history kept separate from current-session authority.
+
+## End state
+
+1. A reader can tell the viewed object, the interaction selection, the
+   processing scope and the historical result apart; moving between surfaces
+   starts no work and keeps valid drafts and committed views.
+2. Conversion and targeted MS1 share product language, not one scientific state
+   machine: each keeps its own scope, parameters, cancel/retry and result
+   contract.
+3. Current results, descriptive QC summaries, runs and sources locate each
+   other, and evidence is not crowded out by technical detail.
+4. After a project reopens, history is inspectable, and "source not checked",
+   "source unavailable", "not in the Workbench", "payload missing or corrupt" and
+   "runtime unavailable" are each stated with a real next action.
+5. The implemented surfaces approach the accepted v5.11 direction in hierarchy,
+   text, density, action placement, feedback, keyboard and narrow-window
+   behaviour, with no fake plot, fake ETA or empty future entry.
+
+## Acceptance (three layers per ID)
+
+On 2026-10-14 every ID is **ACCEPTED** at the browser/rendered and component layers on the frozen candidate `30b855f` ([baseline §18](baseline.md#18-pm97-the-after-side-the-regression-and-the-frozen-candidate-2026-10-14)). Native rendering at OS scaling and the provider-positive checks named below, and the targeted-MS1 engine path ([slice-07 §9](slice-07.md#9-owner-decisions-at-the-freeze), decision 4), stay `PENDING` or `BLOCKED_PROVIDER_HOLD`; the owner accepted U4 with its live-provider check open. Until PM9.7 every ID was **PLANNED**. Status words: `PLANNED`, `IMPLEMENTED_UNVALIDATED`,
+`ACCEPTED`; an unexecuted check is `PENDING`, and a written test is not a run.
+Evidence types are kept apart: static reading, component test (Vitest/jsdom),
+controlled-IPC browser rendering (real frontend, real Vite, real Chrome, only the
+IPC boundary replaced), real Rust payload/parser/renderer tests, native window,
+live provider. Observed evidence from before PM9 is a baseline, not PM9's
+acceptance.
+
+| ID | Observable (true) | Necessary (exists) | Connected path and verification (wired) |
+| --- | --- | --- | --- |
+| U1 Orientation | Current project, viewed acquisition, selected objects, task scope, active task and inspected result are intelligible; Home, Settings and folding keep valid context | Existing shell owners (`PreviewWorkspace` surface, `WorkbenchHeader`, `SessionPreferencesProvider` panels); projections only where needed | Populated-state navigation with IDs, drafts, viewports and IPC/mount counts compared before and after; screenshots and keyboard paths |
+| U2 Curation | Admission, search, grouping, drag, removal/Clear and hidden-selection counts still hold; focus, viewed source, highlights and membership stay distinct | Existing roster and organization owners; no second execution set | Scenarios with duplicate names, hidden rows, empty state and active work; processing order unchanged by grouping or search |
+| U3 Inspection | Chromatogram, scan table, spectrum, range tools and figure actions stay linked and readable; view changes are not source reads or method changes | Existing selection, viewport and figure owners | Scan selection, filter, hide-and-recover, range confirm/cancel; request counts |
+| U4 Conversion | Configuration → review → queue → failure/stop/retry → output uses the typed authority and real admitted combinations | Existing settings, plan, queue and output owners | Controlled scenarios; correct refusal without a provider; a live-provider positive check stays `PENDING` under the ProteoWizard hold |
+| U5 Targeted MS1 | Line-level problems, exact plan review, single and 2–16-member batch states are clear; 1–200 targets, order and guards unchanged | Rust plan review and project operation owners; draft-only UI state | Edit after review, batch stop, mixed outcomes, runtime unavailable |
+| U6 Results and provenance | QC reports and targeted results read in the main region; every row, evidence and export is bound to its artifact, producing run and plan; no implicit recomputation | Schema-4 records, managed payload reads, canonical renderer | Row/artifact/plan consistency; the PR #127 re-attribution counterexample kept |
+| U7 Continuity | Drafts and view state survive navigation; project replacement invalidates stale context; reopen offers only the existing explicit check/relink/admission; valid stored results are readable without source or runtime | Existing reopen, relink and admission commands; session-only UI state | Stored-payload scenarios with no executor and an unavailable source; nothing marked checked that was not |
+| U8 Output | Format-specific capabilities and scopes kept; viewer copy/export unchanged; stored targeted results keep SVG/PNG/CSV/TSV only | Existing viewer and targeted export authority | Ownership, scope, coverage and cancel checks |
+| U9 Experience | A populated production surface reflects the accepted hierarchy, density, disclosure, bilingual controls, focus and responsive behaviour | Existing tokens, shared controls, preferences | 1920×1080, 1366×768 and 960×640 CSS viewports, en and zh-CN, keyboard, reduced motion; OS scaling recorded separately; no-overflow alone is not acceptance |
+| U10 States and resources | Empty, loading, ready, unsupported, failure, stale and missing states have truthful next actions; navigation adds no background work | Minimal projections, existing progress/cancel owners, lifecycle cleanup | Late answers, stop and replacement, unmount/remount; request and mount counts against the baseline |
+
+### Ownership outside the slices (2026-09-26)
+
+Native rendering at the host's OS scaling and every provider-positive check,
+U4's live-provider check included, belong to the M7.6-style installed, native,
+provider and release qualification of PM9.7's frozen candidate, as the
+[roadmap](../../../ROADMAP.md) orders after M9. PM9 records them as `PENDING`
+or `BLOCKED_PROVIDER_HOLD`, never as passed. Whether U4 can be accepted with
+its live-provider check open is the owner's decision at PM9.7's candidate
+freeze. The owner took it on 2026-10-13, accepting U4 with the check open.
+The owner placed the real targeted-MS1 engine path with the same
+qualification ([slice-07 §9](slice-07.md#9-owner-decisions-at-the-freeze)).
+
+## Regression (must still hold at the end)
+
+Only within identified tested scopes: read-only sources; explicit scientific
+changes; range versus view; independent workspace selection states; stale-view
+and late-request protection; conversion order, stop and output ownership;
+Project/Plan/Run/Artifact lineage; atomic Save and Save As refusals, destination
+store occupancy, payload–plan binding and revision bounds (validated on
+`cf4af12`); the two focus-race regressions; snapshot and scratch boundaries;
+stored results never re-executed; a reference added during Save As refused as
+stale (`8ad3912`); a targeted-MS1 row's signal summary refused unless it is its
+evidence's (`03effab`). All five review findings of PR #127 behind these are
+fixed and merged in `main` (`57915de`); their qualification belongs to the
+[integration record](../../development/M8_M9_SOURCE_INTEGRATION.md#14-found-on-the-repaired-head-a-reference-added-during-save-as-and-signal-summaries-against-their-evidence-pr-127),
+not to PM9.
+
+Two findings on PR #127's final head were accepted as deferred limitations of
+the merged code. They are not PM9 tasks, and PM9 does not repair them:
+
+- *Save As with no stored result does not reserve the store name* (review
+  comment 4110202614). It fails closed: a store another process creates in that
+  window is refused at the first run as `payloadStoreUnusable`, and nothing is
+  written to it. Owner: the repository owner, as project-store work. Decision
+  point: the next change to Save As or store creation, or before a store can
+  be shared with another writer.
+- *`-ManifestOnly` re-probes the toolchain* (review comment 4110202616): a
+  re-derived candidate manifest can name the current toolchain rather than the
+  one that built the installer. Owner: the repository owner, as M7.6 release
+  qualification. Decision point: before such a manifest is used as release
+  evidence, or when M7.6 resumes.
+
+## Locked decisions (from the owner)
+
+- Productize existing capabilities only; no new scientific domain.
+- Seven slices in total.
+- Project schema 4 unchanged; no new persisted workflow, method-library or
+  workspace-restoration format, and no sidecar or `localStorage` workaround.
+- Continue the accepted v5.11 direction; no new style competition.
+- The owner's normal use of the host comes before validation throughput; test
+  execution is paused until the owner opens a window.
+
+## Boundaries
+
+- Unify product language, not scientific state machines or execution
+  authorities; existing workspace, project, queue, runtime and export owners
+  stay.
+- The interface may carry typed IDs and render authoritative projections; it
+  never guesses availability, plan identity, source eligibility or lineage, and
+  never fills a missing fact with an ETA, a success state or a permissive
+  fallback.
+- A later authorized slice may add a minimal read-only Rust/DTO projection of an
+  existing fact, with its affected validation; that authorizes no new write
+  capability and no science.
+- Presentation state is not scientific history. No automatic restore,
+  re-admission, pruning, cached-result resurrection or worker restart.
+- ProteoWizard HOLD and the Route B restriction are unchanged. A blocked
+  live-provider check stays blocked; testing only a refusal does not pass it.
+
+## Scope
+
+- Must: U1–U10, the seven slices and the regression list.
+- If time allows: drag and motion details that change no contract; reversible
+  touch improvements needing no new permission or source; non-critical layout
+  adjustments.
+- Not in PM9: new algorithms, XIC, multi-source comparison, normalization or
+  alignment, statistics or library search, new adducts, profile centroiding,
+  workflow graphs; persisted workflows or method libraries; schema migration;
+  automatic workspace restore; runtime, installer or release; M10; a general GC
+  subsystem; unfounded caches; new dependencies; a performance campaign; a new
+  test system; stored-result clipboard; self-describing PNG; changes to exported
+  figure text or raw table semantics.

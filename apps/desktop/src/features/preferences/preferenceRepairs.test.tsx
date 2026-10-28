@@ -18,6 +18,7 @@ import { PreviewApiProvider } from "../mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../mzml-preview/dropTransport";
 import {
   createFakePreviewApi,
+  availableBackend,
   createFakeWorkspaceDropTransport,
   deferred,
   unavailableBackend,
@@ -485,5 +486,58 @@ describe("the banner across its own request", () => {
       expect(control, action).toBeDisabled();
     }
     await act(async () => { check.resolve(unavailableBackend); await Promise.resolve(); });
+  });
+
+  function renderAvailableAfter(check: Promise<typeof availableBackend>, answered = 0) {
+    let calls = 0;
+    const api = createFakePreviewApi({
+      availability: () => (calls++ < answered ? Promise.resolve(availableBackend) : check),
+    });
+    render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreferencesApiProvider value={createFakePreferencesApi()}>
+        <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+      </PreferencesApiProvider>
+    </WorkspaceDropTransportProvider>);
+  }
+
+  it("does not fold away under a reader in the help when a usable verdict arrives (PM9 L10)", async () => {
+    // The banner folds when a usable installation leaves it nothing to act on.
+    // A reader who tabbed into the help while the check ran is not nothing:
+    // folding would take the focused summary out of rendering and drop them
+    // on the body, the regression the identity of the help exists to prevent.
+    const check = deferred<typeof availableBackend>();
+    renderAvailableAfter(check.promise);
+    await waitFor(() => expect(screen.getByText(en.backendChecking)).toBeVisible());
+    const summary = document.querySelector<HTMLElement>("[data-backend-help] summary")!;
+    act(() => { summary.focus(); });
+    await act(async () => { check.resolve(availableBackend); await Promise.resolve(); });
+    await screen.findByText(en.backendAvailable);
+    expect(document.querySelector("#backend-status")).not.toHaveAttribute("data-backend-collapsed");
+    expect(summary).toBeVisible();
+    expect(summary).toHaveFocus();
+  });
+
+  it("hands the header toggle's place to the banner when it has something to say again (PM9 L10)", async () => {
+    // The phrase in the header exists only while the banner is quiet. A check
+    // the reader did not start from it removes it, and a reader who was on it
+    // continues from the banner that replaced it rather than from the body.
+    const check = deferred<typeof availableBackend>();
+    renderAvailableAfter(check.promise, 1);
+    const toggle = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-backend-toggle]");
+      if (found === null) throw new Error("not folded yet");
+      return found;
+    });
+    fireEvent.click(toggle);
+    act(() => { toggle.focus(); });
+    // Pressed without taking the keyboard, as a check started elsewhere would be.
+    fireEvent.click(document.querySelector('[data-backend-action="recheck"]')!);
+    await waitFor(() => expect(document.querySelector("[data-backend-toggle]")).toBeNull());
+    expect(document.querySelector("#backend-status")).toHaveFocus();
+    await act(async () => { check.resolve(availableBackend); await Promise.resolve(); });
+    await screen.findByText(en.backendAvailable);
+    // Still engaged: the reader is in it, so the quiet verdict leaves it open.
+    expect(document.querySelector("#backend-status")).toHaveFocus();
+    expect(document.querySelector("[data-backend-toggle]")).toHaveAttribute("aria-expanded", "true");
   });
 });

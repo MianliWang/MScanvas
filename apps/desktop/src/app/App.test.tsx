@@ -14,6 +14,7 @@ import type {
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
 import { blurAsABrowserWould } from "../test/browserFocus";
+import { showBackendBanner } from "../test/backendBanner";
 import type {
   FakeWorkspaceDropTransport,
   FolderScan,
@@ -131,7 +132,8 @@ describe("mzML preview workspace", () => {
     // Not one read. Nothing about an unusable backend stops the user telling
     // MSCanvas which acquisitions this session is about.
     expect(api.openCount()).toBe(0);
-    expect(screen.getByText(/Install ProteoWizard to read a file/)).toBeVisible();
+    // The evidence pane points at the banner rather than repeat it (PM9 UI-09).
+    expect(screen.getByText("Plots and scans can be read once the backend above is usable.")).toBeVisible();
   });
 
   it("reports an available backend with the release the backend itself named", async () => {
@@ -167,6 +169,7 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     const readsBefore = api.openCount();
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
@@ -187,8 +190,11 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     const picksBefore = api.requestedSpectra.length;
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
     const reopen = await screen.findByRole("button", { name: /^Preview QC_pool_01/ });
+    // The one owned next step in this state, so the surface's primary action (PM9 L1).
+    expect(reopen).toHaveClass("primary-button");
 
     expect(reopen).toHaveTextContent("QC_pool_01.mzML");
     fireEvent.click(reopen);
@@ -281,6 +287,36 @@ describe("mzML preview workspace", () => {
     expect(await screen.findByText("No ProteoWizard installation was found")).toBeVisible();
   });
 
+  it("keeps the selection through a failed spectrum load, says so with Retry and withholds its exports (PM9 UI-36)", async () => {
+    let failing = true;
+    const api = createFakePreviewApi({
+      spectrum: (index) =>
+        failing
+          ? Promise.reject(previewError())
+          : Promise.resolve<SelectedSpectrumOutcome>({ outcome: "spectrum", spectrum: buildSpectrum(index, 12) }),
+    });
+    await openTheFile(api);
+    const grid = await screen.findByRole("grid", { name: "Spectra" });
+    const identifier = "controllerType=0 controllerNumber=1 scan=1";
+    selectRowByIdentifier(identifier);
+
+    const retry = await screen.findByRole("button", { name: "Try loading this spectrum again" });
+    const panel = retry.closest("section")!;
+    // The failure, in the panel it happened to, beside the selection it was for.
+    expect(within(panel).getByText(/could not be loaded/u)).toBeVisible();
+    expect(within(grid).getByText(identifier).closest('[role="row"]')).toHaveAttribute("aria-selected", "true");
+    // Nothing to make a figure or a file of.
+    for (const name of ["Quick PNG", "Copy plot", "Export figure"]) {
+      expect(within(panel).queryByRole("button", { name })).toBeNull();
+    }
+    expect(within(panel).queryByText("Export spectrum")).toBeNull();
+
+    failing = false;
+    fireEvent.click(retry);
+    expect(await within(panel).findByRole("button", { name: "Quick PNG" })).toBeVisible();
+    expect(within(grid).getByText(identifier).closest('[role="row"]')).toHaveAttribute("aria-selected", "true");
+  });
+
   it("does not start a row read once the session has stopped trusting the backend", async () => {
     // A preview loaded before the stop stays on screen -- nothing about it
     // became untrue -- and quarantine does not change the installation, so the
@@ -312,6 +348,7 @@ describe("mzML preview workspace", () => {
     // is monotonic, so the two can never disagree.
     trusted = false;
     api.quarantineBackend();
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     // A quarantined session has its own heading rather than borrowing the one
     // for an unusable installation: nothing is wrong with ProteoWizard, and the
@@ -341,6 +378,7 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     const readsBefore = api.requestedSpectra.length;
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
@@ -400,6 +438,7 @@ describe("mzML preview workspace", () => {
 
     recheck.resolve(availableBackend);
 
+    await showBackendBanner();
     const choose = await screen.findByRole("button", { name: "Choose folder…" });
     expect(choose).toBeEnabled();
     expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
@@ -412,6 +451,7 @@ describe("mzML preview workspace", () => {
     // application has neither a command nor a picker for.
     const api = createFakePreviewApi({ chosenInstallation: chosenFolderWithoutTools });
     renderApp(api);
+    await showBackendBanner();
     fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
 
     expect(await screen.findByText(/has neither msconvert.exe nor msaccess.exe/)).toBeVisible();
@@ -429,6 +469,7 @@ describe("mzML preview workspace", () => {
     renderApp(api);
     expect(bannerOf(await screen.findByText(/ProteoWizard is available/))).toHaveTextContent("3.0.25000");
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
@@ -1784,6 +1825,7 @@ describe("the session workspace roster", () => {
     await screen.findByRole("grid", { name: "Spectra" });
     const readsBefore = api.openCount();
 
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
@@ -3047,7 +3089,8 @@ describe("adding a folder of mzML files", () => {
     );
 
     expect(await screen.findByText("The folder could not be added")).toBeVisible();
-    expect(screen.getByText(/That folder could not be scanned safely\./u)).toBeVisible();
+    // The code's owned sentence, not the boundary's English (PM9 UI-44).
+    expect(screen.getByText(/MSCanvas stopped scanning that folder/u)).toBeVisible();
     expect(rosterRows()).toHaveLength(0);
     expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
   });
@@ -3468,6 +3511,7 @@ describe("telling two identically named acquisitions apart", () => {
 
     // Changing installation discards backend-derived readings but deliberately
     // retains the active roster row as a one-action recovery affordance.
+    await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     expect(

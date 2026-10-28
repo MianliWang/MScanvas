@@ -33,6 +33,7 @@ import {
   setInvokeResult,
 } from "../support/harness";
 import { ipcTable, VENDOR_ROW } from "../support/fixtures";
+import { CONVERT, checkMembers, isRefused, showConversion } from "../support/conversion";
 import {
   admittedIntents,
   availableBackend,
@@ -48,12 +49,11 @@ import type {
   ConversionCatalogRow,
   ConversionIntentDescriptor,
 } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { showBackendBanner } from "../support/backendBanner";
 
 const PANEL = "section.conversion-panel";
 const REGION = '[data-live-region="conversion-availability"]';
 const SETTINGS = ".conversion-settings";
-const VENDOR = `li.dataset-row[data-handle="${VENDOR_ROW.handle}"]`;
-const CONVERT = `${PANEL} button.primary-button`;
 
 /** The binding the session opens on, and the one that replaces it. */
 const A = firstBindingReceipt;
@@ -202,9 +202,36 @@ async function openTheWorkspace(overrides: Record<string, unknown> = {}): Promis
     ...overrides,
   });
   await browser.url("/");
-  await browser.$(VENDOR).waitForDisplayed({ timeout: 60_000 });
-  await browser.$(VENDOR).click();
-  await browser.$(PANEL).waitForDisplayed({ timeout: 60_000 });
+  // M7.2: the row's checkbox makes it a member (a click views it), and the
+  // Conversion surface is its own destination (PM9.4, baseline section 2).
+  await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
+  await checkMembers([VENDOR_ROW.handle]);
+  await showConversion();
+  await browser.$(PANEL).waitForDisplayed({ timeout: 15_000 });
+}
+
+/**
+ * The Advanced view, where every axis is one group of named values. Basic and
+ * Advanced edit one intent since M7.4 (`e495464`); Basic splits precision into
+ * an m/z and an intensity width, which no value names, so this spec reads the
+ * axes in Advanced.
+ */
+async function advanced(): Promise<void> {
+  const ready = `${SETTINGS}[data-settings-state="ready"]`;
+  await browser.$(ready).waitForExist({ timeout: 30_000 });
+  if ((await browser.$(ready).getAttribute("data-settings-view")) === "advanced") return;
+  await browser.execute((css: string) => {
+    [...document.querySelectorAll<HTMLButtonElement>(`${css} .compact-choices button`)][1]?.click();
+  }, ready);
+  await browser.waitUntil(async () => (await browser.$(ready).getAttribute("data-settings-view")) === "advanced", {
+    timeout: 15_000,
+    timeoutMsg: "the Advanced view never opened",
+  });
+}
+
+/** How many single row-level statements say the selection cannot run. */
+async function unavailableStatements(): Promise<number> {
+  return browser.execute(() => document.querySelectorAll(".conversion-settings-unavailable").length);
 }
 
 /** Waits until the settings surface is in one of its named states. */
@@ -249,6 +276,7 @@ async function requestsTo(command: string): Promise<Record<string, unknown>[]> {
 
 /** The state each choice of one axis is in, by value. */
 async function axisStates(axis: string): Promise<Record<string, string>> {
+  await advanced();
   return browser.execute((dimension: string) => {
     const group = document.querySelector(`[data-axis="${dimension}"]`);
     const states: Record<string, string> = {};
@@ -263,7 +291,8 @@ async function axisStates(axis: string): Promise<Record<string, string>> {
 
 /** Chooses one value of one axis, the way a reader does. */
 async function chooseAxisValue(axis: string, value: string): Promise<void> {
-  const control = await browser.$(`input[name="conversion-setting-${axis}"][value="${value}"]`);
+  await advanced();
+  const control = await browser.$(`[data-axis="${axis}"] input[value="${value}"]`);
   await control.waitForEnabled({ timeout: 30_000 });
   await control.click();
 }
@@ -353,6 +382,7 @@ function terminalQueue(sequence: number, authority: typeof AUTHORITY_A) {
 
 /** Presses the backend banner's own recheck, which is not a conversion action. */
 async function pressCheckAgain(): Promise<void> {
+  await showBackendBanner();
   const recheck = await browser.$('[data-backend-action="recheck"]');
   await recheck.click();
 }
@@ -408,7 +438,7 @@ describe("M6.4 — E1: a healthy configuration and a plan bound to it", () => {
     expect(await planFact("Stored precision")).toBe("m/z 64-bit · intensity 32-bit");
     expect(await planFact("Output")).toBe("mzML");
 
-    expect(await browser.$(CONVERT).isEnabled()).toBe(true);
+    expect(await isRefused(CONVERT)).toBe(false);
     expect(await reasons()).toEqual([]);
     expect(await unexpectedConsole()).toEqual([]);
   });
@@ -461,7 +491,7 @@ describe("M6.4 — E2: one axis moves, and only that axis", () => {
     expect(await axisStates("population")).toMatchObject({ ms1_only: "unavailable" });
     const note = await browser.execute(() => {
       const input = document.querySelector(
-        'input[name="conversion-setting-population"][value="ms1_only"]',
+        '[data-axis="population"] input[value="ms1_only"]',
       );
       const id = input?.getAttribute("aria-describedby") ?? "";
       return document.getElementById(id)?.textContent ?? "";
@@ -507,7 +537,7 @@ describe("M6.4 — E3: the selected row survives a replacement and is told the t
     await pressCheckAgain();
 
     await browser.waitUntil(
-      async () => (await owners("conversion-settings-selection-unavailable")) === 1,
+      async () => (await unavailableStatements()) === 1,
       { timeout: 30_000, timeoutMsg: "the row was never reported as unrunnable" },
     );
     // The choice is still the reader's.
@@ -528,7 +558,7 @@ describe("M6.4 — E3: the selected row survives a replacement and is told the t
     expect(await axisStates("compression")).toMatchObject({ zlib: "selected" });
     // A one-axis route out exists here, so no atomic recovery is offered.
     expect(await browser.$(".conversion-settings-recovery").isExisting()).toBe(false);
-    expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+    expect(await isRefused(CONVERT)).toBe(true);
 
     // The ordinary route: one axis back to a row this build runs.
     await setInvokeResult(
@@ -537,7 +567,7 @@ describe("M6.4 — E3: the selected row survives a replacement and is told the t
     );
     await chooseAxisValue("processing", "no_additional_centroiding");
     await browser.waitUntil(
-      async () => (await owners("conversion-settings-selection-unavailable")) === 0,
+      async () => (await unavailableStatements()) === 0,
       { timeout: 30_000, timeoutMsg: "the row-unavailable statement never went away" },
     );
     expect(await unexpectedConsole()).toEqual([]);
@@ -586,7 +616,7 @@ describe("M6.4 — E4: a genuine dead end offers one explicit way out", () => {
       unscoped_default_centroiding: "selected",
     });
     const reason = await browser.execute(
-      () => document.getElementById("conversion-settings-recovery-reason")?.textContent ?? "",
+      () => document.querySelector(".conversion-settings-recovery p")?.textContent ?? "",
     );
     expect(reason).toBe(
       "No single change to one of these settings reaches a combination this build can run.",
@@ -631,9 +661,10 @@ describe("M6.4 — E5: a configuration probe owns the process lane", () => {
       { hold: ["read_conversion_configuration"] },
     );
     await browser.url("/");
-    await browser.$(VENDOR).waitForDisplayed({ timeout: 60_000 });
-    await browser.$(VENDOR).click();
-    await browser.$(PANEL).waitForDisplayed({ timeout: 60_000 });
+    await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
+    await checkMembers([VENDOR_ROW.handle]);
+    await showConversion();
+    await browser.$(PANEL).waitForDisplayed({ timeout: 15_000 });
 
     await awaitSettings("loading");
     const notice = "conversion-availability-configuration-probing";
@@ -646,14 +677,14 @@ describe("M6.4 — E5: a configuration probe owns the process lane", () => {
     expect(await reasons()).toEqual([
       "MSCanvas is reading the conversion options from ProteoWizard.",
     ]);
-    expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+    expect(await isRefused(CONVERT)).toBe(true);
     expect(await describedBy(CONVERT)).toContain(notice);
     expect(await duplicateIds()).toEqual([]);
 
     await releaseInvokeHold("read_conversion_configuration");
     await awaitSettings("ready");
     await awaitPlan();
-    await browser.waitUntil(async () => browser.$(CONVERT).isEnabled(), {
+    await browser.waitUntil(async () => !(await isRefused(CONVERT)), {
       timeout: 30_000,
       timeoutMsg: "Convert never came back",
     });
@@ -722,7 +753,7 @@ describe("M6.4 — E7: a recheck that resolves the same build changes nothing", 
     });
     // A check reports the backend as unusable for as long as it runs, so Convert
     // may flicker; what must not happen is a probe or a re-plan.
-    await browser.waitUntil(async () => browser.$(CONVERT).isEnabled(), {
+    await browser.waitUntil(async () => !(await isRefused(CONVERT)), {
       timeout: 30_000,
       timeoutMsg: "Convert never came back after the recheck",
     });
@@ -779,7 +810,7 @@ describe("M6.4 — E8: BEGIN observes a replacement and refuses before anything 
       timeout: 30_000,
       timeoutMsg: "the replaced binding's settings stayed on screen",
     });
-    expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+    expect(await isRefused(CONVERT)).toBe(true);
     // Nothing was created.
     expect(await callsTo("choose_workspace_conversion_destination")).toBe(0);
     // **And nothing went looking for what the refusal already said.** That is
@@ -1099,7 +1130,11 @@ describe("M6.4 — one lane fact, many refused actions, one notice", () => {
       return (control?.getAttribute("aria-describedby") ?? "").split(" ").filter((id) => id !== "");
     });
     // The shared fact, and the read's own failure, which is not shared.
-    expect(retryDescribedBy).toEqual(["conversion-settings-failure", notice]);
+    // The read's own failure id is minted by useId since M7.4 (`e495464`),
+    // so it is matched by its suffix, as the component suite matches it.
+    expect(retryDescribedBy).toHaveLength(2);
+    expect(retryDescribedBy[0]).toMatch(/-failure$/u);
+    expect(retryDescribedBy[1]).toBe(notice);
     // Generic, because the next duplicate will be a different pair.
     expect(await duplicateIds()).toEqual([]);
 
@@ -1124,15 +1159,27 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
    * clipped, or a panel that scrolls sideways to show it.
    */
   const FLAT_64 = intentId("no_additional_centroiding", "all", "mz64_intensity64", "zlib");
-  const REFUSED = 'input[name="conversion-setting-processing"][value="unscoped_default_centroiding"]';
-  const NOTE_ID = "conversion-choice-processing-unscoped_default_centroiding";
+  const REFUSED = '[data-axis="processing"] input[value="unscoped_default_centroiding"]';
 
-  /** The sentence one refused choice carries, read from the note it names. */
+  /**
+   * The id of the note the refused choice names. Minted by `useId` since M7.4
+   * (`e495464`), so it is read from the control rather than written here, and
+   * looked up as an attribute: a minted id need not be a valid `#` selector.
+   */
+  async function noteId(): Promise<string> {
+    await advanced();
+    const id = await browser.execute((css: string) => document.querySelector(css)?.getAttribute("aria-describedby") ?? "", REFUSED);
+    expect(id).not.toBe("");
+    return id;
+  }
+
+  /** The sentence one refused choice carries, read from the note its control names. */
   async function refusalNote(): Promise<string> {
-    return browser.execute(
-      (id: string) => document.getElementById(id)?.textContent ?? "",
-      NOTE_ID,
-    ) as Promise<string>;
+    await advanced();
+    return browser.execute((css: string) => {
+      const id = document.querySelector(css)?.getAttribute("aria-describedby") ?? "";
+      return document.getElementById(id)?.textContent ?? "";
+    }, REFUSED) as Promise<string>;
   }
 
   it("is not runnable, says why at combination level, and costs no other choice", async () => {
@@ -1183,7 +1230,7 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
     // The way out is the ordinary control, so no explicit reset is offered and
     // the conversion the reader can actually run stays offered.
     expect(await browser.$(".conversion-settings-recovery").isExisting()).toBe(false);
-    expect(await browser.$(CONVERT).isEnabled()).toBe(true);
+    expect(await isRefused(CONVERT)).toBe(false);
 
     // Keyboard: the refused value is out of the tab order rather than focusable
     // and inert, the way out takes focus, and the sentence is associated with
@@ -1204,11 +1251,13 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
     expect(keyboard.refusedDisabled).toBe(true);
     expect(keyboard.wayOutDisabled).toBe(false);
     expect(keyboard.wayOutFocused).toBe(true);
+    // Described by the note whose sentence refusalNote() read above.
+    const NOTE_ID = await noteId();
     expect(keyboard.refusedDescribedBy).toBe(NOTE_ID);
 
     // The new sentence is laid out rather than clipped, and showing it does not
     // make the document scroll sideways at this viewport.
-    const noteBox = await boxOf(`#${NOTE_ID}`);
+    const noteBox = await boxOf(`[id="${NOTE_ID}"]`);
     const panelBox = await boxOf(SETTINGS);
     expect(noteBox.width).toBeGreaterThan(0);
     expect(noteBox.height).toBeGreaterThan(0);
@@ -1268,7 +1317,8 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
       // clipped, still inside the panel, and still not a cause of sideways
       // scrolling.
       expect(await refusalNote()).toContain("MSCanvas has not measured that combination");
-      const noteBox = await boxOf(`#${NOTE_ID}`);
+      const NOTE_ID = await noteId();
+      const noteBox = await boxOf(`[id="${NOTE_ID}"]`);
       const panelBox = await boxOf(SETTINGS);
       expect(noteBox.height).toBeGreaterThan(0);
       expect(noteBox.left).toBeGreaterThanOrEqual(panelBox.left - 1);
@@ -1349,7 +1399,7 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
       await browser.setWindowSize(viewport.width, viewport.height);
       await awaitSettings("ready");
 
-      const banner = "#conversion-settings-selection-unavailable";
+      const banner = ".conversion-settings-unavailable";
       await browser.$(banner).waitForExist({ timeout: 30_000 });
 
       // Each of the three says the evidence is missing, and none of them sends
@@ -1374,7 +1424,7 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
       // Asserted by its own notice rather than by the button's disabled state:
       // a registry that stopped emitting this reason would leave the control
       // disabled and silent, and every other assertion here would still pass.
-      expect(await browser.$(CONVERT).isEnabled()).toBe(false);
+      expect(await isRefused(CONVERT)).toBe(true);
       const noticeId = "conversion-availability-plan-selection-not-evidenced";
       expect(await owners(noticeId)).toBe(1);
       expect(

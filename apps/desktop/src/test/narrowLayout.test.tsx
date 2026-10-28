@@ -30,6 +30,7 @@ import {
   thirdFile,
   unavailableBackend,
 } from "./previewFixtures";
+import { showBackendBanner } from "./backendBanner";
 
 const mountedStyles: HTMLStyleElement[] = [];
 
@@ -326,6 +327,7 @@ describe("narrow desktop layout markup", () => {
     expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Preview focused" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Remove highlighted" })).toHaveLength(1);
+    await showBackendBanner();
     expect(screen.getAllByRole("button", { name: "Check again" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Choose folder…" })).toHaveLength(1);
   });
@@ -404,11 +406,6 @@ describe("narrow desktop layout markup", () => {
         "grid-template-rows",
       ),
     ).toBe("minmax(342px, 0.9fr) minmax(526px, 1.6fr)");
-    expect(
-      requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
-        "grid-template-rows",
-      ),
-    ).toBe("minmax(186px, 0.9fr) minmax(122px, 1.15fr) minmax(202px, 1fr)");
   });
 
   it("keeps the complete loaded viewer reachable when shell notices shorten the workspace", () => {
@@ -438,12 +435,9 @@ describe("narrow desktop layout markup", () => {
       "minmax(342px, 0.9fr) minmax(526px, 1.6fr)",
     );
     expect(workspace.getPropertyValue("overflow-y")).toBe("auto");
-    expect(
-      requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
-        "grid-template-rows",
-      ),
-    ).toBe("minmax(186px, 0.9fr) minmax(122px, 1.15fr) minmax(202px, 1fr)");
-    expect(requireStyleRule(app, ".viewer-stack").style.getPropertyValue("gap")).toBe("8px");
+    // The stack's own grid floors were never applied under the workbench
+    // shell, which lays it out as a flex column, and are gone (PM9 UI-47).
+    expect(requireStyleRule(app, ".viewer-stack").style.getPropertyValue("grid-template-rows")).toBe("");
   });
 
   it("lets a row's notes give ground so the file name keeps a column", () => {

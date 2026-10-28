@@ -25,6 +25,8 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { waitUntilOffered } from "../support/conversion";
+import { revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(HERE, "..", "..");
@@ -34,9 +36,9 @@ const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe15
 const PANEL = "section.conversion-panel";
 const RUNNING = `${PANEL} .conversion-running`;
 const LIST = `${RUNNING} .conversion-queue-list`;
-const CONVERT = `${PANEL} .conversion-plan button.primary-button`;
+const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
 const ADOPT = `${PANEL} .conversion-adoption button`;
-const ROWS = 'ul.dataset-roster-list[role="listbox"] [role="option"]';
+const ROWS = '.grouped-roster [role="row"][data-handle]';
 const QUEUE_SIZE = 2;
 const runNative = FIXTURE !== undefined && OUTPUT_ROOT !== undefined ? describe : describe.skip;
 
@@ -116,6 +118,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     applicationProcessId = Number(capabilities["goog:processID"]);
     if (!Number.isSafeInteger(applicationProcessId) || applicationProcessId <= 0) throw new Error("WebDriver did not identify its application process.");
     expect(capabilities["browserName"]).toBe("webview2");
+    await showRoster();
     await browser.$("button=Add files…").waitForDisplayed();
     expect(await browser.execute(() => Object.keys((window as unknown as { __mscanvasIpcTable__: object }).__mscanvasIpcTable__))).toEqual([]);
     evidence.push({ kind: "identity", binarySha256: sha256(resolve(REPOSITORY, "target/e2e/release/mscanvas-desktop.exe")), fixtureSha256: FIXTURE_SHA256, browserName: capabilities["browserName"], browserVersion: capabilities["browserVersion"], driver: capabilities["msedge"] });
@@ -128,9 +131,10 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     await browser.waitUntil(async () => (await conversionState()).status !== "running", {
       timeout: 180_000, timeoutMsg: "A previous scenario's queue never settled.",
     });
+    await showRoster();
     const clear = browser.$("button=Clear list");
     if (await clear.isExisting()) {
-      await clear.scrollIntoView({ block: "center" });
+      await reveal("#workbench-roster .dataset-roster-actions");
       await clear.waitForClickable({ timeout: 30_000 });
       await clear.click();
       await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
@@ -161,18 +165,52 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
   }
 
   async function reveal(selector: string): Promise<void> {
-    await browser.execute((target: string) => {
-      document.querySelector(target)?.scrollIntoView({ block: "center", inline: "nearest" });
+    await browser.execute(async (target: string) => {
+      const element = document.querySelector<HTMLElement>(target);
+      if (element === null) throw new Error(`The rendered control is absent: ${target}`);
+      const windowX = window.scrollX, windowY = window.scrollY;
+      element.scrollIntoView({ block: "center", inline: "nearest" });
+      window.scrollTo(windowX, windowY);
+      await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
     }, selector);
   }
 
+  async function showRoster(): Promise<void> {
+    await browser.$(".workbench-home").waitForDisplayed({ timeout: 30_000 });
+    await browser.$(".workbench-home").click();
+    await revealTauriRoster();
+  }
+
+  async function showConversion(): Promise<void> {
+    await browser.$("button=Conversion & results").click();
+    await browser.$("#workbench-conversion").waitForDisplayed();
+  }
+
+  async function checkAllMembers(): Promise<void> {
+    await showRoster();
+    for (const row of await browser.$$(ROWS)) {
+      const handle = await row.getAttribute("data-handle");
+      const rowSelector = `${ROWS}[data-handle="${handle}"]`;
+      const checkbox = browser.$(`${rowSelector} input[type="checkbox"]`);
+      if (!(await checkbox.isSelected())) {
+        await reveal(rowSelector);
+        await checkbox.click();
+      }
+      await browser.waitUntil(async () => checkbox.isSelected());
+    }
+    await showConversion();
+    const scope = 'input[name="conversion-scope"][value="selected"]';
+    await reveal(scope);
+    await browser.$(scope).click();
+  }
+
   async function add(path: string): Promise<void> {
+    await showRoster();
     const before = await browser.$$(ROWS).length;
     const addButton = browser.$("button=Add files…");
     await addButton.waitForEnabled({ timeout: 60_000 });
     await browser.waitUntil(async () => {
-      await browser.execute(() => { window.scrollTo(0, 0); });
-      await addButton.scrollIntoView({ block: "center" });
+      await reveal("#workbench-roster .dataset-roster-actions");
       return addButton.isClickable();
     }, { timeout: 60_000, timeoutMsg: "Add files… never became reachable." });
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);
@@ -187,9 +225,8 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     for (let index = 0; index < QUEUE_SIZE; index += 1) await add(source(sourceIndex + index));
     const destination = join(runRoot, `scenario-${String(scenario)}`, `converted-${String(sourceIndex)}`);
     mkdirSync(destination, { recursive: true });
-    await browser.$(ROWS).click();
-    await browser.keys(["Control", "a"]);
-    await browser.$(CONVERT).waitForEnabled({ timeout: 60_000 });
+    await checkAllMembers();
+    await waitUntilOffered(CONVERT, 60_000);
     await reveal(CONVERT);
     const handler = handleDialog(applicationProcessId, "conversion-folder", "choose", destination);
     const [handled] = await Promise.all([handler, browser.$(CONVERT).click()]);
@@ -220,7 +257,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
 
   async function rosterNames(): Promise<string[]> {
     return browser.execute((selector: string) =>
-      [...document.querySelectorAll(selector)].map((node) => node.querySelector(".dataset-roster-name")?.textContent ?? node.textContent ?? ""), ROWS);
+      [...document.querySelectorAll(selector)].map((node) => node.querySelector(".dataset-row-name")?.textContent ?? node.textContent ?? ""), ROWS);
   }
 
   it("completes output-only, shows the manifest, and adopts only when asked", async () => {
@@ -285,6 +322,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     expect(sha256(changedPath)).not.toBe(digestBefore);
     evidence.push({ kind: "changed-output", scenario, name: changedName, before: digestBefore, after: sha256(changedPath) });
 
+    await waitUntilOffered(ADOPT, 60_000);
     await reveal(ADOPT);
     await browser.$(ADOPT).click();
     await browser.waitUntil(async () => (await browser.$(`${PANEL} .conversion-adoption-summary`).getText()).includes("added"), {
@@ -319,6 +357,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
 
     // **The duplicate case, for real.** Asking again reports the added output as
     // already present rather than adding it twice.
+    await waitUntilOffered(ADOPT, 60_000);
     await reveal(ADOPT);
     await browser.$(ADOPT).click();
     await browser.waitUntil(async () => (await browser.$(`${PANEL} .conversion-adoption-summary`).getText()).includes("already in the workspace"), {

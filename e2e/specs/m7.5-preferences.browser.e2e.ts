@@ -16,6 +16,7 @@ import { ipcTable } from "../support/fixtures";
 import { selectedFile, unavailableBackend, availableBackend, chosenFolderWithoutTools, quarantinedBackend } from "../../apps/desktop/src/test/previewFixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
+import { showBackendBanner } from "../support/backendBanner";
 
 /**
  * The pinned animation library's own note when reduced motion is set.
@@ -123,6 +124,8 @@ async function capture(label: string, expectedDpr?: number) {
       detailsOpen: document.querySelector(".workbench-shell")?.getAttribute("data-details-open") ?? null,
       backendStatus: document.querySelector("[data-backend-status]")?.getAttribute("data-backend-status") ?? null,
       backendReading: box(document.querySelector(".backend-status-reading")),
+      backendCollapsed: document.querySelector("[data-backend-collapsed]") !== null,
+      backendToggle: box(document.querySelector("[data-backend-toggle]")),
       backendActions: named("[data-backend-action]"),
       helpOpen: document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open ?? null,
       help: box(document.querySelector("[data-backend-help]")),
@@ -192,8 +195,11 @@ async function capture(label: string, expectedDpr?: number) {
   // Nothing this milestone renders is loaded from anywhere but this origin.
   expect(state.externalResources).toEqual([]);
   // The banner's reading and its actions must be on screen and unclipped
-  // wherever the banner is on screen at all.
-  if (state.backendReading !== null) {
+  // wherever the banner is on screen at all. Folded (PM9 L10) it is not: what
+  // is on screen then is the phrase in the header that reopens it.
+  if (state.backendCollapsed) {
+    expect(state.backendToggle?.clipped).toBe(false);
+  } else if (state.backendReading !== null) {
     // Reported as one object per control, so a failure names which one rather
     // than needing an assertion message the pinned matcher does not take.
     const clipped = Object.entries(state.backendActions)
@@ -438,14 +444,20 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       outcome: "saved", revision: 2, preferences: record({ locale: "en", density: "comfortable" }),
     });
     await browser.$("[data-layout-reset]").click();
-    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLButtonElement>("[data-layout-reset]")?.disabled === true));
+    // With nothing left to reset the control is refused but reachable:
+    // `aria-disabled`, never `disabled` (WorkbenchHeader.tsx, the reset's
+    // `aria-disabled`; docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
+    // "Acceptance"; the native case in m7.5-preferences.native.e2e.ts).
+    await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-layout-reset]")?.getAttribute("aria-disabled") === "true"));
     const reset = await capture("15-layout-reset");
     expect(reset.layoutRegion).toBe(en.layoutResetDone);
     expect(reset.layoutReset?.insideViewport).toBe(true);
-    // The control stays in the document, and the keyboard goes to the adjacent
-    // durable control rather than to the body -- a browser blurs a control it
-    // has just disabled, so "still mounted" is not on its own enough.
-    expect(await browser.execute(() => (document.activeElement?.textContent ?? "").trim())).toBe(en.rosterToggle);
+    expect(reset.layoutReset?.focusable).toBe(true);
+    // The control stays in the document and keeps the keyboard. The earlier
+    // hand-off to the roster toggle was removed in M7.5's acceptance repair: it
+    // fired for pointer presses too, and moved the reader to a control they had
+    // not touched.
+    expect(await browser.execute(() => document.activeElement?.hasAttribute("data-layout-reset") === true)).toBe(true);
   });
 
   it("reads every backend state, and its offline help, in both languages", async () => {
@@ -460,8 +472,11 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       table.inspect_backend = availability;
       await installIpcBoundary(table);
       await browser.url("/");
-      await browser.$("[data-backend-status]").waitForDisplayed();
+      await browser.$("[data-backend-status]").waitForExist();
       await browser.waitUntil(() => browser.execute(want => document.querySelector("[data-backend-status]")?.getAttribute("data-backend-status") === want, expected));
+      // A usable installation folds the banner; its actions and help are one
+      // press away (PM9.2 L10).
+      await showBackendBanner();
       const state = await capture(`16-backend-${label}-en`);
       expect(state.backendStatus).toBe(expected);
       // Every state offers a way to ask again, and the help is beside it.

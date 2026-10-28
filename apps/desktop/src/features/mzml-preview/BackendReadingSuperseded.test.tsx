@@ -104,8 +104,9 @@ async function supersedeTheReading(
   // A conversion takes the lane, so the check the replacement will owe is
   // deferred and the superseded window is one this test can look at.
   const convert = within(panel).getByRole("button", { name: /^Convert/ });
+  // Refused through aria-disabled since PM9.4 (R6); toBeEnabled would pass at once.
   await waitFor(() => {
-    expect(convert).toBeEnabled();
+    expect(convert).not.toHaveAttribute("aria-disabled");
   });
   fireEvent.click(convert);
   await waitFor(() => {

@@ -4,12 +4,21 @@ import { join, resolve } from "node:path";
 import { consoleEntries, holdInvoke, installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
 import { activateFigureFieldByLabel } from "../support/figureLabelActivation";
+import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
 import { selectedFile, unavailableBackend } from "../../apps/desktop/src/test/previewFixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 
+/**
+ * The pinned animation library's own note when reduced motion is set, matched
+ * by its opening as m7.5 does. The 480x320 case emulates reduced motion on
+ * purpose, and the emulation outlives that case.
+ */
+const REDUCED_MOTION_ADVISORY = "You have Reduced Motion enabled on your device.";
+
 const DIALOG = "[data-settings-dialog]";
-const ROW = '.dataset-roster-list [role="option"]';
+/** The roster's first row. Roster rows are `.grouped-roster` treegrid rows since M7.2. */
+const ROW = `.grouped-roster [data-handle="${selectedFile.handle}"]`;
 const evidence: unknown[] = [];
 let output = "";
 
@@ -61,7 +70,7 @@ async function capture(label: string, expectedDpr?: number) {
   const state = await browser.execute(() => {
     const dialog = document.querySelector<HTMLElement>("[data-settings-dialog]");
     const rect = dialog?.getBoundingClientRect();
-    const rows = [...document.querySelectorAll<HTMLElement>('.dataset-roster-list [role="option"]')];
+    const rows = [...document.querySelectorAll<HTMLElement>(".grouped-roster [data-handle]")];
     return {
       cssViewport: { width: innerWidth, height: innerHeight }, devicePixelRatio,
       visualViewportScale: visualViewport?.scale, cssZoom: getComputedStyle(document.documentElement).zoom,
@@ -104,13 +113,41 @@ async function loadWorkspace(emptySpectrum = false, refusedViewport = false) {
   table.get_workspace_roster = { datasets: [selectedFile, { ...selectedFile, handle: "long-name", fileName: `${en.simplifiedChinese}_long_acquisition_name_preserved_without_ellipsis_or_identity_changes_2026_09_12.mzML` }], capacity: 1024 };
   await installIpcBoundary(table);
   await browser.url("/");
-  await browser.$(ROW).waitForDisplayed();
+  await revealRosterRow(selectedFile.handle);
+  // The shared table confirms every save as English with an automatic layout,
+  // and the shell adopts what a save confirms (M7.5), so Settings' Apply would
+  // be undone. The store reads back what it was asked to save instead.
+  await readBackSavedPreferences();
+  // A row press views an mzML row (DatasetRoster `handleRowPress`; PM9
+  // slice-03 "Roster row click, Enter, Preview focused"), so there is no
+  // separate Preview focused step.
   await browser.$(ROW).click();
-  await browser.$("button=Preview focused").waitForEnabled();
-  await browser.$("button=Preview focused").click();
   await browser.$('.spectrum-table[role="grid"]').waitForDisplayed();
-  await browser.$('[role="grid"] [role="row"][aria-rowindex="2"]').click();
-  await browser.$(".spectrum-panel").waitForDisplayed();
+  await chooseFirstScan();
+  // Mounted only for a loaded spectrum, including an empty or refused one.
+  await browser.$(".spectrum-panel .spectrum-export-disclosure").waitForExist();
+}
+
+/**
+ * Commits the run's first scan from the table.
+ *
+ * Dispatched, as `selectTheSpectrum` in `e2e/support/viewer.ts` does and for
+ * its reason: a driver click on a row it has scrolled to lands on the table's
+ * sticky header. Unlike that helper this does not wait for a drawn plot,
+ * because the empty spectrum and the provider refusal are this suite's states.
+ */
+async function chooseFirstScan() {
+  // The rows mount after the grid; `openTheViewer` waits for this one too.
+  await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForExist({ timeout: 60_000 });
+  await browser.execute(() => document.querySelector('div.spectrum-table-row[data-row-position="0"]')
+    ?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+/** Both shared figure-settings consumers: the chromatogram's panel and the spectrum's disclosure. */
+async function openFigureExports() {
+  await browser.$("#chromatogram-export-toggle").click();
+  await browser.$(".spectrum-panel .spectrum-export-disclosure summary").click();
+  await browser.$('.spectrum-panel input[id$="-widthPx"]').waitForDisplayed();
 }
 
 describe("M7.1 localized Settings and real shared consumers", () => {
@@ -124,13 +161,14 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     const console = await consoleEntries();
     evidence.push({ kind: "console", entries: console, calls: await ipcCalls() });
     writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2));
-    expect(console).toEqual([]);
+    // The one expected third-party advisory, as m7.5's afterEach filters it.
+    expect(console.filter(entry => !entry.text.startsWith(REDUCED_MOTION_ADVISORY))).toEqual([]);
   });
 
   it("previews real row geometry offline, preserves work and returns keyboard ownership", async () => {
     await loadWorkspace();
     await metrics(1366, 768);
-    await browser.$("#chromatogram-export-toggle").click();
+    await openFigureExports();
     await browser.$('.spectrum-panel input[id$="-widthPx"]').setValue("00640");
     await browser.$('.spectrum-panel input[id$="-heightPx"]').setValue("480");
     await browser.$('.spectrum-panel input[id$="-pngDpi"]').setValue("1e");
@@ -188,7 +226,15 @@ describe("M7.1 localized Settings and real shared consumers", () => {
       await browser.keys("Escape");
       await returned();
       expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
-      expect(await ipcCalls()).toEqual(calls);
+      // M7.5 made Apply durable: it publishes the appearance group it applied
+      // and nothing else (docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
+      // "Startup, Settings and layout semantics"; m7.5's browser case asserts
+      // the same request). Reset then Cancel, and Escape, still write nothing.
+      const after = await ipcCalls();
+      expect(after.slice(0, calls.length)).toEqual(calls);
+      expect(after.slice(calls.length)).toEqual([
+        { command: "save_ui_preferences", args: { request: { appearance: { locale: "zh-CN", density: "compact" } } } },
+      ]);
       const fieldFacts = await browser.execute(() => {
         const widths = [...document.querySelectorAll<HTMLInputElement>('input[id$="-widthPx"]')];
         const ids = [...document.querySelectorAll("[id]")].map(node => node.id);
@@ -196,10 +242,13 @@ describe("M7.1 localized Settings and real shared consumers", () => {
         return { widths: widths.map(input => input.value), idsUnique: new Set(ids).size === ids.length, themeGroups: new Set(themes.map(input => input.name)).size };
       });
       expect(fieldFacts).toEqual({ widths: ["00640", "00640"], idsUnique: true, themeGroups: 2 });
-      expect(await browser.$('.spectrum-panel').$('button=Export SVG…').isEnabled()).toBe(true);
-      expect(await browser.$('.spectrum-panel').$('button=Export PNG…').isEnabled()).toBe(false);
-      await browser.$(ROW).scrollIntoView();
-      await browser.$(ROW).click();
+      // The session is Chinese here, and the viewer's actions are localized.
+      expect(await browser.$('.spectrum-panel').$(`button=${zh.viewerExportFormat.replace("{{name}}", "SVG")}`).isEnabled()).toBe(true);
+      expect(await browser.$('.spectrum-panel').$(`button=${zh.viewerExportFormat.replace("{{name}}", "PNG")}`).isEnabled()).toBe(false);
+      // The keyboard on the roster's roving tab stop, as Tab would put it. A
+      // pointer press would now view the row again (DatasetRoster
+      // `handleRowPress`) and drop the loaded spectrum this case captures.
+      await browser.execute((row) => document.querySelector<HTMLElement>(row)!.focus(), ROW);
       await browser.keys("ArrowDown");
       expect(await browser.execute(() => document.activeElement?.getAttribute("data-handle"))).toBe("long-name");
       await capture("04-chinese-shared-figure-controls");
@@ -211,7 +260,7 @@ describe("M7.1 localized Settings and real shared consumers", () => {
 
   it("keeps Settings readable across four viewports and explicit 100/125/150/200 percent DPR emulation", async () => {
     await loadWorkspace();
-    await browser.$("#chromatogram-export-toggle").click();
+    await openFigureExports();
     const cases = [
       [1366, 768, 1], [1920, 1080, 1], [960, 640, 1], [1200, 800, 1],
       [1093, 614, 1.25], [1280, 720, 1.5], [480, 320, 2],
@@ -292,7 +341,7 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     await loadWorkspace(true);
     await capture("state-empty-spectrum");
     await holdInvoke("open_mzml_preview");
-    await browser.$("button=Preview focused").click();
+    await browser.$(`button=${en.previewFocused}`).click();
     await openSettings();
     await choose("zh-CN");
     await capture("state-loading-chinese");
@@ -301,7 +350,7 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     await releaseInvokeHold("open_mzml_preview");
     await browser.$('.spectrum-table[role="grid"]').waitForDisplayed();
     await setInvokeResult("load_selected_spectrum", { __reject: { kind: "backend_failed", summary: "Controlled provider refusal", detail: "Original provider detail", retryable: true } });
-    await browser.$('[role="grid"] [role="row"][aria-rowindex="2"]').click();
+    await chooseFirstScan();
     await browser.waitUntil(async () => (await browser.$(".spectrum-panel").getText()).includes("Controlled provider refusal"));
     await openSettings();
     await capture("state-provider-error-english");

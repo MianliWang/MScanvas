@@ -323,7 +323,9 @@ describe("a batch review", () => {
     );
     const run = query("[data-targeted-run]");
     expect(run.getAttribute("aria-disabled")).toBe("true");
-    expect(run.getAttribute("title")).toBe(en.targetedBatchNotReady);
+    expect(document.getElementById(run.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
+      en.targetedBatchNotReady,
+    );
     await press(run);
     expect(api.runTargetedMs1Batch).not.toHaveBeenCalled();
   });
@@ -398,7 +400,9 @@ describe("a batch run", () => {
     expect(stop.textContent).toBe(en.targetedBatchStop);
     await press(stop);
     expect(api.cancelled).toEqual(["project-job-1"]);
-    expect(stop.textContent).toBe(en.targetedBatchStopping);
+    // A request, said on every control that could send it, until the batch answers.
+    expect(stop.textContent).toBe(en.targetedStopRequested);
+    expect(query('[data-project-cancel="project-job-1"]').textContent).toBe(en.targetedStopRequested);
     await press(stop);
     expect(api.cancelled).toEqual(["project-job-1"]);
 
@@ -562,5 +566,67 @@ describe("in Simplified Chinese", () => {
     expect(query(`[data-targeted-batch-member="${LAYERS[2].id}"]`).textContent).toContain(
       zh.targetedBatchStoppedBefore,
     );
+  });
+});
+
+describe("the batch as one path (PM9.5)", () => {
+  it("counts the acquisitions Run would run, before any review (R4)", async () => {
+    mount(three());
+    await screen.findByText(en.projectReferences);
+    await press(query(`[data-project-targeted="${LAYERS[0].id}"]`));
+    await press(query(`[data-targeted-member="${LAYERS[1].id}"]`));
+    expect(query("[data-targeted-run]").textContent).toBe(en.targetedRunBatch.replace("{{count}}", "2"));
+    expect(query("[data-targeted-run]").getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("keeps a stopped batch's ending through an edit, offers it again only as new runs, and keeps the keyboard (R8, R9)", async () => {
+    const api = mount(three());
+    api.setTargeted({
+      batchResolution: reviewOf(),
+      progress: {
+        operationId: "project-job-1",
+        phase: "runningEngine",
+        batch: [
+          member(0, "completed", { runId: RUN_A, artifactId: ARTIFACT_A }),
+          member(1, "running"),
+          member(2, "queued"),
+        ],
+      },
+    });
+    await reviewAll(api);
+    const release = api.holdOnce("runTargetedMs1Batch");
+    await press(query("[data-targeted-run]"));
+    await screen.findByText(en.targetedBatchRunningTitle);
+    const stop = query("[data-targeted-batch-stop]");
+    stop.focus();
+    await press(stop);
+    api.set(afterBatch());
+    api.setTargeted({
+      batchMembers: [
+        member(0, "completed", { runId: RUN_A, artifactId: ARTIFACT_A }),
+        member(1, "cancelled", { runId: RUN_B }),
+        member(2, "notStarted"),
+      ],
+    });
+    await act(async () => {
+      release();
+    });
+
+    // Stop left with the batch: its heading has the keyboard, not the page.
+    expect(document.activeElement).toBe(query('[data-targeted-batch="ended"] h4'));
+    // The same batch again is a secondary action that says what it does.
+    const run = query("[data-targeted-run]");
+    expect(run.textContent).toBe(en.targetedRunBatchAgain.replace("{{count}}", "3"));
+    expect(run.className).toBe("secondary-button");
+    expect(query("[data-targeted-run-again]").textContent).toBe(en.targetedRunBatchAgainNote);
+
+    // Unticking a member withdraws the review, never the ending: the member
+    // that never started is said nowhere else.
+    await press(query(`[data-targeted-member="${LAYERS[2].id}"]`));
+    expect(document.querySelector("[data-targeted-batch-members]")).toBeNull();
+    expect(query(`[data-targeted-batch-member="${LAYERS[2].id}"]`).getAttribute("data-state")).toBe(
+      "notStarted",
+    );
+    expect(query("[data-targeted-run]").textContent).toBe(en.targetedRunBatch.replace("{{count}}", "2"));
   });
 });

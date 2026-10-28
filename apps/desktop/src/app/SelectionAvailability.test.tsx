@@ -39,6 +39,7 @@ import {
   unavailableBackend,
 } from "../test/previewFixtures";
 import { App } from "./App";
+import { showBackendBanner } from "../test/backendBanner";
 
 const SCAN_COUNT = 60;
 const PLOT_PIXELS = 1_000;
@@ -124,6 +125,7 @@ function region(): HTMLElement {
 
 /** Closes the backend lane, by asking for a check that will not answer yet. */
 async function startACheck(): Promise<void> {
+  await showBackendBanner();
   fireEvent.click(screen.getAllByRole("button", { name: "Check again" })[0] as HTMLElement);
   await waitFor(() => {
     expect(notice()).not.toBeNull();
@@ -153,7 +155,7 @@ describe("the viewer's selection availability", () => {
     // explanation that is not there is worse than none.
     expect(notice()).toBeNull();
     expect(grid().getAttribute("aria-describedby")).toBeNull();
-    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout");
+    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units");
   });
 
   it("explains the closed lane once, and both surfaces point at that one sentence", async () => {
@@ -170,7 +172,7 @@ describe("the viewer's selection availability", () => {
     // Both surfaces, the same id, and the plot keeps its readout as well.
     expect(grid().getAttribute("aria-describedby")).toBe("viewer-selection-availability");
     expect(plot().getAttribute("aria-describedby")).toBe(
-      "chromatogram-readout viewer-selection-availability",
+      "chromatogram-readout chromatogram-units viewer-selection-availability",
     );
 
     // Announced politely, by the element that was already there.

@@ -21,6 +21,22 @@ of 200 targets at about 0.84 MiB of document, not the 0.5–0.65 MB estimated
 under *Known limits* below: four such batches fit in one project, and fewer
 with long or non-ASCII labels (§8 of the closure).
 
+Update (PM9.5, 2026-10-04): the batch path below is unchanged in contract,
+and in presentation:
+
+- **The review.** It sits between **Review plan** and **Run**, with every
+  member's readiness above Run.
+- **Stopping.** Once pressed, **Stop batch** and the busy line's control read
+  "Stop requested…" until the batch answers.
+- **After the batch ends.** The review offers **Run N analyses again** as a
+  secondary action, which runs every listed acquisition again as new runs. To
+  run only some, untick the others and review again.
+- **The ended panel.** It stays when the request is edited, so a member that
+  never started is still listed. A member's **Open result** takes the keyboard
+  to its report.
+
+See [PM9.5](../phases/pm9/slice-05.md).
+
 ## Scope
 
 M9.4 lets one reviewed action run the same targeted MS1 request over several

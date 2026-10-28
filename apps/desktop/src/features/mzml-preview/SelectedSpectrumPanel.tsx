@@ -51,7 +51,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
           <p>{describe(state, t)}</p>}
       </div>
       {state.status === "loaded" ? <div className="spectrum-export-header-actions"><QuickFigureActions
-        context={`${t("viewerSpectrumIndex", { index: String(state.spectrum.index) })} · ${t(props.rangeScope === "current" && props.rangeAvailability === "available" ? "viewerExportCurrent" : "viewerExportFull")} · ${props.figureSettings.widthPx || "—"} × ${props.figureSettings.heightPx || "—"} px`}
+        context={[t("viewerSpectrumIndex", { index: String(state.spectrum.index) }), t(props.rangeScope === "current" && props.rangeAvailability === "available" ? "viewerExportCurrent" : "viewerExportFull"), `${props.figureSettings.widthPx || "—"} × ${props.figureSettings.heightPx || "—"} px`]}
         busy={props.scientificExportBusy} figureUnavailable={props.renderSettingsProblem !== null}
         pngUnavailable={props.pngDpiProblem !== null} onPreview={props.onOpenFigure} quickVisible={!exportOpen}
         onPng={() => props.onExport("png")} onCopy={props.onCopyPlot} />

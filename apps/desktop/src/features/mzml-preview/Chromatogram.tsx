@@ -105,12 +105,11 @@ export interface ChromatogramProps {
    */
   readonly selectionAvailability: SpectrumSelectionAvailability;
   /**
-   * The control that opens this panel's export surface.
+   * The figure actions and the control that opens this panel's export surface.
    *
-   * Rendered into the header's existing control row rather than below the plot,
-   * so a viewer with the surface closed is exactly as tall as it was: the
-   * three-panel column's floors are measured, and a disclosure that added a row
-   * to the body would push a control out of a panel that clips.
+   * Rendered beside the title rather than below the plot, so a viewer with the
+   * surface closed is exactly as tall as it was: opening the surface is what
+   * adds its height, and nothing else does.
    */
   readonly exportToggle?: ReactNode;
   /** The export surface itself, when it is open. */
@@ -181,14 +180,18 @@ export const Chromatogram = memo(function Chromatogram({
       className="panel chromatogram-panel"
       data-export-open={exportPanel === null || exportPanel === undefined ? undefined : "true"}
     >
-      {/* One line, and every control on it. The viewer is three stacked panels
-          in a column that is about 480px tall at a 768px window, so what this
-          panel spends on chrome it takes from the scan table and the spectrum
-          below it. A locator earns less of that than the things being read,
-          which is why the source sentence lives under the plot with the axis
-          rather than as a second header line. */}
+      {/* The header names the plot and carries what makes a figure of it, as
+          the selected spectrum's does. What changes the plot itself -- which
+          traces, which range -- sits on the line above the drawing, where the
+          spectrum keeps its m/z controls. Together the two groups did not fit
+          one header line at 960px in English and wrapped into a second (PM9
+          L13); the design system does not let a toolbar become a ribbon. */}
       <header className="panel-header compact">
         <h2 id="chromatogram-heading">{t("viewerChromatogram")}</h2>
+        {model.status === "ready" ? exportToggle : null}
+      </header>
+      {exportPanel}
+      <div className="chromatogram-body">
         {model.status === "ready" ? (
           <div className="chromatogram-controls">
             <fieldset className="chromatogram-traces">
@@ -234,12 +237,8 @@ export const Chromatogram = memo(function Chromatogram({
                 </button>
               ))}
             </fieldset>
-            {exportToggle}
           </div>
         ) : null}
-      </header>
-      {exportPanel}
-      <div className="chromatogram-body">
         {model.status === "ready" && domain !== null && full !== null ? (
           <ChromatogramPlot
             dispatch={dispatch}
@@ -501,8 +500,8 @@ function ChromatogramPlot({
          */
         aria-describedby={
           selectionAvailability.status === "available"
-            ? "chromatogram-readout"
-            : `chromatogram-readout ${SPECTRUM_SELECTION_NOTICE_ID}`
+            ? "chromatogram-readout chromatogram-units"
+            : `chromatogram-readout chromatogram-units ${SPECTRUM_SELECTION_NOTICE_ID}`
         }
         aria-labelledby="chromatogram-heading"
         className="chromatogram-svg"
@@ -611,8 +610,10 @@ function ChromatogramPlot({
         {/* The unit state, said rather than assumed. Nothing in the accepted
             contract establishes what these numbers are measured in, and a
             chromatogram labelled "minutes" states something the file did not.
-            Beside it, what the traces are made of. */}
-        {t("viewerRtUnits")} ·{" "}
+            Beside it, what the traces are made of. Said once per axis here,
+            and part of the plot's description, rather than after every
+            retention time on the panel (PM9 UI-33). */}
+        <span id="chromatogram-units">{t("viewerRtUnits")}</span> ·{" "}
         <span className="chromatogram-range">
           {t("viewerShowing", { low: domain.low.toFixed(4), high: domain.high.toFixed(4) }) +
             (showingFullRange ? t("viewerFullRange") : "")}

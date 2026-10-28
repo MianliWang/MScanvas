@@ -26,6 +26,7 @@ import {
   previewError,
   unavailableBackend,
 } from "../../test/previewFixtures";
+import { showBackendBanner } from "../../test/backendBanner";
 
 function renderWorkspace(api: PreviewApi): void {
   render(
@@ -110,6 +111,7 @@ describe("keyboard focus across the native folder picker", () => {
       },
     });
     renderWorkspace(api);
+    await showBackendBanner();
     const choose = await screen.findByRole("button", { name: "Choose folder…" });
 
     activate(choose);
@@ -271,6 +273,7 @@ describe("keyboard focus across the native folder picker", () => {
     // control is the same node throughout its own request and keeps the
     // keyboard the user gave it. Nothing restores anything here: a recheck is
     // not a folder choice, and the restore machinery must not fire for it.
+    await showBackendBanner();
     const recheck = screen.getByRole("button", { name: "Check again" });
     activate(recheck);
     const focusing = vi.spyOn(recheck, "focus");
@@ -344,6 +347,7 @@ describe("keyboard focus across the native folder picker", () => {
     const picker = deferred<BackendAvailability | null>();
     const api = createFakePreviewApi({ chosenInstallation: () => picker.promise });
     renderWorkspace(api);
+    await showBackendBanner();
     const choose = await screen.findByRole("button", { name: "Choose folder…" });
 
     activate(choose);
@@ -370,6 +374,7 @@ describe("keyboard focus across the native folder picker", () => {
   it("restores nothing when the control that opened the picker never held the keyboard", async () => {
     const api = createFakePreviewApi({ chosenInstallation: null });
     renderWorkspace(api);
+    await showBackendBanner();
     const choose = await screen.findByRole("button", { name: "Choose folder…" });
 
     // Activated without ever being focused. There is no place to give back, and

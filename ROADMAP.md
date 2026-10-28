@@ -892,10 +892,16 @@ Source integration of the M7.6-partial, M8 and M9 stack was prepared as one
 candidate; the
 [M8/M9 source-integration record](docs/development/M8_M9_SOURCE_INTEGRATION.md)
 names it, and the merge on `main`, not this text, is the evidence that it was
-published. Not started and not promised after that: a concentrated
-real-workflow UI/UX cleanup; a frozen new product candidate; M7.6-style
-installed, native, provider and release qualification against that candidate;
-then a decision between a public beta and M10. See the
+published. The concentrated real-workflow UI/UX cleanup ran as PM9, on a
+local branch that is not yet published ([PM9 route](docs/phases/pm9/slices.md)).
+Its closing slice, PM9.7, froze a new product candidate on 2026-10-14
+(production `30b855f`), accepted at the browser/rendered and component
+layers. Not started and not promised after it: M7.6-style
+installed, native, provider and release qualification against that
+candidate, which owns the native acceptance at OS scaling, the
+provider-positive checks and the real targeted-MS1 engine path that PM9
+records but does not run; then a decision
+between a public beta and M10. See the
 [M9 closure](docs/product/M9_CLOSURE.md#15-after-m9).
 
 ## M10 — Automation

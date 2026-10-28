@@ -37,6 +37,7 @@ import {
 import {
   SPECTRUM,
   SPECTRUM_PLOT,
+  type OpenViewerOptions,
   openTheSpectrum,
   revealTheSpectrum,
   spectrumDomain,
@@ -76,6 +77,21 @@ function control(label: string) {
   return browser.$(SPECTRUM).$(`button=${label}`);
 }
 
+/**
+ * A selected spectrum with its export surface open.
+ *
+ * Since M7.3 the chooser, the range note and the data actions sit inside the
+ * panel's "Export spectrum" disclosure, which every spectrum opens closed
+ * ("existing export/help/source sections are reachable disclosures",
+ * docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md). Opened by its summary, as
+ * a reader would (PM9.7; slice-03 §5 family (b)).
+ */
+async function openTheChooser(options: OpenViewerOptions): Promise<void> {
+  await openTheSpectrum(options);
+  await browser.$(`${SPECTRUM} .spectrum-export-disclosure > summary`).click();
+  await browser.$(`${SPECTRUM} .spectrum-data-actions`).waitForDisplayed({ timeout: 10_000 });
+}
+
 /** Chooses a scope by clicking the label a reader would click. */
 async function chooseScope(label: string): Promise<void> {
   const option = await browser.$(SPECTRUM).$(`label*=${label}`);
@@ -83,13 +99,27 @@ async function chooseScope(label: string): Promise<void> {
   await option.click();
 }
 
+/**
+ * What the chooser says the current range is.
+ *
+ * Read from the document rather than through `getText`, which answers only for
+ * text inside the viewport (m4.3's helpers say the same): once the plot is
+ * revealed the note is scrolled away, and while a new spectrum loads it is not
+ * rendered at all.
+ */
 async function rangeNote(): Promise<string> {
-  return (await browser.$(RANGE_NOTE).getText()).trim();
+  return browser.execute(
+    (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
+    RANGE_NOTE,
+  );
 }
 
-/** What the panel's own status region says, verbatim. */
+/** What the panel's own status region says, verbatim, read the same way. */
 async function exportStatus(): Promise<string> {
-  return (await browser.$(`${SPECTRUM} .spectrum-export-status`).getText()).trim();
+  return browser.execute(
+    (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
+    `${SPECTRUM} .spectrum-export-status`,
+  );
 }
 
 /** The range the most recent selected-spectrum export carried. */
@@ -145,7 +175,7 @@ async function narrowTheViewport(): Promise<void> {
 describe("the selected spectrum's range chooser", () => {
   for (const viewport of VIEWPORTS) {
     it(`is reachable and does not clip the panel at ${viewport.name}`, async () => {
-      await openTheSpectrum({
+      await openTheChooser({
         width: viewport.width,
         height: viewport.height,
         answers: ipcTable(),
@@ -179,7 +209,7 @@ describe("the selected spectrum's range chooser", () => {
   }
 
   it("exports the full source until a range is chosen", async () => {
-    await openTheSpectrum({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
 
     await exportAndWait("Export CSV…");
 
@@ -190,10 +220,13 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("says the current range is the whole spectrum until the viewport moves", async () => {
-    await openTheSpectrum({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
     await chooseScope(CURRENT_SCOPE);
 
-    expect(await rangeNote()).toContain("whole spectrum until the viewport is changed");
+    // M7.3's sentence (en.ts `viewerExportFullHelp`, c12f45d: only a confirmed
+    // range is committed); the copy this first expected predates it. Also pinned
+    // by SelectedSpectrumExport.test.tsx (PM9.7).
+    expect(await rangeNote()).toContain("whole spectrum until a range is committed");
 
     await exportAndWait("Export CSV…");
 
@@ -203,7 +236,7 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("sends the committed window once the viewport has been narrowed", async () => {
-    await openTheSpectrum({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
     await chooseScope(CURRENT_SCOPE);
     await narrowTheViewport();
 
@@ -224,7 +257,7 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("copies the same committed window a save would write", async () => {
-    await openTheSpectrum({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
     await chooseScope(CURRENT_SCOPE);
     await narrowTheViewport();
     const offered = await rangeNote();
@@ -243,7 +276,7 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("offers no current range for a spectrum with no m/z viewport", async () => {
-    await openTheSpectrum({
+    await openTheChooser({
       width: 1_366,
       height: 768,
       answers: ipcTable({ refusedViewport: true }),
@@ -265,7 +298,7 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("keeps the current range available while a drawing has failed", async () => {
-    await openTheSpectrum({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
     await chooseScope(CURRENT_SCOPE);
     await narrowTheViewport();
     const committed = await rangeNote();
@@ -290,7 +323,7 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("reports the range an export began on, after the viewport has moved", async () => {
-    await openTheSpectrum({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
     await setInvokeResult("save_selected_spectrum_export", {
       status: "saved",
       format: "csv",
@@ -313,7 +346,11 @@ describe("the selected spectrum's range chooser", () => {
     const reported = await exportStatus();
     expect(reported).toContain("mscanvas-spectrum-0-current.csv");
     expect(reported).toContain("2,500 of 1,000,000 points");
-    expect(reported).toContain("m/z 301.5000 to 303.5000");
+    // The exact bounds, unformatted, since M7.3 (en.ts `viewerExportPointRange`,
+    // c12f45d; SelectedSpectrumExport.test.tsx "names the file, both counts and
+    // the exact bounds it was taken over"; baseline UI-31 keeps exact values in
+    // the export notes). This first expected the four-decimal form (PM9.7).
+    expect(reported).toContain("m/z 301.5 to 303.5");
 
     // The reader now moves somewhere else entirely. The result stands, because
     // it describes a file rather than a viewport.
@@ -328,7 +365,7 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("reports an empty range as a successful export", async () => {
-    await openTheSpectrum({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
     await setInvokeResult("save_selected_spectrum_export", {
       status: "saved",
       format: "tsv",
@@ -356,7 +393,7 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("starts a newly selected spectrum at the full source", async () => {
-    await openTheSpectrum({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
     await chooseScope(CURRENT_SCOPE);
     await narrowTheViewport();
 
@@ -374,7 +411,8 @@ describe("the selected spectrum's range chooser", () => {
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await browser.waitUntil(
-      async () => (await rangeNote()).includes("whole spectrum until the viewport is changed"),
+      // M7.3's sentence, as in the case above (PM9.7).
+      async () => (await rangeNote()).includes("whole spectrum until a range is committed"),
       { timeout: 10_000, timeoutMsg: "the new spectrum kept the old scope" },
     );
 
@@ -385,7 +423,7 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("does not let a spectrum range reach the linked figure", async () => {
-    await openTheSpectrum({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
     await chooseScope(CURRENT_SCOPE);
     await narrowTheViewport();
     const committed = await spectrumRangeCaption();

@@ -195,7 +195,7 @@ describe("the plan the panel is showing", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
 
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: /^Convert/ })).toBeDisabled();
+      expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
     expect(plans.asked).toHaveLength(0);
     expect(within(panel).queryByText(/Working out what this conversion would do/)).toBeNull();
@@ -554,7 +554,7 @@ describe("the plan the panel is showing", () => {
     await waitFor(() => {
       expect(within(panel).getByText(/Working out what this conversion would do/)).toBeVisible();
     });
-    expect(within(panel).getByRole("button", { name: /^Convert/ })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).queryByRole("button", { name: "Describe again" })).toBeNull();
 
     await act(async () => {
@@ -738,14 +738,14 @@ describe("starting the conversion the plan describes", () => {
       plans.fail(2, previewError({ kind: "subfolder_name_unusable", summary: "Use one local subfolder name." }));
       plans.answer(1); // A valid answer for the old name cannot erase the refusal.
     });
-    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).getByText("That is not a folder name MSCanvas can create beside your acquisitions. Use a single name with no slashes.")).toBeVisible();
     expect(within(panel).getByLabelText("Subfolder name")).toHaveAttribute("aria-invalid", "true");
     expect(api.beginRequests()).toHaveLength(0);
     fireEvent.change(within(panel).getByLabelText("Subfolder name"), { target: { value: "Results" } });
     await waitFor(() => expect(plans.asked).toHaveLength(4));
     await act(async () => plans.answer(3));
-    expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeEnabled();
+    expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled");
     expect(within(panel).getByText("Requested destination").nextElementSibling?.textContent).toContain("Results");
   });
 
@@ -766,7 +766,7 @@ describe("starting the conversion the plan describes", () => {
   it("sends the plan's own question, not a list of rows", async () => {
     const api = await mount();
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
 
     await waitFor(() => {
       expect(api.beginRequests()).toHaveLength(1);
@@ -785,9 +785,9 @@ describe("starting the conversion the plan describes", () => {
   it("refuses a start under an installation the session has left, and learns of it from the refusal", async () => {
     const api = await mount();
     const panel = await screen.findByRole("region", { name: "Convert" });
-    const convert = within(panel).getByRole("button", { name: "Convert 1 selected…" });
+    const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
     await waitFor(() => {
-      expect(convert).toBeEnabled();
+      expect(convert).not.toHaveAttribute("aria-disabled");
     });
 
     // Rust moves on and nothing says so: a refused start creates no queue, so
@@ -797,7 +797,7 @@ describe("starting the conversion the plan describes", () => {
     act(() => {
       api.replaceTheBindingSilently();
     });
-    expect(convert).toBeEnabled();
+    expect(convert).not.toHaveAttribute("aria-disabled");
 
     await act(async () => {
       fireEvent.click(convert);
@@ -850,7 +850,7 @@ describe("starting the conversion the plan describes", () => {
       const asked = api.planRequests();
       expect(asked[asked.length - 1]?.expectedReceipt).not.toBe(firstBindingReceipt);
     });
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
     await waitFor(() => {
       expect(api.beginRequests()).toHaveLength(2);
     });
@@ -876,7 +876,7 @@ describe("starting the conversion the plan describes", () => {
       }),
     });
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await pressConvert(panel, "Convert 1 selected…");
+    await pressConvert(panel, "Convert 1 eligible…");
 
     await waitFor(() => {
       expect(within(panel).getByText(UI_RESOURCES.en.m74ErrorNameCollision)).toBeVisible();
@@ -886,7 +886,7 @@ describe("starting the conversion the plan describes", () => {
     // And the plan is still the plan: a refusal is not a reason to re-describe
     // a conversion nothing has changed about.
     expect(within(panel).getByText(/will be converted to mzML/)).toBeVisible();
-    expect(within(panel).getByRole("button", { name: /^Convert/ })).toBeEnabled();
+    expect(within(panel).getByRole("button", { name: /^Convert/ })).not.toHaveAttribute("aria-disabled");
   });
 
   it("offers a start only where the rendered control and the dispatch guard agree", async () => {

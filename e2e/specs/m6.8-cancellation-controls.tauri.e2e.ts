@@ -23,6 +23,8 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { waitUntilOffered } from "../support/conversion";
+import { revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(HERE, "..", "..");
@@ -31,8 +33,8 @@ const OUTPUT_ROOT = process.env["MSCANVAS_M68_NATIVE_OUTPUT_ROOT"];
 const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
 const PANEL = "section.conversion-panel";
 const RUNNING = `${PANEL} .conversion-running`;
-const CONVERT = `${PANEL} .conversion-plan button.primary-button`;
-const ROWS = 'ul.dataset-roster-list[role="listbox"] [role="option"]';
+const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
+const ROWS = '.grouped-roster [role="row"][data-handle]';
 /** Enough real items that a stop has a running one to land on. */
 const QUEUE_SIZE = 8;
 const runNative = FIXTURE !== undefined && OUTPUT_ROOT !== undefined ? describe : describe.skip;
@@ -112,6 +114,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     applicationProcessId = Number(capabilities["goog:processID"]);
     if (!Number.isSafeInteger(applicationProcessId) || applicationProcessId <= 0) throw new Error("WebDriver did not identify its application process.");
     expect(capabilities["browserName"]).toBe("webview2");
+    await showRoster();
     await browser.$("button=Add files…").waitForDisplayed();
     expect(await browser.execute(() => Object.keys((window as unknown as { __mscanvasIpcTable__: object }).__mscanvasIpcTable__))).toEqual([]);
     evidence.push({ kind: "identity", binarySha256: sha256(resolve(REPOSITORY, "target/e2e/release/mscanvas-desktop.exe")), fixtureSha256: FIXTURE_SHA256, browserName: capabilities["browserName"], browserVersion: capabilities["browserVersion"], driver: capabilities["msedge"] });
@@ -128,9 +131,10 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     await browser.waitUntil(async () => (await conversionState()).status !== "running", {
       timeout: 180_000, timeoutMsg: "A previous scenario's queue never settled.",
     });
+    await showRoster();
     const clear = browser.$("button=Clear list");
     if (await clear.isExisting()) {
-      await clear.scrollIntoView({ block: "center" });
+      await reveal("#workbench-roster .dataset-roster-actions");
       await clear.waitForClickable({ timeout: 30_000 });
       await clear.click();
       await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
@@ -173,22 +177,53 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
   }
 
   async function reveal(selector: string): Promise<void> {
-    await browser.execute((target: string) => {
-      document.querySelector(target)?.scrollIntoView({ block: "center", inline: "nearest" });
+    await browser.execute(async (target: string) => {
+      const element = document.querySelector<HTMLElement>(target);
+      if (element === null) throw new Error(`The rendered control is absent: ${target}`);
+      const windowX = window.scrollX, windowY = window.scrollY;
+      element.scrollIntoView({ block: "center", inline: "nearest" });
+      window.scrollTo(windowX, windowY);
+      await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
     }, selector);
   }
 
+  async function showRoster(): Promise<void> {
+    await browser.$(".workbench-home").waitForDisplayed({ timeout: 30_000 });
+    await browser.$(".workbench-home").click();
+    await revealTauriRoster();
+  }
+
+  async function showConversion(): Promise<void> {
+    await browser.$("button=Conversion & results").click();
+    await browser.$("#workbench-conversion").waitForDisplayed();
+  }
+
+  async function checkAllMembers(): Promise<void> {
+    await showRoster();
+    for (const row of await browser.$$(ROWS)) {
+      const handle = await row.getAttribute("data-handle");
+      const rowSelector = `${ROWS}[data-handle="${handle}"]`;
+      const checkbox = browser.$(`${rowSelector} input[type="checkbox"]`);
+      if (!(await checkbox.isSelected())) {
+        await reveal(rowSelector);
+        await checkbox.click();
+      }
+      await browser.waitUntil(async () => checkbox.isSelected());
+    }
+    await showConversion();
+    const scope = 'input[name="conversion-scope"][value="selected"]';
+    await reveal(scope);
+    await browser.$(scope).click();
+  }
+
   async function add(path: string): Promise<void> {
+    await showRoster();
     const before = await browser.$$(ROWS).length;
     const addButton = browser.$("button=Add files…");
     await addButton.waitForEnabled({ timeout: 60_000 });
-    // Eight rows and a settled queue make the document taller than the window,
-    // and a control below the fold is enabled without being clickable. The
-    // layout also settles for a moment after a queue ends, so this re-scrolls
-    // until the control is genuinely reachable rather than scrolling once.
+    // The roster owns its scroll; reach its acquisition control after opening it.
     await browser.waitUntil(async () => {
-      await browser.execute(() => { window.scrollTo(0, 0); });
-      await addButton.scrollIntoView({ block: "center" });
+      await reveal("#workbench-roster .dataset-roster-actions");
       return addButton.isClickable();
     }, { timeout: 60_000, timeoutMsg: "Add files… never became reachable." });
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);
@@ -203,9 +238,8 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     for (let index = 0; index < QUEUE_SIZE; index += 1) await add(source(sourceIndex + index));
     const destination = join(runRoot, `scenario-${String(scenario)}`, `converted-${String(sourceIndex)}`);
     mkdirSync(destination, { recursive: true });
-    await browser.$(ROWS).click();
-    await browser.keys(["Control", "a"]);
-    await browser.$(CONVERT).waitForEnabled({ timeout: 60_000 });
+    await checkAllMembers();
+    await waitUntilOffered(CONVERT, 60_000);
     await reveal(CONVERT);
     const handler = handleDialog(applicationProcessId, "conversion-folder", "choose", destination);
     const [handled] = await Promise.all([handler, browser.$(CONVERT).click()]);
@@ -253,8 +287,9 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     for (let round = 0; round < 3 && stopped === null && Date.now() < deadline; round += 1) {
       if (round > 0) {
         await browser.waitUntil(async () => (await conversionState()).status !== "running", { timeout: 180_000 });
+        await showRoster();
         const clearAgain = browser.$("button=Clear list");
-        await clearAgain.scrollIntoView({ block: "center" });
+        await reveal("#workbench-roster .dataset-roster-actions");
         await clearAgain.waitForClickable({ timeout: 30_000 });
         await clearAgain.click();
         await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
@@ -271,7 +306,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
         // than concluding there was nothing to stop.
         if (current === undefined) continue;
         const button = browser.$(RUNNING).$("button=Stop this file");
-        if (!(await button.isExisting()) || !(await button.isEnabled())) continue;
+        if (!(await button.isExisting()) || !(await button.isEnabled()) || await button.getAttribute("aria-disabled") === "true") continue;
         await button.click();
         await browser.waitUntil(async () => {
           const settling = await conversionState();
@@ -383,6 +418,9 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     });
     const stop = browser.$(RUNNING).$("button=Stop queue");
     await stop.waitForExist({ timeout: 30_000 });
+    await browser.waitUntil(async () => await stop.isEnabled() && await stop.getAttribute("aria-disabled") !== "true", {
+      timeout: 30_000, timeoutMsg: "Stop queue was never offered.",
+    });
     await stop.scrollIntoView({ block: "center" });
     await stop.waitForClickable({ timeout: 30_000 });
     await stop.click();

@@ -28,7 +28,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PreviewError } from "../mzml-preview/contracts";
 import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { attachedRow, qcUnavailable, type ViewedPreview } from "./lineage";
+import { attachedRow, provenanceOf, qcUnavailable, type ViewedPreview } from "./lineage";
 import type {
   OutcomeSummary,
   ProjectArtifact,
@@ -38,12 +38,15 @@ import type {
 } from "./projectApi";
 import { QcReport } from "./QcReport";
 import {
+  EMPTY_TARGETED_DRAFT,
   FAILURE_KEYS,
   OUTCOME_KEYS,
+  PAYLOAD_STATE_KEYS,
   phaseKey,
   TargetedMs1Report,
   TargetedMs1Setup,
   batchSummary,
+  type TargetedDraft,
 } from "./TargetedMs1";
 import type { ProjectBusy, ProjectSession } from "./useProject";
 
@@ -220,7 +223,8 @@ function outcomeCounts(summary: OutcomeSummary): [RowOutcome, number][] {
   return counts.filter(([, count]) => count > 0);
 }
 
-function busyKey(busy: ProjectBusy) {
+/** The sentence this surface uses for what the project is doing, or `null`. */
+export function busyKey(busy: ProjectBusy) {
   return busy === "idle" ? null : BUSY[busy];
 }
 
@@ -324,6 +328,12 @@ export interface ProjectPanelProps {
   readonly viewedPreview?: ViewedPreview | null;
 }
 
+/**
+ * The no-project sentence, which is also why Save, Save As and Close are
+ * refused while nothing is open: they point at it rather than repeating it.
+ */
+const NONE_HINT_ID = "project-none-hint";
+
 export function ProjectPanel({
   session,
   detailsPresent = false,
@@ -409,15 +419,47 @@ export function ProjectPanel({
   const layerOf = (input: ProjectInput) =>
     state.layers.find((layer) => layer.sourceInputId === input.id) ?? null;
 
-  /** The QC snapshot being inspected, with what the report needs beside it. */
+  /**
+   * The record whose report the main region shows: the QC snapshot or
+   * targeted result being inspected -- or, while the run that produced the
+   * report on screen is inspected, that same report. So walking from a report
+   * to its run in Details and back keeps the report, the target chosen in it
+   * and whatever was open. Any other selection replaces or removes it, and
+   * inspecting a run never opens a report that was not already shown.
+   *
+   * Kept while rendering, as the replacement reset below is: an effect would
+   * leave one frame showing no report between the two inspections.
+   */
   const provenance = session.provenance;
+  const [shownRecord, setShownRecord] = useState<string | null>(null);
+  const inspectedRecord =
+    provenance?.kind === "artifact" &&
+    (provenance.artifact.qcSnapshot !== null || provenance.artifact.kind === "targetedMs1ResultV1")
+      ? provenance.artifact.id
+      : null;
+  const recordShown =
+    inspectedRecord ??
+    (provenance?.kind === "run" &&
+    shownRecord !== null &&
+    provenance.run.outputArtifactIds.includes(shownRecord)
+      ? shownRecord
+      : null);
+  if (recordShown !== shownRecord) setShownRecord(recordShown);
+  const shown =
+    recordShown === null
+      ? null
+      : provenance?.kind === "artifact"
+        ? provenance
+        : provenanceOf(state, { kind: "artifact", id: recordShown });
+
+  /** The QC snapshot on screen, with what the report needs beside it. */
   const report =
-    provenance?.kind === "artifact" && provenance.artifact.qcSnapshot !== null
+    shown?.kind === "artifact" && shown.artifact.qcSnapshot !== null
       ? {
-          artifact: provenance.artifact,
-          snapshot: provenance.artifact.qcSnapshot,
-          sourceName: provenance.layerSources[0]?.record?.label ?? null,
-          recordedAt: provenance.producedBy?.record?.finishedAt ?? null,
+          artifact: shown.artifact,
+          snapshot: shown.artifact.qcSnapshot,
+          sourceName: shown.layerSources[0]?.record?.label ?? null,
+          recordedAt: shown.producedBy?.record?.finishedAt ?? null,
         }
       : null;
 
@@ -472,6 +514,23 @@ export function ProjectPanel({
     readonly projectId: string | null;
     readonly layerId: string;
   } | null>(null);
+  /**
+   * What the user typed into the setup, kept for the open project so closing
+   * the setup or opening it from another row does not throw it away. Never
+   * persisted, and never carried into another project.
+   */
+  const [targetedDraft, setTargetedDraft] = useState<TargetedDraft>(EMPTY_TARGETED_DRAFT);
+  // A project replaced under the setup -- a New, Open or Close, also of
+  // another copy with the same identifiers -- closes it and takes the draft
+  // with it. Reset while rendering the replacement, not in an effect after
+  // it: an effect could land after the reader's first press in the new
+  // project and undo it.
+  const [shownReplacement, setShownReplacement] = useState(session.replacements);
+  if (shownReplacement !== session.replacements) {
+    setShownReplacement(session.replacements);
+    setTargeted(null);
+    setTargetedDraft(EMPTY_TARGETED_DRAFT);
+  }
   const targetedLayer =
     targeted !== null && targeted.projectId === state.projectId
       ? (state.layers.find((layer) => layer.id === targeted.layerId) ?? null)
@@ -481,15 +540,15 @@ export function ProjectPanel({
       ? undefined
       : state.inputs.find((input) => input.id === targetedLayer.sourceInputId);
 
-  /** The targeted result being inspected, with what its report needs. */
+  /** The targeted result on screen, with what its report needs. */
   const targetedReport =
-    provenance?.kind === "artifact" && provenance.artifact.kind === "targetedMs1ResultV1"
+    shown?.kind === "artifact" && shown.artifact.kind === "targetedMs1ResultV1"
       ? {
-          artifact: provenance.artifact,
-          plan: provenance.targeted?.plan ?? null,
-          sourceName: provenance.layerSources[0]?.record?.label ?? null,
-          source: provenance.layerSources[0]?.record ?? null,
-          recordedAt: provenance.producedBy?.record?.finishedAt ?? null,
+          artifact: shown.artifact,
+          plan: shown.targeted?.plan ?? null,
+          sourceName: shown.layerSources[0]?.record?.label ?? null,
+          source: shown.layerSources[0]?.record ?? null,
+          recordedAt: shown.producedBy?.record?.finishedAt ?? null,
         }
       : null;
   const phase = phaseKey(session.analysisPhase);
@@ -517,9 +576,21 @@ export function ProjectPanel({
     session.targetedBatchJustEnded && session.lastTargetedBatch !== null
       ? session.lastTargetedBatch
       : null;
+  /** What the surface is doing, in the busy line's words; also the setup's reason to hold. */
+  const busyText =
+    busyKey(busy) === null
+      ? null
+      : batch !== null
+        ? t("projectBusyBatch", { position: batchPosition, total: batch.length })
+        : t(busyKey(busy) as "projectBusySaving");
+  // A cancel of a targeted run is a request until the run answers: every
+  // control that could send it says so, and none sends it twice.
+  const stopping = busy === "analysing" && session.stopRequested;
   const announcement =
     busyKey(busy) !== null
-      ? t(busyKey(busy) as "projectBusySaving")
+      ? stopping
+        ? t("targetedStopRequested")
+        : t(busyKey(busy) as "projectBusySaving")
       : pending !== null
         ? t("projectUnsavedQuestion")
         : problem !== null
@@ -587,7 +658,8 @@ export function ProjectPanel({
             type="button"
             className="secondary-button"
             aria-disabled={working || !state.open || !state.published || undefined}
-            title={state.open && !state.published ? t("projectSaveNeedsLocation") : undefined}
+            aria-describedby={state.open ? undefined : NONE_HINT_ID}
+            title={!state.open ? t("projectNeedsProject") : !state.published ? t("projectSaveNeedsLocation") : undefined}
             onClick={() => {
               if (!working && state.open && state.published) void session.saveProject();
             }}
@@ -598,6 +670,8 @@ export function ProjectPanel({
             type="button"
             className="secondary-button"
             aria-disabled={working || !state.open || undefined}
+            aria-describedby={state.open ? undefined : NONE_HINT_ID}
+            title={state.open ? undefined : t("projectNeedsProject")}
             onClick={() => {
               if (!working && state.open) void session.saveProjectAs();
             }}
@@ -608,6 +682,8 @@ export function ProjectPanel({
             type="button"
             className="secondary-button"
             aria-disabled={working || !state.open || undefined}
+            aria-describedby={state.open ? undefined : NONE_HINT_ID}
+            title={state.open ? undefined : t("projectNeedsProject")}
             onClick={() => {
               if (!working && state.open) void session.closeProject();
             }}
@@ -625,9 +701,7 @@ export function ProjectPanel({
 
       {busyKey(busy) === null ? null : (
         <p className="project-busy" data-project-busy={busy}>
-          {batch !== null
-            ? t("projectBusyBatch", { position: batchPosition, total: batch.length })
-            : t(busyKey(busy) as "projectBusySaving")}
+          {busyText}
           {busy === "analysing" && phase !== null ? (
             <span data-project-busy-phase={session.analysisPhase ?? ""}>{t(phase)}</span>
           ) : null}
@@ -641,12 +715,15 @@ export function ProjectPanel({
             <button
               type="button"
               className="link-button"
+              aria-disabled={stopping || undefined}
               data-project-cancel={session.activeOperation}
-              onClick={() => void session.cancelJob()}
+              onClick={() => {
+                if (!stopping) void session.cancelJob();
+              }}
             >
               {/* A batch's one operation is the whole batch: cancelling it is
                   the batch's Stop, so it is named that. */}
-              {t(batch === null ? "projectCancel" : "targetedBatchStop")}
+              {t(stopping ? "targetedStopRequested" : batch === null ? "projectCancel" : "targetedBatchStop")}
             </button>
           )}
         </p>
@@ -741,6 +818,9 @@ export function ProjectPanel({
               session={session}
               layerId={targetedLayer.id}
               sourceName={targetedSource?.label ?? t("provenanceRelatedGone")}
+              draft={targetedDraft}
+              onDraft={setTargetedDraft}
+              busyText={busyText}
               refusalText={(code) => t(refusalKey(code))}
               onClose={() => {
                 const layerId = targetedLayer.id;
@@ -825,6 +905,7 @@ export function ProjectPanel({
                   type="button"
                   className="primary-button"
                   aria-disabled={working || selected.length === 0 || undefined}
+                  aria-describedby={state.inputs.length > 0 && selected.length === 0 ? "project-capture-reason" : undefined}
                   title={selected.length === 0 ? t("projectCaptureNeedsSelection") : undefined}
                   data-project-capture=""
                   onClick={() => {
@@ -835,6 +916,14 @@ export function ProjectPanel({
                 </button>
               </div>
             </div>
+            {/* Said, not only hovered: the refused capture is still a Tab stop,
+                and its reason has to reach a reader who arrives there (PM9
+                UI-24). With no reference at all, the empty list says so. */}
+            {state.inputs.length > 0 && selected.length === 0 ? (
+              <p className="project-action-reason" id="project-capture-reason">
+                {t("projectCaptureNeedsSelection")}
+              </p>
+            ) : null}
 
             {state.inputs.length === 0 ? (
               <p className="project-empty">{t("projectNoReferences")}</p>
@@ -1275,6 +1364,16 @@ export function ProjectPanel({
                           <time dateTime={run.finishedAt}>{recordedAt(run.finishedAt, locale)}</time>
                         </span>
                       </p>
+                      {/* Why a targeted run failed, where the failure is
+                          listed: the run's own sentence, never an absence. */}
+                      {run.outcome === "failed" && run.targetedMs1?.failure != null ? (
+                        <p
+                          className="project-run-failure"
+                          data-project-run-failure={run.targetedMs1.failure.code}
+                        >
+                          {t(FAILURE_KEYS[run.targetedMs1.failure.code])}
+                        </p>
+                      ) : null}
                       <p className="project-run-relationship">
                         {run.layerIds.length > 0
                           ? // A QC capture consumed a layer, and says which by
@@ -1294,7 +1393,9 @@ export function ProjectPanel({
                             })
                           : t("projectRunInputs", { count: run.inputIds.length })}
                         {artifacts.length === 0 ? (
-                          <span data-project-no-artifact="">{t("projectRunNoArtifact")}</span>
+                          <span data-project-no-artifact="">
+                            {t(run.operation === "targetedMs1V1" ? "projectRunNoResult" : "projectRunNoArtifact")}
+                          </span>
                         ) : (
                           // Described from the counts rather than from the
                           // label the document stores: that label is written in
@@ -1342,6 +1443,21 @@ export function ProjectPanel({
                                       }),
                                     )
                                     .join(" · ")}
+                                  {/* A stored result the project found missing
+                                      or damaged says so before it is opened,
+                                      in the report's own words. What the
+                                      project last looked at, not a later read. */}
+                                  {artifact.targetedMs1.availability === "available" ? null : (
+                                    <>
+                                      {" — "}
+                                      <span
+                                        className="project-artifact-unavailable"
+                                        data-project-artifact-availability={artifact.targetedMs1.availability}
+                                      >
+                                        {t(PAYLOAD_STATE_KEYS[artifact.targetedMs1.availability])}
+                                      </span>
+                                    </>
+                                  )}
                                 </>
                               ) : null}
                             </span>
@@ -1359,7 +1475,9 @@ export function ProjectPanel({
           </section>
         </>
       ) : (
-        <p className="project-empty">{t("projectNoneHint")}</p>
+        <p className="project-empty" id={NONE_HINT_ID}>
+          {t("projectNoneHint")}
+        </p>
       )}
     </div>
   );

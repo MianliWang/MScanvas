@@ -134,7 +134,7 @@ describe("M7.3 through the delivered application", () => {
     expect(api.spectrumExportRequests[0].range).toEqual({ scope: "current", low: 200, high: 800 });
     releaseBand(mzPlot, "mz");
     expect(api.spectrumProjectionRequests).toHaveLength(2);
-    const confirmMz = within(mzPanel).getByRole("button", { name: "Zoom to selection — m/z 350 to 500" });
+    const confirmMz = within(mzPanel).getByRole("button", { name: "Zoom to selection — m/z 350.0000 to 500.0000" });
     expect(confirmMz).toBeVisible();
     await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
     fireEvent.click(within(mzPanel).getByRole("button", { name: "Export CSV…" }));
