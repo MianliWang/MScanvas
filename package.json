@@ -51,6 +51,6 @@
     "expect-webdriverio": "^6.0.10",
     "tsx": "^4.23.13",
     "typescript": "7.0.2",
-    "vite": "8.2.2"
+    "vite": "8.2.4"
   }
 }
