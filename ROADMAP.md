@@ -904,6 +904,15 @@ records but does not run; then a decision
 between a public beta and M10. See the
 [M9 closure](docs/product/M9_CLOSURE.md#15-after-m9).
 
+**Update, 2026-10-27.** The owner chose the public beta first; the decisions
+are in [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27).
+PM9 (PR #131) and beta-1 readiness (PR #134) are in review: the latter takes
+up PM9's carried-forward presentation options and the repository fixes listed
+in the [post-PM9 ledger](docs/development/POST_PM9_DEFERRED_WORK.md). Still
+owed before beta 1 is published: native qualification at OS scaling, the
+live-provider check, a candidate built by the `Release candidate` workflow,
+its installed qualification and the owner's consent on its exact hashes.
+
 ## M10 — Automation
 
 **NOT STARTED.**

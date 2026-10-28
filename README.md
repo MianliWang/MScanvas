@@ -77,11 +77,19 @@ None of them is in an installer or a release.
 
 No public beta exists, and no installer containing M8 or M9 has been qualified.
 ProteoWizard is still yours to install; MSCanvas never downloads or bundles it.
-Known test debt travels with this source: the repository-wide browser suite
-fails 174 legacy M4–M7 and viewer tests exactly as it does on `1daf802`, the
-M7.5 `main` the stack follows (the M8 and M9 browser specs pass), and one
-App-level Vitest case can exceed its
-5-second limit under load. The integration record gives the evidence.
+
+**After M9 (in review, not yet on `main`).** PM9 converged the existing
+surfaces along the real workflow and froze candidate `30b855f`
+([PM9 route](docs/phases/pm9/slices.md)); its integrated browser acceptance
+repaired the 174 legacy browser failures that published `main` still carries.
+Beta-1 readiness then took up PM9's carried-forward presentation options,
+closed the repository and CI gaps a post-PM9 survey found, and recorded the
+owner's 2026-10-27 release decisions in
+[ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27):
+beta 1 is to be an **unsigned** GitHub prerelease, with published SHA-256
+checksums and a build-provenance attestation, and without the targeted-MS1
+runtime. Draft tester documents are in [`docs/release/beta-1/`](docs/release/beta-1/RELEASE_NOTES.md).
+No beta-1 candidate has been built, installed or qualified yet.
 
 ## What works today
 
