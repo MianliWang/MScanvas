@@ -130,6 +130,15 @@ function handleDialog(
   if (path !== undefined) {
     args.push("-Path", path);
   }
+  // The exact application PID. On this host a native common dialog need not be
+  // a UIA root child, so the helper's unattributed root lookup cannot see it;
+  // its attributed path (proved by M7.1) bridges only this PID's window with
+  // the exact title and dialog class.
+  const applicationProcessId = Number((browser.capabilities as unknown as Record<string, unknown>)["goog:processID"]);
+  if (!Number.isSafeInteger(applicationProcessId) || applicationProcessId <= 0) {
+    throw new Error("WebDriver did not identify its application process.");
+  }
+  args.push("-ApplicationProcessId", String(applicationProcessId));
   const helper = ++helperIndex, startedAt = new Date().toISOString();
   const child = spawn("powershell.exe", args, { windowsHide: true });
   const stdoutChunks: Buffer[] = [], stderrChunks: Buffer[] = [];
@@ -322,7 +331,9 @@ describe("M4.2 saving a figure through the real dialog", () => {
 
     // And the interface says what it wrote, naming the file and never a folder.
     const status = await statusText();
-    expect(status).toContain("500 by 400 pixels at 600 DPI");
+    // Since c12f45d: "500 by 400 pixels, <theme> theme, 600 DPI".
+    expect(status).toContain("500 by 400 pixels");
+    expect(status).toContain("600 DPI");
     expect(status).not.toContain(workspace);
     expect(status).not.toContain("C:\\");
   });
@@ -341,9 +352,10 @@ describe("M4.2 saving a figure through the real dialog", () => {
     const svg = readFileSync(destination, "utf8");
     expect(svg).toContain("<svg");
     expect(svg).toContain("</svg>");
-    // The figure's own semantics, at the size that was asked for.
-    expect(svg).toContain('width="900"');
-    expect(svg).toContain('height="500"');
+    // The figure's own semantics, at the size that was asked for. The renderer
+    // writes coordinates at an adaptive fixed precision ("900.000").
+    expect(svg).toMatch(/<svg [^>]*width="900(?:\.0+)?"/u);
+    expect(svg).toMatch(/<svg [^>]*height="500(?:\.0+)?"/u);
     // A vector figure has no physical resolution, and says nothing about one.
     expect(svg).not.toContain("600 DPI");
   });

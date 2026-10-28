@@ -200,7 +200,10 @@ describe("the linked viewer on the real Tauri WebView", () => {
       const svg = document.querySelector(css);
       return {
         paths: svg?.querySelectorAll("path.chromatogram-trace").length ?? 0,
-        circles: svg?.querySelectorAll("circle").length ?? 0,
+        // Visible glyphs only: since c12f45d the plot keeps one hidden point
+        // glyph per trace on purpose (PM9.7 retirement, slice-03 §5; same
+        // selector as Chromatogram.test.tsx). Still "no point drawn".
+        circles: svg?.querySelectorAll('circle:not([visibility="hidden"])').length ?? 0,
         toggles: document.querySelectorAll("label.chromatogram-trace-toggle input").length,
       };
     }, PLOT);
@@ -211,7 +214,13 @@ describe("the linked viewer on the real Tauri WebView", () => {
     expect(await rangeCaption()).toContain("full range");
     const caption = await browser.$(".chromatogram-axis-caption").getText();
     expect(caption).toContain("unit not reported");
-    expect(caption).toContain("Per-scan values from the loaded spectrum table");
+    // The source sentence moved from the caption into the caption's own
+    // "Source and drawing details" disclosure (c12f45d; PM9.7 retirement,
+    // slice-03 §5). Read there, closed or open, with the same meaning.
+    const source = await browser.execute(() =>
+      document.querySelector(".chromatogram-axis-caption + details.plot-source-details")?.textContent ?? "");
+    expect(source).toContain("Per-scan values from the complete loaded table");
+    expect(source).toContain("Not a stored chromatogram record");
     // Nothing was asked of the backend to draw it.
     expect(await spectrumReads()).toEqual([]);
   });

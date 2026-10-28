@@ -32,6 +32,10 @@ import {
   waitForOutcome,
 } from "../support/tauriPanel";
 
+/** The localized owned-error wording (M7.4) for Rust's raster and DPI refusals. */
+const RASTER_BUDGET = /limited to 32[,.\u00a0\u202f ]?000[,.\u00a0\u202f ]?000 pixels/u;
+const DPI_RANGE = "72\u20131200";
+
 /**
  * Everything the panel currently shows, in one round trip.
  *
@@ -196,8 +200,9 @@ describe("M4.2 on the real Tauri WebView", () => {
     await browser.$(".spectrum-panel").$("button=Copy plot").click();
     const status = await waitForOutcome();
 
-    expect(status).toContain("too large to turn into an image");
-    expect(status).toContain("32 million pixels");
+    // Since M7.4 the panel shows its own localized message for the refusal's
+    // code rather than Rust's English text: the same 32-million-pixel budget.
+    expect(status).toMatch(RASTER_BUDGET);
     // The command ran and refused. A refusal that never reached Rust would be
     // the frontend duplicating a bound, which is the drift this avoids.
     const copied = (await ipcCalls()).filter(
@@ -223,7 +228,7 @@ describe("M4.2 on the real Tauri WebView", () => {
     await browser.$(".spectrum-panel").$("button=Dismiss export message").click();
 
     await browser.$(".spectrum-panel").$("button=Export PNG…").click();
-    expect(await waitForOutcome(60_000)).toContain("32 million pixels");
+    expect(await waitForOutcome(60_000)).toMatch(RASTER_BUDGET);
 
     const begun = (await ipcCalls()).filter(
       (call) => call.command === "begin_selected_spectrum_export",
@@ -244,13 +249,14 @@ describe("M4.2 on the real Tauri WebView", () => {
 
     await browser.$(".spectrum-panel").$("button=Export PNG…").click();
     const refusal = await waitForOutcome(60_000);
-    expect(refusal).toContain("between 72 and 1200");
+    // The localized M7.4 message for the same 72 to 1200 range.
+    expect(refusal).toContain(DPI_RANGE);
     await browser.$(".spectrum-panel").$("button=Dismiss export message").click();
 
     focusApplicationWindow();
     await browser.$(".spectrum-panel").$("button=Copy plot").click();
     const copied = await waitForOutcome();
-    expect(copied).not.toContain("between 72 and 1200");
+    expect(copied).not.toContain(DPI_RANGE);
     // And whatever the clipboard did, the confirmation names no resolution:
     // there is nowhere in an RGBA image for one to be recorded.
     expect(copied).not.toContain("DPI");
