@@ -280,7 +280,8 @@ availability, queue, adoption and export contracts.
    only. (PM9.4, 2026-10-04: called `Selected rows` until then, which since M7.2
    collided with the roster's highlighted "selected" rows.) All uses every eligible row in the workspace, regardless of search.
    Both scopes exclude unsupported rows and show requested/eligible/excluded
-   counts. The three families may be mixed. Vendor rows cannot be previewed,
+   counts; a bounded disclosure names the excluded rows without changing
+   membership, eligibility or order (PM9.4 O2). The three families may be mixed. Vendor rows cannot be previewed,
    and say so. There is no `Convert visible` scope: search changes presentation
    only; the selected/all actions remain available.
 3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
@@ -319,8 +320,11 @@ availability, queue, adoption and export contracts.
 
    Review the plan: the ordered list of what will run, which family each row
    is, what each item will write, the combination it will be converted under,
-   how many requested rows are excluded as non-convertible, and the
-   output-only validation disclosure. A compact summary states the requested
+   how many requested rows are excluded as non-convertible, and, when the
+   validation mode Rust projects for the plan is output-only, the output-only
+   validation disclosure (PM9.4 O7, 2026-10-27: fixed text until then; another
+   mode adds no plan-time sentence, because the judgement wording for it
+   reports a finished check). A compact summary states the requested
    policy, relevant name and conflict behavior. It describes conditional
    destinations until Rust admits the directory objects, not a fixed folder or
    an all-clear conflict result.
@@ -344,10 +348,11 @@ availability, queue, adoption and export contracts.
    in [ADR 0043, CNV-D4](../architecture/adr/0043-conversion-completion-route.md#cnv-d4--conflict-and-overwrite),
    not a pending checkbox or provider experiment.
 6. Read the exact ordered member list and the Rust-authored capacity, then use
-   `Convert N eligible…` or `Convert all N eligible…` when that plan is ready. N is
+   `Convert N eligible` or `Convert all N eligible` when that plan is ready. N is
    the eligible count the scope line states (PM9.4, 2026-10-04: `Convert N
    selected…` until then, which read "Convert 0 selected…" beside one checked
-   mzML row). The review sits directly above the action, after the scope,
+   mzML row). The label ends in an ellipsis only for a custom local folder,
+   whose picker follows the press (PM9.4 O5, 2026-10-27). The review sits directly above the action, after the scope,
    settings, destination and conflict it answers; a refused Convert stays a Tab
    stop whose reason can be reached.
    The existing roster sort applies to the full workspace before scope selection;

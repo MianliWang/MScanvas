@@ -62,11 +62,13 @@ async function press(control: HTMLElement) {
   });
 }
 
-function renderShell(project: ProjectState) {
+function renderShell(project: ProjectState, locale: "en" | "zh-CN" = "en") {
   restoreViewport = installRoomyViewport();
   const projects = createFakeProjectApi(project);
   render(
-    <PreferencesApiProvider value={createFakePreferencesApi({ stored: storedRecord() })}>
+    <PreferencesApiProvider
+      value={createFakePreferencesApi({ stored: storedRecord({ appearance: { locale } }) })}
+    >
       <ProjectApiProvider value={projects}>
         <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
           <PreviewApiProvider value={createFakePreviewApi({ availability: unavailableBackend })}>
@@ -142,4 +144,37 @@ describe("the context line in the application shell", () => {
     expect(screen.getAllByRole("button", { name: en.projectSurface })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: /^Conversion & results/ })).toHaveLength(1);
   });
+});
+
+/** The filled primaries on screen anywhere in the shell, by their text. */
+function shownPrimaries(): (string | null)[] {
+  return [...document.querySelectorAll(".workbench-shell .primary-button")]
+    .filter((button) => button.closest("[hidden]") === null)
+    .map((button) => button.textContent);
+}
+
+describe("the empty Project in the application shell", () => {
+  it.each(["en", "zh-CN"] as const)(
+    "has New project as the one filled action beside the open roster, in %s (PM9.7 F2)",
+    async (locale) => {
+      const words = UI_RESOURCES[locale];
+      const projects = renderShell(NO_PROJECT, locale);
+      const addFiles = await screen.findByRole("button", { name: words.addFiles });
+      // The empty Workbench's next step is the roster's, so it keeps the accent.
+      expect(currentSurface()).toBe("workbench");
+      expect(addFiles.className).toBe("primary-button");
+
+      await press(screen.getByRole("button", { name: words.projectSurface }));
+      await screen.findByText(words.projectNone);
+      // One filled action across the whole screen, the roster included (UI-19):
+      // Add files… gives up the accent, and stays offered.
+      expect(shownPrimaries()).toEqual([words.projectNew]);
+      expect(addFiles.closest("[hidden]")).toBeNull();
+      expect(addFiles.className).toBe("secondary-button");
+      expect((addFiles as HTMLButtonElement).disabled).toBe(false);
+      expect(addFiles.getAttribute("aria-disabled")).toBeNull();
+      // Emphasis only: nothing was created, opened or picked.
+      expect(projects.calls).toEqual(["getProjectState"]);
+    },
+  );
 });

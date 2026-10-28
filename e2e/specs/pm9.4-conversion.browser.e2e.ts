@@ -436,7 +436,8 @@ describe("PM9.4 conversion journey, rendered", () => {
 
     // R6: refused, but a Tab stop that gives up the accent and says why.
     expect({ disabled: control?.disabled, ariaDisabled: control?.ariaDisabled, accent: control?.accent }).toEqual({ disabled: false, ariaDisabled: "true", accent: false });
-    expect(control?.described).toContain(word("en", "m74CnvNoticeNoConvertibleTarget"));
+    // The route is composed from the header toggle's and Add files' own labels (PM9.7 F3).
+    expect(control?.described).toContain(fill(word("en", "m74CnvNoticeNoConvertibleTarget"), { toggle: word("en", "rosterToggle"), add: word("en", "addFiles") }));
     expect(await tabToStart()).toBe(true);
     await browser.keys(["Enter"]);
     await browser.keys([" "]);

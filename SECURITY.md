@@ -2,11 +2,11 @@
 
 ## Supported versions
 
-MSCanvas is pre-alpha. Security fixes are applied to the current `main` branch until the first supported release line is published.
+MSCanvas has no supported release line yet. Security fixes are applied to the current `main` branch. A beta prerelease is a test build: a fix reaches testers in a later prerelease, not as a patch to an earlier one.
 
 ## Reporting a vulnerability
 
-Do not open a public issue for vulnerabilities involving arbitrary process execution, path traversal, source-data modification, credential exposure, unsafe update behavior or vendor-library redistribution. Contact the repository owner privately through GitHub security reporting when available.
+Do not open a public issue for vulnerabilities involving arbitrary process execution, path traversal, source-data modification, credential exposure, unsafe update behavior, vendor-library redistribution, or an installer whose hash or build attestation does not match its release. Report it privately through GitHub's private vulnerability reporting: <https://github.com/MianliWang/MScanvas/security/advisories/new>.
 
 ## Security boundaries
 
