@@ -4,6 +4,14 @@ All notable changes will be documented here once versioned releases begin.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-beta.1 — 2026-10-28 (prerelease)
+
+[Release notes](docs/release/beta-1/RELEASE_NOTES.md) ·
+[download](https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1).
+The entries below describe the source of this prerelease (`e6d2a49`).
+
 ### Changed
 
 - **One workbench along the real workflow (PM9).** Home, Workbench, Conversion
@@ -67,11 +75,10 @@ All notable changes will be documented here once versioned releases begin.
   are published with it instead. There is no advice here for getting around a
   policy your organisation set.
 
-  Nothing here has been installed or removed on a real machine yet. Installation,
-  launch, uninstall and what the installer actually places on disk are all
-  unverified until the qualification campaign runs. That campaign is deferred:
-  it will run against a later candidate that contains the project and targeted
-  MS1 work above. No installer has been published and no public beta exists.
+  The beta-1 installer was installed, used and uninstalled in the owner's own
+  account, not on a clean machine or by a standard user; the
+  [installed check](docs/release/beta-1/INSTALLED_CHECK.md) records what it
+  placed on disk and what uninstall leaves.
 
 - **The interface remembers how you set it up, and nothing else.** Language,
   the roster's row spacing and which of the two workspace panels you asked for

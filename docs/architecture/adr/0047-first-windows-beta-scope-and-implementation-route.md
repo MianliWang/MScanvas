@@ -585,3 +585,23 @@ Made by the owner after the first beta-1 candidate was built by the
 - **Consent.** After the checks, a draft prerelease holding the exact
   installer is prepared and the evidence reported; the owner's explicit go on
   that report publishes it. A rebuilt installer needs a new go.
+
+### Owner decisions at publication, 2026-10-28
+
+After the report on the checks, the owner said to publish beta 1. It was
+published as the `v0.1.0-beta.1` prerelease on 2026-10-28, its tag on
+`e6d2a49`, with the installer above and its checksums; the public assets were
+downloaded back and their SHA-256 and attestation verified. With that go the
+owner accepted, beyond the gaps above, what the
+[release notes](../../release/beta-1/RELEASE_NOTES.md#how-beta-1-was-checked)
+list as also not done (no run on 25H2, the installer's own pages, the
+runtime configuration observed but not logged), the exported values read as
+`msaccess` text and stated as such, vendor conversion bound to ProteoWizard
+3.0.26013, and the post-run `msaccess` scan-table read recorded in the
+[installed check](../../release/beta-1/INSTALLED_CHECK.md#5-exported-numerics).
+
+The owner also set direction for the work after beta 1, recorded in the
+[after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28):
+conversion is to be no less capable than msconvert, through verified defaults
+plus an advanced set of msconvert options labelled unverified; and the
+frontend falls short in both execution and scope.

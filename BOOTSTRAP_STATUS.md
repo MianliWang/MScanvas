@@ -12,8 +12,10 @@ tests). The owner's 2026-10-27 decisions in
 make beta 1 an unsigned GitHub prerelease with checksums and a build-provenance
 attestation, built by the `Release candidate` workflow. The first beta-1
 candidate was built from `e6d2a49` and checked natively and installed on
-2026-10-28 ([installed check](docs/release/beta-1/INSTALLED_CHECK.md)); it is
-not published, and M10 is not started. The 2026-09-24 paragraph below is kept
+2026-10-28 ([installed check](docs/release/beta-1/INSTALLED_CHECK.md)), and
+published the same day as the
+[`v0.1.0-beta.1` prerelease](https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1).
+M10 is not started. The 2026-09-24 paragraph below is kept
 as written.
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)

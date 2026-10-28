@@ -35,7 +35,9 @@ quick PNG/Copy plot and data actions
 The first beta's support target is **Windows 11 25H2 x64**; other Windows
 versions and ARM64 are not promised supported. That is a support target, not a
 compatibility claim, and installed-candidate qualification belongs to M7.6,
-which is partial and deferred (below). No public beta is built or released.
+which is partial and deferred (below). Beta 1 was published on 2026-10-28 as the
+[`v0.1.0-beta.1` prerelease](https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1),
+with its [release notes](docs/release/beta-1/RELEASE_NOTES.md).
 
 ## Beyond the published M7.5 product
 
@@ -70,12 +72,12 @@ None of them is in an installer or a release.
   limits.
 - **A partial M7.6.** An NSIS per-user installer configuration, generated
   third-party notices, and candidate build and inspection scripts
-  ([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)). No installer
-  from it has been installed, qualified or published. M7.6 release qualification
-  is deferred and incomplete, and resumes against a later candidate that
-  contains M8 and M9.
-
-No public beta exists, and no installer containing M8 or M9 has been qualified.
+  ([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)). Its first
+  beta-1 installer, which contains M8 and M9, was installed, used and
+  uninstalled in the owner's account
+  ([installed check](docs/release/beta-1/INSTALLED_CHECK.md)) and published as
+  the `v0.1.0-beta.1` prerelease; no clean-machine, standard-user qualification
+  has run.
 ProteoWizard is still yours to install; MSCanvas never downloads or bundles it.
 
 **After M9 (in review, not yet on `main`).** PM9 converged the existing

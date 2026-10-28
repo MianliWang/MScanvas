@@ -23,8 +23,10 @@ Amendment, 2026-10-28: the first beta-1 candidate (`e6d2a49`, installer
 `4bf752ad…`) was installed, used and uninstalled in the owner's own account by
 the owner's decision of that date, recorded as that and not as the clean
 standard-user qualification below; see the
-[installed check](../release/beta-1/INSTALLED_CHECK.md). The "Not started"
-statements in this record describe the candidate it was written for.
+[installed check](../release/beta-1/INSTALLED_CHECK.md). It was published the
+same day as the `v0.1.0-beta.1` prerelease. The "Not started" and "nothing
+published" statements in this record describe the candidate it was written
+for.
 
 This slice does not add a user-visible feature. It turns the application M7.1 to
 M7.5 built into something a person can install, run and remove on a machine that
