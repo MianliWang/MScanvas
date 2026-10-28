@@ -1,12 +1,15 @@
 # MSCanvas beta 1 — install and support
 
-Status: **DRAFT; NOT RELEASED.** Download links, the installer name and its
-SHA-256 are placeholders, filled at candidate acceptance. No
-beta-1 installer had been installed or qualified when this was written. The
-install, first-run and uninstall steps describe the configured installer
-(`apps/desktop/src-tauri/tauri.conf.json`) and are confirmed on the installed
-candidate at acceptance. What beta 1 does and does not do is
-in the [release notes](RELEASE_NOTES.md).
+Status: guide for the `v0.1.0-beta.1` prerelease; the download link works once
+it is published. The [installed check](INSTALLED_CHECK.md) of this installer,
+in a maintainer's administrator account, confirmed a silent install, a launch
+of the installed program with ProteoWizard found, the interface language kept
+across a restart, and uninstall through the program's own uninstaller. It did
+not exercise the installer's own pages and language prompt, the WebView2
+download, the **Not found** and **Found but not usable** banners, uninstall
+started from **Installed apps**, **Delete the application data**, or a
+standard-user account. What beta 1 does and does not do is in the
+[release notes](RELEASE_NOTES.md).
 
 ## Before you install
 
@@ -27,23 +30,32 @@ in the [release notes](RELEASE_NOTES.md).
 ## Download and verify
 
 1. Download the installer from the beta-1 prerelease on the repository's
-   GitHub Releases page: _link filled at candidate acceptance_. Download it only
-   from there.
+   GitHub Releases page,
+   <https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1>. The
+   file is `MSCanvas_0.1.0_x64-setup.exe`. Download it only from there.
 2. Check its SHA-256 against the value in the
-   [release notes](RELEASE_NOTES.md#candidate-identity). In PowerShell:
+   [release notes](RELEASE_NOTES.md#candidate-identity). In PowerShell, in the
+   folder that holds the download (for example, after
+   `cd $env:USERPROFILE\Downloads`):
 
    ```powershell
-   Get-FileHash .\<installer>.exe -Algorithm SHA256
+   Get-FileHash .\MSCanvas_0.1.0_x64-setup.exe -Algorithm SHA256
    ```
+
+   PowerShell prints the hash in capital letters and the release notes give it
+   in lower case. Compare the characters, not their case.
 
 3. Optionally, check where it was built. Each candidate is built on a
    GitHub-hosted runner and carries a build-provenance attestation that ties
    the installer's bytes to the repository commit and workflow run that built
-   it. With the GitHub CLI installed:
+   it. With the GitHub CLI installed and signed in (`gh auth login`), in the
+   same folder:
 
    ```powershell
-   gh attestation verify .\<installer>.exe --repo MianliWang/MScanvas
+   gh attestation verify .\MSCanvas_0.1.0_x64-setup.exe --repo MianliWang/MScanvas
    ```
+
+   An error asking you to sign in is not a failed verification.
 
 If the hash differs or the attestation does not verify, do not run the file.
 Report it privately, not in a public issue, through GitHub's private
@@ -51,21 +63,31 @@ vulnerability reporting:
 <https://github.com/MianliWang/MScanvas/security/advisories/new>.
 
 **Beta 1 is not code-signed.** Windows shows it as coming from an unknown
-publisher, and SmartScreen is expected to warn with "Windows protected your
-PC". If the SHA-256 matched, you can choose **More info**, then **Run
-anyway**. Nothing here asks you to turn a protection off or to override your
-organisation's policy: if your organisation blocks unsigned software, this
-beta is not for that machine.
+publisher. Started from File Explorer, SmartScreen is expected to warn with
+"Windows protected your PC"; if the SHA-256 matched, you can choose **More
+info**, then **Run anyway**. Started another way, for example with
+PowerShell's `Start-Process`, Windows may instead show **Open File - Security
+Warning**, naming an unknown publisher, with **Run** and **Cancel**; if the
+SHA-256 matched, you can choose **Run**. What a browser shows when you download
+the file was not checked for beta 1. Nothing here asks you to turn a
+protection off or to override your organisation's policy: if your
+organisation blocks unsigned software, this beta is not for that machine.
 
 ## Install
 
-1. Run the installer. It asks for its language, English or Simplified Chinese.
-2. It installs for the current user only, into your per-user application folder
-   under `%LOCALAPPDATA%`, without an administrator prompt.
+1. Close MSCanvas if an earlier copy is running. Run the installer. It asks for
+   its language, English or Simplified Chinese, unless an earlier installation
+   on this account recorded one.
+2. It shows its licence (Apache-2.0) and the folder it installs into,
+   `%LOCALAPPDATA%\MSCanvas` unless you change it. It installs for the current
+   user only, without an administrator prompt, and adds an **MSCanvas**
+   shortcut to the Start menu.
 3. If WebView2 is missing, the installer fetches it. If that fails, install the
    Microsoft Edge WebView2 Runtime from Microsoft and run the installer again. A
    machine with neither WebView2 nor Internet access cannot complete a first
    installation.
+4. Its last page offers **Create desktop shortcut** and to start MSCanvas, both
+   selected unless you clear them.
 
 ## First run
 
@@ -93,9 +115,11 @@ beta is not for that machine.
 
 | What | Where |
 | --- | --- |
-| The application | Your per-user application folder under `%LOCALAPPDATA%` |
-| Interface preferences | `ui-preferences.json` in MSCanvas's per-user application data folder. It holds the language, the row spacing and the panel choices, and nothing about your data |
-| Converted mzML | The destination folder you choose. An existing file is never overwritten |
+| The application | `%LOCALAPPDATA%\MSCanvas`, or the folder you chose, with a shortcut in the Start menu and, unless you cleared **Create desktop shortcut**, on the Desktop |
+| Interface preferences | `%LOCALAPPDATA%\org.mscanvas.desktop\ui-preferences.json`. It holds the language, the row spacing and the panel choices, and nothing about your data |
+| WebView2 data | `%LOCALAPPDATA%\org.mscanvas.desktop\EBWebView`, the embedded browser engine's own cache and settings |
+| Install record | The registry key `HKCU\Software\MSCanvas contributors\MSCanvas`, holding the install folder and, after an interactive install, the installer's language, and the entry in **Installed apps**. A later install offers that folder and uses that language |
+| Converted mzML | The destination folder you choose. An existing file is never overwritten. While converting, MSCanvas works in a folder there whose name ends in `.mscanvas-staging`; an interrupted conversion can leave it behind, and it can be cleaned up only in the session that made it (see the [known limits](RELEASE_NOTES.md#known-limits)) |
 | Exported figures and data | Where you save them in the save dialog |
 | Conversion diagnostics | Where you save them in the save dialog |
 | Projects | The `.mscanvas` file you save, and a `<name>.mscanvas.payloads` folder beside it when the project holds stored results |
@@ -105,21 +129,42 @@ file from the workspace removes the row, not the file.
 
 ## Uninstall
 
+Save any project you want to keep, let running conversions finish, then close
+MSCanvas. If it is still running, the uninstaller and the installer stop with
+"MSCanvas is running! Click OK to kill it": **OK** ends MSCanvas at once and
+unsaved work is lost; **Cancel** lets you close it yourself and try again.
+
 Open **Settings → Apps → Installed apps**, choose **MSCanvas**, then
 **Uninstall**. Uninstalling removes the application's own files. It does not
 remove your source acquisitions, converted outputs, exported figures and data,
 saved diagnostics, project files or their payload folders: anything whose
-location you chose stays where it is. That list is confirmed by the installed
-uninstall check at candidate acceptance.
+location you chose stays where it is. The installed check found the sources and
+outputs it had used unchanged after uninstall.
 
-What happens to the interface preference file at uninstall: _recorded from the
-installed candidate at acceptance_.
+The uninstaller uses the language recorded at install, and asks for one only
+when none was recorded, for example after a silent install. It then offers
+**Delete the application data** (**删除应用程序数据** in Chinese), which is
+**not** selected by default. Left unselected, these stay on your computer after
+uninstall, and are still there if you install again:
+
+- `%LOCALAPPDATA%\org.mscanvas.desktop`, with your interface preferences and
+  the WebView2 data;
+- the registry key `HKCU\Software\MSCanvas contributors`.
+
+Beta 1 was not checked with **Delete the application data** selected. To remove
+both by hand after uninstalling, in PowerShell:
+
+```powershell
+Remove-Item -Recurse "$env:LOCALAPPDATA\org.mscanvas.desktop"
+Remove-Item -Recurse 'HKCU:\Software\MSCanvas contributors'
+```
 
 ## Roll back
 
-Uninstall the current beta, then run the earlier installer you kept, after
-checking its SHA-256 again. Beta 1 is the first release, so there is no earlier
-one to return to, and no compatibility between betas is promised.
+Close MSCanvas first, as in [Uninstall](#uninstall), then uninstall the current
+beta and run the earlier installer you kept, after checking its SHA-256 again.
+Beta 1 is the first release, so there is no earlier one to return to, and no
+compatibility between betas is promised.
 
 ## Report a problem
 

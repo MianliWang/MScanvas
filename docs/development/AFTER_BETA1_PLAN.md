@@ -20,18 +20,23 @@ The candidate is the installer the `Release candidate` workflow built from
 6,469,906 bytes, SHA-256
 `4bf752addff63c489df440814efbd2adb9f445cb41ce406bdf6d9a035c657ee8`, unsigned by
 the owner's approval, with a verified build-provenance attestation. Its package
-inspection found none of the QA markers.
+inspection found none of the QA markers in the executable. Its frontend scan
+read the QA control step's rebuild of `dist`, not the shipped files; a
+byte-identical rebuild of the shipped frontend holds no development origin, and
+its only marker matches are three message-table keys every build carries
+([installed check](../release/beta-1/INSTALLED_CHECK.md#adr-0047-release-exits-and-other-beta-1-items)).
 
 | Item | State, 2026-10-28 |
 | --- | --- |
-| Whole Vitest, whole browser suite, per-option rendered spec | Pass on the candidate's source (2301 tests; 487 tests; `beta1-ux` 16 cases) |
-| Native campaign at 150% (NQ-T … NQ-N1) | Pass on final runs, 76 of 79 titles, several after test-only repairs (PR #138) |
-| U4 live-provider check | Pass: 32 real ProteoWizard 3.0.26013 conversions, output identical to the admitted mzML apart from path and checksum |
-| NQ-N2 (3) and NQ-I (18) | **Not run to completion**: they need the foreground, so an idle desktop the owner schedules |
-| Installed check in the owner's account | **Not started**: also needs the idle desktop |
-| ADR 0047 exits not yet accepted or covered | G18 installed fault/recovery, exported numerics, FAT/exFAT/network work areas, stored-result native save/reopen: covered where feasible in the installed check, the rest put to the owner with the report |
-| Release notes and ADR 0047 2026-10-28 record | In review (PR #139) |
-| Draft prerelease `v0.1.0-beta.1`, report, owner's go | After the above |
+| Whole Vitest, whole browser suite, per-option rendered spec | Vitest passes on the candidate's source (114 files, 2301 tests, CI). The whole browser suite passed on `bd82a0a`, one presentation change earlier (34 files, 487 tests). After that change, `beta1-ux` (16 cases) passes with the targeted, PM9.6 and PM9.7 specs (6 files, 87 tests) |
+| Native campaign at 150% (NQ-T … NQ-N2) | Pass on final runs, 79 of 79 titles, several after test-only repairs (PR #138); NQ-N2's 3 on the idle desktop |
+| U4 live-provider check | Pass: 32 real ProteoWizard 3.0.26013 conversions across all attempts; the one output line-compared with the admitted mzML differs only in source path, the index offsets that path shifts, and checksum |
+| NQ-N2 (3) and NQ-I (18) | Pass on an idle desktop, 2026-10-28: 3/3 and 18/18 at first run, no test change ([record](POST_PM9_NATIVE_QUALIFICATION.md)) |
+| Installed check in the owner's account | Run 2026-10-28 ([record](../release/beta-1/INSTALLED_CHECK.md)). One **FAIL**: exported spectrum values are `msaccess`'s 8-decimal text, not the stored binary values. Keeping the candidate and stating it, or rebuilding, is the owner's call |
+| Not covered, put to the owner with the report | No run on the 25H2 support target; the installed runtime's configuration observed but not logged; the installer's own pages and Run anyway; the organisational-policy trust test; G18 installed fault, missing backend, Open file/folder, Copy plot, WebView2 missing/offline, FAT/exFAT/network work areas, stored-result native save/reopen |
+| Release notes and ADR 0047 2026-10-28 record | Merged (PR #139); check results, values and support-target statements filled after the checks |
+| Release documents on `main` | The records and the filled release documents merge to `main` on the owner's go, before publication; the release body links to them at that commit |
+| Draft prerelease `v0.1.0-beta.1`, report, owner's go | Draft and report prepared; publication waits for the owner's go |
 
 **Freeze until publication:** no production, dependency or toolchain merge
 that would rebuild the installer. Test-only and docs-only changes may merge.
@@ -276,12 +281,41 @@ writer and Rust's ownership of files.
     batch.
 - The real targeted-MS1 engine qualification and, before any release ships the
   runtime, its packaging, licence qualification and worker confinement.
+- Exported values are not the stored binary values: a spectrum is read through
+  `msaccess binary … precision=8` (`SELECTED_SPECTRUM_PRECISION`) and the scan
+  table prints rounded retention times; in the test file its total ion current
+  and base peak intensity, printed to two decimals, matched the stored values
+  (installed check, item 5). Read at full precision or decode the arrays; the
+  measurement needs a new bounded release of the ProteoWizard hold.
+- NQ-I's worker `beforeSession` guard throws at `e2e/wdio.pm9-native.conf.ts:201`
+  on every attempt and WDIO only logs it, so the checks after it never run;
+  `specs[0]` arriving as a `file:///` URL is the unconfirmed suspect.
+- WebView2 updated itself to 156.0.4314.50 on 2026-10-28; the next native
+  campaign needs the matching msedgedriver.
+- `release-candidate.yml` runs `pnpm e2e:build` before `inspect_candidate.ps1`,
+  which rebuilds `dist` without the Tauri hook's environment, so the inspection
+  scans a different frontend from the one shipped. Inspect before the QA
+  control build (or build it elsewhere), scan the shipped `dist` for markers,
+  and exempt the three `qaRoot*` keys of the preference-error message table,
+  which every frontend build carries. The native campaign's QA binary was built
+  the same way (NQ-B1 `pnpm build`, Vite target `safari13`), so native results
+  cover the shipped frontend's source, not its files; build the QA frontend
+  with the Tauri hook's environment in the same fix. A release-workflow change:
+  owner approval.
 
 ### 7.2 Polish and limits
 
 - English copy: "1 spectra, 1 chromatograms" has no singular
   (`m74CnvOutputMetrics`); "32000000 pixels" has no digit grouping
   (`m74ErrorRasterBudget`).
+- Figure panel titles echo the raw size draft ("00640 × 480 px") rather than
+  the value the export uses (`SelectedSpectrumPanel.tsx:54`,
+  `PreviewWorkspace.tsx:955`); in zh-CN Settings the workspace-entry count sits
+  against the density options' focus ring.
+- Uninstall leaves `HKCU\Software\MSCanvas contributors` and the application
+  data unless Delete the application data is selected, which the bundled
+  template says removes both (not yet observed); decide whether the uninstaller
+  should remove the key by default, and check the selected path.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
@@ -359,8 +393,10 @@ None can be delivered by engineering alone; each waits for one input.
 
 ## 9. Open owner decisions
 
-- At the beta-1 report: the ADR 0047 exits the installed check cannot cover.
-- The idle-desktop window for NQ-N2, NQ-I and the installed check.
+- At the beta-1 report: the exported-values FAIL (keep and state, or rebuild),
+  no run on 25H2, the exits the installed check did not cover, and the
+  post-run `msaccess` scan-table read that no recorded approval covers
+  (installed check, item 5).
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted.
