@@ -3,7 +3,8 @@
 Date: 2026-10-20; options taken up 2026-10-27.
 Status: **PLANNING RECORD (2026-10-20). ON 2026-10-27 THE OWNER TOOK UP PM9.7 F2/F3,
 PM9.4 O1-O8 AND PM9.5 O1-O4: IMPLEMENTED ON `feat/beta1-readiness`, COMPONENT-TESTED,
-WHOLE VITEST AND BROWSER SUITES PASSING; NATIVE ACCEPTANCE PENDING.** See
+WHOLE VITEST AND BROWSER SUITES AND A PER-OPTION RENDERED SPEC PASSING; NATIVE
+ACCEPTANCE PENDING.** See
 [Beta-1 readiness, 2026-10-27](#beta-1-readiness-2026-10-27).
 
 PM9 is closed on frozen production `30b855f`, tests `e94fb16`, with the closing
@@ -55,8 +56,23 @@ Validation on the merged code: `pnpm typecheck` and `pnpm e2e:typecheck` exit
 0; the whole browser suite passes on `bd82a0a`, 34 spec files and 487 tests in
 Chrome 156; full Vitest first reported two cross-lane assertion conflicts,
 reconciled in `678614f`, and then passed on `678614f`, 114 files and 2301
-tests. Per-option rendered acceptance at the anchors and native acceptance at
-OS scaling are still owed.
+tests.
+
+Rendered acceptance per option: `e2e/specs/beta1-ux.browser.e2e.ts` holds
+F2, F3 (Workbench and Conversion), PM9.4 O1-O8 and PM9.5 O1-O4 in real Chrome
+at 960x640 and 1366x768, in en and zh-CN where the state is language-bearing,
+with keyboard routes and "no command sent" checks for refused presses, and
+leaves a viewport screenshot per state. Its review found one rendered defect:
+the targeted setup's disclosures (O1's read path among them) drew no marker,
+because their summaries are flex boxes, and read as plain text; they now draw
+one. After that repair the spec passes with the targeted, PM9.6 and PM9.7
+specs, 6 files and 87 tests. Not held in a rendered case, each still covered
+by component tests: PM9.4 O3's over-capacity state, O4's other
+request-failure banners, O6's Stop this file wording, O7's source-comparison
+mode and result half, O8's refusals other than cleanup during Add and a
+partially published O1 set; PM9.5 O2 at 960x640 and O4's capture and
+admission families.
+Native acceptance at OS scaling is still owed.
 
 One accepted PM9 position changes: PM9.7 F2 makes New project the one emphasised
 action with no project open, which replaces PM9.2 L1's "New and Open stay
