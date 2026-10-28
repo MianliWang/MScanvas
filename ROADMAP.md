@@ -913,6 +913,14 @@ owed before beta 1 is published: native qualification at OS scaling, the
 live-provider check, a candidate built by the `Release candidate` workflow,
 its installed qualification and the owner's consent on its exact hashes.
 
+**Update, 2026-10-28.** PR #134 is merged, and the candidate is built and
+attested. The native campaign and the live-provider check pass apart from two
+foreground groups that need an idle desktop. Everything after beta 1 is
+ordered in [After beta 1: plan and backlog](docs/development/AFTER_BETA1_PLAN.md):
+tester fixes, dependency and Node 26 batches, signing preparation, M10, the
+four features the owner selected on 2026-10-28, and the evidence-gated items
+with the one input each waits for.
+
 ## M10 — Automation
 
 **NOT STARTED.**
