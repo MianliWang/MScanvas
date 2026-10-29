@@ -53,7 +53,13 @@ use super::service::TableRowFacts;
 pub(super) const CHROMATOGRAM_DATA_FORMAT_ID: &str = "mscanvas_chromatogram_export";
 
 /// The version of that document's schema.
-pub(super) const CHROMATOGRAM_DATA_SCHEMA_VERSION: u32 = 1;
+///
+/// 2 since the records became the scans of one MS level, named in the
+/// preamble, rather than every scan of the run.
+pub(super) const CHROMATOGRAM_DATA_SCHEMA_VERSION: u32 = 2;
+
+/// The MS level a chromatogram is built from when nobody chose one.
+pub(super) const DEFAULT_CHROMATOGRAM_MS_LEVEL: u32 = 1;
 
 /// The value every unreported state is written as.
 const UNREPORTED: &str = "unreported";
@@ -423,7 +429,16 @@ pub(super) struct ChromatogramSource {
     /// reconciling against its row, a table position the user clicked -- depend
     /// on it. Computed once when the snapshot is installed rather than per
     /// export.
+    ///
+    /// Only the scans of `ms_level` are in it. `rows` stays the whole table,
+    /// because a selected spectrum of another level is still found by its
+    /// table position.
     order: Arc<Vec<usize>>,
+    /// The one MS level the traces are built from.
+    ms_level: u32,
+    /// The retention-time span of the whole run, every level included, so a
+    /// range the viewer committed and the marker of a scan of another level
+    /// are both inside it.
     full_domain: Domain,
 }
 
@@ -438,14 +453,32 @@ impl ChromatogramSource {
     /// door onto a capability the product does not otherwise have. A truncated
     /// viewer has no chromatogram and no chromatogram export.
     ///
+    /// One refusal is not yet the viewer's: a run with no scan at the default
+    /// MS level has no chromatogram here, while the viewer draws every level
+    /// until it filters by level too.
+    ///
     /// The remaining refusals are the model's own, and are checked here for the
     /// same reason: a retention time that is not a number cannot be placed on
     /// an axis or written as a coordinate, and a unit this build cannot name
     /// cannot be honestly labelled in a figure or in a document header.
     pub(super) fn from_rows(rows: &Arc<Vec<TableRowFacts>>, truncated: bool) -> Option<Self> {
+        Self::from_rows_at_ms_level(rows, truncated, DEFAULT_CHROMATOGRAM_MS_LEVEL)
+    }
+
+    /// As [`Self::from_rows`], with the traces built from the scans of one MS
+    /// level.
+    ///
+    /// A run with no scan at that level has no chromatogram at it, and answers
+    /// `None` rather than falling back to another level.
+    pub(super) fn from_rows_at_ms_level(
+        rows: &Arc<Vec<TableRowFacts>>,
+        truncated: bool,
+        ms_level: u32,
+    ) -> Option<Self> {
         if truncated || rows.is_empty() {
             return None;
         }
+        let (mut low, mut high) = (f64::INFINITY, f64::NEG_INFINITY);
         for row in rows.iter() {
             if !row.retention_time().is_finite()
                 || !row.total_ion_current().is_finite()
@@ -454,8 +487,15 @@ impl ChromatogramSource {
             {
                 return None;
             }
+            low = low.min(row.retention_time());
+            high = high.max(row.retention_time());
         }
-        let mut order: Vec<usize> = (0..rows.len()).collect();
+        let mut order: Vec<usize> = (0..rows.len())
+            .filter(|position| rows[*position].ms_level() == ms_level)
+            .collect();
+        if order.is_empty() {
+            return None;
+        }
         // Equal retention times keep table order, which is what makes "which of
         // these two scans" answerable without depending on a sort's stability.
         order.sort_by(|left, right| {
@@ -465,18 +505,21 @@ impl ChromatogramSource {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(left.cmp(right))
         });
-        let low = rows[*order.first()?].retention_time();
-        let high = rows[*order.last()?].retention_time();
         let full_domain = Domain::new(low, high).ok()?;
         Some(Self {
             rows: Arc::clone(rows),
             order: Arc::new(order),
+            ms_level,
             full_domain,
         })
     }
 
     pub(super) const fn full_domain(&self) -> Domain {
         self.full_domain
+    }
+
+    pub(super) const fn ms_level(&self) -> u32 {
+        self.ms_level
     }
 
     /// The retained row this selected spectrum was read from, if it is one.
@@ -506,6 +549,7 @@ impl ChromatogramSource {
         Some(row)
     }
 
+    /// The scans the traces are built from: those at [`Self::ms_level`].
     pub(super) fn scan_count(&self) -> usize {
         self.order.len()
     }
@@ -556,18 +600,19 @@ impl ChromatogramSource {
 
 /// The document a chromatogram data export writes.
 ///
-/// # Schema, version 1
+/// # Schema, version 2
 ///
 /// A metadata preamble, then a header row, then one record per **source scan**
-/// inside the exported range:
+/// of the chromatogram's MS level inside the exported range:
 ///
 /// ```text
 /// #format,mscanvas_chromatogram_export
-/// #schema_version,1
+/// #schema_version,2
 /// #source,per_scan_spectrum_table
+/// #ms_level,1
 /// #range_scope,full
-/// #source_scan_count,3
-/// #row_count,3
+/// #source_scan_count,2
+/// #row_count,2
 /// #full_range_low,1
 /// #full_range_high,3
 /// #export_range_low,1
@@ -577,8 +622,13 @@ impl ChromatogramSource {
 /// #row_order,retention_time_then_table_position
 /// spectrum_index,scan_number,ms_level,retention_time,total_ion_current,base_peak_intensity
 /// 0,1,1,1,123,42
-/// 1,,2,2,456,120
+/// 2,,1,3,456,120
 /// ```
+///
+/// `ms_level` is the one level the records were taken from, and
+/// `source_scan_count` counts the scans at it. The full range is the whole
+/// run's, every level included. Version 1 had no `ms_level` and carried every
+/// scan of the run.
 ///
 /// The preamble uses the same delimiter as the records, and every preamble line
 /// begins with `#`, so a reader that wants only the table can skip them without
@@ -630,6 +680,7 @@ pub(super) fn data_document(
             CHROMATOGRAM_DATA_SCHEMA_VERSION.to_string(),
         ),
         ("source", SOURCE_DESCRIPTION.to_owned()),
+        ("ms_level", source.ms_level().to_string()),
         ("range_scope", resolved.scope().stable_id().to_owned()),
         ("source_scan_count", source.scan_count().to_string()),
         ("row_count", rows.len().to_string()),
@@ -769,12 +820,13 @@ pub(super) fn figure_spec(
         FigureSpec::new(settings.theme(), settings.size(), vec![panel])?
             .with_title(Label::new("Chromatogram")?)
             .with_caption(Caption::new(format!(
-                "{} over {}, from {} scans. Per-scan values projected from the loaded \
+                "{} over {}, from {} MS{} scans. Per-scan values projected from the loaded \
                  spectrum table, not a stored chromatogram record. Retention time and intensity \
                  units {UNREPORTED}.",
                 traces.describe(),
                 scope_phrase(resolved),
                 source.scan_count(),
+                source.ms_level(),
             ))?),
     )
 }
@@ -903,7 +955,7 @@ pub(super) fn linked_figure_spec(
             // marker's own coordinate is described beside it by the renderer,
             // as the coordinate it is.
             .with_caption(Caption::new(format!(
-                "Two panels. The upper panel is the chromatogram: {} over {}, from {} scans \
+                "Two panels. The upper panel is the chromatogram: {} over {}, from {} MS{} scans \
                  -- per-scan values projected from the loaded spectrum table, not a stored \
                  chromatogram record. Its one marker identifies spectrum index {}, and that \
                  scan is the lower panel: the complete selected spectrum, {} points, never \
@@ -912,6 +964,7 @@ pub(super) fn linked_figure_spec(
                 traces.describe(),
                 scope_phrase(resolved),
                 source.scan_count(),
+                source.ms_level(),
                 spectrum.identity().index(),
                 spectrum.mz_values().len(),
             ))?),
@@ -1161,8 +1214,9 @@ mod tests {
             preamble(&document, "format", ','),
             CHROMATOGRAM_DATA_FORMAT_ID
         );
-        assert_eq!(preamble(&document, "schema_version", ','), "1");
+        assert_eq!(preamble(&document, "schema_version", ','), "2");
         assert_eq!(preamble(&document, "source", ','), SOURCE_DESCRIPTION);
+        assert_eq!(preamble(&document, "ms_level", ','), "1");
         assert_eq!(preamble(&document, "range_scope", ','), "full");
         assert_eq!(preamble(&document, "source_scan_count", ','), "3");
         assert_eq!(preamble(&document, "row_count", ','), "3");
@@ -1182,6 +1236,109 @@ mod tests {
             ["0,1,1,1,100,40", "1,2,1,2,300,120", "2,3,1,3,200,90"]
         );
         assert!(document.ends_with('\n'));
+    }
+
+    /// A run of MS1 and MS2 scans, interleaved the way an acquisition is, with
+    /// MS2 scans after the last MS1 scan.
+    fn interleaved() -> Arc<Vec<TableRowFacts>> {
+        Arc::new(
+            [
+                (0, 1, 1.0, 100.0, 40.0),
+                (1, 2, 1.5, 7_000.0, 6_000.0),
+                (2, 1, 2.0, 300.0, 120.0),
+                (3, 2, 2.5, 8_000.0, 5_000.0),
+                (4, 2, 3.0, 9_000.0, 4_000.0),
+            ]
+            .iter()
+            .map(|(index, ms_level, retention_time, tic, bpc)| {
+                TableRowFacts::for_test(
+                    *index,
+                    Some(*index + 1),
+                    *ms_level,
+                    *retention_time,
+                    false,
+                    *tic,
+                    *bpc,
+                )
+            })
+            .collect(),
+        )
+    }
+
+    /// By default the traces are the MS1 scans and nothing else, and the
+    /// document says which level it holds.
+    #[test]
+    fn the_default_chromatogram_is_the_ms1_scans() {
+        let source = source(&interleaved());
+        assert_eq!(source.ms_level(), 1);
+        assert_eq!(source.scan_count(), 2);
+        let (document, rows) = data_document(&source, full(&source), ChromatogramExportFormat::Tsv)
+            .expect("a document");
+
+        assert_eq!(rows, 2);
+        assert_eq!(preamble(&document, "ms_level", '\t'), "1");
+        assert_eq!(preamble(&document, "source_scan_count", '\t'), "2");
+        assert_eq!(
+            records(&document),
+            ["0\t1\t1\t1\t100\t40", "2\t3\t1\t2\t300\t120"]
+        );
+        let figure = svg_document(&source, full(&source), both(), settings()).expect("a figure");
+        assert!(figure.contains("from 2 MS1 scans"), "{figure}");
+    }
+
+    /// Another level is its own chromatogram, named as that level.
+    #[test]
+    fn a_chosen_level_builds_its_own_traces() {
+        let source = ChromatogramSource::from_rows_at_ms_level(&interleaved(), false, 2)
+            .expect("the run has MS2 scans");
+        let (document, rows) = data_document(&source, full(&source), ChromatogramExportFormat::Csv)
+            .expect("a document");
+
+        assert_eq!(rows, 3);
+        assert_eq!(preamble(&document, "ms_level", ','), "2");
+        assert_eq!(
+            records(&document),
+            [
+                "1,2,2,1.5,7000,6000",
+                "3,4,2,2.5,8000,5000",
+                "4,5,2,3,9000,4000"
+            ]
+        );
+    }
+
+    /// A level the run has no scan at has no chromatogram, rather than one of
+    /// another level standing in for it.
+    #[test]
+    fn a_level_with_no_scans_has_no_chromatogram() {
+        assert!(ChromatogramSource::from_rows_at_ms_level(&interleaved(), false, 3).is_none());
+        let ms2_only = Arc::new(vec![TableRowFacts::for_test(
+            0, None, 2, 1.0, false, 10.0, 5.0,
+        )]);
+        assert!(ChromatogramSource::from_rows(&ms2_only, false).is_none());
+    }
+
+    /// The range is still the whole run's, so a range the viewer committed over
+    /// every scan resolves, and an MS2 scan after the last MS1 scan still links.
+    #[test]
+    fn the_run_range_and_the_link_cover_every_level() {
+        let source = source(&interleaved());
+        assert_eq!(
+            (source.full_domain().low(), source.full_domain().high()),
+            (1.0, 3.0)
+        );
+        let (document, rows) = data_document(
+            &source,
+            current(&source, 2.5, 3.0),
+            ChromatogramExportFormat::Csv,
+        )
+        .expect("a document");
+        assert_eq!(rows, 0, "no MS1 scan is in that window: {document}");
+
+        let spectrum = selected(4);
+        let figure = linked(&source, &spectrum, full(&source), both());
+        let description = described(&mscanvas_plot_spec::svg::render(&figure));
+        assert!(description.contains("from 2 MS1 scans"), "{description}");
+        assert!(description.contains("spectrum index 4"), "{description}");
     }
 
     /// The same document, with tabs.

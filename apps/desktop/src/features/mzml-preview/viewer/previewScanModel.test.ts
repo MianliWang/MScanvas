@@ -28,6 +28,10 @@ function row(overrides: Partial<SpectrumRow> & { readonly index: number }): Spec
     basePeakIntensity: 10,
     totalIonCurrent: 100,
     precursorMz: null,
+    analyzer: null,
+    scanEvent: null,
+    charge: null,
+    ionInjectionTime: null,
     ...overrides,
   };
 }

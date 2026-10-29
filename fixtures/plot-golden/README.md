@@ -23,3 +23,7 @@ file holds.
 
 The three were generated from canonical main (`c03974c`) before the refactor
 and are byte-identical after it.
+
+The two chromatogram documents were regenerated when the chromatogram became
+the scans of one MS level: their captions now say `from 5 MS1 scans`, and
+nothing else in them changed.

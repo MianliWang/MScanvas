@@ -2684,6 +2684,17 @@ pub struct SpectrumRowDto {
     pub base_peak_intensity: f64,
     pub total_ion_current: f64,
     pub precursor_mz: Option<f64>,
+    /// The scan context the table reported for this row.
+    ///
+    /// `None` (`null` on the wire) where the backend left the field empty: not
+    /// reported, never a zero or an empty string. The two text fields are
+    /// redacted and bounded like the identifier. The spectrum table carries no
+    /// filter-string text, so none is offered here; the selected spectrum has
+    /// it.
+    pub analyzer: Option<String>,
+    pub scan_event: Option<String>,
+    pub charge: Option<f64>,
+    pub ion_injection_time: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -2725,6 +2736,9 @@ pub struct PreviewDto {
     /// the backend reported and the webview receives a bounded prefix, so
     /// issuing a token for a run the viewer refuses would open an export door
     /// onto a capability the product does not otherwise have.
+    ///
+    /// Also `None` for a run with no scan at the chromatogram's MS level (MS1
+    /// by default), which the viewer still draws until it filters by level too.
     ///
     /// Opaque, session-scoped, and meaningless to anything that did not receive
     /// it here. It is not a path, not a dataset handle and not an index.
@@ -2774,6 +2788,17 @@ pub struct SelectedSpectrumDto {
     /// `precursors`.
     pub total_precursor_count: usize,
     pub precursors_truncated: bool,
+    /// The scan context the selected-spectrum formatter reported, under the
+    /// same names the table rows use. `None` (`null`) is not reported.
+    pub analyzer: Option<String>,
+    pub scan_event: Option<String>,
+    pub filter_string: Option<String>,
+    /// Charge and ion injection time, which the selected-spectrum formatter
+    /// does not emit, taken from the spectrum-table row this spectrum was
+    /// reconciled with. `None` where that row reported none, or where no row
+    /// was there to reconcile against: not reported, never zero.
+    pub charge: Option<f64>,
+    pub ion_injection_time: Option<f64>,
     /// The backend emitted no profile/centroid marker for a selected spectrum,
     /// so representation stays unknown rather than being guessed.
     pub representation_known: bool,
@@ -3004,8 +3029,9 @@ pub enum ChromatogramExportOutcomeDto {
         /// The retention-time range actually exported over.
         range_low: f64,
         range_high: f64,
-        /// How many scans the run holds, from the facts Rust retained rather
-        /// than from the rows the webview received.
+        /// How many scans of the chromatogram's MS level (MS1 by default) the run
+        /// holds, from the facts Rust retained rather than from the rows the
+        /// webview received.
         source_scan_count: usize,
         /// How many source scans the data document carries. `None` for a
         /// figure, which draws the complete series and declares a window.

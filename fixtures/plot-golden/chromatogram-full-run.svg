@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200.0000" height="640.0000" viewBox="0 0 1200.0000 640.0000" role="img">
 <title>Chromatogram</title>
-<desc>Total ion current and base peak intensity over the full run, from 5 scans. Per-scan values projected from the loaded spectrum table, not a stored chromatogram record. Retention time and intensity units unreported. An ordered trace over the separation axis. Series: &quot;TIC&quot; is measured data, &quot;BPC&quot; is a second measured series. The source file reports no unit for the Retention time or the Intensity axis, so none is shown.</desc>
+<desc>Total ion current and base peak intensity over the full run, from 5 MS1 scans. Per-scan values projected from the loaded spectrum table, not a stored chromatogram record. Retention time and intensity units unreported. An ordered trace over the separation axis. Series: &quot;TIC&quot; is measured data, &quot;BPC&quot; is a second measured series. The source file reports no unit for the Retention time or the Intensity axis, so none is shown.</desc>
 <rect x="0" y="0" width="1200.0000" height="640.0000" fill="#ffffff"/>
 <text x="64.0000" y="24.000" fill="#111111" font-family="sans-serif" font-size="16.0000" font-weight="600" xml:space="preserve" textLength="192.0000" lengthAdjust="spacingAndGlyphs">Chromatogram</text>
 <line x1="64.0000" y1="550.0000" x2="1180.0000" y2="550.0000" stroke="#333333" stroke-width="1"/>
