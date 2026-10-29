@@ -4,6 +4,8 @@ Status: **Proposed.** Date: 2026-10-28.
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
+[0006](0006-multi-dataset-workspace-boundary.md),
+[0028](0028-figure-renderer-and-semantic-specification.md),
 [0044](0044-conversion-configuration-authority.md),
 [0046](0046-post-m6-xic-provider-runtime-route-lock.md),
 [0047](0047-first-windows-beta-scope-and-implementation-route.md);
@@ -42,8 +44,10 @@ the costs of that route visible:
   representation is unreported (ADR 0005).
 - **XIC is refused.**
   - M5.4 refused every `msaccess` query that can express an m/z window
-    (`XIC_SOURCE_REFUSED`). The deciding reason was region intensities written
-    at four fixed decimals, so a small positive signal reads as zero.
+    (`XIC_SOURCE_REFUSED`), on two independent grounds. `tic`, `sic` and
+    `slice` write region intensities at four fixed decimals, so a small
+    positive signal reads as zero. `image` renders a pseudo-gel that carries no
+    per-scan quantity.
   - PX.4 refused the one mature reader evaluated (direction B, mzdata 0.66.6)
     on legal namespace-prefixed mzML (`XIC_PROVIDER_REFUSED`).
   - Direction C was "not viable as defined", because full-array access in the
@@ -54,40 +58,86 @@ the costs of that route visible:
 The reader spike asked whether MSCanvas should read mzML in-process for viewing.
 It compared a project-owned reader (route b) with mzdata 0.68.0 (route a).
 
+This ADR moves two reads into the process: the spectrum table and the selected
+spectrum. Metadata, the run summary, and the rules that admit a read stay as
+they are. It therefore does not make mzML viewable without ProteoWizard or
+during a conversion (decision 3).
+
 ## Decisions
 
 ### 1. A viewing-only mzML 1.1 reader, owned by the project
 
-MSCanvas reads mzML for viewing in-process, with its own reader built on
-`quick-xml` `=0.41.0` (approved in M0C Slice 2A), `base64` and `flate2`. The
+MSCanvas reads mzML spectra for viewing in-process, with its own reader built
+on `quick-xml` `=0.41.0` (approved in M0C Slice 2A), `base64` and `flate2`. The
 scope is closed.
 
 **It reads:**
 
 - mzML 1.1, plain or wrapped in `indexedmzML`;
-- the spectrum list and the chromatogram list;
+- the spectrum list;
 - `referenceableParamGroup` references and instrument configurations;
-- 32- and 64-bit float and integer arrays, zlib-compressed or uncompressed;
-- per spectrum: MS level, polarity, profile or centroid (MS:1000127 /
-  MS:1000128), scan start time with its declared unit, every precursor, the
-  filter string, total ion current, base peak and `defaultArrayLength`.
+- per spectrum: index, native ID, MS level, polarity, centroid or profile
+  (MS:1000127 / MS:1000128), scan start time with its declared unit, every
+  precursor, the filter string, total ion current, base peak, and the declared
+  array length (`defaultArrayLength`, or an array's own `arrayLength`);
+- the m/z and intensity arrays: 32- and 64-bit float and integer values,
+  zlib-compressed or uncompressed, and the unit each array declares.
 
-**It refuses with a typed error, never skipping or guessing:**
+**Which arrays.** The m/z array is the one array carrying MS:1000514, and the
+intensity array is the one carrying MS:1000515. Any other array is not decoded
+and not shown.
 
-- numpress (MS:1002312–1002314, MS:1002746–1002748), and any compression other
-  than zlib or none;
+**It refuses with a typed error, never skipping or guessing.** Each refusal
+has a scope.
+
+The open, meaning the whole spectrum table, is refused for:
+
+- a document that is not mzML 1.1 (the `mzML` `version` attribute missing or
+  not `1.1.x`), or not UTF-8;
 - a `DOCTYPE` or a custom entity;
 - a `referenceableParamGroupRef` to an undefined group;
-- a decoded array whose length differs from its declared length, either way;
-- a 64-bit integer value that `f64` cannot hold exactly (decision 5);
-- a document or a text run beyond the limits of decision 2.
+- a spectrum with more than one `scan`;
+- a scan start time whose declared unit is not seconds or minutes (UO:0000010,
+  UO:0000031, MS:1000038); an undeclared unit stays undeclared;
+- one term stated twice with different values, counting a spectrum's own terms
+  and its param groups together, or both terms of an exclusive pair (centroid
+  and profile; positive and negative);
+- a spectrum missing a value the table requires (decision 5): MS level, scan
+  start time, base peak m/z and intensity, or total ion current;
+- a document beyond the limits of decision 2.
 
-A corrupt array fails that array or spectrum with a typed error. Nothing
-panics, and nothing returns a partial array as if it were whole.
+A selected spectrum is refused, and the open and every other spectrum stand,
+for:
+
+- a missing m/z or intensity array while the declared length is above zero,
+  either one present twice, or one array carrying both terms;
+- a binary data type that is missing, stated twice, or not one of 32-bit float,
+  64-bit float, 32-bit integer and 64-bit integer (MS:1000521, MS:1000523,
+  MS:1000519, MS:1000522);
+- a compression term that is missing, stated twice, or not zlib (MS:1000574) or
+  none (MS:1000576). That refuses numpress (MS:1002312–1002314,
+  MS:1002746–1002748), truncation and prediction (MS:1003088–1003090) and
+  anything else;
+- corrupt base64 or zlib;
+- a declared length above decision 2's caps, a decoded length that differs from
+  the declared length either way, or m/z and intensity arrays of different
+  lengths;
+- a non-finite value (NaN or infinity), which today's parser also refuses;
+- a 64-bit integer value that `f64` cannot hold exactly (decision 5).
+
+**It must not panic or abort on any input.** That is a requirement slice 1
+proves with its probes (decision 9). The spike did not establish it (see
+[Evidence](#evidence)).
 
 **Out of scope**, each needing its own decision: `.mzML.gz`, mzMLb, imzML,
-MGF, non-UTF-8 documents, multi-scan combination semantics, and any
+MGF, other mzML versions, non-UTF-8 documents, multi-scan combination
+semantics, the metadata sections and run summary (decision 3), and any
 computation over the decoded arrays (XIC, summed spectra, peak picking).
+
+Stored chromatograms are out of scope too, because nothing would read them. The
+product's chromatogram is a projection of the spectrum table
+(`preview/chromatogram.rs`), and the run summary's chromatogram count stays
+`msaccess`'s.
 
 The reader is for viewing only. Conversion, the conversion-integrity
 inspector and targeted MS1 are unchanged; the targeted-MS1 worker still reads
@@ -103,9 +153,23 @@ The reader is a new module beside `crates/proteowizard/src/mzml.rs`.
   `pub(crate)`.
 - **The inspector stays decode-free.** Conversion integrity keeps its rule of
   never base64-decoding or decompressing an array.
-- **Inflate is capped** at the declared length × width + 1 bytes, and both
-  overrun and underrun are refused. A base64 text run is bounded from the
-  declared length before it is read whole.
+- **Decoded sizes have absolute caps,** whatever the file declares:
+  - at most 8,388,608 (2^23) points and 64 MiB of decoded bytes per array;
+  - at most 128 MiB of decoded bytes per spectrum, across its two arrays.
+
+  The caps are checked before any buffer is reserved, in this order: the
+  declared length against the point cap, the declared length × width against
+  the byte cap, then the spectrum's running total. Every size calculation is
+  checked (`checked_mul`, `checked_add`), and an overflow is the same typed
+  refusal as a length over the cap. Buffers are reserved with
+  `try_reserve_exact`, so a reservation the allocator refuses is a typed error,
+  not an abort.
+- **Inflate stops at the declared byte length + 1,** which the caps have
+  already bounded. Both overrun and underrun are refused.
+- **A base64 text run is bounded before it is read whole.** The bound comes
+  from the smaller of the declared and the capped byte length, with room for
+  zlib's stored-block overhead and line breaks. The inspector's 256 MiB
+  text-run limit stays the outer bound.
 - **Names resolve by namespace, not by literal qualified name.** Prefixed mzML
   was PX.3's deciding B failure, and the spike did not probe it. Slice 1 must
   read a namespace-prefixed document built like PX.3's `prefixed` case and its
@@ -113,87 +177,193 @@ The reader is a new module beside `crates/proteowizard/src/mzml.rs`.
 - **Strict after a seek.** Full passes keep quick-xml's end-name checks. A
   random read that starts mid-document checks element names in the reader's own
   stack. The spike relaxed this; production does not.
-- **The index is checked before it is trusted.** If a sample of `indexList`
-  offsets does not land on the spectra they name, the reader falls back to an
-  offsets-only scan. That also covers a file whose line endings were rewritten.
+- **No index is trusted.** The open's table pass reads every spectrum anyway
+  and records each one's byte offset as it goes, so the reader does not read
+  `indexList`. A random read checks that the spectrum it lands on has the index
+  and native ID the table recorded, and refuses otherwise.
+
+The caps are a resource contract, like ADR 0006's session capacity, not a
+performance promise. 2^23 points is 16 times the largest spectrum the spike
+read (500,000 points). Decision 8 records the largest real point count, and
+raising a cap is a recorded change. Widened to `f64`, one selected spectrum
+holds at most 128 MiB of values.
 
 The reader sits in a crate named `mscanvas-proteowizard` although it uses no
 ProteoWizard. That naming cost is accepted. Moving the mzML modules to a
 neutral crate is a later mechanical change, not part of this decision.
 
-### 3. mzML is read natively, with no fallback
+### 3. The table and spectra are read natively; the rest of the open is not
 
-- **Routing is by source kind, in the preview service.** An mzML source is
-  read by the native reader. Vendor rows stay `dataset_not_previewable`
-  (ADR 0005, M3.1).
-- **No silent fallback to `msaccess`.** A file the native reader refuses shows
-  that refusal. It is never quietly reread with ProteoWizard ("no backend
+**Routing is by operation, for mzML sources:**
+
+| Operation | Reader |
+| --- | --- |
+| Spectrum table (part of the open) | native |
+| Selected spectrum | native |
+| Metadata (part of the open) | `msaccess`, as today |
+| Run summary (part of the open) | `msaccess`, as today |
+
+Vendor rows stay `dataset_not_previewable` (ADR 0005, M3.1).
+
+**Why metadata and the run summary stay on `msaccess`:**
+
+- The metadata view is `msaccess`'s text for five sections: file description,
+  sample list, instrument configurations, software, and data processing. The
+  reader reads only instrument configurations, and reproducing the rest would
+  change what the user sees.
+- The run summary carries the retention times at 25, 50 and 75% of cumulative
+  base-peak intensity. `msaccess` computes them, and the QC snapshot records
+  them. Computing them natively is the computation decision 7 excludes.
+
+Moving either needs its own decision.
+
+**One open, two readers, no fallback:**
+
+- The open runs the two `msaccess` operations and the native table pass as one
+  batch, under the same backend gate and `lock_against_replacement`, and inside
+  the same before-and-after `SourceGeneration` check. Both readers therefore
+  describe one generation of the file.
+- The open compares the run summary's spectrum count with the native table's
+  row count. A difference refuses the open with a typed error: one reader is
+  wrong, and the open cannot say which.
+- The operation fixes the reader; an outcome never changes it. A native refusal
+  is shown and is never reread with `msaccess`. An `msaccess` failure fails the
+  open as it does today, and the native reader never stands in ("no backend
   fallback", AGENTS.md).
-- **Not a second `PreviewProvider`.** `PreviewProvider::run` answers an
-  `OperationAttempt` shaped around a ProteoWizard installation (ADR 0044,
-  Decision 1), which a native provider would have to fake. The service calls
-  the reader directly.
-- **What a native read does not touch:**
-  - the backend gate;
-  - the `conversion_is_busy()` refusal (`conversion_busy`) in `open_preview`
-    and `load_spectrum`, which exists because a read would otherwise wait
-    behind a conversion's process;
-  - `require_usable_backend` and its quarantine;
-  - the installation-identity check on a selected spectrum;
-  - `MAX_PREVIEW_TEXT_BYTES`.
 
-  A native read starts no process.
+**Not a second `PreviewProvider`.** `PreviewProvider::run` answers an
+`OperationAttempt` shaped around a ProteoWizard installation (ADR 0044,
+Decision 1), which a native provider would have to fake. The service calls the
+reader directly.
 
-### 4. A per-source session cache
+**What a native read drops:**
 
-A non-indexed file must be scanned to find its spectra. In the spike that took
-5.8 s cold on a 482 MB file, then about 0.04 ms per spectrum. The service keeps,
-per dataset, the open handle, the spectrum offsets and the header:
+- the process;
+- `MAX_PREVIEW_TEXT_BYTES`, for the table and the selected spectrum;
+- the installation-identity check on a selected spectrum, since no installation
+  read it.
 
-- keyed by the retained source generation ADR 0005 already revalidates
-  (filesystem identity, length and modification time), not by path;
-- dropped when that generation changes, when the row is removed and when the
-  workspace is cleared;
-- held for the session only, never persisted, and never holding arrays.
+**What it keeps: admission and serialization, unchanged.** A native read is
+admitted exactly when an `msaccess` read is admitted today, and runs under the
+same gate:
 
-Arrays are still read on demand. This decides ADR 0005's open preview-cache
-question for this reader only.
+- in Rust: `require_usable_backend` and its quarantine; the `conversion_busy`
+  refusal in `open_preview` and `load_spectrum`; the backend gate, with
+  supersession checked after its wait;
+- in the webview: `canPreview` (`PreviewWorkspace.tsx`), which requires ADR
+  0044's `backendUsable` and waits while a conversion runs.
+
+The gate is now also what serializes native reads. One read runs at a time,
+including a non-indexed file's full pass. A pass already under way runs to
+completion, as ADR 0005 says of a backend read.
+
+**Not in this ADR: viewing without ProteoWizard, or during a conversion.**
+Both need a follow-up decision. It must:
+
+- move or drop the open's metadata and run summary, and with the run summary
+  the QC snapshot's producer (schema 4 records `msaccess`);
+- change Rust's admission, the webview's `canPreview`, and ADR 0044's
+  `backendUsable` projection together, so the two layers never disagree about
+  whether a read is admitted;
+- replace the gate for native reads with per-dataset serialization, check
+  supersession before a full pass, and bound how many passes run at once;
+- change discovery, which requires `msaccess` beside `msconvert`, and the setup
+  copy.
+
+### 4. Offsets are kept with the open preview
+
+A non-indexed file needs a full pass to find its spectra. In the spike that
+took 5.8 s cold on a 482 MB file, then about 0.04 ms per spectrum. The open's
+table pass is that pass, so the offsets come with the table:
+
+- **Offsets live beside the table rows** in the dataset's retained preview
+  state (`DatasetPreviewState`), with one lifetime. The next open of the
+  dataset drops them, and so do removing the row and clearing the workspace. A
+  selected spectrum is still checked against the file generation its open
+  recorded, as today.
+- **No file handle is held.** Each read opens the file and closes it. No two
+  reads share a cursor, and between reads the session holds no handle on the
+  user's file.
+- **One dataset at a time.** Starting an open drops every other dataset's
+  preview state, as it already drops its own. The screen shows one preview at a
+  time, and an open takes the previous one off the screen first. Today the
+  8 MiB text cap is what bounds one dataset's retained rows (about 76,000 at
+  M0's row size). Without that cap on the table, this rule bounds them across
+  the session instead. The worst case is one file at the reader's limit:
+  1,000,000 rows and offsets, and never arrays.
+- **A selected spectrum needs its preview.** For a dataset with no retained
+  preview state, a selected spectrum is refused with a typed error that asks
+  for a reopen.
+
+This decides ADR 0005's open preview-cache question for this reader.
 
 ### 5. What changes in the preview seam
 
-All of it is in `apps/desktop/src-tauri/src/preview/` and `crates/proteowizard/`.
+Slices 1 and 2 change only `crates/proteowizard/` and
+`apps/desktop/src-tauri/src/preview/`. Slice 3 changes the shared figure
+specification and how the viewer draws. No admission, gating, discovery or
+setup code changes.
 
 - **Shared result types.** `SpectrumTableRow` and `SelectedSpectrumResult`
   (`crates/proteowizard/src/preview.rs`) have private fields and only the
   `msaccess` parser builds them. They gain constructors the native reader uses,
   so the DTO projection in `service.rs` stays one path. Slice 2 may move them
-  to `crates/core` instead.
-- **Selected spectrum.** `SelectedSpectrumDto` sets `representation_known` and
-  its value units from the spectrum's own terms. Array values are the stored
-  values, widened to `f64`. That is exact for 32-bit floats and for integers
-  up to 2^53; a 64-bit integer array holding a larger value is refused with a
-  typed error rather than rounded. The retained
-  snapshot behind `export_token` holds them, so CSV and TSV export write the
-  stored values.
+  to `crates/core` instead. `MetadataResult` and `RunSummaryResult` keep their
+  `msaccess` parsers.
+- **Table rows.**
+  - A native row fills what the product reads: the identity (index, native ID,
+    and a scan number taken only from `scan=N`), MS level, retention time, base
+    peak m/z and intensity, total ion current, and the first precursor's
+    selected-ion m/z.
+  - A spectrum missing one of the required values refuses the open
+    (decision 1), as today's parser refuses an empty required field.
+  - The row's other fields (event, analyzer, m/z range, charge, Thermo
+    monoisotopic m/z, filter-string m/z, injection time) have no product reader
+    and reach no screen. A native row leaves them unreported, and slice 2 makes
+    them optional.
+  - The reader derives no value from the arrays.
+- **Selected spectrum.**
+  - `SelectedSpectrumDto` sets `representation_known` and its value units from
+    the spectrum's own terms.
+  - Array values are the stored values, widened to `f64`. That is exact for
+    32-bit floats and for integers up to 2^53. A 64-bit integer array holding a
+    larger value is refused with a typed error rather than rounded.
+  - The retained snapshot behind `export_token` holds those values, so CSV and
+    TSV export write the stored values.
+  - Base peak and total ion current come from the same terms as the table row.
+    The m/z range comes from the lowest and highest observed m/z terms
+    (MS:1000528, MS:1000527). A range the spectrum does not state is not
+    reported, and slice 2 makes those fields optional.
+  - `NumericPrecisionEvidence` (requested and observed fraction digits)
+    describes printed text. No product code reads it, and a native spectrum
+    carries the two arrays' stored widths instead.
 - **Retention time** carries its declared unit instead of
-  `UnitState::NotEmitted`. An undeclared unit stays undeclared.
-- **Reconciliation stays.** `SpectrumIdentity::reconcile` still compares the
-  list read with the spectrum read. Its tolerance existed for printed values;
-  slice 2 decides whether it tightens.
+  `UnitState::NotEmitted`. An undeclared unit stays undeclared. The new unit
+  states meet two exhaustive matches:
+  - `reported_unit_known` in `service.rs` maps them;
+  - `qc_snapshot.rs::recorded()` refuses them, because the QC path only ever
+    sees the `msaccess` run summary's `NotEmitted`. Schema 4 does not change.
+- **Reconciliation.**
+  - `SpectrumIdentity::reconcile` compares identities exactly, and stays.
+  - The tolerance lives in `TableRowFacts::contradicts()` and `differs()`
+    (`service.rs`). It exists for printed values.
+  - With both sides read natively from the same terms, a disagreement can only
+    mean a read landed on another spectrum, which the per-read index and ID
+    check already refuses. Slice 2 makes the comparison exact and records that.
 - **Bounds stay.** Lists crossing IPC stay bounded in count, and points cross
   only through the existing screen projection. Sending whole arrays over IPC
   would be its own decision, as binary transfer (AGENTS.md, large arrays).
-- **Redaction stays.** Metadata lines are still redacted for the opened path
-  and for any absolute-path shape.
-- **The project document.** The QC snapshot records its producer as
-  `ProducerTool::Msaccess` with the `msaccess` executable digest, and
-  `qc_snapshot.rs::recorded()` maps only `UnitState::NotEmitted`. A snapshot
-  taken from a native read needs a producer kind with no executable digest and
-  recorded retention-time units. That is a schema change from 4, and slice 2
-  owns it. Until it lands, QC capture is unavailable for a native preview with
-  a stated reason, and a native preview is never recorded as `msaccess` output.
-- **First-run setup.** ProteoWizard setup becomes a requirement of conversion
-  only. Its copy changes through the localized resources.
+- **Redaction stays.** Metadata stays `msaccess` output, redacted as today. The
+  native table goes through the same `spectrum_table_dto` projection and its
+  redactor.
+- **The project document does not change.** The QC snapshot copies only the
+  run summary, which stays `msaccess` output. `ProducerTool::Msaccess`, its
+  executable digest, and schema 4 stay true.
+- **The `msaccess` provider keeps `Metadata` and `RunSummary`.** mzML is the
+  one previewable kind (`DatasetSourceKindDto`), so its spectrum-table and
+  selected-spectrum operations lose their only product caller, and slice 2
+  removes them. Discovery still requires `msaccess` beside `msconvert`, and the
+  setup copy does not change.
 
 ### 6. Dependencies, which need the owner's approval
 
@@ -239,40 +409,62 @@ without a written decision.
 
 This ADR is the written decision, and decision 1's scope is its limit. Any
 computation over the decoded arrays is an algorithm, and it needs its own
-record.
+record. That is why the run summary's retention times at cumulative base-peak
+intensity stay `msaccess`'s (decision 3).
 
 ### 8. Re-measure before implementing
 
 The spike's scale data is synthetic. Before slice 1 starts, the spike's
-route-(b) reader runs on files the owner authorizes, as for PX.3:
+route-(b) reader and its route-(a) mzdata adapter both run on files the owner
+authorizes, as for PX.3:
 
 - the real PRIDE `PXD081190` file M0 measured (208,408,454 bytes, 36,319 MS2
   spectra);
 - one real MS1 profile-mode file.
 
-Each run is compared with the independent reference and recorded with its
-exactness, timing and memory. Before slice 1 merges, the product reader
-repeats that comparison on the same files. The numbers are observations, not
-budgets (ADR 0005).
+Each run is compared with the Python reference and recorded with its
+exactness, timing and memory:
+
+- mzdata is in the comparison because it is the independent implementation.
+  The reference and the own reader share an author, and real vendor-converted
+  files are where that matters most.
+- Each run also records the largest point count, and whether every spectrum
+  states the values the table requires (decision 5).
+
+Before slice 1 merges, the product reader repeats that three-way comparison on
+the same files. The numbers are observations, not budgets (ADR 0005).
 
 ### 9. Delivery order
 
 1. **Reader library, no UI.**
-   - Typed errors; header; index with validation; offsets-only scan; metadata
-     pass; random read; capped inflate.
-   - The chromatogram list (stored TIC and BPC), which the spike did not test.
-   - Small generated fixtures, including namespace prefixes.
+   - Typed errors; the header; a metadata pass that records offsets; a random
+     read with its index and ID check; decoding under decision 2's caps.
+   - Small generated fixtures and probes:
+     - namespace prefixes;
+     - integer arrays, including a 64-bit value above 2^53;
+     - declared array units;
+     - more than one scan, and conflicting terms;
+     - non-finite values;
+     - a declared length of 2^40 points;
+     - a declared length at the cap over a zlib stream of zeros;
+     - a random read that lands on another spectrum.
    - The product reader's repeat of decision 8's comparison, before it merges.
 2. **Native path for mzML sources.**
-   - Routing and the shared-type constructors.
-   - The session cache.
-   - Retention time with its unit.
-   - The QC producer and the schema step.
+   - Routing by operation, the shared-type constructors and the optional
+     fields.
+   - The one batch, with its spectrum-count check.
+   - Offsets kept with the preview, for one dataset at a time.
+   - Retention time with its unit, and exact reconciliation.
+   - Removal of the two `msaccess` operations.
 3. **UI states.**
    - Profile spectra drawn as lines and centroid spectra as sticks, through the
-     shared plot and figure specification, on screen and in export.
+     shared plot and figure specification, on screen and in export. ADR 0028's
+     rules apply:
+     - a profile line is a joined trace and reduces by `MinMaxPerColumn`;
+     - sticks keep `ExtremePerSignPerColumn`;
+     - only a spectrum the file declares profile is joined.
    - Unknown representation stays sticks, with its statement.
-   - Setup and refusal copy.
+   - Copy for the new refusals.
    - Rendered QA.
 
 ## Evidence
@@ -283,8 +475,8 @@ and no dependency was added to the repository.
 
 **Inputs.**
 
-- Two real one-spectrum Thermo MSX acquisitions: the beta-1 installed-check
-  fixture and its beta-1 `msconvert` output.
+- One real acquisition, in two files: a one-spectrum Thermo MSX acquisition
+  (the beta-1 installed-check fixture) and its beta-1 `msconvert` output.
 - A variant whose MS level and representation are reachable only through a
   param group.
 - `synth-rep`: 36,319 MS2 spectra in M0's representative shape; 131 MB;
@@ -303,13 +495,19 @@ and no dependency was added to the repository.
 - The own reader had 0 metadata mismatches. The fields compared were index,
   native ID, scan number, MS level, polarity, representation, base peak, TIC,
   retention time and unit, filter string, analyzers, every precursor, and each
-  array's role, width, compression and length.
-- mzdata agreed on every field compared. It keeps retention time in minutes
-  only, does not read `defaultArrayLength`, and narrows the isolation target
-  and collision energy to `f32`.
+  array's role, width, compression and length. The arrays' declared units were
+  not compared.
+- Every array in the inputs is a float array. Integer arrays and decision 5's
+  2^53 rule are untested.
+- mzdata agreed on every field compared but one. On `synth-profile`, one
+  `rt_min` differs by 1 ULP (4.008333333333333 against …334), because mzdata
+  divides seconds by 60 and the comparison multiplied by 1/60. mzdata also
+  keeps retention time in minutes only, does not read `defaultArrayLength`,
+  and narrows the isolation target and collision energy to `f32`.
 - The own reader and the reference share an author, so they could share a
-  misreading. mzdata, an independent implementation, agreeing on every
-  compared field is the guard against that.
+  misreading. mzdata is an independent implementation, and its agreement guards
+  against that. So far that covers synthetic files and one real acquisition;
+  decision 8 extends it to real files.
 
 **Robustness.**
 
@@ -322,6 +520,12 @@ and no dependency was added to the repository.
 | `DOCTYPE` with an entity | refused | accepted |
 | zlib bomb (512 MiB, declared 1,504 points) | refused in 4.3 ms, 6.7 MB peak | 67,108,864 points, 545 MB peak working set |
 
+The bomb probe declared a small length, and that is what bounded the spike: it
+reserved its output buffer from the declared length. A file that declares a
+huge length was not probed. The spike would have tried to reserve that much,
+and could have aborted. Decision 2's absolute caps close that gap, and slice 1
+probes it.
+
 **Speed and memory.** These are single runs, with release builds, on a 20-core
 machine with a warm cache. M0's `msaccess` figures come from a 2-core hosted
 runner on the real file, so the comparison is directional only.
@@ -330,8 +534,9 @@ runner on the real file, so the comparison is directional only.
 | --- | --- | --- |
 | Selected spectrum | p50 164 ms per process | warm p50 about 0.07 ms in-process, excluding IPC and projection |
 | Selected spectrum, one process per click | — | p50 55 ms, of which 35–45 ms is process creation |
-| Open, indexed, 36,319 spectra | — | 13.8 ms (mzdata 61.2 ms) |
-| All spectrum metadata | spectrum table 3,921 ms | 1.4 s on 131 MB; about 2.1–2.7 s scaled to 208 MB (estimate) |
+| Header and index only, 36,319 spectra | — | 13.8 ms (mzdata 61.2 ms); not the product's open, which reads every spectrum's metadata (next row) |
+| All spectrum metadata | spectrum table 3,921 ms | 1.4 s on 131 MB; about 2.15 s scaled by bytes to 208 MB (estimate; mzdata about 2.75 s) |
+| Run summary and metadata | 3,160 ms and 163 ms | not replaced; still `msaccess` (decision 3) |
 | 500,000-point profile spectrum | about 13.8 MiB of text, over the 8 MiB cap (estimate) | 60–80 ms; 12 MB in memory |
 | Non-indexed 482 MB, cold | — | 5.8 s full scan (mzdata 2.4 s), then about 0.04 ms per spectrum |
 | Peak working set, warm | — | 46 MB (`synth-rep`), 108 MB (`synthetic-long`) |
@@ -359,17 +564,18 @@ runner on the real file, so the comparison is directional only.
   or MGF; even then pin it, turn default features off, wrap every call, and
   keep MSCanvas's own size checks.
 - **Keep `msaccess` and raise `precision`.** That fixes neither the 8 MiB
-  whole-output refusal, the process per click, the unknown representation nor
-  the need for ProteoWizard. Measuring it would also need a ProteoWizard hold
-  release.
+  whole-output refusal, the process per click nor the unknown representation.
+  Measuring it would also need a ProteoWizard hold release.
 - **Direction A**, a corrected or differently versioned ProteoWizard
   interface. PX.4 left it viable and unprototyped, and this ADR does not
-  reject it. It would still be a process per click and would still need
-  ProteoWizard to view an open format.
+  reject it. It would still be a process per click.
 - **Native first, `msaccess` when the native reader refuses.** That is the
   backend fallback AGENTS.md rules out. One view would come from two readers
   with different precision and different representation facts, without the
   user choosing.
+- **Native metadata and run summary now.** Native metadata would change what
+  the user sees, and the run summary's retention times at cumulative base-peak
+  intensity are a computation. Each waits for its own decision (decision 3).
 - **A second `PreviewProvider`.** It would have to fabricate an installation
   identity for ADR 0044's Decision 1.
 
@@ -388,58 +594,75 @@ runner on the real file, so the comparison is directional only.
   it needs its own viewer decision.
 - **Large spectra.** Large profile spectra and large spectrum tables open
   where the 8 MiB cap refuses them today.
-- **Viewing without ProteoWizard.** mzML can be viewed with no ProteoWizard
-  installed.
-- **Viewing while converting.** A native read takes no backend gate and is not
-  refused with `conversion_busy` (decision 3), so viewing works while a
-  conversion runs.
+- **No process per spectrum.** A selected spectrum is an in-process read.
 - **A premise for XIC, not XIC itself.** The four-decimal serialization that
-  decided M5.4 does not exist in-process. **This ADR admits no XIC.** XIC needs
-  the new scope record the
+  decided M5.4 for `tic`, `sic` and `slice` does not exist in-process. **This
+  ADR admits no XIC.** XIC needs the new scope record the
   [after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md#75-evidence-gated-items)
   names: a new candidate that reruns all 77 PX.3 rows, with ADR 0046's
   semantics unchanged.
 
+**What it does not change:**
+
+- **The open still runs `msaccess` twice.** M0 measured the run summary at
+  3,160 ms and metadata at 163 ms on the real file. Only the table's 3,921 ms
+  is replaced, by the native pass.
+- **Viewing still needs ProteoWizard and still waits for a conversion.** Both
+  need the follow-up decision 3 describes.
+
 **Risks:**
 
-- **Numpress becomes a regression.**
-  - ProteoWizard decodes numpress, so `msaccess` presumably views numpress
-    mzML today. This is not measured, because `msaccess` is under the hold.
-  - Under decisions 1 and 3, such files are refused.
-  - ADR 0055 (PR #146) proposes numpress among the advanced conversion
-    outputs. Those outputs would then be adoptable but not viewable.
+- **Numpress, truncation and prediction become regressions.**
+  - ProteoWizard decodes them, so `msaccess` presumably shows such spectra
+    today. This is not measured, because `msaccess` is under the hold.
+  - Under decisions 1 and 3, such a file still opens, because the table pass
+    decodes no array. Every selected spectrum in it is refused.
+  - ADR 0055 (PR #146) proposes numpress (MS:1002312–1002314,
+    MS:1002746–1002748) and truncation and prediction (MS:1003088–1003090)
+    among the advanced conversion outputs. Those outputs would be adoptable,
+    but their spectra would not be viewable.
 
   See the open question below.
 - **Scope creep.** Every refusal in decision 1 will be asked for, and each
   needs its own decision.
-- **Interpretation.** Some readings are choices: which cvParam wins, how
-  activation terms are classified, which scan gives the retention time.
-  mzdata agreed on everything compared, but unusual yet valid vendor-converted
-  mzML could still disagree.
+- **Strict reading can refuse what `msaccess` opens.**
+  - The reader refuses where it would otherwise have to choose: conflicting
+    terms, more than one scan, a missing base peak or TIC.
+  - `msaccess` may derive base peak and TIC when a file omits them. That was
+    not checked. Decision 8 records whether real files state them.
+  - Interpretation remains in a few places: the scan number comes only from
+    `scan=N`, the table's one precursor column shows the first precursor, and
+    activation terms are carried as written.
+  - mzdata agreed on everything compared, but unusual yet valid
+    vendor-converted mzML could still disagree.
 - **Representativeness.**
-  - Only two real acquisitions were tested, both one-spectrum Thermo MSX files.
+  - Only one real acquisition was tested, in two one-spectrum files.
   - All scale data is synthetic.
+  - Integer arrays and declared array units were not tested.
   - Neither the PRIDE file nor a real profile file was measured.
 
-  Decision 8 answers this.
+  Decision 8 answers this, and slice 1's fixtures cover integers and units.
 - **Strictness** is established only for the probed cases and the rules of
   decision 2.
 - **Ownership.** The project owns about 600–900 production lines plus tests,
   where a dependency would have release notes.
 
-**Open question for the owner: numpress.** Three ways forward:
+**Open question for the owner: numpress, truncation and prediction.** Three
+ways forward:
 
 - keep the typed refusal (recommended for now);
-- add native numpress decoding later, in its own decision;
-- offer an explicit, labelled "Read with ProteoWizard" action that the user
-  chooses. That is not a fallback.
+- add native decoding later, in its own decision;
+- offer an explicit, labelled "Read with ProteoWizard" action for a refused
+  spectrum, which the user chooses. That is not a fallback.
 
 ## What this amends, on acceptance
 
 - **[ADR 0002](0002-external-proteowizard.md).** ProteoWizard stays the
-  conversion backend. It is no longer how mzML is viewed.
+  conversion backend and still reads the open's metadata and run summary. It no
+  longer reads mzML's spectrum table or spectra for viewing.
 - **[ADR 0003](0003-msaccess-preview-spike.md).** Its acceptance of
-  `msaccess` for preview navigation is superseded for mzML viewing. Its
+  `msaccess` for preview navigation is superseded for the spectrum table and
+  selected spectra of mzML. It stands for metadata and the run summary. Its
   measurements stay as recorded.
 - **[ADR 0005](0005-mzml-preview-boundary.md), for mzML sources.**
   - "Unknown stays unknown" now reports representation and retention-time
@@ -447,14 +670,28 @@ runner on the real file, so the comparison is directional only.
     not.
   - The stick-only rule becomes sticks for centroid and unknown spectra, and a
     line for profile spectra.
-  - These no longer apply to viewing mzML:
-    - one backend process per read, and the single backend gate;
+  - These no longer apply to the spectrum table and selected spectra:
+    - one backend process per read;
     - the 8 MiB output ceiling;
     - the installation identity a selected spectrum is checked against.
+  - The single backend gate still applies, and now also serializes native
+    reads. Everything it says of metadata and the run summary still applies.
   - The bounded preview cache it left open is decided for this reader
     (decision 4).
   - Unchanged: the command surface, Rust's ownership of the path, bounded and
     redacted transfer, and generation checks.
+- **[ADR 0006](0006-multi-dataset-workspace-boundary.md).** The 1,024-row
+  capacity stands. A native read holds no file handle between reads, so a
+  row's handle cost is unchanged. Native preview state is kept for one dataset
+  at a time, so its memory does not grow with the roster.
+- **[ADR 0028](0028-figure-renderer-and-semantic-specification.md).** A
+  profile-spectrum mark joins the shared specification under its existing
+  rules (decision 9, slice 3), and no rule changes. If the mark changes the
+  saved specification's schema, slice 3 owns that step.
+- **[ADR 0044](0044-conversion-configuration-authority.md).** Not amended.
+  `backendUsable` still gates every mzML read, native or not. The follow-up
+  that admits native reads without a usable backend or during a conversion
+  amends this projection, together with Rust's admission (decision 3).
 - **[ADR 0047](0047-first-windows-beta-scope-and-implementation-route.md).**
   "No … new reader … belongs to this route" bounded M7. This ADR is the
   post-beta decision on a new reader, for viewing. The directions PX.4 handed

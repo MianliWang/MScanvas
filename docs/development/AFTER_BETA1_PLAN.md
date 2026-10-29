@@ -424,8 +424,8 @@ None can be delivered by engineering alone; each waits for one input.
 - Whether to write a project-owned mzML reader in place of `msaccess` for
   viewing: [ADR 0056](../architecture/adr/0056-project-owned-mzml-reader-for-viewing.md),
   proposed, is that written decision. It still needs acceptance, the
-  dependency approval it asks for, a choice on numpress, and real files the
-  owner authorizes for its re-measurement.
+  dependency approval it asks for, a choice on numpress, truncation and
+  prediction, and real files the owner authorizes for its re-measurement.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted.
