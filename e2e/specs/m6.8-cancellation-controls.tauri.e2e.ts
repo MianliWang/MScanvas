@@ -33,7 +33,7 @@ const OUTPUT_ROOT = process.env["MSCANVAS_M68_NATIVE_OUTPUT_ROOT"];
 const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
 const PANEL = "section.conversion-panel";
 const RUNNING = `${PANEL} .conversion-running`;
-const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
+const CONVERT = `${PANEL} .conversion-start`;
 const ROWS = '.grouped-roster [role="row"][data-handle]';
 /** Enough real items that a stop has a running one to land on. */
 const QUEUE_SIZE = 8;
@@ -305,7 +305,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
         // Between two items. The queue is still going, so this waits rather
         // than concluding there was nothing to stop.
         if (current === undefined) continue;
-        const button = browser.$(RUNNING).$("button=Stop this file");
+        const button = browser.$(PANEL).$("button=Stop this file");
         if (!(await button.isExisting()) || !(await button.isEnabled()) || await button.getAttribute("aria-disabled") === "true") continue;
         await button.click();
         await browser.waitUntil(async () => {
@@ -416,7 +416,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     await browser.waitUntil(async () => (await runningItem()) !== null, {
       timeout: 60_000, timeoutMsg: "No item was ever observed running.",
     });
-    const stop = browser.$(RUNNING).$("button=Stop queue");
+    const stop = browser.$(PANEL).$("button=Stop queue");
     await stop.waitForExist({ timeout: 30_000 });
     await browser.waitUntil(async () => await stop.isEnabled() && await stop.getAttribute("aria-disabled") !== "true", {
       timeout: 30_000, timeoutMsg: "Stop queue was never offered.",

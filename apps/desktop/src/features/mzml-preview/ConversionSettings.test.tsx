@@ -163,7 +163,7 @@ describe("a read that answered unusably", () => {
     );
   });
 
-  it("disables the control where a read would be refused, and states nothing itself", () => {
+  it("refuses the control where a read would be refused, and states nothing itself", () => {
     // **The refusing fact has one owner, and it is not this component.** A
     // conversion holding the backend lane refuses this read and a conversion
     // alike; the panel states that fact once and both controls point at it.
@@ -177,7 +177,9 @@ describe("a read that answered unusably", () => {
       />,
     );
     const control = screen.getByRole("button", { name: "Read the settings again" });
-    expect(control).toBeDisabled();
+    // Refused, not disabled: it stays a Tab stop whose reason can be reached.
+    expect(control).toHaveAttribute("aria-disabled", "true");
+    expect(control).not.toBeDisabled();
     // Named, not restated. Nothing in this subtree carries the id, and nothing
     // in it describes the lane.
     const descriptions = (control.getAttribute("aria-describedby") ?? "").split(" ");
@@ -435,12 +437,12 @@ describe("compact settings over a retained intent", () => {
     // This pair has no admitted single-width transition. The advanced paired
     // precision axis still exposes the catalog's legitimate diagonal change.
     expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("32-bit")).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
     expect(screen.getByLabelText("m/z 64-bit · intensity 64-bit")).toBeChecked();
     expect(screen.getByLabelText("m/z 32-bit · intensity 32-bit")).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Change language" }));
     expect(screen.getByLabelText("m/z 64 位 · 强度 64 位")).toBeChecked();
-    fireEvent.click(screen.getByRole("button", { name: "基本" }));
+    fireEvent.click(screen.getByRole("radio", { name: "基本" }));
     expect(within(screen.getByRole("group", { name: "强度精度" })).getByLabelText("64 位")).toBeChecked();
     expect(onChoose).not.toHaveBeenCalled();
   });
@@ -448,7 +450,7 @@ describe("compact settings over a retained intent", () => {
   it("preserves a valid coordinated precision transition without changing processing", () => {
     const onChoose = vi.fn();
     render(<ConversionSettings configuration={view(ready(), { selectedIntentId: CENTROIDED_64 })} onChoose={onChoose} refusalNoticeId={null} />);
-    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
     fireEvent.click(screen.getByLabelText("m/z 32-bit · intensity 32-bit"));
     expect(onChoose).toHaveBeenCalledExactlyOnceWith(CENTROIDED_32);
   });

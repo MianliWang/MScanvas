@@ -150,7 +150,7 @@ describe("M7.4 bilingual conversion composition", () => {
     const api = createFakePreviewApi({ availability: availableBackend, initialDatasets: [source], initialConversion: terminal });
     mount(api); await screen.findByText(en.m74ErrorNameClaimed); await chinese();
     expect(screen.getByText(zh.m74ErrorNameClaimed)).toBeVisible();
-    fireEvent.click(document.querySelector(".conversion-item-detail summary")!);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${zh.cnvDetailsFor.replace("{{name}}", ".*")}$`) }));
     expect(screen.getByText(ownerName)).toBeVisible();
     expect(screen.queryByText("Owned original English summary")).toBeNull(); expect(api.beginRequests()).toEqual([]);
   });
@@ -169,8 +169,8 @@ describe("M7.4 bilingual conversion composition", () => {
     await waitFor(() => expect(api.planRequests().at(-1)?.destinationPolicy).toEqual({ kind: "namedSubfolder", name: raw }));
     const reviewed = structuredClone(api.planRequests().at(-1));
     const planCount = api.planRequests().length;
-    fireEvent.click(within(panel).getByRole("button", { name: en.cnvAdvanced }));
-    fireEvent.click(within(panel).getByRole("button", { name: en.cnvBasic }));
+    fireEvent.click(within(panel).getByRole("radio", { name: en.cnvAdvanced }));
+    fireEvent.click(within(panel).getByRole("radio", { name: en.cnvBasic }));
     await chinese();
     expect(panel).toHaveAccessibleName(zh.m74CnvTitle);
     expect(within(panel).getByRole("textbox", { name: zh.m74CnvSubfolderName })).toHaveValue(raw);
@@ -194,15 +194,16 @@ describe("M7.4 bilingual conversion composition", () => {
     const api = createFakePreviewApi({ availability: availableBackend, initialDatasets: [source], initialConversion: terminal, retry });
     mount(api);
     const button = await screen.findByRole("button", { name: "Retry 1 failed" });
-    await waitFor(() => expect(button).toBeEnabled());
+    await waitFor(() => expect(button).not.toHaveAttribute("aria-disabled"));
     const snapshot = structuredClone(terminal);
     await chinese();
     const panel = screen.getByRole("region", { name: zh.m74CnvTitle });
     expect(panel).toHaveTextContent("共 1 项：已转换 0 项、重名跳过 0 项、失败 1 项。");
     expect(panel).toHaveTextContent(raw);
     expect(document.querySelector('[data-live-region="conversion"]')).toHaveTextContent("失败 1 项");
+    // The queue's bound facts are always on screen, not behind a disclosure.
     const bound = panel.querySelector(".conversion-bound-details")!;
-    fireEvent.click(within(bound as HTMLElement).getByText(zh.m74CnvBoundDetails));
+    expect(bound).toBeVisible();
     expect(bound).toHaveTextContent("original-output");
     expect(bound).toHaveTextContent(zh.m74CnvConflictSkip);
     expect(terminal).toEqual(snapshot);

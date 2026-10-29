@@ -193,15 +193,18 @@ describe("PM9.4 O2: the excluded rows, named", () => {
     await check("Calibration_reference_");
     await waitFor(() => expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull());
     const asked = api.planRequests().length;
-    expect(within(panel).getByText(/2 requested · 1 eligible · 1 excluded \(not convertible\)\./)).toBeVisible();
-    const summary = within(panel).getByText("Excluded rows (1)");
-    // A native disclosure: a Tab stop, closed until asked.
-    expect(summary.tagName).toBe("SUMMARY");
-    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(within(panel).getByText(/2 requested · 1 eligible · 1 excluded \(not convertible\)/)).toBeVisible();
+    const toggle = within(panel).getByRole("button", { name: "Excluded rows (1)" });
+    // A disclosure button: a Tab stop, closed until asked.
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const region = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(region).toHaveAttribute("hidden");
     // Outside the live scope summary, so a scope change does not read the names out.
-    expect(summary.closest("[aria-live]")).toBeNull();
-    fireEvent.click(summary);
-    expect(within(summary.closest("details")!).getByText(long)).toBeInTheDocument();
+    expect(toggle.closest("[aria-live]")).toBeNull();
+    expect(region.closest("[aria-live]")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(within(region).getByText(long)).toBeVisible();
     expect(api.planRequests()).toHaveLength(asked);
     expect(api.planRequests().at(-1)?.handles).toEqual(["file-1"]);
     expect(within(screen.getByRole("row", { name: /Calibration_reference_/ })).getByRole("checkbox")).toBeChecked();
@@ -211,7 +214,8 @@ describe("PM9.4 O2: the excluded rows, named", () => {
     const rows = Array.from({ length: 25 }, (_, index) => mzml(index + 1));
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: rows, availability: availableBackend }));
     fireEvent.click(within(panel).getByRole("radio", { name: "All workspace rows" }));
-    const details = within(panel).getByText("Excluded rows (25)").closest("details")!;
+    const toggle = within(panel).getByRole("button", { name: "Excluded rows (25)" });
+    const details = document.getElementById(toggle.getAttribute("aria-controls")!)!;
     expect(details.querySelectorAll("li")).toHaveLength(20);
     expect(within(details).getByText("5 more not listed here.")).toBeInTheDocument();
   });

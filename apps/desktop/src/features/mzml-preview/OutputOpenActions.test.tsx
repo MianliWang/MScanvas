@@ -17,7 +17,9 @@ describe("opening retained output identities", () => {
     file.focus(); fireEvent.click(file); fireEvent.click(file);
     expect(open).toHaveBeenCalledExactlyOnceWith("finalized-17", "file");
     expect(file).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Open folder" })).toBeDisabled();
+    // Refused while the other request is out, and still a Tab stop.
+    expect(screen.getByRole("button", { name: "Open folder" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Open folder" })).toHaveAccessibleDescription("Opening…");
     await act(async () => pending.resolve({ status: "accepted" }));
     expect(screen.getByRole("status")).toHaveTextContent("Windows accepted the request.");
     expect(api.conversionRequests).toHaveLength(0);

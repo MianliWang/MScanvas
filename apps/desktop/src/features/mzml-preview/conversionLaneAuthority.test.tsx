@@ -364,7 +364,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     const panel = await conversionPanel();
     const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
     await waitFor(() => {
-      expect(retry).toBeEnabled();
+      expect(retry).not.toHaveAttribute("aria-disabled");
     });
     // The explicit empty scope refuses a new start while the bound retry is usable.
     expect(within(panel).getByRole("button", { name: /^Convert/u })).toHaveAttribute("aria-disabled", "true");
@@ -407,7 +407,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     const panel = await conversionPanel();
     const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
     await waitFor(() => {
-      expect(retry).toBeEnabled();
+      expect(retry).not.toHaveAttribute("aria-disabled");
     });
     fireEvent.click(retry);
     // The window this is about: the command has not answered, so the claim is
@@ -618,7 +618,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     await waitFor(() => {
       expect(convert).toHaveAttribute("aria-disabled", "true");
     });
-    expect(retry).toBeDisabled();
+    expect(retry).toHaveAttribute("aria-disabled", "true");
     expect(reasonsOnScreen()).toEqual([BACKEND_REASON]);
     expect(convert).toHaveAccessibleDescription(new RegExp(BACKEND_REASON, "u"));
     expect(retry).toHaveAccessibleDescription(new RegExp(BACKEND_REASON, "u"));
@@ -649,6 +649,7 @@ describe("the conversion lane's one authority, as it ships", () => {
         Array.from(screen.getByRole("treegrid", { name: "Acquisitions" }).querySelectorAll<HTMLElement>("[data-handle]")),
       ).toHaveLength(1);
     });
-    expect(screen.getByRole("combobox", { name: "Execution order" })).toBeEnabled();
+    // The execution order lives with the conversion it orders.
+    expect(within(await conversionPanel()).getByRole("combobox", { name: "Execution order" })).toBeEnabled();
   });
 });

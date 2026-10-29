@@ -358,7 +358,7 @@ describe("saving conversion diagnostics", () => {
     });
     const panel = await panelOf(api);
 
-    expect(await within(panel).findByRole("button", { name: "Retry 1 failed" })).toBeEnabled();
+    expect(await within(panel).findByRole("button", { name: "Retry 1 failed" })).not.toHaveAttribute("aria-disabled");
     fireEvent.click(within(panel).getByRole("button", { name: EXPORT_LABEL }));
 
     await waitFor(() => {
@@ -370,7 +370,7 @@ describe("saving conversion diagnostics", () => {
 
     release!();
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toBeEnabled();
+      expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).not.toHaveAttribute("aria-disabled");
     });
   });
 

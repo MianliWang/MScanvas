@@ -35,7 +35,7 @@ const ANCHORS = [
 
 /** motion's development-build notice when the page asks for reduced motion. */
 const REDUCED_MOTION_NOTICE = "You have Reduced Motion enabled on your device";
-const CONVERT = ".conversion-plan button.primary-button, .conversion-plan .conversion-start";
+const CONVERT = "button.conversion-start";
 const ROSTER_TOGGLE = '[aria-controls="workbench-roster"]';
 /** DESIGN_SYSTEM's focus ring: 2 px, solid, the one focus colour `#1769d1` (UI-46). */
 const RING = "2px solid rgb(23, 105, 209)";

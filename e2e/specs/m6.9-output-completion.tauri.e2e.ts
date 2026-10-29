@@ -36,7 +36,7 @@ const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe15
 const PANEL = "section.conversion-panel";
 const RUNNING = `${PANEL} .conversion-running`;
 const LIST = `${RUNNING} .conversion-queue-list`;
-const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
+const CONVERT = `${PANEL} .conversion-start`;
 const ADOPT = `${PANEL} .conversion-adoption button`;
 const ROWS = '.grouped-roster [role="row"][data-handle]';
 const QUEUE_SIZE = 2;

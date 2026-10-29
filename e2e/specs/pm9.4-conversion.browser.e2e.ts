@@ -305,11 +305,12 @@ async function frame(label: string) {
       .filter((button) => shown(button) && !button.disabled && button.getAttribute("aria-disabled") !== "true")
       .filter((button) => getComputedStyle(button).backgroundColor === accent)
       .map((button) => (button.textContent ?? "").trim());
-    // Controls under the 32 px compact minimum (DESIGN_SYSTEM), inputs aside.
+    // Controls under the rebuild's 30 px small-button height (v5.11 rebuild
+    // spec 1.4, `--control-height-sm`), inputs aside.
     const small = [...(node?.querySelectorAll<HTMLElement>("button, summary") ?? [])]
       .filter(shown)
       .map((control) => ({ name: (control.textContent ?? "").trim().slice(0, 40), height: control.getBoundingClientRect().height }))
-      .filter((control) => control.height < 31.5);
+      .filter((control) => control.height < 29.5);
     return {
       css: { width: innerWidth, height: innerHeight },
       devicePixelRatio,
@@ -482,15 +483,16 @@ describe("PM9.4 conversion journey, rendered", () => {
     await waitUntilOffered(CONVERT);
     const review = await frame("pm94-p3-review-en-1366x768");
 
-    // R5: scope, settings, destination, conflict, the reviewed summary, then Convert.
+    // R5: settings, destination and conflict in the form column, then the
+    // scope, the reviewed summary and Convert in the summary column.
     const order = await browser.execute((css: string) => {
-      const plan = document.querySelector(".conversion-plan");
+      const plan = document.querySelector(".conversion-panel");
       const at = (selector: string) => document.querySelector(selector);
       const parts = [
-        at(".conversion-scope"),
         at(".conversion-settings"),
         at(".conversion-destination"),
         at(".conversion-conflict"),
+        at(".conversion-scope"),
         at("#conversion-plan-summary"),
         at(css),
       ];
@@ -502,7 +504,7 @@ describe("PM9.4 conversion journey, rendered", () => {
     expect(order).toEqual({ ordered: true, settingsInPlan: true, fieldsetsAfterSummary: 0 });
     // R4: compression in words, like the other axes.
     const compression = await browser.execute((label: string) => {
-      const term = [...document.querySelectorAll(".conversion-plan .metadata-list dt")].find((node) => (node.textContent ?? "").trim() === label);
+      const term = [...document.querySelectorAll(".conversion-plan-summary .metadata-list dt")].find((node) => (node.textContent ?? "").trim() === label);
       return (term?.nextElementSibling?.textContent ?? "").trim();
     }, en.m74CnvCompression);
     expect(compression).toBe(en.cnvZlib);
@@ -510,7 +512,7 @@ describe("PM9.4 conversion journey, rendered", () => {
     expect(review.filled).toEqual([fill(word("en", "m74CnvConvertSelected"), { count: 2 })]);
 
     await setInvokeResult("get_workspace_conversion_state", slot(1, STARTED));
-    await pressByKeyboard(".conversion-plan", fill(word("en", "m74CnvConvertSelected"), { count: 2 }));
+    await pressByKeyboard(".conversion-panel", fill(word("en", "m74CnvConvertSelected"), { count: 2 }));
     await browser.$(".conversion-running").waitForExist({ timeout: 15_000 });
     await browser.waitUntil(async () => (await requests("choose_workspace_conversion_destination")).length === 1, { timeout: 15_000 });
     await frames();
@@ -558,7 +560,7 @@ describe("PM9.4 conversion journey, rendered", () => {
     await setInvokeResult("stop_workspace_conversion_queue", slot(2, { ...STARTED, status: "stopping" }));
     await setInvokeResult("get_workspace_conversion_state", slot(2, { ...STARTED, status: "stopping" }));
     await pressByKeyboard(".conversion-running", en.m74CnvStopQueue);
-    await browser.waitUntil(async () => (await browser.$(".conversion-running").getText()).includes(en.m74CnvStopping), { timeout: 15_000 });
+    await browser.waitUntil(async () => (await browser.$(".conversion-panel").getText()).includes(en.m74CnvStopping), { timeout: 15_000 });
     await frame("pm94-p4-stopping-en-1366x768");
     expect(await requests("stop_workspace_conversion_queue")).toEqual([{ operationId: OPERATION }]);
     expect(await focusedId()).toBe("conversion-queue-status");

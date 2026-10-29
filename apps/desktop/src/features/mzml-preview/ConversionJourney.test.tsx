@@ -102,7 +102,7 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
     held.resolve(availableBackend);
   });
 
-  it("puts the scope, settings, destination and conflict above the review, and the review directly above Convert (R4, R5)", async () => {
+  it("puts the settings, destination, conflict and scope before the review, and the review directly above Convert (R4, R5)", async () => {
     const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend });
     renderApp(api);
     await check(/run-1\.raw/);
@@ -112,8 +112,10 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
       expect(node).not.toBeNull();
       return node!;
     });
-    const plan = panel.querySelector(".conversion-plan")!;
-    const parts = [".conversion-scope", ".conversion-settings", ".conversion-destination", ".conversion-conflict"].map((css) => plan.querySelector(css));
+    // The form column, then the summary column: settings, destination and
+    // conflict, then which rows, then the review and Convert.
+    const plan = panel;
+    const parts = [".conversion-settings", ".conversion-destination", ".conversion-conflict", ".conversion-scope"].map((css) => plan.querySelector(css));
     const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
     for (const [index, node] of parts.entries()) {
       expect(node, `part ${String(index)}`).not.toBeNull();
@@ -200,9 +202,9 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
 
     // The outputs are the primary; the next conversion's start is not.
     const convert = await within(panel).findByRole("button", { name: "Convert 1 eligible…" });
-    expect(convert).toHaveClass("secondary-button");
-    expect(convert).not.toHaveClass("primary-button");
-    expect(within(panel).getByRole("button", { name: "Add converted output to workspace" })).toHaveClass("primary-button");
+    expect(convert).toHaveClass("ui-button--secondary");
+    expect(convert).not.toHaveClass("ui-button--primary");
+    expect(within(panel).getByRole("button", { name: "Add converted output to workspace" })).toHaveClass("ui-button--primary");
   });
 
   it("tells a stopped queue's reader how to convert what did not finish (R9)", async () => {

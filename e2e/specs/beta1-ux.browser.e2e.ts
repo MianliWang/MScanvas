@@ -346,7 +346,7 @@ function control(selector: string) {
       text: (button.textContent ?? "").trim(),
       disabled: button.disabled,
       ariaDisabled: button.getAttribute("aria-disabled"),
-      primary: button.classList.contains("primary-button"),
+      primary: button.classList.contains("primary-button") || button.classList.contains("ui-button--primary"),
       described: (button.getAttribute("aria-describedby") ?? "")
         .split(/\s+/u)
         .filter(Boolean)
@@ -579,7 +579,7 @@ describe("Beta 1 UX changes, rendered", () => {
         timeoutMsg: "with the mzML row checked, Convert's description was not the route alone",
       });
       await shot(`o3-conversion-mzml-checked-960-${locale}`);
-      expect(await browser.$(".conversion-excluded > summary").getText()).toBe(say(locale, "m74CnvExcludedNames", { count: 1 }));
+      expect(await browser.$(".conversion-excluded-group > button").getText()).toBe(say(locale, "m74CnvExcludedNames", { count: 1 }));
       expect(await browser.$(CONVERSION_SURFACE).getText()).not.toContain(words.m74CnvNoEligible);
       expect(await tabToStart()).toBe(true);
       await browser.keys(["Enter"]);
@@ -596,7 +596,7 @@ describe("Beta 1 UX changes, rendered", () => {
       await waitUntilOffered(CONVERT);
 
       // O2: the exact count, closed, outside the live scope summary.
-      const summary = ".conversion-excluded > summary";
+      const summary = ".conversion-excluded-group > button";
       await shot(`o2-excluded-closed-1366-${locale}`);
       expect(await browser.$(summary).getText()).toBe(say(locale, "m74CnvExcludedNames", { count: 2 }));
       expect(await browser.$("#conversion-scope-summary").getText()).toContain(
@@ -604,7 +604,7 @@ describe("Beta 1 UX changes, rendered", () => {
       );
       expect(await browser.execute((css: string) => {
         const node = document.querySelector(css);
-        return { open: node?.closest("details")?.open ?? null, live: node?.closest("[aria-live]") !== null };
+        return { open: node === null ? null : node.getAttribute("aria-expanded") === "true", live: node?.closest("[aria-live]") !== null };
       }, summary)).toEqual({ open: false, live: false });
       const asked = (await requests(DESCRIBE)).length;
 
@@ -619,9 +619,9 @@ describe("Beta 1 UX changes, rendered", () => {
       await browser.keys(["Enter"]);
       await frames();
       const listed = await browser.execute(() => {
-        const details = document.querySelector<HTMLDetailsElement>(".conversion-excluded");
+        const details = document.querySelector<HTMLElement>(".conversion-excluded");
         return {
-          open: details?.open ?? null,
+          open: details === null ? null : !details.hidden,
           names: [...(details?.querySelectorAll("li") ?? [])].map((item) => (item.textContent ?? "").trim()),
           // Long names wrap inside the disclosure rather than overflow it.
           overflow: [...(details?.querySelectorAll("li") ?? [])].some(
@@ -634,7 +634,10 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(listed).toEqual({ open: true, names: [OPEN.fileName, LONG.fileName], overflow: false, documentOverflow: 0 });
       await browser.keys([" "]);
       await frames();
-      expect(await browser.execute(() => document.querySelector<HTMLDetailsElement>(".conversion-excluded")?.open ?? null)).toBe(false);
+      expect(await browser.execute(() => {
+        const details = document.querySelector<HTMLElement>(".conversion-excluded");
+        return details === null ? null : !details.hidden;
+      })).toBe(false);
 
       // Read only: no new plan, the plan names the vendor row alone, and the mzML rows stay checked.
       expect((await requests(DESCRIBE)).length).toBe(asked);
@@ -646,7 +649,7 @@ describe("Beta 1 UX changes, rendered", () => {
       ).toEqual([true, true, true]);
 
       // O6/O7: a ready review explains no Stop, and says output-only for an output-only plan.
-      const review = await browser.$(".conversion-plan").getText();
+      const review = await browser.$(".conversion-panel").getText();
       expect(review).not.toContain(words.m74CnvStopQueue);
       expect(await browser.$("#conversion-validation-disclosure").getText()).toBe(words.m74CnvOutputOnly);
 

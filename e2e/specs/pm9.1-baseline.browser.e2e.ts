@@ -577,7 +577,7 @@ async function surfaceFrame(label: string) {
       regionName:
         main === null ? null : (document.getElementById(main.getAttribute("aria-labelledby") ?? "")?.textContent ?? null),
       title: title === null ? null : { text: title.textContent, ...box(title) },
-      primaries: [...(main?.querySelectorAll<HTMLButtonElement>(".primary-button") ?? [])]
+      primaries: [...(main?.querySelectorAll<HTMLButtonElement>(".primary-button, .ui-button--primary") ?? [])]
         .filter((button) => button.getClientRects().length > 0)
         .map((button) => ({ text: button.textContent, disabled: button.disabled, ...box(button) })),
       // The surface owns its own vertical overflow (L22).

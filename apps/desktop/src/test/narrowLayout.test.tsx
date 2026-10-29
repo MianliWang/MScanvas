@@ -200,41 +200,39 @@ describe("narrow desktop layout rules", () => {
 });
 
 describe("narrow desktop layout markup", () => {
-  it("keeps the conversion panel inside the column rather than beside it", () => {
+  it("keeps the conversion surface in two columns that each scroll their own content", () => {
     const app = mountStyles(appStyles);
-    const panel = requireStyleRule(app, ".panel.conversion-panel").style;
+    const panel = requireStyleRule(app, ".conversion-panel").style;
 
-    // As tall as its own content and no taller. A share of the column would
-    // take height from the list on every window that has the panel and leave an
-    // empty box on every window that does not.
-    expect(panel.getPropertyValue("flex")).toBe("0 1 auto");
-    // Its own overflow outranks `.panel`'s hidden. A long failure sentence or a
-    // long output name scrolls here rather than pushing the roster out.
-    expect(panel.getPropertyValue("overflow")).toBe("auto");
+    // The form and a 300 px summary that ends in the action it describes.
+    expect(panel.getPropertyValue("grid-template-columns")).toBe("minmax(0, 1fr) 300px");
     expect(panel.getPropertyValue("min-width")).toBe("0px");
-    // The header alone, so a squeezed panel still says which panel it is.
-    expect(panel.getPropertyValue("min-height")).toBe("54px");
+    // Each column is its own scroll owner: a long failure sentence or a long
+    // output name scrolls there rather than pushing the other column away.
+    const columns = requireStyleRule(app, ".conversion-main, .conversion-side").style;
+    expect(columns.getPropertyValue("overflow")).toBe("auto");
+    expect(columns.getPropertyValue("min-width")).toBe("0px");
+    expect(columns.getPropertyValue("min-height")).toBe("0px");
 
-    // The one primary action wraps rather than being clipped at any width.
+    // The actions wrap rather than being clipped at any width.
     expect(requireStyleRule(app, ".conversion-actions").style.getPropertyValue("flex-wrap")).toBe(
       "wrap",
     );
   });
 
   it("lets a queue of sixteen sit in the column without widening it", () => {
-    // The panel is in the narrow column with the roster, and a queue puts two
-    // file names on every line of it. Neither name may be what pushes the
-    // sidebar -- and the document -- past the window.
+    // A queue puts two file names on every row. Neither name may be what
+    // pushes the column -- and the document -- past the window.
     const app = mountStyles(appStyles);
 
-    const list = requireStyleRule(app, ".conversion-queue-list").style;
+    const list = requireStyleRule(app, ".conversion-queue-list, .conversion-requested-list").style;
     expect(list.getPropertyValue("min-width")).toBe("0px");
-    // The position is rendered as text, so the list marker would say it twice.
+    // The position is rendered as a cell or a circle, so the marker would say it twice.
     expect(list.getPropertyValue("list-style")).toBe("none");
 
-    const item = requireStyleRule(app, ".conversion-queue-list > li").style;
+    const item = requireStyleRule(app, ".conversion-run-list > li").style;
     expect(item.getPropertyValue("min-width")).toBe("0px");
-    expect(item.getPropertyValue("flex-wrap")).toBe("wrap");
+    expect(item.getPropertyValue("grid-template-columns")).toBe("26px minmax(0, 1fr) auto");
 
     // Both names shrink on the same terms, so a long acquisition name cannot
     // take the whole line from the name it converts to.
@@ -248,18 +246,18 @@ describe("narrow desktop layout markup", () => {
     expect(names.getPropertyValue("text-overflow")).toBe("ellipsis");
     expect(names.getPropertyValue("white-space")).toBe("nowrap");
 
-    // The state and a failure sentence take the next line whole and wrap
-    // there, rather than being clipped alongside the names. So does everything
-    // a backend-named set says about its result, for the same reason: a
+    // A failure sentence and everything a backend-named set says about its
+    // result wrap under the name rather than being clipped beside it: a
     // sentence clipped to a column width is a sentence the user cannot read.
+    expect(requireStyleRule(app, ".conversion-run-detail").style.getPropertyValue("grid-column")).toBe("2 / -1");
     const status = requireStyleRule(
       app,
-      ".conversion-queue-status, .conversion-queue-attempts, .conversion-queue-facts, " +
-        ".conversion-queue-reason, .conversion-queue-residue, .conversion-queue-set-result, " +
+      ".conversion-queue-attempts, .conversion-queue-facts, .conversion-queue-reason, " +
+        ".conversion-queue-retry, .conversion-queue-residue, .conversion-queue-set-result, " +
         ".conversion-queue-set-completeness, .conversion-queue-set-partial",
     ).style;
-    expect(status.getPropertyValue("flex")).toBe("1 0 100%");
     expect(status.getPropertyValue("overflow-wrap")).toBe("anywhere");
+    expect(status.getPropertyValue("min-width")).toBe("0px");
     // Two digits' worth, so item 10 does not shift the column item 9 set.
     expect(requireStyleRule(app, ".conversion-queue-order").style.getPropertyValue("min-width")).toBe(
       "1.6em",
@@ -276,23 +274,26 @@ describe("narrow desktop layout markup", () => {
     expect(
       requireStyleRule(
         app,
-        '.conversion-queue-list > li[data-item-state="failed"] > .conversion-queue-status, .conversion-queue-reason',
+        '.conversion-run-list > li:is([data-item-state="failed"], [data-item-state="cancellationFailed"]) .conversion-queue-status',
       ).style.getPropertyValue("color"),
     ).toBe("var(--color-danger)");
+    expect(requireStyleRule(app, ".conversion-queue-reason").style.getPropertyValue("color")).toBe(
+      "var(--color-danger)",
+    );
     expect(
       requireStyleRule(
         app,
-        '.conversion-queue-list > li[data-item-state="finalized"] > .conversion-queue-status',
+        '.conversion-run-list > li[data-item-state="finalized"] .conversion-queue-status',
       ).style.getPropertyValue("color"),
     ).toBe("var(--color-success)");
-    // The running item is the one the user is watching, so it is the one that
-    // takes the primary colour and the weight.
+    // The running item is the one the user is watching, so it takes the
+    // accent and the weight.
     const running = requireStyleRule(
       app,
-      '.conversion-queue-list > li[data-item-state="running"] > .conversion-queue-status',
+      '.conversion-run-list > li[data-item-state="running"] .conversion-queue-status',
     ).style;
-    expect(running.getPropertyValue("color")).toBe("var(--color-text-primary)");
-    expect(running.getPropertyValue("font-weight")).toBe("600");
+    expect(running.getPropertyValue("color")).toBe("var(--color-accent-hover)");
+    expect(running.getPropertyValue("font-weight")).toBe("650");
   });
 
   it("gives the source family a track of its own without taking the name's", () => {
@@ -575,14 +576,11 @@ describe("narrow desktop layout markup", () => {
     // happen to be adjacent, which at 586 CSS pixels is the difference between
     // a column and a pile.
     const app = mountStyles(appStyles);
-    const adoption = requireStyleRule(app, ".conversion-adoption").style;
-    const diagnostics = requireStyleRule(app, ".conversion-diagnostics").style;
-
-    for (const property of ["display", "flex-direction", "gap", "padding-top", "border-top"]) {
-      expect(diagnostics.getPropertyValue(property)).toBe(adoption.getPropertyValue(property));
-    }
-    expect(diagnostics.getPropertyValue("display")).toBe("flex");
-    expect(diagnostics.getPropertyValue("flex-direction")).toBe("column");
+    // One rule for both, so the two shapes cannot drift apart.
+    const offers = requireStyleRule(app, ".conversion-adoption, .conversion-diagnostics").style;
+    expect(offers.getPropertyValue("display")).toBe("flex");
+    expect(offers.getPropertyValue("flex-direction")).toBe("column");
+    expect(offers.getPropertyValue("border-top")).not.toBe("");
   });
 
   it("lets a digest break rather than widen the column it sits in", () => {

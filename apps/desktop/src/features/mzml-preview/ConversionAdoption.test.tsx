@@ -207,10 +207,10 @@ describe("adding converted outputs to the workspace", () => {
     });
     const search = screen.getByRole("searchbox", { name: /search/i });
     fireEvent.change(search, { target: { value: "run" } });
-    const sort = screen.getByRole("combobox", { name: "Execution order" });
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const sort = within(panel).getByRole("combobox", { name: "Execution order" });
     fireEvent.change(sort, { target: { value: "name-asc" } });
 
-    const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(
       await within(panel).findByRole("button", { name: "Add converted outputs to workspace" }),
     );
@@ -418,7 +418,7 @@ describe("adding converted outputs to the workspace", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     // Both are offered before either runs.
-    expect(await within(panel).findByRole("button", { name: "Retry 1 failed" })).toBeEnabled();
+    expect(await within(panel).findByRole("button", { name: "Retry 1 failed" })).not.toHaveAttribute("aria-disabled");
     fireEvent.click(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
     );

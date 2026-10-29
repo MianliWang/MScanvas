@@ -61,6 +61,15 @@ function queueResult(): HTMLElement {
   return result as HTMLElement;
 }
 
+/** The finished or running queue's summary column: its status, actions and bound facts. */
+function queueSummary(): HTMLElement {
+  const result = document.querySelector(".conversion-run-summary");
+  if (result === null) {
+    throw new Error("expected a queue summary on screen");
+  }
+  return result as HTMLElement;
+}
+
 function liveRegion(): string {
   return document.querySelector("[data-live-region='conversion']")?.textContent ?? "";
 }
@@ -269,7 +278,7 @@ describe("destination request and queue truth", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await waitFor(() => expect(within(panel).getByText("Requested destination")).toBeVisible());
-    const actual = queueResult();
+    const actual = queueSummary();
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
     expect(within(actual).getByText("Destination binding").nextElementSibling?.textContent).toBe(
       destinationStatus === "bound" ? en.m74CnvDestinationBound : en.m74CnvDestinationUnbound,
@@ -539,11 +548,11 @@ describe("queueing selected Thermo RAW conversions", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /run-2\.raw/ });
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.change(within(panel).getByRole("combobox", { name: "Execution order" }), {
       target: { value: "name-desc" },
     });
     selectAllRows();
-    const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
       expect(within(panel).getByRole("button", { name: "Convert 2 eligible…" })).not.toHaveAttribute("aria-disabled");
     });
@@ -782,7 +791,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     expect(item).toHaveTextContent("28.0 KiB");
     expect(item).toHaveTextContent(en.m74CnvResidue);
     // And a run that produced something did have its output judged.
-    expect(within(queueResult()).getByText(en.m74CnvOutputOnly, VISIBLE)).toBeVisible();
+    expect(within(queueSummary()).getByText(en.m74CnvOutputOnly, VISIBLE)).toBeVisible();
   });
 
   it("does not claim output-only validation over files it never inspected", async () => {
@@ -828,7 +837,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     // Scoped to the result. The plan below it says the same sentence about the
     // conversion the user could start next, which is a different claim and a
     // true one.
-    expect(within(queueResult()).queryByText(en.m74CnvOutputOnly, VISIBLE)).toBeNull();
+    expect(within(queueSummary()).queryByText(en.m74CnvOutputOnly, VISIBLE)).toBeNull();
     // And the live region is a second path to the same claim, so it answers to
     // the same rule rather than announcing what the screen does not say.
     await waitFor(() => {
@@ -872,7 +881,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     renderApp(api);
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toBeEnabled());
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).not.toHaveAttribute("aria-disabled"));
     fireEvent.click(within(panel).getByRole("button", { name: "Retry 1 failed" }));
 
     // The retry has not answered, and the interface has stopped offering work.
@@ -922,7 +931,7 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toBeDisabled();
+      expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAttribute("aria-disabled", "true");
     });
     // And it still says what it would do, so the reason it is unavailable is
     // the backend rather than the control having quietly changed meaning.

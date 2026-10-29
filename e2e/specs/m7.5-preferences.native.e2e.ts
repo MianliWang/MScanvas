@@ -55,7 +55,7 @@ const DIALOG = "[data-settings-dialog]", ENTRY = "[data-settings-entry]";
 const ROSTER = '[aria-controls="workbench-roster"]', SHELL = ".workbench-shell";
 const ROW = '.dataset-roster-list [role="row"][data-handle]';
 const BANNER = "[data-backend-status]", HELP = "[data-backend-help]";
-const PANEL = ".conversion-panel", CONVERT = PANEL + " .conversion-plan button.primary-button";
+const PANEL = ".conversion-panel", CONVERT = PANEL + " button.conversion-start";
 const input = process.env.MSCANVAS_M75_INPUT_ROOT;
 const root = requireOwnedPreferenceRoot(process.env[PREFERENCE_ROOT_VARIABLE]);
 /** The real per-user record, read only to show this campaign never made one. */

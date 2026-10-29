@@ -11,7 +11,7 @@ import { installM74PreviewBlobObserver } from "../support/m74PreviewBlobObserver
 import type { ObservedPreviewBlob } from "../support/m74PreviewBlobObserver";
 
 const HERE = dirname(fileURLToPath(import.meta.url)), REPO = resolve(HERE, "../..");
-const PANEL = ".conversion-panel", CONVERT = PANEL + " .conversion-plan button.primary-button", RESULT = PANEL + " .conversion-running";
+const PANEL = ".conversion-panel", CONVERT = PANEL + " button.conversion-start", RESULT = PANEL + " .conversion-running";
 const ROWS = ".grouped-roster [data-handle]", FIGURE = '[role="dialog"].figure-export-dialog';
 const input = process.env.MSCANVAS_M74_INPUT_ROOT;
 const evidence: unknown[] = [], sources = new Map<string, string>();
@@ -345,7 +345,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     lastOutput = join(folder, item.finalizedOutputs[0]!.fileName);
     const report = item.result?.kind === "single" ? item.result.report : null;
     expect(report?.output?.sha256.toLowerCase()).toBe(digest(lastOutput)); expect(report?.validation?.fullyVerified).toBe(false);
-    await browser.$(RESULT + " .conversion-queue-list > li:last-child details summary").click(); await capture("01-native-independent-judgments");
+    await browser.$(RESULT + " .conversion-queue-list > li:last-child .conversion-item-toggle").click(); await capture("01-native-independent-judgments");
     const diagnostics = join(output, "conversion-failure-diagnostics.json");
     expect(await browser.$("#conversion-diagnostics-scope").getText()).toContain("Review the file before sharing.");
     await save(".conversion-diagnostics", "Export failure diagnostics…", "Save conversion diagnostics", diagnostics);

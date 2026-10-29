@@ -52,7 +52,7 @@ const VENDOR = `.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`;
 // The two controls by their place rather than their weight: the start control
 // is the next conversion's, the rerun the finished queue's (PM9.4).
 const START = CONVERT;
-const RETRY = `${PANEL} .conversion-running .conversion-actions button.secondary-button`;
+const RETRY = `${PANEL} .conversion-running .conversion-actions button.ui-button--secondary`;
 const SEARCH = "#dataset-roster-search";
 const SORT = "#dataset-roster-sort";
 

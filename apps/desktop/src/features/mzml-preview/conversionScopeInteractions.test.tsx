@@ -40,7 +40,7 @@ function select(handle: string, additive = false) {
 }
 
 function scopeAll() { fireEvent.click(screen.getByRole("radio", { name: "All workspace rows" })); }
-function button() { return document.querySelector<HTMLButtonElement>(".conversion-plan .primary-button")!; }
+function button() { return document.querySelector<HTMLButtonElement>(".conversion-start")!; }
 async function ready() { await waitFor(() => expect(button()).not.toHaveAttribute("aria-disabled")); }
 
 async function organizeRow(handle: string) {
@@ -73,7 +73,7 @@ describe("M6.7 through the production conversion surface", () => {
     expect(api.planRequests()).toEqual(before);
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-3"]);
     expect(reads).not.toHaveBeenCalled(); expect(opens).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "name-desc" } });
+    fireEvent.change(within(document.querySelector<HTMLElement>(".conversion-panel")!).getByRole("combobox", { name: "Execution order" }), { target: { value: "name-desc" } });
     await ready();
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-3", "raw-1"]);
   });
@@ -202,7 +202,7 @@ describe("M6.7 through the production conversion surface", () => {
     await organizeRow("raw-1");
     fireEvent.click(screen.getByRole("button", { name: "Undo organization" }));
     const retry = screen.getByRole("button", { name: "Retry 2 failed" });
-    await waitFor(() => expect(retry).toBeEnabled());
+    await waitFor(() => expect(retry).not.toHaveAttribute("aria-disabled"));
     fireEvent.click(retry);
     // Retry names the existing Rust slot; it carries no new scope or handles.
     await waitFor(() => expect(retryCall).toHaveBeenCalledExactlyOnceWith());
