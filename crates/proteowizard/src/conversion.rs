@@ -1790,12 +1790,23 @@ fn judge_against_source(
     output: ConversionOutputInspection,
     intent: ConversionIntent,
 ) -> ConversionIntegrityOutcome {
+    judge_against_source_with(source, output, intent, None)
+}
+
+/// [`judge_against_source`], with the ADR 0055 decision 5 checks an advanced
+/// intent asks for. The source is revalidated either way.
+fn judge_against_source_with(
+    source: &ConversionSourceFacts,
+    output: ConversionOutputInspection,
+    intent: ConversionIntent,
+    advanced: Option<AdvancedOutputChecks>,
+) -> ConversionIntegrityOutcome {
     match revalidate_source(source.object()) {
         Ok(true) => {}
         Ok(false) => return ConversionIntegrityOutcome::SourceChangedDuringConversion,
         Err(outcome) => return outcome,
     }
-    compare_documents(source, output, intent)
+    compare_documents_with(source, output, intent, advanced)
 }
 
 /// Whether the source object is still the one that was admitted.
@@ -1823,16 +1834,9 @@ fn revalidate_source(source: &SourceObjectFacts) -> Result<bool, ConversionInteg
     Ok(sha256 == source.sha256)
 }
 
-fn compare_documents(
-    source: &ConversionSourceFacts,
-    output: ConversionOutputInspection,
-    intent: ConversionIntent,
-) -> ConversionIntegrityOutcome {
-    compare_documents_with(source, output, intent, None)
-}
-
-/// [`compare_documents`], with the ADR 0055 decision 5 checks an advanced
-/// intent asks for. `None` is the verified rows' judgement, unchanged.
+/// Compares the output against the source, with the ADR 0055 decision 5
+/// checks an advanced intent asks for. `None` is the verified rows'
+/// judgement, unchanged.
 ///
 /// A requested change is decided up front, never by catching the failure it
 /// would cause: a list whose count the request changed is not paired with the
