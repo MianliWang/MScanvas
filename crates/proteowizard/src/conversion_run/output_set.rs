@@ -1371,8 +1371,8 @@ pub fn run_admitted_multi_output_conversion_seamed(
             SetAttemptEvidence::before_staging(),
         );
     }
-    // The same predicate the single-output boundary applies, asked here for the
-    // same reason: a family is evidence about the build it was measured on, and
+    // A measured row and nothing less. ADR 0055's relaxed gate does not reach a
+    // set: its completeness audit is bound to the evidenced build (ADR 0024), so
     // an installation that merely calls itself that build is not that build.
     if !super::provider_build_is_evidenced(capabilities, source.kind()) {
         return refused(

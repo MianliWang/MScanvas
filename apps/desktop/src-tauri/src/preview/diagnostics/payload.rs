@@ -146,6 +146,11 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
     item.optional_string("refusal", ticket.refusal.as_deref());
     item.optional_string("refusalDetail", ticket.refusal_detail.as_deref());
     item.boolean("retryable", ticket.retryable);
+    // An addition, so the schema version stands. `null` on a measured build.
+    item.optional_string(
+        "unverifiedBuildRelease",
+        ticket.unverified_build_release.as_deref(),
+    );
     // Beside the record rather than inside it. A refused output keeps no
     // record, and a check reported without its scope says less than the
     // boundary established. `null` only where no conversion was reached.
@@ -673,6 +678,7 @@ mod tests {
             attempt: AttemptFacts::NOTHING_RAN,
             text: None,
             output_set: None,
+            unverified_build_release: Some("3.0.26204".to_owned()),
         };
 
         let mut out = String::new();
@@ -684,6 +690,7 @@ mod tests {
         // Stated beside the record, so a refused output -- which keeps no
         // record at all -- still says what it was checked against.
         assert_eq!(document["item"]["validationMode"], "source_comparison");
+        assert_eq!(document["item"]["unverifiedBuildRelease"], "3.0.26204");
         let validation = &document["item"]["validation"];
         let mut keys: Vec<&str> = validation
             .as_object()
@@ -759,6 +766,7 @@ mod tests {
             },
             text: None,
             output_set: None,
+            unverified_build_release: None,
         };
 
         let mut out = String::new();
@@ -767,6 +775,7 @@ mod tests {
         root.end();
 
         let document: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert!(document["item"]["unverifiedBuildRelease"].is_null());
         let staged = &document["item"]["stagedOutput"];
         assert_eq!(staged["kind"], "observed");
         assert_eq!(staged["entryCount"], 49);

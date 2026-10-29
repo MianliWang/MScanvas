@@ -3902,10 +3902,11 @@ fn a_vendor_source_replaced_or_rewritten_before_the_run_is_refused() {
 
 // --- Capability binding -----------------------------------------------------
 
-/// One successful conversion is evidence about the build it ran on. A vendor
-/// family is refused on every other build, before a staging area exists.
+/// ADR 0055's relaxed gate (2026-10-29): a Thermo acquisition converts on any
+/// build that reports its release, and on none that does not, which is refused
+/// before a staging area exists.
 #[test]
-fn a_vendor_family_runs_only_on_a_build_it_has_evidence_for() {
+fn a_thermo_acquisition_converts_on_any_build_that_reports_its_release() {
     let directory = TestDirectory::new();
     let source = write_thermo_source(directory.path(), "acquisition.raw");
 
@@ -3939,41 +3940,91 @@ fn a_vendor_family_runs_only_on_a_build_it_has_evidence_for() {
     assert_eq!(calls, 1);
     assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
 
-    // A later release is not this release.
-    let (outcome, calls, entries) = attempt(&capabilities_reporting("3.0.26204", Some("a09eea9")));
+    // A later release, a different revision, no revision, and the measured
+    // strings out of a different binary: each is unverified, and each converts.
+    for installed in [
+        capabilities_reporting("3.0.26204", Some("a09eea9")),
+        capabilities_reporting(EVIDENCED_RELEASE, Some("deadbee")),
+        capabilities_reporting(EVIDENCED_RELEASE, None),
+        capabilities_reporting_for(
+            EVIDENCED_RELEASE,
+            Some(EVIDENCED_REVISION),
+            EXECUTABLE_SHA256,
+        ),
+    ] {
+        let (outcome, calls, entries) = attempt(&installed);
+        assert_eq!(outcome, "finalized");
+        assert_eq!(calls, 1);
+        assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
+    }
+
+    // Help that declares no release at all leaves nothing to name in the label.
+    let (outcome, calls, entries) = attempt(&capabilities());
     assert_eq!(outcome, "source_family_not_evidenced");
-    assert_eq!(calls, 0, "an unevidenced build launched a backend");
+    assert_eq!(calls, 0, "a build without a release launched a backend");
     assert!(
         entries.is_empty(),
-        "an unevidenced build created {entries:?}"
+        "a build without a release created {entries:?}"
     );
+}
 
-    // The right release built from a different revision is a different build.
-    let (outcome, ..) = attempt(&capabilities_reporting(EVIDENCED_RELEASE, Some("deadbee")));
-    assert_eq!(outcome, "source_family_not_evidenced");
+/// The gate's whole table: verified on the measured build, labelled with the
+/// release on any other build that reports one, and refused otherwise. SCIEX is
+/// never relaxed, and mzML is never gated.
+#[test]
+fn the_provider_build_admission_is_measured_unverified_or_refused() {
+    use ConversionSourceKind::{MzmlFile, SciexWiffBundle, ShimadzuLcdFile, ThermoRawFile};
+    let unverified = |release: &str| ProviderBuildAdmission::Unverified {
+        release: release.to_owned(),
+    };
 
-    // A build that will not say which it is cannot be matched against evidence
-    // recorded for a specific one.
-    let (outcome, ..) = attempt(&capabilities_reporting(EVIDENCED_RELEASE, None));
-    assert_eq!(outcome, "source_family_not_evidenced");
+    let measured = evidenced_capabilities();
+    for kind in [MzmlFile, ThermoRawFile, ShimadzuLcdFile, SciexWiffBundle] {
+        assert_eq!(
+            provider_build_admission(&measured, kind),
+            ProviderBuildAdmission::Evidenced,
+            "{kind:?}"
+        );
+    }
 
-    // Help that declares no release at all is the case every existing test
-    // fixture is in, and it is refused for the same reason.
-    let (outcome, ..) = attempt(&capabilities());
-    assert_eq!(outcome, "source_family_not_evidenced");
-
-    // The right release and the right revision out of a different binary. Two
-    // strings from a help banner say what a build calls itself; the evidence was
-    // taken against an artifact, and an installation with the vendor libraries
-    // missing or replaced would answer these two identically.
-    let (outcome, calls, entries) = attempt(&capabilities_reporting_for(
+    // The measured release and revision from another executable: the label is
+    // bound to the whole row, not to the banner.
+    let substituted = capabilities_reporting_for(
         EVIDENCED_RELEASE,
         Some(EVIDENCED_REVISION),
         EXECUTABLE_SHA256,
-    ));
-    assert_eq!(outcome, "source_family_not_evidenced");
-    assert_eq!(calls, 0);
-    assert!(entries.is_empty());
+    );
+    let later = capabilities_reporting("3.0.26204", Some("a09eea9"));
+    let no_revision = capabilities_reporting("3.0.26204", None);
+    for (installed, release) in [
+        (&substituted, EVIDENCED_RELEASE),
+        (&later, "3.0.26204"),
+        (&no_revision, "3.0.26204"),
+    ] {
+        for kind in [ThermoRawFile, ShimadzuLcdFile] {
+            let admission = provider_build_admission(installed, kind);
+            assert_eq!(admission, unverified(release), "{kind:?}");
+            assert!(admission.admits());
+            assert_eq!(admission.unverified_release(), Some(release));
+        }
+        assert_eq!(
+            provider_build_admission(installed, SciexWiffBundle),
+            ProviderBuildAdmission::Refused
+        );
+        assert_eq!(
+            provider_build_admission(installed, MzmlFile),
+            ProviderBuildAdmission::Evidenced
+        );
+    }
+
+    let silent = capabilities();
+    for kind in [ThermoRawFile, ShimadzuLcdFile, SciexWiffBundle] {
+        let admission = provider_build_admission(&silent, kind);
+        assert_eq!(admission, ProviderBuildAdmission::Refused, "{kind:?}");
+        assert!(!admission.admits());
+        assert_eq!(admission.unverified_release(), None);
+    }
+    assert!(provider_build_admission(&silent, MzmlFile).admits());
 }
 
 /// The gate is about the vendor family, not about conversion in general: an
@@ -4847,9 +4898,10 @@ fn a_compound_file_run_that_left_more_than_the_planned_output_finalizes_nothing(
 }
 
 /// The build gate is per family, and the second row was added rather than the
-/// first widened. A build with no evidence for this family launches nothing.
+/// first widened. Under ADR 0055's relaxed gate the family converts, unverified,
+/// on any build that reports its release, and on none that does not.
 #[test]
-fn the_compound_file_family_runs_only_on_a_build_it_has_evidence_for() {
+fn the_compound_file_family_converts_on_any_build_that_reports_its_release() {
     assert!(ConversionSourceKind::ShimadzuLcdFile.requires_provider_build_evidence());
     assert_eq!(
         ConversionSourceKind::ShimadzuLcdFile.stable_id(),
@@ -4903,8 +4955,8 @@ fn the_compound_file_family_runs_only_on_a_build_it_has_evidence_for() {
     assert_eq!(calls, 1);
     assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
 
-    // A later release, a different revision, a build that will not say, and the
-    // same two strings out of a different binary. Each is a different build.
+    // A later release, a different revision, no revision, and the same two
+    // strings out of a different binary. Each is unverified and converts.
     for installed in [
         capabilities_reporting("3.0.26204", Some("a09eea9")),
         capabilities_reporting(EVIDENCED_RELEASE, Some("deadbee")),
@@ -4916,13 +4968,19 @@ fn the_compound_file_family_runs_only_on_a_build_it_has_evidence_for() {
         ),
     ] {
         let (outcome, calls, entries) = attempt(&installed);
-        assert_eq!(outcome, "source_family_not_evidenced");
-        assert_eq!(calls, 0, "an unevidenced build launched a backend");
-        assert!(
-            entries.is_empty(),
-            "an unevidenced build created {entries:?}"
-        );
+        assert_eq!(outcome, "finalized");
+        assert_eq!(calls, 1);
+        assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
     }
+
+    // A build that cannot report its release converts nothing.
+    let (outcome, calls, entries) = attempt(&capabilities());
+    assert_eq!(outcome, "source_family_not_evidenced");
+    assert_eq!(calls, 0, "a build without a release launched a backend");
+    assert!(
+        entries.is_empty(),
+        "a build without a release created {entries:?}"
+    );
 }
 
 /// The measured spelling for this family, which agrees with the other vendor

@@ -605,3 +605,11 @@ The owner also set direction for the work after beta 1, recorded in the
 conversion is to be no less capable than msconvert, through verified defaults
 plus an advanced set of msconvert options labelled unverified; and the
 frontend falls short in both execution and scope.
+
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** Vendor
+conversion is no longer bound to 3.0.26013 after beta 1. Thermo RAW and
+Shimadzu LCD convert on any build that reports its release, labelled
+"unverified build" with that release when the build has no measured row;
+`SciexWiffBundle` stays bound to the measured build; a build that cannot report
+its release converts no vendor family. Beta 1 itself shipped with the binding
+recorded above.

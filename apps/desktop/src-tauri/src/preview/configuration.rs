@@ -13,7 +13,9 @@
 //!
 //! [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
 
-use mscanvas_proteowizard::{ConversionIntent, InstalledHelpCapabilities, OpenFormat};
+use mscanvas_proteowizard::{
+    ConversionIntent, ConversionSourceKind, InstalledHelpCapabilities, OpenFormat,
+};
 
 use super::authority::{BackendBindingReceipt, Binding};
 use super::dto::{
@@ -135,6 +137,10 @@ pub(crate) enum RowAdmission {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConversionCatalog {
     rows: Vec<CatalogRow>,
+    /// Each convertible family this build admits without a measured row, with
+    /// the release its "unverified build" label names (ADR 0055's relaxed
+    /// gate). Read with the grammar, because a plan runs no discovery.
+    unverified_builds: Vec<(ConversionSourceKind, String)>,
 }
 
 impl ConversionCatalog {
@@ -157,6 +163,12 @@ impl ConversionCatalog {
                 .map(|admitted| CatalogRow {
                     intent: admitted.intent(),
                     availability: Self::availability_of(admitted.intent(), capabilities),
+                })
+                .collect(),
+            unverified_builds: super::conversion::convertible_source_kinds()
+                .filter_map(|kind| {
+                    super::conversion::unverified_build_release(capabilities, kind)
+                        .map(|release| (kind, release))
                 })
                 .collect(),
         }
@@ -406,6 +418,18 @@ impl ConversionConfigurations {
                     RowAdmission::NotEvidencedForSources
                 }
             })
+    }
+
+    /// The families this binding's build admits unverified, with the release
+    /// each label names. Empty without a catalog and on a measured build.
+    pub(crate) fn unverified_builds(
+        &mut self,
+        binding: Binding,
+    ) -> Vec<(ConversionSourceKind, String)> {
+        match self.for_binding(binding) {
+            ConversionConfiguration::Ready { catalog } => catalog.unverified_builds.clone(),
+            _ => Vec::new(),
+        }
     }
 
     pub(crate) fn for_binding(&mut self, binding: Binding) -> &ConversionConfiguration {

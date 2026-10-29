@@ -159,6 +159,9 @@ pub(super) struct ConversionFailureDiagnosticTicket {
     /// Present only for a set item, which is why an export of an ordinary queue
     /// is byte-identical to what it was before this existed.
     output_set: Option<OutputSetDiagnosticFacts>,
+    /// The release the "unverified build" label names, for a single-output
+    /// attempt that ran on a build with no measured row (ADR 0055).
+    unverified_build_release: Option<String>,
 }
 
 /// What an export says about one backend-named set's attempt.
@@ -293,6 +296,7 @@ impl ConversionFailureDiagnosticTicket {
             // its job, and the run itself already declined to retain its text.
             text: (state == ItemState::Failed).then_some(text).flatten(),
             output_set: None,
+            unverified_build_release: report.unverified_build_release().map(str::to_owned),
         })
     }
 
@@ -361,6 +365,7 @@ impl ConversionFailureDiagnosticTicket {
             attempt,
             text: (state == ItemState::Failed).then_some(text).flatten(),
             output_set: Some(facts),
+            unverified_build_release: None,
         })
     }
 
@@ -400,6 +405,7 @@ impl ConversionFailureDiagnosticTicket {
             // A refusal reaches every family, so the shape comes from the item
             // rather than from the run it never made.
             output_set,
+            unverified_build_release: None,
         }
     }
 
@@ -447,6 +453,7 @@ impl ConversionFailureDiagnosticTicket {
             // reaches the run before it settles, so these are the shape and
             // nothing else -- see `SetStopFacts::bound_source_objects`.
             output_set,
+            unverified_build_release: None,
         })
     }
 

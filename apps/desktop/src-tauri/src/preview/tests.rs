@@ -7269,6 +7269,17 @@ fn capabilities_declaring(
     .expect("parse the msconvert help fixture")
 }
 
+/// Capabilities whose help reports no release: the one build ADR 0055's
+/// relaxed gate still refuses every vendor family on.
+fn capabilities_without_a_release() -> InstalledHelpCapabilities {
+    let capabilities = conversion_capabilities("", None, EVIDENCED_EXECUTABLE_SHA256);
+    assert!(
+        capabilities.provider_build().is_none(),
+        "no release is reported"
+    );
+    capabilities
+}
+
 /// Capabilities for the exact build the vendor evidence was recorded on.
 fn evidenced_capabilities() -> InstalledHelpCapabilities {
     conversion_capabilities(
@@ -8063,21 +8074,22 @@ fn a_handle_the_session_never_issued_converts_nothing() {
     assert_eq!(entry_names(&destination), Vec::<String>::new());
 }
 
-/// A build the repository has no vendor evidence for is refused before anything
-/// is created and before any process is launched.
+/// A build that cannot report its release is refused before anything is
+/// created and before any process is launched (ADR 0055's relaxed gate leaves
+/// it nothing to name in the label).
 ///
-/// The refusal is the point, and so is where it happens: an unevidenced build
-/// must not reach the stage where a staging directory exists, because a caller
-/// then has to be told about a directory as well as a refusal.
+/// The refusal is the point, and so is where it happens: a refused build must
+/// not reach the stage where a staging directory exists, because a caller then
+/// has to be told about a directory as well as a refusal.
 #[test]
-fn an_unevidenced_build_refuses_a_vendor_conversion_before_it_stages_anything() {
+fn a_build_without_a_release_refuses_a_vendor_conversion_before_it_stages_anything() {
     let fixture = TestFile::new("unevidenced-build");
     let acquisition = fixture.thermo_raw("acquisition.raw");
     let destination = fixture.destination("out");
     let runner = FakeConversionRunner::new(BackendAct::Convert);
     let launches = runner.launches();
     let provider = Box::new(ConvertingProvider::new(
-        conversion_capabilities("3.0.99999", Some("deadbee"), EVIDENCED_EXECUTABLE_SHA256),
+        capabilities_without_a_release(),
         runner,
     ));
     let service = PreviewService::new(provider);
@@ -8104,9 +8116,9 @@ fn an_unevidenced_build_refuses_a_vendor_conversion_before_it_stages_anything() 
 
 /// The same build, reporting the same release and revision, from a different
 /// executable. Two strings out of a help banner say what a build calls itself,
-/// not what it is.
+/// not what it is: it converts, labelled unverified, never as the measured one.
 #[test]
-fn a_build_naming_the_evidenced_release_from_another_executable_is_still_refused() {
+fn a_build_naming_the_evidenced_release_from_another_executable_converts_unverified() {
     let fixture = TestFile::new("substituted-executable");
     let acquisition = fixture.thermo_raw("acquisition.raw");
     let destination = fixture.destination("out");
@@ -8123,11 +8135,17 @@ fn a_build_naming_the_evidenced_release_from_another_executable_is_still_refused
         .add_thermo_dataset(&acquisition)
         .expect("admit the acquisition");
 
-    let error = service
+    let report = service
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
-        .expect_err("evidence is about an artifact, not about what it calls itself");
+        .expect("a build that reports its release converts")
+        .to_dto();
 
-    assert_eq!(error.kind, "provider_build_not_evidenced");
+    assert_eq!(report.outcome, "finalized");
+    assert_eq!(
+        report.unverified_build_release.as_deref(),
+        Some(EVIDENCED_RELEASE),
+        "evidence is about an artifact, not about what it calls itself"
+    );
 }
 
 /// An mzML source needs no vendor evidence, because the repository's evidence
@@ -9266,8 +9284,10 @@ fn a_chromatogram_only_shimadzu_output_is_finalized() {
 }
 
 /// The gate is asked about this family, on this build, before anything exists.
+/// Under ADR 0055's relaxed gate any build that reports its release converts,
+/// labelled with that release; a build that cannot report one converts nothing.
 #[test]
-fn a_shimadzu_conversion_runs_only_on_a_build_evidenced_for_this_family() {
+fn a_shimadzu_conversion_runs_on_any_build_that_reports_its_release() {
     let fixture = TestFile::new("shimadzu-evidence");
     let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
 
@@ -9283,25 +9303,29 @@ fn a_shimadzu_conversion_runs_only_on_a_build_evidenced_for_this_family() {
         let outcome =
             service.convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail);
         (
-            outcome.map(|report| report.to_dto().outcome),
+            outcome.map(|report| report.to_dto()),
             launches.load(Ordering::SeqCst),
             entry_names(&destination),
         )
     };
 
-    let (outcome, launches, entries) = attempt(evidenced_capabilities(), "evidenced");
-    assert_eq!(outcome.expect("the evidenced build converts"), "finalized");
+    let (report, launches, entries) = attempt(evidenced_capabilities(), "evidenced");
+    let report = report.expect("the evidenced build converts");
+    assert_eq!(report.outcome, "finalized");
+    assert_eq!(
+        report.unverified_build_release, None,
+        "measured, so no label"
+    );
     assert_eq!(launches, 1);
     assert_eq!(entries, vec!["acquisition.mzML"]);
 
-    // A different release, a different revision, a build that will not say, and
-    // the same two strings out of a different executable. Every one of them is
-    // refused, nothing is launched, and the destination stays empty -- the
-    // refusal happens before a staging directory could exist.
-    for (capabilities, label) in [
+    // A different release, a different revision, no revision, and the same two
+    // strings out of a different executable: each converts, labelled.
+    for (capabilities, label, release) in [
         (
             conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
             "other-release",
+            "3.0.26204",
         ),
         (
             conversion_capabilities(
@@ -9310,10 +9334,12 @@ fn a_shimadzu_conversion_runs_only_on_a_build_evidenced_for_this_family() {
                 EVIDENCED_EXECUTABLE_SHA256,
             ),
             "other-revision",
+            EVIDENCED_RELEASE,
         ),
         (
             conversion_capabilities(EVIDENCED_RELEASE, None, EVIDENCED_EXECUTABLE_SHA256),
             "no-revision",
+            EVIDENCED_RELEASE,
         ),
         (
             conversion_capabilities(
@@ -9322,23 +9348,31 @@ fn a_shimadzu_conversion_runs_only_on_a_build_evidenced_for_this_family() {
                 OTHER_EXECUTABLE_SHA256,
             ),
             "other-executable",
+            EVIDENCED_RELEASE,
         ),
     ] {
-        let (outcome, launches, entries) = attempt(capabilities, label);
+        let (report, launches, entries) = attempt(capabilities, label);
+        let report = report.expect("a build that reports its release converts");
+        assert_eq!(report.outcome, "finalized", "{label}");
         assert_eq!(
-            outcome.expect_err("an unevidenced build is refused").kind,
-            "provider_build_not_evidenced",
+            report.unverified_build_release.as_deref(),
+            Some(release),
             "{label}"
         );
-        assert_eq!(
-            launches, 0,
-            "{label}: an unevidenced build launched a process"
-        );
-        assert!(
-            entries.is_empty(),
-            "{label}: an unevidenced build created {entries:?}"
-        );
+        assert_eq!(launches, 1, "{label}");
+        assert_eq!(entries, vec!["acquisition.mzML"], "{label}");
     }
+
+    // Nothing to name in the label, so nothing is launched or created.
+    let (report, launches, entries) = attempt(capabilities_without_a_release(), "no-release");
+    assert_eq!(
+        report
+            .expect_err("a build without a release is refused")
+            .kind,
+        "provider_build_not_evidenced"
+    );
+    assert_eq!(launches, 0);
+    assert!(entries.is_empty(), "a refused build created {entries:?}");
 }
 
 /// Every handle that is not a live Shimadzu row, refused.
@@ -11730,12 +11764,15 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "receipt",
             "sourceKind",
             "stagingResidue",
+            // ADR 0055's label, `null` on the measured build this ran on.
+            "unverifiedBuildRelease",
             "validation",
             // The scope of the check, stated beside the record rather than
             // inside it: a refused output keeps no record and still has one.
             "validationMode",
         ]
     );
+    assert!(report["unverifiedBuildRelease"].is_null());
     assert_eq!(
         sorted_keys(&report["backend"]),
         vec!["elapsedMilliseconds", "exitCode"]
@@ -15768,8 +15805,10 @@ fn a_chromatogram_only_shimadzu_result_completes_the_visible_queue() {
 #[test]
 fn an_unevidenced_build_refuses_a_queue_before_the_destination_picker() {
     let fixture = TestFile::new("preflight-evidence");
+    // ADR 0055's relaxed gate: the one build every vendor family is still
+    // refused on is the one that cannot report its release.
     let service = PreviewService::new(Box::new(ConvertingProvider::new(
-        conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+        capabilities_without_a_release(),
         FakeConversionRunner::new(BackendAct::Convert),
     )));
     let document = current_document(&service);
@@ -16387,6 +16426,51 @@ fn a_chosen_intent() -> ConversionIntent {
         "the proof needs a row a fallback to the shipped posture would not land on"
     );
     chosen
+}
+
+/// ADR 0055's relaxed gate, on the plan: every row on a build without a
+/// measured row names the release its "unverified build" label shows, and no
+/// row does on the measured build. The plan runs no discovery, so this is read
+/// from the catalog the binding's configuration read produced.
+#[test]
+fn a_plan_on_an_unmeasured_build_labels_every_row_with_its_release() {
+    let fixture = TestFile::new("plan-unverified-build");
+    for (capabilities, expected) in [
+        (
+            conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+            Some("3.0.26204"),
+        ),
+        (evidenced_capabilities(), None),
+    ] {
+        let service = PreviewService::new(Box::new(ConvertingProvider::new(
+            capabilities,
+            FakeConversionRunner::new(BackendAct::Convert),
+        )));
+        let handles = vec![
+            add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw")),
+            add_one_acquisition(&service, &fixture.shimadzu_lcd("second.lcd")),
+        ];
+        let receipt = current_receipt(&service);
+        let plan = planned(
+            service
+                .conversion_queue_plan(&plan_request(
+                    &handles,
+                    ConversionIntent::SHIPPED,
+                    ConversionConflictPolicyDto::Fail,
+                    receipt,
+                ))
+                .expect("the plan is answered"),
+        );
+        assert_eq!(plan.items.len(), 2);
+        for item in &plan.items {
+            assert_eq!(
+                item.unverified_build_release.as_deref(),
+                expected,
+                "{:?}",
+                item.source_kind
+            );
+        }
+    }
 }
 
 /// A plan asked under a binding the session has left is refused with the one it

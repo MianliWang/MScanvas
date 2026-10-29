@@ -27,7 +27,7 @@ use mscanvas_proteowizard::{
     ConversionRunOutcome, ConversionRunReport, ConversionSource, ConversionSourceKind,
     InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OperationRunIdentity, OutputFormat,
     OwnedTreeDisposition, ProcessAttemptOutcome, StagedOutputEvidence, StagingResidue,
-    ValidationMode, conversion_output_file_name, provider_build_is_evidenced,
+    ValidationMode, conversion_output_file_name, provider_build_admission,
     run_conversion_cancellable,
 };
 // The private multi-output report is built only by the private coordinator,
@@ -37,7 +37,7 @@ use mscanvas_proteowizard::{
     OutputMemberReport, OutputMemberValidation, SciexSampleCompleteness,
 };
 
-use super::backend::ConversionBackend;
+use super::backend::{ConversionBackend, backend_label};
 use super::dto::BackendAuthorityProjectionDto;
 use super::dto::{
     ConversionBackendFactsDto, ConversionConflictPolicyDto, ConversionOutputDto,
@@ -122,6 +122,9 @@ pub(super) struct WorkspaceConversionReport {
     /// reading or a catalog: those are statements about the binding in use, and
     /// this is a statement about the build that ran.
     authority: BackendAuthorityProjectionDto,
+    /// The release the "unverified build" label names, bounded for the wire.
+    /// Absent on a measured build (ADR 0055's relaxed gate).
+    unverified_build_release: Option<String>,
 }
 
 /// What was measured of a finalized output.
@@ -168,9 +171,11 @@ impl WorkspaceConversionReport {
         authority: BackendAuthorityProjectionDto,
         plan: &ConversionPlan,
         run: &ConversionRunReport,
+        capabilities: &InstalledHelpCapabilities,
     ) -> Self {
         let finalized = run.finalized();
         Self {
+            unverified_build_release: unverified_build_release(capabilities, plan.source().kind()),
             dataset,
             source_kind,
             outcome: run.outcome().stable_id(),
@@ -224,6 +229,11 @@ impl WorkspaceConversionReport {
     /// How this run ended, as the queue groups it.
     pub(super) const fn outcome_class(&self) -> OutcomeClass {
         self.outcome_class
+    }
+
+    /// The release the "unverified build" label names, when the run had one.
+    pub(super) fn unverified_build_release(&self) -> Option<&str> {
+        self.unverified_build_release.as_deref()
     }
 
     /// Whether another attempt could plausibly end differently.
@@ -1136,6 +1146,7 @@ impl WorkspaceConversionReport {
             }),
             staging_residue: self.residue.map(|residue| residue.stable_id().to_owned()),
             receipt: self.authority.receipt(),
+            unverified_build_release: self.unverified_build_release.clone(),
         }
     }
 }
@@ -1397,7 +1408,9 @@ pub(super) enum ConvertedItem {
     CancellationFailed(CancellationFailure),
 }
 
-/// Refuses a family this installation has no recorded evidence for.
+/// Refuses a family this installation does not admit (ADR 0055's relaxed gate):
+/// SCIEX without a measured row, or any vendor family on a build that cannot
+/// report its release. A labelled unverified build is admitted.
 ///
 /// The predicate is the crate's, not a copy of it. `run_conversion` applies the
 /// same one regardless, so this is not the gate -- it is the same gate asked
@@ -1406,7 +1419,7 @@ pub(super) fn refuse_unevidenced_build(
     capabilities: &InstalledHelpCapabilities,
     kind: ConversionSourceKind,
 ) -> Result<(), PreviewErrorDto> {
-    if provider_build_is_evidenced(capabilities, kind) {
+    if provider_build_admission(capabilities, kind).admits() {
         return Ok(());
     }
     Err(PreviewErrorDto::new(
@@ -1415,6 +1428,17 @@ pub(super) fn refuse_unevidenced_build(
          ProteoWizard build.",
         false,
     ))
+}
+
+/// The release the "unverified build" label names for one family, bounded and
+/// redacted like any other backend label. `None` on a measured build.
+pub(super) fn unverified_build_release(
+    capabilities: &InstalledHelpCapabilities,
+    kind: ConversionSourceKind,
+) -> Option<String> {
+    provider_build_admission(capabilities, kind)
+        .unverified_release()
+        .map(backend_label)
 }
 
 /// Plans one conversion, reporting a refusal by the plan error's own name.
