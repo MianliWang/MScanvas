@@ -64,11 +64,12 @@ pub use command::{
     build_msconvert_command_for_source, build_msconvert_command_with_capabilities,
 };
 pub use conversion::{
-    AdvisoryObservation, BinaryArrayMismatchKind, ConversionIntegrityOutcome,
+    AdvancedOutputChecks, AdvisoryObservation, BinaryArrayMismatchKind, ConversionIntegrityOutcome,
     ConversionOutputInspection, ConversionOutputRejection, ConversionSourceError,
-    ConversionSourceFacts, DocumentPart, DocumentSide, IntegrityProperty, SourceObjectFacts,
-    ValidConversion, ValidationMode, capture_conversion_source, conversion_output_file_name,
-    inspect_conversion_output, verify_mzml_conversion,
+    ConversionSourceFacts, DocumentPart, DocumentSide, EncodingReport, IntegrityProperty,
+    IntensityNumpress, RequestedChanges, RequestedMzmlEncoding, RoleEncodingReport,
+    SourceObjectFacts, ValidConversion, ValidationMode, capture_conversion_source,
+    conversion_output_file_name, inspect_conversion_output, verify_mzml_conversion,
 };
 pub use conversion_run::artifact::{
     LocalFileWriteError, LocalFileWriteFailure, write_new_local_file,
@@ -110,11 +111,11 @@ pub use intent::{
     NumericPrecision, OutputFormat, ProcessingIntent, ProviderFeature, SpectrumPopulation,
 };
 pub use mzml::{
-    ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, EffectiveProcessing,
-    MzmlChromatogramRecord, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlRoot, MzmlScanError,
-    MzmlScanLimits, MzmlSpectrumRecord, NumericPrecisionMarker, NumericPrecisionSet,
-    ProcessingAlgorithm, ProcessingHistory, RepresentationMarker, RetentionTimeUnitMarker,
-    UnsafeXmlKind, inspect_file, inspect_reader,
+    ArrayEncoding, ArrayEncodingTally, ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet,
+    EffectiveProcessing, MzmlChromatogramRecord, MzmlFacts, MzmlLimitKind, MzmlMalformedKind,
+    MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord, NumericPrecisionMarker,
+    NumericPrecisionSet, ProcessingAlgorithm, ProcessingHistory, RepresentationMarker,
+    RetentionTimeUnitMarker, UnsafeXmlKind, inspect_file, inspect_reader,
 };
 pub use preview::{
     MAX_PREVIEW_TEXT_BYTES, MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind,

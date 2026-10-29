@@ -93,6 +93,12 @@ const KNOWN_OTHER_PICKER_NAMES: [(&str, ProcessingAlgorithm); 2] = [
 ];
 const ZLIB_COMPRESSION: &[u8] = b"MS:1000574";
 const NO_COMPRESSION: &[u8] = b"MS:1000576";
+const NUMPRESS_LINEAR: &[u8] = b"MS:1002312";
+const NUMPRESS_PIC: &[u8] = b"MS:1002313";
+const NUMPRESS_SLOF: &[u8] = b"MS:1002314";
+const NUMPRESS_LINEAR_ZLIB: &[u8] = b"MS:1002746";
+const NUMPRESS_PIC_ZLIB: &[u8] = b"MS:1002747";
+const NUMPRESS_SLOF_ZLIB: &[u8] = b"MS:1002748";
 const SCAN_START_TIME: &[u8] = b"MS:1000016";
 const UNIT_SECOND: &[u8] = b"UO:0000010";
 const UNIT_MINUTE: &[u8] = b"UO:0000031";
@@ -136,11 +142,28 @@ pub enum NumericPrecisionMarker {
 }
 
 /// A recognized compression marker.
+///
+/// The numpress terms are the ones the evidenced build's writer emits, read from
+/// its source (ADR 0055 decision 5), not measured. They are recorded beside the
+/// plain terms and never counted as them: an array carrying `MS:1002746` is not
+/// a zlib array to the per-array zlib count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum CompressionMarker {
     Zlib = 0,
     NoCompression = 1,
+    /// `MS:1002312`, MS-Numpress linear prediction.
+    NumpressLinear = 2,
+    /// `MS:1002313`, MS-Numpress positive integer.
+    NumpressPic = 3,
+    /// `MS:1002314`, MS-Numpress short logged float.
+    NumpressSlof = 4,
+    /// `MS:1002746`, linear prediction followed by zlib.
+    NumpressLinearZlib = 5,
+    /// `MS:1002747`, positive integer followed by zlib.
+    NumpressPicZlib = 6,
+    /// `MS:1002748`, short logged float followed by zlib.
+    NumpressSlofZlib = 7,
 }
 
 /// Whether a unit accession was emitted for `scan start time`.
@@ -406,6 +429,43 @@ marker_set!(
     CompressionMarker,
     "The set of compression markers observed. An empty set means none was emitted."
 );
+
+/// The terms one binary array declared: its roles, and its precision and
+/// compression terms.
+///
+/// Per array, because ADR 0055 decision 5 asks per array: one precision term and
+/// one compression term each, which a record's union cannot answer, and a count
+/// of numpress fallbacks per role, which a union cannot count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ArrayEncoding {
+    pub kinds: ArrayKindSet,
+    pub precision: NumericPrecisionSet,
+    pub compression: CompressionSet,
+}
+
+/// How many arrays of one list declared one [`ArrayEncoding`], and the position
+/// of the first record that held one.
+///
+/// Bounded by the vocabulary rather than by the document: a key is three small
+/// bit sets, so a list has at most a few thousand distinct keys however many
+/// arrays it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArrayEncodingTally {
+    pub arrays: u64,
+    pub first_record: u64,
+}
+
+fn tally_array_encoding(
+    tallies: &mut BTreeMap<ArrayEncoding, ArrayEncodingTally>,
+    encoding: ArrayEncoding,
+    record: usize,
+) {
+    let tally = tallies.entry(encoding).or_insert(ArrayEncodingTally {
+        arrays: 0,
+        first_record: record as u64,
+    });
+    tally.arrays = tally.arrays.saturating_add(1);
+}
 
 /// Compact per-spectrum facts. No raw scientific value is retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -822,6 +882,8 @@ pub struct MzmlFacts {
     first_identities: Vec<SpectrumIdentity>,
     last_identity: Option<SpectrumIdentity>,
     scanned_bytes: u64,
+    spectrum_array_encodings: BTreeMap<ArrayEncoding, ArrayEncodingTally>,
+    chromatogram_array_encodings: BTreeMap<ArrayEncoding, ArrayEncodingTally>,
 }
 
 impl fmt::Debug for MzmlFacts {
@@ -937,6 +999,20 @@ impl MzmlFacts {
     #[must_use]
     pub const fn scanned_bytes(&self) -> u64 {
         self.scanned_bytes
+    }
+
+    /// The terms each spectrum array declared, tallied per distinct set of terms.
+    #[must_use]
+    pub const fn spectrum_array_encodings(&self) -> &BTreeMap<ArrayEncoding, ArrayEncodingTally> {
+        &self.spectrum_array_encodings
+    }
+
+    /// The same, for chromatogram arrays.
+    #[must_use]
+    pub const fn chromatogram_array_encodings(
+        &self,
+    ) -> &BTreeMap<ArrayEncoding, ArrayEncodingTally> {
+        &self.chromatogram_array_encodings
     }
 }
 
@@ -1182,6 +1258,8 @@ struct ScanState {
     data_processing_identity_unusable: bool,
     /// `spectrumList/@defaultDataProcessingRef`.
     default_data_processing_ref: Option<String>,
+    spectrum_array_encodings: BTreeMap<ArrayEncoding, ArrayEncodingTally>,
+    chromatogram_array_encodings: BTreeMap<ArrayEncoding, ArrayEncodingTally>,
 }
 
 /// One `dataProcessing` element, while it is open.
@@ -1226,6 +1304,8 @@ impl ScanState {
             data_processing_definitions: BTreeMap::new(),
             data_processing_identity_unusable: false,
             default_data_processing_ref: None,
+            spectrum_array_encodings: BTreeMap::new(),
+            chromatogram_array_encodings: BTreeMap::new(),
         }
     }
 
@@ -1473,6 +1553,18 @@ impl ScanState {
                     INTEGER_64 => array.precision.insert(NumericPrecisionMarker::Integer64),
                     ZLIB_COMPRESSION => array.compression.insert(CompressionMarker::Zlib),
                     NO_COMPRESSION => array.compression.insert(CompressionMarker::NoCompression),
+                    NUMPRESS_LINEAR => array.compression.insert(CompressionMarker::NumpressLinear),
+                    NUMPRESS_PIC => array.compression.insert(CompressionMarker::NumpressPic),
+                    NUMPRESS_SLOF => array.compression.insert(CompressionMarker::NumpressSlof),
+                    NUMPRESS_LINEAR_ZLIB => array
+                        .compression
+                        .insert(CompressionMarker::NumpressLinearZlib),
+                    NUMPRESS_PIC_ZLIB => {
+                        array.compression.insert(CompressionMarker::NumpressPicZlib)
+                    }
+                    NUMPRESS_SLOF_ZLIB => array
+                        .compression
+                        .insert(CompressionMarker::NumpressSlofZlib),
                     _ => {}
                 }
                 Ok(())
@@ -1636,7 +1728,17 @@ impl ScanState {
         let zlib = u32::from(array.compression.contains(CompressionMarker::Zlib));
         let uncompressed = u32::from(array.compression.contains(CompressionMarker::NoCompression));
         let empty_payload = u32::from(!array.has_payload);
+        let encoding = ArrayEncoding {
+            kinds,
+            precision: array.precision,
+            compression: array.compression,
+        };
         if let Some(spectrum) = self.spectrum.as_mut() {
+            tally_array_encoding(
+                &mut self.spectrum_array_encodings,
+                encoding,
+                self.spectra.len(),
+            );
             spectrum.binary_array_count = spectrum.binary_array_count.saturating_add(1);
             spectrum.zlib_compressed_array_count =
                 spectrum.zlib_compressed_array_count.saturating_add(zlib);
@@ -1655,6 +1757,11 @@ impl ScanState {
             }
             spectrum.compression.merge(array.compression);
         } else if let Some(chromatogram) = self.chromatogram.as_mut() {
+            tally_array_encoding(
+                &mut self.chromatogram_array_encodings,
+                encoding,
+                self.chromatograms.len(),
+            );
             chromatogram.binary_array_count = chromatogram.binary_array_count.saturating_add(1);
             chromatogram.zlib_compressed_array_count = chromatogram
                 .zlib_compressed_array_count
@@ -1741,6 +1848,8 @@ impl ScanState {
             first_identities: self.first_identities,
             last_identity: self.last_identity,
             scanned_bytes,
+            spectrum_array_encodings: self.spectrum_array_encodings,
+            chromatogram_array_encodings: self.chromatogram_array_encodings,
         })
     }
 }
@@ -2453,5 +2562,66 @@ mod tests {
             inspect_file(&directory, MzmlScanLimits::default()),
             Err(MzmlScanError::Source(RegularFileError::NotRegularFile))
         );
+    }
+
+    #[test]
+    fn numpress_terms_are_recorded_per_array_and_never_counted_as_plain_terms() {
+        let array = |role: &str, terms: &str| {
+            format!(
+                r#"<binaryDataArray encodedLength="8"><cvParam accession="{role}"/>{terms}<binary>AA==</binary></binaryDataArray>"#
+            )
+        };
+        let facts = scan_ok(&minimal(&format!(
+            r#"<spectrum index="0" id="scan=1" defaultArrayLength="1"><binaryDataArrayList count="3">{}{}{}</binaryDataArrayList></spectrum>"#,
+            array(
+                "MS:1000514",
+                r#"<cvParam accession="MS:1000521"/><cvParam accession="MS:1002746"/>"#
+            ),
+            array(
+                "MS:1000515",
+                r#"<cvParam accession="MS:1000521"/><cvParam accession="MS:1002313"/>"#
+            ),
+            array(
+                "MS:1000515",
+                r#"<cvParam accession="MS:1000523"/><cvParam accession="MS:1000574"/>"#
+            ),
+        )));
+
+        let spectrum = facts.spectra()[0];
+        // A numpress+zlib array is not a zlib array to the verified rows' count.
+        assert_eq!(spectrum.zlib_compressed_array_count(), 1);
+        assert!(
+            spectrum
+                .compression()
+                .contains(CompressionMarker::NumpressLinearZlib)
+        );
+        assert!(
+            spectrum
+                .compression()
+                .contains(CompressionMarker::NumpressPic)
+        );
+
+        let tallies = facts.spectrum_array_encodings();
+        assert_eq!(tallies.len(), 3);
+        let intensity_numpress = tallies
+            .iter()
+            .find(|(terms, _)| terms.compression.contains(CompressionMarker::NumpressPic))
+            .expect("the positive-integer array is tallied");
+        assert_eq!(
+            intensity_numpress.0.kinds.bits(),
+            1 << ArrayKind::Intensity as u8
+        );
+        assert_eq!(
+            intensity_numpress.0.precision.bits(),
+            1 << NumericPrecisionMarker::Float32 as u8
+        );
+        assert_eq!(
+            *intensity_numpress.1,
+            ArrayEncodingTally {
+                arrays: 1,
+                first_record: 0
+            }
+        );
+        assert!(facts.chromatogram_array_encodings().is_empty());
     }
 }
