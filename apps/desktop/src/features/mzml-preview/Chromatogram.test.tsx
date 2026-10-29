@@ -210,13 +210,22 @@ function tracePaths(): NodeListOf<Element> {
   return document.querySelectorAll('path.chromatogram-trace:not([d=""])');
 }
 
-/** The top value label, which is what the axis claims the tallest thing is. */
+/**
+ * The largest visible value the value axis is scaled from, which is what the
+ * axis claims the tallest thing is. Its ticks are rounded on purpose, so the
+ * plot carries the extent itself (PR #72's guard reads it here).
+ */
 function axisHigh(): string {
-  return document.querySelectorAll("text.chromatogram-value-label")[0]?.textContent ?? "";
+  return plot().getAttribute("data-value-high") ?? "";
 }
 
 function axisLow(): string {
-  return document.querySelectorAll("text.chromatogram-value-label")[1]?.textContent ?? "";
+  return plot().getAttribute("data-value-low") ?? "";
+}
+
+/** The value axis's tick labels, top to bottom as painted. */
+function valueTicks(): string[] {
+  return [...document.querySelectorAll(".chromatogram-y-ticks .plot-tick")].map((node) => node.textContent ?? "");
 }
 
 /** Where a retention time falls, in client pixels, under the range on screen. */
@@ -392,11 +401,28 @@ describe("what the traces are made of", () => {
     expect(axisLow()).toBe("0");
   });
 
-  it("says neither axis carries a unit", () => {
+  it("says neither axis carries a unit, in each axis's title", () => {
     renderChromatogram();
 
-    expect(document.querySelector("#chromatogram-units")).toHaveTextContent(UI_RESOURCES.en.viewerRtUnits);
-    expect(document.querySelector("#chromatogram-units")).toBeVisible();
+    const units = document.querySelector("#chromatogram-units");
+    expect(units).toHaveTextContent(UI_RESOURCES.en.plotAxisRt);
+    expect(units).toHaveTextContent(UI_RESOURCES.en.plotAxisIntensity);
+    expect(screen.getByText(UI_RESOURCES.en.plotAxisRt)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.plotAxisIntensity)).toBeVisible();
+    // Said once per axis: the line under the plot no longer repeats it.
+    expect(document.querySelector(".plot-foot")?.textContent).not.toMatch(/unit/u);
+  });
+
+  it("ticks both axes at round values outside the drawing, with headroom over the tallest point", () => {
+    renderChromatogram({ model: runOf([{ rt: 0, tic: 500, bpc: 90 }, { rt: 30.1, tic: 400, bpc: 80 }]) });
+
+    const ticks = [...document.querySelectorAll(".chromatogram-plot .plot-x-ticks .plot-tick")].map((node) => node.textContent);
+    expect(ticks).toEqual(["0", "10", "20", "30"]);
+    // 500 is the tallest visible value; the axis runs past it to 525.
+    expect(valueTicks()).toEqual(["0", "100", "200", "300", "400", "500"]);
+    expect(document.querySelectorAll("svg.chromatogram-svg .plot-gridlines line")).toHaveLength(6);
+    // Every label is HTML beside the drawing: nothing in it is text a plot height could stretch.
+    expect(document.querySelector("svg.chromatogram-svg text")).toBeNull();
   });
 });
 
@@ -1110,10 +1136,12 @@ describe("a run of a single scan", () => {
 
   /** Where a single scan lands: the domain has no width, so it is centred. */
   const ONLY_X = 526;
-  /** The top of the drawing area, which is where the extent's maximum sits. */
-  const TOP_Y = 12;
-  /** The bottom of it, which is where zero sits when zero is all there is. */
-  const BASELINE_Y = 180;
+  /** The top of the drawing area and its bottom, where zero sits when zero is all there is. */
+  const FRAME_TOP = 12;
+  const BASELINE_Y = 206;
+  const DRAWN_HEIGHT = BASELINE_Y - FRAME_TOP;
+  /** Where the extent's maximum sits: below the top by the axis's headroom. */
+  const TOP_Y = FRAME_TOP + DRAWN_HEIGHT * (0.05 / 1.05);
 
   function glyphs(): { r: string; cx: string; cy: string; className: string }[] {
     return [...document.querySelectorAll('circle.chromatogram-point:not([visibility="hidden"])')].map((node) => ({
@@ -1177,7 +1205,7 @@ describe("a run of a single scan", () => {
     // Scaled together, as they are when they are lines: the axis is the run's,
     // and each mark is at its own series' value.
     expect(Number(drawn[0]?.cy)).toBeCloseTo(TOP_Y, 6);
-    expect(Number(drawn[1]?.cy)).toBeCloseTo(TOP_Y + (6_000 / 9_000) * 168, 6);
+    expect(Number(drawn[1]?.cy)).toBeCloseTo(TOP_Y + (6_000 / 9_450) * DRAWN_HEIGHT, 6);
     expect(Number(drawn[0]?.cx)).toBeCloseTo(ONLY_X, 6);
     expect(Number(drawn[1]?.cx)).toBeCloseTo(ONLY_X, 6);
   });

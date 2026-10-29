@@ -32,6 +32,7 @@ const DELIBERATELY_IDENTICAL: readonly string[] = [
   // Units, axes and machine identifiers. None of these is an English word.
   "pixels",
   "rangeMzAxis",
+  "plotAxisMz",
   "viewerExportMzWindow",
   "pngDpi",
   // Product and format identities.
@@ -40,6 +41,7 @@ const DELIBERATELY_IDENTICAL: readonly string[] = [
   // An MS level as the instrument field names it ("MS2"), and the one tool a
   // preview runs, by its product name.
   "qcReportMsLevel",
+  "scanColumnMs",
   "provenanceProducerMsaccess",
   // Values that are an interpolation and a separator, with no prose at all.
   "summaryIdentity",

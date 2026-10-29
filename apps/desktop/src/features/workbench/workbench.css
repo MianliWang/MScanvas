@@ -162,7 +162,7 @@
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 /* The evidence grid (spec 3.1): identity, chromatogram, then the scan list
    beside the spectrum. Each plot row's floor is its content at the plot's
-   minimum drawable height (the svg's own `height` below), with the head and a
+   minimum drawable height (the plot frame's own `height` below), with the head and a
    wrapped foot whole; the chromatogram grows to its clamp first and the lower
    row takes the rest. Only a window that cannot fit both floors scrolls the
    evidence -- the tracks overflow the stack, never each other. 66 px is the
@@ -200,20 +200,51 @@
 .chromatogram-swatch { width: 18px; height: 8px; }
 .chromatogram-swatch > path { stroke: currentcolor; stroke-width: 2; }
 .plot-menu-reason { display: block; color: var(--color-text-secondary); font-size: 11px; }
+/* A refused plot export stays legible, because its reason is printed inside it. */
+.plot-menu [role="menuitem"][aria-disabled="true"] { opacity: 1; color: var(--color-text-tertiary); }
+.plot-menu-note { max-width: 300px; padding: 4px 9px 6px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
 .workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-height: 0; padding: 0; overflow: hidden; }
 .workbench-shell :is(.chromatogram-plot, .spectrum-viewport, .spectrum-viewport-plot, .spectrum-figure) { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-width: 0; min-height: 0; margin: 0; }
-/* The height is the plot's minimum drawable height, so it is what the box's
-   content measures at its floor; the box's track gives the height and the svg
-   grows into it. The minimum is explicit: an svg's automatic minimum is its
-   aspect ratio, which a stretched viewBox makes meaningless. Axis text is
-   counter-scaled (usePlotTextSize). */
-.workbench-shell .chromatogram-svg { flex: 1 1 auto; height: 94px; min-height: 94px; padding: 4px 8px 0; }
-.workbench-shell .spectrum-plot { flex: 1 1 auto; height: 166px; min-height: 166px; padding: 6px 8px 0; touch-action: pan-y pinch-zoom; cursor: crosshair; }
+/* The plot frame (review fix 3): the drawing, its value ticks left of it,
+   its position ticks under it with the position title at their right end,
+   and the value title in the drawing's top-left corner, over its headroom.
+   The labels are HTML placed by percentage over the stretched drawing, so no
+   plot height distorts them; nothing in the svg is text. */
+.plot-frame { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 14px; flex: 1 1 auto; min-width: 0; min-height: 0; padding: 0 16px 0 6px; }
+.plot-frame > svg { display: block; grid-column: 2; grid-row: 1; width: 100%; height: 100%; min-height: 0; padding: 0; }
+.plot-axis-titles { display: contents; }
+.plot-axis-title { z-index: 1; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.plot-axis-title-y { grid-column: 2; grid-row: 1; align-self: start; justify-self: start; max-width: 70%; margin-left: 0.8%; padding: 0 4px; border-radius: 3px; background: color-mix(in srgb, var(--color-surface) 85%, transparent); }
+.chromatogram-frame .plot-axis-title-y { margin-left: 6.4%; }
+.plot-axis-title-x { grid-column: 2; grid-row: 2; justify-self: end; max-width: 60%; padding-left: 6px; background: var(--color-surface); }
+.plot-x-ticks, .plot-y-ticks { position: relative; min-width: 0; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+.plot-x-ticks { grid-column: 2; grid-row: 2; }
+/* A fixed width, wide enough for the longest label the ticks write ("-1.5e+6"):
+   sized from the labels, the drawing would move when a gesture redraws them,
+   and a plot whose box moves abandons the gesture. */
+.plot-y-ticks { grid-column: 1; grid-row: 1; width: calc(7ch + 8px); }
+/* The chromatogram's value labels sit in its drawing's own left gutter. */
+.chromatogram-y-ticks { grid-column: 2; justify-self: start; width: 6.4%; }
+.plot-tick { position: absolute; color: var(--color-text-tertiary); line-height: 14px; white-space: nowrap; }
+.plot-x-ticks .plot-tick { top: 0; transform: translateX(-50%); }
+.plot-y-ticks .plot-tick { right: 5px; transform: translateY(-50%); }
+.plot-gridlines line { stroke: var(--color-chart-grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.plot-baseline { stroke: var(--color-border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* Each frame's height is its floor -- the plot's minimum drawable height plus
+   the 14 px tick row -- so it is what the box's content measures at its
+   floor; the evidence grid's track gives the height and the frame grows into
+   it. The minimums are explicit: an svg's automatic minimum is its aspect
+   ratio, which a stretched viewBox makes meaningless. The spectrum frame's
+   floor leaves its drawing 160 px. */
+.workbench-shell .chromatogram-frame { height: 100px; min-height: 100px; }
+.workbench-shell .chromatogram-svg { min-height: 60px; }
+.workbench-shell .spectrum-frame { height: 174px; min-height: 174px; }
+.workbench-shell .spectrum-plot { min-height: 160px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
 /* The plot bodies clip, so a focused plot, and a control along a body's
    edge, draws its ring inside itself, as the status bar's do. */
 .workbench-shell :is(.chromatogram-svg, .spectrum-plot, .plot-foot .ui-button, .plot-status .ui-button):focus-visible { outline-offset: -2px; }
 .workbench-shell .spectrum-caption { flex: none; padding: 0 10px; }
-.workbench-shell .spectrum-caption p { margin: 2px 0 0; font-size: 11px; line-height: 1.4; }
+.workbench-shell .spectrum-caption p { min-height: 1.4em; margin: 2px 0 0; font-size: 11px; line-height: 1.4; }
 .plot-foot { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0 12px; min-height: 28px; padding: 0 6px 0 10px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
 .plot-foot > p { margin: 0; }
 .workbench-shell .plot-foot .chromatogram-axis-caption, .workbench-shell .plot-foot .chromatogram-readout { margin: 0; font-size: 11px; }
@@ -252,13 +283,21 @@
 .scan-view-controls .plot-search > input { width: 100%; padding-left: 30px; }
 .scan-hidden-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 0; padding: 4px 8px; font-size: 12px; }
 .spectrum-table-panel > .empty-state { flex: none; padding: 16px; }
-.scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 3px; width: 100%; min-height: 28px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+/* Compact enough for the side column: short labels that ellipsize rather
+   than run into the next header, and a small sort glyph. */
+.workbench-shell .spectrum-table-row { gap: 4px; padding: 0 6px; }
+.scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 100%; min-width: 0; min-height: 28px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.scan-sort-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .spectrum-table-cell:first-child .scan-sort-button { justify-content: flex-start; }
 .scan-sort-button svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; transition: opacity 120ms; }
 .scan-sort-button svg[data-direction="none"] { opacity: .65; }
 .scan-sort-button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .scan-sort-button:hover { color: var(--color-text-primary); }
-.spectrum-table-head .spectrum-table-cell { overflow: visible; }
+.spectrum-table-head .spectrum-table-cell { overflow: hidden; }
+/* Sort scans: every field, with the chosen one checked. */
+.scan-sort-menu-label { padding: 4px 9px 2px; color: var(--color-text-secondary); font-size: 11px; font-weight: 650; }
+.scan-sort-menu [role="menuitemradio"] { position: relative; display: flex; align-items: center; min-height: 30px; padding: 6px 9px 6px 28px; border-radius: 4px; cursor: pointer; }
+.scan-sort-check { position: absolute; left: 8px; display: inline-flex; color: var(--color-accent); }
 @media (prefers-reduced-motion: reduce) { .scan-sort-button svg { transition: none; } }
 .workbench-shell .spectrum-panel { min-height: 0; }
 /* The rows fill the pane and never size it: the spectrum beside them sets the

@@ -333,11 +333,12 @@ async function whatIsDrawn(): Promise<{
   return browser.execute((css: string) => {
     const svg = document.querySelector(css);
     const path = svg?.querySelector("path.spectrum-sticks");
-    const labels = Array.from(svg?.querySelectorAll("text.axis-label") ?? []);
+    // The axis ticks are rounded, so the drawing carries the window it is
+    // drawn over, at the axis precision.
     return {
       sticks: ((path?.getAttribute("d") ?? "").match(/M/gu) ?? []).length,
-      axisLow: labels[0]?.textContent ?? "",
-      axisHigh: labels[1]?.textContent ?? "",
+      axisLow: svg?.getAttribute("data-mz-low") ?? "",
+      axisHigh: svg?.getAttribute("data-mz-high") ?? "",
       caption: (svg?.closest("figure")?.querySelector("figcaption")?.textContent ?? "").trim(),
     };
   }, SPECTRUM_PLOT) as Promise<{

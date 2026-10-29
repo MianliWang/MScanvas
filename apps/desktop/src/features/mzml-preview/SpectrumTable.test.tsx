@@ -23,9 +23,16 @@ import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailabili
 /** v5.11's compact scan list; the rest of a scan's facts are in Details. */
 const COLUMN_LABELS = [
   "Scan",
-  "Retention time",
-  "MS level",
-  "Precursor m/z",
+  "RT",
+  "MS",
+  "Prec. m/z",
+];
+/** What each header is called: its short label first, then its full name where they differ. */
+const COLUMN_NAMES = [
+  "Scan",
+  "RT (Retention time)",
+  "MS (MS level)",
+  "Prec. m/z (Precursor m/z)",
 ];
 
 const mountedStyles: HTMLStyleElement[] = [];
@@ -124,8 +131,47 @@ describe("spectrum table columns", () => {
     expect(headers.map((header) => header.textContent)).toEqual(COLUMN_LABELS);
     // One header set, not a visual copy alongside an announced one.
     expect(headers).toHaveLength(COLUMN_LABELS.length);
-    expect(screen.getAllByText("Retention time")).toHaveLength(1);
-    expect(screen.getAllByText("Precursor m/z")).toHaveLength(1);
+    expect(screen.getAllByText("RT")).toHaveLength(1);
+    expect(screen.getAllByText("Prec. m/z")).toHaveLength(1);
+    // Short enough for the side column, and still spoken in full after the
+    // visible label, which is what a speech user says to press it.
+    expect(headers.map((header) => within(header).getByRole("button").getAttribute("aria-label") ??
+      within(header).getByRole("button").textContent)).toEqual(COLUMN_NAMES);
+    expect(within(headers[1]!).getByRole("button")).toHaveAttribute("title", "Retention time");
+  });
+
+  it("sorts by any field from Sort scans, not only by the four columns, and returns to file order", async () => {
+    const { container } = renderTable({ rowCount: 6 });
+    const order = () => [...container.querySelectorAll("[data-source-index]")].map((row) => row.getAttribute("data-source-index"));
+    const open = async () => {
+      fireEvent.keyDown(screen.getByRole("button", { name: /^Sort scans/u }), { key: "Enter" });
+      return screen.findByRole("menu");
+    };
+    expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
+
+    // Total ion current has no column; it is one of the five fields in Details.
+    let menu = await open();
+    expect(within(menu).getAllByRole("menuitemradio").map((item) => item.textContent)).toEqual([
+      "File order", "Index", "Scan", "Identifier", "MS level", "Retention time", "Base peak m/z",
+      "Base peak intensity", "Total ion current", "Precursor m/z",
+    ]);
+    expect(within(menu).getByRole("menuitemradio", { name: "File order" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Total ion current" }));
+    expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
+    expect(screen.getByRole("button", { name: "Sort scans: Total ion current, Ascending" })).toBeInTheDocument();
+
+    menu = await open();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Descending" }));
+    expect(order()).toEqual(["5", "4", "3", "2", "1", "0"]);
+    // Not one of the columns, so no header claims the order.
+    expect(container.querySelector("[aria-sort]")).toBeNull();
+
+    menu = await open();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "File order" }));
+    expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
+    menu = await open();
+    // With no field chosen there is no direction to choose.
+    expect(within(menu).queryByRole("menuitemradio", { name: "Descending" })).toBeNull();
   });
 
   it("still counts every row the run has, not the rendered window", () => {

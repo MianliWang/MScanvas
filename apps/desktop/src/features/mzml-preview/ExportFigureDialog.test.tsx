@@ -38,6 +38,14 @@ describe("the export-specific figure preview", () => {
     expect(screen.queryByRole("radio", { name: "Full spectrum" })).toBeNull();
     // A linked figure joins two measurements; no single table holds both.
     expect(screen.queryByRole("button", { name: "Export CSV…" }) === null).toBe(kind === "linked");
+    if (kind === "chromatogram") {
+      // The data documents hold both measured columns whatever is on screen,
+      // which the figure beside them does not; said where the choice is made.
+      expect(screen.getByText(UI_RESOURCES.en.viewerExportTraceHelp)).toBeVisible();
+      for (const name of ["Export CSV…", "Export TSV…"]) {
+        expect(screen.getByRole("button", { name })).toHaveAccessibleDescription(UI_RESOURCES.en.viewerExportTraceHelp);
+      }
+    }
   });
 
   it("opens on a close button, keeps the actions real buttons and points refusals at a visible reason", async () => {

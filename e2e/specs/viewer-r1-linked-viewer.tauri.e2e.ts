@@ -212,7 +212,8 @@ describe("the linked viewer on the real Tauri WebView", () => {
     expect(facts.circles).toBe(0);
     expect(facts.toggles).toBe(2);
     expect(await rangeCaption()).toContain("full range");
-    const caption = await browser.$(".chromatogram-axis-caption").getText();
+    // Each axis title says its unit is not reported.
+    const caption = await browser.$("#chromatogram-units").getText();
     expect(caption).toContain("unit not reported");
     // The source sentence lives in Details -> Chromatogram source (rebuild
     // spec 4), so Details is shown before it is read.

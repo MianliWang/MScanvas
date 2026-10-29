@@ -113,10 +113,13 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
     if (!dispatched.current) setState({ status: "none", key: "" });
   };
   const prefix = `export-${id}`;
-  const ids = { range: `${id}-range`, data: `${id}-data`, status: `${id}-status`, result: `${id}-result` };
+  const ids = { range: `${id}-range`, data: `${id}-data`, dataNote: `${id}-data-note`, status: `${id}-status`, result: `${id}-result` };
   // A refused action points at the visible line that says why: the preview
-  // status (no current drawing) and, while an export runs, the result line.
-  const figureReason = props.busy ? `${ids.status} ${ids.result}` : ids.status;
+  // status (no current drawing, or one rendering) and, while an export runs,
+  // the result line, which then says what that export is waiting on. An
+  // up-to-date preview says so only to a screen reader, so it is no reason.
+  const busyReason = status === t("figurePreviewCurrent") ? ids.result : `${ids.status} ${ids.result}`;
+  const figureReason = props.busy ? busyReason : ids.status;
   const figureRefused = props.busy || artifact === null;
   const rangeWindow = props.committedDomain === null ? null : t(props.kind === "spectrum" ? "viewerExportMzWindow" : "viewerExportRtWindow",
     { low: props.committedDomain.low.toFixed(4), high: props.committedDomain.high.toFixed(4) });
@@ -152,8 +155,11 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
             {onExportData === undefined ? null : <div className="figure-export-section figure-export-data" role="group" aria-labelledby={ids.data}>
               <span className="figure-export-label" id={ids.data}>{t("viewerData")}</span>
               <div className="figure-export-data-actions">{(["csv", "tsv"] as const).map(format => <Button key={format} size="sm"
-                refused={props.busy} reasonId={ids.result} onClick={() => { if (!props.busy && !sourceChanged) onExportData(format); }}>
+                aria-describedby={props.kind === "chromatogram" ? ids.dataNote : undefined}
+                refused={props.busy} reasonId={busyReason} onClick={() => { if (!props.busy && !sourceChanged) onExportData(format); }}>
                 {t("viewerExportFormat", { name: format.toUpperCase() })}</Button>)}</div>
+              {/* What a chromatogram data document holds, which the traces on screen do not change. */}
+              {props.kind === "chromatogram" ? <p className="figure-export-note" id={ids.dataNote}>{t("viewerExportTraceHelp")}</p> : null}
             </div>}
           </fieldset>
           <div className="figure-preview" aria-busy={state.status === "loading"}>

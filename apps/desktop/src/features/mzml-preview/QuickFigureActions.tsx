@@ -1,5 +1,5 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { Button, Icon, IconButton } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { UiMessage } from "../preferences/i18n";
@@ -11,9 +11,12 @@ export interface PlotMenuItem {
   readonly label: string;
   /** Receives the ⋯ trigger, so a dialog opened from the menu returns focus to it. */
   readonly onSelect: (trigger: HTMLElement | null) => void;
-  readonly disabled?: boolean;
-  /** Why the item is closed, printed inside it so it is read with its name. */
+  /** Refused, not disabled: it stays in the menu's arrow-key order with its reason. */
+  readonly refused?: boolean;
+  /** Why the item is closed, printed inside it and read as its description. */
   readonly reason?: string | null;
+  /** Ids of other visible lines that describe the item, such as the menu note. */
+  readonly describedBy?: string;
   /** The item opens a dialog, which takes focus from the closing menu. */
   readonly opensDialog?: boolean;
 }
@@ -35,14 +38,17 @@ export function figureRefusal(t: UiMessage, busy: boolean, validation: FigureSet
  * A plot head's figure actions: Export… (the figure dialog), PNG, Copy and ⋯.
  * The running initiating control survives its native picker and guards repeats.
  */
-export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, reasonId, onPreview, onPng, onCopy, menuItems }: {
+export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, reasonId, onPreview, onPng, onCopy, menuItems, menuNote }: {
   readonly busy: boolean; readonly figureUnavailable: boolean; readonly pngUnavailable: boolean;
   /** The visible line that says why PNG or Copy is refused, while one is. */
   readonly reasonId?: string;
   readonly onPreview: () => void; readonly onPng: () => void; readonly onCopy: () => void;
   readonly menuItems: readonly PlotMenuItem[];
+  /** A line under the menu items that items can point at with `describedBy`. */
+  readonly menuNote?: { readonly id: string; readonly text: string };
 }) {
   const t = useUiMessages();
+  const menuId = useId();
   const [active, setActive] = useState<"png" | "copy" | null>(null);
   const claimed = useRef(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
@@ -66,13 +72,28 @@ export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, re
       <Menu.Trigger asChild>
         <IconButton ref={trigger} size="sm" icon={<Icon name="more" />} label={t("plotMoreExports")} />
       </Menu.Trigger>
-      <Menu.Portal><Menu.Content className="roster-menu" sideOffset={4} align="end" onCloseAutoFocus={event => {
+      <Menu.Portal><Menu.Content className="roster-menu plot-menu" sideOffset={4} align="end" onCloseAutoFocus={event => {
         if (openingDialog.current) { event.preventDefault(); openingDialog.current = false; }
       }}>
-        {menuItems.map(item => <Menu.Item key={item.key} disabled={item.disabled} onSelect={() => {
-          if (item.opensDialog) openingDialog.current = true;
-          item.onSelect(trigger.current);
-        }}>{item.label}{item.reason ? <span className="plot-menu-reason">{item.reason}</span> : null}</Menu.Item>)}
+        {menuItems.map(item => {
+          const reasonId = item.reason ? `${menuId}-${item.key}-reason` : undefined;
+          // Radix `disabled` would drop the item from the arrow-key order and
+          // with it the reason, so a refused item is aria-disabled and its
+          // selection is cancelled here, which also keeps the menu open on it.
+          return <Menu.Item key={item.key} aria-disabled={item.refused || undefined}
+            aria-describedby={[reasonId, item.describedBy].filter(Boolean).join(" ") || undefined}
+            onSelect={event => {
+              if (item.refused) { event.preventDefault(); return; }
+              if (item.opensDialog) openingDialog.current = true;
+              item.onSelect(trigger.current);
+            }}>
+            {item.label}
+            {/* Read as the description, not as part of the name. */}
+            {item.reason ? <span aria-hidden="true" className="plot-menu-reason" id={reasonId}>{item.reason}</span> : null}
+          </Menu.Item>;
+        })}
+        {menuNote === undefined ? null : <><Menu.Separator />
+          <Menu.Label className="plot-menu-note" id={menuNote.id}>{menuNote.text}</Menu.Label></>}
       </Menu.Content></Menu.Portal>
     </Menu.Root>
   </div>;

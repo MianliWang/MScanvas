@@ -29,6 +29,8 @@ import type {
 
 /** Where the chromatogram says why PNG or Copy is refused. */
 const REASON_ID = "chromatogram-figure-reason";
+/** The ⋯ menu's note on what the data documents hold, which CSV and TSV point at. */
+const DATA_NOTE_ID = "chromatogram-data-note";
 
 export interface ChromatogramExportToolsProps {
   readonly onOpenFigure: () => void;
@@ -65,11 +67,13 @@ export function ChromatogramExportTools({ onOpenFigure, onOpenLinkedFigure, scie
     figureUnavailable={figureSettingsValidation.render !== null || nothingDrawn}
     pngUnavailable={figureSettingsValidation.dpi !== null} reasonId={REASON_ID}
     onPreview={onOpenFigure} onPng={() => onExport("png")} onCopy={onCopyPlot}
+    menuNote={{ id: DATA_NOTE_ID, text: t("viewerExportTraceHelp") }}
     menuItems={[
       ...(["csv", "tsv"] as const).map(format => ({ key: format, label: t("viewerExportFormat", { name: format.toUpperCase() }),
-        // Closed while any scientific export runs: Rust holds one lane.
-        disabled: scientificExportBusy, onSelect: () => { onExport(format); } })),
-      { key: "linked", label: t("figurePreviewLinked"), disabled: linkedBlocked, opensDialog: true,
+        // Refused while any scientific export runs: Rust holds one lane.
+        refused: scientificExportBusy, reason: scientificExportBusy ? t("plotExportBusy") : null, describedBy: DATA_NOTE_ID,
+        onSelect: () => { onExport(format); } })),
+      { key: "linked", label: t("figurePreviewLinked"), refused: linkedBlocked, opensDialog: true,
         // Said whenever there is a reason; the ones the dialog can repair leave the item open.
         reason: linkedUnavailable === null ? null : describeUnavailable(linkedUnavailable, t), onSelect: onOpenLinkedFigure },
     ]} />;
@@ -106,7 +110,8 @@ export function ChromatogramExportStatus({ exportState, linkedExportState, scien
 /** What one finished linked export says about itself. */
 export function LinkedFigureResult({ state, onDismiss }: { readonly state: LinkedFigureExportState; readonly onDismiss: () => void }) {
   const t = useUiMessages();
-  if (state.status === "idle" || state.status === "running") return null;
+  if (state.status === "idle") return null;
+  if (state.status === "running") return <p className="spectrum-export-message">{describeRunning(state.operation, t)}</p>;
   const message = state.status === "cancelled" ? t("viewerExportCancelled") : state.status === "failed" ? ownedErrorMessage(state.error, t) :
     state.status === "copied" ? t("viewerLinkedCopied", { width: String(state.figure.width), height: String(state.figure.height),
       theme: t(state.figure.theme), index: formatCount(state.selectedIndex), count: state.sourceScanCount }) :
@@ -120,7 +125,8 @@ export function LinkedFigureResult({ state, onDismiss }: { readonly state: Linke
 
 export function ChromatogramExportResult({ state, onDismiss }: { readonly state: ChromatogramExportState; readonly onDismiss: () => void }) {
   const t = useUiMessages();
-  if (state.status === "idle" || state.status === "running") return null;
+  if (state.status === "idle") return null;
+  if (state.status === "running") return <p className="spectrum-export-message">{describeRunning(state.operation, t)}</p>;
   const message = state.status === "cancelled" ? t("viewerExportCancelled") : state.status === "failed" ? ownedErrorMessage(state.error, t) :
     state.status === "copied" ? t("viewerChromCopied", { width: String(state.figure.width), height: String(state.figure.height),
       theme: t(state.figure.theme), count: state.sourceScanCount }) :
@@ -130,6 +136,14 @@ export function ChromatogramExportResult({ state, onDismiss }: { readonly state:
     {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{ownedErrorDetail(state.error, t)}</span> : null}
     <DismissButton onDismiss={onDismiss} />
   </p>;
+}
+
+/**
+ * What a running export is waiting on, in the spectrum's words: a refused
+ * action under the plot or in the figure dialog points at this line.
+ */
+function describeRunning(operation: string, t: UiMessage): string {
+  return operation === "copy" ? t("viewerCopying") : t("viewerExportChoose", { name: operation.toUpperCase() });
 }
 
 function DismissButton({ onDismiss, label }: { readonly onDismiss: () => void; readonly label?: string }) {

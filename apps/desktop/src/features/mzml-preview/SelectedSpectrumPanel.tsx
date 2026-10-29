@@ -57,8 +57,9 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
           pngUnavailable={props.figureSettingsValidation.dpi !== null} reasonId={REASON_ID}
           onPreview={props.onOpenFigure} onPng={() => props.onExport("png")} onCopy={props.onCopyPlot}
           menuItems={(["csv", "tsv"] as const).map(format => ({ key: format, label: t("viewerExportFormat", { name: format.toUpperCase() }),
-            // Closed while any scientific export runs: Rust holds one lane.
-            disabled: props.scientificExportBusy, onSelect: () => { props.onExport(format); } }))} />
+            // Refused while any scientific export runs: Rust holds one lane.
+            refused: props.scientificExportBusy, reason: props.scientificExportBusy ? t("plotExportBusy") : null,
+            onSelect: () => { props.onExport(format); } }))} />
       </Toolbar> : null}
     </div>
     {/* An absent spectrum has no body: the head's line already says it is not in this run. */}

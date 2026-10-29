@@ -1,8 +1,9 @@
+import * as Menu from "@radix-ui/react-dropdown-menu";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button, Icon, IconButton } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { MessageKey } from "../preferences/i18n";
-import type { ScanSortKey } from "./viewer/scanTableView";
+import { SCAN_SORT_KEYS, type ScanSortKey } from "./viewer/scanTableView";
 import type { ScanTableView } from "./viewer/useScanTableView";
 
 import type { SpectrumRow, SpectrumTable as SpectrumTableModel } from "./contracts";
@@ -38,17 +39,31 @@ const FALLBACK_VIEWPORT_HEIGHT = 600;
 /** The sentence that says the filters hide the selected scan. */
 const HIDDEN_SELECTION_ID = "scan-hidden-selection-reason";
 
+/** Every field the list sorts by, by its full name: the four columns and the five in Details. */
+const SORT_LABELS = {
+  index: "scanIndex", scanNumber: "scanNumber", identifier: "scanIdentifier", msLevel: "scanMsLevel",
+  retentionTime: "scanRetentionTime", basePeakMz: "scanBasePeakMz", basePeakIntensity: "scanBasePeakIntensity",
+  totalIonCurrent: "scanTotalIonCurrent", precursorMz: "scanPrecursorMz",
+} as const satisfies Record<ScanSortKey, MessageKey>;
+
 /**
  * The scan list's columns, v5.11's compact four: what tells scans apart at a
- * glance. The index, identifier, base peak and TIC of the selected scan are in
- * Details, and the search still reaches identifiers and indices.
+ * glance. Each header is short enough for the side column; its full name is
+ * its tooltip and the rest of its accessible name. The index, identifier, base
+ * peak and TIC of the selected scan are in Details, Sort scans orders by any of
+ * them, and the search still reaches identifiers and indices.
  */
 const COLUMNS: readonly { readonly label: MessageKey; readonly sort: ScanSortKey; readonly cell: (row: SpectrumRow) => string }[] = [
-  { label: "scanNumber", sort: "scanNumber", cell: row => row.scanNumber === null ? "—" : formatCount(row.scanNumber) },
-  { label: "scanRetentionTime", sort: "retentionTime", cell: row => formatRetentionTimeValue(row.retentionTime) },
-  { label: "scanMsLevel", sort: "msLevel", cell: row => `MS${row.msLevel}` },
-  { label: "scanPrecursorMz", sort: "precursorMz", cell: row => row.precursorMz === null ? "—" : formatMz(row.precursorMz) },
+  { label: "scanColumnScan", sort: "scanNumber", cell: row => row.scanNumber === null ? "—" : formatCount(row.scanNumber) },
+  { label: "scanColumnRt", sort: "retentionTime", cell: row => formatRetentionTimeValue(row.retentionTime) },
+  { label: "scanColumnMs", sort: "msLevel", cell: row => `MS${row.msLevel}` },
+  { label: "scanColumnPrecursor", sort: "precursorMz", cell: row => row.precursorMz === null ? "—" : formatMz(row.precursorMz) },
 ];
+
+/** Two arrows, up and down: the order of a list. */
+const SORT_GLYPH = <svg aria-hidden="true" className="ui-icon" height="16" viewBox="0 0 24 24" width="16">
+  <path d="M8 19V5m-4 4 4-4 4 4 M16 5v14m-4-4 4 4 4-4" />
+</svg>;
 
 export interface SpectrumTableProps {
   readonly table: SpectrumTableModel;
@@ -306,6 +321,7 @@ export const SpectrumTable = memo(function SpectrumTable({
         {/* Beside the heading: these step through this table's order, and
             they stay available for a preview whose chromatogram cannot be
             drawn at all. */}
+        <ScanSortMenu view={view} />
         <div className="plot-tools" role="group" aria-label={t("scanNavigation")}>
           <IconButton icon={<Icon name="chevronUp" />} label={t("scanPrevious")} onClick={onSelectPrevious} refused={!canSelectPrevious}
             reasonId={stepReasonId} size="sm" />
@@ -365,24 +381,27 @@ export const SpectrumTable = memo(function SpectrumTable({
               happen to agree. */}
           <div className="spectrum-table-track" role="presentation">
             <div aria-rowindex={1} className="spectrum-table-row spectrum-table-head" role="row">
-              {COLUMNS.map((column, columnIndex) => (
-                <span
+              {COLUMNS.map((column, columnIndex) => {
+                const short = t(column.label), full = t(SORT_LABELS[column.sort]);
+                return <span
                   aria-colindex={columnIndex + 1}
                   className="spectrum-table-cell"
                   key={column.label}
                   role="columnheader"
                   aria-sort={view.options.sort?.key === column.sort ? view.options.sort.direction : undefined}
                 >
-                  <button className="scan-sort-button" type="button" onClick={() => view.sortBy(column.sort)}>
-                    {t(column.label)}
-                    <svg aria-hidden="true" viewBox="0 0 12 12" width="12" height="12"
+                  {/* The name starts with what the header shows, so it can be spoken. */}
+                  <button aria-label={short === full ? undefined : t("scanColumnName", { short, full })} className="scan-sort-button"
+                    onClick={() => view.sortBy(column.sort)} title={full} type="button">
+                    <span className="scan-sort-label">{short}</span>
+                    <svg aria-hidden="true" viewBox="0 0 12 12" width="10" height="10"
                       data-direction={view.options.sort?.key === column.sort ? view.options.sort.direction : "none"}>
                       <path d={view.options.sort?.key !== column.sort ? "M3 4 6 1 9 4 M3 8 6 11 9 8" :
                         view.options.sort.direction === "ascending" ? "M2 8 6 4 10 8" : "M2 4 6 8 10 4"} />
                     </svg>
                   </button>
-                </span>
-              ))}
+                </span>;
+              })}
             </div>
 
             <div
@@ -425,6 +444,42 @@ export const SpectrumTable = memo(function SpectrumTable({
     </section>
   );
 });
+
+/**
+ * Sort scans: every field the list can be ordered by, not only the four with a
+ * column, and the direction. The header buttons are the quick way to the four.
+ */
+function ScanSortMenu({ view }: { readonly view: ScanTableView }) {
+  const t = useUiMessages();
+  const sort = view.options.sort;
+  const direction = (value: "ascending" | "descending") => t(value === "ascending" ? "scanSortAscending" : "scanSortDescending");
+  const label = sort === null ? t("scanSortBy") : t("scanSortCurrent", { name: t(SORT_LABELS[sort.key]), direction: direction(sort.direction) });
+  return <Menu.Root>
+    <Menu.Trigger asChild><IconButton icon={SORT_GLYPH} label={label} size="sm" /></Menu.Trigger>
+    <Menu.Portal><Menu.Content align="end" className="roster-menu scan-sort-menu" sideOffset={4}>
+      <Menu.Label className="scan-sort-menu-label">{t("scanSortField")}</Menu.Label>
+      <Menu.RadioGroup aria-label={t("scanSortField")} value={sort?.key ?? "source"} onValueChange={value =>
+        view.setSort(value === "source" ? null : { key: value as ScanSortKey, direction: sort?.direction ?? "ascending" })}>
+        {(["source", ...SCAN_SORT_KEYS] as const).map(key => <Menu.RadioItem key={key} value={key}>
+          <Menu.ItemIndicator className="scan-sort-check"><Icon name="check" size={14} /></Menu.ItemIndicator>
+          {t(key === "source" ? "scanSortSource" : SORT_LABELS[key])}
+        </Menu.RadioItem>)}
+      </Menu.RadioGroup>
+      {/* A direction only means something once a field is chosen. */}
+      {sort === null ? null : <>
+        <Menu.Separator />
+        <Menu.Label className="scan-sort-menu-label">{t("scanSortOrder")}</Menu.Label>
+        <Menu.RadioGroup aria-label={t("scanSortOrder")} value={sort.direction} onValueChange={value =>
+          view.setSort({ key: sort.key, direction: value === "descending" ? "descending" : "ascending" })}>
+          {(["ascending", "descending"] as const).map(value => <Menu.RadioItem key={value} value={value}>
+            <Menu.ItemIndicator className="scan-sort-check"><Icon name="check" size={14} /></Menu.ItemIndicator>
+            {direction(value)}
+          </Menu.RadioItem>)}
+        </Menu.RadioGroup>
+      </>}
+    </Menu.Content></Menu.Portal>
+  </Menu.Root>;
+}
 
 interface SpectrumTableRowProps {
   readonly row: SpectrumRow;

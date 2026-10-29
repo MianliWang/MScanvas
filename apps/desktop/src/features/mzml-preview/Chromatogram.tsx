@@ -5,6 +5,7 @@ import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { UiMessage } from "../preferences/i18n";
 
 import { PlotRangeActions, plotGestureHelpId } from "./PlotRangeActions";
+import { niceTicks, paintGridlines, paintTicks, withHeadroom } from "./viewer/plotAxes";
 import { retentionTimeInput } from "./viewer/plotInputAdapters";
 import { usePlotInput } from "./viewer/usePlotInput";
 import { usePlotTextSize } from "./viewer/usePlotTextSize";
@@ -38,13 +39,18 @@ import type { TraceVisibility } from "./usePreviewWorkspace";
  * The drawing area, in viewBox units. The element scales to its container, so
  * these are resolution units rather than pixels -- the same approach the stick
  * spectrum takes.
+ *
+ * The tick labels and axis titles are HTML around the drawing, so the stretched
+ * viewBox never distorts them. The left gutter is where the value labels sit,
+ * outside the drawn area; nothing else of the viewBox is reserved for text.
  */
 const PLOT_WIDTH = 1000;
 const PLOT_HEIGHT = 210;
 const PADDING_LEFT = 64;
 const PADDING_RIGHT = 12;
+/** Deep enough that the value title in the corner clears the headroom's top. */
 const PADDING_TOP = 12;
-const BASELINE_Y = PLOT_HEIGHT - 30;
+const BASELINE_Y = PLOT_HEIGHT - 4;
 const USABLE_WIDTH = PLOT_WIDTH - PADDING_LEFT - PADDING_RIGHT;
 const USABLE_HEIGHT = BASELINE_Y - PADDING_TOP;
 
@@ -426,12 +432,21 @@ function ChromatogramPlot({
       point?.setAttribute("visibility", mark.point === null ? "hidden" : "visible");
       if (mark.point !== null) { point?.setAttribute("cx", String(mark.point.x)); point?.setAttribute("cy", String(mark.point.y)); }
     }
-    node.querySelectorAll(".chromatogram-time-label").forEach((label, position) => {
-      label.textContent = ticksOf(shown)[position]?.toFixed(4) ?? "";
-    });
-    node.querySelectorAll(".chromatogram-value-label").forEach((label, position) => {
-      label.textContent = formatIntensity(position === 0 ? extentNow.high : extentNow.low);
-    });
+    // The axes, from the same range and extent the traces were just placed by:
+    // ticks along the range on screen, and value ticks and their rules over
+    // the visible extent. With no trace drawn there are no values to rule.
+    const frame = node.closest(".chromatogram-plot");
+    const valueTicks = geometry.traces.length === 0 ? [] : niceTicks(scaleNow.valueLow, scaleNow.valueHigh);
+    paintTicks(frame?.querySelector<HTMLElement>(".plot-x-ticks") ?? null, niceTicks(shown.low, shown.high),
+      value => (scaleNow.x(value) / PLOT_WIDTH) * 100, "x", frame?.querySelector<HTMLElement>(".plot-axis-title-x") ?? null);
+    paintTicks(frame?.querySelector<HTMLElement>(".plot-y-ticks") ?? null, valueTicks, value => (scaleNow.y(value) / PLOT_HEIGHT) * 100, "y");
+    paintGridlines(node.querySelector<SVGGElement>(".plot-gridlines"), valueTicks.map(tick => scaleNow.y(tick.value)),
+      PADDING_LEFT, PLOT_WIDTH - PADDING_RIGHT);
+    // The visible extent the value axis is scaled from, the clipped trace's
+    // own: what PR #72's guard reads, since the ticks are rounded on purpose.
+    for (const [name, value] of [["data-value-high", extentNow.high], ["data-value-low", extentNow.low]] as const) {
+      if (geometry.traces.length === 0) node.removeAttribute(name); else node.setAttribute(name, formatIntensity(value));
+    }
     for (const [kind, index] of [["selected", state.selection?.index], ["hover", state.hover?.spectrumIndex]] as const) {
       const group = node.querySelector(`.chromatogram-${kind}`); const point = index === undefined ? undefined : byIndex.get(index);
       group?.setAttribute("visibility", point === undefined ? "hidden" : "visible");
@@ -441,7 +456,7 @@ function ChromatogramPlot({
         group?.querySelector("rect")?.setAttribute("x", String(x - 4.5));
       }
     }
-    const line = node.parentElement?.querySelector(".chromatogram-range");
+    const line = frame?.querySelector(".chromatogram-range");
     if (line) line.textContent = t("viewerShowing", { low: shown.low.toFixed(4), high: shown.high.toFixed(4) }) +
       (state.committedDomain === null && state.gesture === null ? t("viewerFullRange") : "");
   }, [readInteraction, activeTraces, points, byIndex, t, domain, extent, scale, marks]);
@@ -462,131 +477,108 @@ function ChromatogramPlot({
 
   return (
     <div className="chromatogram-plot">
-      <svg
-        /*
-         * The readout always, and the reason for a blocked selection while
-         * there is one. Described rather than disabled: this plot can still be
-         * read, and a reader who arrives at it is told which of the things it
-         * offers is temporarily not one of them.
-         */
-        aria-describedby={
-          selectionAvailability.status === "available"
-            ? `chromatogram-readout chromatogram-units ${plotGestureHelpId("rt")}`
-            : `chromatogram-readout chromatogram-units ${plotGestureHelpId("rt")} ${SPECTRUM_SELECTION_NOTICE_ID}`
-        }
-        aria-labelledby="chromatogram-heading"
-        className="chromatogram-svg"
-        preserveAspectRatio="none"
-        ref={attachPlot}
-        role="img"
-        tabIndex={0}
-        viewBox={`0 0 ${String(PLOT_WIDTH)} ${String(PLOT_HEIGHT)}`}
-      >
-        <defs>
-          <clipPath id="chromatogram-clip">
-            <rect height={USABLE_HEIGHT} width={USABLE_WIDTH} x={PADDING_LEFT} y={PADDING_TOP} />
-          </clipPath>
-        </defs>
-        <g className="chromatogram-axes">
-          <line x1={PADDING_LEFT} x2={PLOT_WIDTH - PADDING_RIGHT} y1={BASELINE_Y} y2={BASELINE_Y} />
-          <line x1={PADDING_LEFT} x2={PADDING_LEFT} y1={PADDING_TOP} y2={BASELINE_Y} />
-          {ticksOf(domain).map((tick, position) => (
-            <text
-              className="chromatogram-time-label"
-              key={`${String(position)}:${String(tick)}`}
-              textAnchor={position === 4 ? "end" : "middle"}
-              // Hung from just under the axis: the label is counter-scaled
-              // about this point, so it clears the line at any plot height.
-              dominantBaseline="hanging"
-              x={scale.x(tick)}
-              y={BASELINE_Y + 4}
-            >
-              {tick.toFixed(4)}
-            </text>
-          ))}
-        </g>
-        <g clipPath="url(#chromatogram-clip)">
-          <rect className="plot-range-band" aria-hidden="true" visibility="hidden" x={0} y={PADDING_TOP} width={0} height={USABLE_HEIGHT} />
-          {marks.map(each => <g key={each.trace}>
-            <path className={`chromatogram-trace chromatogram-trace-${each.trace}`} d={each.d} strokeDasharray={each.dash} />
-            <circle className={`chromatogram-point chromatogram-point-${each.trace}`} visibility={each.point === null ? "hidden" : "visible"}
-              cx={each.point?.x ?? 0} cy={each.point?.y ?? 0} r={each.pointRadius} />
-          </g>)}
-          {nothingDrawn ? (
-            // An intentional state rather than an empty drawing. The axis is
-            // still the run's, and the plot is still where a scan is chosen.
-            <text
-              className="chromatogram-hidden-note"
-              textAnchor="middle"
-              x={PADDING_LEFT + USABLE_WIDTH / 2}
-              y={PADDING_TOP + USABLE_HEIGHT / 2}
-            >
-              {t("viewerTracesHidden")}
-            </text>
-          ) : null}
-          {selectedPoint === null ? null : (
-            <g className="chromatogram-selected">
-              {/* A rule and a glyph, not a colour change. Which scan is
-                  selected has to be readable without seeing colour. */}
-              <line
-                x1={scale.x(selectedPoint.retentionTime)}
-                x2={scale.x(selectedPoint.retentionTime)}
-                y1={PADDING_TOP}
-                y2={BASELINE_Y}
-              />
-              <rect
-                height={9}
-                width={9}
-                x={scale.x(selectedPoint.retentionTime) - 4.5}
-                y={PADDING_TOP - 1}
-              />
-            </g>
-          )}
-          {hoveredPoint === null ? null : (
-            <g className="chromatogram-hover">
-              {/* Placed from the scan's own retention time under the range on
-                  screen now, never from a coordinate scaled when the
-                  observation was made. */}
-              <line
-                x1={scale.x(hoveredPoint.retentionTime)}
-                x2={scale.x(hoveredPoint.retentionTime)}
-                y1={PADDING_TOP}
-                y2={BASELINE_Y}
-              />
-            </g>
-          )}
-        </g>
-        {/* Paint intensity text above traces so the existing halo protects signs and digits. */}
-        {nothingDrawn ? null : (
+      {/* The drawing and its axes. The labels and titles are HTML placed by
+          percentage over the stretched drawing, so no height distorts them;
+          React leaves the tick containers empty and paintFrame fills them. */}
+      <div className="plot-frame chromatogram-frame">
+        <svg
+          /*
+           * The readout always, and the reason for a blocked selection while
+           * there is one. Described rather than disabled: this plot can still be
+           * read, and a reader who arrives at it is told which of the things it
+           * offers is temporarily not one of them.
+           */
+          aria-describedby={
+            selectionAvailability.status === "available"
+              ? `chromatogram-readout chromatogram-units ${plotGestureHelpId("rt")}`
+              : `chromatogram-readout chromatogram-units ${plotGestureHelpId("rt")} ${SPECTRUM_SELECTION_NOTICE_ID}`
+          }
+          aria-labelledby="chromatogram-heading"
+          className="chromatogram-svg"
+          preserveAspectRatio="none"
+          ref={attachPlot}
+          role="img"
+          tabIndex={0}
+          viewBox={`0 0 ${String(PLOT_WIDTH)} ${String(PLOT_HEIGHT)}`}
+        >
+          <defs>
+            <clipPath id="chromatogram-clip">
+              <rect height={USABLE_HEIGHT} width={USABLE_WIDTH} x={PADDING_LEFT} y={PADDING_TOP} />
+            </clipPath>
+          </defs>
+          {/* Light rules at the value ticks, under everything drawn. */}
+          <g aria-hidden="true" className="plot-gridlines" />
           <g className="chromatogram-axes">
-            <text
-              className="chromatogram-value-label"
-              textAnchor="start"
-              dominantBaseline="hanging"
-              x={PADDING_LEFT + 6}
-              y={PADDING_TOP + 2}
-            >
-              {formatIntensity(extent.high)}
-            </text>
-            <text
-              className="chromatogram-value-label"
-              textAnchor="start"
-              x={PADDING_LEFT + 6}
-              y={BASELINE_Y}
-            >
-              {formatIntensity(extent.low)}
-            </text>
+            <line x1={PADDING_LEFT} x2={PLOT_WIDTH - PADDING_RIGHT} y1={BASELINE_Y} y2={BASELINE_Y} />
+            <line x1={PADDING_LEFT} x2={PADDING_LEFT} y1={PADDING_TOP} y2={BASELINE_Y} />
           </g>
-        )}
-      </svg>
+          <g clipPath="url(#chromatogram-clip)">
+            <rect className="plot-range-band" aria-hidden="true" visibility="hidden" x={0} y={PADDING_TOP} width={0} height={USABLE_HEIGHT} />
+            {marks.map(each => <g key={each.trace}>
+              <path className={`chromatogram-trace chromatogram-trace-${each.trace}`} d={each.d} strokeDasharray={each.dash} />
+              <circle className={`chromatogram-point chromatogram-point-${each.trace}`} visibility={each.point === null ? "hidden" : "visible"}
+                cx={each.point?.x ?? 0} cy={each.point?.y ?? 0} r={each.pointRadius} />
+            </g>)}
+            {nothingDrawn ? (
+              // An intentional state rather than an empty drawing. The axis is
+              // still the run's, and the plot is still where a scan is chosen.
+              <text
+                className="chromatogram-hidden-note"
+                textAnchor="middle"
+                x={PADDING_LEFT + USABLE_WIDTH / 2}
+                y={PADDING_TOP + USABLE_HEIGHT / 2}
+              >
+                {t("viewerTracesHidden")}
+              </text>
+            ) : null}
+            {selectedPoint === null ? null : (
+              <g className="chromatogram-selected">
+                {/* A rule and a glyph, not a colour change. Which scan is
+                    selected has to be readable without seeing colour. */}
+                <line
+                  x1={scale.x(selectedPoint.retentionTime)}
+                  x2={scale.x(selectedPoint.retentionTime)}
+                  y1={PADDING_TOP}
+                  y2={BASELINE_Y}
+                />
+                <rect
+                  height={9}
+                  width={9}
+                  x={scale.x(selectedPoint.retentionTime) - 4.5}
+                  y={PADDING_TOP - 1}
+                />
+              </g>
+            )}
+            {hoveredPoint === null ? null : (
+              <g className="chromatogram-hover">
+                {/* Placed from the scan's own retention time under the range on
+                    screen now, never from a coordinate scaled when the
+                    observation was made. */}
+                <line
+                  x1={scale.x(hoveredPoint.retentionTime)}
+                  x2={scale.x(hoveredPoint.retentionTime)}
+                  y1={PADDING_TOP}
+                  y2={BASELINE_Y}
+                />
+              </g>
+            )}
+          </g>
+        </svg>
+        <div aria-hidden="true" className="plot-y-ticks chromatogram-y-ticks" />
+        <div aria-hidden="true" className="plot-x-ticks" />
+        {/* The unit state, said rather than assumed. Nothing in the accepted
+            contract establishes what these numbers are measured in, and a
+            chromatogram labelled "minutes" states something the file did not.
+            Said once per axis, in its title, and the two titles are the plot's
+            unit description (PM9 UI-33). The wrapper lays out no box. */}
+        <div className="plot-axis-titles" id="chromatogram-units">
+          <p className="plot-axis-title plot-axis-title-x">{t("plotAxisRt")}</p>
+          <span className="visually-hidden"> · </span>
+          <p className="plot-axis-title plot-axis-title-y">{t("plotAxisIntensity")}</p>
+        </div>
+      </div>
       <div className="plot-foot">
         <p className="chromatogram-axis-caption" id={AXIS_CAPTION_ID}>
-          {/* The unit state, said rather than assumed. Nothing in the accepted
-              contract establishes what these numbers are measured in, and a
-              chromatogram labelled "minutes" states something the file did not.
-              Said once per axis here, and part of the plot's description,
-              rather than after every retention time on the panel (PM9 UI-33). */}
-          <span id="chromatogram-units">{t("viewerRtUnits")}</span> ·{" "}
           <span className="chromatogram-range">
             {t("viewerShowing", { low: domain.low.toFixed(4), high: domain.high.toFixed(4) }) +
               (showingFullRange ? t("viewerFullRange") : "")}
@@ -609,10 +601,17 @@ function ChromatogramPlot({
   );
 }
 
-/** How a value and a retention time become viewBox coordinates. */
+/**
+ * How a value and a retention time become viewBox coordinates.
+ *
+ * The retention-time axis is the range on screen exactly. The value axis is the
+ * visible extent with headroom, so the tallest visible point sits below the
+ * frame rather than on it; `valueLow`/`valueHigh` are that axis, for its ticks.
+ */
 function scaleFor(domain: RetentionTimeDomain, extent: ValueExtent) {
   const span = domain.high - domain.low;
-  const valueSpan = extent.high - extent.low;
+  const axis = withHeadroom(extent.low, extent.high);
+  const valueSpan = axis.high - axis.low;
   // Both guards are about the same thing: a divisor that is zero, or that
   // overflowed adding two finite extremes, would put `NaN` or `Infinity` into
   // an SVG coordinate -- which draws nothing and says nothing about why.
@@ -624,7 +623,9 @@ function scaleFor(domain: RetentionTimeDomain, extent: ValueExtent) {
       (usableX ? ((retentionTime - domain.low) / span) * USABLE_WIDTH : USABLE_WIDTH / 2),
     y: (value: number) =>
       PADDING_TOP +
-      (usableY ? ((extent.high - value) / valueSpan) * USABLE_HEIGHT : USABLE_HEIGHT),
+      (usableY ? ((axis.high - value) / valueSpan) * USABLE_HEIGHT : USABLE_HEIGHT),
+    valueLow: axis.low,
+    valueHigh: axis.high,
   };
 }
 
@@ -644,15 +645,6 @@ function pathOf(
     path += `${index === 0 ? "M" : "L"} ${x} ${y} `;
   }
   return path.trimEnd();
-}
-
-/** Five evenly spaced retention times across the viewport. */
-function ticksOf(domain: RetentionTimeDomain): readonly number[] {
-  const span = domain.high - domain.low;
-  if (!(span > 0)) {
-    return [domain.low];
-  }
-  return [0, 0.25, 0.5, 0.75, 1].map((fraction) => domain.low + span * fraction);
 }
 
 
