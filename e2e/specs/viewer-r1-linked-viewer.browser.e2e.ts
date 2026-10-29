@@ -1115,11 +1115,12 @@ describe("the linked viewer, rendered", () => {
     const IN = -240;
     const OUT = 240;
 
-    it("has a column with somewhere to scroll to at 1366x768", async () => {
-      // The reason the claim matters. On the laptop window this product is
-      // measured against, the three panels do not all fit, and the wheel is how
-      // a reader reaches the ones below.
-      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    it("has a column with somewhere to scroll to at 960x640", async () => {
+      // The reason the claim matters. The rebuild sizes the plots to the card,
+      // so the laptop window fits both unscrolled (m5.2); a window too short
+      // for both plots' floors scrolls the column, and the wheel is how a
+      // reader reaches the ones below.
+      await openTheViewer({ width: 960, height: 640, scans: SCANS });
 
       const stack = await stackOverflow();
       expect(stack.overflowY).toBe("auto");

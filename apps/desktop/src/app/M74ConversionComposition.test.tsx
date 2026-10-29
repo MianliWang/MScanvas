@@ -10,6 +10,7 @@ import {
   availableBackend, createFakePreviewApi, createFakeWorkspaceDropTransport,
   deferred, queueItem, queueOf, type FakePreviewApi,
 } from "../test/previewFixtures";
+import { rosterAction } from "../test/rosterActions";
 
 const en = UI_RESOURCES.en;
 const zh = UI_RESOURCES["zh-CN"];
@@ -31,6 +32,15 @@ async function chinese() {
   expect(document.documentElement.lang).toBe("zh-CN");
 }
 
+/** Starts Clear from the roster's list menu once it is offered; the menu's trigger is its keyboard home. */
+async function startClear(): Promise<HTMLElement> {
+  const clear = await screen.findByRole("button", { name: en.rosterListActions });
+  const item = await rosterAction("clearList");
+  await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled"));
+  await act(async () => { fireEvent.click(item); });
+  return clear;
+}
+
 describe("M7.4 bilingual conversion composition", () => {
   beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
   afterEach(() => { vi.restoreAllMocks(); });
@@ -49,9 +59,7 @@ describe("M7.4 bilingual conversion composition", () => {
     });
     mount(api);
     await waitFor(() => expect(document.querySelector(".conversion-running")).toBeInTheDocument());
-    const clear = await screen.findByRole("button", { name: en.clearList });
-    await waitFor(() => expect(clear).toBeEnabled());
-    clear.focus(); fireEvent.click(clear);
+    const clear = await startClear();
     const cancel = await screen.findByRole("button", { name: en.clearCancelAll });
     await waitFor(() => expect(cancel).not.toHaveAttribute("aria-disabled"));
     cancel.focus(); fireEvent.click(cancel);
@@ -88,8 +96,7 @@ describe("M7.4 bilingual conversion composition", () => {
     });
     mount(api);
     await waitFor(() => expect(document.querySelector(".conversion-running")).toBeInTheDocument());
-    const clear = screen.getByRole("button", { name: en.clearList });
-    clear.focus(); fireEvent.click(clear);
+    const clear = await startClear();
     const remove = await screen.findByRole("button", { name: en.clearRemoveNonRunning });
     await waitFor(() => expect(remove).not.toHaveAttribute("aria-disabled"));
     remove.focus(); fireEvent.click(remove);
@@ -109,8 +116,7 @@ describe("M7.4 bilingual conversion composition", () => {
     });
     mount(api);
     await waitFor(() => expect(document.querySelector(".conversion-running")).toBeInTheDocument());
-    const clear = screen.getByRole("button", { name: en.clearList });
-    clear.focus(); fireEvent.click(clear);
+    await startClear();
     const cancel = await screen.findByRole("button", { name: en.clearCancelAll });
     await waitFor(() => expect(cancel).not.toHaveAttribute("aria-disabled"));
     cancel.focus(); fireEvent.click(cancel);

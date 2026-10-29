@@ -15,7 +15,7 @@ import type { MessageKey } from "../preferences/i18n";
 import { captureOrganizationPayload, UNGROUPED, type AcquisitionGroup, type OrganizationPayload, type OrganizationTarget, type OrganizationNotice } from "./organization";
 import { GroupNameDialog } from "./GroupNameDialog";
 import { useRosterWindow } from "./useRosterWindow";
-import { Button, Icon } from "../../components/ui";
+import { Icon } from "../../components/ui";
 
 interface Props {
   readonly state: RosterState; readonly projection: RosterProjection;
@@ -26,8 +26,8 @@ interface Props {
   readonly onKeyDown: KeyboardEventHandler<HTMLDivElement>;
   readonly onRowPress: (event: MouseEvent<HTMLElement>, handle: string) => void;
   readonly empty: ReactNode;
-  /** The roster footer, given the `New group` action this list owns. */
-  readonly footer: (newGroup: ReactNode) => ReactNode;
+  /** The roster footer, given the `New group` action this list owns and where its dialog returns the keyboard. */
+  readonly footer: (newGroup: (returnTo: HTMLElement | null) => void) => ReactNode;
 }
 const noticeKeys = {
   changed: "organizationChanged", undone: "organizationUndone", cancelled: "organizationCancelled",
@@ -143,12 +143,15 @@ export function GroupedRosterList(props: Props) {
     latest.current.onRowPress(event, handle);
   }, []);
   const items = useMemo<WindowItem[]>(() => {
+    // An empty list has no groups to show: "Ungrouped 0" under "No
+    // acquisitions yet" would be a heading over nothing.
+    if (state.datasets.length === 0) return [];
     const visible = new Map(projection.datasets.map(row => [row.handle, row]));
     return state.organization.groups.flatMap(group => [
       { key: `group:${group.id}`, group, row: null, estimate: 40 },
       ...group.handles.flatMap(handle => { const row = visible.get(handle); return row === undefined ? [] : [{ key: handle, group, row, estimate: preferences.effective.density === "compact" ? 32 : 44 }]; }),
     ]);
-  }, [state.organization.groups, projection.datasets, preferences.effective.density]);
+  }, [state.datasets.length, state.organization.groups, projection.datasets, preferences.effective.density]);
   const retained = useMemo(() => new Set([state.focused, dragSource].filter((id): id is string => id !== null)), [state.focused, dragSource]);
   const windowing = useRosterWindow(items, retained, dragSource !== null, state.focused);
   const rootRef = useCallback((node: HTMLDivElement | null) => { props.listRef.current = node; windowing.root.current = node; }, [props.listRef, windowing.root]);
@@ -197,8 +200,8 @@ export function GroupedRosterList(props: Props) {
         announcement?.kind === "target" ? t("dragTarget", { count: announcement.count, name: groupName(announcement.groupId), position: announcement.position, total: announcement.total }) : notice === null ? "" : t(noticeKeys[notice])}
     </p>
     {/* A row or group menu whose own trigger has left the document returns
-        focus to New group (`data-roster-new-group`). */}
-    {props.footer(<Button data-roster-new-group="" size="sm" variant="quiet" onClick={event => setEditing({ id: null, name: "", returnTo: event.currentTarget })}>{t("newGroup")}</Button>)}
+        focus to the footer's list menu (`data-roster-list-menu`). */}
+    {props.footer(returnTo => setEditing({ id: null, name: "", returnTo }))}
     <DragOverlay dropAnimation={null} style={{ pointerEvents: "none", display: "flex", justifyContent: "flex-end", alignItems: "center" }}><span className="roster-drag-overlay" aria-hidden="true">{t("dragCount", { count: payload.current?.handles.length ?? 0 })}</span></DragOverlay>
     {editing !== null ? <GroupNameDialog name={editing.name} rename={editing.id !== null} returnTo={editing.returnTo} onClose={() => setEditing(null)} onSave={name => {
       dispatch({ type: "organization", action: editing.id === null ? { type: "create", name } : { type: "rename", groupId: editing.id, name } }); setEditing(null);
@@ -230,7 +233,7 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
     <div role="gridcell"><MembershipCheckbox label={t("checkGroup", { name, count: group.handles.length })} checked={group.handles.length > 0 && checked === group.handles.length} mixed={checked > 0 && checked < group.handles.length}
       onChange={checked => dispatch({ type: "membershipChanged", handles: group.handles, checked })} /></div>
     {group.id !== UNGROUPED ? <div role="gridcell"><Menu.Root onOpenChange={open => {
-      if (open) menuReturnFallback.current = menuTrigger.current?.closest(".dataset-roster-panel")?.querySelector<HTMLButtonElement>("[data-roster-new-group]") ?? null;
+      if (open) menuReturnFallback.current = menuTrigger.current?.closest(".dataset-roster-panel")?.querySelector<HTMLButtonElement>("[data-roster-list-menu]") ?? null;
     }}><Menu.Trigger asChild><button ref={menuTrigger} type="button" className="row-menu-trigger" aria-label={t("groupActions", { name })}><Icon name="more" /></button></Menu.Trigger>
       <Menu.Portal><Menu.Content className="roster-menu" sideOffset={4} onCloseAutoFocus={event => {
         const fallback = menuReturnFallback.current;
@@ -239,8 +242,13 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
         else if (!menuTrigger.current?.isConnected && fallback?.isConnected) { event.preventDefault(); fallback.focus(); }
       }}>
         <Menu.Item onSelect={() => { openingDialog.current = true; onRename({ id: group.id, name: group.name, returnTo: menuTrigger.current }); }}>{t("renameGroup")}</Menu.Item>
-        <Menu.Item disabled={index <= 1} onSelect={() => { const targetId = state.organization.groups[index - 1]?.id; if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } }); }}>{t("moveGroupUp")}</Menu.Item>
-        <Menu.Item disabled={index === state.organization.groups.length - 1} onSelect={() => { const targetId = state.organization.groups[index + 1]?.id; if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } }); }}>{t("moveGroupDown")}</Menu.Item>
+        {/* Refused, not disabled: each stays reachable and says why (spec 1.4). */}
+        {([["moveGroupUp", index <= 1, -1, "moveGroupFirst"], ["moveGroupDown", index === state.organization.groups.length - 1, 1, "moveGroupLast"]] as const).map(([label, refused, step, reason]) =>
+          <Menu.Item key={label} aria-disabled={refused || undefined} onSelect={event => {
+            if (refused) { event.preventDefault(); return; }
+            const targetId = state.organization.groups[index + step]?.id;
+            if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } });
+          }}>{t(label)}{refused ? <span className="plot-menu-reason">{t(reason)}</span> : null}</Menu.Item>)}
         <Menu.Separator /><Menu.Item onSelect={() => dispatch({ type: "organization", action: { type: "dissolve", groupId: group.id } })}>{t("dissolveGroup")}</Menu.Item>
       </Menu.Content></Menu.Portal></Menu.Root></div> : null}
   </div>;
@@ -286,7 +294,7 @@ const AcquisitionRow = memo(function AcquisitionRow({ row, group, state, project
           const header = Array.from(panel?.querySelectorAll<HTMLElement>(".roster-group-header") ?? [])
             .find(element => element.dataset.groupId === destination.id);
           menuReturnTarget.current = header?.querySelector<HTMLButtonElement>(".group-disclosure") ?? null;
-          menuReturnFallback.current = panel?.querySelector<HTMLButtonElement>("[data-roster-new-group]") ?? null;
+          menuReturnFallback.current = panel?.querySelector<HTMLButtonElement>("[data-roster-list-menu]") ?? null;
           moveTo(row.handle, destination.id);
         }}>{destination.id === UNGROUPED ? t("ungrouped") : destination.name}</Menu.Item>)}
       </Menu.Content></Menu.Portal></Menu.Root></div>

@@ -267,10 +267,10 @@ describe("the empty Project in the application shell", () => {
       const words = UI_RESOURCES[locale];
       const projects = renderShell(NO_PROJECT, locale);
       const addFiles = await screen.findByRole("button", { name: words.addFiles });
-      // The roster's Add files… is always secondary: the empty Workbench's
-      // filled first-run action belongs to the evidence pane.
+      // The first run's one filled action: with the roster on screen the
+      // evidence leaves the Add actions to it (spec 3.3, 3.6).
       expect(currentSurface()).toBe("workbench");
-      expect(addFiles).toHaveClass("ui-button--secondary");
+      await waitFor(() => expect(addFiles).toHaveClass("ui-button--primary"));
 
       await openProjectSurface(words);
       await screen.findByText(words.projectNone);

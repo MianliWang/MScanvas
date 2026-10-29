@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { renderPm9Scenario } from "../test/pm9Scenarios";
 import { openProjectSurface } from "../test/projectMenu";
+import { rosterAction } from "../test/rosterActions";
 
 const en = UI_RESOURCES.en;
 
@@ -161,20 +162,25 @@ describe("PM9.2: each surface says what it is, and offers only its own next step
 describe("PM9.2: the roster's actions, quieter but all there (L9)", () => {
   it("keeps every action reachable by name", async () => {
     mount("populated");
-    for (const name of [en.addFiles, en.addFolder, en.removeHighlighted, en.clearList, en.newGroup]) {
+    for (const name of [en.addFiles, en.addFolder, en.rosterListActions]) {
       expect(await screen.findAllByRole("button", { name })).toHaveLength(1);
+    }
+    // The list actions are one menu away, each once.
+    await rosterAction("removeHighlighted");
+    for (const name of [en.removeHighlighted, en.clearList, en.newGroup]) {
+      expect(screen.getAllByRole("menuitem", { name })).toHaveLength(1);
     }
   });
 
   it("leads the footer with the checked count, which is Convert's reason while it is zero", async () => {
     mount("populated");
-    await screen.findByRole("button", { name: en.newGroup });
+    await screen.findByRole("button", { name: en.rosterListActions });
     const footer = document.querySelector<HTMLElement>(".roster-foot")!;
     const count = footer.querySelector<HTMLElement>("#roster-selection-count")!;
     expect(count).toBeVisible();
     expect(count.textContent).toMatch(/^0\u00a0checked/);
-    expect(footer.querySelector("[data-roster-new-group]")).toHaveTextContent(en.newGroup);
-    const convert = screen.getByRole("button", { name: "Convert 0…" });
+    expect(footer.querySelector("[data-roster-list-menu]")).toHaveAccessibleName(en.rosterListActions);
+    const convert = screen.getByRole("button", { name: "Convert 0 checked…" });
     expect(convert).toHaveAttribute("aria-disabled", "true");
     expect(convert.getAttribute("aria-describedby")).toContain("roster-selection-count");
   });

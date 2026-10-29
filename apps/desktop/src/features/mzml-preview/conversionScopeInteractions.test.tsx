@@ -7,6 +7,7 @@ import { PreviewApiProvider } from "./api";
 import type { ConversionPlanOutcome, ConversionPlanRequest, SelectedFile, WorkspaceConversionState } from "./contracts";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
+import { chooseRosterAction } from "../../test/rosterActions";
 
 const vendor = (n: number): SelectedFile => ({ handle: `raw-${n}`, fileName: `sample-${n}.raw`, sourceKind: "thermo_raw", byteLength: n, relativeContext: null });
 const open: SelectedFile = { ...vendor(0), handle: "open", fileName: "open.mzML", sourceKind: "mzml" };
@@ -44,7 +45,7 @@ function button() { return document.querySelector<HTMLButtonElement>(".conversio
 async function ready() { await waitFor(() => expect(button()).not.toHaveAttribute("aria-disabled")); }
 
 async function organizeRow(handle: string) {
-  fireEvent.click(screen.getByRole("button", { name: "New group" }));
+  await chooseRosterAction("newGroup");
   fireEvent.change(screen.getByRole("textbox", { name: "Group name" }), { target: { value: "Local browsing" } });
   fireEvent.click(screen.getByRole("button", { name: "Save group" }));
   const row = document.querySelector(`[data-handle="${handle}"]`) as HTMLElement;

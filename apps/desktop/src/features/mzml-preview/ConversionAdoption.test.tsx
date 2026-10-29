@@ -20,6 +20,7 @@ import type {
   WorkspaceConversionState,
   WorkspaceOutputAdoptionResult,
 } from "./contracts";
+import { rosterActionRefused } from "../../test/rosterActions";
 
 /**
  * Adding a terminal queue's finalized outputs to the workspace, from the
@@ -438,7 +439,7 @@ describe("adding converted outputs to the workspace", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     });
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+    expect(await rosterActionRefused("clearList")).toBe(true);
     // The roster stays readable throughout.
     expect(screen.getByRole("treegrid", { name: "Acquisitions" })).toBeVisible();
     expect(screen.getByRole("searchbox", { name: /search/i })).toBeEnabled();

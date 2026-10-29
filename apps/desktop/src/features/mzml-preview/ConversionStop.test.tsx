@@ -19,6 +19,7 @@ import type {
   SelectedFile,
   WorkspaceConversionState,
 } from "./contracts";
+import { chooseRosterAction, rosterActionRefused } from "../../test/rosterActions";
 
 /**
  * Stopping a running queue, from the interface a user actually has.
@@ -1112,8 +1113,8 @@ describe("stopping a running conversion queue", () => {
     expect(api.stopRequests).toEqual([]);
     expect(within(panel).queryByRole("button", { name: "Stop queue" })).toBeNull();
     // Every row a stopping queue holds is still protected.
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    expect(await rosterActionRefused("clearList")).toBe(false);
+    await chooseRosterAction("clearList");
     expect(await screen.findByRole("dialog")).toBeVisible();
     expect(api.calls()).not.toContain("clearWorkspace");
     fireEvent.click(screen.getByRole("button", { name: "Return" }));
@@ -1134,7 +1135,7 @@ describe("stopping a running conversion queue", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
     });
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    expect(await rosterActionRefused("clearList")).toBe(false);
   });
 
   it("moves focus to the queue's status line when the pressed stop control leaves (PM9.4 R11)", async () => {

@@ -39,6 +39,7 @@ import {
   unavailableBackend,
 } from "../test/previewFixtures";
 import { App } from "./App";
+import { chooseRosterAction, rosterActionRefused, rosterListMenu } from "../test/rosterActions";
 
 function renderApp(
   api: PreviewApi,
@@ -889,7 +890,7 @@ describe("mzML preview workspace", () => {
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
     fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
     await waitFor(() => {
       expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
     });
@@ -1229,11 +1230,12 @@ describe("native Explorer drop presentation", () => {
     const api = createFakePreviewApi({ availability: unavailableBackend });
     renderApp(api, transport);
 
-    expect(await screen.findByText("Explorer drag-and-drop is unavailable")).toBeVisible();
-    expect(
-      screen.getByText(/Explorer drag-and-drop could not connect\./u, { selector: "span:not([class])" }),
-    ).toBeVisible();
-    expect(screen.getByText("File drop unavailable; use Add files")).toBeVisible();
+    // Said once, in the status bar, with its reconnect beside it: no banner
+    // repeats it. What went wrong is the hint's title and the drop region's.
+    const hint = await screen.findByText("File drop unavailable; use Add files");
+    expect(hint).toBeVisible();
+    expect(hint).toHaveAttribute("title", "Explorer drag-and-drop could not connect.");
+    expect(screen.queryByText("Explorer drag-and-drop is unavailable")).toBeNull();
     expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
       /Explorer drag-and-drop is unavailable\..*Explorer drag-and-drop could not connect\./u,
     );
@@ -1247,7 +1249,7 @@ describe("native Explorer drop presentation", () => {
     retry.focus();
     fireEvent.click(retry, { detail: 0 });
     expect(addFiles).toHaveFocus();
-    expect(screen.queryByText("Explorer drag-and-drop is unavailable")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try connecting again" })).toBeNull();
     // Nothing is said about a gesture that cannot work yet.
     expect(document.querySelector(".workspace-drop-hint")).toBeNull();
 
@@ -1376,7 +1378,7 @@ describe("the session workspace roster", () => {
     expect(api.rosterReads()).toBe(1);
     // Listed but not selected and not being read: nothing here is a decision
     // the user has made yet.
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(true);
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
   });
 
@@ -1554,7 +1556,7 @@ describe("the session workspace roster", () => {
 
     // The first row is the one being shown; the other two are removed.
     highlightRows(/QC_pool_02\.mzML/, /Blank_03\.mzML/);
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
 
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(1);
@@ -1573,7 +1575,7 @@ describe("the session workspace roster", () => {
     const readsBefore = api.openCount();
 
     highlightRows(/QC_pool_01\.mzML/);
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
 
     await waitFor(() => {
       expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
@@ -1587,43 +1589,9 @@ describe("the session workspace roster", () => {
     expect(rosterRow(/QC_pool_02\.mzML/)).toHaveAttribute("aria-selected", "true");
   });
 
-  it("returns a focused removal action to the survivor beside the gap", async () => {
-    const removal = deferred<WorkspaceRemoveResult>();
-    const api = createFakePreviewApi({
-      initialDatasets: [selectedFile, secondFile, thirdFile],
-      removeDatasets: () => removal.promise,
-    });
-    renderApp(api);
-    const removed = await screen.findByRole("row", { name: /QC_pool_02\.mzML/ });
-    fireEvent.click(removed);
-    const survivor = rosterRow(/Blank_03\.mzML/);
-    const focusing = vi.spyOn(survivor, "focus");
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    remove.focus();
-    fireEvent.click(remove);
-
-    await waitFor(() => {
-      expect(remove).toBeDisabled();
-    });
-    // WebView2 blurs the action when the request disables it. jsdom keeps a
-    // disabled element focused, so reproduce the production transition.
-    blurAsABrowserWould(remove);
-    expect(document.body).toHaveFocus();
-    removal.resolve({
-      roster: { datasets: [selectedFile, thirdFile], capacity: 1_024 },
-      removedHandles: [secondFile.handle],
-      unknownHandles: [],
-    });
-
-    await waitFor(() => {
-      expect(survivor).toHaveFocus();
-    });
-    expect(survivor).toHaveAttribute("tabindex", "0");
-    expect(survivor).toHaveAttribute("aria-selected", "true");
-    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
-  });
-
-  it("waits for failed removal reconciliation before restoring focus", async () => {
+  it("keeps the keyboard on the list menu through a removal and its failed reconciliation", async () => {
+    // Removal is a list-menu item now; the trigger it returns the keyboard to
+    // is never disabled, so there is no blurred action to restore.
     const removal = deferred<WorkspaceRemoveResult>();
     const reconciliation = deferred<WorkspaceRoster>();
     const initialRoster: WorkspaceRoster = {
@@ -1640,100 +1608,22 @@ describe("the session workspace roster", () => {
       },
     });
     renderApp(api);
-    const removed = await screen.findByRole("row", { name: /QC_pool_02\.mzML/ });
-    fireEvent.click(removed);
-    const survivor = rosterRow(/QC_pool_01\.mzML/);
-    const focusing = vi.spyOn(survivor, "focus");
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    remove.focus();
-    fireEvent.click(remove);
-
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_02\.mzML/ }));
+    await chooseRosterAction("removeHighlighted");
+    const menu = rosterListMenu();
     await waitFor(() => {
-      expect(remove).toBeDisabled();
+      expect(menu).toHaveFocus();
     });
-    blurAsABrowserWould(remove);
-    removal.reject(previewError({ kind: "preview_worker_unavailable" }));
-
-    await waitFor(() => {
-      expect(api.rosterReads()).toBe(2);
-      expect(remove).toBeEnabled();
-    });
-    // The request settling did not say whether Rust changed the workspace.
-    // Keep the debt until its owed authoritative read answers rather than
-    // paying it against the stale row that is still on screen.
-    expect(document.body).toHaveFocus();
-    expect(focusing).not.toHaveBeenCalled();
-
-    reconciliation.resolve({
-      datasets: [selectedFile, thirdFile],
-      capacity: 1_024,
-    });
-
-    await waitFor(() => {
-      expect(survivor).toHaveFocus();
-    });
-    expect(survivor).toHaveAttribute("tabindex", "0");
-    expect(survivor).toHaveAttribute("aria-selected", "false");
-    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
-  });
-
-  it("keeps removal focus debt through a failed reconciliation and its retry", async () => {
-    const removal = deferred<WorkspaceRemoveResult>();
-    const failedReconciliation = deferred<WorkspaceRoster>();
-    const retry = deferred<WorkspaceRoster>();
-    const initialRoster: WorkspaceRoster = {
-      datasets: [selectedFile, secondFile, thirdFile],
-      capacity: 1_024,
-    };
-    let rosterReads = 0;
-    const api = createFakePreviewApi({
-      initialDatasets: initialRoster.datasets,
-      removeDatasets: () => removal.promise,
-      roster: () => {
-        rosterReads += 1;
-        if (rosterReads === 1) {
-          return Promise.resolve(initialRoster);
-        }
-        return rosterReads === 2 ? failedReconciliation.promise : retry.promise;
-      },
-    });
-    renderApp(api);
-    const removed = await screen.findByRole("row", { name: /QC_pool_02\.mzML/ });
-    fireEvent.click(removed);
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    const focusing = vi.spyOn(remove, "focus");
-    remove.focus();
-    focusing.mockClear();
-    fireEvent.click(remove);
-
-    await waitFor(() => {
-      expect(remove).toBeDisabled();
-    });
-    blurAsABrowserWould(remove);
     removal.reject(previewError({ kind: "preview_worker_unavailable" }));
     await waitFor(() => {
       expect(api.rosterReads()).toBe(2);
     });
-    failedReconciliation.reject(previewError({ kind: "preview_worker_unavailable" }));
-
-    const retryControl = await screen.findByRole("button", {
-      name: "Try reading it again",
-    });
-    expect(remove).toBeEnabled();
-    expect(document.body).toHaveFocus();
-    expect(focusing).not.toHaveBeenCalled();
-
-    retryControl.focus();
-    fireEvent.click(retryControl);
-    await waitFor(() => {
-      expect(api.rosterReads()).toBe(3);
-    });
-    retry.resolve(initialRoster);
+    reconciliation.resolve({ datasets: [selectedFile, thirdFile], capacity: 1_024 });
 
     await waitFor(() => {
-      expect(remove).toHaveFocus();
+      expect(rosterRows()).toHaveLength(2);
     });
-    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+    expect(menu).toHaveFocus();
   });
 
   it("empties the list without a restart and gives the keyboard back to Add files", async () => {
@@ -1741,7 +1631,7 @@ describe("the session workspace roster", () => {
     await openTheFile(api);
     await screen.findByRole("grid", { name: "Spectra" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    await chooseRosterAction("clearList");
 
     expect(await screen.findByText("No acquisitions yet")).toBeVisible();
     expect(screen.queryByRole("option")).toBeNull();
@@ -1755,7 +1645,7 @@ describe("the session workspace roster", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
     });
-    expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "List actions" })).toBeNull();
   });
 
   it("bounds repeated activation to one read at a time", async () => {
@@ -1798,7 +1688,7 @@ describe("the session workspace roster", () => {
 
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     highlightRows(/QC_pool_01\.mzML/);
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(1);
     });
@@ -1869,7 +1759,7 @@ describe("the session workspace roster", () => {
     // The row on screen is removed, and before Rust answers the user reads
     // another one.
     highlightRows(/QC_pool_01\.mzML/);
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await waitFor(() => {
@@ -1914,13 +1804,9 @@ describe("the session workspace roster", () => {
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
 
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    remove.focus();
-    fireEvent.click(remove);
-    // WebView2 blurs a button when the request disables it. jsdom keeps a
-    // disabled element focused, so model the production focusout explicitly.
-    blurAsABrowserWould(remove);
-    expect(document.body).toHaveFocus();
+    // The list menu gives the keyboard back to its trigger, which leaves with
+    // the last row.
+    await chooseRosterAction("removeHighlighted");
 
     await waitFor(() => {
       expect(api.rosterReads()).toBe(2);
@@ -2048,12 +1934,12 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    await chooseRosterAction("clearList");
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     });
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(true);
 
     clearing.resolve({ datasets: [], capacity: 1_024 });
 
@@ -2078,7 +1964,7 @@ describe("the session workspace roster", () => {
 
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     highlightRows(/QC_pool_01\.mzML/);
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(2);
     });
@@ -2086,7 +1972,7 @@ describe("the session workspace roster", () => {
     expect(afterFirst).toContain("Removed 1 file from the list.");
 
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(1);
     });
@@ -2158,16 +2044,18 @@ describe("the session workspace roster", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     });
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(true);
+    expect(await rosterActionRefused("clearList")).toBe(true);
 
     picking.resolve(null);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
     });
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(false);
+    expect(await rosterActionRefused("clearList")).toBe(false);
   });
 
   it("auto-previews only the first added mzML of a mixed three-family batch", async () => {
@@ -2303,7 +2191,7 @@ describe("the session workspace roster", () => {
     expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC_pool_01");
     expect(executionOrder()).toHaveValue("name-desc");
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
 
     await waitFor(() => {
       expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
@@ -2329,7 +2217,7 @@ describe("the session workspace roster", () => {
     chooseExecutionOrder("size-asc");
     expect(rosterRows()).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    await chooseRosterAction("clearList");
 
     // Every file, not the one the search was showing.
     expect(await screen.findByText("No acquisitions yet")).toBeVisible();
@@ -2450,7 +2338,7 @@ describe("the session workspace roster", () => {
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
 
     // Back to an empty workspace, which is now something this side knows
     // rather than something it failed to find out.
@@ -2693,8 +2581,8 @@ describe("adding a folder of mzML files", () => {
     // escape; `Remove selected` remains available to manage rows already shown,
     // though imported rows can remain if the import committed first. Rust
     // linearises either action rather than this side making it impossible.
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(false);
+    expect(await rosterActionRefused("clearList")).toBe(false);
     // And none of the ones that cost nothing. Curating what is on screen is
     // this side's own work, and a filesystem walk is no reason to stop it.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
@@ -2732,7 +2620,7 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
 
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(2);
@@ -2839,7 +2727,8 @@ describe("adding a folder of mzML files", () => {
 
       reconciliation.resolve({ datasets: [thirdFile], capacity: 1_024 });
 
-      const restored = await screen.findByRole("button", { name: "Clear list" });
+      // Over rows Clear lives in the list menu, so its trigger is the action.
+      const restored = await screen.findByRole("button", { name: "List actions" });
       await waitFor(() => {
         expect(restored).toHaveFocus();
       });
@@ -2962,7 +2851,7 @@ describe("adding a folder of mzML files", () => {
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    await chooseRosterAction("clearList");
 
     expect(await screen.findByText("No acquisitions yet")).toBeVisible();
     expect(screen.getByText(/Cleared 2 files from the list/, VISIBLE)).toBeVisible();
@@ -3476,7 +3365,7 @@ describe("telling two identically named acquisitions apart", () => {
       "title",
       "sample.mzML, batch-1",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
     let uniqueIdentity: HTMLElement | null = null;
     await waitFor(() => {
       uniqueIdentity = within(summary).getByText(/^sample\.mzML ·/);
@@ -3587,7 +3476,7 @@ describe("telling two identically named acquisitions apart", () => {
     expect(screen.getByRole("row", { name: COLLIDING_ONE })).toBeVisible();
 
     fireEvent.click(screen.getByRole("row", { name: COLLIDING_TWO }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
+    await chooseRosterAction("removeHighlighted");
 
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(2);

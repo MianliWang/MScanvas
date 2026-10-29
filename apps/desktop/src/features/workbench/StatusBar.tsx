@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef, type MouseEvent } from "react";
 
 import { Button, StatusBar } from "../../components/ui";
 import type { UiMessage } from "../preferences/i18n";
@@ -57,11 +57,15 @@ export function statusBusyReason(flags: BusyFlags, t: UiMessage): string | "conv
  * workspace actions wait, the project, then the layout's save state and how
  * files arrive. Built from existing state only; it starts no work.
  */
-export function WorkbenchStatusBar({ backend, items, busy, dropStatus, onNavigate, inert = false }: {
+export function WorkbenchStatusBar({ backend, items, busy, dropStatus, dropProblem = null, onReconnectDrop, onNavigate, inert = false }: {
   readonly backend: StatusBackend;
   readonly items: readonly ShellContextItem[];
   readonly busy: string | "conversion" | null;
   readonly dropStatus: "available" | "connecting" | "unavailable";
+  /** What went wrong connecting file drop, while it is unavailable. */
+  readonly dropProblem?: string | null;
+  /** Tries to connect file drop again; offered while it is unavailable. */
+  readonly onReconnectDrop?: (event: MouseEvent<HTMLButtonElement>) => void;
   readonly onNavigate: (surface: WorkbenchSurface) => void;
   /** A drawer is open over the workspace: the bar is behind it. */
   readonly inert?: boolean;
@@ -118,7 +122,10 @@ export function WorkbenchStatusBar({ backend, items, busy, dropStatus, onNavigat
       <span className="status-item-text">{t(panels.save.problem === "notConfirmed" ? "layoutUncertain" : "layoutUnsaved")}</span>
       {panels.save.retryable ? <Button variant="secondary" size="sm" onClick={panels.retry}>{t("layoutRetry")}</Button> : null}
     </p> : null}
-    {dropHint === null ? null : <p className="workspace-drop-hint">{dropHint}</p>}
+    {dropHint === null ? null : <p className="workspace-drop-hint" title={dropProblem ?? undefined}>{dropHint}</p>}
+    {dropStatus === "unavailable" && onReconnectDrop !== undefined
+      ? <Button variant="secondary" size="sm" className="drop-reconnect" title={dropProblem ?? undefined} onClick={onReconnectDrop}>{t("dropReconnect")}</Button>
+      : null}
   </>;
   return <div className="workbench-status" inert={inert || undefined}>
     <StatusBar start={start} end={end} />
