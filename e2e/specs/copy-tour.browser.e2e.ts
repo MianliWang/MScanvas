@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { cdp, metrics } from "../support/cdp";
+import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
 import { CONVERT, checkMembers, waitUntilOffered } from "../support/conversion";
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails } from "../support/harness";
 import { MZML_ROW } from "../support/fixtures";
@@ -171,33 +172,6 @@ async function answerPlans() {
   );
 }
 
-/** A labelled synthetic preview for the Export figure dialog (m7.4's boundary); never the renderer's output. */
-async function answerFigurePreviews() {
-  await browser.execute((tableKey: string) => {
-    const table = Reflect.get(window, tableKey) as Record<string, unknown>;
-    const internals = Reflect.get(window, "__TAURI_INTERNALS__") as {
-      invoke: (name: string, args: Record<string, unknown>, ...rest: unknown[]) => Promise<unknown>;
-    };
-    const invoke = internals.invoke;
-    internals.invoke = (name, args, ...rest) => {
-      if (name === "preview_figure") {
-        const request = args["request"] as { requestId: string; settings: { widthPx: number; heightPx: number } };
-        const { widthPx: width, heightPx: height } = request.settings;
-        table[name] = {
-          status: "rendered",
-          requestId: request.requestId,
-          specId: JSON.stringify(request),
-          empty: false,
-          width,
-          height,
-          svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${String(width)}" height="${String(height)}" viewBox="0 0 1200 640"><rect width="1200" height="640" fill="white"/><text x="70" y="55" fill="#1b2532" font-size="24">MOCK IPC FIGURE</text><path d="M80 90V550H1150" fill="none" stroke="#485666" stroke-width="2"/><path d="M150 550V430M330 550V250M600 550V125M850 550V375M1050 550V480" stroke="#267fbb" stroke-width="3"/></svg>`,
-        };
-      }
-      return invoke(name, args, ...rest);
-    };
-  }, IPC_TABLE_KEY);
-}
-
 // ---------------------------------------------------------------- driving
 
 async function frames() {
@@ -303,10 +277,8 @@ const STOPS: readonly Stop[] = [
     drive: async () => {
       await answerFigurePreviews();
       await openSpectrum();
-      const entry = browser.$(".spectrum-panel .figure-quick-actions button:first-child");
-      await entry.scrollIntoView({ block: "center" });
-      await entry.click();
-      await browser.$(".figure-preview img").waitForDisplayed({ timeout: 30_000 });
+      await openFigureDialog(".spectrum-panel");
+      await waitForFigurePreview();
     },
     anchor: ".figure-export-dialog",
   },
@@ -369,6 +341,16 @@ const STOPS: readonly Stop[] = [
     drive: () => go(2),
     anchor: 'li[data-item-state="finalized"]',
   },
+  {
+    // The header's Project menu, open over the Workbench (rebuild spec 1.1).
+    name: "project-menu",
+    table: populated,
+    drive: async () => {
+      await browser.$("[data-project-menu]").click();
+      await browser.$('[data-project-menu-item="surface"]').waitForDisplayed({ timeout: 30_000 });
+    },
+    anchor: '[role="menu"] [data-project-menu-item="surface"]',
+  },
   { name: "project-empty", table: emptyTable, drive: () => go(3), anchor: "[data-project-surface]" },
   { name: "project-records", table: populated, drive: () => go(3), anchor: "[data-project-surface]" },
   { name: "project-result", table: (locale) => scenario("projectWithResult", locale), drive: () => go(3), anchor: `[data-project-inspect-artifact="${RESULT}"]` },
@@ -415,7 +397,8 @@ async function open(stop: Stop, locale: Locale, width: number, height: number) {
 async function capture(file: string) {
   await browser.execute(() => {
     const active = document.activeElement;
-    if (active instanceof HTMLElement && active.closest('[role="dialog"]') === null) active.blur();
+    // A dialog or an open menu keeps its focus: blurring it would close a menu.
+    if (active instanceof HTMLElement && active.closest('[role="dialog"], [role="menu"]') === null) active.blur();
   });
   await frames();
   const shot = await cdp("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
@@ -423,10 +406,59 @@ async function capture(file: string) {
   writeFileSync(join(OUTPUT, file), Buffer.from(shot.data, "base64"));
 }
 
+/**
+ * The rebuild's rendered-QA facts for the shot (spec 12), recorded beside it
+ * and not judged here: whether the header is one row, where each plot is and
+ * whether a pointer at its centre reaches it, how far the evidence is
+ * scrolled, what scrolls sideways, and whether a link-button or a details
+ * element is left.
+ */
+async function layoutFacts() {
+  return browser.execute(() => {
+    const header = document.querySelector(".workbench-header");
+    const headerBox = header?.getBoundingClientRect();
+    // Every visible control in the header, by the row its centre sits on.
+    const rows = new Set(
+      [...(header?.querySelectorAll("button") ?? [])]
+        .map((child) => child.getBoundingClientRect())
+        .filter((box) => box.width > 0 && box.height > 0)
+        .map((box) => Math.round(box.top + box.height / 2)),
+    );
+    const plot = (css: string) => {
+      const element = document.querySelector(css);
+      const box = element?.getBoundingClientRect();
+      if (element === null || box === undefined || box.width === 0) return null;
+      const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return {
+        top: Math.round(box.top),
+        bottom: Math.round(box.bottom),
+        height: Math.round(box.height),
+        onScreen: box.top >= 0 && box.bottom <= innerHeight,
+        unobstructed: at !== null && element.contains(at),
+      };
+    };
+    const sideways = [...document.querySelectorAll<HTMLElement>("body *")]
+      .filter((node) => {
+        const overflowX = getComputedStyle(node).overflowX;
+        return (overflowX === "auto" || overflowX === "scroll") && node.scrollWidth > node.clientWidth + 1;
+      })
+      .map((node) => `${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0] ?? ""}`);
+    return {
+      header: { height: headerBox === undefined ? null : Math.round(headerBox.height), rowCenters: [...rows] },
+      chromatogram: plot("svg.chromatogram-svg"),
+      spectrum: plot("svg.spectrum-plot"),
+      evidenceScrollTop: document.querySelector("#workbench-evidence")?.scrollTop ?? null,
+      documentOverflowX: document.documentElement.scrollWidth - innerWidth,
+      sideways,
+      linkButtonsOrDetails: document.querySelectorAll("details, .link-button").length,
+    };
+  });
+}
+
 // ---------------------------------------------------------------- tour
 
 describe("Copy tour, rendered", () => {
-  const captured: { file: string; state: string; locale: Locale; viewport: string; text: string }[] = [];
+  const captured: { file: string; state: string; locale: Locale; viewport: string; text: string; layout: unknown }[] = [];
 
   before(() => {
     mkdirSync(OUTPUT, { recursive: true });
@@ -447,7 +479,7 @@ describe("Copy tour, rendered", () => {
           await browser.$(stop.anchor).waitForExist({ timeout: 30_000, timeoutMsg: `${stop.name}: ${stop.anchor} never appeared` });
           await capture(file);
           const text = await browser.execute(() => document.body.innerText);
-          captured.push({ file, state: stop.name, locale, viewport: `${String(width)}x${String(height)}`, text });
+          captured.push({ file, state: stop.name, locale, viewport: `${String(width)}x${String(height)}`, text, layout: await layoutFacts() });
           // Judged after the shot, so a failure still leaves its picture.
           expect(await browser.execute(() => [innerWidth, innerHeight])).toEqual([width, height]);
           expect(text.match(/\{\{\w+\}\}|\$t\(\w+\)/gu)).toBeNull();
