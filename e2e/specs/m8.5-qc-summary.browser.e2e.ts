@@ -34,6 +34,7 @@ import {
   setInvokeResult,
   revealInDetails,
 } from "../support/harness";
+import { showProjectSurface } from "../support/shell";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { FAKE_WORKSPACE_CAPACITY } from "../../apps/desktop/src/test/previewFixtures";
 
@@ -451,7 +452,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
     await installIpcBoundary(table);
     await browser.url("/");
     await browser.$(".workbench-header").waitForDisplayed();
-    await browser.$("button=Project").click();
+    await showProjectSurface();
     await browser.$(`[data-project-capture-qc="${LAYER}"]`).waitForDisplayed();
 
     // 1. The source is in the Workbench and nothing has been viewed. The
@@ -480,7 +481,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
     }
     await browser.$(row).click();
     await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
-    await browser.$("button=Project").click();
+    await showProjectSurface();
     await browser.$(`[data-project-capture-qc="${LAYER}"]:not([aria-disabled])`).waitForDisplayed();
     const offered = await capture("m85-02-offered");
     expect(offered.control).toMatchObject({ disabled: null, unavailable: null, reason: null });
@@ -599,7 +600,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
     }
     await browser.$(row).click();
     await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
-    await browser.$("button=Project").click();
+    await showProjectSurface();
     await browser.$(`[data-project-capture-qc="${LAYER}"]:not([aria-disabled])`).waitForExist();
 
     await browser.execute((layer: string) => {
@@ -646,7 +647,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
       await metrics(width, height);
       await browser.url("/");
       await browser.$(".workbench-header").waitForDisplayed();
-      await browser.$("button=Project").click();
+      await showProjectSurface();
       await browser.$(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`).waitForDisplayed();
       await browser.$(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`).click();
       await browser.$("[data-qc-report]").waitForDisplayed();

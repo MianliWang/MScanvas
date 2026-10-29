@@ -747,16 +747,43 @@ describe("the visible m/z viewport", () => {
      * that cancelled everything and moved correctly would pass one of them.
      */
 
-    it("has a column with somewhere to scroll to at 1366x768", async () => {
-      // The reason the claim matters. On the laptop window this product is
-      // measured against, the three panels do not all fit, and the wheel is how
-      // a reader reaches the spectrum at the bottom of the column.
+    it("fits the whole spectrum in a column that still scrolls itself at 1366x768", async () => {
+      // The rebuild (spec 3.1, 12) sizes the plots to the card: on the laptop
+      // window the spectrum is wholly on screen with the column unscrolled.
+      // The column keeps its own scrolling for taller content, so a wheel the
+      // panel cancels and then does not use is still a scroll taken away.
       await openTheSpectrum({ width: 1_366, height: 768 });
+      await waitForTheDrawing();
 
       const stack = await stackOverflow();
       expect(stack.overflowY).toBe("auto");
       expect(stack.clientHeight).toBeGreaterThan(0);
-      expect(stack.scrollHeight).toBeGreaterThan(stack.clientHeight);
+      // Both plots on screen with the column unscrolled, and each one the
+      // element a pointer at its centre reaches: a plot drawn under another
+      // panel is not on screen however its box measures.
+      const plots = await browser.execute((spectrum: string, chromatogram: string) => {
+        const measure = (css: string) => {
+          const element = document.querySelector(css);
+          const box = element?.getBoundingClientRect();
+          if (element === null || box === undefined) return null;
+          const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return { top: box.top, bottom: box.bottom, height: box.height, unobstructed: at !== null && element.contains(at) };
+        };
+        return {
+          spectrum: measure(spectrum),
+          chromatogram: measure(chromatogram),
+          innerHeight,
+          scrolled: document.querySelector("#workbench-evidence")?.scrollTop ?? -1,
+        };
+      }, SPECTRUM_PLOT, "svg.chromatogram-svg");
+      expect(plots.scrolled).toBe(0);
+      for (const plot of [plots.spectrum, plots.chromatogram]) {
+        expect(plot).not.toBeNull();
+        expect(plot!.height).toBeGreaterThan(0);
+        expect(plot!.top).toBeGreaterThanOrEqual(0);
+        expect(plot!.bottom).toBeLessThanOrEqual(plots.innerHeight);
+        expect(plot!.unobstructed).toBe(true);
+      }
     });
 
     it("claims a wheel that narrows the range, and moves the range with it", async () => {

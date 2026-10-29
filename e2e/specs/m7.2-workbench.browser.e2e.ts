@@ -69,6 +69,10 @@ async function capture(label: string) {
     expect(control.y + control.height).toBeLessThanOrEqual(measured.css.height);
   }
 }
+/** The search's clear: the field's icon button, or the no-match state's own button of that name. */
+const CLEAR_SEARCH = '//button[@aria-label="Clear search" or normalize-space()="Clear search"]';
+/** An icon button since the rebuild (spec 3.3), named by its label. */
+const UNDO_ORGANIZATION = 'button[aria-label="Undo organization"]';
 async function newGroup(name: string) {
   await browser.$("button=New group").click();
   await browser.$("#organization-group-name").setValue(name);
@@ -173,7 +177,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
         expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(true);
         await capture(`review-inspector-${language}-${state}`);
       };
-      await browser.$("#workbench-evidence .empty-state").waitForDisplayed();
+      await browser.$("#workbench-evidence .ui-empty-state").waitForDisplayed();
       await unavailable("wide-empty");
       await metrics(960, 640, 2);
       await unavailable("empty");
@@ -282,7 +286,8 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await setInvokeResult("get_workspace_roster", { capacity: 1024, datasets: [] });
       await retry.click();
       await browser.waitUntil(async () => (await browser.$("#dataset-roster-matches").getText()).includes("1024"));
-      expect(await browser.$("#dataset-roster-matches").getAttribute("title")).toContain("1024");
+      // The visible tag is the bare count; the whole sentence is its title (rebuild spec 3.3).
+      expect(await browser.$(".roster-count-tag").getAttribute("title")).toContain("1024");
       expect(await browser.$('[data-live-region="search"]').getProperty("textContent")).toContain("1024");
       await capture(`review-capacity-${language}-known`);
       expect(await consoleEntries()).toEqual([]);
@@ -393,7 +398,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.releaseActions();
     expect(await browser.$(".roster-selection-context").getText()).toContain("80 highlighted");
     await browser.keys("End"); await browser.$(row("menu-79")).waitForDisplayed();
-    await browser.$("button=Clear search").click();
+    await browser.$(CLEAR_SEARCH).click();
     await browser.$('[data-group-id="group-1"] .group-disclosure').click();
     await browser.$(`${row("menu-79")} .row-menu-trigger`).click();
     expect(await browser.$('.grouped-roster[data-windowed="true"]').isExisting()).toBe(true);
@@ -440,7 +445,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$('[role="menuitem"]=Session group 研究').click();
     expect(await browser.$(row("sample-1")).getAttribute("data-group")).toBe("group-1");
     expect(await ipcCalls()).toEqual(before);
-    await browser.$("button=Undo organization").click();
+    await browser.$(UNDO_ORGANIZATION).click();
     expect(await browser.$(row("sample-1")).getAttribute("data-group")).toBe("ungrouped");
     await browser.$(".workbench-navigation button:nth-child(2)").click();
     await browser.$("#workbench-conversion").waitForDisplayed();
@@ -458,7 +463,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     expect(await browser.$(row(selectedFile.handle)).getAttribute("data-group")).toBe("group-1");
     expect(await ipcCalls()).toEqual(before);
     await capture("05-pointer-drop");
-    await browser.$("button=Undo organization").click();
+    await browser.$(UNDO_ORGANIZATION).click();
     await startDrag(`${row("sample-1")} .row-drag-handle`);
     await dragOver('[data-group-id="group-1"]');
     await browser.keys("Escape");
@@ -481,7 +486,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await capture("06-hidden-payload-collapsed-target");
     await dropDrag();
     expect(await browser.$('[data-group-id="group-1"] .group-count').getText()).toBe("3");
-    await browser.$("button=Clear search").click();
+    await browser.$(CLEAR_SEARCH).click();
     await browser.$('[data-group-id="group-1"] .group-disclosure').click();
     for (const handle of [selectedFile.handle, "sample-1", "sample-2"]) expect(await browser.$(row(handle)).getAttribute("data-group")).toBe("group-1");
     await browser.performActions([{ type: "key", id: "roster-modifier", actions: [{ type: "keyDown", value: "\uE009" }] }]);
@@ -574,7 +579,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$('[data-group-id="group-1"]').waitForExist();
     expect(await browser.$('[data-group-id="group-1"] .group-count').getText()).toBe("200");
     expect(await ipcCalls()).toEqual(before);
-    await browser.$("button=Undo organization").click();
+    await browser.$(UNDO_ORGANIZATION).click();
     expect(await browser.$(row("wide-0")).getAttribute("data-group")).toBe("ungrouped");
     await browser.$("[data-settings-entry]").click();
     await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="zh-CN"])').click();
@@ -588,7 +593,9 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$('[aria-controls="workbench-roster"]').click();
     await browser.$("#workbench-roster").waitForDisplayed();
     await capture("13-zh-compact-960-roster");
-    expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(false);
+    // The roster is a modal drawer over the evidence at this width (rebuild
+    // spec 3.1): the evidence stays on screen, behind it and inert.
+    expect(await browser.$("#workbench-evidence").getAttribute("inert")).not.toBeNull();
     await browser.$("#dataset-roster-search").setValue("采集_199");
     await browser.$(row("wide-199")).waitForDisplayed();
     await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });

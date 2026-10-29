@@ -53,6 +53,7 @@ const NOTICE = "#viewer-selection-availability";
 const REGION = '[data-live-region="spectrum-selection-availability"]';
 const VIEWER_COLUMN = ".viewer-column";
 const VIEWER_STACK = ".viewer-stack";
+const IDENTITY = ".viewer-identity";
 const GRID = "div.spectrum-table";
 const FIRST_ROW = 'div.spectrum-table-row[data-row-position="0"]';
 
@@ -131,8 +132,9 @@ describe("M5.7 — selection availability, rendered", () => {
     expect(await browser.$(REGION).isExisting()).toBe(true);
     expect(await noticeText()).toBe(null);
     expect(await describedBy(GRID)).toBe(null);
-    // The readout, then each axis's unit state (PM9 UI-33).
-    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units");
+    // The readout, then each axis's unit state (PM9 UI-33), then the plot's
+    // gestures, whose disclosure became a hidden description (rebuild spec 3.4).
+    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units plot-range-rt-gestures");
   });
 
   it("explains a closed lane once, and points both surfaces at that one sentence", async () => {
@@ -150,7 +152,7 @@ describe("M5.7 — selection availability, rendered", () => {
     expect(await browser.$$(NOTICE).length).toBe(1);
 
     expect(await describedBy(GRID)).toBe("viewer-selection-availability");
-    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units viewer-selection-availability");
+    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units plot-range-rt-gestures viewer-selection-availability");
     // Announced politely, by the element that was already there.
     expect(
       await browser.execute(
@@ -280,7 +282,13 @@ describe("M5.7 — selection availability, rendered", () => {
       // three views that have bunched at the top.
       const stack = await boxOf(VIEWER_STACK);
       expect(Math.abs(stack.bottom - column.bottom)).toBeLessThan(2);
-      expect(stack.top).toBeGreaterThanOrEqual(notice.bottom - 1);
+      // The sentence sits in the identity row, the stack's first row (rebuild
+      // spec 3.2), and stays inside it: the chromatogram below is not covered.
+      const identity = await boxOf(IDENTITY);
+      expect(identity.top).toBeGreaterThanOrEqual(stack.top - 1);
+      expect(notice.top).toBeGreaterThanOrEqual(identity.top - 1);
+      expect(notice.bottom).toBeLessThanOrEqual(identity.bottom + 1);
+      expect((await boxOf(CHROMATOGRAM)).top).toBeGreaterThanOrEqual(identity.bottom - 1);
       const overflow = await horizontalOverflow();
       expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
 

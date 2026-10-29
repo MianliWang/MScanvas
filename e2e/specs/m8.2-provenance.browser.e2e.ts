@@ -26,6 +26,7 @@ import {
   ipcCalls,
   setInvokeResult,
 } from "../support/harness";
+import { showProjectSurface } from "../support/shell";
 import { ipcTable } from "../support/fixtures";
 
 let output = "";
@@ -237,7 +238,7 @@ async function openProjectSurface() {
   await installIpcBoundary(table);
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed();
-  await browser.$("button=Project").click();
+  await showProjectSurface();
   await browser.$("[data-project-surface]").waitForDisplayed();
 }
 
@@ -405,10 +406,11 @@ describe("M8.2 provenance, rendered", () => {
     await browser.$('[data-provenance="input"]').waitForDisplayed();
 
     const opened = await capture("m82-08-constrained-open");
-    // Opened, it takes the one column and the list yields it -- the existing
-    // folding, not a new layout and not a modal.
+    // Opened, it is a modal drawer over the surface (rebuild spec 3.1): the
+    // list stays on screen behind it, inert, and Details holds the keyboard.
     expect(opened.regions.inspector).not.toBe(null);
-    expect(opened.regions.project).toBe(null);
+    expect(opened.regions.project).not.toBe(null);
+    expect(await browser.$("#workbench-project").getAttribute("inert")).not.toBeNull();
     expect(opened.provenanceHeading).toBe("QC_pool_01.mzML");
   });
 });

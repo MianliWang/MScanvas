@@ -41,7 +41,19 @@ async function reveal(selector: string) {
     window.scrollTo(x, y);
   }, selector);
 }
-async function click(selector: string) { await reveal(selector); await browser.$(selector).click(); }
+/**
+ * A pointer press on what a person sees. The scope radios are visually hidden
+ * inside their segment labels since the rebuild (spec 5.1), so a press on one
+ * is a press on its label.
+ */
+async function click(selector: string) {
+  await reveal(selector);
+  const hiddenRadio = await browser.execute((target: string) => {
+    const node = document.querySelector(target);
+    return node instanceof HTMLInputElement && node.type === "radio" && node.classList.contains("visually-hidden") && node.closest("label") !== null;
+  }, selector);
+  await (hiddenRadio ? browser.$(selector).parentElement() : browser.$(selector)).click();
+}
 async function capture(name: string, selector: string) {
   await reveal(selector);
   const directory = process.env.MSCANVAS_QA_ARTIFACTS ?? resolve("test-results", "m6.7-browser");
@@ -122,7 +134,8 @@ describe("M6.7 explicit selected/all review", () => {
     await click('input[name="conversion-conflict-policy"][value="skip"]'); await ready();
     const before = (await requests(DESCRIBE)).length;
     await holdInvoke(DESCRIBE);
-    await browser.$("select#dataset-roster-sort").selectByAttribute("value", "name-desc");
+    // The execution order is the Conversion summary's own control (rebuild spec 5).
+    await browser.$("select#conversion-order").selectByAttribute("value", "name-desc");
     await browser.waitUntil(async () => (await requests(DESCRIBE)).length > before);
     expect(await isRefused(CONVERT)).toBe(true);
     expect(await names()).toEqual([]);

@@ -278,13 +278,18 @@ async function shot(name: string) {
   await browser.saveScreenshot(join(OUTPUT, `${name}.png`));
 }
 
-/** The shown button inside `scope` whose trimmed text is `name`, marked so WebDriver can address it. */
+/**
+ * The shown button inside `scope` whose name is `name`, marked so WebDriver can
+ * address it. The name is its trimmed text or its `aria-label` (a row's short
+ * "Skip" is named "Skip <file>").
+ */
 async function mark(scope: string, name: string, tag: string): Promise<string | null> {
   return browser.execute(
     (css: string, label: string, attribute: string) => {
       document.querySelectorAll(`[${attribute}]`).forEach((node) => node.removeAttribute(attribute));
       const button = [...document.querySelectorAll<HTMLButtonElement>(`${css} button`)].find(
-        (candidate) => (candidate.textContent ?? "").trim() === label && candidate.getClientRects().length > 0,
+        (candidate) => [candidate.getAttribute("aria-label"), (candidate.textContent ?? "").trim()].includes(label)
+          && candidate.getClientRects().length > 0,
       );
       if (button === undefined) return null;
       button.setAttribute(attribute, "");
@@ -366,13 +371,13 @@ function shellPanels() {
   });
 }
 
-/** The empty evidence column's guidance: the help line under "Inspect an acquisition". */
+/** The empty evidence column's guidance: a help line in the message under "Inspect an acquisition". */
 function guidance(heading: string) {
   return browser.execute((title: string) => {
-    const state = [...document.querySelectorAll(".empty-state")].find(
+    const state = [...document.querySelectorAll(".ui-empty-state")].find(
       (node) => (node.querySelector("strong")?.textContent ?? "").trim() === title,
     );
-    const help = state?.querySelector("span") ?? null;
+    const help = state?.querySelector(".ui-empty-state__message > span") ?? null;
     return help === null ? null : { text: (help.textContent ?? "").trim(), shown: help.getClientRects().length > 0 };
   }, heading);
 }
@@ -399,8 +404,9 @@ async function tabToStart(limit = 40): Promise<boolean> {
 async function pressByKeyboard(scope: string, name: string) {
   const found = await browser.execute(
     (css: string, label: string) => {
+      // By its text or its aria-label (an icon-only Dismiss has only the label).
       const button = [...document.querySelectorAll<HTMLButtonElement>(`${css} button`)].find(
-        (candidate) => (candidate.textContent ?? "").trim() === label,
+        (candidate) => [candidate.getAttribute("aria-label"), (candidate.textContent ?? "").trim()].includes(label),
       );
       button?.focus();
       return button !== undefined && document.activeElement === button;
@@ -478,53 +484,63 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it(`PM9.7-F3 the empty Workbench names the folded route to Add files…, and it is the route that exists, ${locale}`, async () => {
+    it(`PM9.7-F3 the empty Workbench offers Add files… itself while the roster is folded, and once when it is open, ${locale}`, async () => {
       await open(emptyTable(locale), locale, 960, 640);
       await toggleOperable();
-      // Drop is live in this world, so the empty route offers it too.
-      const expected = say(locale, "emptyEvidenceDropHelp");
-      const offered = () => browser.waitUntil(async () => (await guidance(words.emptyEvidence))?.text === expected, {
+      /** The visible buttons of the empty state under `emptyEvidence`, in order. */
+      const offered = () => browser.execute((title: string) => {
+        const state = [...document.querySelectorAll(".ui-empty-state")].find(
+          (node) => (node.querySelector("strong")?.textContent ?? "").trim() === title && node.getClientRects().length > 0,
+        );
+        return state === undefined ? null : [...state.querySelectorAll("button")]
+          .filter((button) => button.getClientRects().length > 0)
+          .map((button) => (button.textContent ?? "").trim());
+      }, words.emptyEvidence);
+      /** How many Add files… buttons a person can see anywhere in the shell. */
+      const addsOnScreen = () => browser.execute((label: string) =>
+        [...document.querySelectorAll<HTMLButtonElement>(".workbench-shell button")]
+          .filter((button) => (button.textContent ?? "").trim() === label && button.getClientRects().length > 0).length,
+      words.addFiles);
+
+      // Folded at 960: the empty evidence holds the route itself, as buttons,
+      // and no sentence is left explaining the interface (rebuild spec 3.6).
+      await browser.waitUntil(async () => (await offered())?.includes(words.addFiles) === true, {
         timeout: 30_000,
-        timeoutMsg: "the empty Workbench never offered its route with file drop",
+        timeoutMsg: "the empty Workbench never offered Add files…",
       });
-      const toggleText = await browser.$(ROSTER_TOGGLE).getText();
-      expect(toggleText).toBe(words.rosterToggle);
-
-      await offered();
-      const folded = await guidance(words.emptyEvidence);
-      await shot(`f3-empty-workbench-960-${locale}`);
-      expect(folded).toEqual({ text: expected, shown: true });
-      expect(folded!.text).not.toContain("$t(");
-      expect(folded!.text).toContain(toggleText);
-      expect(folded!.text).toContain(words.addFiles);
-      // Folded, and nothing unfolds it: no Add files… is on screen anywhere.
-      await browser.pause(1_000);
       expect(await shellPanels()).toMatchObject({ roster: "false", toggle: "false" });
-      expect(await mark(".workbench-shell", words.addFiles, "data-beta1-add")).toBeNull();
+      expect(await offered()).toEqual([words.addFiles, words.addFolder, words.projectOpen]);
+      expect(await guidance(words.emptyEvidence)).toBeNull();
+      expect(await addsOnScreen()).toBe(1);
+      const add = await mark("#workbench-evidence", words.addFiles, "data-beta1-add");
+      expect(add).not.toBeNull();
+      expect(await control(add!)).toMatchObject({ primary: true, ariaDisabled: null });
+      expect(await tabsTo(add!)).not.toBeNull();
+      await shot(`f3-empty-workbench-960-${locale}-add-focused`);
 
-      // Tab reaches the header toggle, Enter unfolds it, and Add files… is then a Tab stop.
+      // Tab reaches the header toggle, Enter unfolds it, and Add files… is then
+      // the roster's, offered once and still a Tab stop.
       expect(await tabsTo(ROSTER_TOGGLE)).not.toBeNull();
-      await shot(`f3-empty-workbench-960-${locale}-toggle-focused`);
       await browser.keys(["Enter"]);
       await browser.waitUntil(async () => (await shellPanels()).roster === "true", {
         timeoutMsg: "Enter on Acquisitions did not unfold the roster",
       });
-      const add = await mark(".workbench-shell", words.addFiles, "data-beta1-add");
-      expect(add).not.toBeNull();
-      expect(await tabsTo(add!)).not.toBeNull();
+      await frames();
+      expect(await addsOnScreen()).toBe(1);
+      const rosterAdd = await mark("#workbench-roster", words.addFiles, "data-beta1-add");
+      expect(rosterAdd).not.toBeNull();
+      expect(await tabsTo(rosterAdd!)).not.toBeNull();
       await shot(`f3-empty-workbench-960-${locale}-expanded-add-focused`);
-      // The sentence is unchanged by the unfold (at 960 px the roster takes the
-      // evidence column's place, so it is read from the document here).
-      expect((await guidance(words.emptyEvidence))?.text).toBe(expected);
 
-      // With room for both, the guidance, the toggle and Add files… are on screen together.
+      // With room for both, the roster's Add files… is the one on screen, and
+      // the empty evidence keeps only what the roster does not offer.
       await open(emptyTable(locale), locale, 1366, 768);
       await toggleOperable();
       expect(await shellPanels()).toMatchObject({ roster: "true", toggle: "true" });
-      await offered();
-      const expanded = await guidance(words.emptyEvidence);
-      expect(expanded).toEqual({ text: expected, shown: true });
-      expect(await mark(".workbench-shell", words.addFiles, "data-beta1-add")).not.toBeNull();
+      await browser.waitUntil(async () => (await offered()) !== null, { timeout: 30_000 });
+      expect(await offered()).toEqual([words.projectOpen]);
+      expect(await addsOnScreen()).toBe(1);
+      expect(await mark("#workbench-roster", words.addFiles, "data-beta1-add")).not.toBeNull();
       await shot(`f3-empty-workbench-1366-${locale}-expanded`);
       expect(await unexpectedConsole()).toEqual([]);
     });
@@ -701,7 +717,7 @@ describe("Beta 1 UX changes, rendered", () => {
           role: banner.getAttribute("role"),
           lead: banner.querySelector("strong")?.textContent ?? null,
           text: (banner.textContent ?? "").trim(),
-          dismiss: [...banner.querySelectorAll("button")].map((button) => (button.textContent ?? "").trim()),
+          dismiss: [...banner.querySelectorAll("button")].map((button) => button.getAttribute("aria-label") ?? (button.textContent ?? "").trim()),
         })),
       CONVERSION_SURFACE);
       const lead = say(locale, "m74CnvRequestFailed", { action: words.m74CnvStopQueue });

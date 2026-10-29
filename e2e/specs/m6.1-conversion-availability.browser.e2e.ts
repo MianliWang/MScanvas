@@ -54,7 +54,8 @@ const VENDOR = `.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`;
 const START = CONVERT;
 const RETRY = `${PANEL} .conversion-running .conversion-actions button.ui-button--secondary`;
 const SEARCH = "#dataset-roster-search";
-const SORT = "#dataset-roster-sort";
+// The execution order moved from the roster to the Conversion summary (rebuild spec 3.3, 5).
+const SORT = "#conversion-order";
 
 /**
  * The sentence the shared notice carries.

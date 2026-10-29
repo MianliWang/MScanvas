@@ -395,10 +395,14 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await browser.$("[data-settings-entry]").waitForDisplayed();
 
     // Gated: no default is written and no editor is enabled before the read
-    // resolves. Every refused control says why.
+    // resolves. Every refused control says why. Reset layout is Settings'
+    // since the rebuild (spec 8), so it is read there.
+    await openSettings();
     const loading = await capture("11-startup-gated");
     expect(loading.layoutReset?.refused).toBe(true);
     expect(loading.layoutReset?.focusable).toBe(true);
+    await browser.keys("Escape");
+    await returned();
     const toggles = await browser.execute(() => [...document.querySelectorAll(".workbench-global-actions button")]
       .map(control => ({ text: (control.textContent ?? "").trim(), disabled: (control as HTMLButtonElement).disabled,
         refused: control.getAttribute("aria-disabled") === "true", title: control.getAttribute("title") })));
@@ -412,9 +416,12 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
 
     await releaseInvokeHold("load_ui_preferences");
     await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
+    await openSettings();
     const settled = await capture("12-startup-settled");
     expect(settled.density).toBe("compact");
     expect(settled.layoutReset?.refused).toBe(true);
+    await browser.keys("Escape");
+    await returned();
   });
 
   it("commits a panel arrangement, reports one that would not survive, and resets it", async () => {
@@ -425,8 +432,12 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     });
     await browser.$(`button=${en.rosterToggle}`).click();
     await browser.waitUntil(() => browser.execute(() => document.querySelector(".workbench-shell")?.getAttribute("data-roster-open") === "false"));
+    // Reset layout lives in Settings → Layout (rebuild spec 8).
+    await openSettings();
     const committed = await capture("13-roster-hidden-committed");
     expect(committed.layoutReset?.refused).toBe(false);
+    await browser.keys("Escape");
+    await returned();
     const layoutCalls = (await ipcCalls()).filter(call => call.command === "save_ui_preferences");
     expect(layoutCalls.at(-1)?.args).toEqual({ request: { layout: { roster: "hidden", details: "automatic" } } });
 
@@ -446,14 +457,18 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await setInvokeResult("save_ui_preferences", {
       outcome: "saved", revision: 2, preferences: record({ locale: "en", density: "comfortable" }),
     });
+    await openSettings();
     await browser.$("[data-layout-reset]").click();
     // With nothing left to reset the control is refused but reachable:
-    // `aria-disabled`, never `disabled` (WorkbenchHeader.tsx, the reset's
+    // `aria-disabled`, never `disabled` (SettingsDialog.tsx, the reset's
     // `aria-disabled`; docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
     // "Acceptance"; the native case in m7.5-preferences.native.e2e.ts).
     await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-layout-reset]")?.getAttribute("aria-disabled") === "true"));
     const reset = await capture("15-layout-reset");
     expect(reset.layoutRegion).toBe(en.layoutResetDone);
+    // The header's region is behind the modal, so the dialog says it too.
+    expect(await browser.execute(() => (document.querySelector("[data-live-region='settings-layout']")?.textContent ?? "").trim()))
+      .toBe(en.layoutResetDone);
     expect(reset.layoutReset?.insideViewport).toBe(true);
     expect(reset.layoutReset?.focusable).toBe(true);
     // The control stays in the document and keeps the keyboard. The earlier

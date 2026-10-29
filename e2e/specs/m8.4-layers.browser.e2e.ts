@@ -35,6 +35,7 @@ import {
   ipcCalls,
   setInvokeResult,
 } from "../support/harness";
+import { showProjectSurface } from "../support/shell";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { FAKE_WORKSPACE_CAPACITY } from "../../apps/desktop/src/test/previewFixtures";
 
@@ -369,7 +370,7 @@ async function openProjectSurface() {
   await installIpcBoundary(table);
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed();
-  await browser.$("button=Project").click();
+  await showProjectSurface();
   await browser.$("[data-project-surface]").waitForDisplayed();
 }
 
@@ -437,7 +438,7 @@ describe("M8.4 layer identity and provenance, rendered", () => {
     await browser.$(`[data-project-add-to-workbench="${INPUT}"]`).click();
     await browser.$(`#workbench-roster [data-handle="${MZML_ROW.handle}"]`).waitForDisplayed();
     expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("workbench");
-    await browser.$("button=Project").click();
+    await showProjectSurface();
     await browser
       .$(`[data-project-create-layer="${INPUT}"]:not([aria-disabled])`)
       .waitForDisplayed();
@@ -558,7 +559,7 @@ describe("M8.4 layer identity and provenance, rendered", () => {
     expect(shown.rows[0]?.focused).toBe(true);
     expect(shown.activeElement?.handle).toBe(MZML_ROW.handle);
     expect(await ipcCalls()).toEqual(beforeNavigation);
-    await browser.$("button=Project").click();
+    await showProjectSurface();
     await browser.$("[data-project-surface]").waitForDisplayed();
 
     // 7. Save, close, reopen -- through the real buttons. The layer comes back
@@ -702,7 +703,7 @@ describe("M8.4 layer identity and provenance, rendered", () => {
       await metrics(width, height);
       await browser.url("/");
       await browser.$(".workbench-header").waitForDisplayed();
-      await browser.$("button=Project").click();
+      await showProjectSurface();
       await browser.$(`[data-project-layer="${LAYER}"]`).waitForDisplayed();
 
       const listed = await capture(`${label}-list`);

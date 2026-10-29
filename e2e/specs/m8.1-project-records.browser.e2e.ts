@@ -28,6 +28,7 @@ import {
   setInvokeRejection,
   setInvokeResult,
 } from "../support/harness";
+import { showProjectSurface } from "../support/shell";
 import { ipcTable } from "../support/fixtures";
 
 let output = "";
@@ -191,7 +192,7 @@ async function openSurface(state: Record<string, unknown>) {
   await installIpcBoundary(table);
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed();
-  await browser.$("button=Project").click();
+  await showProjectSurface();
   await browser.$("[data-project-surface]").waitForDisplayed();
 }
 
