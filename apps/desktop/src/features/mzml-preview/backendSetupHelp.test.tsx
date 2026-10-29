@@ -41,7 +41,10 @@ function renderWorkspace(api: PreviewApi) {
   );
 }
 
-const help = () => document.querySelector<HTMLDetailsElement>("[data-backend-help]");
+/** The setup help's disclosure button, and the region it shows. */
+const help = () => document.querySelector<HTMLButtonElement>("[data-backend-help]");
+const helpRegion = () => document.getElementById(help()!.getAttribute("aria-controls")!)!;
+const helpOpen = () => help()?.getAttribute("aria-expanded") === "true";
 
 describe("offline setup help", () => {
   it("is reachable in every backend state, with no dataset and no backend", async () => {
@@ -60,8 +63,10 @@ describe("offline setup help", () => {
         await showBackendBanner();
       }
       // Closed to begin with: it is help, not an interruption.
-      expect(disclosure.open).toBe(false);
-      expect(within(disclosure).getByText(en.backendHelpTitle)).toBeVisible();
+      expect(helpOpen()).toBe(false);
+      expect(helpRegion()).not.toBeVisible();
+      expect(disclosure).toHaveAccessibleName(en.backendHelpTitle);
+      expect(disclosure).toBeVisible();
       view.unmount();
     }
   });
@@ -91,16 +96,16 @@ describe("offline setup help", () => {
       expect(node).not.toBeNull();
       return node!;
     });
-    fireEvent.click(within(disclosure).getByText(en.backendHelpTitle));
-    await waitFor(() => expect(disclosure.open).toBe(true));
+    fireEvent.click(disclosure);
+    await waitFor(() => expect(helpOpen()).toBe(true));
 
-    const said = disclosure.textContent ?? "";
+    const said = helpRegion().textContent ?? "";
     // MSCanvas never downloads, installs or bundles a provider.
     expect(said).toContain(en.backendHelpProvider);
     // The real lifetime of a chosen folder: this session, and no longer.
     expect(said).toContain(en.backendHelpSessionScope);
     // The controls name themselves; the help does not restate them.
-    expect(disclosure.querySelector("ul")).toBeNull();
+    expect(helpRegion().querySelector("ul")).toBeNull();
     // The approved support target, stated as a support target.
     expect(said).toContain("Windows 11 25H2 x64");
     // And what needs a backend at all.
@@ -119,9 +124,8 @@ describe("offline setup help", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(add).toBeEnabled();
 
-    const disclosure = help()!;
-    fireEvent.click(within(disclosure).getByText(en.backendHelpTitle));
-    await waitFor(() => expect(disclosure.open).toBe(true));
+    fireEvent.click(help()!);
+    await waitFor(() => expect(helpOpen()).toBe(true));
     expect(add).toBeEnabled();
     expect(screen.getByRole("treegrid", { name: en.rosterTitle })).toBeVisible();
     // Reading help is not a request. Nothing was probed and nothing was stored.
@@ -148,9 +152,10 @@ describe("offline setup help", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     const disclosure = help()!;
-    fireEvent.click(within(disclosure).getByText(zh.backendHelpTitle));
-    await waitFor(() => expect(disclosure.open).toBe(true));
-    const said = disclosure.textContent ?? "";
+    expect(disclosure).toHaveAccessibleName(zh.backendHelpTitle);
+    fireEvent.click(disclosure);
+    await waitFor(() => expect(helpOpen()).toBe(true));
+    const said = helpRegion().textContent ?? "";
     expect(said).toContain(zh.backendHelpProvider);
     expect(said).toContain(zh.backendHelpSessionScope);
     // Product identities and the support target stay original inside the

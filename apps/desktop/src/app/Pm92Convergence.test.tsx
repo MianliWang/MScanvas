@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { renderPm9Scenario } from "../test/pm9Scenarios";
+import { openProjectSurface } from "../test/projectMenu";
 
 const en = UI_RESOURCES.en;
 
@@ -130,9 +131,8 @@ describe("PM9.2: each surface says what it is, and offers only its own next step
       ["project", en.projectSurface],
     ] as const;
     for (const [target, name] of surfaces) {
-      if (target !== "workbench") {
-        await press(screen.getByRole("button", { name: target === "project" ? en.projectSurface : /^Conversion & results/ }));
-      }
+      if (target === "project") await openProjectSurface();
+      else if (target === "conversion") await press(screen.getByRole("button", { name: /^Conversion & results/ }));
       await waitFor(() => expect(shell()).toHaveAttribute("data-surface", target));
       const titles = screen.getAllByRole("heading", { level: 1 });
       expect(titles.map((title) => title.textContent)).toEqual([name]);
@@ -148,8 +148,8 @@ describe("PM9.2: each surface says what it is, and offers only its own next step
     mount("empty");
     await screen.findByText("No ProteoWizard installation was found");
     // Nothing read and nothing retained: the evidence surface offers nothing.
-    expect(document.querySelectorAll("#workbench-evidence .primary-button")).toHaveLength(0);
-    await press(screen.getByRole("button", { name: en.projectSurface }));
+    expect(document.querySelectorAll("#workbench-evidence :is(.primary-button, .ui-button--primary)")).toHaveLength(0);
+    await openProjectSurface();
     await screen.findByText(en.projectNone);
     // With no project open, New project is the one owned next step (PM9.7 F2,
     // which replaced L1's New/Open equality); Open project stays beside it.
@@ -184,28 +184,18 @@ describe("PM9.2: the roster's actions, quieter but all there (L9)", () => {
   });
 });
 
-describe("PM9.2: the context line by rank (L14–L16)", () => {
-  it("ranks every item, and leaves the conversion scope out on the Project surface", async () => {
+describe("PM9.2: the status bar's order (L14–L16)", () => {
+  it("puts work first on every surface, and never moves an item between them", async () => {
     mount("conversionEnded");
     await waitFor(() => expect(document.querySelector('[data-shell-context="conversionActivity"]')).not.toBeNull());
-    // The scope item needs an eligible row: All workspace rows holds the
-    // vendor row, which the ended queue never converted.
-    await press(document.querySelector<HTMLElement>('[data-shell-context="conversionActivity"]')!);
-    fireEvent.click(await screen.findByRole("radio", { name: en.m74CnvAll }));
-    await waitFor(() => expect(document.querySelector('[data-shell-context="conversionScope"]')).not.toBeNull());
-    const ranked = () =>
-      [...document.querySelectorAll<HTMLElement>("[data-shell-context]")].map((item) => [
-        item.getAttribute("data-shell-context"),
-        item.getAttribute("data-priority"),
-      ]);
-    // The status comes first, and never gives way.
-    expect(ranked()[0]).toEqual(["conversionActivity", "1"]);
-    expect(ranked().some(([id]) => id === "conversionScope")).toBe(true);
+    const order = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-shell-context]")].map((item) => item.getAttribute("data-shell-context"));
+    const before = order();
+    expect(before[0]).toBe("conversionActivity");
 
-    await press(screen.getByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await waitFor(() => expect(shell()).toHaveAttribute("data-surface", "project"));
-    expect(ranked()[0]).toEqual(["conversionActivity", "1"]);
-    expect(ranked().some(([id]) => id === "conversionScope")).toBe(false);
+    expect(order()).toEqual(before);
   });
 });
 

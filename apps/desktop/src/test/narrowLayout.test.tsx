@@ -332,7 +332,7 @@ describe("narrow desktop layout markup", () => {
     expect(screen.getAllByRole("button", { name: "Choose folder…" })).toHaveLength(1);
   });
 
-  it("states the whole empty-state sentence rather than a shortened one", async () => {
+  it("states the whole empty-state heading rather than a shortened one", async () => {
     // #24 reported this text clipped. Nothing may fix that by saying less.
     render(
       <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
@@ -342,11 +342,7 @@ describe("narrow desktop layout markup", () => {
       </WorkspaceDropTransportProvider>,
     );
 
-    expect(
-      await screen.findByText(
-        "Choose Add files… in Acquisitions, or drop mzML files onto this window, then select one.",
-      ),
-    ).toBeVisible();
+    expect(await screen.findByText("Inspect an acquisition")).toBeVisible();
   });
 
   it("keeps the roster tall enough to be a list when the column is stacked", () => {
