@@ -16,12 +16,12 @@ use tauri::{DragDropEvent, WindowEvent};
 use super::discovery::{
     DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
     DiscoveryUsage, DropRootInspection, MAX_DISCOVERY_CANDIDATES, MAX_DISCOVERY_DEPTH,
-    MAX_DISCOVERY_DIRECTORIES, MAX_DISCOVERY_ENTRIES, discover_mzml_candidates, inspect_drop_root,
+    MAX_DISCOVERY_DIRECTORIES, MAX_DISCOVERY_ENTRIES, discover_candidates, inspect_drop_root,
 };
 use super::dto::{
     DropIngestionSummaryDto, DropRejectionReasonDto, DropScanLimitDto, PreviewErrorDto,
     WorkspaceDropStateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
-    invalid_workspace_drop_subscription,
+    WorkspaceIngestionProgressDto, invalid_workspace_drop_subscription,
 };
 use super::selection::FileIdentity;
 
@@ -248,6 +248,8 @@ pub(super) struct DropIngestionSummary {
     pub(super) unsupported_root_count: u64,
     pub(super) skipped_reparse_entry_count: u64,
     pub(super) inaccessible_entry_count: u64,
+    /// Candidates left unread because the user stopped adding (ADR 0051).
+    pub(super) not_attempted_count: usize,
     limits_reached: Vec<DropScanLimitDto>,
 }
 
@@ -266,7 +268,8 @@ impl DropIngestionSummary {
             && self.remote_root_count == 0
             && self.unsupported_root_count == 0
             && self.skipped_reparse_entry_count == 0
-            && self.inaccessible_entry_count == 0;
+            && self.inaccessible_entry_count == 0
+            && self.not_attempted_count == 0;
         DropIngestionSummaryDto {
             workspace_was_empty,
             complete,
@@ -277,7 +280,146 @@ impl DropIngestionSummary {
             unsupported_root_count: self.unsupported_root_count,
             skipped_reparse_entry_count: self.skipped_reparse_entry_count,
             inaccessible_entry_count: self.inaccessible_entry_count,
+            not_attempted_count: self.not_attempted_count,
             limits_reached: self.limits_reached,
+        }
+    }
+}
+
+/// The one folder or drop add in flight, as counts (ADR 0051).
+///
+/// A leaf lock, never held across a file and independent of the mutation gate
+/// and the drop claim, so a progress read answers while an add hashes and while
+/// a drop makes every other workspace read wait.
+#[derive(Default)]
+pub(super) struct IngestionProgressSlot(Mutex<IngestionSlot>);
+
+impl fmt::Debug for IngestionProgressSlot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<ingestion-progress-slot>")
+    }
+}
+
+#[derive(Default)]
+struct IngestionSlot {
+    next_id: u64,
+    current: Option<IngestionProgress>,
+}
+
+#[derive(Clone, Copy)]
+struct IngestionProgress {
+    id: u64,
+    total: Option<usize>,
+    completed: usize,
+    vendor_total: usize,
+    stop_requested: bool,
+}
+
+const INGESTION_HANDLE_PREFIX: &str = "ingestion-";
+
+impl IngestionProgressSlot {
+    /// Registers a new add as the current one, still counting its candidates.
+    pub(super) fn begin(&self) -> IngestionTicket<'_> {
+        let mut slot = self.lock();
+        slot.next_id = slot
+            .next_id
+            .checked_add(1)
+            .expect("a session cannot begin more than u64::MAX adds");
+        let id = slot.next_id;
+        slot.current = Some(IngestionProgress {
+            id,
+            total: None,
+            completed: 0,
+            vendor_total: 0,
+            stop_requested: false,
+        });
+        IngestionTicket { slot: self, id }
+    }
+
+    pub(super) fn snapshot(&self) -> Option<WorkspaceIngestionProgressDto> {
+        self.lock()
+            .current
+            .map(|progress| WorkspaceIngestionProgressDto {
+                ingestion_id: format!("{INGESTION_HANDLE_PREFIX}{}", progress.id),
+                total: progress.total,
+                completed: progress.completed,
+                vendor_total: progress.vendor_total,
+                stop_requested: progress.stop_requested,
+            })
+    }
+
+    /// Asks the add this handle names to stop before its next candidate.
+    /// False when the handle names no current add.
+    pub(super) fn request_stop(&self, handle: &str) -> bool {
+        let Some(id) = handle
+            .strip_prefix(INGESTION_HANDLE_PREFIX)
+            .and_then(|digits| digits.parse::<u64>().ok())
+            .filter(|id| format!("{INGESTION_HANDLE_PREFIX}{id}") == handle)
+        else {
+            return false;
+        };
+        let mut slot = self.lock();
+        match slot.current.as_mut() {
+            Some(progress) if progress.id == id => {
+                progress.stop_requested = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, IngestionSlot> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// One add's claim on the progress slot; leaving it clears the slot.
+pub(super) struct IngestionTicket<'a> {
+    slot: &'a IngestionProgressSlot,
+    id: u64,
+}
+
+impl IngestionTicket<'_> {
+    /// The scan or expansion has counted its candidates.
+    pub(super) fn counted(&self, total: usize, vendor_total: usize) {
+        self.update(|progress| {
+            progress.total = Some(total);
+            progress.vendor_total = vendor_total;
+        });
+    }
+
+    /// One more candidate has been decided.
+    pub(super) fn advance(&self) {
+        self.update(|progress| progress.completed += 1);
+    }
+
+    pub(super) fn stop_requested(&self) -> bool {
+        self.slot
+            .lock()
+            .current
+            .is_some_and(|progress| progress.id == self.id && progress.stop_requested)
+    }
+
+    fn update(&self, change: impl FnOnce(&mut IngestionProgress)) {
+        if let Some(progress) = self
+            .slot
+            .lock()
+            .current
+            .as_mut()
+            .filter(|progress| progress.id == self.id)
+        {
+            change(progress);
+        }
+    }
+}
+
+impl Drop for IngestionTicket<'_> {
+    fn drop(&mut self) {
+        let mut slot = self.slot.lock();
+        if slot.current.is_some_and(|progress| progress.id == self.id) {
+            slot.current = None;
         }
     }
 }
@@ -312,7 +454,7 @@ pub(super) fn expand_drop_paths_with_budget(
     paths: Vec<PathBuf>,
     budget: DropBudget,
 ) -> Result<DropBatch, PreviewErrorDto> {
-    expand_drop_paths_with_budget_using(paths, budget, inspect_drop_root, discover_mzml_candidates)
+    expand_drop_paths_with_budget_using(paths, budget, inspect_drop_root, discover_candidates)
 }
 
 /// Testable seam for proving that all roots share one traversal ledger even

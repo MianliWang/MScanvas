@@ -73,13 +73,15 @@ use super::diagnostics::{
 use super::dialog::{DIAGNOSTICS_SAVE_DIALOG, SaveDialogFacts};
 use super::discovery::{
     DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
-    discover_mzml_candidates,
+    discover_candidates,
 };
 use super::drop_ingestion::{
-    ActiveDrop, DropBatch, DropCandidateOrigin, DropImportToken, DropOperationId, DropUpdateHub,
+    ActiveDrop, DropBatch, DropCandidate, DropCandidateOrigin, DropImportToken,
+    DropIngestionSummary, DropOperationId, DropUpdateHub, IngestionProgressSlot, IngestionTicket,
     NativeDropDispatch, NativeDropSignal, NativeDropWork, conversion_busy_state, drop_busy_state,
     expand_drop_paths,
 };
+use super::dto::WorkspaceIngestionProgressDto;
 use super::dto::queue_output_name_claimed;
 use super::dto::{
     AdoptionCandidateIdentityDto, BackendAvailabilityDto, BackendFailureDto,
@@ -164,11 +166,13 @@ use super::operation::{
 use super::operation::{ItemOutputTopology, SetStopFacts};
 use super::projection::{self, ProjectionRefusal};
 use super::selection::DatasetSourceKind;
+#[cfg(test)]
+use super::selection::accept_mzml_file;
 use super::selection::{
-    AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
-    accept_mzml_file, accept_workspace_file, candidate_display_name, file_identity,
-    lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
-    selected_file_dto, source_kind_dto, unknown_dataset,
+    AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, ProposalRefusal,
+    RevocationReason, accept_proposed_file, accept_workspace_file, candidate_display_name,
+    file_identity, lock_against_replacement, open_conversion_source, proposes_vendor_family,
+    relative_contexts, revalidate, selected_file_dto, source_kind_dto, unknown_dataset,
 };
 use mscanvas_plot_spec::spec::{Domain, FigureTheme};
 
@@ -456,6 +460,78 @@ fn describe_outcomes(
         .collect()
 }
 
+/// What admission decided about one walked or dropped candidate, before the
+/// mutation gate is taken (ADR 0051).
+enum Admitted {
+    File {
+        candidate_name: String,
+        accepted: AcceptedFile,
+        origin: DropCandidateOrigin,
+    },
+    /// Already a row, or an earlier candidate of this batch: never read again,
+    /// and resolved against the registry at commit.
+    Duplicate {
+        candidate_name: String,
+        identity: FileIdentity,
+    },
+    Refused {
+        candidate_name: String,
+        error: PreviewErrorDto,
+    },
+}
+
+/// One batch's admissions, in discovery order, and how many the user stopped
+/// before they were read.
+struct AdmittedBatch {
+    items: Vec<Admitted>,
+    not_attempted: usize,
+}
+
+/// Registers what admission accepted, in order, under the gate the caller
+/// holds. In-memory only: no file is read here.
+fn register_admitted(workspace: &mut Workspace, items: Vec<Admitted>) -> Vec<PendingOutcome> {
+    items
+        .into_iter()
+        .map(|item| match item {
+            Admitted::File {
+                candidate_name,
+                accepted,
+                origin,
+            } => PendingOutcome::Registered {
+                candidate_name,
+                outcome: match origin {
+                    DropCandidateOrigin::Direct => workspace.registry.add_direct(accepted),
+                    DropCandidateOrigin::Folder { relative_parents } => workspace
+                        .registry
+                        .add_discovered(accepted, relative_parents),
+                },
+            },
+            Admitted::Duplicate {
+                candidate_name,
+                identity,
+            } => match workspace.registry.single_object_row(identity) {
+                Some(existing_id) => PendingOutcome::Registered {
+                    candidate_name,
+                    outcome: AddDatasetOutcome::Duplicate { existing_id },
+                },
+                // Only when this batch's first name for the object found the
+                // workspace full.
+                None => PendingOutcome::Rejected {
+                    candidate_name,
+                    error: workspace_full(),
+                },
+            },
+            Admitted::Refused {
+                candidate_name,
+                error,
+            } => PendingOutcome::Rejected {
+                candidate_name,
+                error,
+            },
+        })
+        .collect()
+}
+
 /// Why a retained run summary cannot be handed to a QC capture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RetainedSummaryRefusal {
@@ -557,6 +633,9 @@ pub struct PreviewService {
     // subscriber. Its delivery gate is always acquired before the workspace
     /// mutation gate, and `Channel::send` runs after all workspace locks drop.
     drop_updates: DropUpdateHub,
+    /// How far the one folder or drop add in flight has got, and whether the
+    /// user asked it to stop. A leaf (ADR 0051).
+    ingestion: IngestionProgressSlot,
     /// The session's one conversion slot.
     //
     // A leaf: never held while any other lock is taken, and never held across
@@ -700,6 +779,7 @@ impl PreviewService {
             next_drop_operation: AtomicU64::new(1),
             native_drop_event_ticket: AtomicU64::new(0),
             drop_updates: DropUpdateHub::default(),
+            ingestion: IngestionProgressSlot::default(),
             conversion: Mutex::new(ConversionSlot::default()),
             conversion_busy: AtomicBool::new(false),
             backend_quarantined: AtomicBool::new(false),
@@ -5493,10 +5573,11 @@ impl PreviewService {
         FolderImportToken { generation }
     }
 
-    /// Scans one chosen folder and adds every mzML file it proposes.
+    /// Scans one chosen folder and adds every mzML, Thermo RAW and Shimadzu
+    /// LCD file it proposes.
     //
-    // The shape of this is the whole of what M1.4.1 adds, and every step is
-    // load-bearing:
+    // The shape of this is what M1.4.1 added and ADR 0051 widened, and every
+    // step is load-bearing:
     //
     // 1. the exact claim advanced the generation before the picker opened, so
     //    there is a name for "the workspace when this picker was accepted";
@@ -5504,15 +5585,19 @@ impl PreviewService {
     // 3. scan holding **no** lock -- not the workspace, not the mutation gate.
     //    A tree can take as long as it takes, and a session frozen for the
     //    length of it would be one the user could not remove a row from;
-    // 4. take the gate again and refuse outright if anything has happened
-    //    since. A user who cleared the list, added files, or reloaded the
-    //    window has said what the workspace is, and rows from an import they
-    //    started before that would arrive from nowhere;
-    // 5. accept the candidates in discovery order, under the gate, so the
-    //    batch is one contiguous run;
-    // 6. recheck each candidate's identity against what discovery found,
-    //    because a path is a proposal and the object behind it can be
-    //    replaced between the walk and the open.
+    // 4. admit the candidates in discovery order, still holding no lock: a
+    //    vendor file is read whole, and Clear, Remove and roster reads must not
+    //    wait behind that. Each candidate's identity is checked against what
+    //    discovery found before it is read, a duplicate or a full workspace is
+    //    answered without reading, and Stop and supersession end the run
+    //    between files;
+    // 5. take the gate again and refuse outright if anything has happened
+    //    since, or a conversion now holds the workspace. A user who cleared the
+    //    list, added files, or reloaded the window has said what the workspace
+    //    is, and rows from an import they started before that would arrive
+    //    from nowhere;
+    // 6. register the admitted candidates in discovery order, under the gate,
+    //    so the batch is one contiguous run.
     //
     // No backend is launched, for any candidate, ever. A folder of a thousand
     /// files costs a thousand filesystem inspections and no processes.
@@ -5522,7 +5607,7 @@ impl PreviewService {
         token: FolderImportToken,
     ) -> Result<FolderIngestionResultDto, PreviewErrorDto> {
         self.import_folder(token, || {
-            discover_mzml_candidates(root, DiscoveryBudget::default())
+            discover_candidates(root, DiscoveryBudget::default())
         })
     }
 
@@ -5557,57 +5642,44 @@ impl PreviewService {
         }
         drop(preflight);
 
+        let ticket = self.ingestion.begin();
         let discovered = scan().map_err(|error| folder_error(error.kind()))?;
+        let complete = discovered.is_complete();
+        let (candidates, summary, limits) = discovered.into_parts();
+        let candidates = candidates
+            .into_iter()
+            .map(|candidate| {
+                let (path, relative, observed_identity) = candidate.into_parts();
+                DropCandidate {
+                    path,
+                    observed_identity,
+                    origin: DropCandidateOrigin::Folder {
+                        relative_parents: parent_components(&relative),
+                    },
+                }
+            })
+            .collect();
+        let admitted = self.admit_candidates(candidates, &ticket, folder_candidate_changed, || {
+            self.enter_workspace_mutation().generation == reserved
+        });
 
         // Under the gate, and deliberately without advancing it: this commit is
         // the completion of the decision the token names, not a new one.
         let batch = self.enter_workspace_mutation();
         if batch.generation != reserved {
-            // Nothing accepted, so nothing leased and no identifier spent. The
-            // candidates are dropped here, which is also where the files they
-            // named stop being held.
+            // Nothing registered and no identifier spent. The admitted files
+            // are dropped here, which is also where they stop being held.
             return Err(import_superseded());
         }
-
-        let mut outcomes = Vec::with_capacity(discovered.candidates().len());
-        for candidate in discovered.candidates() {
-            let candidate_name = candidate_display_name(candidate.path());
-            let accepted = match accept_mzml_file(candidate.path()) {
-                Ok(accepted) => accepted,
-                Err(error) => {
-                    outcomes.push(PendingOutcome::Rejected {
-                        candidate_name,
-                        error,
-                    });
-                    continue;
-                }
-            };
-            // The recheck. Acceptance resolved the path again, and between the
-            // walk finding this name and that resolution the name can have been
-            // made to mean a different file -- one outside the folder the user
-            // chose, in the case worth worrying about. Containment was proved
-            // for the object discovery found; this is what carries that proof
-            // across to the object being registered.
-            if accepted.identity() != candidate.identity() {
-                outcomes.push(PendingOutcome::Rejected {
-                    candidate_name,
-                    error: folder_candidate_changed(),
-                });
-                continue;
-            }
-            let relative_parents = parent_components(candidate.relative_components());
-            let mut workspace = self.workspace();
-            let outcome = workspace
-                .registry
-                .add_discovered(accepted, relative_parents);
-            drop(workspace);
-            outcomes.push(PendingOutcome::Registered {
-                candidate_name,
-                outcome,
-            });
+        // The check the drop's commit has always made. A conversion can be
+        // admitted after the claim, and nothing commits into a workspace a
+        // conversion is reading.
+        if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
+            return Err(conversion_busy());
         }
 
-        let workspace = self.workspace();
+        let mut workspace = self.workspace();
+        let outcomes = register_admitted(&mut workspace, admitted.items);
         let roster = roster_of(&workspace);
         let outcomes = describe_outcomes(&workspace, outcomes);
         drop(workspace);
@@ -5617,12 +5689,125 @@ impl PreviewService {
             roster,
             outcomes,
             discovery: FolderDiscoverySummaryDto {
-                complete: discovered.is_complete(),
-                skipped_reparse_count: discovered.summary().skipped_reparse_count,
-                inaccessible_entry_count: discovered.summary().inaccessible_entry_count,
-                limits_reached: discovered.limits().iter().copied().map(limit_dto).collect(),
+                complete: complete && admitted.not_attempted == 0,
+                skipped_reparse_count: summary.skipped_reparse_count,
+                inaccessible_entry_count: summary.inaccessible_entry_count,
+                not_attempted_count: admitted.not_attempted,
+                limits_reached: limits.into_iter().map(limit_dto).collect(),
             },
         })
+    }
+
+    /// Admits walked or dropped candidates in order, holding neither the
+    /// mutation gate nor the workspace across any file (ADR 0051).
+    //
+    // Before a candidate is read: Stop and `still_current` end the run (what
+    // was admitted is kept, the rest is counted as not attempted); an object
+    // that is already a row, or an earlier candidate of this batch, is a
+    // duplicate; and a workspace this batch has already filled refuses it.
+    // Each answer is the one the registry would give at commit, without
+    // hashing a vendor file to reach it. The registry still decides at commit.
+    fn admit_candidates(
+        &self,
+        candidates: Vec<DropCandidate>,
+        ticket: &IngestionTicket<'_>,
+        changed: fn() -> PreviewErrorDto,
+        still_current: impl Fn() -> bool,
+    ) -> AdmittedBatch {
+        let total = candidates.len();
+        let vendor_total = candidates
+            .iter()
+            .filter(|candidate| proposes_vendor_family(&candidate.path))
+            .count();
+        ticket.counted(total, vendor_total);
+
+        let mut items = Vec::with_capacity(total);
+        let mut admitted_here = HashSet::new();
+        for (index, candidate) in candidates.into_iter().enumerate() {
+            if ticket.stop_requested() || !still_current() {
+                return AdmittedBatch {
+                    items,
+                    not_attempted: total - index,
+                };
+            }
+            let candidate_name = candidate_display_name(&candidate.path);
+            let identity = candidate.observed_identity;
+            let (held, existing) = {
+                let workspace = self.workspace();
+                (
+                    workspace.registry.len(),
+                    workspace.registry.single_object_row(identity),
+                )
+            };
+            let item = if existing.is_some() || admitted_here.contains(&identity) {
+                Admitted::Duplicate {
+                    candidate_name,
+                    identity,
+                }
+            } else if held + admitted_here.len() >= MAX_WORKSPACE_DATASETS {
+                Admitted::Refused {
+                    candidate_name,
+                    error: workspace_full(),
+                }
+            } else {
+                match accept_proposed_file(&candidate.path, identity) {
+                    Ok(accepted) => {
+                        admitted_here.insert(identity);
+                        Admitted::File {
+                            candidate_name,
+                            accepted,
+                            origin: candidate.origin,
+                        }
+                    }
+                    Err(ProposalRefusal::IdentityChanged) => Admitted::Refused {
+                        candidate_name,
+                        error: changed(),
+                    },
+                    Err(ProposalRefusal::Refused(error)) => Admitted::Refused {
+                        candidate_name,
+                        error,
+                    },
+                }
+            };
+            items.push(item);
+            ticket.advance();
+        }
+        AdmittedBatch {
+            items,
+            not_attempted: 0,
+        }
+    }
+
+    /// How far the folder or drop add in flight has got, if one is.
+    ///
+    /// Read-only and a leaf: it takes neither the mutation gate nor waits on a
+    /// drop claim, so it answers while a drop holds every other workspace read.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "ADR 0051: the command exposing it is wired with its frontend"
+        )
+    )]
+    pub fn ingestion_progress(&self) -> Option<WorkspaceIngestionProgressDto> {
+        self.ingestion.snapshot()
+    }
+
+    /// Stops the folder or drop add this handle names before its next file.
+    ///
+    /// Non-destructive: what was already admitted is still added, the rest is
+    /// reported as not attempted, and a file being read is finished first --
+    /// one file's hash cannot be interrupted. False when the handle names no
+    /// add in flight.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "ADR 0051: the command exposing it is wired with its frontend"
+        )
+    )]
+    pub fn stop_ingestion(&self, ingestion_id: &str) -> bool {
+        self.ingestion.request_stop(ingestion_id)
     }
 
     /// Processes one owned dispatch on a blocking worker. No branch of this
@@ -5707,15 +5892,27 @@ impl PreviewService {
     {
         let (operation_id, paths, top_level_item_count) = work.into_parts();
         let token = self.begin_native_drop(operation_id, top_level_item_count)?;
+        let ticket = self.ingestion.begin();
         match expand(paths) {
-            Ok(mut batch) => {
-                batch.summary.top_level_item_count = top_level_item_count;
+            Ok(batch) => {
+                let DropBatch {
+                    candidates,
+                    mut summary,
+                } = batch;
+                summary.top_level_item_count = top_level_item_count;
                 if top_level_item_count > super::drop_ingestion::MAX_DROP_ROOTS {
-                    batch
-                        .summary
-                        .record_limit(super::dto::DropScanLimitDto::Roots);
+                    summary.record_limit(super::dto::DropScanLimitDto::Roots);
                 }
-                self.commit_native_drop(token, batch)
+                // Before the gate, like the folder's (ADR 0051): a Clear or a
+                // Remove that supersedes this drop takes the gate at once and
+                // the claim check below ends the run before its next file.
+                let admitted =
+                    self.admit_candidates(candidates, &ticket, drop_candidate_changed, || {
+                        drop_claim_operation(self.native_drop_claim.load(Ordering::Acquire))
+                            == Some(operation_id)
+                    });
+                summary.not_attempted_count = admitted.not_attempted;
+                self.commit_native_drop(token, admitted.items, summary)
             }
             Err(error) => {
                 self.fail_native_drop(token, error);
@@ -5790,7 +5987,8 @@ impl PreviewService {
     fn commit_native_drop(
         &self,
         token: DropImportToken,
-        batch: DropBatch,
+        admitted: Vec<Admitted>,
+        summary: DropIngestionSummary,
     ) -> Option<DropIngestionResultDto> {
         let delivery = self.drop_updates.begin_delivery();
         let mut gate = self.enter_workspace_mutation();
@@ -5819,46 +6017,8 @@ impl PreviewService {
             return None;
         }
 
-        let DropBatch {
-            candidates,
-            summary,
-        } = batch;
-        let mut outcomes = Vec::with_capacity(candidates.len());
-        for candidate in candidates {
-            let candidate_name = candidate_display_name(&candidate.path);
-            let accepted = match accept_mzml_file(&candidate.path) {
-                Ok(accepted) => accepted,
-                Err(error) => {
-                    outcomes.push(PendingOutcome::Rejected {
-                        candidate_name,
-                        error,
-                    });
-                    continue;
-                }
-            };
-            if accepted.identity() != candidate.observed_identity {
-                outcomes.push(PendingOutcome::Rejected {
-                    candidate_name,
-                    error: drop_candidate_changed(),
-                });
-                continue;
-            }
-
-            let mut workspace = self.workspace();
-            let outcome = match candidate.origin {
-                DropCandidateOrigin::Direct => workspace.registry.add_direct(accepted),
-                DropCandidateOrigin::Folder { relative_parents } => workspace
-                    .registry
-                    .add_discovered(accepted, relative_parents),
-            };
-            drop(workspace);
-            outcomes.push(PendingOutcome::Registered {
-                candidate_name,
-                outcome,
-            });
-        }
-
-        let workspace = self.workspace();
+        let mut workspace = self.workspace();
+        let outcomes = register_admitted(&mut workspace, admitted);
         let roster = roster_of(&workspace);
         let outcomes = describe_outcomes(&workspace, outcomes);
         drop(workspace);

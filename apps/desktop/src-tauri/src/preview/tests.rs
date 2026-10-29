@@ -5748,7 +5748,7 @@ fn roster_contexts(service: &PreviewService) -> Vec<(String, Option<String>)> {
 fn walk(
     root: &Path,
 ) -> Result<super::discovery::DiscoveryResult, super::discovery::DiscoveryError> {
-    super::discovery::discover_mzml_candidates(root, super::discovery::DiscoveryBudget::default())
+    super::discovery::discover_candidates(root, super::discovery::DiscoveryBudget::default())
 }
 
 #[cfg(windows)]
@@ -6254,7 +6254,7 @@ fn a_scan_cut_short_by_a_limit_says_so_and_names_the_limit() {
 
     let result = service
         .import_folder(service.reserve_folder_import(), || {
-            super::discovery::discover_mzml_candidates(
+            super::discovery::discover_candidates(
                 tree.path(),
                 super::discovery::DiscoveryBudget {
                     max_candidates: 1,
@@ -8432,14 +8432,15 @@ fn a_thermo_acquisition_under_another_extension_is_not_admitted() {
     assert_eq!(error.kind, "unsupported_extension");
 }
 
-/// The picker admits a vendor acquisition; the mzML-only doors do not.
+/// The picker admits a vendor acquisition, and since ADR 0051 a folder walk
+/// reaches the same one: as the row it already is, not as a second dataset.
 ///
-/// ADR 0012 widens exactly one ingestion surface. The other two walk a tree the
-/// user did not enumerate, and admitting a vendor family from a walk is a wider
-/// claim than admitting one the user named -- so this states both halves
-/// together, where a change to either is visible against the other.
+/// ADR 0012 widened the picker alone; ADR 0051 widens the walking surfaces to
+/// the single-object vendor families. The retired single-file path stays
+/// mzML-only. All three are stated together, where a change to any is visible
+/// against the others.
 #[test]
-fn the_picker_admits_a_vendor_acquisition_and_the_mzml_only_doors_still_refuse_one() {
+fn the_picker_admits_a_vendor_acquisition_and_a_folder_walk_finds_the_same_row() {
     let fixture = TestFile::new("ingestion-widened");
     let acquisition = fixture.thermo_raw("acquisition.raw");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
@@ -8459,18 +8460,28 @@ fn the_picker_admits_a_vendor_acquisition_and_the_mzml_only_doors_still_refuse_o
         .expect_err("the replaced picker opens mzML only");
     assert_eq!(picked.kind, "unsupported_extension");
 
-    // And folder discovery proposes nothing for it, whatever the folder holds.
+    // Folder discovery proposes it now, and finds the row the picker made.
     let discovered =
         service.add_mzml_folder(fixture.directory.as_path(), service.reserve_folder_import());
     let discovered = discovered.expect("a folder scan is an outcome");
     assert!(
-        discovered.outcomes.iter().all(
-            |outcome| !matches!(outcome, WorkspaceAddOutcomeDto::Added { dataset } if dataset
+        discovered.outcomes.iter().any(
+            |outcome| matches!(outcome, WorkspaceAddOutcomeDto::Duplicate { existing } if existing
                 .source_kind
                 == DatasetSourceKindDto::ThermoRaw)
         ),
-        "folder discovery proposes no vendor acquisition; got {:?}",
+        "the walk reaches the acquisition the picker added; got {:?}",
         discovered.outcomes
+    );
+    assert_eq!(
+        discovered
+            .roster
+            .datasets
+            .iter()
+            .filter(|row| row.source_kind == DatasetSourceKindDto::ThermoRaw)
+            .count(),
+        1,
+        "one acquisition, one row"
     );
 }
 
@@ -9489,14 +9500,14 @@ fn a_shimadzu_report_names_no_output_it_did_not_produce_and_no_path_at_all() {
     assert!(rendered.contains("acquisition.mzML"));
 }
 
-/// Nothing a user can reach admits, lists or converts this family.
+/// The picker admits this family by its container rule, the visible queue plans
+/// it, and since ADR 0051 a folder walk proposes it too.
 ///
-/// The private path exists and the product does not have it. Asserted against
-/// the surfaces themselves rather than by reading the code: the picker, the
-/// folder import, the Explorer drop and the visible queue each get a real
-/// LabSolutions acquisition and each refuses it.
+/// Asserted against the surfaces themselves rather than by reading the code:
+/// the picker, the folder walk and the visible queue each get a real
+/// LabSolutions acquisition.
 #[test]
-fn the_picker_admits_the_shimadzu_family_and_no_walking_surface_does() {
+fn the_picker_admits_the_shimadzu_family_and_the_folder_walk_proposes_it() {
     let fixture = TestFile::new("shimadzu-reachable");
     let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
@@ -9553,21 +9564,28 @@ fn the_picker_admits_the_shimadzu_family_and_no_walking_surface_does() {
     );
     assert_eq!(plan_output_name(&plan.items[0]), "acquisition.mzML");
 
-    // Folder discovery does not walk into this family. A scan of the fixture
-    // folder proposes the mzML and never the acquisition beside it.
-    let proposals = super::discovery::discover_mzml_candidates(
+    // Folder discovery proposes every `.lcd` beside the mzML -- the decoys
+    // too, which admission refuses -- and never LCD bytes under another name.
+    let proposals = super::discovery::discover_candidates(
         &fixture.directory,
         super::discovery::DiscoveryBudget::default(),
     )
     .expect("the folder scan completes");
-    assert!(
-        proposals.candidates().iter().all(|candidate| {
-            candidate
-                .path()
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("mzml"))
-        }),
-        "a folder walk proposed a vendor acquisition"
+    let proposed: Vec<String> = proposals
+        .candidates()
+        .iter()
+        .filter_map(|candidate| candidate.path().file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        proposed,
+        vec![
+            "acquisition.lcd",
+            "archive.lcd",
+            "renamed-wiff.lcd",
+            "sample.mzML"
+        ],
+        "the walk proposes by name and nothing else"
     );
 
     // And it is still not previewable: converting is the way to read one.
@@ -15386,82 +15404,363 @@ fn adoption_kinds(result: &WorkspaceOutputAdoptionResultDto) -> Vec<&'static str
         .collect()
 }
 
-/// Folder ingestion and the Explorer drop stay regular-mzML-only: the picker's
-/// widened routing is deliberately not theirs.
+/// Each outcome as `(name, kind)`: `added`, `duplicate`, or the refusal's kind.
+#[cfg(windows)]
+fn outcome_kinds(outcomes: &[WorkspaceAddOutcomeDto]) -> Vec<(String, String)> {
+    outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Added { dataset } => {
+                (dataset.file_name.clone(), "added".to_owned())
+            }
+            WorkspaceAddOutcomeDto::Duplicate { existing } => {
+                (existing.file_name.clone(), "duplicate".to_owned())
+            }
+            WorkspaceAddOutcomeDto::Rejected {
+                candidate_name,
+                error,
+            } => (candidate_name.clone(), error.kind.clone()),
+        })
+        .collect()
+}
+
+/// Holds a file open for writing, the way acquisition software holds the file
+/// it is still recording. Shares everything, so it disturbs no one -- but a
+/// handle that refuses writers cannot be opened beside it.
+#[cfg(windows)]
+fn held_for_writing(path: &Path) -> fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .write(true)
+        .share_mode(0x7)
+        .open(path)
+        .expect("hold the file open for writing")
+}
+
+/// ADR 0051: a folder and a drop propose Thermo RAW and Shimadzu LCD files and
+/// admit each by its own family's rule; SCIEX stays the picker's.
 ///
-/// The distinction ADR 0020 pins: `Add files\u2026` acts on files the user named
-/// one by one, and the walking surfaces classify a broader filesystem surface.
-/// Widening a walk is a wider claim than widening the picker, and it is not
-/// made here -- no vendor-family recognition runs during traversal at all.
+/// The SCIEX residual is ADR 0027's: a traversal that found a `.wiff` beside a
+/// `.wiff.scan` and admitted the two together would be deciding they are one
+/// acquisition from adjacency alone. So a walk never proposes either half, and
+/// a drop of either refuses it by name without opening the companion.
 #[cfg(windows)]
 #[test]
-fn folder_and_drop_ingestion_remain_mzml_only_for_vendor_files() {
+fn folder_and_drop_add_thermo_and_shimadzu_files_and_never_sciex() {
     let chosen = FolderTree::new("vendor-in-folder");
     chosen.file("kept.mzML", b"<mzML>inside</mzML>");
     chosen.file("acquisition.lcd", &shimadzu_lcd_bytes());
     chosen.file("acquisition.raw", &thermo_raw_bytes());
-    // A complete SCIEX bundle, both halves, sitting in the walked folder. The
-    // pairing a picker selection would do must not happen here: a traversal
-    // that found a `.wiff` beside a `.wiff.scan` and admitted the two together
-    // would be deciding they are one acquisition from adjacency alone.
     chosen.file("acquisition.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
-    chosen.file(
+    let companion = chosen.file(
         "acquisition.wiff.scan",
         &scan_companion_bytes("opaque spectral payload"),
     );
-    let service = PreviewService::new(Box::new(NoProcess));
+    let expected = vec![
+        ("acquisition.lcd".to_owned(), "added".to_owned()),
+        ("acquisition.raw".to_owned(), "added".to_owned()),
+        ("kept.mzML".to_owned(), "added".to_owned()),
+    ];
 
-    // A dropped folder discovers the mzML and never the acquisitions beside
-    // it: they are not candidates, so they are not even rejections.
+    // The folder import: discovery order, one family per row, SCIEX unnamed.
+    let service = PreviewService::new(Box::new(NoProcess));
+    let result = service
+        .add_mzml_folder(chosen.path(), service.reserve_folder_import())
+        .expect("the folder is scanned");
+    assert_eq!(outcome_kinds(&result.outcomes), expected);
+    assert_eq!(
+        result
+            .roster
+            .datasets
+            .iter()
+            .map(|row| row.source_kind)
+            .collect::<Vec<_>>(),
+        vec![
+            DatasetSourceKindDto::ShimadzuLcd,
+            DatasetSourceKindDto::ThermoRaw,
+            DatasetSourceKindDto::Mzml,
+        ]
+    );
+    assert!(result.discovery.complete);
+    assert_eq!(result.discovery.not_attempted_count, 0);
+    assert!(nothing_else_holds_open(&companion));
+
+    // The same folder dropped: the same answer.
+    let service = PreviewService::new(Box::new(NoProcess));
     let work = reserve_drop_work(&service, &[chosen.path().to_path_buf()]);
     let result = service
         .process_native_drop_with(work, expand_drop_paths)
         .expect("the drop completes");
-    assert_eq!(roster_names(&service), vec!["kept.mzML"]);
-    assert!(
-        result.outcomes.iter().all(|outcome| !matches!(
-            outcome,
-            WorkspaceAddOutcomeDto::Rejected { candidate_name, .. }
-                if candidate_name.ends_with(".lcd")
-                    || candidate_name.ends_with(".raw")
-                    || candidate_name.ends_with(".wiff")
-                    || candidate_name.ends_with(".wiff.scan")
-        )),
-        "a walk neither admits nor names vendor files"
-    );
-    assert_eq!(
-        service.dataset_count(),
-        1,
-        "no bundle was paired out of a folder's contents"
-    );
+    assert_eq!(outcome_kinds(&result.outcomes), expected);
+    assert!(result.summary.complete);
+    assert!(nothing_else_holds_open(&companion));
 
-    // A vendor file dropped directly is refused by name -- the drop admits
-    // through mzML acceptance and never through the picker's routing. Both
-    // halves of a bundle are refused, and by the same reason: the drop does not
-    // know this family at all, which is the point.
+    // Dropped directly: each vendor file is admitted by its own rule, and
+    // either half of a SCIEX acquisition is refused by name, the companion
+    // never opened.
     let direct = FolderTree::new("vendor-direct-drop");
-    direct.file("direct.lcd", &shimadzu_lcd_bytes());
-    direct.file("direct.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
-    direct.file(
-        "direct.wiff.scan",
-        &scan_companion_bytes("opaque spectral payload"),
-    );
-    for dropped in ["direct.lcd", "direct.wiff", "direct.wiff.scan"] {
-        let work = reserve_drop_work(&service, &[direct.path().join(dropped)]);
+    let service = PreviewService::new(Box::new(NoProcess));
+    for (name, bytes, kind) in [
+        ("direct.lcd", shimadzu_lcd_bytes(), "added"),
+        ("direct.raw", thermo_raw_bytes(), "added"),
+        (
+            "direct.wiff",
+            wiff_container_bytes(&SCIEX_MARKERS),
+            "sciex_add_files_only",
+        ),
+        (
+            "direct.wiff.scan",
+            scan_companion_bytes("opaque spectral payload"),
+            "sciex_add_files_only",
+        ),
+    ] {
+        let path = direct.file(name, &bytes);
+        let work = reserve_drop_work(&service, &[path]);
         let result = service
             .process_native_drop_with(work, expand_drop_paths)
             .expect("the drop completes");
-        assert!(
-            matches!(
-                result.outcomes.first(),
-                Some(WorkspaceAddOutcomeDto::Rejected { error, .. })
-                    if error.kind == "unsupported_extension"
-            ),
-            "a directly dropped {dropped} stays unsupported; got {:?}",
-            result.outcomes.first()
+        assert_eq!(
+            outcome_kinds(&result.outcomes),
+            vec![(name.to_owned(), kind.to_owned())]
         );
-        assert_eq!(roster_names(&service), vec!["kept.mzML"]);
     }
+    assert_eq!(roster_names(&service), vec!["direct.lcd", "direct.raw"]);
+    assert!(nothing_else_holds_open(
+        &direct.path().join("direct.wiff.scan")
+    ));
+}
+
+/// A file whose name proposes a family and whose bytes are not one -- a camera
+/// `.raw` -- is refused on its own, and so is one an instrument is still
+/// writing. The rest of the batch arrives.
+#[cfg(windows)]
+#[test]
+fn a_walked_vendor_file_that_is_not_one_or_is_still_being_written_is_refused_alone() {
+    let tree = FolderTree::new("vendor-refusals");
+    tree.file("a-camera.raw", b"\xff\xd8\xff\xe0 a JPEG from a camera");
+    let writing = tree.file("b-writing.raw", &thermo_raw_bytes());
+    tree.file("c-kept.lcd", &shimadzu_lcd_bytes());
+    let writer = held_for_writing(&writing);
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
+        .expect("the folder is scanned");
+    drop(writer);
+
+    assert_eq!(
+        outcome_kinds(&result.outcomes),
+        vec![
+            (
+                "a-camera.raw".to_owned(),
+                "unrecognized_acquisition".to_owned()
+            ),
+            ("b-writing.raw".to_owned(), "source_in_use".to_owned()),
+            ("c-kept.lcd".to_owned(), "added".to_owned()),
+        ]
+    );
+    assert_eq!(roster_names(&service), vec!["c-kept.lcd"]);
+}
+
+/// The identity is checked before a vendor file is read. A valid `.raw`
+/// replaced by garbage after the walk is refused as changed, not as an
+/// unrecognized acquisition -- which is what reading it first would have said.
+#[cfg(windows)]
+#[test]
+fn a_vendor_candidate_replaced_after_the_walk_is_refused_before_it_is_read() {
+    let tree = FolderTree::new("vendor-swap");
+    let swapped = tree.file("sample.raw", &thermo_raw_bytes());
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .import_folder(service.reserve_folder_import(), || {
+            let found = walk(tree.path())?;
+            fs::remove_file(&swapped).expect("remove the discovered file");
+            fs::write(&swapped, b"not an acquisition").expect("put a different file there");
+            Ok(found)
+        })
+        .expect("the folder itself is fine");
+
+    assert_eq!(
+        outcome_kinds(&result.outcomes),
+        vec![(
+            "sample.raw".to_owned(),
+            "folder_candidate_changed".to_owned()
+        )]
+    );
+    assert!(service.roster().datasets.is_empty());
+}
+
+/// A duplicate and a full workspace are answered without reading the file.
+///
+/// Each file is held open for writing, so any attempt to admit it would be
+/// refused as `source_in_use`. Being told `duplicate` or `workspace_full`
+/// instead is the proof nothing tried -- and the second half shows a batch
+/// counting its own new rows against the capacity.
+#[cfg(windows)]
+#[test]
+fn a_duplicate_and_a_full_workspace_are_answered_without_reading_the_file() {
+    let tree = FolderTree::new("vendor-short-circuit");
+    let known = tree.file("known.raw", &thermo_raw_bytes());
+    let service = PreviewService::new(Box::new(NoProcess));
+    service.add_files_now(std::slice::from_ref(&known));
+    let writer = held_for_writing(&known);
+    let result = service
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
+        .expect("the folder is scanned");
+    drop(writer);
+    assert_eq!(
+        outcome_kinds(&result.outcomes),
+        vec![("known.raw".to_owned(), "duplicate".to_owned())]
+    );
+
+    // One row of room, two new vendor files: the first takes it, and the
+    // second is refused as full without being opened for its read.
+    let filler = TestFile::new("vendor-short-circuit-filler");
+    let service = PreviewService::new(Box::new(NoProcess));
+    let held: Vec<PathBuf> = (0..MAX_WORKSPACE_DATASETS - 1)
+        .map(|index| filler.sibling(&format!("held-{index}.mzML")))
+        .collect();
+    service.add_files_now(&held);
+    let room = FolderTree::new("vendor-short-circuit-room");
+    room.file("a-first.raw", &thermo_raw_bytes());
+    let second = room.file("b-second.lcd", &shimadzu_lcd_bytes());
+    let writer = held_for_writing(&second);
+    let result = service
+        .add_mzml_folder(room.path(), service.reserve_folder_import())
+        .expect("the folder is scanned");
+    drop(writer);
+    assert_eq!(
+        outcome_kinds(&result.outcomes),
+        vec![
+            ("a-first.raw".to_owned(), "added".to_owned()),
+            ("b-second.lcd".to_owned(), "workspace_full".to_owned()),
+        ]
+    );
+    assert_eq!(service.dataset_count(), MAX_WORKSPACE_DATASETS);
+}
+
+/// Stop adding is non-destructive and named: a stop for this add leaves the
+/// workspace as it was and reports every candidate as not attempted; a stale
+/// or malformed handle stops nothing; and the progress read answers while the
+/// workspace gates are held by someone else.
+#[cfg(windows)]
+#[test]
+fn stop_adding_leaves_the_rest_unread_and_progress_never_waits_on_a_gate() {
+    let tree = FolderTree::new("vendor-stop");
+    tree.file("a.raw", &thermo_raw_bytes());
+    tree.file("b.lcd", &shimadzu_lcd_bytes());
+    tree.file("c.mzML", b"<mzML/>");
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    assert!(service.ingestion_progress().is_none());
+
+    let token = service.reserve_folder_import();
+    let result = service
+        .import_folder(token, || {
+            // Another thread holds both workspace gates; the progress read
+            // still answers, because it takes neither.
+            let (started, held) = mpsc::channel();
+            let (release, wait) = mpsc::channel();
+            let holder = {
+                let service = Arc::clone(&service);
+                std::thread::spawn(move || service.hold_drop_gates_for_test(started, wait))
+            };
+            held.recv_timeout(Duration::from_secs(10))
+                .expect("the gates are held");
+            let progress = service
+                .ingestion_progress()
+                .expect("an add in flight reports progress");
+            release.send(()).expect("release the gates");
+            holder.join().expect("the holder finishes");
+
+            assert_eq!(progress.total, None, "still counting");
+            assert_eq!(progress.completed, 0);
+            assert!(!service.stop_ingestion("ingestion-999"));
+            assert!(!service.stop_ingestion("ingestion-01"));
+            assert!(!service.stop_ingestion("folder-import-reservation-0"));
+            assert!(service.stop_ingestion(&progress.ingestion_id));
+            assert!(
+                service
+                    .ingestion_progress()
+                    .is_some_and(|progress| progress.stop_requested)
+            );
+            walk(tree.path())
+        })
+        .expect("a stopped import is an outcome, not a failure");
+
+    assert!(
+        result.outcomes.is_empty(),
+        "nothing was read after the stop"
+    );
+    assert_eq!(result.discovery.not_attempted_count, 3);
+    assert!(
+        !result.discovery.complete,
+        "a stopped add is not the whole folder"
+    );
+    assert!(service.roster().datasets.is_empty());
+    assert!(
+        service.ingestion_progress().is_none(),
+        "a finished add leaves no progress behind"
+    );
+}
+
+/// The progress slot itself: counting, advancing, stopping only the add a
+/// handle names, and a finished add never clearing its successor.
+#[test]
+fn the_progress_slot_counts_one_add_at_a_time() {
+    use super::drop_ingestion::IngestionProgressSlot;
+
+    let slot = IngestionProgressSlot::default();
+    let first = slot.begin();
+    first.counted(3, 2);
+    first.advance();
+    let progress = slot.snapshot().expect("an add is in flight");
+    assert_eq!(
+        (progress.total, progress.completed, progress.vendor_total),
+        (Some(3), 1, 2)
+    );
+    let first_id = progress.ingestion_id;
+
+    let second = slot.begin();
+    assert!(
+        !slot.request_stop(&first_id),
+        "a superseded add's handle stops nothing"
+    );
+    drop(first);
+    let progress = slot.snapshot().expect("the newer add is still current");
+    assert_eq!((progress.total, progress.completed), (None, 0));
+    assert_ne!(progress.ingestion_id, first_id);
+    assert!(slot.request_stop(&progress.ingestion_id));
+    assert!(second.stop_requested());
+    drop(second);
+    assert!(slot.snapshot().is_none());
+}
+
+/// A folder import claimed before a conversion began commits nothing into the
+/// workspace that conversion holds -- the check the drop's commit always made.
+#[cfg(windows)]
+#[test]
+fn a_folder_import_refuses_to_commit_beside_a_conversion_that_began_after_its_claim() {
+    let fixture = TestFile::new("folder-after-conversion");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let tree = FolderTree::new("folder-after-conversion-tree");
+    tree.file("late.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let token = service.reserve_folder_import();
+
+    let error = service
+        .import_folder(token, || {
+            let document = current_document(&service);
+            service
+                .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+                .expect("the conversion takes the workspace");
+            walk(tree.path())
+        })
+        .expect_err("nothing commits beside a conversion");
+
+    assert_eq!(error.kind, "conversion_busy");
+    assert_eq!(roster_names(&service), vec!["acquisition.raw"]);
 }
 
 /// No walking surface can reach the SCIEX admission at all.
@@ -15485,6 +15784,38 @@ fn no_walking_surface_routes_a_candidate_through_sciex_admission() {
             assert!(
                 !module.to_ascii_lowercase().contains(forbidden),
                 "a walking surface names {forbidden}"
+            );
+        }
+    }
+    // ADR 0051: the admission both walking surfaces call reaches the two
+    // single-object vendor families and never the bundle or the picker's router.
+    for (source, marker, end) in [
+        (
+            include_str!("selection.rs"),
+            "pub(super) fn accept_proposed_file(",
+            "\n}\n",
+        ),
+        (
+            include_str!("service.rs"),
+            "fn admit_candidates(",
+            "\n    }\n",
+        ),
+    ] {
+        let admission = source
+            .split_once(marker)
+            .unwrap_or_else(|| panic!("{marker} exists"))
+            .1
+            .split_once(end)
+            .expect("the function is closed")
+            .0;
+        for forbidden in [
+            "accept_sciex_wiff_bundle",
+            "accept_workspace_file",
+            "sciex_wiff_companion_path",
+        ] {
+            assert!(
+                !admission.contains(forbidden),
+                "{marker} reaches {forbidden}"
             );
         }
     }

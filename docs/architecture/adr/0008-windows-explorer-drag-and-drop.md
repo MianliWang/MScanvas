@@ -2,6 +2,9 @@
 
 - Status: Accepted for regular mzML files and folders on Windows
 - Date: 2026-08-02
+- Amended: 2026-10-29 — a drop also adds Thermo RAW and Shimadzu LCD files,
+  directly or from a dropped folder; a dropped SCIEX file is refused by name.
+  See [ADR 0051](0051-folder-and-drop-propose-admitted-vendor-files.md).
 
 ## Context
 

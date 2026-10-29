@@ -1017,6 +1017,9 @@ pub struct FolderDiscoverySummaryDto {
     pub skipped_reparse_count: u64,
     /// Entries and subtrees the filesystem would not describe.
     pub inaccessible_entry_count: u64,
+    /// Candidates the scan found and the user stopped adding before they were
+    /// read. Non-zero makes `complete` false (ADR 0051).
+    pub not_attempted_count: usize,
     pub limits_reached: Vec<FolderScanLimitDto>,
 }
 
@@ -2546,7 +2549,32 @@ pub struct DropIngestionSummaryDto {
     pub unsupported_root_count: u64,
     pub skipped_reparse_entry_count: u64,
     pub inaccessible_entry_count: u64,
+    /// Candidates the user stopped adding before they were read. Non-zero
+    /// makes `complete` false (ADR 0051).
+    pub not_attempted_count: usize,
     pub limits_reached: Vec<DropScanLimitDto>,
+}
+
+/// How far the one folder or drop add in flight has got (ADR 0051).
+///
+/// Counts only: no name, path or identity. Read without the mutation gate or
+/// the drop claim, so it answers while an add reads vendor files.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceIngestionProgressDto {
+    /// Opaque; names this add to a stop request and to nothing else.
+    pub ingestion_id: String,
+    /// How many candidates the scan or drop proposed. `None` while it is still
+    /// counting them.
+    pub total: Option<usize>,
+    /// How many of them have been decided: added, already present, or refused.
+    pub completed: usize,
+    /// How many of `total` are Thermo RAW or Shimadzu LCD files. Admitting one
+    /// reads the whole file through a handle that refuses writers, which is
+    /// what the warning about folders an instrument is still writing to is
+    /// about.
+    pub vendor_total: usize,
+    pub stop_requested: bool,
 }
 
 /// The authoritative result of one mixed native drop.

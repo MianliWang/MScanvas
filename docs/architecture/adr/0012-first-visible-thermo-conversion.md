@@ -13,6 +13,11 @@
   family's own admission and never admits anything itself. Folder ingestion and
   the Explorer drop remain regular-mzML-only. See
   [ADR 0020](0020-first-visible-shimadzu-lcd-workflow.md).
+- Amended: 2026-10-29 — the walk restriction is lifted for the single-file
+  vendor families. Folder ingestion and the Explorer drop propose `.raw` and
+  `.lcd` files and admit each under its family's own rule, after checking it
+  is still the object they found; SCIEX stays picker-only. See
+  [ADR 0051](0051-folder-and-drop-propose-admitted-vendor-files.md).
 
 ## Context
 

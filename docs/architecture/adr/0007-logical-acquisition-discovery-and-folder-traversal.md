@@ -13,6 +13,11 @@
 - Amended: 2026-08-02 (M1.5) — Windows Explorer drop reuses the same discovery,
   acceptance and containment boundary under the mixed-root and shared-budget
   rules in [ADR 0008](0008-windows-explorer-drag-and-drop.md).
+- Amended: 2026-10-29 — the walk also proposes Thermo RAW and Shimadzu LCD
+  files, admission runs before the mutation gate, and an add reports k-of-N
+  progress and can be stopped. "The budgets are what bound the worst case" is
+  withdrawn: admitting vendor files is bounded by their size. See
+  [ADR 0051](0051-folder-and-drop-propose-admitted-vendor-files.md).
 
 ## Context
 

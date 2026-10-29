@@ -123,7 +123,7 @@ fn remove_junctions(directory: &Path) {
 }
 
 fn walk_real(root: &Path) -> DiscoveryResult {
-    discover_mzml_candidates(root, DiscoveryBudget::default()).expect("a real root opens")
+    discover_candidates(root, DiscoveryBudget::default()).expect("a real root opens")
 }
 
 fn names(result: &DiscoveryResult) -> Vec<String> {
@@ -294,9 +294,8 @@ fn a_junction_used_as_the_chosen_root_is_refused() {
     let holder = TestTree::new("root-holder");
     holder.junction("as-root", target.path());
 
-    let error =
-        discover_mzml_candidates(&holder.path().join("as-root"), DiscoveryBudget::default())
-            .expect_err("a link chosen as the root is refused");
+    let error = discover_candidates(&holder.path().join("as-root"), DiscoveryBudget::default())
+        .expect_err("a link chosen as the root is refused");
 
     assert_eq!(error.kind(), DiscoveryErrorKind::RootReparsePoint);
 }
@@ -306,8 +305,8 @@ fn a_file_chosen_as_the_root_is_refused_as_not_a_directory() {
     let tree = TestTree::new("file-root");
     let file = tree.file("sample.mzML", 8);
 
-    let error = discover_mzml_candidates(&file, DiscoveryBudget::default())
-        .expect_err("a file is not a folder");
+    let error =
+        discover_candidates(&file, DiscoveryBudget::default()).expect_err("a file is not a folder");
 
     assert_eq!(error.kind(), DiscoveryErrorKind::RootNotDirectory);
 }
@@ -316,7 +315,7 @@ fn a_file_chosen_as_the_root_is_refused_as_not_a_directory() {
 fn a_root_that_does_not_exist_is_refused() {
     let tree = TestTree::new("absent");
 
-    let error = discover_mzml_candidates(
+    let error = discover_candidates(
         &tree.path().join("no-such-folder"),
         DiscoveryBudget::default(),
     )
@@ -329,7 +328,7 @@ fn a_root_that_does_not_exist_is_refused() {
 fn a_unc_root_is_refused_without_being_walked() {
     // A UNC path names a share; this slice makes no claim about identity,
     // leases or consistency on one. It need not exist to be refused.
-    let error = discover_mzml_candidates(
+    let error = discover_candidates(
         Path::new(r"\\mscanvas-no-such-host\share\folder"),
         DiscoveryBudget::default(),
     )
@@ -401,7 +400,7 @@ fn a_real_tree_deeper_than_the_budget_truncates_and_keeps_its_siblings() {
     tree.file(&format!("{relative}\\bottom.mzML"), 4);
     tree.file("shallow.mzML", 4);
 
-    let result = discover_mzml_candidates(
+    let result = discover_candidates(
         tree.path(),
         DiscoveryBudget {
             max_depth: 3,
@@ -422,7 +421,7 @@ fn a_real_walk_stops_at_the_candidate_budget_and_keeps_what_it_found() {
         tree.file(&format!("f{index}.mzML"), 4);
     }
 
-    let result = discover_mzml_candidates(
+    let result = discover_candidates(
         tree.path(),
         DiscoveryBudget {
             max_candidates: 3,
@@ -675,7 +674,7 @@ fn a_real_walk_stops_inspecting_at_its_allowance() {
         tree.file(&format!("f{index:02}.mzML"), 4);
     }
 
-    let result = discover_mzml_candidates(
+    let result = discover_candidates(
         tree.path(),
         DiscoveryBudget {
             max_entries: 5,
@@ -708,7 +707,7 @@ fn a_real_walk_stops_reading_at_its_allowance_too() {
     }
 
     super::super::windows::ENUMERATION_CALLS.with(|calls| calls.set(0));
-    let result = discover_mzml_candidates(
+    let result = discover_candidates(
         tree.path(),
         DiscoveryBudget {
             max_entries: 5,
@@ -807,7 +806,7 @@ fn a_root_that_reaches_a_share_without_naming_one_is_refused() {
     // privilege the first would need.
     let _restore = WorkingDirectory::moved_to(Path::new(r"\\localhost\C$"));
 
-    let error = discover_mzml_candidates(Path::new("Windows"), DiscoveryBudget::default())
+    let error = discover_candidates(Path::new("Windows"), DiscoveryBudget::default())
         .expect_err("a root on a share is refused however it was spelled");
 
     assert_eq!(error.kind(), DiscoveryErrorKind::RemoteRootUnsupported);
