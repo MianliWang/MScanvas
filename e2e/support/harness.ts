@@ -366,7 +366,8 @@ export async function focusedName(): Promise<string> {
     if (active === null) {
       return "";
     }
-    return (active.textContent ?? "").trim();
+    // An icon button has no text; its accessible name is its label.
+    return (active.textContent ?? "").trim() || (active.getAttribute("aria-label") ?? "");
   }) as Promise<string>;
 }
 

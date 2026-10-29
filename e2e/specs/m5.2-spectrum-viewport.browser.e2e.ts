@@ -1319,7 +1319,8 @@ describe("the visible m/z viewport", () => {
         // "the drawing gets the room" at every window rather than a number that
         // happens to hold at one of them.
         expect(plot.width).toBeGreaterThan(panel.width * 0.6);
-        expect(plot.height).toBeGreaterThanOrEqual(200);
+        // The plot fills its box down to the rebuild's 160 px floor (spec 3.1).
+        expect(plot.height).toBeGreaterThanOrEqual(160);
         expect(plot.left).toBeGreaterThanOrEqual(panel.left - 0.5);
         expect(plot.right).toBeLessThanOrEqual(panel.right + 0.5);
 

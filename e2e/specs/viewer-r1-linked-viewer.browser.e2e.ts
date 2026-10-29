@@ -281,7 +281,7 @@ describe("the linked viewer, rendered", () => {
         // The traces are switched here too, and a checkbox squeezed to nothing
         // is a control that exists and cannot be used.
         const toggles = await browser.execute(() =>
-          [...document.querySelectorAll("label.chromatogram-trace-toggle input")].map((input) => {
+          [...document.querySelectorAll(".plot-traces button[aria-pressed]")].map((input) => {
             const box = input.getBoundingClientRect();
             return { width: box.width, height: box.height };
           }),
@@ -363,7 +363,7 @@ describe("the linked viewer, rendered", () => {
         const box = await boxOf(caption);
         expect(box.bottom).toBeLessThanOrEqual(panel.bottom + 0.5);
       }
-      for (const group of [".chromatogram-traces", ".chromatogram-viewport-actions"]) {
+      for (const group of [".chromatogram-panel .plot-traces", ".chromatogram-panel .plot-tools"]) {
         const box = await boxOf(group);
         expect(box.top).toBeGreaterThanOrEqual(panel.top - 0.5);
         expect(box.bottom).toBeLessThanOrEqual(panel.bottom + 0.5);
@@ -687,7 +687,7 @@ describe("the linked viewer, rendered", () => {
 
       await browser.execute(() => {
         [...document.querySelectorAll("button")]
-          .find((button) => (button.textContent ?? "").trim() === "Next scan")
+          .find((button) => button.getAttribute("aria-label") === "Next scan")
           ?.focus();
       });
       await browser.keys(["Enter"]);
@@ -791,9 +791,9 @@ describe("the linked viewer, rendered", () => {
         timeout: 10_000,
       });
 
-      // Row 2 sits at canvas offset 60; a scroll of exactly 60 puts it against
-      // the header.
-      await scrollTableTo(60);
+      // Row 2 sits at canvas offset 56 (two 28 px rows); a scroll of exactly
+      // 56 puts it against the header.
+      await scrollTableTo(56);
       const before = await tableGeometry();
       expect(before.selectedTop).toBeCloseTo(before.headerBottom, 0);
 
@@ -959,9 +959,9 @@ describe("the linked viewer, rendered", () => {
         const state: Record<string, boolean> = {};
         for (const label of labels) {
           const found = buttons.find(
-            (button) => (button.textContent ?? "").trim() === label,
+            (button) => button.getAttribute("aria-label") === label,
           );
-          state[label] = found !== undefined && !found.disabled;
+          state[label] = found !== undefined && !found.disabled && found.getAttribute("aria-disabled") !== "true";
         }
         return state;
       }, CONTROLS) as Promise<Record<string, boolean>>;
