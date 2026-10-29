@@ -67,19 +67,23 @@ pub(crate) fn nice_ticks(domain: Domain, fits: impl Fn(&[Tick]) -> bool) -> Opti
             // neither drop a tick on the end nor add one past it.
             let first = (low / step).floor() - 1.0;
             let last = (high / step).ceil() + 1.0;
+            // A finer step only needs larger integers, so past this point no
+            // candidate is exact -- but a coarser one already found still is.
             if !first.is_finite()
                 || !last.is_finite()
                 || first.abs() > EXACT_INTEGER / 8.0
                 || last.abs() > EXACT_INTEGER / 8.0
             {
-                return None;
+                return best.map(|(_, ticks)| ticks);
             }
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "bounded above by an exact integer"
             )]
             let (first, last) = (first as i64, last as i64);
-            let candidate = candidate(low, high, first, last, mantissa, exponent)?;
+            let Some(candidate) = candidate(low, high, first, last, mantissa, exponent) else {
+                return best.map(|(_, ticks)| ticks);
+            };
             if candidate.len() > MAX_TICKS {
                 return best.map(|(_, ticks)| ticks);
             }
@@ -261,6 +265,14 @@ mod tests {
         assert_eq!(fixed(0, -2), "0.00");
         assert_eq!(fixed(-5, -1), "-0.5");
         assert_eq!(scientific(-15, 5), "-1.5e6");
+    }
+
+    #[test]
+    fn a_coarse_exact_set_survives_a_finer_step_that_is_not() {
+        // Step 0.2 at 3e14 needs integers past the exact range; step 1 does not.
+        let ticks = nice_ticks(domain(3e14, 3e14 + 5.0), |_| true).expect("ticks");
+        assert_eq!(ticks.len(), 6);
+        assert!(ticks.windows(2).all(|pair| pair[0].at < pair[1].at));
     }
 
     #[test]
