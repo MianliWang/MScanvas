@@ -182,6 +182,12 @@ try {
             "(command '$($manifest["command"])', executable SHA-256 '$recordedExecutableSha256'; inspected $executableSha256), " +
             "so its frontendInputs say nothing about what this candidate shipped.")
     }
+    # A -ManifestOnly re-derivation re-measures whatever dist holds now and says
+    # so; only the build's own measurement binds frontendInputs to the build.
+    if ("$($manifest["frontendMeasured"])" -notlike "measured from * after the build succeeded;*") {
+        throw ("The candidate manifest at $manifestPath did not measure its frontend at build time " +
+            "(frontendMeasured: '$($manifest["frontendMeasured"])'), so its frontendInputs cannot show what this candidate shipped.")
+    }
     $recordedFrontend = @($manifest["frontendInputs"] | ForEach-Object { "$($_.path) $($_.sha256)" } | Sort-Object)
     $frontendAssets = @(Get-ChildItem -LiteralPath "apps/desktop/dist" -Recurse -File -ErrorAction SilentlyContinue |
         ForEach-Object {
