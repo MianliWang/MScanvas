@@ -2345,13 +2345,19 @@ fn picker_unavailable() -> PreviewErrorDto {
     )
 }
 
-/// Shows the native folder picker and uses the chosen ProteoWizard for this
-/// session, returning what that installation can actually do.
+/// Shows the native folder picker and uses the chosen ProteoWizard, returning
+/// what that installation can actually do.
 ///
-/// For this session only, and never written to disk. Automatic discovery
-/// searches `PATH` and the locations an installer writes; this looks wherever
-/// it is told, and what keeps it the narrower of the two is that the user says
-/// so again next time rather than having a past choice apply silently.
+/// A folder that reads as usable is also remembered, so the next launch starts
+/// discovery on it. Remembering is not trusting: that launch probes it again
+/// through the same discovery, and a folder that no longer holds usable tools
+/// is reported and searched past. A folder that does not read as usable is
+/// used for this session and not remembered. The preference store is written
+/// after the reading, outside the backend gate, and the reading says whether
+/// remembering worked.
+///
+/// The folder comes from a native dialog the user answered; no document can
+/// name one, so this is not bound to a document the way a preference commit is.
 ///
 /// Cancelling returns `None`, which means nothing changed — the caller keeps the
 /// verdict it already had rather than being handed one about a folder nobody
@@ -2360,9 +2366,11 @@ fn picker_unavailable() -> PreviewErrorDto {
 async fn choose_backend_installation(
     app: tauri::AppHandle,
     service: State<'_, SharedService>,
+    preferences: State<'_, SharedPreferences>,
 ) -> Result<Option<BackendReadingDto>, PreviewErrorDto> {
     let owner = main_window_handle(&app);
     let service = Arc::clone(&service);
+    let preferences = Arc::clone(&preferences);
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         let _ = sender.send(preview::dialog::choose_installation_folder(owner));
@@ -2371,9 +2379,47 @@ async fn choose_backend_installation(
 
     off_the_async_runtime(move || {
         let chosen = receiver.recv().map_err(|_| folder_picker_unavailable())??;
-        Ok(chosen.map(|home| service.use_installation(Some(home))))
+        Ok(chosen.map(|home| {
+            service.choose_installation(home, |folder| {
+                match preferences.remember_backend_folder(Some(folder)) {
+                    UiPreferenceSaveDto::Saved { .. } => Ok(()),
+                    UiPreferenceSaveDto::StoredRecordUnusable { problem, .. }
+                    | UiPreferenceSaveDto::Unavailable { problem, .. }
+                    | UiPreferenceSaveDto::Failed { problem, .. } => Err(problem),
+                }
+            })
+        }))
     })
     .await?
+}
+
+/// Forgets the remembered ProteoWizard folder, so the next launch searches
+/// automatically.
+///
+/// Changes only what is stored. The session keeps the installation it is
+/// using; going back to automatic discovery now is
+/// `use_automatic_backend_discovery`, which remembers nothing either way. The
+/// answer is the preference store's own outcome, so a forget that could not be
+/// written is reported rather than assumed. Bound to the calling document like
+/// a preference commit, because it is one.
+#[tauri::command]
+async fn forget_backend_installation(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    preferences: State<'_, SharedPreferences>,
+) -> Result<UiPreferenceSaveDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    let preferences = Arc::clone(&preferences);
+    off_the_async_runtime(move || {
+        let outcome = preferences.remember_backend_folder(None);
+        if matches!(outcome, UiPreferenceSaveDto::Saved { .. }) {
+            service.note_folder_stored(false);
+        }
+        outcome
+    })
+    .await
 }
 
 /// Goes back to searching for ProteoWizard automatically, and reports what that
@@ -2492,6 +2538,14 @@ pub fn run() {
             app.manage(SharedPreferences::new(UiPreferenceStore::bind(
                 app.handle(),
             )));
+            // A ProteoWizard folder an earlier session remembered is where this
+            // one's discovery starts. Nothing is launched here: the first
+            // backend reading probes it, and searches automatically instead,
+            // saying why, if it no longer holds usable tools.
+            if let Some(folder) = app.state::<SharedPreferences>().remembered_backend_folder() {
+                app.state::<SharedService>()
+                    .start_on_remembered_folder(folder);
+            }
             // The project store starts with no project open and no path bound.
             // It resolves nothing, reads nothing and creates nothing until a
             // user acts, so binding it cannot fail and cannot touch the disk.
@@ -2574,6 +2628,7 @@ pub fn run() {
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,
+            forget_backend_installation,
             read_conversion_configuration,
             get_workspace_roster,
             choose_workspace_files,

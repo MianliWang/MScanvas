@@ -16,9 +16,12 @@ English in every session until now.
 Rust owns where preferences live and what may be in them. The webview sends a
 typed field group and receives the committed snapshot; it cannot name a
 directory, a file, a key or a prefix, and there is no operation here that takes
-one. The store confers no authority: nothing in the record can open a file, bind
-a backend, name a destination or restore an operation, because none of those
-things is representable in its type.
+one. The store confers no authority: nothing in the record can open a file,
+name a destination or restore an operation, because none of those things is
+representable in its type. The one location it holds, the remembered
+ProteoWizard folder (see
+[below](#remembered-proteowizard-folder-after-beta-1)), binds no backend by
+being stored: every launch's discovery decides again whether it is usable.
 
 ## The record
 
@@ -31,9 +34,11 @@ One versioned record, in `apps/desktop/src-tauri/src/preferences/record.rs`.
 | `appearance.density` | `comfortable` \| `compact` | `comfortable` | the roster's `data-density` and its row-height estimate |
 | `layout.roster` | `automatic` \| `shown` \| `hidden` | `automatic` | the workspace shell's roster panel |
 | `layout.details` | `automatic` \| `shown` \| `hidden` | `automatic` | the workspace shell's inspector panel |
+| `backendFolder` | absent, or an absolute folder of at most 4 KiB with no control characters | absent | startup discovery (Rust only; never sent to the webview) |
 
 The stored document is asserted byte for byte in a test, so a field added
-without a decision fails there rather than reaching a profile:
+without a decision fails there rather than reaching a profile. A record that
+remembers no folder omits `backendFolder` and is still exactly this:
 
     {"schemaVersion":1,"appearance":{"locale":"en","density":"comfortable"},"layout":{"roster":"automatic","details":"automatic"}}
 
@@ -57,7 +62,8 @@ remember. Inventing one would have meant inventing the splitter to set it with.
 
 ### What is not representable
 
-No acquisition, backend or destination path. No recent file, dataset id, roster
+No acquisition or destination path, and no backend path other than the one
+remembered ProteoWizard folder. No recent file, dataset id, roster
 or membership. No group name. No highlighted or conversion selection, active
 source or scan. No search filter or scientific sort. No RT or m/z range, and no
 raw numeric draft. No `FigureSpec` or export setting. No conversion intent, plan
@@ -65,9 +71,12 @@ or queue. No output manifest. No backend receipt, authority revision or
 capability reading. No process state, quarantine or staging deletion authority.
 No open dialog, focus claim, undo history or interrupted operation.
 
-A provider folder choice stays session-scoped, as it was: a restart searches
-automatically again and obtains fresh authority through the existing discovery.
-The offline help says so in both languages.
+*Changed after beta 1:* a provider folder choice that read as usable is now
+remembered across launches, and a restart starts discovery on it rather than
+on the automatic search. It still obtains fresh authority through the existing
+discovery every time; what changed is where that discovery starts. The offline
+help still says a chosen folder lasts for this session, and is now wrong; its
+copy belongs to the interface change that offers **Forget**.
 
 ## Path and write policy
 
@@ -257,6 +266,68 @@ open, and a focused control that leaves hands its place to the banner. The
 paragraphs above and M7.5's captures describe M7.5's build, where the banner
 was always shown.
 
+## Remembered ProteoWizard folder (after beta 1)
+
+*Added after beta 1 (2026-10-29).* Before this, a folder chosen through
+**Choose folder…** lasted for the session only, as ADR 0005 decided, and every
+launch searched automatically. This reverses that rule and needs the owner's
+acceptance and an ADR 0005 amendment; it is a draft until then.
+
+**Remembering.** `choose_backend_installation` uses the chosen folder exactly as
+before. When that reading is `available` with origin `chosen`, the command then
+writes the folder to the record's `backendFolder` through
+`UiPreferenceStore::remember_backend_folder`: the same lock, merge base,
+bounded publish and read-back a Settings apply uses. The write happens after the
+service has answered, so the preference lock is never taken under the backend
+gate. A folder that is not usable is used for the session and not remembered,
+and what was stored stays stored. A quarantined session's answer is never
+`available`, so it remembers nothing. A folder that is not Unicode cannot be
+written as itself and is refused as `folderNotStorable`; a record this build
+cannot read is never replaced from here (`storedRecordUnusable`). The webview's
+write payload cannot name the field, and neither preference answer carries it:
+`loaded` and `saved` are serialized without `backendFolder`.
+
+**Startup.** The host reads the stored folder once in its setup hook and points
+discovery at it, launching nothing. The first backend reading probes it through
+the existing discovery checks. If that reading is usable the session stays on
+it. If it is not, the reason (the same `chosen_folder_*` failure a picker
+choice would show) is kept, discovery is pointed back at the automatic search
+and probed once, and that reading is the answer. That is discovery, not a
+backend fallback: nothing runs on a build the user did not get a verdict for,
+the reason is shown, and there is no retry loop. Startup never writes: the
+folder stays remembered, because a drive that is unplugged today may be back
+tomorrow. Choosing a folder or going automatic before the first reading
+supersedes the remembered one without a fallback.
+
+**Forgetting.** `forget_backend_installation` clears `backendFolder` and answers
+with the preference store's own outcome, so a forget that could not be written
+is reported, not assumed. It is bound to the calling document like
+`save_ui_preferences`. It changes only what is stored: the session keeps the
+installation it is on, and **Search automatically** stays the session-only
+switch it was.
+
+**What the reading says.** Every backend reading now carries two more fields
+beside `release`:
+
+| Field | Meaning |
+| --- | --- |
+| `location` | The resolved installation's folder as display text (no `\\?\` prefix, at most 260 characters), for the status indicator's tooltip. Present only on a usable reading; absent from a quarantined session's echo; never written to a diagnostics export or a project document. |
+| `remembered.stored` | Whether a folder is remembered, which is when **Forget** has something to forget. |
+| `remembered.refusedAtStartup` | The `BackendFailure` that kept the remembered folder from being used at startup. Kept on later readings until the user chooses, goes automatic or forgets. |
+| `remembered.notRemembered` | The preference store's problem code when a usable folder chosen this session could not be remembered. It is still used for the session. |
+
+`location` is the first installation path the webview receives. ADR 0005 and
+the preview DTOs said none crosses; the status indicator's tooltip names the
+folder, so the exception is this one field, on a usable reading only. It needs
+the same acceptance as the rest of this section.
+
+**Limits.** Beta 1 reads a schema-1 record that holds `backendFolder` as
+`malformed`, because it refuses unknown fields: going back to beta 1 after a
+folder was remembered reports the record as unusable and offers to replace it.
+The interface does not render any of this yet: the green status indicator, the
+tooltip, **Forget**, the startup refusal and the corrected help copy belong to
+the interface lane.
+
 ## Localization and accessibility coverage
 
 Every surface M7.5 delivers or touches is localized in `en` and `zh-CN`, bundled
@@ -337,7 +408,9 @@ Installed-candidate qualification on the target belongs to M7.6.
   settings rather than application appearance.
 - Panel dimensions are inapplicable, as recorded above, not deferred.
 - No migration path exists or is needed: no earlier schema was ever published,
-  and a later one belongs to the build that wrote it.
+  and a later one belongs to the build that wrote it. The remembered folder was
+  added to schema 1 as an optional field whose absence is its default, so the
+  records beta 1 wrote still read unchanged.
 - The eleven declared boundary codes above are shown in the boundary's own
   words rather than translated, labelled as untranslated original where the
   reader's language is not the one they are written in.

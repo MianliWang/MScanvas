@@ -40,6 +40,15 @@ export interface PreferencesApi {
    * is a failure, not a save.
    */
   savePreferences(request: PreferenceWriteRequest): Promise<PreferenceSaveOutcome>;
+  /**
+   * Forgets the ProteoWizard folder Rust remembered after a usable picker
+   * choice, so the next launch searches automatically. Names nothing: it can
+   * only clear. The session keeps the installation it is using.
+   *
+   * Optional until the interface offers it; the backend reading's
+   * `remembered.stored` says when there is something to forget.
+   */
+  forgetBackendFolder?(): Promise<PreferenceSaveOutcome>;
 }
 
 export const tauriPreferencesApi: PreferencesApi = {
@@ -47,6 +56,8 @@ export const tauriPreferencesApi: PreferencesApi = {
     invoke<PreferenceReadOutcome>("load_ui_preferences", {}, documentAuthorityHeaders()),
   savePreferences: (request) =>
     invoke<PreferenceSaveOutcome>("save_ui_preferences", { request }, documentAuthorityHeaders()),
+  forgetBackendFolder: () =>
+    invoke<PreferenceSaveOutcome>("forget_backend_installation", {}, documentAuthorityHeaders()),
 };
 
 /**
