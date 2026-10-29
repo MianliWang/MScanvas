@@ -339,7 +339,7 @@ function control(selector: string) {
       text: (button.textContent ?? "").trim(),
       disabled: button.disabled,
       ariaDisabled: button.getAttribute("aria-disabled"),
-      primary: button.classList.contains("primary-button"),
+      primary: button.classList.contains("primary-button") || button.classList.contains("ui-button--primary"),
       described: (button.getAttribute("aria-describedby") ?? "")
         .split(/\s+/u)
         .filter(Boolean)
@@ -432,7 +432,7 @@ describe("Beta 1 UX changes, rendered", () => {
 
       // Every primary under the surface, hidden or not: one, shown, and it is New project.
       const primaries = await browser.execute(() =>
-        [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .primary-button")].map((button) => ({
+        [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .ui-button--primary")].map((button) => ({
           text: (button.textContent ?? "").trim(),
           shown: button.getClientRects().length > 0,
         })),
@@ -463,7 +463,7 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(await control(add!)).toMatchObject({ primary: false });
       expect(
         await browser.execute(() =>
-          [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .primary-button")].map((button) => (button.textContent ?? "").trim()),
+          [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .ui-button--primary")].map((button) => (button.textContent ?? "").trim()),
         ),
       ).toEqual([words.projectNew]);
       await shot(`f2-empty-project-1366-${locale}`);

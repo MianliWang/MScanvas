@@ -263,7 +263,7 @@ async function control(selector: string) {
       text: (button.textContent ?? "").trim(),
       refused: button.disabled || button.getAttribute("aria-disabled") === "true",
       disabled: button.disabled,
-      primary: button.classList.contains("primary-button"),
+      primary: button.classList.contains("primary-button") || button.classList.contains("ui-button--primary"),
       described: (button.getAttribute("aria-describedby") ?? "")
         .split(/\s+/u)
         .filter(Boolean)
@@ -294,11 +294,11 @@ async function frame(label: string) {
       .filter((button) => shown(button) && !button.disabled && button.getAttribute("aria-disabled") !== "true")
       .filter((button) => getComputedStyle(button).backgroundColor === accent)
       .map((button) => (button.textContent ?? "").trim());
-    // Controls under the 32 px compact minimum (DESIGN_SYSTEM), inputs aside.
-    const small = [...(setup?.querySelectorAll<HTMLElement>("button, summary") ?? [])]
+    // Controls under the 30 px compact minimum (rebuild spec 1.4), inputs aside.
+    const small = [...(setup?.querySelectorAll<HTMLElement>("button") ?? [])]
       .filter(shown)
       .map((element) => ({ name: (element.textContent ?? "").trim().slice(0, 40), height: Math.round(element.getBoundingClientRect().height * 10) / 10 }))
-      .filter((element) => element.height < 31.5);
+      .filter((element) => element.height < 29.5);
     const scrollers = [...(setup?.querySelectorAll<HTMLElement>(".targeted-review-scroll, .targeted-batch-scroll, .targeted-member-list") ?? [])];
     return {
       css: { width: innerWidth, height: innerHeight },

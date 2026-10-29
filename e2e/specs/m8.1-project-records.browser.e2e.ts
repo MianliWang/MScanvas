@@ -99,7 +99,7 @@ async function metrics(width: number, height: number, dpr: number) {
  *
  * The assertions here are the ones a screenshot alone cannot make: that nothing
  * overflows horizontally, that no control leaves the viewport, that every
- * interactive target meets the compact 32px minimum the design system sets, and
+ * interactive target meets the 30px compact minimum (rebuild spec 1.4), and
  * that the page reached for nothing off-origin.
  */
 async function capture(label: string) {
@@ -126,7 +126,11 @@ async function capture(label: string) {
         verification: node.getAttribute("data-verification"),
         reason: node.getAttribute("data-unavailable-reason"),
         outcomeText: node.querySelector(".project-verification")?.textContent,
-        accent: getComputedStyle(node).borderLeftColor,
+        // The state's tag carries the category's tone (rebuild spec 7).
+        accent: (() => {
+          const tag = node.querySelector(".project-verification");
+          return tag === null ? null : getComputedStyle(tag).color;
+        })(),
         ...rect(node),
       })),
       runs: [...document.querySelectorAll("[data-project-run]")].map((node) => ({
@@ -167,9 +171,10 @@ async function capture(label: string) {
   for (const control of measured.controls) {
     expect(control.x).toBeGreaterThanOrEqual(0);
     expect(control.x + control.width).toBeLessThanOrEqual(measured.css.width + 1);
-    // The design system's compact control minimum. A project action that
-    // reflowed itself below this would be a target a pointer user cannot hit.
-    expect(control.height).toBeGreaterThanOrEqual(31.5);
+    // The compact control minimum (sm, 30 px; rebuild spec 1.4). A project
+    // action that reflowed itself below this would be a target a pointer user
+    // cannot hit.
+    expect(control.height).toBeGreaterThanOrEqual(29.5);
   }
   return measured;
 }
@@ -341,11 +346,6 @@ describe("M8.1 project records, rendered", () => {
     expect(measured.runs[0].outcome).toBe("completed");
     // The relationship is on screen: this run produced that artifact.
     expect(measured.runs[0].artifacts).toEqual(["eeeeeeee-1111-4111-8111-111111111111"]);
-    // And what a record is is stated where it is displayed: facts only, so
-    // nobody reads it as analysis -- nor as something a later press can take back.
-    const note = await browser.$(".project-note").getText();
-    expect(note).toContain("Records hold facts only.");
-    expect(note).toContain("cannot be removed yet");
     // Unsaved, because a capture changed the project and nothing saved it.
     expect(await browser.$("[data-project-unsaved]").isDisplayed()).toBe(true);
   });

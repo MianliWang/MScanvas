@@ -286,7 +286,7 @@ describe("the setup", () => {
       expect(setupHeading?.getPropertyValue("font-size")).toBe("14px");
       expect(setupHeading?.getPropertyValue("color")).toBe("var(--color-text-primary)");
       expect(rule(".project-section h3")?.style.getPropertyValue("font-size")).toBe("13px");
-      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("16px");
+      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("17px");
     } finally {
       style.remove();
     }
@@ -593,7 +593,9 @@ describe("a stored result", () => {
     );
     expect(plot.getAttribute("data-targeted-figure")).toBe(`spec-${DETECTED}-1200x640-light`);
     expect(plot.getAttribute("src")).toMatch(/^blob:/u);
-    expect(document.querySelector("[data-targeted-plot] svg")).toBeNull();
+    // The drawing is an image, never DOM SVG; the only inline SVG is the
+    // points disclosure's own chevron icon.
+    expect(document.querySelector("[data-targeted-plot] svg:not(.ui-icon)")).toBeNull();
     expect(document.querySelector("figcaption")?.textContent).toContain("M 195.0877, M+1 196.0911");
     expect(document.querySelectorAll(".targeted-points tbody tr")).toHaveLength(6);
 
@@ -707,7 +709,6 @@ describe("a stored result", () => {
       "targetedNewRunsAvailable",
       "targetedReuseNote",
       "targetedTableExports",
-      "targetedTableExportHelp",
       "targetedFigureExports",
     ] as const) {
       expect(document.body.textContent, key).toContain(zh[key]);
@@ -900,18 +901,20 @@ describe("a stored result reused (M9.2)", () => {
       },
     });
     await chooseDetected();
-    const disclosure = query<HTMLDetailsElement>("[data-targeted-figure-export]");
-    await act(async () => {
-      disclosure.open = true;
-      disclosure.dispatchEvent(new Event("toggle"));
-    });
+    const region = query("[data-targeted-figure-export]");
+    const toggle = query(`[aria-controls="${region.id}"]`);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(region.hidden).toBe(true);
+    await press(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     await type(query(`[data-targeted-figure-export] input[id$="-heightPx"]`), "");
     await press(query(`[data-targeted-choose="${ABSENT}"]`));
     // Drawn at the last size that was one, not left waiting on the text.
     const image = await screen.findByRole("img");
     expect(image.getAttribute("data-targeted-figure")).toBe(`spec-${ABSENT}-1200x640-light`);
     expect(document.querySelector("[data-targeted-figure-loading]")).toBeNull();
-    expect(query<HTMLDetailsElement>("[data-targeted-figure-export]").open).toBe(true);
+    // Open as the user left it, for the next target too.
+    expect(query("[data-targeted-figure-export]").hidden).toBe(false);
     expect(button("svg").disabled).toBe(true);
   });
 
@@ -1455,10 +1458,10 @@ describe("the task as one path (PM9.5)", () => {
     api.set(targetedProject());
     await press(query("[data-targeted-run]"));
     const open = query(`[data-targeted-open-result="${ARTIFACT}"]`);
-    expect(open.className).toBe("primary-button");
+    expect(open.classList.contains("ui-button--primary")).toBe(true);
     const run = query("[data-targeted-run]");
     expect(run.textContent).toBe(en.targetedRunAgain);
-    expect(run.className).toBe("secondary-button");
+    expect(run.classList.contains("ui-button--secondary")).toBe(true);
     expect(described(run)).toEqual([en.targetedRunAgainNote]);
 
     await press(open);
@@ -1600,7 +1603,7 @@ describe("the task as one path (PM9.5)", () => {
     const base = targetedProject();
     api.set({ ...base, inputs: two.inputs, layers: [base.layers[0], other] });
     await press(query("[data-targeted-run]"));
-    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).className).toBe("primary-button");
+    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).classList.contains("ui-button--primary")).toBe(true);
 
     api.setTargeted({
       batchResolution: {
@@ -1622,9 +1625,9 @@ describe("the task as one path (PM9.5)", () => {
     await press(query("[data-targeted-review]"));
     const run = query("[data-targeted-run]");
     expect(run.textContent).toBe(en.targetedRunBatch.replace("{{count}}", "2"));
-    expect(run.className).toBe("primary-button");
+    expect(run.classList.contains("ui-button--primary")).toBe(true);
     expect(run.getAttribute("aria-disabled")).toBeNull();
-    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).className).toBe("secondary-button");
+    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).classList.contains("ui-button--secondary")).toBe(true);
   });
 });
 
@@ -1756,12 +1759,4 @@ describe("a stored result in its report and in the history (PM9.6)", () => {
     expect(zh.targetedPayloadCorrupt).toContain("重新打开项目");
   });
 
-  it("keeps the history's note true of targeted runs, in both languages (R4)", () => {
-    // Each run's row says how it ended and what it stored; the note names no
-    // record type, claims no absence of analysis, and says opening runs nothing.
-    expect(en.projectCaptureMeaning).toContain("Opening one runs nothing.");
-    expect(zh.projectCaptureMeaning).toContain("打开记录不会运行任何内容。");
-    expect(en.projectCaptureMeaning).not.toMatch(/analy[sz]e/u);
-    expect(zh.projectCaptureMeaning).not.toContain("不分析");
-  });
 });

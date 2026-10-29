@@ -872,14 +872,22 @@ async function openStoredResult() {
   );
 }
 
-/** Opens one export disclosure by keyboard, as a reader without a pointer would. */
+/**
+ * Opens one export disclosure by keyboard, as a reader without a pointer would:
+ * its toggle button, then Enter. A region that is always shown (the table's
+ * output) is left as it is.
+ */
 async function openDisclosure(selector: string) {
-  await browser.execute((target: string) => {
-    document.querySelector<HTMLElement>(`${target} > summary`)?.focus();
+  const focused = await browser.execute((target: string) => {
+    const region = document.querySelector<HTMLElement>(target);
+    if (region === null || !region.hidden) return false;
+    const toggle = document.querySelector<HTMLElement>(`[aria-controls="${region.id}"]`);
+    toggle?.focus();
+    return toggle !== null && document.activeElement === toggle;
   }, selector);
-  await browser.keys("Enter");
+  if (focused) await browser.keys("Enter");
   await browser.waitUntil(() =>
-    browser.execute((target: string) => document.querySelector<HTMLDetailsElement>(target)?.open === true, selector),
+    browser.execute((target: string) => document.querySelector<HTMLElement>(target)?.hidden === false, selector),
   );
 }
 
@@ -932,8 +940,9 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
         .replace("{{outcome}}", en.targetedOutcomeDetected)
         .replace("{{drawn}}", en.targetedFigureDrawnFeature),
     );
-    // No SVG markup is placed in the page: the drawing is an image.
-    expect(await browser.execute(() => document.querySelector("[data-targeted-plot] svg") === null)).toBe(true);
+    // No SVG markup is placed in the page: the drawing is an image. The only
+    // inline SVG is the points disclosure's own chevron icon.
+    expect(await browser.execute(() => document.querySelector("[data-targeted-plot] svg:not(.ui-icon)") === null)).toBe(true);
     const preview = (await ipcCalls()).find((call) => call.command === "preview_targeted_ms1_figure");
     expect(preview?.args).toEqual({
       artifactId: ARTIFACT,
@@ -941,8 +950,11 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
       settings: { widthPx: 1200, heightPx: 640, pngDpi: 300, theme: "light" },
     });
 
-    // The table, by keyboard: open the disclosure, move to CSV, press it.
-    await openDisclosure("[data-targeted-table-export]");
+    // The table, by keyboard: its output is always offered, the first stop
+    // after the report's heading. Move to CSV and press it.
+    await browser.execute(() => {
+      document.querySelector<HTMLElement>("[data-targeted-report] h3")?.focus();
+    });
     await browser.keys("Tab");
     expect(
       await browser.execute(() => document.activeElement?.getAttribute("data-targeted-export") ?? null),
@@ -1079,7 +1091,6 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
     for (const key of [
       "targetedReuseNote",
       "targetedTableExports",
-      "targetedTableExportHelp",
       "targetedFigureExports",
       "targetedStateSource",
     ] as const) {

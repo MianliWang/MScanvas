@@ -332,7 +332,8 @@ async function capture(label: string) {
     for (const control of [...measured.layerControls, ...measured.layerRows]) {
       expect(control.x).toBeGreaterThanOrEqual(0);
       expect(control.x + control.width).toBeLessThanOrEqual(measured.css.width + 1);
-      expect(control.height).toBeGreaterThanOrEqual(31.5);
+      // The compact control minimum (sm, 30 px; rebuild spec 1.4).
+      expect(control.height).toBeGreaterThanOrEqual(29.5);
     }
   }
   return measured;

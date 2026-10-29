@@ -378,7 +378,8 @@ async function capture(label: string) {
       expect(measured.control.x + measured.control.width).toBeLessThanOrEqual(
         measured.css.width + 1,
       );
-      expect(measured.control.height).toBeGreaterThanOrEqual(31.5);
+      // The compact control minimum (sm, 30 px; rebuild spec 1.4).
+      expect(measured.control.height).toBeGreaterThanOrEqual(29.5);
     }
   }
   if (measured.details !== null) {

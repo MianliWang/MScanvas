@@ -220,8 +220,8 @@ async function capture(label: string) {
   for (const link of measured.links) {
     expect(link.x).toBeGreaterThanOrEqual(0);
     expect(link.x + link.width).toBeLessThanOrEqual(measured.css.width + 1);
-    // The design system's compact control minimum.
-    expect(link.height).toBeGreaterThanOrEqual(31.5);
+    // The compact control minimum (sm, 30 px; rebuild spec 1.4).
+    expect(link.height).toBeGreaterThanOrEqual(29.5);
     // No relationship exists only as colour: each control carries its own name.
     expect(link.name ?? "").not.toEqual("");
   }
