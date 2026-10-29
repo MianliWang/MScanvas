@@ -10,7 +10,12 @@ Related: [0002](0002-external-proteowizard.md),
 Evidence: [msconvert 3.0.26013 help capture](../../spikes/MSCONVERT_HELP_CAPTURE.md),
 [option inventory](../../spikes/MSCONVERT_OPTION_INVENTORY.md),
 [M6.2](../../spikes/M6_MSCONVERT_CAPABILITY_EVIDENCE.md),
-[M6.10](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md).
+[M6.10](../../spikes/M6_10_EVIDENCE_GATED_SIDE_ROUTES.md),
+and the [ProteoWizard source](https://github.com/ProteoWizard/pwiz/tree/47b13cf)
+at the evidenced build's revision, `47b13cf`
+([bootstrap status](../../../BOOTSTRAP_STATUS.md) records 3.0.26013 as that
+revision). The source was read, not run. Citations of the form
+`IO.cpp:1926` are to that revision, under `pwiz/data/msdata/`.
 
 ## Context
 
@@ -114,12 +119,24 @@ source holds. That covers every filter that selects spectra, the picker steps,
 threshold, denoising, deisotoping, the refiners, truncation and numpress, and
 switches such as `--ddaProcessing` and `--combineIonMobilitySpectra`. The
 inventory marks it per row, and the step and the plan summary name the loss.
-Numeric precision is the one exception: every row states it, and the check
-verifies it on every array.
+Numeric precision is the one exception, and only where a check reads it: on
+mzML arrays not encoded with numpress, and on mzXML's `<peaks>` (decisions 5
+and 6). There every row states it, and the check verifies it. On mz5 and mzMLb
+the final file is not read, so precision below 64 bits is lossy by request
+there.
 
-A format that keeps only part of a document says so in the format choice:
-mzXML and mgf keep no chromatograms, ms1 and cms1 keep MS1 spectra only, and
-ms2 and cms2 keep MS2 spectra only.
+A format that keeps only part of a document, or fixes how precisely it writes
+values, says so in the format choice. This is what the build's writers do:
+
+- mzXML keeps no chromatograms;
+- mgf keeps no chromatograms, and only spectra above MS1 that name a selected
+  precursor ion (`Serializer_MGF.cpp:101-103`);
+- ms1 and cms1 keep MS1 spectra only;
+- ms2 and cms2 keep only MS2 spectra that name a selected precursor ion, so
+  MS3 and above are dropped (`Serializer_MSn.cpp:480-482`);
+- mgf, text, ms1 and ms2 write values as decimal text, with m/z at 10, 12, 7
+  and 7 significant digits, and cms1 and cms2 store intensities at 32 bits
+  (decision 4's table).
 
 Lossy-by-request options are offered, not blocked. Without this distinction
 every subsetting filter would look blockable, and parity would mean nothing.
@@ -200,23 +217,33 @@ Rules enforced when an intent is built, not when it is displayed:
 - `cwt` is unrepresentable;
 - `snr`, `peakSpace` and `msLevel=` exist only on a picker variant that
   consumes them;
-- format-bound options exist only with their format:
-  - the mzMLb chunk size and compression level with mzMLb;
-  - with mzXML, one global precision, `--32` or `--64`. Its `<peaks>` element
-    holds m/z-intensity pairs at a single precision, so per-array precision
-    cannot be expressed. Numpress, truncation and prediction are not offered
-    with mzXML either: its `compressionType` can declare only none or zlib, so
-    the file could not say what was done;
-- encoding options exist only in the combinations a controlled-vocabulary term
-  can name (decision 5):
-  - truncation and prediction exist only with zlib on, because every term for
-    them includes zlib;
-  - on one array role, numpress excludes truncation and prediction, and
-    `--numpressPic` excludes `--numpressSlof`;
-  - a role encoded with numpress is fixed at 64-bit precision, since numpress
-    decodes to 64-bit values;
-  - `--numpressLinearAbsTol` exists only with `--numpressLinear`;
+- an encoding option exists only with a format whose writer reads it, as the
+  table below states;
+- on one array role, numpress excludes truncation and prediction, which the
+  mzMLb writer ignores on an array it numpresses (`IO.cpp:1639-1647`), and
+  `--numpressPic` excludes `--numpressSlof`;
+- a role encoded with numpress is fixed at 64-bit precision. The writer stores
+  an array without numpress when numpress would exceed its tolerance, and then
+  at the role's precision (decision 5), so the fallback keeps every bit
+  instead of losing more than the tolerance the user set;
+- `--numpressLinearAbsTol` exists only with `--numpressLinear`;
 - numbers are finite, ranges ordered and sets non-empty.
+
+**Which encoding options each format takes** is what its writer reads. msconvert
+accepts every encoding option with every format and reports nothing
+(`msconvert.cpp:672-729`), so an option outside its format's row would be a
+control that cannot affect the result, which CNV-D2's obligation 2 makes
+unrepresentable.
+
+| Format | Encoding options offered | What the writer does |
+| --- | --- | --- |
+| mzML | per-array precision, zlib, numpress, `--noindex` | Reads all four; decision 5 checks them. Applies no truncation and no prediction: prediction is read only for mzMLb (`IO.cpp:1871-1876`), both are applied only on the mzMLb path (`:1628-1818`), and the encoder reads neither |
+| mzXML | one global precision (`--32` or `--64`), zlib, `--noindex` | `<peaks>` holds m/z-intensity pairs at the global precision, and `compressionType` declares none or zlib; per-array precision and numpress are never read (`Serializer_mzXML.cpp:552-584`) |
+| mzMLb | per-array precision, zlib, numpress, truncation, prediction, chunk size, compression level | The only writer that applies truncation and prediction (`IO.cpp:1628-1818`). It writes its index datasets whatever `--noindex` says (`Serializer_mzML.cpp:199-242`), so `--noindex` is not offered |
+| mz5 | per-array precision, zlib | Reads precision per array and zlib, and no other encoding option (`mz5/Configuration_mz5.cpp:173-251`, `:297-322`) |
+| mgf, text, ms1, ms2, cms1, cms2 | none | Read no encoding option. mgf, text, ms1 and ms2 write decimal text, m/z at 10, 12, 7 and 7 significant digits (`Serializer_MGF.cpp:77`, `TextWriter.hpp:426`, `Serializer_MSn.cpp:167`); cms1 and cms2 store m/z at 64 bits and intensity at 32, always compressed (`Serializer_MSn.cpp:255-307`, `:413-427`) |
+
+The table was read from the source, not measured.
 
 **The nine rows stay, as the verified subset.** `ADMITTED` remains a table,
 and "is this verified?" remains one lookup in it: the intent equals a row, the
@@ -236,36 +263,49 @@ with three extensions:
 1. **Changes the chain or a switch was asked to make are reported unverified
    for that item.** The switches are `--simAsSpectra` and `--srmAsSpectra`
    (spectrum and chromatogram counts), `--ddaProcessing`,
-   `--combineIonMobilitySpectra`, `--acceptZeroLengthSpectra` and
-   `--ignoreMissingZeroSamples`. This covers:
+   `--combineIonMobilitySpectra`, `--ignoreCalibrationScans`,
+   `--acceptZeroLengthSpectra` and `--ignoreMissingZeroSamples`. This covers:
    - spectrum and chromatogram counts under subsetting or those switches;
    - array lengths under centroiding, thresholds or zero-sample handling;
-   - values under truncation, numpress or `mzShift`.
+   - values under numpress or `mzShift`.
 
    These are never reported verified, and never failed for the requested
    change. **An output with no records still fails** (`OutputContainsNoRecords`),
-   whatever was requested. For a SCIEX output set it fails the whole set, as
-   it is one link of ADR 0024's completeness proof.
-2. **Each encoding option has one expected term per array.** The table names
-   the term each array of the affected role must carry; the other role's arrays
-   carry their own role's term. The terms are those of the PSI-MS controlled
-   vocabulary (data-version 4.2.12). They were not measured on this build. An
-   array with any other term, or with two, fails as `CompressionPolicyMismatch`,
-   which is the existing closed rule.
+   whatever was requested; for a format that keeps part of a document, decision
+   6 applies this to the part it keeps. For a SCIEX output set it fails the
+   whole set, as it is one link of ADR 0024's completeness proof.
+2. **Each array carries one precision term and one compression term, as the
+   table says.** The terms are the ones the evidenced build's writer emits, read
+   from its source (`IO.cpp:1926-1969`), not measured. The other role's arrays
+   carry their own role's terms. An array with any other term, or with two
+   precision or two compression terms, fails as `NumericPrecisionMismatch` or
+   `CompressionPolicyMismatch`, the existing closed rules.
 
-   | Requested, per array role | Expected term | Verdict |
+   | Requested, per array role | Expected terms | Verdict |
    | --- | --- | --- |
-   | zlib, nothing else | `MS:1000574` zlib compression | checked, as today |
-   | No compression, nothing else | `MS:1000576` no compression | checked, as today |
-   | `--numpressLinear` (m/z and retention time) | `MS:1002312`; with zlib, `MS:1002746` | encoding checked; values unverified |
-   | `--numpressPic` (intensity) | `MS:1002313`; with zlib, `MS:1002747` | encoding checked; values unverified |
-   | `--numpressSlof` (intensity) | `MS:1002314`; with zlib, `MS:1002748` | encoding checked; values unverified |
-   | Truncation, no prediction | `MS:1003088` truncation and zlib compression | encoding checked; values unverified |
-   | Delta prediction, with or without truncation | `MS:1003089` truncation, delta prediction and zlib compression | encoding checked; values unverified |
-   | Linear prediction, with or without truncation | `MS:1003090` truncation, linear prediction and zlib compression | encoding checked; values unverified |
+   | zlib, nothing else | the requested precision; `MS:1000574` zlib compression | checked, as today |
+   | No compression, nothing else | the requested precision; `MS:1000576` no compression | checked, as today |
+   | `--numpressLinear` (m/z and retention time) | `MS:1000521` 32-bit float; `MS:1002312`, or with zlib `MS:1002746` | encoding checked; precision not applicable; values unverified |
+   | `--numpressPic` (intensity) | `MS:1000521` 32-bit float; `MS:1002313`, or with zlib `MS:1002747` | as above |
+   | `--numpressSlof` (intensity) | `MS:1000521` 32-bit float; `MS:1002314`, or with zlib `MS:1002748` | as above |
+   | Numpress requested, array stored without it | `MS:1000523` 64-bit float (decision 4); `MS:1000574` or `MS:1000576`, as requested | checked as the plain rows; reported |
 
-   The precision check reads each array's precision term as today. A numpress
-   role expects the 64-bit term, as decision 4 fixes it.
+   **On a numpress array the precision term is nominal.** The writer always
+   writes the 32-bit float term there, because numpress fixes its own word size
+   (`IO.cpp:1958-1969`), so its precision is reported as not applicable.
+
+   **A numpress array can come back without numpress.** The writer decodes what
+   it encoded, and when the error exceeds the tolerance it stores that array
+   without numpress (`BinaryDataEncoder.cpp:202-238`, `IO.cpp:1886`):
+   - Pic always checks, against 0.5 and for overflow;
+   - Linear and Slof check when their tolerance is above 0, which it is by
+     default;
+   - with `--numpressLinearAbsTol`, an accuracy the encoder cannot reach also
+     falls back (`BinaryDataEncoder.cpp:164-170`).
+
+   Which arrays fall back depends on the data, so a fallback is not a failure.
+   The array is judged by the last row, and the item's outcome reports, per
+   role, how many arrays were stored without numpress.
 3. **Under `--noindex`** the index property is reported as not applicable,
    never as passed.
 
@@ -293,16 +333,24 @@ intermediate, that format blocks both until it can.
    Its precision, compression and index are judged against its own fixed
    encoding, 64/64 with zlib and an index; the requested encoding is lowered
    only in run 2. A failure here fails the item before run 2.
+
+   **So does an intermediate with nothing the format keeps.** If the
+   intermediate holds no spectrum the chosen format keeps (decision 1; for
+   mzXML, no spectrum at all), the item fails before run 2 as
+   `OutputContainsNoRecords`. Otherwise run 2 would write a file with no
+   records, such as an ms2 file of headers only, and the minimal checks below
+   would pass it.
 2. **Run 2: mzML to the requested format.** Each intermediate is converted into
    a second private staging directory. Run 2 carries:
    - the format flag;
-   - the encoding options that format takes (decision 4), such as precision,
-     `-z`, `--noindex` and the mzMLb options;
+   - the encoding options decision 4's table lists for that format, and no
+     other;
    - the writer switches: `--stripLocationFromSourceFiles`,
      `--stripVersionFromSoftware` and `--contactInfo`.
 
-   **Run 2 carries no filter**, so nothing acts on the data after run 1's
-   checks.
+   **Run 2 carries no filter**, so no filter acts on the data after run 1's
+   checks. The encoding run 2 applies is unverified, except what mzXML's
+   comparison reads.
 3. **The final file gets the minimal checks.** These need no new dependency:
    - exit 0;
    - exactly the expected file in run 2's staging directory;
@@ -313,7 +361,10 @@ intermediate, that format blocks both until it can.
    A deeper check of mz5 or mzMLb would need an HDF5 reader, which is a
    dependency decision this ADR does not take. Except for mzXML, run 2's output
    is not compared with the intermediate, and what it holds beyond run 1's
-   checks is unverified.
+   checks is unverified. That includes every mzMLb encoding option, truncation
+   and prediction among them, and the terms the mzMLb writer leaves: with zlib,
+   a predicted array carries both a prediction term and the zlib term
+   (`IO.cpp:1939-1952`).
 4. **The intermediates are discarded** with the staging area and never
    finalized.
 
@@ -330,9 +381,10 @@ previewable**, because the viewer reads mzML only, and the queue item says so.
 mzXML adds two checks to this route.
 
 1. **The X2 precondition.** If any spectrum of the intermediate names a source
-   file other than the run's default, the item is refused before run 2. This is
-   X2's measured loss, now checked on the document rather than assumed of the
-   source.
+   file other than the run's default, or names one where the run declares no
+   default, the item is refused before run 2. The writer skips exactly those
+   spectra (`Serializer_mzXML.cpp:782-783`). This is X2's measured loss, now
+   checked on the document rather than assumed of the source.
 2. **The output is compared with the intermediate.** It is read with the XML
    reader the conversion crate already depends on, and all of these must hold:
    - the `<scan>` elements, nested ones included, must match the
@@ -364,7 +416,8 @@ The [inventory's section 6](../../spikes/MSCONVERT_OPTION_INVENTORY.md#6-blocked
 is the list. In short:
 
 - **mzXML where any spectrum of the intermediate names a source file other
-  than the run's default, and mzXML with `--merge`.** X2.
+  than the run's default, or names one where the run declares no default, and
+  mzXML with `--merge`.** X2.
 - **`peakPicking cwt`.** M6.2.
 - **`peakPicking vendor` on an mzML source.** It was measured running the
   local-maximum picker instead.
@@ -372,6 +425,9 @@ is the list. In short:
 - **Bare `peakPicking` on Thermo RAW.** The vendor picker runs, and the check
   refuses it (M6.10 S1).
 - **Picker parameters a picker ignores.**
+- **Encoding options the chosen format's writer does not read** (decision 4's
+  table), truncation and prediction outside mzMLb among them. They could not
+  affect the result.
 - **`--continueOnError`.** It skips data at exit 0, against fail-closed.
 - **`-c/--config`.** An untyped argument channel.
 - **The envelope switches.**
@@ -450,7 +506,7 @@ Each later in its own slice:
 - the probe's filter list;
 - the advanced disclosure and chain editor, with rendered and keyboard QA;
 - the label in `en` and `zh-CN`;
-- the integrity extensions and the encoding-term table;
+- the integrity extensions, the per-format encoding table and the term table;
 - the two-run route for non-mzML formats, and mzXML's comparison;
 - a Rust-owned picker and staged copies for file parameters;
 - a test matrix over chain constraints and blocked rows.
@@ -463,9 +519,13 @@ Each later in its own slice:
 - **A larger settings surface.** It cuts against the owner's direction to
   remove secondary explanations. It is collapsed by default, with one label
   and no prose.
-- **Unmeasured encoding terms.** If this build writes a term other than
-  decision 5's table, every item with that option fails closed until a
-  measurement corrects the table.
+- **Encoding behaviour read, not measured.** Decision 4's format table and
+  decision 5's term table come from the evidenced build's source. If the
+  binary does otherwise, every mzML item with that option fails closed
+  (decision 5's closed rules) until a measurement corrects the table, and
+  on other formats the option goes unchecked, as decision 6 says. Numpress
+  fallback is not this risk: it depends on the data, and decision 5 accepts
+  and reports it.
 
 **No dependency is added by this ADR.** `-g` and any HDF5 check wait for their
 own decisions.
@@ -513,21 +573,30 @@ If the owner wants otherwise, that is its own decision, and it must at least:
   chain, and obligation 3 is met for every format through the intermediate.
   The "no additional centroiding" lock is unchanged.
 - **[ADR 0044](0044-conversion-configuration-authority.md).** Its authority
-  carries a structured intent, not only a row id:
-  - React sends the typed intent (format, encoding, both chains, switches) as a
-    structured value. Rust builds the `ConversionIntent`, validates it against
-    decision 4 and refuses what it cannot build.
-  - `ConversionIntent::from_stable_id` remains, and resolves the nine verified
-    rows only.
-  - The catalog is the verified rows plus what the build's help lists.
-    Availability is answered per format, step and switch from the probe, where
-    0044 answered it per admitted row; "verified" stays a property of a row.
-  - Plan identity carries the canonical intent, chains included, where it
-    carried the intent id. The receipt binds it, and a plan whose intent
-    differs from Rust's own answer is not current.
-  - A selection preserved across an installation change (0044 decision 8) is
-    the whole intent. It stays selected, and the steps or switches the new
-    build cannot express are named.
+  carries a structured intent, not only a row id. React sends the typed intent
+  (format, encoding, both chains, switches) as a structured value; Rust builds
+  the `ConversionIntent`, validates it against decision 4 and refuses what it
+  cannot build. `ConversionIntent::from_stable_id` remains, and resolves the
+  nine verified rows only. Amended, by name:
+  - **Decision 6** (`catalog: admitted rows`): the catalog is the verified
+    rows plus the formats, steps and switches the build's help lists.
+  - **Decision 7** ("availability belongs to the row, never to the value") and
+    the question table's granularity row: this holds for the verified tier.
+    For the advanced tier availability is answered per format, step and switch
+    from the probe. "Verified" stays a property of a row.
+  - **Decision 8** ("stated once, at settings level, naming the combination"):
+    kept for the verified tier. A preserved advanced intent is the whole
+    intent; it stays selected, and its one settings-level statement names the
+    steps or switches the new build's help does not list. That answers which
+    spelling is missing, not which axis is to blame, and no control repeats it;
+    the rejection of per-value messages stands.
+  - **Decision 9** and the question table's plan row: plan identity carries the
+    canonical intent, chains included, where it carried the intent id. The
+    receipt binds it, and a plan whose intent differs from Rust's own answer is
+    not current.
+  - **Decision 13** and the question table's retention row: React retains the
+    selected intent as its structured value, where it retained "the selected
+    admitted intent id".
 - **[ADR 0045](0045-conversion-completion-closure-and-handoff.md), the
   terminal ledger.** CNV-002's `REFUSED_WITH_EVIDENCE` stays the disposition
   of mzXML as a verified format. mzXML is offered as advanced through decision
@@ -546,8 +615,12 @@ If the owner wants otherwise, that is its own decision, and it must at least:
 - **[The after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md), section
   7.6.** "mzXML output" and "settings outside the admitted catalog" leave
   "Stays refused". The refusals that remain are decision 7's.
-- **The status lines that say mzXML is refused pending this ADR:** the README's
-  "What works today", the project proposal's section 7.7 and the roadmap's M3.
+- **The status lines that keep mzXML gated until representative multi-source
+  integrity checks pass:** the README's "What works today" and "Product scope";
+  the project proposal's sections 1, 6 (layer 2), 7.7, 18 (M3) and 21 (success
+  criterion 5); and the roadmap's M3. They describe the verified tier. mzXML is
+  offered as advanced through decision 6, and that gate, CNV-002's source/output
+  comparison, remains what promotion to verified needs.
 - **Unchanged:** M6.2's rule that help text is not evidence of an operation.
   The advanced set rests on help text precisely because it is labelled
   unverified.

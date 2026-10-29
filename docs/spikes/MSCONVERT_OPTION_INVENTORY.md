@@ -40,8 +40,10 @@ several lines.
     describes it, removes, merges or alters spectra, peaks, chromatograms,
     array values or metadata the source holds. The user asks for that effect,
     and the step and the plan summary name it. The parenthesis says which
-    effect. Numeric precision is the one exception: every row states it and
-    the check verifies it.
+    effect. Numeric precision is the one exception where a check reads it
+    (mzML arrays not encoded with numpress, mzXML `<peaks>`): every row states
+    it and the check verifies it. On mz5 and mzMLb, precision below 64 bits is
+    lossy by request.
 - **Blocked:** not offered, for the reason given.
   - **Envelope** means MSCanvas sets the option itself, to keep typed argv,
     private staging, no overwrite or one queue item per acquisition.
@@ -56,24 +58,29 @@ private staging. None is a free-text argument box.
 | Option | Help | MSCanvas today | Option-C tier | UI control |
 | --- | --- | --- | --- | --- |
 | `--mzML` | 14 | Verified row (all nine) | Verified default | "Output format" select; mzML first and selected |
-| `--mzXML` | 15 | Absent: `MZXML_REFUSED` (ADR 0043 CNV-D1; M6.10 case X2) | Advanced, written from the private mzML intermediate and compared with it (ADR 0055 decision 6). Lossy by request (the format keeps no chromatograms). One global precision only. **Blocked** when any spectrum of the intermediate names a source file other than the run's default, and with `--merge`: X2 dropped those spectra silently at exit 0 | "mzXML (legacy, no chromatograms)" in the same select |
+| `--mzXML` | 15 | Absent: `MZXML_REFUSED` (ADR 0043 CNV-D1; M6.10 case X2) | Advanced, written from the private mzML intermediate and compared with it (ADR 0055 decision 6). Lossy by request (the format keeps no chromatograms). One global precision only. **Blocked** when any spectrum of the intermediate names a source file other than the run's default, or names one where the run declares no default, and with `--merge`: X2 dropped those spectra silently at exit 0 | "mzXML (legacy, no chromatograms)" in the same select |
 | `--mz5` | 16 | Absent (M6.2: not a candidate) | Advanced, written from the intermediate, offered only when the build's own help lists it (format availability is a build property, CNV-D1) | same select |
 | `--mzMLb` | 17 | Absent | Advanced, written from the intermediate, same build condition | same select |
 | `--mzMLbChunkSize arg (=1048576)` | 18 | Absent | Advanced, with mzMLb only | integer field, bytes, above 0 |
 | `--mzMLbCompressionLevel arg (=4)` | 19 | Absent | Advanced, with mzMLb only | 0–9 stepper |
-| `--mgf` | 20 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps no chromatograms) | same select, labelled "no chromatograms" |
-| `--text` | 21 | Absent | Advanced, written from the intermediate | same select |
-| `--ms1` | 22 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps MS1 spectra only) | same select |
-| `--cms1` | 23 | Absent | As `--ms1` | same select |
-| `--ms2` | 24 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps MS2 spectra only) | same select |
-| `--cms2` | 25 | Absent | As `--ms2` | same select |
+| `--mgf` | 20 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps no chromatograms, and only spectra above MS1 that name a selected precursor ion; m/z as text at 10 significant digits) | same select, labelled "MS/MS spectra only" |
+| `--text` | 21 | Absent | Advanced, written from the intermediate. Lossy by request (values as text at 12 significant digits) | same select |
+| `--ms1` | 22 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps MS1 spectra only; values as text at 7 significant digits) | same select |
+| `--cms1` | 23 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps MS1 spectra only; intensity at 32 bits) | same select |
+| `--ms2` | 24 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps only MS2 spectra that name a selected precursor ion; values as text at 7 significant digits) | same select |
+| `--cms2` | 25 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps only MS2 spectra that name a selected precursor ion; intensity at 32 bits) | same select |
 | `-e [ --ext ] arg` | 12–13 | Absent; the extension is derived from the format | Blocked (envelope): an extension chosen apart from the format lets a file's name disagree with its contents | none |
 
 ## 2. Precision, encoding and compression
 
-The encoding rules and the term each option must leave on its arrays are
-ADR 0055 decisions 4 and 5. With mzXML only one global precision, zlib and
-`--noindex` are offered.
+The encoding rules, which format takes which option, and the terms each option
+must leave on mzML arrays are ADR 0055 decisions 4 and 5, read from the
+evidenced build's source at revision `47b13cf` and not measured. In short: mzML
+takes precision, zlib, numpress and `--noindex`; mzXML one global precision,
+zlib and `--noindex`; mzMLb precision, zlib, numpress, truncation, prediction
+and its own two options; mz5 precision and zlib; mgf, text, ms1, cms1, ms2 and
+cms2 none. An option is not offered with a format whose writer does not read
+it.
 
 | Option | Help | MSCanvas today | Option-C tier | UI control |
 | --- | --- | --- | --- | --- |
@@ -83,18 +90,18 @@ ADR 0055 decisions 4 and 5. With mzXML only one global precision, zlib and
 | `--mz32` | 33 | Verified row with `--inten64` (P5), no filter | Verified default there; advanced otherwise. Not with mzXML | same |
 | `--inten64` | 34–35 | Verified row with `--mz32` (P5), no filter | As `--mz32` | same |
 | `--inten32` | 36–37 | Not emitted. D1 (no flag) was measured with intensity at 32 bits | Verified default as the intensity half of D1. Not with mzXML | same |
-| `--mzTruncation arg (=0)` | 38–40 | Absent (M6.2: not a candidate) | Advanced, with zlib only. Lossy by request (alters m/z and RT values; `-1` stores integers only) | integer field "m/z and RT mantissa bits to drop" (0 off, −1 integers only) |
-| `--intenTruncation arg (=0)` | 41–43 | Absent | Advanced, with zlib only. Lossy by request (alters intensity values) | the same field for intensity |
-| `--mzDelta` | 44–45 | Absent | Advanced, with zlib only | checkbox "Delta prediction, m/z and RT" |
-| `--intenDelta` | 46–47 | Absent | Advanced, with zlib only | checkbox "Delta prediction, intensity" |
-| `--mzLinear` | 48–49 | Absent | Advanced, with zlib only | checkbox "Linear prediction, m/z and RT" |
-| `--intenLinear` | 50–51 | Absent | Advanced, with zlib only | checkbox "Linear prediction, intensity" |
-| `--noindex` | 52 | Absent | Advanced; the index check is reported as not applicable, never as passed | checkbox "Write no index" |
+| `--mzTruncation arg (=0)` | 38–40 | Absent (M6.2: not a candidate) | Advanced, with mzMLb only: the build's writer applies truncation nowhere else, and msconvert accepts it with any format to no effect. Lossy by request (alters m/z values; `-1` stores integers only. The help says m/z and RT, but the source at `47b13cf` sets it for m/z arrays only, `msconvert.cpp:726-727`) | integer field "m/z mantissa bits to drop" (0 off, −1 integers only) |
+| `--intenTruncation arg (=0)` | 41–43 | Absent | Advanced, with mzMLb only, as `--mzTruncation`. Lossy by request (alters intensity values) | the same field for intensity |
+| `--mzDelta` | 44–45 | Absent | Advanced, with mzMLb only: the build's writer reads prediction nowhere else | checkbox "Delta prediction, m/z and RT" |
+| `--intenDelta` | 46–47 | Absent | Advanced, with mzMLb only, as `--mzDelta` | checkbox "Delta prediction, intensity" |
+| `--mzLinear` | 48–49 | Absent | Advanced, with mzMLb only, as `--mzDelta` | checkbox "Linear prediction, m/z and RT" |
+| `--intenLinear` | 50–51 | Absent | Advanced, with mzMLb only, as `--mzDelta` | checkbox "Linear prediction, intensity" |
+| `--noindex` | 52 | Absent | Advanced, with mzML and mzXML; the index check is reported as not applicable, never as passed. Not with mzMLb, whose writer writes its index whatever the switch says | checkbox "Write no index" |
 | `-z [ --zlib ] [=arg(=1)]` | 54–55 | Verified row: on in eight rows; `=off` at 64/64 with no filter (C2) | Verified default (on). Off: verified default in C2's combination, advanced otherwise | checkbox "zlib compression" |
-| `--numpressLinear [=arg(=2.0e-09)]` | 56–59 | Absent | Advanced; fixes m/z and RT at 64 bits. Lossy by request (alters m/z and RT values within the relative tolerance) | checkbox and tolerance field |
+| `--numpressLinear [=arg(=2.0e-09)]` | 56–59 | Absent | Advanced, with mzML and mzMLb; fixes m/z and RT at 64 bits, so an array the writer stores without numpress keeps every bit. On mzML each array carries the nominal 32-bit term and the numpress term, or falls back to the plain terms (ADR 0055 decision 5). Lossy by request (alters m/z and RT values within the relative tolerance) | checkbox and tolerance field |
 | `--numpressLinearAbsTol [=arg(=-1)]` | 60–66 | Absent | Advanced, with numpress linear only. Lossy by request (alters m/z and RT values within the absolute tolerance) | absolute tolerance field (m/z) |
-| `--numpressPic` | 67–70 | Absent | Advanced, not with `--numpressSlof`; fixes intensity at 64 bits. Lossy by request (alters intensities, absolute loss up to 0.5) | checkbox |
-| `--numpressSlof [=arg(=2.0e-04)]` | 71–74 | Absent | Advanced, not with `--numpressPic`; fixes intensity at 64 bits. Lossy by request (alters intensities within the relative tolerance) | checkbox and tolerance field |
+| `--numpressPic` | 67–70 | Absent | Advanced, with mzML and mzMLb, not with `--numpressSlof`; fixes intensity at 64 bits, as `--numpressLinear`. Lossy by request (alters intensities, absolute loss up to 0.5) | checkbox |
+| `--numpressSlof [=arg(=2.0e-04)]` | 71–74 | Absent | Advanced, with mzML and mzMLb, not with `--numpressPic`; fixes intensity at 64 bits, as `--numpressLinear`. Lossy by request (alters intensities within the relative tolerance) | checkbox and tolerance field |
 | `-n [ --numpressAll ]` | 75–77 | Absent | Covered by the two options it abbreviates; not offered separately | none |
 | `-g [ --gzip ]` | 78–79 | Absent | Advanced after a dependency decision. The mzML checks must read through gzip, and the conversion crate has no gzip reader (`flate2` is in the lockfile only transitively) | checkbox "gzip the whole file (.gz)" |
 
@@ -192,12 +199,13 @@ not a set of switches. Integer-set fields take the help's `int_set` grammar
 
 | What | Why | Record |
 | --- | --- | --- |
-| mzXML when any spectrum of the private mzML intermediate names a source file other than the run's default, and mzXML with `--merge` | The writer dropped every spectrum of the non-default source at exit 0 with empty stderr, under a header declaring them all | M6.10 case X2 |
+| mzXML when any spectrum of the private mzML intermediate names a source file other than the run's default, or names one where the run declares no default, and mzXML with `--merge` | The writer dropped every spectrum of the non-default source at exit 0 with empty stderr, under a header declaring them all | M6.10 case X2 |
 | `peakPicking cwt` | Silently returned one of three peaks; aborted with an unterminated document on unflanked input | M6.2 |
 | `peakPicking vendor` on an mzML source | Silently ran the local-maximum picker instead | M6.2 |
 | `peakPicking vendor` anywhere but first | The help requires it first; a preceding filter defeats the vendor path and the provider falls back silently | help lines 207–208; ADR 0043 CNV-D2 |
 | Bare `peakPicking` on Thermo RAW | The same argv runs the vendor picker there; the output check refuses it | M6.10 S1 |
 | `snr`, `peakSpace` or `msLevel=` on a picker that ignores them | Discarded silently, so the control could not affect the result | M6.2; ADR 0043 CNV-D2 |
+| An encoding option with a format whose writer does not read it, truncation and prediction outside mzMLb among them | msconvert accepts it and the writer ignores it, so the control could not affect the result | ADR 0055 decision 4, from the source at `47b13cf`; ADR 0043 CNV-D2 |
 | `--continueOnError` | Skips data that fails to enumerate and continues at exit 0 | help lines 121–126; ADR 0043 fail-closed |
 | `-c/--config` | An untyped argument channel | ADR 0055 |
 | Envelope: filemasks, `-f`, `-o` (and `-` for stdout), `--outfile`, `-e`, `-v`, `--help`, `--help-filter`, `--show-examples`, `--doc` | MSCanvas sets these itself for typed argv, private staging, no overwrite and one item per acquisition; the help switches run no conversion | ADR 0055 |
