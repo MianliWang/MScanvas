@@ -127,7 +127,12 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
         ? <PrecisionFields key={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} />
         : <AxisFieldset key={axis} axis={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} advanced={advanced} />)}
     </div>
-    {refusalNotes.length === 0 ? null : <div className="conversion-settings-refusals">{refusalNotes}</div>}
+    {/* Labelled, so the one sentence reads as being about the dimmed choices
+        rather than as the note of whichever group it happens to sit under. */}
+    {refusalNotes.length === 0 ? null : <div className="conversion-settings-refusals">
+      <p className="conversion-settings-refusals-label">{t("cnvRefusedChoices")}</p>
+      <div>{refusalNotes}</div>
+    </div>}
   </div>;
 }
 

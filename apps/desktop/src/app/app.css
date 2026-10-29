@@ -319,8 +319,10 @@ button:disabled,
 
 /* A page head (v5.11 .page-head, compact): the title, its one-line purpose
    and, where a page has them, its actions on the right. Shared by Conversion
-   and Project. Where the window is short the purpose follows the title on its
-   line, so the head costs no more height than the old heading did. */
+   and Project. The copy gives way before the actions do, so a long purpose
+   wraps under the title rather than pushing the actions onto a row of their
+   own. On Conversion, which has no actions, a short window puts the purpose
+   beside the title, so the head costs no more height than the old heading. */
 .page-head {
   display: flex;
   min-width: 0;
@@ -335,6 +337,7 @@ button:disabled,
 .page-head-copy {
   display: flex;
   min-width: 0;
+  flex: 1 1 16em;
   flex-direction: column;
 }
 
@@ -357,7 +360,7 @@ button:disabled,
 }
 
 @media (max-height: 720px) {
-  .page-head-copy { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+  .conversion-page-head .page-head-copy { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 }
 
 /* Positioned, so the visually hidden text inside each column is placed and
@@ -590,9 +593,21 @@ button:disabled,
 .conversion-setting > .conversion-setting-note,
 .conversion-precision-fields + .conversion-setting-note { padding-left: 0; }
 
-/* Why the dimmed choices are refused: once for the form, under the groups. */
-.conversion-settings-refusals { display: flex; flex-direction: column; gap: 2px; }
-.conversion-settings-refusals > .conversion-setting-note { padding-left: 0; }
+/* Why the dimmed choices are refused: once for the form, under the groups,
+   on a line of its own that names what it is about. */
+.conversion-settings-refusals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--color-surface-subtle);
+}
+
+.conversion-settings-refusals-label { flex: none; color: var(--color-text-primary); font-size: 11px; font-weight: 600; }
+.conversion-settings-refusals > div { min-width: 0; flex: 1 1 16em; }
+.conversion-settings-refusals .conversion-setting-note { padding-left: 0; }
 
 .conversion-settings-unavailable {
   color: var(--color-text-secondary);

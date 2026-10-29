@@ -828,6 +828,7 @@ export const en = {
   cnvNotQualified: "Not validated with these settings.",
   cnvUnavailableHere: "Not offered by this ProteoWizard build with your other settings.",
   cnvNotEvidenced: "Not measured with your other settings on any kind of acquisition MSCanvas converts.",
+  cnvRefusedChoices: "Unavailable choices",
   cnvSelectionUnqualified: "These settings have not been qualified.",
   cnvSelectionUnavailable: "These settings cannot run with this ProteoWizard installation.",
   cnvSelectionNotEvidenced: "These settings have not been measured on any kind of acquisition MSCanvas converts.",

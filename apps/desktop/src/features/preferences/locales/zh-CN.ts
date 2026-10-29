@@ -809,6 +809,7 @@ export const zhCN = {
   cnvNotQualified: "与当前设置的组合尚未验证。",
   cnvUnavailableHere: "此 ProteoWizard 构建不提供与其他所选设置的这一组合。",
   cnvNotEvidenced: "与其他所选设置的组合未在 MSCanvas 转换的任何采集类型上测量过。",
+  cnvRefusedChoices: "不可选的选项",
   cnvSelectionUnqualified: "所选设置尚未验证。",
   cnvSelectionUnavailable: "所选设置无法在此 ProteoWizard 安装上运行。",
   cnvSelectionNotEvidenced: "所选设置未在 MSCanvas 转换的任何采集类型上测量过。",
