@@ -114,9 +114,9 @@ describe(`the linked viewer at ${String(REPRESENTATIVE_SCANS)} scans`, () => {
 
     const middle = await pointAt(0.5);
     await browser.action("wheel").scroll({ x: middle.x, y: middle.y, deltaY: -240 }).perform();
-    await browser.$("button=Zoom in").click();
-    await browser.$("button=Zoom out").click();
-    await browser.$("button=Reset range").click();
+    await browser.$('button[aria-label="Zoom in"]').click();
+    await browser.$('button[aria-label="Zoom out"]').click();
+    await browser.$('button[aria-label="Reset range"]').click();
 
     expect(viewerReads(await ipcCalls())).toBe(before);
     // The table is still windowed after all of it.

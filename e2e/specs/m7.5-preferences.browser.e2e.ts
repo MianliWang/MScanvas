@@ -536,7 +536,7 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     const inspector = state.inspector?.text ?? "";
     expect(inspector).toContain(zh.summaryRun);
     expect(inspector).toContain(zh.summarySpectra);
-    expect(inspector).toContain(zh.summaryTiming);
+    expect(inspector).toContain(zh.summaryMsLevels);
     // The unreported state stays the unreported state.
     expect(inspector).not.toContain("(unit not reported)");
     expect(inspector).not.toContain(en.summaryRetentionTime);
@@ -553,7 +553,7 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     // where one is on screen.
     const english = [
       en.backendMissing, en.backendNotFound, en.backendHelpProvider,
-      en.summaryRun, en.summaryRetentionTime, en.summaryTiming, en.summaryNotMeasured,
+      en.summaryRun, en.summaryRetentionTime, en.summaryMsLevels,
       en.rosterToggle, en.layoutReset, en.settings, en.viewerData,
       "(unit not reported)",
     ].filter(sentence => (state.bodyText ?? "").includes(sentence));

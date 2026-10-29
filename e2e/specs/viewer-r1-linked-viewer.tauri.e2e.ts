@@ -72,7 +72,7 @@ async function backToFullRange(): Promise<void> {
   if ((await rangeCaption()).includes("full range")) {
     return;
   }
-  await browser.$("button=Reset range").click();
+  await browser.$('button[aria-label="Reset range"]').click();
   await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
     timeout: 30_000,
     timeoutMsg: "the run never came back to full range",
@@ -237,14 +237,14 @@ describe("the linked viewer on the real Tauri WebView", () => {
 
     expect((await drawn()).join(" ")).toContain("chromatogram-trace-tic");
 
-    await browser.$("//span[normalize-space()='BPC']/preceding-sibling::input").click();
+    await browser.$("//button[normalize-space()='BPC']").click();
     await browser.waitUntil(async () => (await drawn()).length === 2, {
       timeout: 20_000,
       timeoutMsg: "BPC never appeared",
     });
     expect((await drawn()).join(" ")).toContain("chromatogram-trace-bpc");
 
-    await browser.$("//span[normalize-space()='TIC']/preceding-sibling::input").click();
+    await browser.$("//button[normalize-space()='TIC']").click();
     await browser.waitUntil(async () => (await drawn()).length === 1, {
       timeout: 20_000,
       timeoutMsg: "TIC never went away",
@@ -310,13 +310,13 @@ describe("the linked viewer on the real Tauri WebView", () => {
     await browser.$('div.spectrum-table-row[data-row-position="1"]').click();
     await browser.waitUntil(async () => (await selectedRowPosition()) === 1, { timeout: 30_000 });
 
-    await browser.$("button=Next scan").click();
+    await browser.$('button[aria-label="Next scan"]').click();
     await browser.waitUntil(async () => (await selectedRowPosition()) === 2, {
       timeout: 30_000,
       timeoutMsg: "Next scan did not move the selection",
     });
 
-    await browser.$("button=Previous scan").click();
+    await browser.$('button[aria-label="Previous scan"]').click();
     await browser.waitUntil(async () => (await selectedRowPosition()) === 1, {
       timeout: 30_000,
       timeoutMsg: "Previous scan did not move the selection",
@@ -336,7 +336,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
       timeout: 30_000,
       timeoutMsg: "the wheel never changed the visible range",
     });
-    await browser.$("button=Reset range").click();
+    await browser.$('button[aria-label="Reset range"]').click();
     await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
       timeout: 30_000,
       timeoutMsg: "Reset range did not return the whole run",
@@ -359,7 +359,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
      * contract does.
      */
     if (!(await rangeCaption()).includes("full range")) {
-      await browser.$("button=Reset range").click();
+      await browser.$('button[aria-label="Reset range"]').click();
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 30_000,
         timeoutMsg: "the run never came back to full range",
