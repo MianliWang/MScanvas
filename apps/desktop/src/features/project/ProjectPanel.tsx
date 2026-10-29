@@ -1418,8 +1418,10 @@ export function ProjectPanel({
                           // English into a Chinese session.
                           artifacts.map((artifact) => (
                             <span key={artifact.id} className="project-artifact" data-project-artifact={artifact.id}>
+                              {/* Bordered, not link-coloured: the record is
+                                  something to press, and it opens Details. */}
                               <Button
-                                variant="quiet"
+                                variant="secondary"
                                 size="sm"
                                 icon={<Icon name="note" />}
                                 className="project-record"

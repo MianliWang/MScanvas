@@ -395,10 +395,6 @@
   gap: 2px 4px;
 }
 
-.project-record.ui-button:not([aria-current="true"]) {
-  color: var(--color-accent-hover);
-}
-
 .project-run-version,
 .project-run-failure {
   margin: 0;
