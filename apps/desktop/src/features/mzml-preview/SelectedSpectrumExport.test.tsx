@@ -384,12 +384,13 @@ describe("selected spectrum export affordance", () => {
     expect(screen.getByRole("textbox", { name: /^PNG DPI/u })).toHaveValue("300");
   });
 
-  it("says DPI is one format's metadata rather than a count of pixels", () => {
-    // Two things a user could be misled about by the control rather than by
-    // the file: that DPI alone adds pixels, and that it reaches every figure.
+  it("names DPI after the one format it reaches", () => {
+    // The label says it: DPI is PNG metadata, not a count of pixels, and it
+    // reaches no other figure. No separate note repeats it.
     renderPanel(loaded());
 
-    expect(screen.getByText("PNG metadata only")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "PNG DPI" })).toBeVisible();
+    expect(screen.queryByText("PNG metadata only")).toBeNull();
   });
 
   it("reports every field a figure could not be built from", () => {

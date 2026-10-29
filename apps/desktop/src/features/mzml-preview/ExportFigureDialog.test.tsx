@@ -13,7 +13,7 @@ function rendered(requestId: number, specId = "spec-17"): FigurePreviewOutcome {
 function props(overrides: Partial<ExportFigureDialogProps> = {}): ExportFigureDialogProps {
   return { kind: "spectrum", sourceLabel: "sample.mzML · Spectrum 17", question, preview: async request => rendered(request.requestId), onExport: vi.fn(() => true), onCopy: vi.fn(() => true), onClose: vi.fn(), returnTo: null, busy: false,
     settings: { widthPx: "1200", heightPx: "640", pngDpi: "300", theme: "light" }, validation: { render: null, dpi: null },
-    onSetting: vi.fn(), onTheme: vi.fn(), scope: "full", currentAvailable: true, onScope: vi.fn(), scopeHelp: "Current range is the last committed m/z window.", result: null, ...overrides };
+    onSetting: vi.fn(), onTheme: vi.fn(), scope: "full", onScope: vi.fn(), rangeAvailability: "available", committedDomain: null, result: null, ...overrides };
 }
 const NativeUrl = URL;
 const revoke = vi.fn();
@@ -25,15 +25,49 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("the export-specific figure preview", () => {
-  it.each(["chromatogram", "linked"] as const)("names the %s scope as a run and preserves linked full-spectrum semantics", async kind => {
+  it.each(["chromatogram", "linked"] as const)("names the %s scope as a run and offers data only beside a single plot", async kind => {
     const source = kind === "chromatogram"
       ? { kind, token: "chromatogram-1", range: { scope: "full" as const, low: null, high: null }, traces: { tic: true, bpc: false } }
       : { kind, chromatogramToken: "chromatogram-1", spectrumToken: "spectrum-1", range: { scope: "full" as const, low: null, high: null }, traces: { tic: true, bpc: false } };
-    render(<ExportFigureDialog {...props({ kind, question: { ...question, source } })} />);
+    const onExportData = vi.fn();
+    render(<ExportFigureDialog {...props({ kind, question: { ...question, source }, onExportData, committedDomain: { low: 0.5, high: 1.5 } })} />);
     await screen.findByRole("img");
+    expect(screen.getByRole("radiogroup", { name: "Run range to export" })).toBeVisible();
     expect(screen.getByRole("radio", { name: "Full run" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Current range RT 0.5000–1.5000" })).not.toBeChecked();
     expect(screen.queryByRole("radio", { name: "Full spectrum" })).toBeNull();
-    if (kind === "linked") expect(screen.getByText(UI_RESOURCES.en.viewerLinkedHelp)).toBeVisible();
+    // A linked figure joins two measurements; no single table holds both.
+    expect(screen.queryByRole("button", { name: "Export CSV…" }) === null).toBe(kind === "linked");
+  });
+
+  it("opens on a close button, keeps the actions real buttons and points refusals at a visible reason", async () => {
+    const onExportData = vi.fn();
+    const view = render(<ExportFigureDialog {...props({ onExportData, committedDomain: { low: 200, high: 550 } })} />);
+    const close = screen.getByRole("button", { name: "Return to viewer" });
+    expect(close).toHaveFocus();
+    expect(screen.getByRole("radio", { name: "Current range m/z 200.0000–550.0000" })).toBeVisible();
+    const png = screen.getByRole("button", { name: "Export PNG…" });
+    expect(png).toHaveAttribute("aria-disabled", "true");
+    expect(png).toHaveAccessibleDescription(UI_RESOURCES.en.figurePreviewLoading);
+    await screen.findByRole("img");
+    expect(png).not.toHaveAttribute("aria-disabled");
+    expect(document.querySelector(".figure-export-dialog details, .figure-export-dialog .link-button")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Export TSV…" }));
+    expect(onExportData).toHaveBeenCalledExactlyOnceWith("tsv");
+    view.rerender(<ExportFigureDialog {...props({ onExportData, busy: true, result: <p>Choose where to save the TSV file.</p> })} />);
+    const csv = screen.getByRole("button", { name: "Export CSV…" });
+    expect(csv).toHaveAttribute("aria-disabled", "true");
+    expect(csv).toHaveAccessibleDescription("Choose where to save the TSV file.");
+    fireEvent.click(csv);
+    expect(onExportData).toHaveBeenCalledTimes(1);
+  });
+
+  it("freezes the range on the full spectrum and says why when there is no range to narrow to", async () => {
+    render(<ExportFigureDialog {...props({ rangeAvailability: "noPeaks" })} />);
+    await screen.findByRole("img");
+    expect(screen.getByRole("radio", { name: "Full spectrum" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Current range" })).toBeDisabled();
+    expect(screen.getByText(UI_RESOURCES.en.viewerExportNoPeaks)).toBeVisible();
   });
   it("renders only an inert image and binds double activation to the current question", async () => {
     const onExport = vi.fn(() => true);
@@ -42,6 +76,7 @@ describe("the export-specific figure preview", () => {
     expect(image).toHaveAttribute("data-spec-id", "spec-17");
     expect(document.querySelector(".figure-preview svg, .figure-preview object, .figure-preview iframe")).toBeNull();
     const save = screen.getByRole("button", { name: "Export SVG…" });
+    expect(save).not.toHaveAttribute("aria-disabled");
     save.focus(); fireEvent.click(save); fireEvent.click(save);
     expect(onExport).toHaveBeenCalledExactlyOnceWith(question, "svg");
     expect(save).toHaveFocus();
@@ -107,8 +142,11 @@ describe("the export-specific figure preview", () => {
     render(<ExportFigureDialog {...value} />);
     await screen.findByRole("img");
     expect(screen.getByRole("status")).toHaveTextContent(UI_RESOURCES.en.figurePreviewEmpty);
-    expect(screen.getByRole("textbox", { name: /^PNG DPI/ })).toHaveValue("1e");
-    fireEvent.click(screen.getByRole("button", { name: "Export PNG…" }));
+    expect(screen.getByRole("textbox", { name: "PNG DPI" })).toHaveValue("1e");
+    const png = screen.getByRole("button", { name: "Export PNG…" });
+    expect(png).toHaveAttribute("aria-disabled", "true");
+    expect(png).toHaveAccessibleDescription(expect.stringContaining(UI_RESOURCES.en.invalidDpi));
+    fireEvent.click(png);
     expect(onExport).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Export SVG…" }));
     expect(onExport).toHaveBeenCalledExactlyOnceWith(question, "svg");

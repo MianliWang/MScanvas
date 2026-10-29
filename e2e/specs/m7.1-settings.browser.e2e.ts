@@ -238,8 +238,8 @@ describe("M7.1 localized Settings and real shared consumers", () => {
       const fieldFacts = await browser.execute(() => {
         const widths = [...document.querySelectorAll<HTMLInputElement>('input[id$="-widthPx"]')];
         const ids = [...document.querySelectorAll("[id]")].map(node => node.id);
-        const themes = [...document.querySelectorAll<HTMLInputElement>('.spectrum-figure-settings input[type="radio"]')];
-        return { widths: widths.map(input => input.value), idsUnique: new Set(ids).size === ids.length, themeGroups: new Set(themes.map(input => input.name)).size };
+        const themes = [...document.querySelectorAll('.spectrum-figure-settings [role="radiogroup"]')];
+        return { widths: widths.map(input => input.value), idsUnique: new Set(ids).size === ids.length, themeGroups: new Set(themes.map(group => group.getAttribute("aria-labelledby"))).size };
       });
       expect(fieldFacts).toEqual({ widths: ["00640", "00640"], idsUnique: true, themeGroups: 2 });
       // The session is Chinese here, and the viewer's actions are localized.

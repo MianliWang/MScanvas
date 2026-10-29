@@ -21,6 +21,7 @@ import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
+import { Icon, IconButton } from "../../components/ui";
 import { QuickFigureActions } from "./QuickFigureActions";
 import type { FigurePreviewKind } from "./contracts";
 import { SpectrumTable } from "./SpectrumTable";
@@ -772,10 +773,12 @@ export function PreviewWorkspace() {
         returnTo={figureDialog.returnTo} onClose={() => setFigureDialog(null)} busy={workspace.scientificExportBusy}
         settings={workspace.figureSettings} validation={workspace.figureSettingsValidation} onSetting={workspace.setFigureSetting} onTheme={workspace.setFigureTheme}
         scope={figureDialog.kind === "spectrum" ? workspace.spectrumRangeScope : workspace.chromatogramRangeScope}
-        currentAvailable={figureDialog.kind !== "spectrum" || workspace.spectrumRangeAvailability === "available"}
+        rangeAvailability={figureDialog.kind === "spectrum" ? workspace.spectrumRangeAvailability : "available"}
         onScope={figureDialog.kind === "spectrum" ? workspace.setSpectrumRangeScope : workspace.setChromatogramRangeScope}
-        scopeHelp={figureDialog.kind === "spectrum" ? workspace.spectrumCommittedDomain === null ? t("viewerExportFullHelp") : t("viewerExportRangeHelp", { low: String(workspace.spectrumCommittedDomain.low), high: String(workspace.spectrumCommittedDomain.high) }) : workspace.chromatogramCommittedDomain === null ? t("viewerExportFullRunHelp") : t("viewerExportRtHelp", { low: String(workspace.chromatogramCommittedDomain.low), high: String(workspace.chromatogramCommittedDomain.high) })}
-        result={figureDialog.kind === "spectrum" ? <p role="status">{describeSpectrumExport(workspace.spectrumExport, t)}{workspace.spectrumExport.status === "failed" ? <span className="notice-detail">{ownedErrorDetail(workspace.spectrumExport.error, t)}</span> : null}</p> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} /></div>}
+        committedDomain={figureDialog.kind === "spectrum" ? workspace.spectrumCommittedDomain : workspace.chromatogramCommittedDomain}
+        onExportData={figureDialog.kind === "spectrum" ? workspace.exportSpectrum : figureDialog.kind === "chromatogram" ? workspace.exportChromatogram : undefined}
+        result={figureDialog.kind === "spectrum" ? <><p role="status">{describeSpectrumExport(workspace.spectrumExport, t)}{workspace.spectrumExport.status === "failed" ? <span className="notice-detail">{ownedErrorDetail(workspace.spectrumExport.error, t)}</span> : null}</p>
+          {["saved", "copied", "cancelled", "failed"].includes(workspace.spectrumExport.status) ? <IconButton size="sm" icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={workspace.dismissSpectrumExport} /> : null}</> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} /></div>}
       /> : null}
       <main className="workspace-layout">
         <aside id="workbench-roster" className="workspace-sidebar" hidden={!rosterOpen}>

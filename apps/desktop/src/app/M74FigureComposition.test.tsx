@@ -164,11 +164,12 @@ describe("M7.4 through the delivered figure owner", () => {
     fireEvent.click(plot, { detail: 1 });
     expect(within(panel).getByRole("button", { name: "Zoom to selection — m/z 350.0000 to 500.0000" })).toBeVisible();
     const dialog = await openFigure(panel);
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Current range" }));
+    // The option names the window it covers, so the choice reads without a help line.
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Current range m/z 200.0000–800.0000" }));
     await waitFor(() => expect(preview.mock.calls.at(-1)?.[0].source).toEqual({ kind: "spectrum", token: "token-1", range: { scope: "current", low: 200, high: 800 } }));
     await within(dialog).findByRole("img");
     const svg = within(dialog).getByRole("button", { name: "Export SVG…" });
-    await waitFor(() => expect(svg).toHaveAttribute("aria-disabled", "false"));
+    await waitFor(() => expect(svg).not.toHaveAttribute("aria-disabled"));
     fireEvent.click(svg); fireEvent.click(svg);
     expect(api.spectrumExportRequests).toHaveLength(1);
     const captured = structuredClone(api.spectrumExportRequests[0]);
@@ -176,7 +177,7 @@ describe("M7.4 through the delivered figure owner", () => {
     fireEvent.change(within(dialog).getByRole("textbox", { name: /^Width/ }), { target: { value: "1800" } });
     expect(api.spectrumExportRequests[0]).toEqual(captured);
     await act(async () => save.resolve({ status: "cancelled" }));
-    await waitFor(() => expect(svg).toHaveAttribute("aria-disabled", "false"));
+    await waitFor(() => expect(svg).not.toHaveAttribute("aria-disabled"));
     expect(within(dialog).getByText("Export cancelled. Nothing was saved.")).toBeVisible();
     fireEvent.click(within(dialog).getByRole("button", { name: "Return to viewer" }));
     expect(within(panel).getByRole("button", { name: "Zoom to selection — m/z 350.0000 to 500.0000" })).toBeVisible();
@@ -188,7 +189,7 @@ describe("M7.4 through the delivered figure owner", () => {
     const dialog = await openFigure(panel);
     const save = within(dialog).getByRole("button", { name: "Export SVG…" });
     await act(async () => { fireEvent.click(save); await Promise.resolve(); });
-    await waitFor(() => expect(save).toHaveAttribute("aria-disabled", "false"));
+    await waitFor(() => expect(save).not.toHaveAttribute("aria-disabled"));
     expect(api.spectrumExportRequests).toHaveLength(1);
     await act(async () => { fireEvent.click(save); await Promise.resolve(); });
     expect(api.spectrumExportRequests).toHaveLength(2);

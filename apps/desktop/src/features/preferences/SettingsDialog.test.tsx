@@ -305,8 +305,8 @@ describe("session Settings in the real application composition", () => {
     }
     const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
     expect(new Set(ids).size).toBe(ids.length);
-    const themes = [...document.querySelectorAll<HTMLInputElement>('.spectrum-figure-settings input[type="radio"]')];
-    expect(new Set(themes.map((radio) => radio.name)).size).toBe(2);
+    const themes = [...document.querySelectorAll('.spectrum-figure-settings [role="radiogroup"]')];
+    expect(new Set(themes.map((group) => group.getAttribute("aria-labelledby"))).size).toBe(2);
     press(dialog, zh.cancel);
     expect(field).toHaveValue("1e");
     expect(field).toHaveAccessibleName(`${en.width} ${en.pixels}`);

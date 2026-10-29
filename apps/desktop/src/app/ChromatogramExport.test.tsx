@@ -491,14 +491,11 @@ describe("what the chromatogram can be exported as", () => {
 
     const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
     expect(new Set(ids).size).toBe(ids.length);
-    const names = [...document.querySelectorAll(".spectrum-figure-settings input[type=radio]")].map(
-      (input) => (input as HTMLInputElement).name,
-    );
-    expect(names).toHaveLength(4);
-    expect(names.every((name) => name.length > 0)).toBe(true);
-    expect(names[0]).toBe(names[1]);
-    expect(names[2]).toBe(names[3]);
-    expect(names[0]).not.toBe(names[2]);
+    // Each panel's theme is its own radio group, named by its own label.
+    const themes = [...document.querySelectorAll(".spectrum-figure-settings [role=radiogroup]")];
+    expect(themes).toHaveLength(2);
+    expect(themes.map((group) => within(group as HTMLElement).getAllByRole("radio")).map((radios) => radios.length)).toEqual([2, 2]);
+    expect(themes[0].getAttribute("aria-labelledby")).not.toBe(themes[1].getAttribute("aria-labelledby"));
   });
 
   it("says what was saved, including a range that held no scans", async () => {
