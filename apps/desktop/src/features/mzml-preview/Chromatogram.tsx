@@ -233,7 +233,9 @@ export const Chromatogram = memo(function Chromatogram({
           </div>
         )}
       </div>
-      {exportStatus}
+      {/* Only beside the tools it explains: a refusal sentence under a plot
+          with nothing to refuse would describe no control. */}
+      {model.status === "ready" && exportTools ? exportStatus : null}
     </section>
   );
 })

@@ -391,6 +391,20 @@ describe("stepping through scans from the table", () => {
     expect(onSelectPrevious).not.toHaveBeenCalled();
   });
 
+  it("says why Previous and Next are refused while the filters hide the selection", () => {
+    renderTable({ selection: commit(3, 1) });
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search loaded scans" }), { target: { value: "no such scan" } });
+
+    const reason = "Selected scan 3 is hidden by the filters.";
+    expect(screen.getByText(reason)).toBeVisible();
+    for (const name of ["Previous scan", "Next scan"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(reason);
+    }
+  });
+
   it("does not present the end of a truncated prefix as the end of the run", () => {
     renderTable({ rowCount: 40, truncated: true });
 

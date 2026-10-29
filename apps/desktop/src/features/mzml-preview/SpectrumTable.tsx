@@ -35,6 +35,8 @@ const OVERSCAN = 10;
  * client height, so without this a test would observe an empty table.
  */
 const FALLBACK_VIEWPORT_HEIGHT = 600;
+/** The sentence that says the filters hide the selected scan. */
+const HIDDEN_SELECTION_ID = "scan-hidden-selection-reason";
 
 /**
  * The scan list's columns, v5.11's compact four: what tells scans apart at a
@@ -137,6 +139,10 @@ export const SpectrumTable = memo(function SpectrumTable({
   const rowCount = rows.length;
   const focusRow = (focusIndex === null ? undefined : view.projection.positions.get(focusIndex)) ?? 0;
   const selectedOutside = selectedIndex !== null && !view.projection.positions.has(selectedIndex);
+  // Why Previous and Next are refused, where a sentence says it: the selection
+  // lock, else a selection the filters hide. At either end of the list the
+  // highlighted row says it.
+  const stepReasonId = !canCommit ? SPECTRUM_SELECTION_NOTICE_ID : selectedOutside ? HIDDEN_SELECTION_ID : undefined;
   /** What the viewport has left for rows once the header has its row. */
   const rowsHeight = Math.max(ROW_HEIGHT, viewportHeight - HEADER_HEIGHT);
   const visibleCount = Math.ceil(rowsHeight / ROW_HEIGHT) + OVERSCAN * 2;
@@ -302,9 +308,9 @@ export const SpectrumTable = memo(function SpectrumTable({
             drawn at all. */}
         <div className="plot-tools" role="group" aria-label={t("scanNavigation")}>
           <IconButton icon={<Icon name="chevronUp" />} label={t("scanPrevious")} onClick={onSelectPrevious} refused={!canSelectPrevious}
-            reasonId={canCommit ? undefined : SPECTRUM_SELECTION_NOTICE_ID} size="sm" />
+            reasonId={stepReasonId} size="sm" />
           <IconButton icon={<Icon name="chevronDown" />} label={t("scanNext")} onClick={onSelectNext} refused={!canSelectNext}
-            reasonId={canCommit ? undefined : SPECTRUM_SELECTION_NOTICE_ID} size="sm" />
+            reasonId={stepReasonId} size="sm" />
         </div>
       </div>
 
@@ -324,7 +330,7 @@ export const SpectrumTable = memo(function SpectrumTable({
         <p className="visually-hidden" id="scan-view-help">{t("scanHelpText")}</p>
       </div>
       {selectedOutside ? <p className="scan-hidden-selection" aria-live="polite">
-        {t("scanSelectedOutside", { name: String(selectedIndex) })}{" "}
+        <span id={HIDDEN_SELECTION_ID}>{t("scanSelectedOutside", { name: String(selectedIndex) })}</span>{" "}
         <Button onClick={view.clearFilters} size="sm" variant="quiet">{t("scanReveal")}</Button>
       </p> : null}
       {rowCount === 0 ? <p className="empty-state">{t(table.rows.length === 0 ? "scanEmpty" : "scanNoMatches")}</p> : null}
