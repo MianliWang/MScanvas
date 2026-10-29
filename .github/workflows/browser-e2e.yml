@@ -43,11 +43,14 @@ jobs:
         env:
           MSCANVAS_BROWSER_DEV_PORT: "15273"
         run: pnpm e2e:browser --shard ${{ matrix.shard }}/6
-      - name: Keep failure screenshots
+      # The specs write their evidence under test-results/ and .tmp/.
+      - name: Keep the failed shard's screenshots
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: browser-e2e-failures-${{ matrix.shard }}
-          path: .tmp/**/failure-*.png
+          name: browser-e2e-evidence-${{ matrix.shard }}
+          path: |
+            test-results/**/*.png
+            .tmp/**/*.png
           if-no-files-found: ignore
           retention-days: 7
