@@ -1,18 +1,21 @@
 import { useRef, useState } from "react";
 import { RawTextField } from "../../components/fields/RawTextField";
+import { Button } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { formatMz } from "./format";
 import type { PlotInputPort, PlotInputSnapshot } from "./viewer/plotInputAdapters";
 import { sameRange, usableRange } from "./viewer/rangeSelection";
 import { validateRangeDraft } from "./viewer/rangeDraft";
 
+/** The plot's gesture sentence; each plot's `aria-describedby` names its own. */
+export const plotGestureHelpId = (axis: "rt" | "mz") => `plot-range-${axis}-gestures`;
+
 export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low: number; readonly high: number }>({ port }: {
   readonly port: PlotInputPort<A, D>;
 }) {
   const t = useUiMessages();
-  const summary = useRef<HTMLElement | null>(null);
+  const toggle = useRef<HTMLButtonElement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
-  const details = useRef<HTMLDetailsElement | null>(null);
   const composing = useRef(false);
   const [draft, setDraft] = useState<{ context: PlotInputSnapshot<A, D>; low: string; high: string } | null>(null);
   const [problem, setProblem] = useState<"rangeBlank" | "rangeInvalid" | "rangeForward" | "rangeOutside" | "rangeStale" | null>(null);
@@ -24,8 +27,13 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
   // values are the editor's and the export note's (PM9 UI-31).
   const format = (value: number) => (port.axis === "mz" ? formatMz(value) : value.toFixed(4));
   const id = `plot-range-${port.axis}`;
-  const close = () => { setDraft(null); setProblem(null); if (details.current) details.current.open = false; summary.current?.focus(); };
-  const focusPlot = () => root.current?.parentElement?.querySelector<SVGSVGElement>('svg[role="img"]')?.focus({ preventScroll: true });
+  const close = () => { setDraft(null); setProblem(null); toggle.current?.focus(); };
+  const open = () => {
+    const context = port.current();
+    if (context) { const range = context.committed ?? context.full;
+      setDraft({ context, low: String(range.low), high: String(range.high) }); setProblem(null); }
+  };
+  const focusPlot = () => root.current?.closest("section")?.querySelector<SVGSVGElement>('svg[role="img"]')?.focus({ preventScroll: true });
   return <div className="plot-range-actions" ref={root}>
     {/* The plot's caption prints the range on screen, a gesture's included.
         This line says what is pending or committed: a pending band's bounds,
@@ -55,22 +63,15 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
         : <>{t("rangeCommittedPart", { name: axis })}<span className="visually-hidden">{t("rangeCommittedBounds", {
           low: format(current.committed.low), high: format(current.committed.high) })}</span></>}</p>
     {pending === null ? null : <div className="plot-pending-actions">
-      <button type="button" className="secondary-button" onClick={() => { port.confirm(pending); focusPlot(); }}
+      <Button size="sm" onClick={() => { port.confirm(pending); focusPlot(); }}
         aria-label={t("rangeConfirmContext", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })}>
         {t("rangeConfirm")}
-      </button>
-      <button type="button" className="secondary-button" onClick={() => { port.cancel(pending.transaction); focusPlot(); }}>{t("rangeCancel")}</button>
+      </Button>
+      <Button size="sm" onClick={() => { port.cancel(pending.transaction); focusPlot(); }}>{t("rangeCancel")}</Button>
     </div>}
-    <details className="plot-range-editor" ref={details} onToggle={event => {
-      if (!event.currentTarget.open) { setDraft(null); setProblem(null); }
-    }}>
-      <summary ref={summary} onClick={() => {
-        if (!details.current?.open) {
-          const context = port.current();
-          if (context) { const range = context.committed ?? context.full;
-            setDraft({ context, low: String(range.low), high: String(range.high) }); setProblem(null); }
-        }
-      }}>{t("rangeEdit", { name: axis })}</summary>
+    <Button ref={toggle} size="sm" variant="quiet" className="plot-range-toggle" aria-expanded={draft !== null} aria-controls={`${id}-editor`}
+      onClick={() => { if (draft === null) open(); else { setDraft(null); setProblem(null); } }}>{t("rangeSet")}</Button>
+    <div className="plot-range-editor" id={`${id}-editor`} hidden={draft === null}>
       {draft === null ? null : <form className="plot-range-form" onCompositionStartCapture={() => { composing.current = true; }}
         onCompositionEndCapture={() => { composing.current = false; }} onKeyDown={event => {
           if (event.ctrlKey || event.altKey || event.metaKey || event.nativeEvent.isComposing || event.keyCode === 229 || composing.current) return;
@@ -91,11 +92,12 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
         <label id={`${id}-high-label`} htmlFor={`${id}-high`}>{t("rangeHigh")}</label>
         <RawTextField id={`${id}-high`} labelledBy={`${id}-high-label`} describedBy={`${id}-problem`} inputMode="decimal"
           invalid={problem !== null} value={draft.high} onChange={high => setDraft({ ...draft, high })} />
-        <button type="submit" className="secondary-button" disabled={!usableRange(current.full)}>{t("rangeApply")}</button>
-        <button type="button" className="secondary-button" onClick={close}>{t("rangeCancel")}</button>
+        <Button type="submit" size="sm" refused={!usableRange(current.full)} reasonId={`${id}-problem`}>{t("rangeApply")}</Button>
+        <Button size="sm" onClick={close}>{t("rangeCancel")}</Button>
         <p id={`${id}-problem`} aria-live="polite">{problem === null ? t("rangeGrammar") : t(problem)}</p>
       </form>}
-    </details>
-    <details className="plot-gesture-help"><summary>{t("rangeHelp")}</summary><p>{t("rangeHelpText")}</p></details>
+    </div>
+    {/* The gestures, as the plot's description rather than a disclosure. */}
+    <p className="visually-hidden" id={plotGestureHelpId(port.axis)}>{t("rangeHelpText")}</p>
   </div>;
 }

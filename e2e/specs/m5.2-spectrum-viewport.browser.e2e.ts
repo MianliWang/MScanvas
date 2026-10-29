@@ -272,13 +272,14 @@ async function keyTheSpectrum(key: string): Promise<boolean> {
  * browser does with it, which is the actual claim: that a keyboard user moving
  * through this panel is never parked on a picture nothing can be done to.
  *
- * Start at the panel's real export disclosure and stop at its final source
- * disclosure. A fixed walk from body can end in the roster before reaching the
- * viewer; the retained M7.3 failure records that false-negative precondition.
+ * Start at the panel head's toolbar (one Tab stop) and stop at the foot's Set
+ * range…, the panel's last control. A fixed walk from body can end in the
+ * roster before reaching the viewer; the retained M7.3 failure records that
+ * false-negative precondition.
  */
 async function tabTrail(): Promise<string[]> {
   expect(await browser.execute(() => {
-    const entry = document.querySelector<HTMLElement>(".spectrum-export-disclosure > summary");
+    const entry = document.querySelector<HTMLElement>('.spectrum-panel .plot-tools [tabindex="0"]');
     entry?.focus(); return entry !== null && document.activeElement === entry;
   })).toBe(true);
   const trail: string[] = [];
@@ -294,22 +295,22 @@ async function tabTrail(): Promise<string[]> {
         return classes === "" ? active.tagName.toLowerCase() : `${active.tagName.toLowerCase()}.${classes}`;
       }),
     );
-    if (await browser.execute(() => document.activeElement?.matches(".spectrum-source-details > summary"))) {
+    if (await browser.execute(() => document.activeElement?.matches(".spectrum-panel .plot-range-toggle"))) {
       console.log("M7.3 refreshed M5.2 real Tab trail: " + JSON.stringify(trail));
       return trail;
     }
   }
-  throw Error("Real Tab did not reach the panel's final source disclosure.");
+  throw Error("Real Tab did not reach the panel's Set range….");
 }
 
-/** Which of the three controls would do something, by their own `disabled`. */
+/** Which of the three controls would do something: named icon buttons, refused rather than disabled. */
 async function controlStates(): Promise<Record<string, boolean>> {
   return browser.execute((labels: readonly string[]) => {
     const buttons = [...document.querySelectorAll("button")];
     const state: Record<string, boolean> = {};
     for (const label of labels) {
-      const found = buttons.find((button) => (button.textContent ?? "").trim() === label);
-      state[label] = found !== undefined && !found.disabled;
+      const found = buttons.find((button) => button.getAttribute("aria-label") === label);
+      state[label] = found !== undefined && !found.disabled && found.getAttribute("aria-disabled") !== "true";
     }
     return state;
   }, CONTROLS) as Promise<Record<string, boolean>>;
@@ -391,7 +392,9 @@ async function projectionsAskedFor(): Promise<readonly { low: number; high: numb
 /** Presses one of the panel's controls, where a reader can actually see it. */
 async function press(label: string): Promise<void> {
   await revealTheSpectrum();
-  await browser.$(`button=${label}`).click();
+  // An icon button is named by its label; a text button by its text.
+  const icon = browser.$(`button[aria-label="${label}"]`);
+  await (await icon.isExisting() ? icon : browser.$(`button=${label}`)).click();
 }
 
 /**
@@ -406,7 +409,7 @@ async function press(label: string): Promise<void> {
 async function whatIsAt(label: string): Promise<string> {
   return browser.execute((name: string) => {
     const node = [...document.querySelectorAll("button")].find(
-      (candidate) => (candidate.textContent ?? "").trim() === name,
+      (candidate) => (candidate.textContent ?? "").trim() === name || candidate.getAttribute("aria-label") === name,
     );
     if (node === undefined) {
       return "no such button";
@@ -1177,8 +1180,8 @@ describe("the visible m/z viewport", () => {
         // Real traversal through this panel skips only its inert plot.
         const trail = await tabTrail();
         expect(trail.some((stop) => stop.includes("spectrum-plot"))).toBe(false);
-        // The real source disclosure is reached, so the traversal is not inert.
-        expect(trail.some((stop) => stop.startsWith("summary"))).toBe(true);
+        // The foot's Set range… is reached, so the traversal is not inert.
+        expect(trail.some((stop) => stop.includes("plot-range-toggle"))).toBe(true);
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
@@ -1316,7 +1319,8 @@ describe("the visible m/z viewport", () => {
         // "the drawing gets the room" at every window rather than a number that
         // happens to hold at one of them.
         expect(plot.width).toBeGreaterThan(panel.width * 0.6);
-        expect(plot.height).toBeGreaterThanOrEqual(200);
+        // The plot fills its box down to the rebuild's 160 px floor (spec 3.1).
+        expect(plot.height).toBeGreaterThanOrEqual(160);
         expect(plot.left).toBeGreaterThanOrEqual(panel.left - 0.5);
         expect(plot.right).toBeLessThanOrEqual(panel.right + 0.5);
 

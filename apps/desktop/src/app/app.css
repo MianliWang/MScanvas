@@ -345,20 +345,6 @@ button:disabled,
   cursor: pointer;
 }
 
-/* A plot header's figure actions and the caption naming what they produce --
-   which plot, which range, what size -- share one line, the caption first, so
-   the header is as tall as its buttons. Under the buttons it cost each plot
-   header a line, and at 960x640 that put the selected spectrum's plot below the
-   window (PM9.3; M7.3 has it begin inside). Short of room the caption wraps
-   within its own width; the buttons never do. */
-.figure-quick-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.figure-quick-group > .figure-quick-actions { flex: none; }
-/* Each part of the caption -- plot, range, size -- is kept whole, so the
-   caption reflows only at its separators and never splits "1200 × 640 px"
-   (PM9 UI-26). Its floor is its widest part. */
-.figure-quick-context { flex: 0 1 auto; margin: 0; color: var(--color-text-secondary); }
-.figure-quick-part { white-space: nowrap; }
-.panel-header .figure-quick-context { max-width: 14em; margin: 0; white-space: normal; text-overflow: clip; text-align: right; line-height: 1.2; }
 .figure-export-source { margin: 0; overflow-wrap: anywhere; }
 .figure-export-options { min-width: 0; margin: 0; padding: 0; border: 0; }
 
@@ -1024,95 +1010,6 @@ button:disabled,
   flex-direction: column;
 }
 
-/* Open, the panel scrolls its own content.
-
-   The preferred repair was to let the grid row grow to the surface, so the one
-   column already scrolling would carry it. That was tried twice and measured
-   twice, and it crashes the renderer: a content-based track minimum here is
-   cyclic. The row's minimum would come from the panel's content, the content
-   includes an axis caption and a plot that size against the available width,
-   and the available width depends on whether this column is showing a
-   scrollbar -- which depends on the row's height. Chrome resolves that loop by
-   growing until the tab dies, and it took the whole spec file down with it.
-
-   So the surface gets its own scroll owner, which is what the layout rules
-   allow once a growing track is shown to produce another defect. Every length
-   below is definite, and that is the point: nothing here asks the panel how
-   tall its content wants to be.
-
-   The body stops filling and keeps the floor the three-panel column was
-   measured with -- 6px of padding, the 52px the plot floors at, the axis
-   caption's two lines, the readout, and 8px below -- so the plot stays a plot
-   instead of being squeezed out by a taller surface. The line of plot
-   controls above the drawing (PM9 L13) came later and sits on top of that
-   floor; `flex: none` sizes the body to all of it. The surface's own height
-   stays content-driven: a label that wraps, or a settings problem that appears,
-   makes it taller and the panel simply has more to scroll through. */
-.chromatogram-panel[data-export-open="true"] {
-  overflow-y: auto;
-}
-
-.chromatogram-panel[data-export-open="true"] .chromatogram-body {
-  min-height: 124px;
-  flex: none;
-}
-
-/* The same treatment the selected-spectrum header needed. The figure actions
-   beside the title are taller than a title, so a header that does not grow to
-   fit them centres them outside itself; below the width where both fit on one
-   line they take their own row. */
-.chromatogram-panel > .panel-header {
-  flex: none;
-  flex-wrap: wrap;
-  align-items: flex-start;
-}
-
-/* The plot's own controls, on the line above the drawing: which traces, and
-   the range. The selected spectrum's m/z controls sit in the same place. */
-.chromatogram-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.chromatogram-traces,
-.chromatogram-viewport-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 1px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-}
-
-.chromatogram-trace-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-}
-
-.chromatogram-trace-toggle > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-/* The legend's own line, drawn with the same dash the trace uses. Colour is
-   never the only difference between the two traces. */
-.chromatogram-swatch {
-  width: 24px;
-  height: 8px;
-}
-
-.chromatogram-swatch > path {
-  stroke: currentcolor;
-  stroke-width: 2;
-}
-
 .chromatogram-body {
   display: flex;
   min-height: 0;
@@ -1129,90 +1026,6 @@ button:disabled,
   flex: 1;
   flex-direction: column;
   gap: 4px;
-}
-
-/* The export surface, opened from the chromatogram's own header.
-
-   Closed it costs nothing: the control that opens it sits in the header row
-   that already exists, so the measured floors of the three-panel column are
-   unchanged. Open, it takes the width of the panel and pushes the plot down
-   inside a column that scrolls, which is the honest trade for a surface the
-   user asked for. */
-.chromatogram-export-panel {
-  border-top: 1px solid var(--color-border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 0 0;
-}
-
-/* The two range choosers, which are one pattern rather than two.
-
-   The selected spectrum's chooser and the chromatogram's answer the same
-   question about different axes, so they share a rule: a reader who has learned
-   one has learned the other, and a change to the interaction language cannot
-   move only half of it. */
-.chromatogram-export-range,
-.spectrum-export-range {
-  border: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-}
-
-/* The linked two-panel figure, at the bottom of the same surface.
-
-   A rule of its own rather than a border, because this section is a third
-   thing over the two above it and a reader should see that it groups. The
-   separator is the only chrome it spends: the actions inside reuse the export
-   surface's own row, so opening this section costs the column no width and the
-   panel's scroll owner keeps carrying the height. */
-.linked-figure-actions {
-  border: 0;
-  border-top: 1px solid var(--color-border);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 8px 0 0;
-}
-
-.linked-figure-actions > legend {
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0;
-}
-
-/* One sentence per thing a reader would otherwise have to guess: which traces a
-   figure draws, that data carries both columns, and what the current range
-   currently is. */
-.chromatogram-export-note {
-  color: var(--text-muted, #56606e);
-  font-size: 0.85rem;
-  margin: 0;
-}
-
-/* The linked section's availability note when it has nothing to say.
-
-   Collapsed rather than unmounted, so the live region is being watched before
-   the refusal arrives -- and so the section stays one sentence tall, which is
-   the height the open surface was measured against.
-
-   Out of flow rather than `display: none`, for the reason the viewer's own
-   notice gives: a region that is not in the accessibility tree is not being
-   watched, and it would arrive carrying its text. */
-.chromatogram-export-note:empty {
-  position: absolute;
-  overflow: hidden;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  border: 0;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 .chromatogram-svg {
@@ -1328,48 +1141,6 @@ button:disabled,
   visibility: hidden;
 }
 
-
-/* The scan-step actions sit beside this panel's heading, and two buttons are
-   taller than a title line. The same treatment the selected-spectrum header
-   needed, and for the same reason: a header that does not grow to fit its
-   controls centres them outside itself, where nothing clips them because
-   nothing contains them. Below the width where the sentence and the buttons fit
-   on one line, the buttons take their own row rather than squeezing the
-   sentence about the run into nothing. */
-.spectrum-table-panel > .panel-header {
-  flex: none;
-  flex-wrap: wrap;
-  align-items: flex-start;
-}
-
-/* Measured rather than assumed. A flex item's line break is decided from its
-   hypothetical size, and this block's is its content: the sentence under the
-   heading is `white-space: nowrap`, so its unwrapped width is about 700px and
-   the two buttons beside it were pushed onto a row of their own at every window
-   this product supports. That row costs the panel 50px it can only take from
-   the rows, and at 1366x768 the rows have one row to give.
-
-   A zero basis removes the wrap without removing anything else: the block still
-   grows into whatever the buttons leave, and the line still truncates through
-   the ellipsis it already had. */
-.spectrum-table-panel > .panel-header > div {
-  flex: 1 1 0;
-}
-
-/* Grouped rather than listed, so a screen reader is told these two are one
-   control set. `fieldset` for the semantics the legend gives, with its default
-   chrome replaced by the panel's own. */
-.spectrum-scan-steps {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  padding: 1px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-}
-
 .spectrum-table {
   display: flex;
   min-height: 0;
@@ -1380,15 +1151,13 @@ button:disabled,
 .spectrum-table-row {
   display: grid;
   align-items: center;
-  gap: 8px;
-  /* Every column can give ground, so a narrow window shrinks the table
-     instead of overflowing a panel that clips. */
-  grid-template-columns:
-    minmax(58px, 0.6fr) minmax(58px, 0.6fr) minmax(96px, 1.5fr) minmax(52px, 0.6fr)
-    minmax(74px, 0.9fr) minmax(84px, 1fr) minmax(92px, 1.1fr) minmax(92px, 1.1fr)
-    minmax(80px, 0.9fr);
-  height: 30px;
-  padding: 0 10px;
+  /* v5.11's compact four: scan, RT, MS level, precursor m/z. Every column can
+     give ground, so a narrow pane shrinks the table instead of overflowing. */
+  grid-template-columns: minmax(44px, 0.9fr) minmax(60px, 1.1fr) minmax(40px, 0.7fr) minmax(64px, 1.1fr);
+  gap: 6px;
+  /* SpectrumTable's ROW_HEIGHT. */
+  height: 28px;
+  padding: 0 8px;
   font-size: 12px;
 }
 
@@ -1396,7 +1165,8 @@ button:disabled,
    them sideways because it is inside the same scrolling box. The background is
    opaque on purpose: rows pass beneath it. */
 .spectrum-table-head {
-  height: 36px;
+  /* SpectrumTable's HEADER_HEIGHT. */
+  height: 30px;
   position: sticky;
   z-index: 1;
   top: 0;
@@ -1415,8 +1185,7 @@ button:disabled,
   white-space: nowrap;
 }
 
-.spectrum-table-cell:first-child,
-.spectrum-table-cell:nth-child(3) {
+.spectrum-table-cell:first-child {
   text-align: left;
 }
 
@@ -1434,7 +1203,7 @@ button:disabled,
      do when focus moves to it, and left to itself it counts a row that is
      already half behind the header as near enough -- which is how a row can be
      focused with its top edge, and its focus ring, under the header. */
-  scroll-padding-top: 36px;
+  scroll-padding-top: 30px;
 }
 
 /* The width the header row and the rows below it both resolve their columns
@@ -1462,7 +1231,9 @@ button:disabled,
   background: var(--color-surface-subtle);
 }
 
+/* v5.11's selected row: an inset blue edge as well as the marker glyph. */
 .spectrum-table-row.is-selected {
+  box-shadow: inset 3px 0 0 var(--color-accent);
   background: var(--color-surface-selected);
   color: var(--color-text-primary);
   font-weight: 650;
@@ -1480,45 +1251,6 @@ button:disabled,
   flex-direction: column;
   gap: 10px;
   padding: 10px 12px 14px;
-}
-
-/* The selected spectrum's export affordance, in the panel header beside the
-   heading. It wraps rather than shrinking: three actions and a status line do
-   not fit one row beside a heading at 960px, and a header that clipped them
-   would hide the only route to this feature. */
-.spectrum-export {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px 8px;
-}
-
-/* Two groups, because the figure settings decide what a figure looks like and
-   reach nothing in a data document. A single row of five buttons would suggest
-   otherwise. `fieldset` for the grouping semantics the legend gives, with its
-   default chrome removed. */
-/* This header holds the figure controls, and they are taller than a title.
-   Two things follow, and both were defects before they were rules.
-
-   It may not shrink below its own content. Compressed to the header's minimum
-   the export block was still 144px tall inside a 46px line, and `align-items:
-   center` then centred it *outside* the panel -- the controls rendered above
-   the panel's own top edge, where nothing clips them because nothing contains
-   them.
-
-   And below the width where a title and the controls fit side by side, the
-   controls take their own row rather than squeezing the sentence about the
-   spectrum into nothing. */
-.spectrum-panel > .panel-header {
-  flex: none;
-  flex-wrap: wrap;
-  align-items: flex-start;
-}
-
-.spectrum-panel > .panel-header > .spectrum-export {
-  flex: 1 1 22rem;
 }
 
 .spectrum-figure-settings,
@@ -1635,28 +1367,6 @@ button:disabled,
   gap: 6px;
 }
 
-/* The same pill the chromatogram's range controls sit in, because they are the
-   same kind of thing: a small group of viewport actions over a plot. Matching
-   it exactly is the point -- `--radius-lg` and `--color-border` are the toolbar
-   chrome, while the flat 6px and `--color-border-subtle` below belong to the
-   figure settings, and using the settings chrome here would read as a different
-   kind of control. A `fieldset` has a UA border and margin of its own, so both
-   are stated rather than inherited. */
-.spectrum-viewport-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  /* As wide as its controls, as the chromatogram's pills are, rather than
-     stretched across the column it sits in (PM9 UI-30). */
-  align-self: flex-start;
-  max-width: 100%;
-  gap: 8px;
-  margin: 0;
-  padding: 1px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-}
-
 /* The element the pointer gestures are attached to, and deliberately not the
    drawing itself: the plot is replaced whenever the viewport is refused,
    admitted or given a new spectrum, and a listener bound to a node that has
@@ -1727,27 +1437,9 @@ button:disabled,
   overflow: hidden;
 }
 
-.spectrum-figure {
-  display: flex;
-  /* Not `0`. The plot carries its own minimum height, and a parent allowed to
-     collapse below it lets the plot overflow this box: the facts list after it
-     is then placed against a box shorter than what was drawn, and lands on top
-     of the spectrum. The panel scrolls instead. */
-  min-height: min-content;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: 4px;
-  margin: 0;
-}
-
-/* A definite height rather than a share of leftover space. Inside a panel that
-   scrolls, "leftover" is not well defined: the plot grew until the facts under
-   it were below the fold. A taller drawing of the same points is not a more
-   informative one, so the size is fixed and the panel scrolls for the rest. */
+/* The spectrum svg; its height is the plot box's (workbench.css). */
 .plot {
   width: 100%;
-  height: 220px;
-  flex: none;
 }
 
 .plot-grid line {

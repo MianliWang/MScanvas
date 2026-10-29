@@ -29,7 +29,8 @@ export const AXIS_CAPTION = ".chromatogram-axis-caption";
  */
 export const SPECTRUM_PLOT = "svg.spectrum-plot";
 export const SPECTRUM_SURFACE = "div.spectrum-viewport-plot";
-export const SPECTRUM_ACTIONS = ".spectrum-viewport-actions";
+/** The spectrum plot head's toolbar: the m/z range controls, then the figure. */
+export const SPECTRUM_ACTIONS = ".spectrum-panel .plot-tools";
 export const SPECTRUM_RANGE = "#spectrum-viewport-range";
 export const SPECTRUM_STATUS = "#spectrum-viewport-status";
 

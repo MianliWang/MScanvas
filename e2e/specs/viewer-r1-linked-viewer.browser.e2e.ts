@@ -281,7 +281,7 @@ describe("the linked viewer, rendered", () => {
         // The traces are switched here too, and a checkbox squeezed to nothing
         // is a control that exists and cannot be used.
         const toggles = await browser.execute(() =>
-          [...document.querySelectorAll("label.chromatogram-trace-toggle input")].map((input) => {
+          [...document.querySelectorAll(".plot-traces button[aria-pressed]")].map((input) => {
             const box = input.getBoundingClientRect();
             return { width: box.width, height: box.height };
           }),
@@ -363,7 +363,7 @@ describe("the linked viewer, rendered", () => {
         const box = await boxOf(caption);
         expect(box.bottom).toBeLessThanOrEqual(panel.bottom + 0.5);
       }
-      for (const group of [".chromatogram-traces", ".chromatogram-viewport-actions"]) {
+      for (const group of [".chromatogram-panel .plot-traces", ".chromatogram-panel .plot-tools"]) {
         const box = await boxOf(group);
         expect(box.top).toBeGreaterThanOrEqual(panel.top - 0.5);
         expect(box.bottom).toBeLessThanOrEqual(panel.bottom + 0.5);
@@ -401,7 +401,7 @@ describe("the linked viewer, rendered", () => {
     it("says on purpose when both traces are hidden", async () => {
       await openTheViewer({ scans: SCANS });
 
-      await browser.$("//span[normalize-space()='TIC']/preceding-sibling::input").click();
+      await browser.$("//button[normalize-space()='TIC']").click();
 
       expect((await plotNodeCounts()).paths).toBe(0);
       expect(await browser.$(PLOT).isDisplayed()).toBe(true);
@@ -481,24 +481,24 @@ describe("the linked viewer, rendered", () => {
       // Still there after the debounce has had every chance to fire.
       await browser.pause(300);
       expect(await rangeCaption()).toBe(settled);
-      expect(await browser.$("button=Reset range").isEnabled()).toBe(true);
+      expect(await browser.$('button[aria-label="Reset range"]').getAttribute("aria-disabled")).toBeNull();
       expect(await unexpectedConsole()).toEqual([]);
     });
 
     it("resets to the whole run", async () => {
       await openTheViewer({ scans: SCANS });
-      await browser.$("button=Zoom in").click();
+      await browser.$('button[aria-label="Zoom in"]').click();
       await browser.waitUntil(async () => !(await rangeCaption()).includes("full range"), {
         timeout: 10_000,
       });
 
-      await browser.$("button=Reset range").click();
+      await browser.$('button[aria-label="Reset range"]').click();
 
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 10_000,
         timeoutMsg: "Reset range did not return the whole run",
       });
-      expect(await browser.$("button=Reset range").isEnabled()).toBe(false);
+      expect(await browser.$('button[aria-label="Reset range"]').getAttribute("aria-disabled")).toBe("true");
     });
 
     it("never asks the backend for anything while the viewport moves", async () => {
@@ -508,9 +508,9 @@ describe("the linked viewer, rendered", () => {
       const at = await pointAt(0.5);
       await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -240 }).perform();
       await browser.action("pointer").move({ x: at.x, y: at.y }).perform();
-      await browser.$("button=Zoom in").click();
-      await browser.$("button=Zoom out").click();
-      await browser.$("button=Reset range").click();
+      await browser.$('button[aria-label="Zoom in"]').click();
+      await browser.$('button[aria-label="Zoom out"]').click();
+      await browser.$('button[aria-label="Reset range"]').click();
 
       expect(viewerReads(await ipcCalls())).toBe(before);
     });
@@ -687,7 +687,7 @@ describe("the linked viewer, rendered", () => {
 
       await browser.execute(() => {
         [...document.querySelectorAll("button")]
-          .find((button) => (button.textContent ?? "").trim() === "Next scan")
+          .find((button) => button.getAttribute("aria-label") === "Next scan")
           ?.focus();
       });
       await browser.keys(["Enter"]);
@@ -791,9 +791,9 @@ describe("the linked viewer, rendered", () => {
         timeout: 10_000,
       });
 
-      // Row 2 sits at canvas offset 60; a scroll of exactly 60 puts it against
-      // the header.
-      await scrollTableTo(60);
+      // Row 2 sits at canvas offset 56 (two 28 px rows); a scroll of exactly
+      // 56 puts it against the header.
+      await scrollTableTo(56);
       const before = await tableGeometry();
       expect(before.selectedTop).toBeCloseTo(before.headerBottom, 0);
 
@@ -891,8 +891,8 @@ describe("the linked viewer, rendered", () => {
       });
 
       // Zoom in, then pan away from the marker.
-      await browser.$("button=Zoom in").click();
-      await browser.$("button=Zoom in").click();
+      await browser.$('button[aria-label="Zoom in"]').click();
+      await browser.$('button[aria-label="Zoom in"]').click();
       await browser.waitUntil(async () => (await visibleDomain()).low > 0, {
         timeout: 10_000,
         timeoutMsg: "the viewport never left the start of the run",
@@ -920,7 +920,7 @@ describe("the linked viewer, rendered", () => {
       await openTheViewer({ scans: SCANS });
       await browser.$('div.spectrum-table-row[data-row-position="1"]').click();
       await browser.waitUntil(async () => (await selectedRowPosition()) === 1, { timeout: 10_000 });
-      await browser.$("button=Zoom in").click();
+      await browser.$('button[aria-label="Zoom in"]').click();
       await browser.waitUntil(async () => !(await rangeCaption()).includes("full range"), {
         timeout: 10_000,
       });
@@ -959,9 +959,9 @@ describe("the linked viewer, rendered", () => {
         const state: Record<string, boolean> = {};
         for (const label of labels) {
           const found = buttons.find(
-            (button) => (button.textContent ?? "").trim() === label,
+            (button) => button.getAttribute("aria-label") === label,
           );
-          state[label] = found !== undefined && !found.disabled;
+          state[label] = found !== undefined && !found.disabled && found.getAttribute("aria-disabled") !== "true";
         }
         return state;
       }, CONTROLS) as Promise<Record<string, boolean>>;
@@ -984,7 +984,7 @@ describe("the linked viewer, rendered", () => {
       await openTheViewer({ scans: SCANS });
       const full = await visibleSpan();
 
-      await browser.$("button=Zoom in").click();
+      await browser.$('button[aria-label="Zoom in"]').click();
 
       await browser.waitUntil(async () => (await visibleSpan()) < full, {
         timeout: 10_000,
@@ -1005,7 +1005,7 @@ describe("the linked viewer, rendered", () => {
         if (!(await controlStates())["Zoom in"]) {
           break;
         }
-        await browser.$("button=Zoom in").click();
+        await browser.$('button[aria-label="Zoom in"]').click();
       }
 
       const states = await controlStates();
@@ -1043,14 +1043,14 @@ describe("the linked viewer, rendered", () => {
           // The opening state, unchanged.
         },
         async () => {
-          await browser.$("button=Zoom in").click();
+          await browser.$('button[aria-label="Zoom in"]').click();
         },
         async () => {
           for (let step = 0; step < 60; step += 1) {
             if (!(await controlStates())["Zoom in"]) {
               break;
             }
-            await browser.$("button=Zoom in").click();
+            await browser.$('button[aria-label="Zoom in"]').click();
           }
         },
       ];
@@ -1329,7 +1329,7 @@ describe("the linked viewer, rendered", () => {
       expect(await wheelClaim(at.x, -1)).toBe(true);
       const gentle = await visibleSpan();
 
-      await browser.$("button=Reset range").click();
+      await browser.$('button[aria-label="Reset range"]').click();
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 10_000,
         timeoutMsg: "Reset range did not return the whole run",
@@ -1351,7 +1351,7 @@ describe("the linked viewer, rendered", () => {
       expect(await wheelClaim(at.x, -100)).toBe(true);
       const once = await visibleDomain();
 
-      await browser.$("button=Reset range").click();
+      await browser.$('button[aria-label="Reset range"]').click();
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 10_000,
         timeoutMsg: "Reset range did not return the whole run",
@@ -1392,7 +1392,7 @@ describe("the linked viewer, rendered", () => {
       expect(await wheelClaim(at.x, -1, LINE_MODE)).toBe(true);
       const fromLines = await visibleDomain();
 
-      await browser.$("button=Reset range").click();
+      await browser.$('button[aria-label="Reset range"]').click();
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 10_000,
         timeoutMsg: "Reset range did not return the whole run",
@@ -1470,7 +1470,7 @@ describe("the linked viewer, rendered", () => {
 
     it("marks each series, told apart by more than colour", async () => {
       await openTheViewer({ scans: 1 });
-      await browser.$("//span[normalize-space()='BPC']/preceding-sibling::input").click();
+      await browser.$("//button[normalize-space()='BPC']").click();
 
       await browser.waitUntil(
         async () =>
@@ -1507,7 +1507,7 @@ describe("the linked viewer, rendered", () => {
       expect(painted[1]?.fill).toBe("none");
 
       // Switching the first off leaves the second, still visible.
-      await browser.$("//span[normalize-space()='TIC']/preceding-sibling::input").click();
+      await browser.$("//button[normalize-space()='TIC']").click();
       await browser.waitUntil(
         async () =>
           (await browser.execute(
@@ -1597,8 +1597,8 @@ describe("the linked viewer, rendered", () => {
       await keyThePlot("+");
       await keyThePlot("ArrowLeft");
       await keyThePlot("Home");
-      await browser.$("button=Next scan").click();
-      await browser.$("button=Previous scan").click();
+      await browser.$('button[aria-label="Next scan"]').click();
+      await browser.$('button[aria-label="Previous scan"]').click();
       await leaveThePlot();
 
       expect(await unexpectedConsole()).toEqual([]);

@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import { memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { Button, Icon, IconButton, Toolbar, type IconName } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { UiMessage } from "../preferences/i18n";
 
-import { PlotRangeActions } from "./PlotRangeActions";
+import { PlotRangeActions, plotGestureHelpId } from "./PlotRangeActions";
 import { retentionTimeInput } from "./viewer/plotInputAdapters";
 import { usePlotInput } from "./viewer/usePlotInput";
 import { usePlotTextSize } from "./viewer/usePlotTextSize";
@@ -75,11 +76,14 @@ const TRACES: readonly {
  * drift -- which is how `Reset range` came to be the only one of them telling
  * the truth about being inert.
  */
-const VIEWPORT_CONTROLS: readonly { readonly action: ViewportAction }[] = [
-  { action: "zoom-in" },
-  { action: "zoom-out" },
-  { action: "reset" },
+const VIEWPORT_CONTROLS: readonly { readonly action: ViewportAction; readonly icon: IconName }[] = [
+  { action: "zoom-out", icon: "minus" },
+  { action: "zoom-in", icon: "plus" },
+  { action: "reset", icon: "fit" },
 ];
+
+/** The line the zoom controls point at when one would change nothing: the range on screen. */
+const AXIS_CAPTION_ID = "chromatogram-axis-caption";
 
 export interface ChromatogramProps {
   readonly model: ScanModel;
@@ -101,16 +105,10 @@ export interface ChromatogramProps {
    * that is still perfectly true.
    */
   readonly selectionAvailability: SpectrumSelectionAvailability;
-  /**
-   * The figure actions and the control that opens this panel's export surface.
-   *
-   * Rendered beside the title rather than below the plot, so a viewer with the
-   * surface closed is exactly as tall as it was: opening the surface is what
-   * adds its height, and nothing else does.
-   */
-  readonly exportToggle?: ReactNode;
-  /** The export surface itself, when it is open. */
-  readonly exportPanel?: ReactNode;
+  /** The figure actions, at the end of the head's toolbar. */
+  readonly exportTools?: ReactNode;
+  /** What the last export did, and why a figure action is refused, under the plot. */
+  readonly exportStatus?: ReactNode;
 }
 
 /**
@@ -139,8 +137,8 @@ export const Chromatogram = memo(function Chromatogram({
   onToggleTrace,
   onSelect,
   selectionAvailability,
-  exportToggle,
-  exportPanel,
+  exportTools,
+  exportStatus,
 }: ChromatogramProps) {
   const t = useUiMessages();
   const domain = renderedDomain(interaction);
@@ -172,70 +170,42 @@ export const Chromatogram = memo(function Chromatogram({
   } as const;
 
   return (
-    <section
-      aria-labelledby="chromatogram-heading"
-      className="panel chromatogram-panel"
-      data-export-open={exportPanel === null || exportPanel === undefined ? undefined : "true"}
-    >
-      {/* The header names the plot and carries what makes a figure of it, as
-          the selected spectrum's does. What changes the plot itself -- which
-          traces, which range -- sits on the line above the drawing, where the
-          spectrum keeps its m/z controls. Together the two groups did not fit
-          one header line at 960px in English and wrapped into a second (PM9
-          L13); the design system does not let a toolbar become a ribbon. */}
-      <header className="panel-header compact">
+    <section aria-labelledby="chromatogram-heading" className="panel plot-box chromatogram-panel">
+      {/* v5.11's plot head: the title, which traces, then one toolbar for the
+          range and the figure. */}
+      <div className="plot-head">
         <h2 id="chromatogram-heading">{t("viewerChromatogram")}</h2>
-        {model.status === "ready" ? exportToggle : null}
-      </header>
-      {exportPanel}
-      <div className="chromatogram-body">
-        {model.status === "ready" ? (
-          <div className="chromatogram-controls">
-            <fieldset className="chromatogram-traces">
-              {/* Named for a screen reader without spending a line on it. A
-                  group of controls still has to say what it groups. */}
-              <legend className="visually-hidden">{t("viewerTraces")}</legend>
-              {TRACES.map(({ trace, label, dash }) => (
-                <label className="chromatogram-trace-toggle" key={trace}>
-                  <input
-                    checked={traces[trace]}
-                    onChange={() => {
-                      onToggleTrace(trace);
-                    }}
-                    type="checkbox"
-                  />
-                  <span>
-                    {label}
-                    {/* The same dash pattern the trace is drawn with, so the
-                        legend distinguishes the two without asking anyone to
-                        compare colours. */}
-                    <svg aria-hidden="true" className="chromatogram-swatch" viewBox="0 0 24 8">
-                      <path d="M 1 4 L 23 4" strokeDasharray={dash} />
-                    </svg>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
-            <fieldset className="chromatogram-viewport-actions">
-              <legend className="visually-hidden">{t("viewerRange")}</legend>
-              {VIEWPORT_CONTROLS.map(({ action }) => (
-                <button
-                  className="secondary-button"
-                  disabled={!viewportPlans[action].available}
-                  key={action}
-                  onClick={() => {
-                    // Planned again against the live state, not against the
-                    // `disabled` this render computed.
-                    applyViewportAction(readInteraction(), dispatch, action);
-                  }}
-                  type="button"
-                >
-                  {t(action === "reset" ? "viewerReset" : action === "zoom-in" ? "viewerZoomIn" : "viewerZoomOut")}
-                </button>
-              ))}
-            </fieldset>
+        {model.status === "ready" ? <>
+          <div className="plot-traces" role="group" aria-label={t("viewerTraces")}>
+            {TRACES.map(({ trace, label, dash }) => (
+              <Button aria-pressed={traces[trace]} key={trace} onClick={() => { onToggleTrace(trace); }} size="sm" variant="quiet"
+                // The same dash the trace is drawn with, so the toggles do not rely on colour.
+                icon={<svg aria-hidden="true" className="chromatogram-swatch" viewBox="0 0 24 8"><path d="M 1 4 L 23 4" strokeDasharray={dash} /></svg>}>
+                {label}
+              </Button>
+            ))}
           </div>
-        ) : null}
+          <Toolbar className="plot-tools" label={t("plotChromatogramTools")} roving>
+            {VIEWPORT_CONTROLS.map(({ action, icon }) => (
+              <IconButton
+                icon={<Icon name={icon} />}
+                key={action}
+                label={t(action === "reset" ? "viewerReset" : action === "zoom-in" ? "viewerZoomIn" : "viewerZoomOut")}
+                onClick={() => {
+                  // Planned again against the live state, not against the
+                  // refusal this render computed.
+                  applyViewportAction(readInteraction(), dispatch, action);
+                }}
+                reasonId={AXIS_CAPTION_ID}
+                refused={!viewportPlans[action].available}
+                size="sm"
+              />
+            ))}
+            {exportTools ? <><span aria-hidden="true" className="plot-tools-divider" />{exportTools}</> : null}
+          </Toolbar>
+        </> : null}
+      </div>
+      <div className="chromatogram-body">
         {model.status === "ready" && domain !== null && full !== null ? (
           <ChromatogramPlot
             dispatch={dispatch}
@@ -263,6 +233,9 @@ export const Chromatogram = memo(function Chromatogram({
           </div>
         )}
       </div>
+      {/* Only beside the tools it explains: a refusal sentence under a plot
+          with nothing to refuse would describe no control. */}
+      {model.status === "ready" && exportTools ? exportStatus : null}
     </section>
   );
 })
@@ -498,8 +471,8 @@ function ChromatogramPlot({
          */
         aria-describedby={
           selectionAvailability.status === "available"
-            ? "chromatogram-readout chromatogram-units"
-            : `chromatogram-readout chromatogram-units ${SPECTRUM_SELECTION_NOTICE_ID}`
+            ? `chromatogram-readout chromatogram-units ${plotGestureHelpId("rt")}`
+            : `chromatogram-readout chromatogram-units ${plotGestureHelpId("rt")} ${SPECTRUM_SELECTION_NOTICE_ID}`
         }
         aria-labelledby="chromatogram-heading"
         className="chromatogram-svg"
@@ -522,8 +495,11 @@ function ChromatogramPlot({
               className="chromatogram-time-label"
               key={`${String(position)}:${String(tick)}`}
               textAnchor={position === 4 ? "end" : "middle"}
+              // Hung from just under the axis: the label is counter-scaled
+              // about this point, so it clears the line at any plot height.
+              dominantBaseline="hanging"
               x={scale.x(tick)}
-              y={BASELINE_Y + 14}
+              y={BASELINE_Y + 4}
             >
               {tick.toFixed(4)}
             </text>
@@ -586,8 +562,9 @@ function ChromatogramPlot({
             <text
               className="chromatogram-value-label"
               textAnchor="start"
+              dominantBaseline="hanging"
               x={PADDING_LEFT + 6}
-              y={PADDING_TOP + 8}
+              y={PADDING_TOP + 2}
             >
               {formatIntensity(extent.high)}
             </text>
@@ -602,37 +579,32 @@ function ChromatogramPlot({
           </g>
         )}
       </svg>
-      <PlotRangeActions port={inputPort} />
-      <div className="chromatogram-context">
-      <p className="chromatogram-axis-caption">
-        {/* The unit state, said rather than assumed. Nothing in the accepted
-            contract establishes what these numbers are measured in, and a
-            chromatogram labelled "minutes" states something the file did not.
-            Beside it, what the traces are made of. Said once per axis here,
-            and part of the plot's description, rather than after every
-            retention time on the panel (PM9 UI-33). */}
-        <span id="chromatogram-units">{t("viewerRtUnits")}</span> ·{" "}
-        <span className="chromatogram-range">
-          {t("viewerShowing", { low: domain.low.toFixed(4), high: domain.high.toFixed(4) }) +
-            (showingFullRange ? t("viewerFullRange") : "")}
-        </span>{" "}
-      </p>
-      <details className="plot-source-details"><summary>{t("viewerSourceDetails")}</summary>
-        <p>{t("viewerScanSource", { count: points.length })}</p>
-      </details>
+      <div className="plot-foot">
+        <p className="chromatogram-axis-caption" id={AXIS_CAPTION_ID}>
+          {/* The unit state, said rather than assumed. Nothing in the accepted
+              contract establishes what these numbers are measured in, and a
+              chromatogram labelled "minutes" states something the file did not.
+              Said once per axis here, and part of the plot's description,
+              rather than after every retention time on the panel (PM9 UI-33). */}
+          <span id="chromatogram-units">{t("viewerRtUnits")}</span> ·{" "}
+          <span className="chromatogram-range">
+            {t("viewerShowing", { low: domain.low.toFixed(4), high: domain.high.toFixed(4) }) +
+              (showingFullRange ? t("viewerFullRange") : "")}
+          </span>
+        </p>
+        {/* Not a live region. Which scan the pointer is over changes on most
+            pointer frames at a full-run zoom, and a region that announced each
+            of them would be noise rather than feedback. It is the plot's
+            accessible description instead, so a reader who focuses the plot is
+            told what is selected. With nothing selected or hovered it is unseen,
+            but still read as that description. */}
+        <p className="chromatogram-readout" id="chromatogram-readout" data-idle={hoveredPoint === null && selectedPoint === null ? "" : undefined}>
+          {hoveredPoint === null
+            ? selectedPoint === null ? t("viewerNoSelection") : describeScan(selectedPoint, t("viewerSelected"), t)
+            : describeScan(hoveredPoint, t("viewerHover"), t)}
+        </p>
+        <PlotRangeActions port={inputPort} />
       </div>
-      {/* Not a live region. Which scan the pointer is over changes on most
-          pointer frames at a full-run zoom, and a region that announced each of
-          them would be noise rather than feedback. It is the plot's accessible
-          description instead, so a reader who focuses the plot is told what is
-          selected -- and the persistent selection, not the transient hover, is
-          what every keyboard route establishes. With nothing selected or
-          hovered it is unseen, but still read as that description. */}
-      <p className="chromatogram-readout" id="chromatogram-readout" data-idle={hoveredPoint === null && selectedPoint === null ? "" : undefined}>
-        {hoveredPoint === null
-          ? selectedPoint === null ? t("viewerNoSelection") : describeScan(selectedPoint, t("viewerSelected"), t)
-          : describeScan(hoveredPoint, t("viewerHover"), t)}
-      </p>
     </div>
   );
 }

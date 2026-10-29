@@ -15,7 +15,8 @@ import { buildRows } from "../../test/previewFixtures";
 import { SpectrumTable, type SpectrumTableProps } from "./SpectrumTable";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { useScanTableView } from "./viewer/useScanTableView";
-import { StickSpectrum } from "./StickSpectrum";
+import { describeSpectrumSource, StickSpectrum, type SpectrumDrawing } from "./StickSpectrum";
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 /** The measured representative acquisition. */
 const REPRESENTATIVE_ROW_COUNT = 36_319;
@@ -90,13 +91,9 @@ describe("spectrum table at acquisition scale", () => {
     expect(rows.length).toBeLessThan(100);
     // The final spectrum is reachable and is the one the file actually ends on.
     expect(rows.at(-1)).toHaveAttribute("aria-rowindex", String(REPRESENTATIVE_ROW_COUNT + 1));
-    expect(
-      within(grid).getByText(`controllerType=0 controllerNumber=1 scan=${REPRESENTATIVE_ROW_COUNT}`),
-    ).toBeVisible();
+    expect(grid.querySelector(`[data-source-index="${String(REPRESENTATIVE_ROW_COUNT - 1)}"]`)).toBeVisible();
     // Nothing from the top of the run is still mounted.
-    expect(
-      within(grid).queryByText("controllerType=0 controllerNumber=1 scan=1"),
-    ).not.toBeInTheDocument();
+    expect(grid.querySelector('[data-source-index="0"]')).not.toBeInTheDocument();
   });
 
   it("jumps to the end with the keyboard and keeps exactly one tab stop", () => {
@@ -130,30 +127,30 @@ describe("stick spectrum at profile-scale point counts", () => {
     const spikeIndex = 123_456;
     intensity[spikeIndex] = 5_000_000;
 
+    const drawing: SpectrumDrawing = {
+      kind: "transfer",
+      reportedMzHigh: mz[pointCount - 1] ?? 0,
+      reportedMzLow: mz[0] ?? 0,
+    };
+    // Details says what the caption cannot, from the same reduction.
+    function Source() {
+      return <p>{describeSpectrumSource(mz, intensity, drawing, false, useUiMessages())}</p>;
+    }
     const { container } = render(
-      <StickSpectrum
-        drawing={{
-          kind: "transfer",
-          reportedMzHigh: mz[pointCount - 1] ?? 0,
-          reportedMzLow: mz[0] ?? 0,
-        }}
-        intensity={intensity}
-        labelledBy="scale-summary"
-        mz={mz}
-        representationKnown={false}
-        surface={{ kind: "static" }}
-      />,
+      <>
+        <StickSpectrum drawing={drawing} intensity={intensity} labelledBy="scale-summary" mz={mz} surface={{ kind: "static" }} />
+        <Source />
+      </>,
     );
 
     // One path node regardless of point count.
-    const paths = container.querySelectorAll("path");
+    const paths = container.querySelectorAll("svg path");
     expect(paths).toHaveLength(1);
     const commands = (paths[0]?.getAttribute("d") ?? "").split("M").length - 1;
     // 900 columns, and at most one stick per sign in each.
     expect(commands).toBeLessThanOrEqual(1_800);
 
     expect(screen.getByText(/[\d,]+ sticks · 200,000 transferred points/)).toBeVisible();
-    fireEvent.click(screen.getByText("Source and drawing details"));
     expect(screen.getByText(/nearby points can merge into one stick/)).toBeVisible();
     // The spike survives the reduction: it is the axis maximum.
     expect(screen.getByText("5.000e+6")).toBeInTheDocument();

@@ -173,17 +173,78 @@
 .viewer-lower { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 8px; min-height: 0; }
 .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
 .viewer-lower > .panel { min-width: 0; min-height: 0; }
-.workbench-shell .spectrum-table-panel { min-height: 0; }
-.scan-view-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 8px 12px; }
-.scan-view-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
-.scan-view-controls input, .scan-view-controls select { min-height: 32px; font: inherit; border: 1px solid var(--color-border); border-radius: 6px; padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
-.scan-view-controls input { width: min(260px, 55vw); }
-.scan-view-controls details { flex: 1 1 110px; font-size: 12px; }
-.scan-view-controls summary { cursor: pointer; min-height: 32px; align-content: center; }
-.scan-view-controls details p { max-width: 65ch; white-space: normal; }
-.spectrum-table-panel .scan-result-count { white-space: normal; overflow: visible; }
-.scan-hidden-selection { margin: 0; padding: 6px 12px; font-size: 12px; }
-.scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 4px; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+/* Plot boxes (rebuild spec 3.4, v5.11 .plot): one line of head -- the title,
+   what is shown, one toolbar -- then the plot, which fills whatever height its
+   box is given, then a foot. Every link from the box to the svg is a flex
+   column with a zero minimum, so a pane that is given height passes it on. */
+.plot-box { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.workbench-shell .plot-box { border-radius: 6px; box-shadow: none; }
+.plot-head { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 36px; padding: 3px 6px 3px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }
+.plot-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 650; white-space: nowrap; }
+/* The subtitle gives way first, so the tools keep the head's one line. */
+.plot-head > p { flex: 1 1 0; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.plot-tools { flex: none; flex-wrap: nowrap; gap: 2px; margin-left: auto; }
+.plot-tools-divider { flex: none; width: 1px; height: 18px; margin: 0 4px; background: var(--color-border); }
+.figure-quick-actions { display: flex; align-items: center; gap: 2px; }
+/* The traces: two toggles drawn as v5.11's segmented pair. Both may be on, or
+   neither, so they are pressed buttons rather than a single choice. */
+.plot-traces { display: inline-flex; flex: none; gap: 2px; padding: 2px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); }
+.plot-traces > .ui-button { min-height: 24px; padding: 2px 8px; border: 0; }
+.plot-traces > .ui-button[aria-pressed="true"],
+.plot-traces > .ui-button[aria-pressed="true"]:hover:not([aria-disabled="true"]) { background: var(--color-surface); box-shadow: var(--shadow-segment-checked); color: var(--color-accent-hover); font-weight: 650; }
+.chromatogram-swatch { width: 18px; height: 8px; }
+.chromatogram-swatch > path { stroke: currentcolor; stroke-width: 2; }
+.plot-menu-reason { display: block; color: var(--color-text-secondary); font-size: 11px; }
+.workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-height: 0; padding: 0; overflow: hidden; }
+.workbench-shell :is(.chromatogram-plot, .spectrum-viewport, .spectrum-viewport-plot, .spectrum-figure) { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-width: 0; min-height: 0; margin: 0; }
+/* Heights from the viewport rather than fixed pixels; inside a pane with a
+   definite height the plot grows past them. The minimum is explicit: an svg's
+   automatic minimum is its aspect ratio, which a stretched viewBox makes
+   meaningless. Axis text is counter-scaled (usePlotTextSize). */
+.workbench-shell .chromatogram-svg { flex: 1 1 auto; height: clamp(90px, 22vh, 180px); min-height: 90px; padding: 4px 8px 0; }
+.workbench-shell .spectrum-plot { flex: 1 1 auto; height: clamp(160px, 30vh, 320px); min-height: 160px; padding: 6px 8px 0; touch-action: pan-y pinch-zoom; cursor: crosshair; }
+.workbench-shell .spectrum-caption { flex: none; padding: 0 10px; }
+.workbench-shell .spectrum-caption p { margin: 2px 0 0; font-size: 11px; line-height: 1.4; }
+.plot-foot { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0 12px; min-height: 28px; padding: 0 6px 0 10px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
+.plot-foot > p { margin: 0; }
+.workbench-shell .plot-foot .chromatogram-axis-caption, .workbench-shell .plot-foot .chromatogram-readout { margin: 0; font-size: 11px; }
+.plot-foot .chromatogram-readout[data-idle] { display: none; }
+.plot-range-actions { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0 8px; }
+/* A range line gives way inside its own box before the actions beside it take
+   a second row (PM9 UI-32). 12em is wider than any one formatted value. */
+.plot-committed-range { flex: 1 1 12em; margin: 0; font-size: 11px; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.plot-pending-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.plot-range-toggle { flex: none; }
+.plot-range-editor { flex-basis: 100%; }
+.plot-range-form { display: grid; grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr) auto auto; gap: 6px; align-items: center; padding: 4px 0 8px; font-size: 12px; }
+.plot-range-form input { min-width: 0; width: 100%; }
+.plot-range-form p { grid-column: 1 / -1; margin: 0; max-width: 64ch; }
+@media (max-width: 1100px) { .plot-range-form { grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr); } }
+.plot-range-band { fill: rgb(42 108 201 / .12); stroke: #286ac5; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.spectrum-viewport-status:not(:empty), .spectrum-viewport-retry { margin: 0 10px 6px; }
+.spectrum-viewport-retry { align-self: flex-start; }
+.spectrum-body > .notice, .spectrum-body > .empty-state { margin: 8px 10px; }
+/* What the last export did, and why PNG or Copy is refused; nothing at rest. */
+.plot-status { flex: none; padding: 0 6px 0 10px; color: var(--color-text-secondary); font-size: 11px; }
+.plot-reason { margin: 0; padding: 4px 0; }
+.plot-status-line { display: flex; align-items: center; gap: 4px; }
+.plot-status .spectrum-export-status, .plot-status .spectrum-export-message { margin: 0; font-size: 11px; }
+.plot-status .spectrum-export-message { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
+.plot-status .spectrum-export-status:not(:empty) { padding: 2px 0; }
+
+/* The scan list (spec 3.5): head, filters, a compact four-column grid. */
+.workbench-shell .spectrum-table-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.spectrum-table-panel .scan-result-count { font-variant-numeric: tabular-nums; }
+.scan-view-controls { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
+.plot-search { position: relative; flex: 1 1 140px; min-width: 0; }
+.plot-search > .ui-icon { position: absolute; top: 8px; left: 9px; color: var(--color-text-secondary); pointer-events: none; }
+.scan-view-controls input, .scan-view-controls select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: 5px; padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
+.scan-view-controls select { flex: none; max-width: 50%; }
+.scan-view-controls .plot-search > input { width: 100%; padding-left: 30px; }
+.scan-hidden-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 0; padding: 4px 8px; font-size: 12px; }
+.spectrum-table-panel > .empty-state { flex: none; padding: 16px; }
+.scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 3px; width: 100%; min-height: 28px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.spectrum-table-cell:first-child .scan-sort-button { justify-content: flex-start; }
 .scan-sort-button svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; transition: opacity 120ms; }
 .scan-sort-button svg[data-direction="none"] { opacity: .65; }
 .scan-sort-button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
@@ -191,71 +252,25 @@
 .spectrum-table-head .spectrum-table-cell { overflow: visible; }
 @media (prefers-reduced-motion: reduce) { .scan-sort-button svg { transition: none; } }
 .workbench-shell .spectrum-panel { min-height: 0; }
-/* The header's own bottom padding already separates it from the plot's
-   controls, so the body adds little above them (PM9.3, 960x640). */
-.workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { padding: 4px 12px 8px; }
-/* The plots flex with the card (spec 3.1); both SVGs stretch their viewBox
-   and counter-scale their text. */
-.workbench-shell .chromatogram-svg { flex: none; height: clamp(90px, 22vh, 180px); }
-.workbench-shell .spectrum-plot { flex: 1 1 auto; height: auto; min-height: 160px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
-.workbench-shell .spectrum-summary { margin: 0; font-size: 13px; }
-.workbench-shell .spectrum-panel > .panel-header { flex-direction: row; align-items: start; flex-wrap: wrap; padding: 8px 12px; }
-.workbench-shell .chromatogram-panel > .panel-header { padding: 8px 12px; }
-/* The figure actions and the export disclosure share one line, as the
-   chromatogram's figure actions and its Export toggle do, rather than the
-   disclosure taking a line of its own under them. Opened, the disclosure
-   takes the whole width below. */
-.spectrum-export-header-actions { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: flex-end; gap: 6px; }
-/* A plot header's actions keep the heading's row wherever their buttons fit
-   beside it (PM9 UI-27, UI-28). The header decides that from the buttons
-   alone: the actions' floor is their controls in one line. Inside, the
-   caption goes before the buttons where there is room and under them where
-   there is not -- `wrap-reverse` stacks the line it wraps onto above the
-   first -- so it never costs the buttons their row. */
-.chromatogram-panel > .panel-header > .figure-quick-actions,
-.spectrum-panel > .panel-header > .spectrum-export-header-actions { flex: 1 1 0%; min-width: min-content; align-items: flex-start; justify-content: flex-end; }
-.chromatogram-panel > .panel-header > .figure-quick-actions,
-.spectrum-panel > .panel-header > .spectrum-export-header-actions:not(:has(> .spectrum-export-disclosure[open])) { flex-wrap: nowrap; }
-.panel-header .figure-quick-group { flex: 1 1 auto; min-width: min-content; flex-wrap: wrap-reverse; justify-content: flex-end; row-gap: 4px; }
-.panel-header .figure-quick-group > .figure-quick-actions { flex-wrap: nowrap; }
-.panel-header .figure-quick-actions > button { flex: none; white-space: nowrap; }
-/* Never paid for by the sentence about the spectrum: where heading and
-   controls do not fit side by side, the controls take their own row. */
-.spectrum-panel > .panel-header > div:not(.spectrum-export-header-actions) { flex: none; }
-.spectrum-export-disclosure { margin-left: auto; }
-.spectrum-export-disclosure[open] { width: 100%; }
-.spectrum-export-disclosure > summary { width: fit-content; margin-left: auto; white-space: nowrap; }
-.spectrum-export-disclosure > .spectrum-export { width: 100%; margin-top: 8px; }
-.spectrum-source-details, .plot-source-details, .plot-range-editor, .plot-gesture-help { font-size: 12px; color: var(--color-text-secondary); }
-.spectrum-export-disclosure > summary, .spectrum-source-details > summary,
-.plot-source-details > summary, .plot-range-editor > summary, .plot-gesture-help > summary {
-  cursor: pointer; min-height: 32px; align-content: center; border-radius: 4px;
-}
-.plot-range-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; margin: 4px 0; }
-/* A range line gives way inside its own box before the pending actions and
-   disclosures beside it take a second row: with a real run's values, and for
-   a pending retention-time band at a 699 px column with any values (PM9
-   UI-32). 12em is wider than any one formatted value, so no number breaks. */
-.plot-committed-range { flex: 1 1 12em; margin: 0; font-size: 12px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.plot-pending-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.plot-range-actions button { min-height: 32px; }
-.plot-range-form { display: grid; grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr); gap: 6px; align-items: center; padding: 8px 0; }
-.plot-range-form input { min-width: 0; width: 100%; }
-.plot-range-form p { grid-column: 1 / -1; margin: 0; max-width: 64ch; }
-.plot-gesture-help p, .plot-source-details p { margin: 4px 0 8px; line-height: 1.45; max-width: 85ch; }
-.plot-range-editor[open], .plot-gesture-help[open] { flex-basis: 100%; }
-/* At the line's end whether or not the range line beside it is printed. */
-.plot-range-actions > .plot-range-editor { margin-left: auto; }
-.chromatogram-context { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; }
-.chromatogram-context > .chromatogram-axis-caption { flex: 1 1 auto; }
-.chromatogram-context > details[open] { flex-basis: 100%; }
-.workbench-shell .spectrum-body { gap: 4px; }
-.plot-range-band { fill: rgb(42 108 201 / .12); stroke: #286ac5; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
-.workbench-shell .spectrum-caption p, .workbench-shell .chromatogram-axis-caption, .workbench-shell .chromatogram-readout { margin: 4px 0; font-size: 12px; line-height: 1.4; }
-.spectrum-panel > .spectrum-export-status { padding: 0 12px; }
-.spectrum-panel > .spectrum-export-status:empty { margin: 0; padding: 0; }
-.spectrum-source-details .metadata-lines { overflow-wrap: anywhere; }
-@media (max-width: 600px) { .plot-range-form { grid-template-columns: auto minmax(90px, 1fr); } }
+/* The rows fill the pane; the cap keeps windowing honest in a pane with no definite height. */
+.workbench-shell .spectrum-table-viewport { flex: 1 1 auto; min-height: 0; max-height: 70vh; }
+
+/* Details (spec 4, v5.11 .inspector): dt left, dd right, a light rule
+   between rows, a 1 px rule between sections. */
+.workbench-inspector .inspector-panel { min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+.workbench-inspector .inspector-section { padding: 14px 14px 16px; border-bottom: 1px solid var(--color-border); }
+.workbench-inspector .inspector-section h2,
+.workbench-inspector .inspector-section h3 { margin: 0 0 8px; color: var(--color-text-secondary); font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
+.workbench-inspector .inspector-section h4 { margin: 12px 0 6px; font-size: 12px; font-weight: 650; }
+.workbench-inspector .preview-file-identity { margin: 0 0 8px; color: var(--color-text-primary); font-size: 15px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
+.workbench-inspector .metadata-list { gap: 0; }
+.workbench-inspector .metadata-list > div { padding: 7px 0; border-bottom: 1px solid #edf1f5; }
+.workbench-inspector .metadata-list dt { color: var(--color-text-secondary); }
+.workbench-inspector .metadata-list dd { overflow-wrap: anywhere; }
+.workbench-inspector .spectrum-facts { grid-template-columns: minmax(0, 1fr); }
+.inspector-text { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+.metadata-disclosure { width: 100%; justify-content: flex-start; margin-inline: -6px; text-align: left; white-space: normal; }
+.metadata-section { padding: 2px 0 8px 22px; }
 /* Evidence states (spec 3.6), centred in the card: an icon, one heading, a
    row of buttons. */
 .evidence-state { flex: 1 1 auto; min-height: 0; }

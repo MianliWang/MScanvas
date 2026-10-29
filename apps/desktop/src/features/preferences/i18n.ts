@@ -152,8 +152,6 @@ export interface MessageParameters {
   readonly clearCounts: { readonly count: number; readonly total: number; readonly protected: string };
   readonly linkedHeight: { readonly value: string };
   readonly viewerExportRtHelp: { readonly low: string; readonly high: string };
-  readonly viewerLinkedExport: { readonly name: string };
-  readonly viewerLinkedExporting: { readonly name: string };
   readonly viewerLinkedCopied: { readonly width: string; readonly height: string; readonly theme: string; readonly index: string; readonly count: number };
   readonly viewerLinkedSaved: { readonly name: string; readonly index: string; readonly rt: string; readonly count: number };
   readonly viewerChromCopied: { readonly width: string; readonly height: string; readonly theme: string; readonly count: number };
@@ -197,7 +195,6 @@ export interface MessageParameters {
   readonly rangeCommittedBounds: { readonly low: string; readonly high: string };
   readonly rangePending: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeConfirmContext: { readonly name: string; readonly low: string; readonly high: string };
-  readonly rangeEdit: { readonly name: string };
   readonly scanCountAll: { readonly count: number };
   readonly scanCounts: { readonly visible: number; readonly count: number; readonly total: number };
   readonly scanSelectedOutside: { readonly name: string };

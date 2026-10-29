@@ -38,7 +38,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PreviewError, SpectrumProjection, SpectrumViewportDomain } from "./contracts";
 import { formatMz } from "./format";
-import { SpectrumViewport } from "./SpectrumViewport";
+import { SpectrumViewport, SpectrumZoomControls } from "./SpectrumViewport";
 import {
   SPECTRUM_PLOT_DRAWN_WIDTH,
   SPECTRUM_PLOT_PADDING_LEFT,
@@ -180,9 +180,10 @@ function Harness({
         readState={viewport.current}
         reportedMzHigh={500}
         reportedMzLow={100}
-        representationKnown
         state={viewport.state}
       />
+      {/* The head's m/z controls, as the spectrum box renders them. */}
+      <SpectrumZoomControls dispatch={viewport.dispatch} readState={viewport.current} state={viewport.state} />
     </>
   );
 }
@@ -257,6 +258,11 @@ function pointerSurface(): HTMLElement {
 
 function control(label: (typeof CONTROLS)[number]): HTMLButtonElement {
   return screen.getByRole("button", { name: label }) as HTMLButtonElement;
+}
+
+/** A refused control stays focusable, as `aria-disabled` (UI-24). */
+function refused(label: (typeof CONTROLS)[number]): boolean {
+  return control(label).getAttribute("aria-disabled") === "true";
 }
 
 function state(): SpectrumViewportState {
@@ -521,7 +527,7 @@ describe("the committed m/z line (PM9 UI-34)", () => {
     else expect(liveLine()).not.toHaveClass("visually-hidden");
     const sentence = textOutside(liveLine(), "span.visually-hidden");
     expect(untrue(sentence, "m/z", { committed, shown: displayed })).toBeNull();
-    const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
+    const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, .plot-range-toggle, .plot-range-editor");
     expect(visible).toBe(committed === null ? "" : sentence);
     if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
     expect(rangeText()).toContain(displayed);
@@ -612,9 +618,9 @@ describe("what each m/z control would do", () => {
 
       for (const label of CONTROLS) {
         if (scenario.expected[label]) {
-          expect(control(label), label).toBeEnabled();
+          expect(refused(label), label).toBe(false);
         } else {
-          expect(control(label), label).toBeDisabled();
+          expect(refused(label), label).toBe(true);
         }
       }
     });
@@ -631,7 +637,7 @@ describe("what each m/z control would do", () => {
 
       for (const label of CONTROLS) {
         const before = state();
-        if (control(label).disabled) {
+        if (refused(label)) {
           /*
            * Two refusals, and only one of them is the adapter's.
            *
@@ -679,13 +685,13 @@ describe("what each m/z control would do", () => {
     // accessible name, and the list is the contract's rather than this file's so
     // the render and the keyboard cannot drift apart about which controls exist.
     renderViewport();
+    // Icon buttons, so each is named by its label; v5.11's order is out, in, reset.
+    const named = screen.getAllByRole("button").flatMap((button) => button.getAttribute("aria-label") ?? []);
 
-    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      ...VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map((entry) => messages("en")(entry.messageKey)),
-    ]);
-    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      ...CONTROLS,
-    ]);
+    expect([...named].sort()).toEqual(
+      VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map((entry) => messages("en")(entry.messageKey)).sort(),
+    );
+    expect(named).toEqual([CONTROLS[1], CONTROLS[0], CONTROLS[2]]);
   });
 });
 
@@ -703,7 +709,7 @@ describe("pressing a control", () => {
      */
     renderViewport();
     commitSubrange();
-    expect(control("Reset m/z range")).toBeEnabled();
+    expect(refused("Reset m/z range")).toBe(false);
 
     let afterReset: SpectrumViewportState | null = null;
     act(() => {
@@ -713,7 +719,7 @@ describe("pressing a control", () => {
 
     expect(afterReset).not.toBeNull();
     expect(state()).toBe(afterReset);
-    expect(control("Reset m/z range")).toBeDisabled();
+    expect(refused("Reset m/z range")).toBe(true);
   });
 
   it("zooms the window the live state holds, not the one the render drew", () => {
@@ -1691,8 +1697,6 @@ describe("what the plot draws, and what it says it is drawing", () => {
 
     expect(sticks()).not.toBeNull();
     expect(captionLine()).toBe(`${en("plotCaption", { count: 3, total: 3 })} · ${en("plotUnits")}`);
-    // Every observation is a stick, so the details have nothing to add.
-    expect(document.querySelector(".plot-source-details")).not.toBeVisible();
     // Nothing left to say, so the region says nothing: a live region whose text
     // is added and removed as a sibling node is not reliably announced.
     expect(statusText()).toBe("");
@@ -1966,7 +1970,7 @@ describe("a spectrum with no m/z range to navigate", () => {
     expect(rangeText()).toBe("No m/z range to navigate.");
     expect(statusText()).toBe("");
     for (const label of CONTROLS) {
-      expect(control(label), label).toBeDisabled();
+      expect(refused(label), label).toBe(true);
     }
   });
 });
@@ -2008,7 +2012,7 @@ describe("a viewport that is admitted and has nothing to do", () => {
     }
     expect(hasProductiveSpectrumViewportAction(state())).toBe(false);
     for (const label of CONTROLS) {
-      expect(control(label), label).toBeDisabled();
+      expect(refused(label), label).toBe(true);
     }
   });
 
@@ -2023,13 +2027,13 @@ describe("a viewport that is admitted and has nothing to do", () => {
     expect(plot()).toHaveAttribute("tabindex", "-1");
     expect(plot()).toHaveAttribute(
       "aria-describedby",
-      "spectrum-viewport-range spectrum-viewport-status",
+      "spectrum-viewport-range spectrum-viewport-status plot-range-mz-gestures",
     );
     expect(plot()).toHaveAttribute("role", "img");
     // And no fake enabled control was invented to give the keyboard something
     // to land on: the buttons are still honestly disabled.
     for (const label of CONTROLS) {
-      expect(control(label), label).toBeDisabled();
+      expect(refused(label), label).toBe(true);
     }
   });
 
@@ -2192,7 +2196,7 @@ describe("what the panel says is on screen", () => {
 
     expect(plot()).toHaveAttribute(
       "aria-describedby",
-      "spectrum-viewport-range spectrum-viewport-status",
+      "spectrum-viewport-range spectrum-viewport-status plot-range-mz-gestures",
     );
     expect(plot()).toHaveAttribute("tabindex", "0");
   });

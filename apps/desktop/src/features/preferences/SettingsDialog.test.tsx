@@ -62,9 +62,8 @@ async function loadedApp(api = createFakePreviewApi({ availability: availableBac
   await waitFor(() => expect(add).toBeEnabled());
   fireEvent.click(add);
   const grid = await screen.findByRole("grid", { name: "Spectra" });
-  fireEvent.click(within(grid).getByText("controllerType=0 controllerNumber=1 scan=1"));
+  fireEvent.click(grid.querySelector('[data-source-index="0"]')!);
   await screen.findByText(/Spectrum 0, MS2, 12 points\./);
-  fireEvent.click(document.getElementById("chromatogram-export-toggle")!);
   return api;
 }
 
@@ -272,48 +271,6 @@ describe("session Settings in the real application composition", () => {
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
-  it("keeps both figure instances, raw drafts, caret and error targets across a locale preview", async () => {
-    const api = await loadedApp();
-    const widths = [...document.querySelectorAll<HTMLInputElement>('input[id$="-widthPx"]')];
-    const heights = [...document.querySelectorAll<HTMLInputElement>('input[id$="-heightPx"]')];
-    expect(widths).toHaveLength(2);
-    const field = widths[0];
-    field.focus();
-    fireEvent.change(field, { target: { value: "1e" } });
-    field.setSelectionRange(1, 1);
-    fireEvent.compositionStart(field);
-    fireEvent.keyDown(field, { key: "Enter", isComposing: true });
-    fireEvent.keyDown(field, { key: "Escape", isComposing: true });
-    fireEvent.compositionEnd(field);
-    const calls = [...api.calls()];
-    const dialog = openSettings();
-    choose(dialog, en.simplifiedChinese);
-    expect([...document.querySelectorAll('input[id$="-widthPx"]')]).toEqual(widths);
-    expect(field.selectionStart).toBe(1);
-    expect(field.selectionEnd).toBe(1);
-    for (const input of widths) {
-      expect(input).toHaveValue("1e");
-      expect(input).toHaveAttribute("aria-invalid", "true");
-      expect(input).toHaveAccessibleName(`${zh.width} ${zh.pixels}`);
-      const error = document.getElementById(input.getAttribute("aria-describedby")!);
-      expect(error).toHaveTextContent(zh.invalidWidth);
-      expect(error).toHaveAttribute("data-problem-code", "FIGURE_WHOLE_COUNT");
-    }
-    for (const input of heights) {
-      expect(input).not.toHaveAttribute("aria-invalid");
-      expect(input).not.toHaveAttribute("aria-describedby");
-    }
-    const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
-    expect(new Set(ids).size).toBe(ids.length);
-    const themes = [...document.querySelectorAll<HTMLInputElement>('.spectrum-figure-settings input[type="radio"]')];
-    expect(new Set(themes.map((radio) => radio.name)).size).toBe(2);
-    press(dialog, zh.cancel);
-    expect(field).toHaveValue("1e");
-    expect(field).toHaveAccessibleName(`${en.width} ${en.pixels}`);
-    expect(api.calls()).toEqual(calls);
-    expect(api.spectrumExportRequests).toHaveLength(0);
-  });
-
   it("accepts a pending spectrum normally while Settings is open and rejects a late abandoned locale", async () => {
     const result = deferred<SelectedSpectrumOutcome>();
     const runtime = createUiRuntime();
@@ -323,7 +280,7 @@ describe("session Settings in the real application composition", () => {
     await waitFor(() => expect(add).toBeEnabled());
     fireEvent.click(add);
     const grid = await screen.findByRole("grid", { name: "Spectra" });
-    fireEvent.click(within(grid).getByText("controllerType=0 controllerNumber=1 scan=1"));
+    fireEvent.click(grid.querySelector('[data-source-index="0"]')!);
     expect(api.requestedSpectra).toEqual([0]);
     const calls = [...api.calls()];
     const dialog = openSettings();
@@ -344,31 +301,29 @@ describe("session Settings in the real application composition", () => {
   });
 
   it("keeps PNG-only invalidity narrow and exports unchanged canonical dimensions after applying a locale", async () => {
+    vi.stubGlobal("URL", class extends URL { static createObjectURL = () => "blob:mock-figure"; static revokeObjectURL = vi.fn(); });
     const api = await loadedApp();
-    const width = document.querySelector<HTMLInputElement>('input[id$="-widthPx"]')!;
-    const height = document.querySelector<HTMLInputElement>('input[id$="-heightPx"]')!;
-    const dpi = document.querySelector<HTMLInputElement>('input[id$="-pngDpi"]')!;
-    fireEvent.change(width, { target: { value: "00640" } });
-    fireEvent.change(height, { target: { value: "480" } });
-    fireEvent.change(dpi, { target: { value: "1e" } });
-    const figure = width.closest("fieldset")!;
+    const spectrum = document.querySelector<HTMLElement>("section.spectrum-panel")!;
+    // The settings are the figure dialog's; the plot head repeats them.
+    fireEvent.click(within(spectrum).getByRole("button", { name: en.figureExportTitle }));
+    const figure = screen.getByRole("dialog");
+    fireEvent.change(figure.querySelector<HTMLInputElement>('input[id$="-widthPx"]')!, { target: { value: "00640" } });
+    fireEvent.change(figure.querySelector<HTMLInputElement>('input[id$="-heightPx"]')!, { target: { value: "480" } });
+    fireEvent.change(figure.querySelector<HTMLInputElement>('input[id$="-pngDpi"]')!, { target: { value: "1e" } });
     fireEvent.click(within(figure).getByRole("radio", { name: en.dark }));
+    fireEvent.click(within(figure).getByRole("button", { name: en.figureExportReturn }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     await applyAndClose(dialog, zh.apply);
-    expect(dpi).toHaveAccessibleDescription(zh.invalidDpi);
-    expect(width).not.toHaveAttribute("aria-invalid");
-    const spectrum = document.getElementById("spectrum-widthPx")?.closest("section") ?? width.closest("section")!;
-    fireEvent.click(within(spectrum).getByText("导出质谱"));
-    const svg = within(spectrum).getByRole("button", { name: "导出 SVG…" });
-    expect(svg).toBeEnabled();
-    expect(within(spectrum).getByRole("button", { name: "导出 PNG…" })).toBeDisabled();
-    expect(within(spectrum).getByRole("button", { name: "复制图像" })).toBeEnabled();
-    fireEvent.click(svg);
-    await waitFor(() => expect(api.spectrumExportRequests.length + api.chromatogramExportRequests.length).toBe(1));
-    const request = api.spectrumExportRequests[0] ?? api.chromatogramExportRequests[0];
-    expect(request.settings).toEqual({ widthPx: 640, heightPx: 480, pngDpi: 300, theme: "dark" });
-    expect(width).toHaveValue("00640");
-    expect(dpi).toHaveValue("1e");
+    const png = within(spectrum).getByRole("button", { name: zh.figureQuickPng });
+    expect(png).toHaveAttribute("aria-disabled", "true");
+    expect(png).toHaveAccessibleDescription(zh.invalidDpi);
+    expect(within(spectrum).getByRole("button", { name: zh.viewerCopy })).not.toHaveAttribute("aria-disabled");
+    fireEvent.keyDown(within(spectrum).getByRole("button", { name: zh.plotMoreExports }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "导出 CSV…" }));
+    await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(1));
+    expect(api.spectrumExportRequests[0]?.settings).toEqual({ widthPx: 640, heightPx: 480, pngDpi: 300, theme: "dark" });
+    vi.unstubAllGlobals();
   });
 });

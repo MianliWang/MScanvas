@@ -2,94 +2,33 @@ import { UI_RESOURCES } from "../preferences/i18n";
 import { validateFigureDraft } from "./figureSettingsValidation";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 /**
- * The selected spectrum's one export affordance.
+ * The selected spectrum's export actions, in its plot head.
  *
  * Every state this panel can be in decides whether an export is offered at all,
  * and the loaded state decides what a user is told about one that ran. Both are
  * asserted here rather than left to the hook, because the whole point of this
- * surface is that a person can reach it: an action that exists but is refused,
- * or a result that outlives the spectrum it describes, are failures a passing
- * hook test would not see.
+ * surface is that a person can reach it: an action that exists but is refused
+ * without a reason, or a result that outlives the spectrum it describes, are
+ * failures a passing hook test would not see. Range, size and theme are the
+ * figure dialog's, and are tested there.
  */
 
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import type {
-  ExportedSpectrumRange,
-  SelectedSpectrum,
-  SpectrumRangeScope,
-} from "./contracts";
+import type { ExportedSpectrumRange, SelectedSpectrum } from "./contracts";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
-import type { MzDomain } from "./viewer/spectrumViewport";
-import { initialSpectrumViewportState, mzDomain } from "./viewer/spectrumViewport";
-import type {
-  FigureSettingsDraft,
-  SpectrumExportState,
-  SpectrumState,
-} from "./usePreviewWorkspace";
+import { initialSpectrumViewportState } from "./viewer/spectrumViewport";
+import type { FigureSettingsDraft, SpectrumExportState, SpectrumState } from "./usePreviewWorkspace";
 import { buildSpectrum } from "../../test/previewFixtures";
 
-/** The fields a panel starts with, which is what most of these tests want. */
-const DEFAULT_DRAFT: FigureSettingsDraft = {
-  widthPx: "1200",
-  heightPx: "640",
-  pngDpi: "300",
-  theme: "light",
-};
+const en = UI_RESOURCES.en;
 
-function renderPanel(
-  state: SpectrumState,
-  exportState: SpectrumExportState = { status: "idle" },
-  draft: FigureSettingsDraft = DEFAULT_DRAFT,
-  renderProblem: string | null = null,
-  dpiProblem: string | null = null,
-  // What the composition passes: the lane is busy while *either* surface owns
-  // it, and this panel's own running state is one of the two ways it can be.
-  // Defaulted from that so every case written before the lane was shared keeps
-  // saying exactly what it said.
-  scientificExportBusy: boolean = exportState.status === "running",
-): {
-  readonly onExport: ReturnType<typeof vi.fn>;
-  readonly onDismiss: ReturnType<typeof vi.fn>;
-  readonly onCopyPlot: ReturnType<typeof vi.fn>;
-  readonly onFigureSetting: ReturnType<typeof vi.fn>;
-  readonly onFigureTheme: ReturnType<typeof vi.fn>;
-} {
-  const onExport = vi.fn();
-  const onDismiss = vi.fn();
-  const onCopyPlot = vi.fn();
-  const onFigureSetting = vi.fn();
-  const onFigureTheme = vi.fn();
-  render(
-    <SelectedSpectrumPanel
-      {...NO_VIEWPORT}
-      exportState={exportState}
-      figureSettings={draft}
-      figureSettingsValidation={validateFigureDraft(draft)}
-      onCopyPlot={onCopyPlot}
-      onDismissExport={onDismiss}
-      onExport={onExport}
-      onFigureSetting={onFigureSetting}
-      onFigureTheme={onFigureTheme}
-      onRetry={() => undefined}
-      pngDpiProblem={dpiProblem}
-      renderSettingsProblem={renderProblem}
-      scientificExportBusy={scientificExportBusy}
-      state={state}
-    />,
-  );
-  if (state.status === "loaded") fireEvent.click(screen.getByText("Export spectrum"));
-  return { onExport, onDismiss, onCopyPlot, onFigureSetting, onFigureTheme };
-}
+const DEFAULT_DRAFT: FigureSettingsDraft = { widthPx: "1200", heightPx: "640", pngDpi: "300", theme: "light" };
 
 /**
- * The m/z viewport props, held at the state that has no viewport.
- *
- * This suite is about what a spectrum exports, and an export reads the retained
- * source through a token rather than anything a viewport knows. Keeping the
- * viewport at `none` here is therefore not a convenience: it is the assertion
- * that every export result below is reached without one.
+ * The m/z viewport props, held at the state that has no viewport: every export
+ * result below is reached without one, through the token Rust retained.
  */
 const NO_VIEWPORT = {
   onOpenFigure: () => undefined,
@@ -98,385 +37,147 @@ const NO_VIEWPORT = {
   readViewport: () => initialSpectrumViewportState,
   projectionError: null,
   onRetryProjection: () => undefined,
-  // And therefore no range to choose. Every export result below is a
-  // full-source one, reached by a spectrum that has no current range at all --
-  // which is the state M5.3 must leave exactly as it found it.
-  rangeScope: "full",
-  onRangeScope: () => undefined,
-  rangeAvailability: "noViewport",
-  committedDomain: null,
 } as const;
+
+function renderPanel(
+  state: SpectrumState,
+  exportState: SpectrumExportState = { status: "idle" },
+  draft: FigureSettingsDraft = DEFAULT_DRAFT,
+  // The lane is busy while *either* surface owns it; this panel's own running
+  // state is one of the two ways it can be.
+  scientificExportBusy: boolean = exportState.status === "running",
+) {
+  const onExport = vi.fn();
+  const onDismiss = vi.fn();
+  const onCopyPlot = vi.fn();
+  const onOpenFigure = vi.fn();
+  const view = render(
+    <SelectedSpectrumPanel
+      {...NO_VIEWPORT}
+      exportState={exportState}
+      figureSettingsValidation={validateFigureDraft(draft)}
+      onCopyPlot={onCopyPlot}
+      onDismissExport={onDismiss}
+      onExport={onExport}
+      onOpenFigure={onOpenFigure}
+      onRetry={() => undefined}
+      scientificExportBusy={scientificExportBusy}
+      state={state}
+    />,
+  );
+  return { ...view, onExport, onDismiss, onCopyPlot, onOpenFigure };
+}
 
 function loaded(overrides: Partial<SelectedSpectrum> = {}): SpectrumState {
   return { status: "loaded", spectrum: { ...buildSpectrum(3, 4), ...overrides } };
 }
 
-function exportButtons(): readonly HTMLElement[] {
-  return ["SVG", "CSV", "TSV"].map((format) =>
-    screen.getByRole("button", { name: `Export ${format}…` }),
-  );
+function button(name: string): HTMLElement {
+  return screen.getByRole("button", { name });
 }
 
-describe("selected spectrum export affordance", () => {
+/** Opens the ⋯ menu and returns its data items. */
+async function dataItems(): Promise<readonly HTMLElement[]> {
+  fireEvent.keyDown(button(en.plotMoreExports), { key: "Enter" });
+  return Promise.all(["CSV", "TSV"].map(format => screen.findByRole("menuitem", { name: `Export ${format}…` })));
+}
+
+describe("selected spectrum export actions", () => {
   it("offers nothing before a spectrum has loaded", () => {
-    // Four states, and none of them has a measurement to write. An export
-    // control here would be an action that is present and refuses, which is
-    // worse than one that is not there.
+    // None of these states has a measurement to write. An export control here
+    // would be an action that is present and refuses, which is worse than one
+    // that is not there.
     for (const state of [
       { status: "none" } as const,
       { status: "loading", index: 3 } as const,
       { status: "unavailable", requestedIndex: 3 } as const,
-      {
-        status: "failed",
-        index: 3,
-        error: { kind: "spectrum_failed", summary: "No.", detail: null, retryable: true },
-      } as const,
+      { status: "failed", index: 3, error: { kind: "spectrum_failed", summary: "No.", detail: null, retryable: true } } as const,
     ]) {
-      const { unmount } = render(
-        <SelectedSpectrumPanel
-          {...NO_VIEWPORT}
-          exportState={{ status: "idle" }}
-          figureSettings={DEFAULT_DRAFT}
-          figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
-          onCopyPlot={() => undefined}
-          onDismissExport={() => undefined}
-          onExport={() => undefined}
-          onFigureSetting={() => undefined}
-          onFigureTheme={() => undefined}
-          onRetry={() => undefined}
-          pngDpiProblem={null}
-          renderSettingsProblem={null}
-          scientificExportBusy={false}
-          state={state}
-        />,
-      );
-      expect(screen.queryByRole("button", { name: /^Export /u })).toBeNull();
+      const { unmount } = renderPanel(state);
+      expect(screen.queryByRole("button", { name: en.figureExportTitle })).toBeNull();
+      expect(screen.queryByRole("button", { name: en.plotMoreExports })).toBeNull();
       unmount();
     }
   });
 
-  it("offers all three formats for a loaded spectrum, each named in its label", () => {
-    renderPanel(loaded());
+  it("offers the figure, PNG, Copy and both data formats for a loaded spectrum", async () => {
+    const { onExport, onCopyPlot, onOpenFigure } = renderPanel(loaded());
 
-    // The accessible name carries the format, so a screen-reader user choosing
-    // between three buttons is choosing between three documents rather than
-    // three identically named actions.
-    for (const button of exportButtons()) {
-      expect(button).toBeEnabled();
-    }
+    fireEvent.click(button(en.figureExportTitle));
+    fireEvent.click(button(en.figureQuickPng));
+    fireEvent.click(button(en.viewerCopy));
+    for (const item of await dataItems()) expect(item).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Export CSV…" }));
+
+    expect(onOpenFigure).toHaveBeenCalledOnce();
+    expect(onCopyPlot).toHaveBeenCalledOnce();
+    expect(onExport.mock.calls).toEqual([["png"], ["csv"]]);
   });
 
-  it("offers them for a spectrum that loaded with no peaks", () => {
+  it("offers them for a spectrum that loaded with no peaks, with no range controls", async () => {
     // An empty spectrum is a real scientific answer, and an honest empty figure
-    // is a real export of it. Refusing here would make "this sample had no
-    // peaks" the one result a user cannot take away with them.
+    // is a real export of it.
     renderPanel(loaded({ pointCount: 0, mz: [], intensity: [] }));
 
-    for (const button of exportButtons()) {
-      expect(button).toBeEnabled();
-    }
+    expect(button(en.figureQuickPng)).not.toHaveAttribute("aria-disabled");
+    for (const item of await dataItems()) expect(item).not.toHaveAttribute("aria-disabled");
+    expect(screen.queryByRole("button", { name: en.viewerMzZoomIn })).toBeNull();
     expect(screen.getByText("This spectrum has no peaks")).toBeVisible();
   });
 
-  it("asks for the format that was pressed", () => {
-    const { onExport } = renderPanel(loaded());
-
-    fireEvent.click(screen.getByRole("button", { name: "Export CSV…" }));
-
-    expect(onExport.mock.calls).toEqual([["csv"]]);
-  });
-
-  it("reaches every format from the keyboard", () => {
-    const { onExport } = renderPanel(loaded());
-
-    // Ordinary buttons: focusable in document order, activated by key with no
-    // pointer involved, and each one keeps a visible focus ring from the
-    // shared button styles rather than removing outlines of its own.
-    const [svg, csv, tsv] = exportButtons();
-    for (const button of [svg, csv, tsv]) {
-      button?.focus();
-      expect(button).toHaveFocus();
-      expect(button?.tagName).toBe("BUTTON");
-      // `fireEvent.click` is what a keyboard activation dispatches on a button;
-      // there is no pointer-only path into any of these.
-      fireEvent.click(button as HTMLElement);
-    }
-
-    expect(onExport.mock.calls).toEqual([["svg"], ["csv"], ["tsv"]]);
-  });
-
-  it("closes every action while one export is running and says which", () => {
+  it("refuses every action while one export is running, and says why and which", async () => {
     renderPanel(loaded(), { status: "running", operation: "svg", namesVisibleRun: true });
 
-    // Rust holds one export slot and refuses a second, so leaving the others
-    // live would offer an action already known to fail.
-    for (const format of ["CSV", "TSV"]) {
-      expect(screen.getByRole("button", { name: `Export ${format}…` })).toBeDisabled();
+    // Rust holds one export slot and refuses a second, so the others are
+    // refused -- still focusable, pointing at the visible reason.
+    for (const name of [en.figureQuickPng, en.viewerCopy]) {
+      expect(button(name)).toHaveAttribute("aria-disabled", "true");
+      expect(button(name)).toHaveAccessibleDescription(en.plotExportBusy);
     }
-    const running = screen.getByRole("button", { name: "Exporting SVG…" });
-    expect(running).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Choose where to save the SVG file.",
-    );
+    expect(screen.getByText(en.plotExportBusy)).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("Choose where to save the SVG file.");
+    for (const item of await dataItems()) expect(item).toHaveAttribute("aria-disabled", "true");
   });
 
-  it.each(["csv", "tsv"] as const)("keeps the running %s data action focusable while refusing another activation", (operation) => {
-    const { onExport } = renderPanel(loaded(), { status: "running", operation, namesVisibleRun: true });
-    const running = screen.getByRole("button", { name: `Exporting ${operation.toUpperCase()}…` });
-    running.focus();
-    expect(running).toHaveFocus();
-    expect(running).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(running);
-    expect(onExport).not.toHaveBeenCalled();
-    for (const format of ["svg", "png", "csv", "tsv"].filter(format => format !== operation)) {
-      expect(screen.getByRole("button", { name: `Export ${format.toUpperCase()}…` })).toBeDisabled();
-    }
+  it("names the running PNG on its own initiator", () => {
+    renderPanel(loaded(), { status: "running", operation: "png", namesVisibleRun: true });
+    expect(screen.getByRole("status")).toHaveTextContent("Choose where to save the PNG file.");
+    expect(button(en.figureQuickPng)).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("closes every action for an export that outlived the spectrum it names", () => {
-    /*
-     * An export begun on one spectrum and still being written when the user
-     * opens another. Rust is holding the one scientific lane until it settles,
-     * so every action stays closed -- but the spectrum on screen is not the one
-     * being written, and no label here may say that it is.
-     *
-     * The two facts are separate on purpose. Availability is about the lane and
-     * survives the replacement; the running label is about identity and does
-     * not.
-     */
-    renderPanel(
-      loaded(),
-      { status: "running", operation: "svg", namesVisibleRun: false },
-      DEFAULT_DRAFT,
-      null,
-      null,
-      // The composition still reports the lane busy, because Rust still holds it.
-      true,
-    );
+  it("refuses PNG alone when the resolution is the unusable field, and says so", () => {
+    renderPanel(loaded(), { status: "idle" }, { ...DEFAULT_DRAFT, pngDpi: "0" });
 
-    for (const format of ["SVG", "PNG", "CSV", "TSV"]) {
-      expect(screen.getByRole("button", { name: `Export ${format}…` })).toBeDisabled();
-    }
-    expect(screen.getByRole("button", { name: "Copy plot" })).toBeDisabled();
-    // Plain labels: nothing claims this spectrum is the one being exported.
-    expect(screen.queryByRole("button", { name: "Exporting SVG…" })).toBeNull();
+    expect(button(en.figureQuickPng)).toHaveAttribute("aria-disabled", "true");
+    expect(button(en.figureQuickPng)).toHaveAccessibleDescription(en.invalidDpi);
+    expect(button(en.viewerCopy)).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByText(en.invalidDpi)).toBeVisible();
+  });
+
+  it("refuses PNG and Copy when the size is the unusable field, and leaves the dialog open to fix it", () => {
+    renderPanel(loaded(), { status: "idle" }, { ...DEFAULT_DRAFT, widthPx: "" });
+
+    expect(button(en.figureQuickPng)).toHaveAttribute("aria-disabled", "true");
+    expect(button(en.viewerCopy)).toHaveAttribute("aria-disabled", "true");
+    expect(button(en.figureExportTitle)).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByText(en.invalidWidth)).toBeVisible();
   });
 
   it("reports a saved export by name and point count, and never a path", () => {
     renderPanel(loaded(), {
-      status: "saved",
-      format: "csv",
-      fileName: "mscanvas-spectrum-3.csv",
-      figure: null,
-      rangeScope: "full",
-      rangeLow: null,
-      rangeHigh: null,
-      sourcePointCount: 1_000_000,
-      exportedPointCount: 1_000_000,
+      status: "saved", format: "csv", fileName: "mscanvas-spectrum-3.csv", figure: null,
+      rangeScope: "full", rangeLow: null, rangeHigh: null, sourcePointCount: 1_000_000, exportedPointCount: 1_000_000,
     });
 
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent("Saved mscanvas-spectrum-3.csv with 1,000,000 points.");
-    // The count is the complete spectrum's, not the drawing's, and the folder
-    // it went into is not this side's to know.
     expect(status.textContent).not.toMatch(/[/\\]/u);
   });
 
-  it("treats a dismissed dialog as an outcome rather than a failure", () => {
-    renderPanel(loaded(), { status: "cancelled" });
-
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Export cancelled. Nothing was saved.",
-    );
-    // Still offered, and the spectrum is exactly as it was.
-    for (const button of exportButtons()) {
-      expect(button).toBeEnabled();
-    }
-    expect(screen.getByText(/^Spectrum 3, MS/u)).toBeVisible();
-  });
-
-  it("localizes a known typed refusal while retaining recovery", () => {
+  it("reports what a figure was rendered as", () => {
     renderPanel(loaded(), {
-      status: "failed",
-      operation: "tsv",
-      error: {
-        kind: "spectrum_destination_exists",
-        summary: "A file of that name is already in that folder.",
-        detail: null,
-        retryable: true,
-      },
-    });
-
-    expect(screen.getByRole("status")).toHaveTextContent(
-      UI_RESOURCES.en.m74ErrorExists,
-    );
-    // Recoverable: the actions stay live, because choosing another name is the
-    // whole of the recovery.
-    for (const button of exportButtons()) {
-      expect(button).toBeEnabled();
-    }
-  });
-
-  it("says what a refusal left behind, not only that it refused", () => {
-    // The detail is where a refusal puts the part the user has to act on. A
-    // failed export that could not remove its own temporary file has left one
-    // in the folder the user chose, and only the detail says so -- rendering
-    // the summary alone would tell them the save did not happen and leave the
-    // evidence that it half-did sitting there unexplained.
-    renderPanel(loaded(), {
-      status: "failed",
-      operation: "csv",
-      error: {
-        kind: "spectrum_destination_exists",
-        summary: "A file of that name is already in that folder.",
-        detail:
-          'MSCanvas also left a temporary file whose name begins with ".mscanvas-export-" ' +
-          "in that folder and could not remove it.",
-        retryable: true,
-      },
-    });
-
-    const status = screen.getByRole("status");
-    expect(status).toHaveTextContent(UI_RESOURCES.en.m74ErrorExists);
-    expect(status).toHaveTextContent(".mscanvas-export-");
-  });
-
-  it("lets a result be dismissed without touching the spectrum", () => {
-    const { onDismiss } = renderPanel(loaded(), { status: "cancelled" });
-
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss export message" }));
-
-    expect(onDismiss).toHaveBeenCalledOnce();
-    expect(screen.getByText(/^Spectrum 3, MS/u)).toBeVisible();
-  });
-
-  it("offers no dismissal while nothing has happened", () => {
-    renderPanel(loaded());
-
-    expect(screen.queryByRole("button", { name: "Dismiss export message" })).toBeNull();
-    expect(screen.getByRole("status")).toHaveTextContent("");
-  });
-
-  it("offers the figure controls and the data actions as separate groups", () => {
-    renderPanel(loaded());
-
-    // The figure settings decide what a figure looks like and reach nothing in
-    // a data document. Grouping says so before any label has to.
-    for (const label of ["Width", "Height", "PNG DPI"]) {
-      expect(screen.getByRole("textbox", { name: new RegExp(`^${label}`, "u") })).toBeVisible();
-    }
-    for (const theme of ["Light", "Dark"]) {
-      expect(screen.getByRole("radio", { name: theme })).toBeVisible();
-    }
-    for (const name of ["Export SVG…", "Export PNG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
-      expect(screen.getByRole("button", { name })).toBeEnabled();
-    }
-    // Light is where a figure starts, because a reader publishing on paper is
-    // the case a default should serve.
-    expect(screen.getByRole("radio", { name: "Light" })).toBeChecked();
-  });
-
-  it("starts at the figure M4.1 shipped", () => {
-    renderPanel(loaded());
-
-    expect(screen.getByRole("textbox", { name: /^Width/u })).toHaveValue("1200");
-    expect(screen.getByRole("textbox", { name: /^Height/u })).toHaveValue("640");
-    expect(screen.getByRole("textbox", { name: /^PNG DPI/u })).toHaveValue("300");
-  });
-
-  it("says DPI is one format's metadata rather than a count of pixels", () => {
-    // Two things a user could be misled about by the control rather than by
-    // the file: that DPI alone adds pixels, and that it reaches every figure.
-    renderPanel(loaded());
-
-    expect(screen.getByText("PNG metadata only")).toBeVisible();
-  });
-
-  it("reports every field a figure could not be built from", () => {
-    renderPanel(
-      loaded(),
-      { status: "idle" },
-      { widthPx: "0", heightPx: "", pngDpi: "12.5", theme: "light" },
-      "Width and Height must be whole numbers of at least 1.",
-      "PNG DPI must be a whole number of at least 1.",
-    );
-
-    // The figure actions are closed, because there is no figure to draw.
-    for (const name of ["Export SVG…", "Export PNG…", "Copy plot"]) {
-      expect(screen.getByRole("button", { name })).toBeDisabled();
-    }
-    // The data actions are not: a width nobody could draw at says nothing
-    // about a list of numbers.
-    for (const name of ["Export CSV…", "Export TSV…"]) {
-      expect(screen.getByRole("button", { name })).toBeEnabled();
-    }
-    // And the reason is attached to the fields rather than only shown near
-    // them, so it is read out when focus arrives -- each field carrying its
-    // own, rather than one sentence about every field there is.
-    const width = screen.getByRole("textbox", { name: /^Width/u });
-    expect(width).toHaveAttribute("aria-invalid", "true");
-    expect(width).toHaveAccessibleDescription(
-      "Width and Height must be whole numbers of at least 1.",
-    );
-    const dpi = screen.getByRole("textbox", { name: /^PNG DPI/u });
-    expect(dpi).toHaveAttribute("aria-invalid", "true");
-    expect(dpi).toHaveAccessibleDescription("PNG DPI must be a whole number of at least 1.");
-  });
-
-  it("closes only the PNG export when the resolution is the unusable field", () => {
-    // The Round-2 finding, as an affordance. DPI is written into one format's
-    // metadata and read by nothing else: an SVG has no pixels to give a
-    // physical size to, and a clipboard image is RGBA with nowhere for a
-    // `pHYs` chunk. Closing those two over this number would take away two
-    // working operations for a reason that could not have affected either.
-    renderPanel(
-      loaded(),
-      { status: "idle" },
-      { widthPx: "1200", heightPx: "640", pngDpi: "50", theme: "light" },
-      null,
-      "PNG DPI must be a whole number of at least 1.",
-    );
-
-    expect(screen.getByRole("button", { name: "Export PNG…" })).toBeDisabled();
-    for (const name of ["Export SVG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
-      expect(screen.getByRole("button", { name })).toBeEnabled();
-    }
-    // And the width is not marked wrong, because nothing is wrong with it.
-    const width = screen.getByRole("textbox", { name: /^Width/u });
-    expect(width).not.toHaveAttribute("aria-invalid");
-    expect(width).toHaveAccessibleDescription("");
-  });
-
-  it("closes every figure action when the size is the unusable field", () => {
-    // The other half of the same split: a width nothing can be drawn at stops
-    // all three, because all three are drawings.
-    renderPanel(
-      loaded(),
-      { status: "idle" },
-      { widthPx: "", heightPx: "640", pngDpi: "300", theme: "light" },
-      "Width must be a whole number of at least 1.",
-      null,
-    );
-
-    for (const name of ["Export SVG…", "Export PNG…", "Copy plot"]) {
-      expect(screen.getByRole("button", { name })).toBeDisabled();
-    }
-    const dpi = screen.getByRole("textbox", { name: /^PNG DPI/u });
-    expect(dpi).not.toHaveAttribute("aria-invalid");
-    expect(dpi).toHaveAccessibleDescription("");
-  });
-
-  it("reports what a figure was rendered as, and a data document that it was not one", () => {
-    renderPanel(loaded(), {
-      status: "saved",
-      format: "png",
-      fileName: "mscanvas-spectrum-3.png",
-      figure: { width: 1_200, height: 640, dpi: 300, theme: "light" },
-      rangeScope: "full",
-      rangeLow: null,
-      rangeHigh: null,
-      sourcePointCount: 1_000_000,
-      exportedPointCount: 1_000_000,
+      status: "saved", format: "png", fileName: "mscanvas-spectrum-3.png", figure: { width: 1_200, height: 640, dpi: 300, theme: "light" },
+      rangeScope: "full", rangeLow: null, rangeHigh: null, sourcePointCount: 1_000_000, exportedPointCount: 1_000_000,
     });
 
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -484,315 +185,71 @@ describe("selected spectrum export affordance", () => {
     );
   });
 
-  it("says an SVG has no physical resolution to report", () => {
-    renderPanel(loaded(), {
-      status: "saved",
-      format: "svg",
-      fileName: "mscanvas-spectrum-3.svg",
-      figure: { width: 800, height: 600, dpi: null, theme: "dark" },
-      rangeScope: "full",
-      rangeLow: null,
-      rangeHigh: null,
-      sourcePointCount: 12,
-      exportedPointCount: 12,
-    });
-
-    const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("800 by 600 pixels, Dark theme");
-    expect(status).not.toHaveTextContent("DPI");
-  });
-
   it("reports a copied plot without naming a file or a resolution", () => {
     renderPanel(loaded(), {
-      status: "copied",
-      figure: { width: 1_200, height: 640, theme: "dark" },
-      rangeScope: "full",
-      rangeLow: null,
-      rangeHigh: null,
-      sourcePointCount: 8,
-      exportedPointCount: 8,
+      status: "copied", figure: { width: 1_200, height: 640, theme: "dark" },
+      rangeScope: "full", rangeLow: null, rangeHigh: null, sourcePointCount: 8, exportedPointCount: 8,
     });
 
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent("Copied the plot with 8 points, 1,200 by 640 pixels");
-    // No file was written, so there is nothing to name and nothing to find.
     expect(status).not.toHaveTextContent("Saved");
-    expect(status).not.toHaveTextContent(".png");
-    // And no DPI. A clipboard image is RGBA and a size, with nowhere for a
-    // `pHYs` chunk, so naming one would describe a property it does not have.
     expect(status).not.toHaveTextContent("DPI");
-    // A result is still a result: it can be dismissed like any other.
-    expect(screen.getByRole("button", { name: "Dismiss export message" })).toBeVisible();
+    expect(button("Dismiss export message")).toBeVisible();
   });
 
-  it("closes every figure and data action while a copy is running", () => {
-    renderPanel(loaded(), { status: "running", operation: "copy", namesVisibleRun: true });
+  it("treats a dismissed dialog as an outcome rather than a failure", () => {
+    renderPanel(loaded(), { status: "cancelled" });
 
-    for (const name of ["Export SVG…", "Export PNG…", "Export CSV…", "Export TSV…"]) {
-      expect(screen.getByRole("button", { name })).toBeDisabled();
-    }
-    const running = screen.getByRole("button", { name: "Copying plot…" });
-    expect(running).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("Copying plot…");
+    expect(screen.getByRole("status")).toHaveTextContent("Export cancelled. Nothing was saved.");
+    expect(button(en.figureQuickPng)).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByText(/^Spectrum 3, MS/u)).toBeVisible();
   });
 
-  it("closes every action while a PNG is being written and says which", () => {
-    renderPanel(loaded(), { status: "running", operation: "png", namesVisibleRun: true });
-
-    for (const name of ["Export SVG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
-      expect(screen.getByRole("button", { name })).toBeDisabled();
-    }
-    expect(screen.getByRole("button", { name: "Exporting PNG…" })).toBeDisabled();
-  });
-
-  it("reports a copy that the clipboard refused", () => {
+  it("localizes a known typed refusal, says what it left behind and keeps recovery", () => {
     renderPanel(loaded(), {
-      status: "failed",
-      operation: "copy",
+      status: "failed", operation: "csv",
       error: {
-        kind: "figure_clipboard_unavailable",
-        summary: "MSCanvas could not put the plot on the clipboard. Nothing was copied.",
-        detail: null,
+        kind: "spectrum_destination_exists",
+        summary: "A file of that name is already in that folder.",
+        detail: 'MSCanvas also left a temporary file whose name begins with ".mscanvas-export-" in that folder and could not remove it.',
         retryable: true,
       },
     });
 
-    expect(screen.getByRole("status")).toHaveTextContent("Nothing was copied.");
-    // Retryable: the actions stay live, because trying again is the recovery.
-    expect(screen.getByRole("button", { name: "Copy plot" })).toBeEnabled();
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(en.m74ErrorExists);
+    expect(status).toHaveTextContent(".mscanvas-export-");
+    expect(button(en.viewerCopy)).not.toHaveAttribute("aria-disabled");
   });
 
-  it("hands each control back to the caller rather than deciding anything itself", () => {
-    const { onCopyPlot, onFigureSetting, onFigureTheme } = renderPanel(loaded());
+  it("lets a result be dismissed without touching the spectrum, and offers no dismissal at rest", () => {
+    const { onDismiss, unmount } = renderPanel(loaded(), { status: "cancelled" });
+    fireEvent.click(button("Dismiss export message"));
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(screen.getByText(/^Spectrum 3, MS/u)).toBeVisible();
+    unmount();
 
-    fireEvent.change(screen.getByRole("textbox", { name: /^Width/u }), {
-      target: { value: "800" },
-    });
-    fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
-    fireEvent.click(screen.getByRole("button", { name: "Copy plot" }));
-
-    expect(onFigureSetting.mock.calls).toEqual([["widthPx", "800"]]);
-    expect(onFigureTheme.mock.calls).toEqual([["dark"]]);
-    expect(onCopyPlot).toHaveBeenCalledOnce();
-  });
-});
-
-/**
- * The range chooser, and the sentences it and its results are allowed to say.
- *
- * Rendered rather than asserted through the hook, because every claim here is
- * about what a person can see and reach: a choice that exists but has no range
- * to read, a note that says "the current range" while the reader is mid-drag,
- * or a confirmation that stops being true once the viewport moves are all
- * failures a passing hook test would not notice.
- */
-describe("the selected spectrum's range chooser", () => {
-  /** A viewport that has a domain and a committed window. */
-  function withRange(
-    committedDomain: MzDomain | null,
-    rangeScope: SpectrumRangeScope = "full",
-  ): { readonly onRangeScope: ReturnType<typeof vi.fn> } {
-    const onRangeScope = vi.fn();
-    render(
-      <SelectedSpectrumPanel
-        {...NO_VIEWPORT}
-        committedDomain={committedDomain}
-        exportState={{ status: "idle" }}
-        figureSettings={DEFAULT_DRAFT}
-        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
-        onCopyPlot={() => undefined}
-        onDismissExport={() => undefined}
-        onExport={() => undefined}
-        onFigureSetting={() => undefined}
-        onFigureTheme={() => undefined}
-        onRangeScope={onRangeScope}
-        onRetry={() => undefined}
-        pngDpiProblem={null}
-        rangeAvailability="available"
-        rangeScope={rangeScope}
-        renderSettingsProblem={null}
-        scientificExportBusy={false}
-        state={loaded()}
-      />,
-    );
-    fireEvent.click(screen.getByText("Export spectrum"));
-    return { onRangeScope };
-  }
-
-  it("offers both scopes once the spectrum has an m/z viewport", () => {
-    withRange(null);
-
-    const group = screen.getByRole("radiogroup", {
-      name: "Spectrum range to export",
-    });
-    expect(group).toBeInTheDocument();
-    const full = screen.getByRole("radio", { name: "Full spectrum" });
-    const current = screen.getByRole("radio", { name: "Current range" });
-    // Distinguishable, and one of them is the answer. A group in which neither
-    // is chosen would leave a reader unable to tell what a button would write.
-    expect(full).toBeChecked();
-    expect(current).not.toBeChecked();
-  });
-
-  it("says the current range is the whole spectrum until something is committed", () => {
-    withRange(null);
-    // `null` is a real state, not a missing answer, and it is said in words
-    // rather than filled in with the spectrum's own bounds -- which would read
-    // as a choice the user had made.
-    expect(
-      screen.getByText("Current range: full spectrum. Selections being drawn or pending are not exported."),
-    ).toBeInTheDocument();
-  });
-
-  it("names the exact committed bounds, and says a gesture is not exported", () => {
-    withRange(mzDomain(105.25, 130.5));
-
-    const note = screen.getByText(/Current range: m\/z/u);
-    expect(note).toHaveTextContent("Current range: m/z 105.25 to 130.5.");
-    // The half a reader mid-drag needs: what is on screen right now is not what
-    // pressing a button would write.
-    expect(note).toHaveTextContent("Selections being drawn or pending are not exported.");
-  });
-
-  it("reports a choice without taking focus away from it", () => {
-    const { onRangeScope } = withRange(mzDomain(105.0, 130.0));
-
-    const current = screen.getByRole("radio", { name: "Current range" });
-    current.focus();
-    fireEvent.click(current);
-
-    expect(onRangeScope).toHaveBeenCalledWith("current");
-    // The scope is the panel's to own, so the control the reader just used is
-    // still the control they are on. Nothing here reaches for focus on a scope
-    // change -- a chooser that moved it would take a keyboard reader out of the
-    // group they were still deciding in.
-    expect(document.activeElement).toBe(current);
-  });
-
-  it("offers no current range where the spectrum has no viewport, and no inert control", () => {
-    // `NO_VIEWPORT` carries `rangeAvailable: false`, which is the state every
-    // other case in this file is written at.
     renderPanel(loaded());
-
-    expect(screen.queryByRole("radiogroup", { name: /Spectrum range to export/u })).toBeNull();
-    expect(screen.queryByRole("radio", { name: "Current range" })).toBeNull();
-    // Said honestly, and as a fact about drawability rather than about the
-    // source: the data exports beside it are exactly as available as ever.
-    expect(
-      screen.getByText(/No m\/z range: exports cover the full spectrum\./u),
-    ).toBeInTheDocument();
-    for (const button of exportButtons()) {
-      expect(button).toBeEnabled();
-    }
-  });
-
-  it("says a spectrum with no peaks has no range, without calling it a refusal", () => {
-    // Two absences, and only one of them is a verdict. An empty spectrum's
-    // domain *is* admitted -- zero wide -- so no viewport is published for it
-    // and there is nothing to take a range of. Reporting that as the figure
-    // contract having refused the source would state something Rust never said.
-    render(
-      <SelectedSpectrumPanel
-        {...NO_VIEWPORT}
-        committedDomain={null}
-        exportState={{ status: "idle" }}
-        figureSettings={DEFAULT_DRAFT}
-        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
-        onCopyPlot={() => undefined}
-        onDismissExport={() => undefined}
-        onExport={() => undefined}
-        onFigureSetting={() => undefined}
-        onFigureTheme={() => undefined}
-        onRangeScope={() => undefined}
-        onRetry={() => undefined}
-        pngDpiProblem={null}
-        rangeAvailability="noPeaks"
-        rangeScope="full"
-        renderSettingsProblem={null}
-        scientificExportBusy={false}
-        state={loaded({ pointCount: 0, mz: [], intensity: [] })}
-      />,
-    );
-
-    fireEvent.click(screen.getByText("Export spectrum"));
-    expect(screen.getByText(/No peaks: exports cover the full spectrum\./u)).toBeInTheDocument();
-    expect(screen.queryByText(/No m\/z range/u)).toBeNull();
-    expect(screen.queryByRole("radio", { name: "Current range" })).toBeNull();
-    // And its full-source data exports are exactly as available as ever.
-    for (const label of ["Export CSV…", "Export TSV…"]) {
-      expect(screen.getByRole("button", { name: label })).toBeEnabled();
-    }
-  });
-
-  it("calls a refused viewport a refusal, and says which absence it is", () => {
-    renderPanel(loaded());
-
-    expect(
-      screen.getByText(/No m\/z range: exports cover the full spectrum\./u),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/No peaks/u)).toBeNull();
-  });
-
-  it("keeps the choice open while the one export lane is busy", () => {
-    // A scope is a decision about the *next* export rather than a claim on the
-    // lane. Closing it would leave a reader unable to prepare while a file is
-    // being written, for no safety this side owns.
-    render(
-      <SelectedSpectrumPanel
-        {...NO_VIEWPORT}
-        committedDomain={mzDomain(105.0, 130.0)}
-        exportState={{ status: "running", operation: "csv", namesVisibleRun: true }}
-        figureSettings={DEFAULT_DRAFT}
-        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
-        onCopyPlot={() => undefined}
-        onDismissExport={() => undefined}
-        onExport={() => undefined}
-        onFigureSetting={() => undefined}
-        onFigureTheme={() => undefined}
-        onRangeScope={() => undefined}
-        onRetry={() => undefined}
-        pngDpiProblem={null}
-        rangeAvailability="available"
-        rangeScope="current"
-        renderSettingsProblem={null}
-        scientificExportBusy
-        state={loaded()}
-      />,
-    );
-
-    fireEvent.click(screen.getByText("Export spectrum"));
-    expect(screen.getByRole("radio", { name: "Current range" })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: "Full spectrum" })).toBeEnabled();
-    // While every action the lane owns is closed, as it always was.
-    expect(screen.getByRole("button", { name: "Export SVG…" })).toBeDisabled();
-  });
-
-  it("announces the range note once, in the section rather than a live region", () => {
-    withRange(mzDomain(105.0, 130.0));
-    // One reading. The note is ordinary text a traversal meets once; the export
-    // status region beside it is the one live region this panel has, and it is
-    // empty until an export has something to report.
-    expect(screen.getAllByText(/Current range: m\/z/u)).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Dismiss export message" })).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("returns focus to ⋯ once a data item closes the menu", async () => {
+    renderPanel(loaded());
+    const more = button(en.plotMoreExports);
+    more.focus();
+    await dataItems();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Export TSV…" }));
+    await waitFor(() => expect(more).toHaveFocus());
   });
 });
 
 describe("what a finished range export is allowed to claim", () => {
-  /** One saved outcome, over the range Rust resolved when it began. */
-  function savedOver(
-    range: Partial<ExportedSpectrumRange> & { readonly fileName?: string },
-  ): SpectrumExportState {
+  function savedOver(range: Partial<ExportedSpectrumRange> & { readonly fileName?: string }): SpectrumExportState {
     return {
-      status: "saved",
-      format: "csv",
-      fileName: "mscanvas-spectrum-3-current.csv",
-      figure: null,
-      rangeScope: "current",
-      rangeLow: 105.25,
-      rangeHigh: 130.5,
-      sourcePointCount: 1_000_000,
-      exportedPointCount: 2_500,
-      ...range,
+      status: "saved", format: "csv", fileName: "mscanvas-spectrum-3-current.csv", figure: null,
+      rangeScope: "current", rangeLow: 105.25, rangeHigh: 130.5, sourcePointCount: 1_000_000, exportedPointCount: 2_500, ...range,
     };
   }
 
@@ -800,35 +257,8 @@ describe("what a finished range export is allowed to claim", () => {
     renderPanel(loaded(), savedOver({}));
 
     const status = screen.getByRole("status");
-    // Everything needed to identify the document after the viewport has moved:
-    // "saved the current range" would name a window this file may not hold.
-    expect(status).toHaveTextContent(
-      "Saved mscanvas-spectrum-3-current.csv with 2,500 of 1,000,000 points, " +
-        "m/z 105.25 to 130.5.",
-    );
-    // Still no path. The one forward slash in this sentence is the `m/z` the
-    // axis is named by, so the separator check is made against what is left
-    // once that word is accounted for rather than being dropped.
+    expect(status).toHaveTextContent("Saved mscanvas-spectrum-3-current.csv with 2,500 of 1,000,000 points, m/z 105.25 to 130.5.");
     expect(status.textContent?.replaceAll("m/z", "")).not.toMatch(/[/\\]/u);
-  });
-
-  it("keeps the full-source sentence exactly as concise as it was", () => {
-    renderPanel(
-      loaded(),
-      savedOver({
-        fileName: "mscanvas-spectrum-3.csv",
-        rangeScope: "full",
-        rangeLow: null,
-        rangeHigh: null,
-        exportedPointCount: 1_000_000,
-      }),
-    );
-
-    // A full export has no window to disambiguate, so it says one count and no
-    // bounds -- the wording M4.1 shipped, unchanged.
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Saved mscanvas-spectrum-3.csv with 1,000,000 points.",
-    );
   });
 
   it("reports an empty range as a successful export rather than a failure", () => {
@@ -836,88 +266,17 @@ describe("what a finished range export is allowed to claim", () => {
 
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent("Saved mscanvas-spectrum-3-current.csv with 0 of 1,000,000");
-    // Nothing about this is an error: a window of a spectrum may truthfully
-    // hold no reported peak.
     expect(status).not.toHaveTextContent("could not");
-    expect(status).not.toHaveTextContent("failed");
   });
 
   it("names the range a copy covered, since the clipboard holds one image", () => {
     renderPanel(loaded(), {
-      status: "copied",
-      figure: { width: 1_200, height: 640, theme: "light" },
-      rangeScope: "current",
-      rangeLow: 105.25,
-      rangeHigh: 130.5,
-      sourcePointCount: 1_000_000,
-      exportedPointCount: 2_500,
+      status: "copied", figure: { width: 1_200, height: 640, theme: "light" },
+      rangeScope: "current", rangeLow: 105.25, rangeHigh: 130.5, sourcePointCount: 1_000_000, exportedPointCount: 2_500,
     });
 
-    const status = screen.getByRole("status");
-    expect(status).toHaveTextContent(
-      "Copied the plot with 2,500 of 1,000,000 points, m/z 105.25 to 130.5, " +
-        "1,200 by 640 pixels, Light theme.",
-    );
-    expect(status).not.toHaveTextContent("Saved");
-  });
-
-  it("does not rewrite a result when the viewport moves after it landed", () => {
-    // The message is built from the outcome and from nothing else, so a panel
-    // re-rendered with a different committed window says exactly what it said.
-    const outcome = savedOver({});
-    const { rerender } = render(
-      <SelectedSpectrumPanel
-        {...NO_VIEWPORT}
-        committedDomain={mzDomain(105.25, 130.5)}
-        exportState={outcome}
-        figureSettings={DEFAULT_DRAFT}
-        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
-        onCopyPlot={() => undefined}
-        onDismissExport={() => undefined}
-        onExport={() => undefined}
-        onFigureSetting={() => undefined}
-        onFigureTheme={() => undefined}
-        onRangeScope={() => undefined}
-        onRetry={() => undefined}
-        pngDpiProblem={null}
-        rangeAvailability="available"
-        rangeScope="current"
-        renderSettingsProblem={null}
-        scientificExportBusy={false}
-        state={loaded()}
-      />,
-    );
-    const before = screen.getByRole("status").textContent;
-
-    rerender(
-      <SelectedSpectrumPanel
-        {...NO_VIEWPORT}
-        committedDomain={mzDomain(900.0, 950.0)}
-        exportState={outcome}
-        figureSettings={DEFAULT_DRAFT}
-        figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
-        onCopyPlot={() => undefined}
-        onDismissExport={() => undefined}
-        onExport={() => undefined}
-        onFigureSetting={() => undefined}
-        onFigureTheme={() => undefined}
-        onRangeScope={() => undefined}
-        onRetry={() => undefined}
-        pngDpiProblem={null}
-        rangeAvailability="available"
-        rangeScope="current"
-        renderSettingsProblem={null}
-        scientificExportBusy={false}
-        state={loaded()}
-      />,
-    );
-
-    expect(screen.getByRole("status").textContent).toBe(before);
-    expect(screen.getByRole("status")).toHaveTextContent("m/z 105.25 to 130.5");
-    // And the *note* did follow the viewport, which is the difference: it
-    // describes what the next export would cover.
-    expect(screen.getByText(/Current range: m\/z/u)).toHaveTextContent(
-      "m/z 900 to 950",
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Copied the plot with 2,500 of 1,000,000 points, m/z 105.25 to 130.5, 1,200 by 640 pixels, Light theme.",
     );
   });
 });
