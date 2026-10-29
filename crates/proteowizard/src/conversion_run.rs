@@ -228,8 +228,9 @@ impl ConversionSourceKind {
         }
     }
 
-    /// Whether this family needs its own recorded provider-build evidence
-    /// before a run may use it.
+    /// Whether this family is gated on provider-build evidence: verified on a
+    /// measured build, and otherwise labelled or refused by
+    /// [`provider_build_admission`].
     ///
     /// mzML is read by ProteoWizard's own open-format code and by this crate's
     /// scanner, and the repository has open-format evidence across builds. A
@@ -317,8 +318,10 @@ fn require_family_structure(
 /// One ProteoWizard build a vendor source family was actually converted on.
 ///
 /// A row exists because a real acquisition of that family was converted on that
-/// exact build through this boundary and the result was recorded. Widening
-/// support is therefore adding a measured row, not relaxing a check.
+/// exact build through this boundary and the result was recorded. Widening the
+/// *verified* tier is therefore adding a measured row, not relaxing a check.
+/// Since ADR 0055's build-gate decision (2026-10-29) a family may also convert
+/// on a build without a row, labelled; see [`provider_build_admission`].
 struct EvidencedProviderBuild {
     kind: ConversionSourceKind,
     release: &'static str,
@@ -377,14 +380,11 @@ const EVIDENCED_PROVIDER_BUILDS: [EvidencedProviderBuild; 3] = [
     },
 ];
 
-/// Whether the installed build is one this family has been converted on.
+/// Whether the installed build is one this family has been converted on: a
+/// measured row covers its release, revision and executable digest.
 ///
-/// Public because a caller that is about to build a staging directory and a
-/// plan should be able to learn the answer before it does that work, and the
-/// only safe way to offer it that is to hand it *this* predicate. A second
-/// implementation of the same rule at the call site would be a second rule the
-/// moment either changed. [`run_conversion`] applies this one regardless, so a
-/// caller that skips the question is refused, not admitted.
+/// This is the verified tier, not the gate. [`provider_build_admission`] is the
+/// gate, and it reads this first.
 #[must_use]
 pub fn provider_build_is_evidenced(
     capabilities: &InstalledHelpCapabilities,
@@ -404,6 +404,73 @@ pub fn provider_build_is_evidenced(
             && build.is(evidenced.release, evidenced.source_revision)
             && executable.eq_ignore_ascii_case(evidenced.executable_sha256)
     })
+}
+
+/// How the installed build stands for one source family (ADR 0055, owner
+/// decision on the build gate, 2026-10-29).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderBuildAdmission {
+    /// mzML, which needs no provider-build evidence, or a family with a
+    /// measured row for this exact build.
+    Evidenced,
+    /// No measured row, and the build reports its release. The family converts,
+    /// and every plan, result and diagnostic for it carries the "unverified
+    /// build" label and this release.
+    Unverified { release: String },
+    /// Converts nothing: a build that cannot report its release leaves nothing
+    /// to name in the label, and a family whose correctness depends on the
+    /// measured build is never relaxed.
+    Refused,
+}
+
+impl ProviderBuildAdmission {
+    #[must_use]
+    pub const fn admits(&self) -> bool {
+        !matches!(self, Self::Refused)
+    }
+
+    /// The release the "unverified build" label names, when there is one.
+    #[must_use]
+    pub fn unverified_release(&self) -> Option<&str> {
+        match self {
+            Self::Unverified { release } => Some(release),
+            Self::Evidenced | Self::Refused => None,
+        }
+    }
+}
+
+/// The provider-build gate.
+///
+/// Public because a caller that is about to build a staging directory and a
+/// plan should be able to learn the answer before it does that work, and the
+/// only safe way to offer it that is to hand it *this* predicate. A second
+/// implementation of the same rule at the call site would be a second rule the
+/// moment either changed. [`run_conversion`] applies this one regardless, so a
+/// caller that skips the question is refused, not admitted.
+#[must_use]
+pub fn provider_build_admission(
+    capabilities: &InstalledHelpCapabilities,
+    kind: ConversionSourceKind,
+) -> ProviderBuildAdmission {
+    if provider_build_is_evidenced(capabilities, kind) {
+        return ProviderBuildAdmission::Evidenced;
+    }
+    let relaxed = match kind {
+        ConversionSourceKind::ThermoRawFile | ConversionSourceKind::ShimadzuLcdFile => true,
+        // Its completeness audit reads a per-sample failure marker that is a
+        // string literal of the evidenced build (ADR 0024, "Bound to one
+        // executable"). A build that words it differently would have a lost
+        // sample judged complete.
+        ConversionSourceKind::SciexWiffBundle => false,
+        // Never gated, so already answered above.
+        ConversionSourceKind::MzmlFile => false,
+    };
+    match capabilities.provider_build() {
+        Some(build) if relaxed => ProviderBuildAdmission::Unverified {
+            release: build.release().to_owned(),
+        },
+        _ => ProviderBuildAdmission::Refused,
+    }
 }
 
 /// The extension the installed vendor reader requires, whatever the signature
@@ -3144,10 +3211,10 @@ fn run_admitted(
         }
     }
 
-    // A source family this installation has no evidence for is refused before a
-    // staging area exists, so an ungated build never gets as far as creating a
+    // A source family this installation does not admit is refused before a
+    // staging area exists, so a refused build never gets as far as creating a
     // directory or launching anything.
-    if !provider_build_is_evidenced(capabilities, plan.source.kind()) {
+    if !provider_build_admission(capabilities, plan.source.kind()).admits() {
         return settled_failure(ConversionRunFailure::SourceFamilyNotEvidenced);
     }
 

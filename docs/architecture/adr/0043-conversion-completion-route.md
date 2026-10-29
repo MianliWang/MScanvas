@@ -362,6 +362,14 @@ family before a staging directory exists. Widening support is *adding a measured
 row*, not relaxing a check. The executable is re-verified before launch and
 `ExecutableChanged` fails a run whose binary moved under it.
 
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** The rows
+now define the verified tier rather than the whole gate. `provider_build_admission`
+answers measured, unverified (with the release) or refused: Thermo RAW and
+Shimadzu LCD convert on any build that reports its release, labelled
+"unverified build" in the plan, the item outcome and the diagnostics;
+`SciexWiffBundle` keeps the measured-row requirement; a build that cannot report
+its release converts no vendor family.
+
 **What M6 extends it to.** Today the binding answers one question — may this
 *family* be converted on this build. M6 makes settings expressible, so it must
 answer a second: may this *setting* be admitted on this build. The binding

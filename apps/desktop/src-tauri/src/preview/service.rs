@@ -1761,7 +1761,7 @@ impl PreviewService {
         // The binding and its catalog in one critical section, so a check
         // installing a new binding between the two reads cannot produce an
         // answer that pairs one binding's receipt with another's availability.
-        let admission = {
+        let (admission, unverified_builds) = {
             let mut observed = self
                 .resolved
                 .lock()
@@ -1778,7 +1778,10 @@ impl PreviewService {
                     authority: projection.to_dto(),
                 });
             };
-            observed.configurations.admits(binding, &intent)
+            (
+                observed.configurations.admits(binding, &intent),
+                observed.configurations.unverified_builds(binding),
+            )
         };
         match admission {
             RowAdmission::Available => {}
@@ -1814,6 +1817,10 @@ impl PreviewService {
                         file_name: item.file_name().to_owned(),
                         source_kind: source_kind_dto(item.kind()),
                         output: item.output().to_dto(),
+                        unverified_build_release: unverified_builds
+                            .iter()
+                            .find(|(kind, _)| *kind == conversion_source_kind(item.kind()))
+                            .map(|(_, release)| release.clone()),
                     })
                     .collect(),
                 // All three read off the intent this queue would be bound to,
@@ -4991,6 +4998,7 @@ impl PreviewService {
                         generation,
                         &plan,
                         &report,
+                        &backend.capabilities,
                     );
                     // Taken rather than copied, so the report the queue keeps
                     // and projects holds no backend text at all.
@@ -6866,6 +6874,7 @@ impl PreviewService {
             generation,
             &plan,
             &report,
+            &backend.capabilities,
         ))
     }
 

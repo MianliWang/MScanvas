@@ -1725,6 +1725,11 @@ pub struct ConversionQueuePlanItemDto {
     pub source_kind: DatasetSourceKindDto,
     /// What this row will produce, in the cardinality it will produce it.
     pub output: ConversionOutputPlanDto,
+    /// Present exactly when this row would run on a build with no measured row
+    /// for its family: the interface shows the "unverified build" label with
+    /// this release (ADR 0055's relaxed gate). `null` on a measured build, and
+    /// on a row the build refuses, which `BEGIN` reports instead.
+    pub unverified_build_release: Option<String>,
 }
 
 /// What one conversion did, in facts that name no location.
@@ -1766,6 +1771,10 @@ pub struct ConversionReportDto {
     /// the session is on once the installation has changed -- so it is read as
     /// provenance rather than judged for currency.
     pub receipt: Option<BackendBindingReceiptDto>,
+    /// Present exactly when this result ran on a build with no measured row
+    /// for its family: the interface shows the "unverified build" label with
+    /// this release (ADR 0055's relaxed gate). `null` on a measured build.
+    pub unverified_build_release: Option<String>,
 }
 
 /// What one attempt established about its private staging area.
