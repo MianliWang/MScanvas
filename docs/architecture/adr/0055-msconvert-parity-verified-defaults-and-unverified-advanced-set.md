@@ -1,6 +1,8 @@
 # ADR 0055 — msconvert parity: verified defaults and an unverified advanced set
 
-Status: **Proposed.** Date: 2026-10-28.
+Status: **Accepted** by the owner on 2026-10-29, together with the build-gate
+decision recorded under [Owner decision on the build gate](#owner-decision-on-the-build-gate-2026-10-29).
+Proposed 2026-10-28.
 Related: [0002](0002-external-proteowizard.md),
 [0024](0024-sciex-sample-completeness.md),
 [0043](0043-conversion-completion-route.md),
@@ -564,16 +566,29 @@ Each later in its own slice:
 **No dependency is added by this ADR.** `-g` and any HDF5 check wait for their
 own decisions.
 
-## Open questions for the owner
+## Owner decision on the build gate, 2026-10-29
 
-**May a build without an `EVIDENCED_PROVIDER_BUILDS` row convert vendor
-families, labelled instead of refused?** This ADR does not decide it. Option C
-is about options, not builds, and the owner accepted beta 1 with vendor
-conversion bound to ProteoWizard 3.0.26013 (ADR 0047). So the build gate stays
-as it is: a vendor family converts only on a build its row names, and a build
-that cannot report its release matches no row.
+**Question:** may a build without an `EVIDENCED_PROVIDER_BUILDS` row convert
+vendor families, labelled instead of refused? Option C is about options, not
+builds, and beta 1 shipped with vendor conversion bound to ProteoWizard
+3.0.26013 (ADR 0047).
 
-If the owner wants otherwise, that is its own decision, and it must at least:
+**Decision (owner, 2026-10-29): relax the gate.**
+
+- Thermo RAW and Shimadzu LCD convert on any installed build that reports its
+  release. On a build without a measured row every setting, the defaults
+  included, carries the "not verified by MSCanvas" label, and the plan, the
+  item results and diagnostics name the build's release.
+- A build that cannot report its release still converts no vendor family:
+  there is nothing to name in the label.
+- `SciexWiffBundle` stays refused on any build without a measured row, for the
+  reason below.
+- The measured build keeps its verified defaults; nothing about the verified
+  tier changes.
+
+The records below are amended in the change that implements the relaxed gate,
+not by this note. The decision honours these constraints, recorded before it
+was taken:
 
 - **keep `SciexWiffBundle` refused on a build without a measured row.** Its
   completeness proof reads a per-sample failure marker that is a string
