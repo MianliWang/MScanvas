@@ -68,6 +68,16 @@ measured intent rows cover the visible vendor workflow, conditional on grammar;
 the two reader-sensitive centroiding rows do not. Whole-combination refusals
 retain their separate evidence, installation and source-family reasons.
 
+> **Amended 2026-10-29 (ADR 0055, msconvert parity).** The paragraph above
+> described beta 1. An imported mzML is now also a conversion source: it is
+> queued like a vendor row, judged by source comparison rather than output
+> only, and its output takes the name `<stem>-converted.mzML`, so an output
+> written beside its source never names it. Fail and Skip stay the only
+> conflict policies. The two centroiding rows are therefore offered, for mzML
+> sources only; a vendor row asked for one is still refused for source
+> evidence. The record of this change is the amendment at the end of
+> [ADR 0045](0045-conversion-completion-closure-and-handoff.md#amendment-2026-10-29-mzml-as-a-conversion-source).
+
 Rust owns filesystem identity, discovery, backend receipts, queue/capacity,
 processes and scientific data. React consumes typed operations and projections,
 never shell strings, unrestricted paths or a second capability registry. Keep

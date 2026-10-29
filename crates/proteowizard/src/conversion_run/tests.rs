@@ -504,7 +504,10 @@ fn a_plan_derives_a_deterministic_mzml_name_and_fixes_every_other_decision() {
 
     let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
 
-    assert_eq!(plan.output_file_name(), OsStr::new("样本 01.mzML"));
+    assert_eq!(
+        plan.output_file_name(),
+        OsStr::new("样本 01-converted.mzML")
+    );
     assert_eq!(plan.format(), OpenFormat::MzMl);
     assert_eq!(plan.conflict_policy(), ConflictPolicy::Fail);
     assert_eq!(plan.intent().compression().stable_id(), "zlib");
@@ -602,12 +605,12 @@ fn a_conversion_runs_in_a_private_staging_directory_and_finalizes_into_the_root(
     assert_eq!(
         entry_names(&root),
         vec![
-            OsString::from("sample.mzML"),
+            OsString::from("sample-converted.mzML"),
             OsString::from("unrelated.txt")
         ]
     );
     assert_eq!(
-        fs::read_to_string(root.join("sample.mzML")).expect("read finalized output"),
+        fs::read_to_string(root.join("sample-converted.mzML")).expect("read finalized output"),
         output_document()
     );
     assert_eq!(
@@ -641,13 +644,14 @@ fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml()
     // below the staging root, because the ownership marker lives in the root and
     // the integrity contract insists the output directory hold one entry.
     let staging = canonical_root
-        .join("sample.mzML.mscanvas-staging")
+        .join("sample-converted.mzML.mscanvas-staging")
         .join("output");
     // And the suffix must not be one the output snapshot reads as an
     // interrupted write, decided by that rule rather than by restating it.
     let probe = directory.path().join("suffix-probe");
     fs::create_dir(&probe).expect("create the suffix probe directory");
-    fs::create_dir(probe.join("sample.mzML.mscanvas-staging")).expect("create the probe entry");
+    fs::create_dir(probe.join("sample-converted.mzML.mscanvas-staging"))
+        .expect("create the probe entry");
     assert!(
         !fs_guard::snapshot_output_directory(&probe)
             .expect("snapshot the suffix probe directory")
@@ -672,7 +676,7 @@ fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml()
         "the backend writes into the private staging directory, not the destination root"
     );
     assert_eq!(argv[5], OsStr::new("--outfile"));
-    assert_eq!(argv[6], OsStr::new("sample.mzML"));
+    assert_eq!(argv[6], OsStr::new("sample-converted.mzML"));
     assert!(
         !argv.iter().any(|value| value == OsStr::new("--mzXML")),
         "{argv:?}"
@@ -699,7 +703,7 @@ fn an_existing_destination_is_refused_or_skipped_and_never_overwritten() {
         let source = write_source(directory.path(), "sample.mzML");
         let root = directory.path().join("out");
         fs::create_dir(&root).expect("create destination root");
-        let destination = root.join("sample.mzML");
+        let destination = root.join("sample-converted.mzML");
         fs::write(&destination, b"the result of an earlier run").expect("write destination");
 
         let plan = plan_into(open_source(&source), &root, conflict);
@@ -713,7 +717,10 @@ fn an_existing_destination_is_refused_or_skipped_and_never_overwritten() {
             fs::read(&destination).expect("read destination"),
             b"the result of an earlier run"
         );
-        assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+        assert_eq!(
+            entry_names(&root),
+            vec![OsString::from("sample-converted.mzML")]
+        );
     }
 }
 
@@ -723,7 +730,7 @@ fn an_existing_staging_target_fails_without_disturbing_what_is_in_it() {
     let source = write_source(directory.path(), "sample.mzML");
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
-    let mut staging_name = OsString::from("sample.mzML");
+    let mut staging_name = OsString::from("sample-converted.mzML");
     staging_name.push(STAGING_SUFFIX);
     let staging = root.join(&staging_name);
     fs::create_dir(&staging).expect("create the pre-existing staging directory");
@@ -785,7 +792,10 @@ fn an_existing_staging_target_fails_without_disturbing_what_is_in_it() {
     let report = run_conversion(&plan, &capabilities(), &runner);
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     assert_eq!(runner.calls(), 1);
-    assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+    assert_eq!(
+        entry_names(&root),
+        vec![OsString::from("sample-converted.mzML")]
+    );
 }
 
 #[test]
@@ -1066,7 +1076,7 @@ fn a_destination_taken_during_the_run_is_left_exactly_as_it_arrived() {
     fs::create_dir(&root).expect("create destination root");
 
     let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
-    let raced = root.join("sample.mzML");
+    let raced = root.join("sample-converted.mzML");
     let act = move |spec: &CommandSpec| {
         fs::write(staged_destination(spec), output_document()).expect("write staged output");
         fs::write(&raced, b"something else took this name").expect("take the destination");
@@ -1080,11 +1090,14 @@ fn a_destination_taken_during_the_run_is_left_exactly_as_it_arrived() {
         ConversionRunOutcome::Failed(ConversionRunFailure::DestinationAppearedDuringRun)
     );
     assert_eq!(
-        fs::read(root.join("sample.mzML")).expect("read the raced destination"),
+        fs::read(root.join("sample-converted.mzML")).expect("read the raced destination"),
         b"something else took this name",
         "finalization never replaces what already holds the name"
     );
-    assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+    assert_eq!(
+        entry_names(&root),
+        vec![OsString::from("sample-converted.mzML")]
+    );
 }
 
 #[test]
@@ -1154,13 +1167,16 @@ fn a_unicode_name_with_a_space_survives_planning_staging_and_finalization() {
     let report = run_conversion(&plan, &capabilities(), &runner);
 
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
-    assert_eq!(entry_names(&root), vec![OsString::from("样本 01.mzML")]);
     assert_eq!(
-        fs::read_to_string(root.join("样本 01.mzML")).expect("read finalized output"),
+        entry_names(&root),
+        vec![OsString::from("样本 01-converted.mzML")]
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("样本 01-converted.mzML")).expect("read finalized output"),
         output_document()
     );
     let argv = runner.argv();
-    assert_eq!(argv[6], OsStr::new("样本 01.mzML"));
+    assert_eq!(argv[6], OsStr::new("样本 01-converted.mzML"));
     assert_eq!(argv.len(), 7, "the name stays one argv value: {argv:?}");
 }
 
@@ -1186,7 +1202,7 @@ fn a_panic_in_the_runner_preserves_staging_without_confirmed_process_disposition
     assert!(unwound.is_err(), "the panic must not be swallowed");
     assert_eq!(
         entry_names(&root),
-        vec![OsString::from("sample.mzML.mscanvas-staging")]
+        vec![OsString::from("sample-converted.mzML.mscanvas-staging")]
     );
     assert_eq!(
         fs::read_to_string(
@@ -1367,8 +1383,9 @@ fn an_output_name_that_leaves_no_room_for_a_staging_name_is_refused_when_planned
     let root = base.join("out");
     fs::create_dir(&root).expect("create destination root");
 
-    // ".mzML" is five units, and the staging suffix is seventeen more.
-    let longest_stageable = 255 - 17 - 5;
+    // ".mzML" is five units, an mzML source adds "-converted" (ten), and the
+    // staging suffix is seventeen more.
+    let longest_stageable = 255 - 17 - 10 - 5;
     for (stem_length, expected) in [(longest_stageable, true), (longest_stageable + 1, false)] {
         let name = format!("{}.mzML", "n".repeat(stem_length));
         let source = base.join(&name);
@@ -1781,7 +1798,7 @@ fn a_staging_directory_that_cannot_be_removed_never_changes_the_outcome() {
         Some("staging_not_removed")
     );
     assert!(
-        !root.join("sample.mzML").exists(),
+        !root.join("sample-converted.mzML").exists(),
         "nothing was finalized into the destination root"
     );
 
@@ -1789,7 +1806,7 @@ fn a_staging_directory_that_cannot_be_removed_never_changes_the_outcome() {
     // marker, so a cleanup that gives up part-way leaves the proof that this
     // area is MSCanvas's. Without that order the residue would be permanently
     // unreclaimable.
-    let staging = root.join("sample.mzML.mscanvas-staging");
+    let staging = root.join("sample-converted.mzML.mscanvas-staging");
     assert!(
         staging.join(".mscanvas-staging-owner").is_file(),
         "the ownership marker did not survive the failed cleanup"
@@ -1806,7 +1823,10 @@ fn a_staging_directory_that_cannot_be_removed_never_changes_the_outcome() {
     let report = run_conversion(&plan, &capabilities(), &runner);
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     assert_eq!(report.residue(), None);
-    assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+    assert_eq!(
+        entry_names(&root),
+        vec![OsString::from("sample-converted.mzML")]
+    );
 }
 
 // --- Handle-bound finalization ---
@@ -1870,7 +1890,7 @@ fn the_object_that_receives_the_final_name_is_the_object_that_was_validated() {
     });
 
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
-    let finalized = fixture.root.join("sample.mzML");
+    let finalized = fixture.root.join("sample-converted.mzML");
     let valid = report.finalized().expect("a finalized conversion");
     assert_eq!(
         valid.output().byte_length(),
@@ -1887,7 +1907,7 @@ fn the_object_that_receives_the_final_name_is_the_object_that_was_validated() {
     assert_eq!(report.residue(), None);
     assert_eq!(
         entry_names(&fixture.root),
-        vec![OsString::from("sample.mzML")]
+        vec![OsString::from("sample-converted.mzML")]
     );
 
     // The witness and the finalized name are the same object: a write through
@@ -1924,7 +1944,7 @@ fn a_staging_path_replaced_after_validation_never_reaches_the_final_name() {
         fs::write(&staged, &decoy).expect("write a different document at that name");
     });
 
-    let finalized = fixture.root.join("sample.mzML");
+    let finalized = fixture.root.join("sample-converted.mzML");
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     let finalized_bytes = fs::read_to_string(&finalized).expect("read the finalized output");
     assert_eq!(
@@ -1946,7 +1966,7 @@ fn a_staging_path_replaced_after_validation_never_reaches_the_final_name() {
     // The replacement stayed in the staging area and was discarded with it.
     assert_eq!(
         entry_names(&fixture.root),
-        vec![OsString::from("sample.mzML")]
+        vec![OsString::from("sample-converted.mzML")]
     );
 }
 
@@ -2001,7 +2021,7 @@ fn a_destination_taken_after_validation_is_never_replaced() {
         let fixture = fixture("sample.mzML", conflict);
         let act = convert_faithfully;
         let runner = FakeRunner::new(&act);
-        let finalized = fixture.root.join("sample.mzML");
+        let finalized = fixture.root.join("sample-converted.mzML");
         let neighbour = fixture.root.join("neighbour.txt");
         fs::write(&neighbour, b"an unrelated file").expect("write neighbour");
 
@@ -2038,7 +2058,7 @@ fn a_destination_taken_after_validation_is_never_replaced() {
             entry_names(&fixture.root),
             vec![
                 OsString::from("neighbour.txt"),
-                OsString::from("sample.mzML")
+                OsString::from("sample-converted.mzML")
             ],
             "occupant: {occupant}"
         );
@@ -2069,7 +2089,7 @@ fn a_reparse_destination_taken_after_validation_is_never_replaced_or_followed() 
         let sentinel = outside.path().join("keep.txt");
         fs::write(&sentinel, b"the existing directory belongs to its owner")
             .expect("write the independent target's sentinel");
-        let final_name = fixture.root.join("sample.mzML");
+        let final_name = fixture.root.join("sample-converted.mzML");
         let mut junction = None;
         let act = convert_faithfully;
         let runner = FakeRunner::new(&act);
@@ -2103,7 +2123,7 @@ fn a_reparse_destination_taken_after_validation_is_never_replaced_or_followed() 
         );
         assert_eq!(
             entry_names(&fixture.root),
-            vec![OsString::from("sample.mzML")]
+            vec![OsString::from("sample-converted.mzML")]
         );
         assert_eq!(report.residue(), None, "the staging area was cleaned");
         assert_eq!(runner.calls(), 1, "the occupation arrived after validation");
@@ -2144,7 +2164,7 @@ fn the_admitted_destination_root_cannot_be_moved_out_from_under_a_run() {
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     assert_eq!(
         entry_names(&fixture.root),
-        vec![OsString::from("sample.mzML")]
+        vec![OsString::from("sample-converted.mzML")]
     );
     assert!(!elsewhere.exists());
 }
@@ -2156,7 +2176,7 @@ fn a_failed_finalization_produces_no_result_and_leaves_no_staging_behind() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
     let act = convert_faithfully;
     let runner = FakeRunner::new(&act);
-    let finalized = fixture.root.join("sample.mzML");
+    let finalized = fixture.root.join("sample-converted.mzML");
     let staged = staged_output_of(&fixture.plan);
 
     let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
@@ -2171,7 +2191,7 @@ fn a_failed_finalization_produces_no_result_and_leaves_no_staging_behind() {
     );
     assert_eq!(
         entry_names(&fixture.root),
-        vec![OsString::from("sample.mzML")]
+        vec![OsString::from("sample-converted.mzML")]
     );
     assert_eq!(fs::read(&finalized).expect("read the occupant"), b"taken");
     // The validated reading is released whether or not it was finalized, so the
@@ -2283,7 +2303,7 @@ fn a_unicode_name_with_a_space_survives_the_object_bound_rename() {
     });
 
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
-    let finalized = fixture.root.join("样本 01.mzML");
+    let finalized = fixture.root.join("样本 01-converted.mzML");
     assert_eq!(
         fs::read_to_string(&finalized).expect("read the finalized output"),
         output_document()
@@ -2328,7 +2348,8 @@ fn a_validated_object_cannot_be_written_to_while_it_is_held() {
     );
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     assert_eq!(
-        fs::read_to_string(fixture.root.join("sample.mzML")).expect("read the finalized output"),
+        fs::read_to_string(fixture.root.join("sample-converted.mzML"))
+            .expect("read the finalized output"),
         output_document()
     );
 }
@@ -2585,7 +2606,7 @@ fn a_reparse_entry_inside_the_owned_tree_is_refused_and_never_followed() {
 #[test]
 fn reclamation_trusts_only_the_admitted_marker_object() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
-    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    let staging = fixture.root.join("sample-converted.mzML.mscanvas-staging");
     let marker = staging.join(".mscanvas-staging-owner");
 
     // No marker at all.
@@ -2636,7 +2657,7 @@ fn reclamation_trusts_only_the_admitted_marker_object() {
 #[test]
 fn a_link_at_the_staging_name_is_never_reclaimed_through() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
-    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    let staging = fixture.root.join("sample-converted.mzML.mscanvas-staging");
     let outside = fixture
         .root
         .parent()
@@ -2689,7 +2710,9 @@ fn reclamation_covers_absent_owned_empty_and_repeated_attempts() {
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create the destination root");
     let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
-    let staging = plan.destination_root().join("sample.mzML.mscanvas-staging");
+    let staging = plan
+        .destination_root()
+        .join("sample-converted.mzML.mscanvas-staging");
 
     // Absent is nothing to reclaim.
     plan.reclaim_staging_area()
@@ -2758,7 +2781,7 @@ fn a_cleanup_that_cannot_finish_keeps_the_outcome_and_stays_reclaimable() {
         report.residue().is_some(),
         "an unremovable tree reported nothing"
     );
-    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    let staging = fixture.root.join("sample-converted.mzML.mscanvas-staging");
     assert!(
         staging.join(".mscanvas-staging-owner").is_file(),
         "the residue lost the proof a later attempt needs"
@@ -6703,7 +6726,7 @@ fn an_unrequested_non_ordinary_termination_is_still_not_a_cancellation() {
 #[test]
 fn a_cancellable_attempt_never_disturbs_an_existing_destination() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
-    let destination = fixture.root.join("sample.mzML");
+    let destination = fixture.root.join("sample-converted.mzML");
     fs::write(&destination, b"the user's own file").expect("occupy the destination");
     let act = convert_faithfully;
     let runner = CancellingRunner::new(&act);

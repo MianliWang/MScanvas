@@ -1822,12 +1822,18 @@ impl PreviewService {
                 output_format: fixed_output_format(intent),
                 compression: fixed_compression(intent).to_owned(),
                 intent: intent_dto(&intent),
-                // Stated before the run rather than after it. A vendor
-                // acquisition has no mzML reading, so nothing about any output
-                // can be compared to a source model -- and a user deciding
-                // whether to convert a batch is entitled to know that before
-                // they choose a folder.
-                validation_mode: ValidationModeDto::OutputOnly,
+                // Stated before the run rather than after it, as the weakest
+                // claim any item holds. A vendor acquisition has no mzML
+                // reading, so nothing about its output can be compared to a
+                // source model; only a queue of mzML sources is compared.
+                validation_mode: if items
+                    .iter()
+                    .all(|item| conversion_source_kind(item.kind()).supports_source_comparison())
+                {
+                    ValidationModeDto::SourceComparison
+                } else {
+                    ValidationModeDto::OutputOnly
+                },
                 capacity: MAX_CONVERSION_QUEUE_ITEMS,
                 conflict_policy: request.conflict_policy,
                 destination_policy: policy.to_dto(),
@@ -1893,10 +1899,7 @@ impl PreviewService {
             // What this row's outputs will look like. For a known single output
             // the name is derived from the display name the roster already
             // carries, through the same function the plan itself uses -- nothing
-            // here touches a path. mzML rows are refused rather than silently
-            // dropped: the interface states how many selected rows are
-            // excluded, and a boundary that quietly shortened the list would
-            // make that count a fiction.
+            // here touches a path.
             // The same applicability question the crate's plan asks, asked here
             // so it is answered before the queue commits, before a destination
             // picker opens and before any folder is created. It is a *refusal*,
