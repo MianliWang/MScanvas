@@ -800,6 +800,13 @@ impl PreviewService {
     // reading is what decides whether the session stays on it.
     pub fn start_on_remembered_folder(&self, folder: PathBuf) {
         let _running = self.enter_backend();
+        // Should anything have settled a binding first, it is not re-pointed
+        // underneath that binding with no reading to say so; the folder is
+        // only reported as remembered.
+        if self.authority_projection().state.binding().is_some() {
+            self.remembered_lock().facts.stored = true;
+            return;
+        }
         self.provider.use_installation(Some(folder.clone()));
         self.note_discovery_target(Some(folder));
         let mut remembered = self.remembered_lock();

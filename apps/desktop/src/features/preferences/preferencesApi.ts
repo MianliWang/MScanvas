@@ -3,8 +3,10 @@
  *
  * Two questions: what is stored, and commit this field group. Neither takes a
  * path, a file name, a key, a prefix, an arbitrary document or a filesystem
- * capability, and there is no third operation that does -- where the record
- * lives is decided in Rust and is not expressible here.
+ * capability, and there is no operation that does -- where the record lives is
+ * decided in Rust and is not expressible here. The one other operation,
+ * forgetting the ProteoWizard folder Rust remembered, names nothing and can
+ * only clear.
  *
  * A separate boundary from the preview API on purpose. Preferences are not
  * scientific state, confer no authority over a backend, a dataset or a

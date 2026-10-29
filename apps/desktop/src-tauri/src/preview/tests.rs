@@ -1039,6 +1039,22 @@ fn a_usable_chosen_folder_is_remembered_and_an_unusable_one_is_not() {
 }
 
 #[test]
+fn a_remembered_folder_never_re_points_a_session_already_settled() {
+    let provider = FakeProvider::only_when_chosen();
+    let world = provider.clone_world();
+    let service = PreviewService::new(Box::new(provider));
+    let before = service.inspect_backend();
+    assert_eq!(before.availability.origin, "automatic");
+
+    service.start_on_remembered_folder(PathBuf::from(r"C:\pwiz"));
+    let after = service.inspect_backend();
+    assert_eq!(after.availability.origin, "automatic");
+    assert_eq!(after.authority, before.authority);
+    assert!(after.remembered.stored);
+    assert_eq!(world.availability_count(), 2);
+}
+
+#[test]
 fn an_unusable_reading_names_no_location() {
     let service = PreviewService::new(Box::new(FakeProvider::unavailable()));
     let reading = service.inspect_backend();
@@ -4139,11 +4155,13 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         registered,
         [
             "get_bootstrap_status",
-            // The UI preference store. Two commands, and deliberately not
-            // three: reading and committing are the whole boundary, and the
-            // reset-and-replace of an unusable record is a commit that carries
-            // its confirmation rather than a separate operation a document
-            // could reach for on its own.
+            // The UI preference store. Two commands for the record the
+            // webview owns: reading and committing are the whole boundary,
+            // and the reset-and-replace of an unusable record is a commit
+            // that carries its confirmation rather than a separate operation
+            // a document could reach for on its own. The remembered
+            // ProteoWizard folder's forget sits with the installation
+            // commands below, because what it clears was written by Rust.
             "load_ui_preferences",
             "save_ui_preferences",
             // The M8.1 project store, on its own boundary for the same reason
