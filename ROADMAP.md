@@ -25,7 +25,7 @@ This roadmap sequences product risk; it is not the authoritative feature definit
 
 ## M3 — Conversion workflow
 
-- Typed conversion settings for mzML; keep mzXML gated until representative multi-source integrity checks pass.
+- Typed conversion settings for mzML. mzXML is refused at present ([ADR 0043, CNV-D1](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d1--output-formats) `MZXML_REFUSED`, 2026-09-10): on the measured ProteoWizard build a multi-source test document lost spectra silently at exit 0, while single-source output was faithful. The owner's [option C of 2026-10-28](docs/development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28) is to offer it in an advanced set labelled not verified by MSCanvas, with multi-source documents blocked, once that set has its own ADR.
 - Queue, cancellation, retry, failure isolation and output-conflict handling.
 - Transactional outputs and basic integrity checks.
 
