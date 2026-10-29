@@ -181,7 +181,7 @@ describe("M7.4 through the delivered figure owner", () => {
   it("binds preview and save to committed data and captures settings before the save picker settles", async () => {
     const save = deferred<SpectrumExportOutcome>();
     const { api, preview, panel } = await mount({ spectrumExport: () => save.promise });
-    fireEvent.click(within(panel).getByRole("button", { name: UI_RESOURCES.en.rangeSet }));
+    fireEvent.click(within(panel).getByRole("button", { name: new RegExp(`^${UI_RESOURCES.en.rangeSet}`, "u") }));
     fireEvent.change(within(panel).getByRole("textbox", { name: "From" }), { target: { value: "200" } });
     fireEvent.change(within(panel).getByRole("textbox", { name: "To" }), { target: { value: "800" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Apply range" }));

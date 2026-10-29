@@ -33,6 +33,8 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
     if (context) { const range = context.committed ?? context.full;
       setDraft({ context, low: String(range.low), high: String(range.high) }); setProblem(null); }
   };
+  // A plot whose whole range is one value has nothing narrower to apply.
+  const noWidth = !usableRange(current.full);
   const focusPlot = () => root.current?.closest("section")?.querySelector<SVGSVGElement>('svg[role="img"]')?.focus({ preventScroll: true });
   return <div className="plot-range-actions" ref={root}>
     {/* The plot's caption prints the range on screen, a gesture's included.
@@ -69,7 +71,9 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
       </Button>
       <Button size="sm" onClick={() => { port.cancel(pending.transaction); focusPlot(); }}>{t("rangeCancel")}</Button>
     </div>}
+    {/* Named with its axis: the chromatogram and the spectrum each have one. */}
     <Button ref={toggle} size="sm" variant="quiet" className="plot-range-toggle" aria-expanded={draft !== null} aria-controls={`${id}-editor`}
+      aria-label={t("rangeSetFor", { name: axis })}
       onClick={() => { if (draft === null) open(); else { setDraft(null); setProblem(null); } }}>{t("rangeSet")}</Button>
     <div className="plot-range-editor" id={`${id}-editor`} hidden={draft === null}>
       {draft === null ? null : <form className="plot-range-form" onCompositionStartCapture={() => { composing.current = true; }}
@@ -92,9 +96,9 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
         <label id={`${id}-high-label`} htmlFor={`${id}-high`}>{t("rangeHigh")}</label>
         <RawTextField id={`${id}-high`} labelledBy={`${id}-high-label`} describedBy={`${id}-problem`} inputMode="decimal"
           invalid={problem !== null} value={draft.high} onChange={high => setDraft({ ...draft, high })} />
-        <Button type="submit" size="sm" refused={!usableRange(current.full)} reasonId={`${id}-problem`}>{t("rangeApply")}</Button>
+        <Button type="submit" size="sm" refused={noWidth} reasonId={`${id}-problem`}>{t("rangeApply")}</Button>
         <Button size="sm" onClick={close}>{t("rangeCancel")}</Button>
-        <p id={`${id}-problem`} aria-live="polite">{problem === null ? t("rangeGrammar") : t(problem)}</p>
+        <p id={`${id}-problem`} aria-live="polite">{problem !== null ? t(problem) : noWidth ? t("rangeNoWidth") : t("rangeGrammar")}</p>
       </form>}
     </div>
     {/* The gestures, as the plot's description rather than a disclosure. */}

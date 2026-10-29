@@ -57,8 +57,14 @@ function startBand(plot: HTMLElement, axis: "rt" | "mz") {
 function releaseBand(plot: HTMLElement, axis: "rt" | "mz") {
   pointer(plot, "pointerUp", point(axis, .5)); fireEvent.click(plot, { detail: 1 });
 }
+/** The RT header shows its short label first and its full name after it. */
+const RT_HEADER = "RT (Retention time)";
+/** Each plot names its Set range… with its axis, so a panel finds its own by the shared start. */
+const SET_RANGE = new RegExp(`^${UI_RESOURCES.en.rangeSet}`, "u");
+const setRangeFor = (locale: "en" | "zh-CN", axis: "rangeRtAxis" | "rangeMzAxis") =>
+  UI_RESOURCES[locale].rangeSetFor.replace("{{name}}", UI_RESOURCES[locale][axis]);
 function editRange(panel: HTMLElement, low: string, high: string) {
-  fireEvent.click(within(panel).getByRole("button", { name: UI_RESOURCES.en.rangeSet }));
+  fireEvent.click(within(panel).getByRole("button", { name: SET_RANGE }));
   fireEvent.change(within(panel).getByRole("textbox", { name: "From" }), { target: { value: low } });
   fireEvent.change(within(panel).getByRole("textbox", { name: "To" }), { target: { value: high } });
   fireEvent.click(within(panel).getByRole("button", { name: "Apply range" }));
@@ -91,9 +97,9 @@ describe("M7.3 through the delivered application", () => {
   it("sorts and searches loaded facts and activates source indices from row bodies or keys", async () => {
     const { api, preview } = await mount(); const sourceRows = [...preview.spectrumTable.rows];
     const search = screen.getByRole("searchbox", { name: "Search loaded scans" });
-    fireEvent.click(within(grid()).getByRole("button", { name: "Retention time" }));
-    fireEvent.click(within(grid()).getByRole("button", { name: "Retention time" }));
-    expect(within(grid()).getByRole("columnheader", { name: "Retention time" })).toHaveAttribute("aria-sort", "descending");
+    fireEvent.click(within(grid()).getByRole("button", { name: RT_HEADER }));
+    fireEvent.click(within(grid()).getByRole("button", { name: RT_HEADER }));
+    expect(within(grid()).getByRole("columnheader", { name: /^RT(?: |$)/u })).toHaveAttribute("aria-sort", "descending");
     expect(rows().map(rowIndex)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
     fireEvent.change(search, { target: { value: "rare" } });
     expect(rows().map(rowIndex)).toEqual([7, 3]);
@@ -115,8 +121,8 @@ describe("M7.3 through the delivered application", () => {
 
   it("preserves a hidden selection and resumes navigation in the displayed sort order", async () => {
     const { api, preview } = await mount(); const sourceRows = [...preview.spectrumTable.rows];
-    fireEvent.click(within(grid()).getByRole("button", { name: "Retention time" }));
-    fireEvent.click(within(grid()).getByRole("button", { name: "Retention time" }));
+    fireEvent.click(within(grid()).getByRole("button", { name: RT_HEADER }));
+    fireEvent.click(within(grid()).getByRole("button", { name: RT_HEADER }));
     expect(rows().map(rowIndex)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
     selectRow(3, 3);
     await screen.findByRole("img", { name: /^Spectrum 3,/u });
@@ -206,7 +212,7 @@ describe("M7.3 through the delivered application", () => {
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(1));
     const panel = spectrumPanel(); const plot = plotIn(panel);
     startBand(plot, "mz"); releaseBand(plot, "mz");
-    fireEvent.click(within(panel).getByRole("button", { name: UI_RESOURCES.en.rangeSet }));
+    fireEvent.click(within(panel).getByRole("button", { name: setRangeFor("en", "rangeMzAxis") }));
     const from = within(panel).getByRole("textbox", { name: "From" }) as HTMLInputElement;
     from.focus(); fireEvent.change(from, { target: { value: "2e" } }); from.setSelectionRange(1, 1);
     fireEvent.compositionStart(from); fireEvent.keyDown(from, { key: "Enter", isComposing: true });
@@ -226,7 +232,7 @@ describe("M7.3 through the delivered application", () => {
     expect(screen.getByText(UI_RESOURCES["zh-CN"].rangeInvalid)).toBeVisible();
     from.focus(); fireEvent.keyDown(from, { key: "Escape" });
     expect(from).not.toBeInTheDocument();
-    expect(within(panel).getByRole("button", { name: UI_RESOURCES["zh-CN"].rangeSet })).toHaveFocus();
+    expect(within(panel).getByRole("button", { name: setRangeFor("zh-CN", "rangeMzAxis") })).toHaveFocus();
     expect(api.spectrumProjectionRequests).toHaveLength(1);
   });
 });

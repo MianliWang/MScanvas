@@ -72,17 +72,23 @@ describe("a plot head's figure actions", () => {
     const csv = vi.fn();
     const linked = vi.fn();
     const items: PlotMenuItem[] = [
-      { key: "csv", label: "Export CSV…", onSelect: csv },
-      { key: "linked", label: en.figurePreviewLinked, onSelect: linked, disabled: true, reason: en.linkedNoSpectrum },
+      { key: "csv", label: "Export CSV…", onSelect: csv, describedBy: "note" },
+      { key: "linked", label: en.figurePreviewLinked, onSelect: linked, refused: true, reason: en.linkedNoSpectrum },
     ];
-    renderActions({ menuItems: items });
+    renderActions({ menuItems: items, menuNote: { id: "note", text: en.viewerExportTraceHelp } });
     const more = screen.getByRole("button", { name: en.plotMoreExports });
     fireEvent.keyDown(more, { key: "Enter" });
-    const closed = await screen.findByRole("menuitem", { name: new RegExp(en.figurePreviewLinked) });
+    // Refused rather than disabled: named by its label alone, described by its
+    // reason, and still an item the arrow keys reach.
+    const closed = await screen.findByRole("menuitem", { name: en.figurePreviewLinked });
     expect(closed).toHaveAttribute("aria-disabled", "true");
+    expect(closed).not.toHaveAttribute("data-disabled");
+    expect(closed).toHaveAccessibleDescription(en.linkedNoSpectrum);
     expect(closed).toHaveTextContent(en.linkedNoSpectrum);
     fireEvent.click(closed);
     expect(linked).not.toHaveBeenCalled();
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Export CSV…" })).toHaveAccessibleDescription(en.viewerExportTraceHelp);
     fireEvent.click(screen.getByRole("menuitem", { name: "Export CSV…" }));
     expect(csv).toHaveBeenCalledWith(more);
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());

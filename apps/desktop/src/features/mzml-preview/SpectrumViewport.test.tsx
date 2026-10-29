@@ -686,7 +686,9 @@ describe("what each m/z control would do", () => {
     // the render and the keyboard cannot drift apart about which controls exist.
     renderViewport();
     // Icon buttons, so each is named by its label; v5.11's order is out, in, reset.
-    const named = screen.getAllByRole("button").flatMap((button) => button.getAttribute("aria-label") ?? []);
+    // The foot's Set range… is a text button and not one of them.
+    const named = screen.getAllByRole("button").filter((button) => !button.classList.contains("plot-range-toggle"))
+      .flatMap((button) => button.getAttribute("aria-label") ?? []);
 
     expect([...named].sort()).toEqual(
       VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map((entry) => messages("en")(entry.messageKey)).sort(),
@@ -2035,6 +2037,18 @@ describe("a viewport that is admitted and has nothing to do", () => {
     for (const label of CONTROLS) {
       expect(refused(label), label).toBe(true);
     }
+  });
+
+  it("names its Set range… by its axis, and says why Apply is refused in its editor", () => {
+    renderViewport({ domain: FLAT });
+
+    // Two plots each have one; the axis is what tells them apart.
+    fireEvent.click(screen.getByRole("button", { name: "Set range… (m/z)" }));
+    const apply = screen.getByRole("button", { name: "Apply range" });
+    expect(apply).toHaveAttribute("aria-disabled", "true");
+    expect(apply).not.toBeDisabled();
+    // The reason, not the number grammar: nothing typed would make this work.
+    expect(apply).toHaveAccessibleDescription(UI_RESOURCES.en.rangeNoWidth);
   });
 
   it("changes nothing and claims nothing for any viewport key", () => {

@@ -180,7 +180,6 @@ export interface MessageParameters {
   readonly viewerBasePeakValue: { readonly mz: string; readonly value: string };
   readonly viewerLoadedNone: { readonly count: number };
   readonly viewerSpectrumLoaded: { readonly index: string; readonly count: number };
-  readonly viewerExportRangeHelp: { readonly low: string; readonly high: string };
   readonly viewerExportMzWindow: { readonly low: string; readonly high: string };
   readonly viewerExportFormat: { readonly name: string };
   readonly viewerExporting: { readonly name: string };
@@ -195,6 +194,9 @@ export interface MessageParameters {
   readonly rangeCommittedBounds: { readonly low: string; readonly high: string };
   readonly rangePending: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeConfirmContext: { readonly name: string; readonly low: string; readonly high: string };
+  readonly rangeSetFor: { readonly name: string };
+  readonly scanColumnName: { readonly short: string; readonly full: string };
+  readonly scanSortCurrent: { readonly name: string; readonly direction: string };
   readonly scanCountAll: { readonly count: number };
   readonly scanCounts: { readonly visible: number; readonly count: number; readonly total: number };
   readonly scanSelectedOutside: { readonly name: string };

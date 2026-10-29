@@ -185,7 +185,9 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await open(); await browser.$(SCANS).scrollIntoView({ block: "start" });
     const header = browser.$(SCANS + ' [role="columnheader"]:nth-child(2) button');
     const before = await scientificCalls(); await header.click(); await header.click();
-    expect(await browser.$(SCANS + ' [aria-sort="descending"]').getText()).toContain("Retention time");
+    // The header shows "RT"; its full name is its tooltip and the rest of its name.
+    expect(await browser.$(SCANS + ' [aria-sort="descending"]').getText()).toContain("RT");
+    expect(await header.getAttribute("title")).toBe("Retention time");
     await browser.$(SCANS + ' input[type="search"]').setValue("rare-");
     expect(await browser.$$(SCANS + " [data-source-index]").map(row => row.getAttribute("data-source-index"))).toEqual(["7", "3"]);
     await browser.$(row(3) + ' [role="gridcell"]:nth-child(3)').click();

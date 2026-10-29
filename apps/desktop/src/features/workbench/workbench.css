@@ -195,6 +195,9 @@
 .chromatogram-swatch { width: 18px; height: 8px; }
 .chromatogram-swatch > path { stroke: currentcolor; stroke-width: 2; }
 .plot-menu-reason { display: block; color: var(--color-text-secondary); font-size: 11px; }
+/* A refused plot export stays legible, because its reason is printed inside it. */
+.plot-menu [role="menuitem"][aria-disabled="true"] { opacity: 1; color: var(--color-text-tertiary); }
+.plot-menu-note { max-width: 300px; padding: 4px 9px 6px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
 .workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-height: 0; padding: 0; overflow: hidden; }
 .workbench-shell :is(.chromatogram-plot, .spectrum-viewport, .spectrum-viewport-plot, .spectrum-figure) { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-width: 0; min-height: 0; margin: 0; }
 /* Heights from the viewport rather than fixed pixels; inside a pane with a
@@ -243,13 +246,21 @@
 .scan-view-controls .plot-search > input { width: 100%; padding-left: 30px; }
 .scan-hidden-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 0; padding: 4px 8px; font-size: 12px; }
 .spectrum-table-panel > .empty-state { flex: none; padding: 16px; }
-.scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 3px; width: 100%; min-height: 28px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+/* Compact enough for the side column: short labels that ellipsize rather
+   than run into the next header, and a small sort glyph. */
+.workbench-shell .spectrum-table-row { gap: 4px; padding: 0 6px; }
+.scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 100%; min-width: 0; min-height: 28px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.scan-sort-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .spectrum-table-cell:first-child .scan-sort-button { justify-content: flex-start; }
 .scan-sort-button svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; transition: opacity 120ms; }
 .scan-sort-button svg[data-direction="none"] { opacity: .65; }
 .scan-sort-button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .scan-sort-button:hover { color: var(--color-text-primary); }
-.spectrum-table-head .spectrum-table-cell { overflow: visible; }
+.spectrum-table-head .spectrum-table-cell { overflow: hidden; }
+/* Sort scans: every field, with the chosen one checked. */
+.scan-sort-menu-label { padding: 4px 9px 2px; color: var(--color-text-secondary); font-size: 11px; font-weight: 650; }
+.scan-sort-menu [role="menuitemradio"] { position: relative; display: flex; align-items: center; min-height: 30px; padding: 6px 9px 6px 28px; border-radius: 4px; cursor: pointer; }
+.scan-sort-check { position: absolute; left: 8px; display: inline-flex; color: var(--color-accent); }
 @media (prefers-reduced-motion: reduce) { .scan-sort-button svg { transition: none; } }
 .workbench-shell .spectrum-panel { min-height: 0; }
 /* The rows fill the pane; the cap keeps windowing honest in a pane with no definite height. */
