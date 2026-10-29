@@ -277,6 +277,7 @@ describe("destination request and queue truth", () => {
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
+    fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
     await waitFor(() => expect(within(panel).getByText("Requested destination")).toBeVisible());
     const actual = queueSummary();
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");

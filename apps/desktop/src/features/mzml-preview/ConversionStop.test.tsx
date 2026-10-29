@@ -835,6 +835,7 @@ describe("stopping a running conversion queue", () => {
       "MSCanvas could not confirm that a ProteoWizard process it started has ended. Restart MSCanvas before starting another preview or conversion.",
     );
     // And the gates derived from that verdict close with it.
+    fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
@@ -978,7 +979,9 @@ describe("stopping a running conversion queue", () => {
     // place: converting those rows again is a new queue from the roster.
     expect(within(panel).queryByRole("button", { name: /^retry/i })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /resume/i })).toBeNull();
-    // The ordinary way to convert again is the one that was always there.
+    // The ordinary way to convert again is the one that was always there,
+    // opened under the finished queue on request (review 6).
+    fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
     //
     // Awaited, unlike the two queries above it. Those assert an absence, which
     // is true from the first render; this one asserts a presence that arrives
@@ -1082,6 +1085,7 @@ describe("stopping a running conversion queue", () => {
 
     // Every backend control is refused while quarantined.
     expect(within(panel).queryByRole("button", { name: /^retry/i })).toBeNull();
+    fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });

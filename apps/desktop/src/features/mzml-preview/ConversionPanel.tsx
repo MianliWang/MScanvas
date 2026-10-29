@@ -156,6 +156,22 @@ export function ConversionPanel({
   // Basic or Advanced, kept here rather than in the settings, which leave the
   // screen while a queue runs (PM9.4 R5).
   const [settingsView, setSettingsView] = useState<"basic" | "advanced">("basic");
+  // Under a finished queue the next conversion is off screen until the reader
+  // asks for it ("Start another conversion"), so a success is not followed by
+  // a refused Convert and a warning about an empty scope (rebuild review 6).
+  // Spent when the slot leaves the finished queue or a retry replaces it; a
+  // start that failed before Rust reported a queue keeps the form open.
+  const [startingAnother, setStartingAnother] = useState(false);
+  if (startingAnother && (!terminal || conversion.retrying)) setStartingAnother(false);
+  /** Whether the next conversion's form, summary and Convert are on screen. */
+  const planShown = !conversion.busy && (!terminal || startingAnother);
+  // The plan mounts in the commit after the press, so the keyboard follows it
+  // there rather than being dropped with the control that asked for it.
+  const focusPlan = useRef(false);
+  const startAnother = () => {
+    setStartingAnother(true);
+    focusPlan.current = true;
+  };
   const currentReturn = useRef<() => void>(() => {});
   // A later focus destination permanently cancels the return, including one
   // which disappears before the picker settles. Opening Settings is such a
@@ -247,7 +263,7 @@ export function ConversionPanel({
   // With rows to convert it is always offered and `startAvailability` says
   // whether it may be pressed and why not, which is what lets a failed plan and
   // one being read refuse it differently.
-  const startOffered = !conversion.busy;
+  const startOffered = planShown;
   const retryOffered =
     state.status === "terminal" &&
     state.reason === "completed" &&
@@ -270,9 +286,10 @@ export function ConversionPanel({
    * how one contended moment produces one sentence rather than two.
    */
   // The settings belong to the next conversion, which is not on screen while a
-  // queue runs (PM9.4 R5), and neither is their retry then.
+  // queue runs (PM9.4 R5) or under a finished one until it is asked for, and
+  // neither is their retry then.
   const settingsRefusal: ConversionRefusal | null =
-    !conversion.busy && configuration.retryOffered && configuration.refusal !== null
+    planShown && configuration.retryOffered && configuration.refusal !== null
       ? { source: "probe", refusal: configuration.refusal }
       : null;
 
@@ -326,6 +343,16 @@ export function ConversionPanel({
    * picker is still open: its return to Convert is the picker's own.
    */
   const panel = useRef<HTMLElement | null>(null);
+  // Before the return below, so the plan rather than the status line takes
+  // the keyboard from a "Start another conversion" that has just left.
+  useLayoutEffect(() => {
+    if (!focusPlan.current) return;
+    const next = panel.current?.querySelector<HTMLElement>(".conversion-plan") ?? null;
+    if (next === null) return;
+    focusPlan.current = false;
+    next.focus({ preventScroll: true });
+    next.scrollIntoView?.({ block: "nearest" });
+  });
   const lastFocused = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const node = panel.current;
@@ -372,7 +399,6 @@ export function ConversionPanel({
       resolvedScope={resolvedScope}
       onScopeChange={onScopeChange}
       onSortChange={onSortChange}
-      repeating={terminal}
       startAvailability={startAvailability}
       convertButton={convertButton}
       onCustomStart={() => { restoreAfterPicker.current = true; }}
@@ -390,6 +416,15 @@ export function ConversionPanel({
       className="conversion-panel"
       data-phase={conversion.busy ? "running" : terminal ? "finished" : "plan"}
     >
+      {/* The page head (rebuild review 10). The surface's h1 says the title to
+          assistive technology already, so the visible copy here is hidden from
+          it rather than heard twice; the purpose line is read. */}
+      <div className="page-head conversion-page-head">
+        <div className="page-head-copy">
+          <p className="page-head-title" aria-hidden="true">{t("conversionTask")}</p>
+          <p className="page-head-subtitle">{t("m74CnvPageSubtitle")}</p>
+        </div>
+      </div>
       <div className="conversion-main">
         {conversion.failure === null ? null : (
           <div className="notice notice-danger conversion-notice" role="status">
@@ -415,9 +450,7 @@ export function ConversionPanel({
             part="rows"
             onReviewNewPlan={() => {
               plan.invalidate();
-              const next = panel.current?.querySelector<HTMLElement>(".conversion-plan");
-              next?.focus({ preventScroll: true });
-              next?.scrollIntoView?.({ block: "nearest" });
+              startAnother();
             }}
             conversion={conversion}
             retryAvailability={retryAvailability}
@@ -429,12 +462,12 @@ export function ConversionPanel({
             output and so is the running queue, and two of them side by side
             -- one live, one hypothetical, and the hypothetical one's button
             refused -- is the panel describing two different things in the same
-            shape. A finished queue is different: there the plan is how the user
-            converts something else, so it stays, under its own heading, below
-            the results; its summary and Convert stay in the summary column,
-            directly under the notice that explains them. The settings are the
-            next conversion's and go with it (PM9.4 R5). */}
-        {conversion.busy ? null : (
+            shape. Under a finished queue the plan is how the user converts
+            something else, so it comes back, under its own heading below the
+            results, once they ask for it; its summary and Convert follow the
+            queue's in the summary column. The settings are the next
+            conversion's and go with it (PM9.4 R5). */}
+        {!planShown ? null : (
           <div className="conversion-plan" tabIndex={-1} role={terminal ? "group" : undefined}
             aria-labelledby={terminal ? "conversion-next-heading" : undefined}>
             {terminal ? <h3 id="conversion-next-heading">{t("m74CnvNextConversion")}</h3> : null}
@@ -458,10 +491,25 @@ export function ConversionPanel({
             retryAvailability={retryAvailability}
             retryOffered={retryOffered}
             refusedBy={refusedBy}
+            addPrimary={!startingAnother}
+            startAnother={terminal && !startingAnother ? (
+              // Removed once pressed, and the keyboard follows to the plan it
+              // brings back. The one primary when there is nothing to add.
+              <Button
+                variant={conversion.eligibleOutputCount > 0 ? "secondary" : "primary"}
+                className="conversion-wide-action"
+                refused={conversion.busy}
+                reasonId={heldBy ?? QUEUE_STATUS_ID}
+                data-conversion-start-another=""
+                onClick={startAnother}
+              >
+                {t("m74CnvStartAnother")}
+              </Button>
+            ) : null}
           />
         ) : null}
         <AvailabilityNotice refusals={refusals} />
-        {conversion.busy ? null : terminal ? (
+        {!planShown ? null : terminal ? (
           // The next conversion's half of the summary column, set apart from
           // the finished queue's and named like the settings it describes.
           <div className="conversion-next-summary" role="group" aria-labelledby="conversion-next-summary-label">
@@ -559,10 +607,12 @@ interface QueueRefusals {
  * launches nothing. Retry and this are mutually exclusive because one of them
  * replaces the results the other is reading.
  */
-function AdoptOutputs({ conversion, refusedBy }: {
+function AdoptOutputs({ conversion, refusedBy, primary }: {
   readonly conversion: ConversionOperation;
   /** What says why Add is refused, while it is. */
   readonly refusedBy: string | null;
+  /** Whether Add is the state's one filled primary. */
+  readonly primary: boolean;
 }): ReactElement | null {
   const t = useUiMessages();
   const { adoption, eligibleOutputCount } = conversion;
@@ -629,9 +679,10 @@ function AdoptOutputs({ conversion, refusedBy }: {
         <div className="conversion-actions">
           {/* Refused rather than `disabled`, for the reason the comment above
               gives: Chromium drops focus from a control that becomes natively
-              disabled (PM9.4 R11). The one filled primary of a finished queue. */}
+              disabled (PM9.4 R11). The one filled primary of a finished queue
+              until the next conversion is opened under it. */}
           <Button
-            variant="primary"
+            variant={primary ? "primary" : "secondary"}
             className="conversion-wide-action"
             refused={!conversion.canAdopt}
             aria-describedby={refusedBy ?? undefined}
@@ -860,7 +911,6 @@ function PlanSummary({
   startAvailability,
   convertButton,
   onCustomStart,
-  repeating,
 }: {
   readonly conversion: ConversionOperation;
   readonly configuration: ConversionConfigurationView;
@@ -873,8 +923,6 @@ function PlanSummary({
   readonly onSortChange: (sort: SortMode) => void;
   /** Whether a conversion of these rows may start, and what to say when not. */
   readonly startAvailability: ConversionAvailability;
-  /** Whether a previous result is on screen above this plan. */
-  readonly repeating: boolean;
 }): ReactElement {
   const t = useUiMessages();
   const current = plan.current;
@@ -1088,10 +1136,10 @@ function PlanSummary({
               : plan.capacityRefusal !== null ? CAPACITY_REFUSAL_ID : "",
             startAvailability,
           )}
-          // One filled primary per state (R7): under a finished queue whose
-          // outputs are on offer, adding them is the primary and starting the
-          // next conversion is not.
-          variant={repeating && conversion.eligibleOutputCount > 0 && conversion.canAdopt ? "secondary" : "primary"}
+          // One filled primary per state (R7). On screen under a finished queue
+          // only once the reader opened the next conversion, and Add then
+          // steps down to secondary.
+          variant="primary"
           className="conversion-start conversion-wide-action"
           // The one rule, and the whole of it. The empty-row case and the plan
           // are inside it rather than beside it: a second clause here is
@@ -1198,9 +1246,15 @@ function QueueState({
   retryAvailability,
   retryOffered,
   refusedBy,
+  addPrimary = true,
+  startAnother = null,
 }: {
   readonly part: "rows" | "summary";
   readonly onReviewNewPlan?: () => void;
+  /** Whether Add is the one primary: not once the next conversion is open. */
+  readonly addPrimary?: boolean;
+  /** The control that opens the next conversion, under Add (rebuild review 6). */
+  readonly startAnother?: ReactElement | null;
   readonly conversion: ConversionOperation;
   /** Whether this queue's failures may be rerun, and what to say when not. */
   readonly retryAvailability: ConversionAvailability;
@@ -1525,9 +1579,16 @@ function QueueState({
       {/* The same numbers the sentence above says, large, for a glance. Hidden
           from assistive technology because the sentence already says them. */}
       {state.status === "running" && !stopping ? (
-        <p className="conversion-progress-num" aria-hidden="true">
-          {`${String(runningItem ? runningPosition(queue) : queue.finalizedCount)} / ${String(queue.itemCount)}`}
-        </p>
+        <>
+          <p className="conversion-progress-num" aria-hidden="true">
+            {`${String(runningItem ? runningPosition(queue) : queue.finalizedCount)} / ${String(queue.itemCount)}`}
+          </p>
+          {/* Filled by the items already settled, never by the one running:
+              nothing measures a fraction of a run (rebuild review 13). */}
+          <div className="conversion-progress-bar" aria-hidden="true">
+            <span style={{ width: `${String(settledShare(queue))}%` }} />
+          </div>
+        </>
       ) : null}
       {/* No stop controls until the state read dispatched beside a retry
           reports the rerun running. */}
@@ -1595,7 +1656,8 @@ function QueueState({
               <p className="conversion-side-note">{t("m74CnvStoppedFilesRemain")}</p>
             </>
           )}
-          <AdoptOutputs conversion={conversion} refusedBy={refusedBy.adopt} />
+          <AdoptOutputs conversion={conversion} refusedBy={refusedBy.adopt} primary={addPrimary} />
+          {startAnother === null ? null : <div className="conversion-actions conversion-start-another">{startAnother}</div>}
           <ExportDiagnostics conversion={conversion} refusedBy={refusedBy.diagnostics} />
           {/* A stopped queue is terminal and is not rerun in place. Converting
               those rows again is a new queue, made from the roster, which is
@@ -1746,6 +1808,12 @@ function completedSummary(queue: ConversionQueue, t: UiMessage): string {
 
 function stoppedSummary(queue: ConversionQueue, t: UiMessage): string {
   return t("m74CnvQueueCounts", { parts: conversionCountParts(queue, true, t).join(t("m74CnvListSeparator")), total: queue.itemCount });
+}
+
+/** The share of items no longer waiting or running, as a percentage. */
+function settledShare(queue: ConversionQueue): number {
+  const settled = queue.items.filter((item) => item.state !== "pending" && item.state !== "running").length;
+  return queue.itemCount === 0 ? 0 : (settled / queue.itemCount) * 100;
 }
 
 function runningPosition(queue: ConversionQueue): number {

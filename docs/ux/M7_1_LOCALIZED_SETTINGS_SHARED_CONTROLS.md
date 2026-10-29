@@ -33,8 +33,9 @@ viewports, operation identity and delivered scientific results keep their existi
 owners. Completing a background read while Settings is open remains an ordinary
 workspace update; Cancel does not restore a workspace snapshot.
 
-`SettingField` and `ChoiceField` are consumed by both Settings and
-`FigureSettingsFields`. The latter remains shared by `SelectedSpectrumPanel`
+`SettingField` is consumed by both Settings and `FigureSettingsFields`; since
+the v5.11 rebuild their choice groups are `SegmentedControl`, and the former
+`ChoiceField` is removed. The latter remains shared by `SelectedSpectrumPanel`
 and `ChromatogramExportPanel`, with stable distinct panel IDs and per-instance
 radio names. `RawTextField` preserves the string, node, caret and IME composition;
 the existing whole-positive-integer parsing and Rust range/unit validation remain

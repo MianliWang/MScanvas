@@ -160,6 +160,8 @@ export const en = {
   m74CnvDiagnosticsAction: "Export failure diagnostics…",
   m74CnvScope: "Conversion scope",
   m74CnvNextConversion: "Next conversion",
+  m74CnvStartAnother: "Start another conversion",
+  m74CnvPageSubtitle: "Choose settings, review the plan, then convert vendor acquisitions to mzML.",
   m74CnvQueueTitle: "Queue",
   m74CnvResultsTitle: "Results",
   m74CnvSelected: "Checked rows",
@@ -189,7 +191,7 @@ export const en = {
   m74CnvQueueConflict: "Queue conflict policy",
   m74CnvRetryKeepsFailure: "Rerun of an earlier failure",
   m74CnvStoppedFilesRemain: "Completed outputs remain in the destination folder.",
-  m74CnvConvertAgain: "To convert rows that were cancelled, not run or skipped by you, check only those rows and use Next conversion below.",
+  m74CnvConvertAgain: "To convert rows that were cancelled, not run or skipped by you, check only those rows and start another conversion.",
   m74CnvRetryScope: "Uses this queue's original folder, conflict setting and order.",
   m74CnvWillRetry: "Retryable",
   m74CnvWillNotRetry: "Not retryable: the same settings would fail again.",
@@ -1064,6 +1066,7 @@ export const en = {
   // them. None of it depends on a converter being installed.
   projectSurface: "Project",
   projectNone: "No project open",
+  projectPageSubtitle: "References, layers and recorded work, kept in one local project file.",
   projectNoneHint: "A project is a private local file. It records the names, locations and content fingerprints of referenced files.",
   projectDefaultName: "Untitled project",
   projectNew: "New project",
@@ -1210,6 +1213,7 @@ export const en = {
   provenanceRelatedGone: "A record no longer in this project",
   provenanceArtifactStored: "Stored in the project file.",
   provenanceShowDetails: "Show Details",
+  provenanceCloseDetails: "Close Details",
   provenanceInspectInput: "Show what {{name}} is related to",
   // --- M8.2 review pass.
   projectRefusedAmbiguousProducer: "That project file says two runs produced the same record. Nothing was changed.",

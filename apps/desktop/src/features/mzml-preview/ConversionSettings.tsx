@@ -102,6 +102,13 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
   if (selected === null) return <div className="conversion-settings" data-settings-state="failed">{head()}<p>{t("cnvSettingsMismatch")}</p></div>;
   const refusal = selectionRefusal(held.catalog, selected.intent.id);
   const recovery = recoveryIntent(held.catalog, held.shipped, selected.intent.id);
+  // Why a choice is refused, said once for the whole form however many groups
+  // it dims (rebuild review 9). Every refused control points at its sentence.
+  const refusalPrefix = `${prefix}-choices`;
+  const shownStates = CONVERSION_AXES.flatMap(axis => axis === "precision" && !advanced
+    ? precisionGrid(held.catalog, selected.intent).flat().map(cell => cell.state)
+    : axisChoices(held.catalog, selected.intent, axis).map(choice => choice.state));
+  const refusalNotes = refusals(refusalPrefix, shownStates, t);
   return <div className="conversion-settings" data-settings-state="ready" data-settings-view={advanced ? "advanced" : "basic"}>
     {head(<>
       {/* One format exists, so it is stated rather than offered as a choice. */}
@@ -117,9 +124,10 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
     </div>}
     <div className="conversion-settings-grid">
       {CONVERSION_AXES.map(axis => axis === "precision" && !advanced
-        ? <PrecisionFields key={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} />
-        : <AxisFieldset key={axis} axis={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} advanced={advanced} />)}
+        ? <PrecisionFields key={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} />
+        : <AxisFieldset key={axis} axis={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} advanced={advanced} />)}
     </div>
+    {refusalNotes.length === 0 ? null : <div className="conversion-settings-refusals">{refusalNotes}</div>}
   </div>;
 }
 
@@ -127,9 +135,11 @@ interface AxisProps {
   readonly catalog: readonly ConversionCatalogRow[];
   readonly current: ConversionIntentDescriptor;
   readonly onChoose: (intentId: string) => void;
+  /** Where the form's one sentence per refusal reason is named. */
+  readonly refusalPrefix: string;
 }
 
-function AxisFieldset({ axis, catalog, current, onChoose, advanced }: AxisProps & { readonly axis: ConversionAxis; readonly advanced: boolean }) {
+function AxisFieldset({ axis, catalog, current, onChoose, refusalPrefix, advanced }: AxisProps & { readonly axis: ConversionAxis; readonly advanced: boolean }) {
   const t = useUiMessages();
   const prefix = useId();
   const choices = axisChoices(catalog, current, axis);
@@ -141,7 +151,7 @@ function AxisFieldset({ axis, catalog, current, onChoose, advanced }: AxisProps 
       // Secondary explanation is disclosed without changing the intent.
       const lossWarning = value === "unscoped_default_centroiding" || (state.status === "selected" && (value === "ms1_only" || value === "ms2_only"));
       const disclosure = advanced || lossWarning ? note(axis, value, t) : null;
-      const describedBy = [refusalId(prefix, state), disclosure === null ? undefined : noteId].filter(Boolean).join(" ") || undefined;
+      const describedBy = [refusalId(refusalPrefix, state), disclosure === null ? undefined : noteId].filter(Boolean).join(" ") || undefined;
       return <div className="conversion-setting-choice" data-choice-state={state.status} key={value}>
         <label><input type="radio" name={`${prefix}-${axis}`} value={value} checked={state.status === "selected"}
           disabled={state.status === "unavailable"} aria-describedby={describedBy}
@@ -149,7 +159,6 @@ function AxisFieldset({ axis, catalog, current, onChoose, advanced }: AxisProps 
         {disclosure === null ? null : <p className="conversion-setting-note" id={noteId}>{disclosure}</p>}
       </div>;
     })}
-    {refusals(prefix, choices.map(choice => choice.state), t)}
   </fieldset>;
 }
 
@@ -158,40 +167,44 @@ function refusalId(prefix: string, state: ConversionChoiceState): string | undef
   return state.status === "unavailable" ? `${prefix}-refusal-${state.reason}` : undefined;
 }
 
-/** Each refusal said once for its group, however many values it refuses. */
+/** Each refusal said once for the form, however many values it refuses. */
 function refusals(prefix: string, states: readonly ConversionChoiceState[], t: UiMessage): ReactElement[] {
   const reasons = [...new Set(states.flatMap(state => state.status === "unavailable" ? [state.reason] : []))];
   return reasons.map(reason => <p className="conversion-setting-note" id={`${prefix}-refusal-${reason}`} key={reason}>{t(REFUSAL[reason])}</p>);
 }
 
-function PrecisionFields({ catalog, current, onChoose }: AxisProps) {
-  const t = useUiMessages();
-  const prefix = useId();
+/** Per array, each width and what choosing it with the other array's current width would do. */
+function precisionGrid(catalog: readonly ConversionCatalogRow[], current: ConversionIntentDescriptor) {
   const choices = axisChoices(catalog, current, "precision");
   const currentWidths = WIDTHS[current.precision];
-  const selectedNote = note("precision", current.precision, t);
-  const selectedId = selectedNote === null ? undefined : `${prefix}-selected`;
-  const grid = ([0, 1] as const).map(index => ([32, 64] as const).map(width => {
+  return ([0, 1] as const).map(index => ([32, 64] as const).map(width => {
     const target = choices.find(choice => WIDTHS[choice.value][index] === width && WIDTHS[choice.value][1 - index] === currentWidths[1 - index]);
     const state: ConversionChoiceState = target?.state ?? { status: "unavailable", reason: "notQualified" };
     return { width, state };
   }));
+}
+
+function PrecisionFields({ catalog, current, onChoose, refusalPrefix }: AxisProps) {
+  const t = useUiMessages();
+  const prefix = useId();
+  const selectedNote = note("precision", current.precision, t);
+  const selectedId = selectedNote === null ? undefined : `${prefix}-selected`;
+  const grid = precisionGrid(catalog, current);
   return <fieldset className="conversion-setting" data-axis="precision">
     <legend>{t("cnvPrecision")}</legend>
     <div className="conversion-precision-fields">
       {/* Native radios drawn as a segmented pair: an unavailable width stays on
-          screen, natively disabled, and points at the reason said below. */}
+          screen, natively disabled, and points at the form's reason for it. */}
       {grid.map((widths, index) => <fieldset className="conversion-segments" key={index}>
         <legend>{t(index === 0 ? "cnvMz" : "cnvIntensity")}</legend>
         <div className="conversion-segments-track">
           {widths.map(({ width, state }) => <label className="conversion-segment" data-choice-state={state.status} key={width}>
             <input className="visually-hidden" type="radio" name={`${prefix}-${index}`} checked={state.status === "selected"}
-              disabled={state.status === "unavailable"} aria-describedby={refusalId(prefix, state) ?? selectedId}
+              disabled={state.status === "unavailable"} aria-describedby={refusalId(refusalPrefix, state) ?? selectedId}
               onChange={() => { if (state.status === "selectable") onChoose(state.intentId); }} />{t(width === 32 ? "cnv32Bit" : "cnv64Bit")}</label>)}
         </div>
       </fieldset>)}
     </div>
-    {refusals(prefix, grid.flat().map(choice => choice.state), t)}
     {selectedNote === null ? null : <p className="conversion-setting-note" id={selectedId}>{selectedNote}</p>}
   </fieldset>;
 }

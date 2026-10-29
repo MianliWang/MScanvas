@@ -30,7 +30,7 @@ import {
   setInvokeResult,
 } from "../support/harness";
 import { cdp, metrics } from "../support/cdp";
-import { CONVERT, CONVERSION_SURFACE, checkMembers, isRefused, showConversion, waitUntilOffered } from "../support/conversion";
+import { CONVERT, CONVERSION_SURFACE, START_ANOTHER, checkMembers, isRefused, showConversion, startAnother, waitUntilOffered } from "../support/conversion";
 import { NO_PROJECT, scenario, type Locale } from "../support/pm9Scenarios";
 import { readBackSavedPreferences } from "../support/viewer";
 import {
@@ -583,11 +583,13 @@ describe("PM9.4 conversion journey, rendered", () => {
     await open(world({ slot: slot(1, MIXED) }));
     await checkMembers([THIRD.handle]);
     await showConversion();
-    await waitUntilOffered(CONVERT);
+    await browser.$(START_ANOTHER).waitForDisplayed({ timeout: 15_000 });
     const finished = await frame("pm94-p6-mixed-en-1366x768");
 
-    // R7: the outputs are the primary; the next conversion's start is secondary.
+    // R7: the outputs are the primary; the next conversion waits behind
+    // Start another conversion, and no Convert is on screen (review 6).
     expect(finished.filled).toEqual([en.m74CnvAddOne]);
+    expect(await browser.$(CONVERT).isExisting()).toBe(false);
     // R8: each failed row says whether Retry reruns it, and the scope is visible.
     const markers = await browser.execute(() =>
       [...document.querySelectorAll('li[data-item-state="failed"]')].map((row) => (row.querySelector(".conversion-queue-retry")?.textContent ?? "").trim() || null),
@@ -700,11 +702,12 @@ describe("PM9.4 conversion journey, rendered", () => {
         }
       }
 
-      // A finished mixed queue with the next conversion below it.
+      // A finished mixed queue with the next conversion opened below it.
       await metrics(1920, 1080);
       await open(world({ locale, slot: slot(1, MIXED) }));
       await checkMembers([THIRD.handle]);
       await showConversion();
+      await startAnother();
       await waitUntilOffered(CONVERT);
       for (const [width, height] of anchors) {
         await metrics(width, height);

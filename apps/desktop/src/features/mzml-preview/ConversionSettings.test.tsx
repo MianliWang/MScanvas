@@ -243,6 +243,22 @@ describe("the four control groups", () => {
     expect(note?.textContent).toBe(en.cnvNotQualified);
   });
 
+  it("says a refusal once for the form, however many groups it dims (review 9)", () => {
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={vi.fn()}
+        refusalNoticeId={null}
+      />);
+    const refused = [...panel().querySelectorAll<HTMLInputElement>("input[type=radio]:disabled")];
+    const groups = new Set(refused.map((radio) => radio.closest("[data-axis]")));
+    expect(groups.size).toBeGreaterThan(1);
+    expect(screen.getAllByText(en.cnvNotQualified)).toHaveLength(1);
+    for (const radio of refused) {
+      const ids = (radio.getAttribute("aria-describedby") ?? "").split(" ");
+      expect(ids.map((each) => document.getElementById(each)?.textContent)).toContain(en.cnvNotQualified);
+    }
+  });
+
   it("say nothing under a precision that rounds nothing", () => {
     // 64-bit for both arrays has no loss to disclose, so no note is rendered
     // and no radio points at one.

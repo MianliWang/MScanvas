@@ -270,7 +270,7 @@ describe("the setup", () => {
 
     // jsdom lays nothing out, so the stylesheet is held to its word: the setup
     // carries the accent bar and a heading in primary text above a section's
-    // quiet 13px, still below the surface's 16px h2.
+    // quiet 13px, still below the page head's 24px h2.
     const style = document.createElement("style");
     style.textContent = projectStyles;
     document.head.append(style);
@@ -286,7 +286,7 @@ describe("the setup", () => {
       expect(setupHeading?.getPropertyValue("font-size")).toBe("14px");
       expect(setupHeading?.getPropertyValue("color")).toBe("var(--color-text-primary)");
       expect(rule(".project-section h3")?.style.getPropertyValue("font-size")).toBe("13px");
-      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("17px");
+      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("24px");
     } finally {
       style.remove();
     }

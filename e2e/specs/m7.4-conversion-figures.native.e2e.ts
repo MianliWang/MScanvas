@@ -5,6 +5,7 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, 
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FigurePreviewRequest, WorkspaceConversionUpdate, WorkspaceRoster } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { openNextConversion } from "../support/conversion";
 import { nativeResourceOrigins } from "../support/nativeResourceOrigins";
 import { inspectNativePng, matchesNativePreviewDigest } from "../support/m74NativeFixture";
 import { installM74PreviewBlobObserver } from "../support/m74PreviewBlobObserver";
@@ -246,7 +247,10 @@ async function start(destinationPath: string, cancel = false) {
 }
 async function terminal() {
   await browser.waitUntil(async () => (await state()).status === "terminal", { timeout: 240_000, interval: 250 });
-  const result = await state(); if (result.status !== "terminal") throw Error("No terminal queue."); record({ kind: "real terminal conversion", result }); return result;
+  const result = await state(); if (result.status !== "terminal") throw Error("No terminal queue."); record({ kind: "real terminal conversion", result });
+  // The next conversion's form stays off screen under a finished queue until
+  // asked for (rebuild review 6); the steps after this one use it.
+  await openNextConversion(PANEL); return result;
 }
 async function save(selector: string, name: string, title: string, path: string, cancel = false) {
   await reveal(selector); await remember(selector + " button", name);

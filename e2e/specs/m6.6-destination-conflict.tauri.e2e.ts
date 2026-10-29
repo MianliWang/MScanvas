@@ -17,7 +17,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath } from "node:url";
 
 import type { DestinationPolicy, WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
-import { isRefused, waitUntilOffered } from "../support/conversion";
+import { isRefused, openNextConversion, waitUntilOffered } from "../support/conversion";
 import { revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -246,7 +246,11 @@ runNative("M6.6 real native destination and conflict proof (requires authorized 
       const [handled] = await Promise.all([handler, browser.$(CONVERT).click()]);
       evidence.push({ kind: "native-picker", scenario, result: handled });
     }
-    return terminal(previousId);
+    const finished = await terminal(previousId);
+    // The next conversion's form stays off screen under a finished queue
+    // until asked for (rebuild review 6); the steps after this one use it.
+    await openNextConversion(PANEL);
+    return finished;
   }
 
   function output(path: string): void {

@@ -160,6 +160,8 @@ export const zhCN = {
   m74CnvDiagnosticsAction: "导出失败诊断…",
   m74CnvScope: "转换范围",
   m74CnvNextConversion: "下一次转换",
+  m74CnvStartAnother: "开始另一次转换",
+  m74CnvPageSubtitle: "选择设置并核对计划，然后将厂商采集数据转换为 mzML。",
   m74CnvQueueTitle: "队列",
   m74CnvResultsTitle: "结果",
   m74CnvSelected: "勾选的行",
@@ -189,7 +191,7 @@ export const zhCN = {
   m74CnvQueueConflict: "队列重名策略",
   m74CnvRetryKeepsFailure: "重试先前的失败项",
   m74CnvStoppedFilesRemain: "已完成的输出保留在目标文件夹中。",
-  m74CnvConvertAgain: "要转换已取消、未运行或由你跳过的行，请只勾选这些行，并使用下方的“下一次转换”。",
+  m74CnvConvertAgain: "要转换已取消、未运行或由你跳过的行，请只勾选这些行，再开始另一次转换。",
   m74CnvRetryScope: "沿用此队列原来的文件夹、重名设置和顺序。",
   m74CnvWillRetry: "可重试",
   m74CnvWillNotRetry: "不可重试：以相同设置重试仍会失败。",
@@ -1037,6 +1039,7 @@ export const zhCN = {
   // them. None of it depends on a converter being installed.
   projectSurface: "项目",
   projectNone: "未打开任何项目",
+  projectPageSubtitle: "引用文件、图层和已记录的工作，保存在一个本地项目文件中。",
   projectNoneHint: "项目是保存在本机的私有文件，会记录所引用文件的名称、位置和内容指纹。",
   projectDefaultName: "未命名项目",
   projectNew: "新建项目",
@@ -1176,6 +1179,7 @@ export const zhCN = {
   provenanceRelatedGone: "已不属于此项目的记录",
   provenanceArtifactStored: "保存在项目文件中。",
   provenanceShowDetails: "显示详情",
+  provenanceCloseDetails: "关闭详情",
   provenanceInspectInput: "查看 {{name}} 的关联",
   // --- M8.2 review pass.
   projectRefusedAmbiguousProducer: "该项目文件称有两次运行产生了同一条记录。未更改任何内容。",

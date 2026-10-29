@@ -183,6 +183,15 @@ describe("provenance in the application shell", () => {
     expect(within(inspector()).getByText(en.provenanceKindInput)).toBeTruthy();
     expect(document.querySelector("#workbench-project")?.hasAttribute("hidden")).toBe(false);
     expect(document.querySelector("#workbench-project")).toHaveAttribute("inert");
+
+    // Its own close folds it, lifts `inert` from the project and gives the
+    // keyboard back to the row that was inspected (review 11).
+    await press(within(inspector()).getByRole("button", { name: en.provenanceCloseDetails }));
+    await waitFor(() => expect(inspector().hidden).toBe(true));
+    expect(document.querySelector("#workbench-project")).not.toHaveAttribute("inert");
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }),
+    );
   });
 
   it("navigates between related objects without asking the backend for anything", async () => {

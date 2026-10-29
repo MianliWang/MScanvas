@@ -33,7 +33,7 @@ import {
   setInvokeResult,
 } from "../support/harness";
 import { ipcTable, VENDOR_ROW } from "../support/fixtures";
-import { CONVERT, checkMembers, isRefused, showConversion } from "../support/conversion";
+import { CONVERT, checkMembers, isRefused, showConversion, startAnother } from "../support/conversion";
 import {
   admittedIntents,
   availableBackend,
@@ -906,7 +906,8 @@ describe("M6.4 — E10: what BEGIN bound is not what the controls show next", ()
       timeoutMsg: "the finished queue never offered a rerun",
     });
 
-    // The reader moves the controls to the *next* conversion's settings.
+    // The reader opens the *next* conversion and moves its settings.
+    await startAnother();
     await setInvokeResult(
       "describe_workspace_conversion_queue",
       plannedAs(intentOf(FLAT_32), A),

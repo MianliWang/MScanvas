@@ -8,7 +8,7 @@ import {
 import { ipcTable, VENDOR_ROW } from "../support/fixtures";
 import { cdp } from "../support/cdp";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
-import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion, waitUntilOffered } from "../support/conversion";
+import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion, startAnother, waitUntilOffered } from "../support/conversion";
 import {
   availableBackend, completeCatalog, queueItem, queueOf, settledAt, shippedIntent,
 } from "../../apps/desktop/src/test/previewFixtures";
@@ -59,7 +59,8 @@ async function setInnerViewport(width: number, height: number) {
   console.log("M6.6 measured inner viewport", { width, height, frame });
 }
 
-async function openWorkspace(overrides: Record<string, unknown> = {}) {
+/** `finished`: the slot holds a finished queue, whose next conversion opens on request. */
+async function openWorkspace(overrides: Record<string, unknown> = {}, finished = false) {
   await setInnerViewport(1_366, 768);
   await installIpcBoundary({
     ...ipcTable(), inspect_backend: { ...availableBackend, authority: AUTHORITY },
@@ -78,6 +79,7 @@ async function openWorkspace(overrides: Record<string, unknown> = {}) {
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
   await checkMembers([VENDOR_ROW.handle]);
   await showConversion();
+  if (finished) await startAnother();
   await waitUntilOffered(CONVERT);
 }
 
@@ -270,7 +272,7 @@ describe("M6.6 destination and conflict review", () => {
       destinationPolicy: { kind: "namedSubfolder", name: "Original" }, conflictPolicy: "skip" };
     await openWorkspace({ get_workspace_conversion_state: {
       ...IDLE, sequence: 1, state: { status: "terminal", reason: "completed", operationId: "1", queue },
-    } });
+    } }, true);
     const actual = await browser.$('.conversion-running [aria-label="Queue destination"]');
     await openBoundDetails();
     await scrollNestedIntoView('.conversion-running [aria-label="Queue destination"]');
