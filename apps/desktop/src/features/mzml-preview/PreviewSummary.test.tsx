@@ -11,13 +11,14 @@ import { buildPreview, buildSpectrum } from "../../test/previewFixtures";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { UI_RESOURCES } from "../preferences/i18n";
 import { PreviewSummary } from "./PreviewSummary";
+import { initialSpectrumViewportState } from "./viewer/spectrumViewport";
 
 const en = UI_RESOURCES.en;
 const preview = buildPreview();
 
 function renderDetails(props: Partial<Parameters<typeof PreviewSummary>[0]> = {}) {
   render(<PreviewSummary chromatogramScanCount={null} file={preview.file} metadata={preview.metadata} runSummary={preview.runSummary}
-    spectrum={null} spectrumListTotal={preview.spectrumTable.totalRowCount} spectrumSource="" {...props} />);
+    spectrum={null} spectrumListTotal={preview.spectrumTable.totalRowCount} spectrumViewport={initialSpectrumViewportState} {...props} />);
 }
 
 describe("the Details inspector", () => {
@@ -42,12 +43,12 @@ describe("the Details inspector", () => {
   });
 
   it("says what each plot is drawn from, only while there is something to say", () => {
-    renderDetails({ chromatogramScanCount: 50, spectrumSource: en.plotTransferReduced });
+    renderDetails({ chromatogramScanCount: 50, spectrum: { ...buildSpectrum(3, 4), representationKnown: false } });
 
     expect(screen.getByRole("heading", { name: en.detailsChromatogramSource })).toBeVisible();
     expect(screen.getByText(en.viewerScanSource.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "50"))).toBeVisible();
     expect(screen.getByRole("heading", { name: en.detailsSpectrumSource })).toBeVisible();
-    expect(screen.getByText(en.plotTransferReduced)).toBeVisible();
+    expect(screen.getByText(en.plotUnknownRepresentation)).toBeVisible();
   });
 
   it("folds each metadata section behind a button named by the file's own heading", () => {

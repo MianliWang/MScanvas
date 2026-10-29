@@ -571,30 +571,6 @@ describe("mzML preview workspace", () => {
     expect(within(grid).getByRole("columnheader", { name: "Scan" })).toBeVisible();
   });
 
-  it("records both timings only once what they name is in the document", async () => {
-    await openTheFile(createFakePreviewApi());
-    await screen.findByRole("grid", { name: "Spectra" });
-
-    // Recorded from a layout effect, so both read as measured rather than
-    // staying "Not measured yet" as they would if the response handler had
-    // been the only thing to run.
-    expect(screen.getByText("Open to first preview").nextElementSibling).not.toHaveTextContent(
-      "Not measured yet",
-    );
-    expect(screen.getByText("Row select to rendered").nextElementSibling).toHaveTextContent(
-      "Not measured yet",
-    );
-
-    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
-    await findSpectrumPlot();
-
-    await waitFor(() => {
-      expect(screen.getByText("Row select to rendered").nextElementSibling).not.toHaveTextContent(
-        "Not measured yet",
-      );
-    });
-  });
-
   it("treats a dismissed file picker as no change rather than as a failure", async () => {
     const api = createFakePreviewApi({ pickedFiles: null });
     await openTheFile(api);
@@ -799,7 +775,7 @@ describe("mzML preview workspace", () => {
 
     const plot = await findSpectrumPlot();
     expect(plot).toHaveAccessibleName("Spectrum 0, MS2, 900,000 points.");
-    fireEvent.click(screen.getByText("Spectrum details"));
+    // The spectrum's facts are in Details, beside the run's.
     expect(screen.getByText("Base peak").nextElementSibling).toHaveTextContent("812.5000 at 4.200e+6");
     // What the drawing covers, now that this spectrum has a viewport. The
     // sentence this replaces -- "the drawing covers the first 8 of those

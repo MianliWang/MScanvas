@@ -23,7 +23,6 @@ import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
 import type { FigurePreviewKind } from "./contracts";
 import { SpectrumTable } from "./SpectrumTable";
-import { spectrumSourceDetails } from "./SpectrumViewport";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
@@ -874,7 +873,7 @@ export function PreviewWorkspace() {
               runSummary={preview.preview.runSummary}
               spectrum={spectrum.status === "loaded" ? spectrum.spectrum : null}
               spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
-              spectrumSource={spectrum.status === "loaded" ? spectrumSourceDetails(spectrum.spectrum, workspace.spectrumViewport, t) : ""}
+              spectrumViewport={workspace.spectrumViewport}
             />
           ) : null}        </aside>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-workbench">

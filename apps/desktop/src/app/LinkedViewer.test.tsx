@@ -362,7 +362,7 @@ describe("the linked viewer", () => {
     const panned = rangeCaption();
 
     // A render that changes nothing about the selection: toggling a trace.
-    fireEvent.click(screen.getByRole("checkbox", { name: /BPC/u }));
+    fireEvent.click(screen.getByRole("button", { name: "BPC" }));
 
     expect(rangeCaption()).toBe(panned);
   });
@@ -668,6 +668,20 @@ describe("what the open measurement waits for", () => {
     expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
     await waitFor(() => {
       expect(opensTimed()).toBeGreaterThan(before);
+    });
+  });
+
+  it("times a row select only once its spectrum is drawn", async () => {
+    const preview = api();
+    await openTheViewer(preview);
+    const selects = () => measuredWith.filter((entry) => entry.name === "rowSelectToRendered").length;
+    expect(selects()).toBe(0);
+
+    const grid = screen.getByRole("grid", { name: "Spectra" });
+    fireEvent.click(grid.querySelector('[data-source-index="0"]') as HTMLElement);
+    await screen.findByRole("img", { name: /^Spectrum 0,/u }, { timeout: 15_000 });
+    await waitFor(() => {
+      expect(selects()).toBe(1);
     });
   });
 

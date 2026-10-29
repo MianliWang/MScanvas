@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 
 import { Disclosure } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
@@ -13,6 +13,8 @@ import {
   formatRetentionTime,
   formatRetentionTimeValue,
 } from "./format";
+import { spectrumSourceDetails } from "./SpectrumViewport";
+import type { SpectrumViewportState } from "./viewer/spectrumViewport";
 
 export interface PreviewSummaryProps {
   readonly file: SelectedFile;
@@ -24,8 +26,8 @@ export interface PreviewSummaryProps {
   readonly spectrum: SelectedSpectrum | null;
   /** How many scans the chromatogram is drawn from, while one is drawn. */
   readonly chromatogramScanCount: number | null;
-  /** What the spectrum drawing is made of beyond its caption; empty when nothing. */
-  readonly spectrumSource: string;
+  /** The spectrum's m/z viewport, which decides what its drawing is made of. */
+  readonly spectrumViewport: SpectrumViewportState;
 }
 
 /**
@@ -52,9 +54,15 @@ export const PreviewSummary = memo(function PreviewSummary({
   spectrumListTotal,
   spectrum,
   chromatogramScanCount,
-  spectrumSource,
+  spectrumViewport,
 }: PreviewSummaryProps) {
   const t = useUiMessages();
+  // A reduction over the drawn points: once per spectrum or committed window,
+  // never per pointer frame.
+  const spectrumSource = useMemo(
+    () => (spectrum === null ? "" : spectrumSourceDetails(spectrum, spectrumViewport, t)),
+    [spectrum, spectrumViewport, t],
+  );
   // The run summary and the spectrum list are two separate reads of the same
   // file. When they disagree, showing one number here and a different one over
   // the table would present a single acquisition with two sizes.

@@ -152,7 +152,9 @@ describe("M7.3 through the delivered application", () => {
     await exportCsv(mzPanel);
     await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(1));
     expect(api.spectrumExportRequests[0].range).toEqual({ scope: "current", low: 200, high: 800 });
-    releaseBand(mzPlot, "mz");
+    // The menu took focus from the plot, which abandons a drawing (never a
+    // settled band), so the band is drawn again before it can pend.
+    startBand(mzPlot, "mz"); releaseBand(mzPlot, "mz");
     expect(api.spectrumProjectionRequests).toHaveLength(2);
     const confirmMz = within(mzPanel).getByRole("button", { name: "Zoom to selection — m/z 350.0000 to 500.0000" });
     expect(confirmMz).toBeVisible();
@@ -169,7 +171,8 @@ describe("M7.3 through the delivered application", () => {
     await exportCsv(rtPanel);
     await waitFor(() => expect(api.chromatogramExportRequests).toHaveLength(1));
     expect(api.chromatogramExportRequests[0].range).toEqual({ scope: "current", low: 1, high: 6 });
-    fireEvent.keyDown(rtPlot, { key: "Enter" });
+    // The menu returned focus to its trigger; the band confirms from the plot.
+    rtPlot.focus(); fireEvent.keyDown(rtPlot, { key: "Enter" });
     await exportCsv(rtPanel);
     await waitFor(() => expect(api.chromatogramExportRequests).toHaveLength(2));
     expect(api.chromatogramExportRequests[1].range).toEqual({ scope: "current", low: 2.25, high: 3.5 });
