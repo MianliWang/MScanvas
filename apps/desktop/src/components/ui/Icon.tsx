@@ -23,6 +23,13 @@ const PATHS = {
   eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12 M12 9a3 3 0 1 0 0 6 3 3 0 1 0 0-6",
   note: "M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5",
   refresh: "M20 8A8 8 0 1 0 20 16 M20 3v5h-5",
+  minus: "M5 12h14",
+  copy: "M8 8h12v12H8z M16 8V4H4v12h4",
+  more: "M5 12h.01 M12 12h.01 M19 12h.01",
+  undo: "M9 14 4 9l5-5 M4 9h11a5 5 0 0 1 0 10h-3",
+  panelLeft: "M3 4h18v16H3z M9 4v16",
+  panelRight: "M3 4h18v16H3z M15 4v16",
+  fit: "M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5",
 } as const;
 
 export type IconName = keyof typeof PATHS;
@@ -30,6 +37,7 @@ export type IconName = keyof typeof PATHS;
 /** A decorative glyph: the control that carries it owns the accessible name. */
 export function Icon({ name, size = 16 }: { readonly name: IconName; readonly size?: number }) {
   return <svg className="ui-icon" viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
-    <path d={PATHS[name]} />
+    {/* The ellipsis dots are near-zero strokes: they need the wider pen. */}
+    <path d={PATHS[name]} strokeWidth={name === "more" ? 3 : undefined} />
   </svg>;
 }

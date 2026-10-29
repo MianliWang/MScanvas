@@ -1,4 +1,5 @@
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from "./Button";
+export { Disclosure, type DisclosureProps } from "./Disclosure";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";
 export { Icon, type IconName } from "./Icon";
 export { IconButton, type IconButtonProps } from "./IconButton";

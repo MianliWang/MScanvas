@@ -32,7 +32,7 @@ body {
   background: var(--color-app-background);
   color: var(--color-text-primary);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: var(--type-body);
   text-rendering: optimizeLegibility;
 }
 
