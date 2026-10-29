@@ -60,17 +60,20 @@ and [ADR 0047](0047-first-windows-beta-scope-and-implementation-route.md#owner-d
 - combinations known to lose data stay blocked.
 
 That reverses the evidence-bound rule for the advanced set. This ADR states
-how.
+how. It is about options, not builds: which builds may convert a vendor family
+is unchanged, and is left as an [open question](#open-questions-for-the-owner).
 
 **The distance to parity** is the
 [option inventory](../../spikes/MSCONVERT_OPTION_INVENTORY.md). The help lists:
 
-- 59 switches and positional filemasks;
-- 10 output formats;
+- 59 switches, ten of which choose the output format, and the positional
+  filemasks;
 - 39 spectrum filters and 2 chromatogram filters.
 
-MSCanvas offers one format, two filters (`msLevel` and the gated default
-picker) and no switch.
+MSCanvas emits one format switch (`--mzML`), the precision and compression
+switches its nine rows carry (`--64`, `--32`, `--mz32` with `--inten64`,
+`--zlib` and `--zlib=off`), and two filters (`msLevel` and the gated default
+picker). It offers no other switch.
 
 ## Decisions
 
@@ -82,13 +85,19 @@ all 103 rows. A row's tier can depend on the combination and the source family:
 bare `peakPicking` is blocked on Thermo RAW. A row covered by another, such as
 `-n/--numpressAll` or `analyzerType`, names the row that covers it.
 
-- **Verified default.** All of ADR 0043's three admission questions hold:
-  the combination is one of the measured rows; the build is the verified
-  build; and the measurement was taken on this kind of source. No label is
-  shown.
-- **Advanced.** The build's own help lists the option, and it is not blocked.
-  It is offered labelled "not verified by MSCanvas" (decision 3), inside the
-  envelope of decision 2.
+- **Verified default.** Four conditions hold, and no label is shown:
+  - ADR 0043's three admission questions (CNV-D2): the measured vocabulary
+    contains the combination; the installed build can express it; and the
+    measurement was taken on this kind of source;
+  - and the executable is the verified build, `msconvert.exe` SHA-256
+    `9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD`, the
+    identity ADR 0043's contract 3 binds every measured setting to.
+
+  On any other build nothing is verified. The vendor families stay refused
+  there, as today; an mzML source still converts, with every setting labelled.
+- **Advanced.** The installed build's own help lists the option, and it is not
+  blocked. It is offered labelled "not verified by MSCanvas" (decision 3),
+  inside the envelope of decision 2.
 - **Blocked.** Not offered. Each blocked row names its reason.
 
 **Known to lose data** means all three of these:
@@ -98,19 +107,32 @@ bare `peakPicking` is blocked on Thermo RAW. A row covered by another, such as
   reports success;
 - either measured on the verified build, or stated by the help itself.
 
-Loss the user asks for is different. A threshold, an m/z window, truncation,
-numpress tolerance or a denoising step is **lossy by request**. It stays in
-the advanced set, and the plan summary names the loss. Without this
-distinction every subsetting filter would look blockable, and parity would mean
-nothing.
+Loss the user asks for is different, and it is defined by effect, not by name.
+An option is **lossy by request** when, as the help describes it, it removes,
+merges or alters spectra, peaks, chromatograms, array values or metadata the
+source holds. That covers every filter that selects spectra, the picker steps,
+threshold, denoising, deisotoping, the refiners, truncation and numpress, and
+switches such as `--ddaProcessing` and `--combineIonMobilitySpectra`. The
+inventory marks it per row, and the step and the plan summary name the loss.
+Numeric precision is the one exception: every row states it, and the check
+verifies it on every array.
+
+A format that keeps only part of a document says so in the format choice:
+mzXML and mgf keep no chromatograms, ms1 and cms1 keep MS1 spectra only, and
+ms2 and cms2 keep MS2 spectra only.
+
+Lossy-by-request options stay in the advanced set. Without this distinction
+every subsetting filter would look blockable, and parity would mean nothing.
 
 ### 2. The envelope, the same for both tiers
 
-- **Typed arguments only.** React sends typed values through the
-  configuration authority of [ADR 0044](0044-conversion-configuration-authority.md),
-  and Rust owns everything after that:
-  - Rust validates every value and lowers it to argv, deterministically.
-  - The receipt binds the whole configuration.
+- **Typed arguments only.** React sends a structured, typed intent through the
+  configuration authority of
+  [ADR 0044](0044-conversion-configuration-authority.md), as amended below, and
+  Rust owns everything after that:
+  - Rust builds the intent from the structured value, validates every value and
+    every rule of decision 4, and lowers it to argv, deterministically.
+  - The receipt binds the whole intent, chains included.
   - Each `--filter` and `--chromatogramFilter` is one argv element.
   - No field is a free-text argument box, and no configuration file
     (`-c/--config`) is ever passed.
@@ -121,14 +143,23 @@ nothing.
 - **File-valued parameters** come from a Rust-owned picker and never from a
   path typed in React. These are `mzRefiner`'s identification files,
   `diaUmpire`'s parameter file and `--contactInfo`.
+  - Inside a `--filter` value the provider splits on whitespace, and a chosen
+    path, or the destination the staging area sits under, can contain spaces.
+  - So Rust copies each chosen file into the item's private staging area under
+    a generated name with no whitespace, keeping its extension, before launch.
+    The run reads the copy, so the content is fixed when the plan is bound.
+  - The argv names the copy by a path relative to the provider's working
+    directory, so every component of the token is a generated name.
+  - The copies sit outside the directory output discovery reads.
+  - Rust refuses the item if a token it would emit still contains whitespace.
 - **Private staging and no overwrite.** msconvert always writes into the
   private staging directory. MSCanvas finalizes the output under the name its
   plan derives (for a SCIEX output set, the backend's names, as today); Fail
   and Skip remain the only conflict policies. `-o`, `--outfile`, `-e`,
   filemasks and `-f` stay MSCanvas's own (the inventory's "envelope" rows).
 - **Exactly one format flag**, from one typed enum (CNV-D1).
-- **The five judgements and the output checks** of decision 6 run for every
-  item, advanced or not.
+- **The five judgements and the output checks** of decisions 5 and 6 run for
+  every item, advanced or not.
 - **The executable is re-verified before launch.** A binary that changes
   mid-run still fails (`ExecutableChanged`).
 
@@ -168,88 +199,147 @@ Rules enforced when an intent is built, not when it is displayed:
 - `cwt` is unrepresentable;
 - `snr`, `peakSpace` and `msLevel=` exist only on a picker variant that
   consumes them;
-- format-bound options exist only with their format (the mzMLb chunk and
-  level; `--numpressLinearAbsTol` with `--numpressLinear`);
+- format-bound options exist only with their format:
+  - the mzMLb chunk size and compression level with mzMLb;
+  - with mzXML, one global precision, `--32` or `--64`. Its `<peaks>` element
+    holds m/z-intensity pairs at a single precision, so per-array precision
+    cannot be expressed. Numpress, truncation and prediction are not offered
+    with mzXML either: its `compressionType` can declare only none or zlib, so
+    the file could not say what was done;
+- encoding options exist only in the combinations a controlled-vocabulary term
+  can name (decision 5):
+  - truncation and prediction exist only with zlib on, because every term for
+    them includes zlib;
+  - on one array role, numpress excludes truncation and prediction, and
+    `--numpressPic` excludes `--numpressSlof`;
+  - a role encoded with numpress is fixed at 64-bit precision, since numpress
+    decodes to 64-bit values;
+  - `--numpressLinearAbsTol` exists only with `--numpressLinear`;
 - numbers are finite, ranges ordered and sets non-empty.
 
 **The nine rows stay, as the verified subset.** `ADMITTED` remains a table,
-and "is this verified?" remains one lookup in it: equal to a row, on the
-verified build, in the row's source domain. Every other buildable intent is
-advanced. Steps are lowered in chain order.
+and "is this verified?" remains one lookup in it: the intent equals a row, the
+installed build can express it, the executable is the verified build, and the
+source is in the row's source domain. These are decision 1's four conditions.
+Every other buildable intent is advanced. Steps are lowered in chain order.
 
 The existing capability probe reads which formats, switches and filters a build
 accepts, from that build's own help. This is evidence of spelling only, as
 M6.2's rule says. An option the build does not list is unavailable, and says so.
 
-### 5. The build pin becomes a label, not a refusal
-
-**What changes:**
-
-- Only the verified build has verified defaults. That build is
-  `msconvert.exe` SHA-256
-  `9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD`.
-- Any other build may convert every admitted source family.
-- On another build, every setting carries the label, the defaults included,
-  and the build's release is shown.
-- `EVIDENCED_PROVIDER_BUILDS` stays. A missing row now decides the label
-  instead of refusing the run.
-
-**What does not change:** no source family is added. Agilent, Bruker and
-Waters directories and `.wiff2` stay unadmitted.
-
-### 6. Output checks
+### 5. Output checks for mzML
 
 **mzML outputs** keep the five judgements and the existing integrity contract,
 with three extensions:
 
-1. **Changes the chain was asked to make are reported unverified for that
-   item.** This covers spectrum count under subsetting, array lengths under
-   centroiding or thresholds, and values under truncation, numpress or
-   `mzShift`. They are never reported verified, and never failed for the
-   requested change.
-2. **Numpress arrays** are recognized by accession and checked against the
-   requested compression. Their values are reported unverified, since they are
-   not decoded.
-3. **Under `--noindex`** the index property is reported as not applicable.
+1. **Changes the chain or a switch was asked to make are reported unverified
+   for that item.** The switches are `--simAsSpectra` and `--srmAsSpectra`
+   (spectrum and chromatogram counts), `--ddaProcessing`,
+   `--combineIonMobilitySpectra`, `--acceptZeroLengthSpectra` and
+   `--ignoreMissingZeroSamples`. This covers:
+   - spectrum and chromatogram counts under subsetting or those switches;
+   - array lengths under centroiding, thresholds or zero-sample handling;
+   - values under truncation, numpress or `mzShift`.
+
+   These are never reported verified, and never failed for the requested
+   change. **An output with no records still fails** (`OutputContainsNoRecords`),
+   whatever was requested. For a SCIEX output set it fails the whole set, as
+   it is one link of ADR 0024's completeness proof.
+2. **Each encoding option has one expected term per array.** The table names
+   the term each array of the affected role must carry; the other role's arrays
+   carry their own role's term. The terms are those of the PSI-MS controlled
+   vocabulary (data-version 4.2.12). They were not measured on this build. An
+   array with any other term, or with two, fails as `CompressionPolicyMismatch`,
+   which is the existing closed rule.
+
+   | Requested, per array role | Expected term | Verdict |
+   | --- | --- | --- |
+   | zlib, nothing else | `MS:1000574` zlib compression | checked, as today |
+   | No compression, nothing else | `MS:1000576` no compression | checked, as today |
+   | `--numpressLinear` (m/z and retention time) | `MS:1002312`; with zlib, `MS:1002746` | encoding checked; values unverified |
+   | `--numpressPic` (intensity) | `MS:1002313`; with zlib, `MS:1002747` | encoding checked; values unverified |
+   | `--numpressSlof` (intensity) | `MS:1002314`; with zlib, `MS:1002748` | encoding checked; values unverified |
+   | Truncation, no prediction | `MS:1003088` truncation and zlib compression | encoding checked; values unverified |
+   | Delta prediction, with or without truncation | `MS:1003089` truncation, delta prediction and zlib compression | encoding checked; values unverified |
+   | Linear prediction, with or without truncation | `MS:1003090` truncation, linear prediction and zlib compression | encoding checked; values unverified |
+
+   The precision check reads each array's precision term as today. A numpress
+   role expects the 64-bit term, as decision 4 fixes it.
+3. **Under `--noindex`** the index property is reported as not applicable,
+   never as passed.
 
 The requested-algorithm check stays for every picker step: an output recording
 a different algorithm fails. `-g` waits for a dependency decision, because the
 checks would have to read through gzip and the conversion crate has no gzip
 reader.
 
-**Other formats get minimal checks that need no new dependency:**
+### 6. Every other format is written from a private mzML intermediate
 
-- exit 0;
-- exactly the expected file or files in staging;
-- non-zero length;
-- the format's fixed leading signature, where it has one: the XML root element
-  for mzXML, the HDF5 signature for mz5 and mzMLb.
+**Every non-mzML output is written from a private mzML intermediate.** No
+format needs the fallback of blocking picker steps and SCIEX sources for that
+format. If implementation finds a format that cannot be written from an mzML
+intermediate, that format blocks both until it can.
 
-A deeper check of mz5 or mzMLb would need an HDF5 reader, which is a
-dependency decision this ADR does not take.
+1. **Run 1: source to mzML.** The source is converted to mzML in its own
+   private staging directory, at 64/64 with zlib and an index, which is
+   lossless. Run 1 carries:
+   - both chains; a vendor picker reaches the vendor reader here, first in its
+     chain;
+   - the reader switches.
+
+   The intermediate gets every check of decision 5: the integrity contract, the
+   requested-algorithm check, SCIEX completeness and `OutputContainsNoRecords`.
+   A failure here fails the item before run 2.
+2. **Run 2: mzML to the requested format.** Each intermediate is converted into
+   a second private staging directory. Run 2 carries:
+   - the format flag;
+   - the encoding options that format takes (decision 4), such as precision,
+     `-z`, `--noindex` and the mzMLb options;
+   - the writer switches: `--stripLocationFromSourceFiles`,
+     `--stripVersionFromSoftware` and `--contactInfo`.
+
+   **Run 2 carries no filter**, so nothing acts on the data after run 1's
+   checks.
+3. **The final file gets the minimal checks.** These need no new dependency:
+   - exit 0;
+   - exactly the expected file in run 2's staging directory;
+   - non-zero length;
+   - the format's fixed leading signature, where it has one: the XML root
+     element for mzXML, the HDF5 signature for mz5 and mzMLb.
+
+   A deeper check of mz5 or mzMLb would need an HDF5 reader, which is a
+   dependency decision this ADR does not take. Except for mzXML, run 2's output
+   is not compared with the intermediate, and what it holds beyond run 1's
+   checks is unverified.
+4. **The intermediates are discarded** with the staging area and never
+   finalized.
+
+**What it costs:** for a single-output source, two provider runs. For a SCIEX
+output set of N samples, 1 + N: run 1 writes N intermediates, which run 1's
+checks judge as a set, and run 2 runs once per intermediate. If any run 2
+fails, the set fails whole. Progress shows two phases.
 
 Non-mzML outputs are finalized as files. They are **not adoptable and not
 previewable**, because the viewer reads mzML only, and the queue item says so.
 
-### 7. mzXML returns through a private mzML intermediate
+#### mzXML
 
-1. **Source to mzML.** The source is converted to mzML in staging, with the
-   spectrum chain, at 64/64, under the existing mzML checks. A vendor picker
-   reaches the vendor reader here, first in its chain.
-2. **The X2 precondition.** If any spectrum of the intermediate names a source
-   file other than the run's default, the item is refused before the second
-   run. This is X2's measured loss, now checked on the document rather than
-   assumed of the source.
-3. **mzML to mzXML.** The intermediate is converted to mzXML at the requested
-   precision. The output is read with the XML reader the conversion crate
-   already depends on, and two things must hold:
+mzXML adds two checks to this route.
+
+1. **The X2 precondition.** If any spectrum of the intermediate names a source
+   file other than the run's default, the item is refused before run 2. This is
+   X2's measured loss, now checked on the document rather than assumed of the
+   source.
+2. **The output is compared with the intermediate.** It is read with the XML
+   reader the conversion crate already depends on, and all of these must hold:
    - the `<scan>` elements, nested ones included, must match the
      intermediate's spectra by count, and by scan number where the
      intermediate's native IDs carry one;
-   - `msRun/@scanCount` must equal the count written.
+   - `msRun/@scanCount` must equal the count written;
+   - every `<peaks>` element must state the requested precision, and the
+     requested `compressionType`.
 
    Any shortfall fails the item.
-4. **The intermediate is discarded** with the staging area and never finalized.
 
 **What this checks:** because the comparison is against the intermediate and
 not against the declared count, it catches any dropped spectrum, whatever the
@@ -262,17 +352,16 @@ occurs. S2 is still unmeasured, and this ADR does not claim otherwise.
 - chromatograms (the format has none; the format choice is labelled
   "legacy, no chromatograms").
 
-**What it costs:** two provider runs per item. Progress shows two phases.
-
 mzXML is advanced, never a verified default. CNV-002's source/output array
 comparison is still not met.
 
-### 8. What stays blocked
+### 7. What stays blocked
 
 The [inventory's section 6](../../spikes/MSCONVERT_OPTION_INVENTORY.md#6-blocked-in-one-place)
 is the list. In short:
 
-- **mzXML on a multi-source document, and with `--merge`.** X2.
+- **mzXML where any spectrum of the intermediate names a source file other
+  than the run's default, and mzXML with `--merge`.** X2.
 - **`peakPicking cwt`.** M6.2.
 - **`peakPicking vendor` on an mzML source.** It was measured running the
   local-maximum picker instead.
@@ -291,7 +380,7 @@ Still refused, as before:
 - any default or preset that inserts a picker. The "no additional
   centroiding" lock of CNV-D2 is unchanged.
 
-### 9. What runs, and how an option becomes verified
+### 8. What runs, and how an option becomes verified
 
 **This ADR runs nothing.** Implementation is tested against the fake provider
 and the captured help. Running the real build to qualify an advanced option,
@@ -304,16 +393,16 @@ unchanged:
 - a case in the evidence record;
 - a new row in the verified table.
 
-### 10. Delivery order
+### 9. Delivery order
 
 1. **The typed chain and the verified subset.** No visible change: the nine
-   rows become the subset, and the capability probe reads filter names.
+   rows become the subset, the capability probe reads filter names, and the
+   ADR 0044 wire carries the structured intent.
 2. **The advanced set for mzML output.** The chain editor, encoding,
-   switches, the label and the check extensions of decision 6.
-3. **Non-mzML formats.** The finalize-only path, the minimal checks, and
-   mzXML through the intermediate.
-4. **File-valued parameters** through a Rust-owned picker.
-5. **The build pin** becomes a label.
+   switches, the label and the check extensions of decision 5.
+3. **Non-mzML formats.** The two-run route of decision 6, the minimal checks,
+   and mzXML's comparison.
+4. **File-valued parameters** through a Rust-owned picker and staged copies.
 
 Each later in its own slice:
 
@@ -336,6 +425,9 @@ Each later in its own slice:
   S2's form is unknown.
 - **Finalize advanced outputs on exit 0 alone.** That contradicts the five
   judgements, and X2 exited 0.
+- **Write non-mzML formats directly from the source.** Only mzML can be checked
+  for the algorithm that ran and for records, so a picker substitution or an
+  empty SCIEX member would pass as a non-empty file.
 - **Block every lossy filter.** Requested loss is not silent loss. Blocking it
   would leave parity empty.
 
@@ -351,13 +443,13 @@ Each later in its own slice:
 **What it costs:**
 
 - the chain type and its lowering;
+- the structured intent on the ADR 0044 wire;
 - the probe's filter list;
 - the advanced disclosure and chain editor, with rendered and keyboard QA;
 - the label in `en` and `zh-CN`;
-- the integrity extensions;
-- a finalize-only path for non-mzML files;
-- the intermediate path for mzXML;
-- a Rust-owned picker for file parameters;
+- the integrity extensions and the encoding-term table;
+- the two-run route for non-mzML formats, and mzXML's comparison;
+- a Rust-owned picker and staged copies for file parameters;
 - a test matrix over chain constraints and blocked rows.
 
 **Risks:**
@@ -368,9 +460,42 @@ Each later in its own slice:
 - **A larger settings surface.** It cuts against the owner's direction to
   remove secondary explanations. It is collapsed by default, with one label
   and no prose.
+- **Unmeasured encoding terms.** If this build writes a term other than
+  decision 5's table, every item with that option fails closed until a
+  measurement corrects the table.
 
 **No dependency is added by this ADR.** `-g` and any HDF5 check wait for their
 own decisions.
+
+## Open questions for the owner
+
+**May a build without an `EVIDENCED_PROVIDER_BUILDS` row convert vendor
+families, labelled instead of refused?** This ADR does not decide it. Option C
+is about options, not builds, and the owner accepted beta 1 with vendor
+conversion bound to ProteoWizard 3.0.26013 (ADR 0047). So the build gate stays
+as it is: a vendor family converts only on a build its row names, and a build
+that cannot report its release matches no row.
+
+If the owner wants otherwise, that is its own decision, and it must at least:
+
+- **keep `SciexWiffBundle` refused on a build without a measured row.** Its
+  completeness proof reads a per-sample failure marker that is a string
+  literal of the evidenced build (`sciex_completeness.rs`, ADR 0024 "Bound to
+  one executable"). On a build that words it differently the audit sees no
+  marker and judges the set complete. ADR 0024 measured that loss: exit 0,
+  nine of ten samples declared and written, the tenth lost in silence;
+- say what a build that cannot report its release gets;
+- amend:
+  - [ADR 0010](0010-first-vendor-raw-source-admission.md), "Support is bound to
+    the provider build" ("Widening support is adding a measured row, not
+    relaxing a check");
+  - [ADR 0018](0018-shimadzu-labsolutions-lcd-source-admission.md) and
+    [ADR 0022](0022-sciex-wiff-source-admission.md), each family's build-gate
+    row;
+  - [ADR 0024](0024-sciex-sample-completeness.md), "Bound to one executable";
+  - ADR 0043, contract 3 (`EVIDENCED_PROVIDER_BUILDS`);
+  - [ADR 0047](0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-at-publication-2026-10-28),
+    which records vendor conversion bound to 3.0.26013 as accepted.
 
 ## What this amends, on acceptance
 
@@ -378,18 +503,48 @@ own decisions.
   admitted setting is evidence-bound" and contract 3** ("a visible setting must
   not exist merely because a CLI flag exists"): these hold for the verified
   tier only. The advanced tier exists because the owner chose parity, and it is
-  labelled, not admitted.
+  labelled, not admitted. Contract 3's build binding is unchanged.
 - **ADR 0043, CNV-D1.** mzXML stays `MZXML_REFUSED` as a verified format, and
-  returns as advanced through decision 7. The one-format-flag rule is kept.
+  returns as advanced through decision 6. The one-format-flag rule is kept.
 - **ADR 0043, CNV-D2.** Structural obligations 1–3 now govern the general
-  chain. The "no additional centroiding" lock is unchanged.
-- **ADR 0043, contract 3 (`EVIDENCED_PROVIDER_BUILDS`).** A missing row labels
-  instead of refusing (decision 5).
+  chain, and obligation 3 is met for every format through the intermediate.
+  The "no additional centroiding" lock is unchanged.
+- **[ADR 0044](0044-conversion-configuration-authority.md).** Its authority
+  carries a structured intent, not only a row id:
+  - React sends the typed intent (format, encoding, both chains, switches) as a
+    structured value. Rust builds the `ConversionIntent`, validates it against
+    decision 4 and refuses what it cannot build.
+  - `ConversionIntent::from_stable_id` remains, and resolves the nine verified
+    rows only.
+  - The catalog is the verified rows plus what the build's help lists.
+    Availability is answered per format, step and switch from the probe, where
+    0044 answered it per admitted row; "verified" stays a property of a row.
+  - Plan identity carries the canonical intent, chains included, where it
+    carried the intent id. The receipt binds it, and a plan whose intent
+    differs from Rust's own answer is not current.
+  - A selection preserved across an installation change (0044 decision 8) is
+    the whole intent. It stays selected, and the steps or switches the new
+    build cannot express are named.
+- **[ADR 0045](0045-conversion-completion-closure-and-handoff.md), the
+  terminal ledger.** CNV-002's `REFUSED_WITH_EVIDENCE` stays the disposition
+  of mzXML as a verified format. mzXML is offered as advanced through decision
+  6.
+- **[ADR 0047](0047-first-windows-beta-scope-and-implementation-route.md), the
+  scope table.** "Additional centroiding admission" and "mzXML" leave "Later or
+  excluded" for the advanced tier, labelled. Overwrite and ETA stay excluded.
+- **[The feature catalog](../../product/FEATURE_CATALOG.md):**
+  - CNV-002: "Disabled until … counts pass", "unplannable by type" and the
+    terminal `MZXML_REFUSED` describe the verified tier. mzXML is plannable as
+    advanced, labelled legacy with no chromatograms, and its acceptance remains
+    what promotion to verified would need;
+  - CNV-005: the unconstructible scoped presets and the vendor-family
+    restriction hold for the verified tier. The advanced set offers picker
+    steps, scoped ones included, labelled and lossy by request.
 - **[The after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md), section
   7.6.** "mzXML output" and "settings outside the admitted catalog" leave
-  "Stays refused". The refusals that remain are decision 8's.
-- **Unchanged:**
-  - [ADR 0044](0044-conversion-configuration-authority.md): the chain is
-    configuration under its authority and receipt;
-  - M6.2's rule that help text is not evidence of an operation: the advanced
-    set rests on help text precisely because it is labelled unverified.
+  "Stays refused". The refusals that remain are decision 7's.
+- **The status lines that say mzXML is refused pending this ADR:** the README's
+  "What works today", the project proposal's section 7.7 and the roadmap's M3.
+- **Unchanged:** M6.2's rule that help text is not evidence of an operation.
+  The advanced set rests on help text precisely because it is labelled
+  unverified.
