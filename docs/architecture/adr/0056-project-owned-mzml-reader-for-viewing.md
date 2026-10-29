@@ -79,6 +79,7 @@ scope is closed.
 - a `DOCTYPE` or a custom entity;
 - a `referenceableParamGroupRef` to an undefined group;
 - a decoded array whose length differs from its declared length, either way;
+- a 64-bit integer value that `f64` cannot hold exactly (decision 5);
 - a document or a text run beyond the limits of decision 2.
 
 A corrupt array fails that array or spectrum with a typed error. Nothing
@@ -132,10 +133,16 @@ neutral crate is a later mechanical change, not part of this decision.
   `OperationAttempt` shaped around a ProteoWizard installation (ADR 0044,
   Decision 1), which a native provider would have to fake. The service calls
   the reader directly.
-- **What a native read does not touch:** the backend gate,
-  `require_usable_backend` and its quarantine, the installation-identity check
-  on a selected spectrum, and `MAX_PREVIEW_TEXT_BYTES`. A native read starts no
-  process.
+- **What a native read does not touch:**
+  - the backend gate;
+  - the `conversion_is_busy()` refusal (`conversion_busy`) in `open_preview`
+    and `load_spectrum`, which exists because a read would otherwise wait
+    behind a conversion's process;
+  - `require_usable_backend` and its quarantine;
+  - the installation-identity check on a selected spectrum;
+  - `MAX_PREVIEW_TEXT_BYTES`.
+
+  A native read starts no process.
 
 ### 4. A per-source session cache
 
@@ -163,7 +170,9 @@ All of it is in `apps/desktop/src-tauri/src/preview/` and `crates/proteowizard/`
   to `crates/core` instead.
 - **Selected spectrum.** `SelectedSpectrumDto` sets `representation_known` and
   its value units from the spectrum's own terms. Array values are the stored
-  values, widened to `f64`, which is exact for 32-bit floats. The retained
+  values, widened to `f64`. That is exact for 32-bit floats and for integers
+  up to 2^53; a 64-bit integer array holding a larger value is refused with a
+  typed error rather than rounded. The retained
   snapshot behind `export_token` holds them, so CSV and TSV export write the
   stored values.
 - **Retention time** carries its declared unit instead of
@@ -234,16 +243,17 @@ record.
 
 ### 8. Re-measure before implementing
 
-The spike's scale data is synthetic. Before slice 1 merges, the reader runs on
-files the owner authorizes, as for PX.3:
+The spike's scale data is synthetic. Before slice 1 starts, the spike's
+route-(b) reader runs on files the owner authorizes, as for PX.3:
 
 - the real PRIDE `PXD081190` file M0 measured (208,408,454 bytes, 36,319 MS2
   spectra);
 - one real MS1 profile-mode file.
 
 Each run is compared with the independent reference and recorded with its
-exactness, timing and memory. The numbers are observations, not budgets
-(ADR 0005).
+exactness, timing and memory. Before slice 1 merges, the product reader
+repeats that comparison on the same files. The numbers are observations, not
+budgets (ADR 0005).
 
 ### 9. Delivery order
 
@@ -252,7 +262,7 @@ exactness, timing and memory. The numbers are observations, not budgets
      pass; random read; capped inflate.
    - The chromatogram list (stored TIC and BPC), which the spike did not test.
    - Small generated fixtures, including namespace prefixes.
-   - The re-measurement of decision 8.
+   - The product reader's repeat of decision 8's comparison, before it merges.
 2. **Native path for mzML sources.**
    - Routing and the shared-type constructors.
    - The session cache.
@@ -380,8 +390,9 @@ runner on the real file, so the comparison is directional only.
   where the 8 MiB cap refuses them today.
 - **Viewing without ProteoWizard.** mzML can be viewed with no ProteoWizard
   installed.
-- **Viewing while converting.** A native read takes no backend gate, so
-  viewing works while a conversion runs.
+- **Viewing while converting.** A native read takes no backend gate and is not
+  refused with `conversion_busy` (decision 3), so viewing works while a
+  conversion runs.
 - **A premise for XIC, not XIC itself.** The four-decimal serialization that
   decided M5.4 does not exist in-process. **This ADR admits no XIC.** XIC needs
   the new scope record the
