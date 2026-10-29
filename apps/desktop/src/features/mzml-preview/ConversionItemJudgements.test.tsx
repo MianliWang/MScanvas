@@ -190,16 +190,13 @@ async function details(index: number): Promise<string> {
 
 /** Opens a row's detail disclosure the way a user does. */
 function openDetails(row: HTMLElement): HTMLElement {
-  const summary = within(row).getByText(/^Details for /).closest("summary");
-  if (summary === null) {
-    throw new Error("the row has no detail disclosure");
+  const toggle = within(row).getByRole("button", { name: /^Details for / });
+  fireEvent.click(toggle);
+  const region = document.getElementById(toggle.getAttribute("aria-controls") ?? "");
+  if (region === null) {
+    throw new Error("the disclosure controls no region");
   }
-  fireEvent.click(summary);
-  const details = summary.closest("details");
-  if (details === null) {
-    throw new Error("the summary has no disclosure");
-  }
-  return details;
+  return region;
 }
 
 describe("the five judgements of one queue item", () => {
@@ -933,13 +930,13 @@ describe("the five judgements of one queue item", () => {
     const result = await queueResult();
 
     const row = rowFor(result, "run-1.raw");
-    const summary = within(row).getByText(/^Details for run-1\.raw$/).closest("summary");
-    expect(summary).not.toBeNull();
-    (summary as HTMLElement).focus();
-    fireEvent.click(summary as HTMLElement);
-    const details = (summary as HTMLElement).closest("details") as HTMLDetailsElement;
-    expect(details.open).toBe(true);
-    expect(document.activeElement).toBe(summary);
+    const toggle = within(row).getByRole("button", { name: /^Details for run-1\.raw$/ });
+    toggle.focus();
+    fireEvent.click(toggle);
+    const region = document.getElementById(toggle.getAttribute("aria-controls") ?? "") as HTMLElement;
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(region).not.toHaveAttribute("hidden");
+    expect(document.activeElement).toBe(toggle);
 
     // An adoption, which replaces the queue transfer object and re-renders
     // every row. The rows are keyed by their handles, so the disclosure is the
@@ -957,7 +954,8 @@ describe("the five judgements of one queue item", () => {
       ).toContain("added,");
     });
 
-    expect(details.open).toBe(true);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(region).not.toHaveAttribute("hidden");
     // The control the user activated is still on screen and still focused: it
     // is disabled while the work is in flight rather than removed, so focus
     // never falls to the document.

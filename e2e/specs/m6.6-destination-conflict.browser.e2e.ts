@@ -81,14 +81,9 @@ async function openWorkspace(overrides: Record<string, unknown> = {}) {
   await waitUntilOffered(CONVERT);
 }
 
-/** The bound queue's facts, in their disclosure since M7.4 (`e495464`). */
+/** The bound queue's facts, always on screen in the summary column since the v5.11 rebuild. */
 async function openBoundDetails() {
-  const details = '.conversion-running .conversion-bound-details';
-  await browser.$(details).waitForExist({ timeout: 15_000 });
-  await browser.execute((css: string) => {
-    const node = document.querySelector<HTMLDetailsElement>(css);
-    if (node !== null) node.open = true;
-  }, details);
+  await browser.$('.conversion-running .conversion-bound-details').waitForExist({ timeout: 15_000 });
 }
 
 async function requests(command: string) {
@@ -97,7 +92,7 @@ async function requests(command: string) {
 
 async function requestedDestination() {
   return browser.execute(() => {
-    const term = [...document.querySelectorAll(".conversion-plan dt")]
+    const term = [...document.querySelectorAll(".conversion-plan-summary dt")]
       .find((element) => element.textContent === "Requested destination");
     return term?.nextElementSibling?.textContent ?? null;
   });
@@ -256,7 +251,7 @@ describe("M6.6 destination and conflict review", () => {
     } });
     await browser.$('.conversion-running [aria-label="Queue destination"]').waitForExist();
     await openBoundDetails();
-    expect(await browser.$(".conversion-running").getText()).toContain("No destination bound");
+    expect(await browser.$(".conversion-panel").getText()).toContain("No destination bound");
     const cancelled = { ...IDLE, sequence: 2 };
     await setInvokeResult("get_workspace_conversion_state", cancelled);
     await setInvokeResult(RESOLVE, cancelled);

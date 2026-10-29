@@ -90,7 +90,6 @@ export interface MessageParameters {
   readonly m74CnvBetweenItems: { readonly count: number; readonly total: number };
   readonly m74CnvRerunningItem: { readonly position: number; readonly total: number };
   readonly m74CnvRerunBetweenItems: { readonly count: number; readonly total: number };
-  readonly m74CnvScopeLine: { readonly counts: string; readonly help: string };
   readonly m74CnvExcludedNames: { readonly count: number };
   readonly m74CnvNoticeNoConvertibleTarget: { readonly toggle: string; readonly add: string };
   readonly m74CnvRequestFailed: { readonly action: string };
@@ -104,7 +103,6 @@ export interface MessageParameters {
   readonly m74CnvDiagnosticsSaved: { readonly name: string; readonly bytes: string; readonly items: string };
   readonly m74CnvDiagnosticItems: { readonly count: number };
   readonly m74CnvScopeCounts: { readonly requested: string; readonly eligible: string; readonly excluded: string };
-  readonly m74CnvOrder: { readonly order: string };
   readonly m74CnvCapacityExceeded: { readonly count: number; readonly capacity: number };
   readonly m74CnvCancelNamed: { readonly name: string };
   readonly m74CnvOutputMetrics: { readonly bytes: string; readonly spectra: string; readonly chromatograms: string };

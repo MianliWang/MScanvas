@@ -221,7 +221,7 @@ async function advanced(): Promise<void> {
   await browser.$(ready).waitForExist({ timeout: 30_000 });
   if ((await browser.$(ready).getAttribute("data-settings-view")) === "advanced") return;
   await browser.execute((css: string) => {
-    [...document.querySelectorAll<HTMLButtonElement>(`${css} .compact-choices button`)][1]?.click();
+    [...document.querySelectorAll<HTMLButtonElement>(`${css} .conversion-section-head [role="radio"]`)][1]?.click();
   }, ready);
   await browser.waitUntil(async () => (await browser.$(ready).getAttribute("data-settings-view")) === "advanced", {
     timeout: 15_000,
@@ -300,7 +300,7 @@ async function chooseAxisValue(axis: string, value: string): Promise<void> {
 /** What the plan summary says about one of its named facts. */
 async function planFact(term: string): Promise<string | null> {
   return browser.execute((label: string) => {
-    const list = document.querySelector(".conversion-plan dl.metadata-list");
+    const list = document.querySelector(".conversion-plan-summary dl.metadata-list");
     for (const group of list?.querySelectorAll("div") ?? []) {
       if (group.querySelector("dt")?.textContent?.trim() === label) {
         return group.querySelector("dd")?.textContent?.trim() ?? null;
@@ -388,7 +388,7 @@ async function pressCheckAgain(): Promise<void> {
 }
 
 async function pressLinkButton(label: string): Promise<void> {
-  const buttons = await browser.$$("button.link-button");
+  const buttons = await browser.$$(".conversion-panel button.ui-button");
   for (const button of buttons) {
     if ((await button.getText()).trim() === label) {
       await button.click();
@@ -632,7 +632,7 @@ describe("M6.4 — E4: a genuine dead end offers one explicit way out", () => {
       plannedAs(shippedIntent, B),
     );
     await browser.execute(() => {
-      const control = [...document.querySelectorAll("button.link-button")].find(
+      const control = [...document.querySelectorAll(".conversion-panel button.ui-button")].find(
         (candidate) => candidate.textContent?.trim() === "Use the settings MSCanvas ships",
       );
       (control as HTMLElement | undefined)?.focus();
@@ -1127,7 +1127,7 @@ describe("M6.4 — one lane fact, many refused actions, one notice", () => {
     expect(await describedBy(CONVERT)).toContain(notice);
 
     const retryDescribedBy = await browser.execute(() => {
-      const control = [...document.querySelectorAll("button.link-button")].find(
+      const control = [...document.querySelectorAll(".conversion-panel button.ui-button")].find(
         (candidate) => candidate.textContent?.trim() === "Read the settings again",
       );
       return (control?.getAttribute("aria-describedby") ?? "").split(" ").filter((id) => id !== "");

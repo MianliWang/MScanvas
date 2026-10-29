@@ -369,87 +369,362 @@ button:disabled,
   flex: 1 1 60%;
 }
 
-/* The focused row's conversion. Conditional, like the Run panel beside it: it
-   appears when there is a convertible row focused or an operation to report,
-   and takes no height at all otherwise.
-
-   `flex: 0 1 auto` rather than a share, because unlike the roster and the Run
-   panel this one is as tall as its own content and no taller. Giving it a share
-   of the column would take space from the list on every window that has it and
-   leave an empty box on every window that does not. */
-.panel.conversion-panel {
-  display: flex;
-  min-width: 0;
-  flex: 0 1 auto;
-  flex-direction: column;
-  /* Its own overflow, inside the `.panel` rule's `hidden`. A long failure
-     sentence or a long output name scrolls here rather than pushing the roster
-     out of the column. */
-  overflow: auto;
-  scroll-padding-block: 12px;
-  /* The header alone, so a panel squeezed to its floor still says which panel
-     it is rather than becoming an unlabelled sliver. */
-  min-height: 54px;
+/* Conversion & results (rebuild spec 5). Two columns, each its own scroll
+   owner: the form -- or, while a queue runs or has finished, its rows -- and a
+   300 px summary that ends in the action it describes. The surface fills what
+   the shell gives it; the columns scroll rather than the page. */
+.workbench-conversion > .conversion-panel {
+  flex: 1 1 0;
+  min-height: 320px;
 }
 
+.conversion-panel {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  padding: 16px;
+  font-size: 13px;
+}
+
+.conversion-main,
+.conversion-side {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-surface);
+}
+
+.conversion-main { padding: 18px 20px 20px; }
+.conversion-side { gap: 12px; padding: 16px; }
+
+/* Below the two-column floor the summary goes under the form and the surface
+   scrolls as one column. Not reached at the 960 px minimum window. */
+@media (max-width: 900px) {
+  .conversion-panel { grid-template-columns: minmax(0, 1fr); }
+  .workbench-conversion > .conversion-panel { flex: 1 0 auto; }
+  .conversion-main, .conversion-side { overflow: visible; }
+}
+
+.conversion-panel h2,
+.conversion-panel h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.conversion-panel p { margin: 0; }
+
+.conversion-panel .notice {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.conversion-notice { align-items: flex-start; justify-content: space-between; flex-wrap: nowrap; }
+.conversion-notice > span { min-width: 0; overflow-wrap: anywhere; }
+
 .conversion-plan,
-.conversion-running {
+.conversion-running,
+.conversion-plan-summary {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  padding: 8px 12px;
+  gap: 16px;
+}
+
+.conversion-plan:focus { outline: none; }
+.conversion-plan:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.conversion-plan[role="group"] { padding-top: 16px; border-top: 1px solid var(--color-border); }
+.conversion-plan-summary,
+.conversion-run-summary { gap: 12px; }
+/* Under a finished queue the next conversion's summary sits under its form, as
+   a box of its own, so it does not read as part of the settings. */
+.conversion-main .conversion-plan-summary {
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-subtle);
+}
+
+.conversion-actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.conversion-bound-details > summary {
-  min-height: 32px;
-  padding-block: 6px;
-  cursor: pointer;
+.conversion-wide-action { width: 100%; white-space: normal; }
+.conversion-start-actions { flex-direction: column; align-items: stretch; }
+.conversion-start-actions > .ui-button--sm { align-self: flex-start; }
+
+.conversion-side-note,
+.conversion-plan-pending {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
-/* A plot header's figure actions and the caption naming what they produce --
-   which plot, which range, what size -- share one line, the caption first, so
-   the header is as tall as its buttons. Under the buttons it cost each plot
-   header a line, and at 960x640 that put the selected spectrum's plot below the
-   window (PM9.3; M7.3 has it begin inside). Short of room the caption wraps
-   within its own width; the buttons never do. */
-.figure-quick-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.figure-quick-group > .figure-quick-actions { flex: none; }
-/* Each part of the caption -- plot, range, size -- is kept whole, so the
-   caption reflows only at its separators and never splits "1200 × 640 px"
-   (PM9 UI-26). Its floor is its widest part. */
-.figure-quick-context { flex: 0 1 auto; margin: 0; color: var(--color-text-secondary); }
-.figure-quick-part { white-space: nowrap; }
-.panel-header .figure-quick-context { max-width: 14em; margin: 0; white-space: normal; text-overflow: clip; text-align: right; line-height: 1.2; }
-.figure-export-source { margin: 0; overflow-wrap: anywhere; }
-.figure-export-options { min-width: 0; margin: 0; padding: 0; border: 0; }
+.conversion-field-label,
+.conversion-order > label {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
 
-/* The queue, both as a plan and as it runs. An ordered list, because the order
-   is the claim: these acquisitions convert in exactly this sequence, one at a
-   time. The marker is suppressed and the position rendered instead, so the
-   number is a cell the names can align against rather than a glyph the browser
-   places outside the box. */
-.conversion-queue-list {
+/* Settings: a heading row (title, the one format, Basic | Advanced), then the
+   axes two to a row as radio cards (v5.11 .field-grid / .radio-option). */
+.conversion-settings {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.conversion-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.conversion-section-head > h3 { margin-right: auto; }
+.conversion-format { color: var(--color-text-secondary); font-size: 12px; }
+.conversion-format strong { color: var(--color-text-primary); font-weight: 650; }
+
+.conversion-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 18px;
+}
+
+@media (max-width: 1100px) {
+  .conversion-settings-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.conversion-setting,
+.conversion-destination,
+.conversion-conflict,
+.conversion-segments {
   display: flex;
   min-width: 0;
   flex-direction: column;
   margin: 0;
   padding: 0;
-  gap: 4px;
-  font-size: 0.85rem;
+  border: 0;
+  gap: 6px;
+}
+
+.conversion-setting > legend,
+.conversion-destination > legend,
+.conversion-conflict > legend,
+.conversion-segments > legend {
+  margin-bottom: 6px;
+  padding: 0;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* The destination and conflict sections are their own form sections. */
+.conversion-destination,
+.conversion-conflict { padding-top: 16px; border-top: 1px solid var(--color-border); }
+.conversion-destination > legend,
+.conversion-conflict > legend { float: left; width: 100%; margin-bottom: 10px; font-size: 13px; font-weight: 650; }
+
+.conversion-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+  clear: both;
+}
+
+/* A radio card: the whole card is the label, so the target is the card. */
+.conversion-option,
+.conversion-setting-choice {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  font-size: 12px;
+}
+
+.conversion-option { flex-direction: row; align-items: flex-start; gap: 8px; cursor: pointer; }
+.conversion-option > input,
+.conversion-setting-choice > label > input { flex: none; margin: 2px 0 0; }
+
+.conversion-setting-choice > label {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.conversion-option:has(input:checked),
+.conversion-setting-choice:has(input:checked) {
+  border-color: #9fbfeb;
+  background: var(--color-surface-selected);
+}
+
+/* A refused choice, marked by more than the browser's dimming. */
+.conversion-setting-choice[data-choice-state="unavailable"] { background: var(--color-surface-subtle); }
+.conversion-setting-choice[data-choice-state="unavailable"] > label {
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}
+
+/* What a choice does to the data, and why it cannot be taken: indented under
+   its own control, as text rather than as a colour. */
+.conversion-setting-note {
+  margin: 0;
+  padding-left: 21px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.conversion-setting > .conversion-setting-note,
+.conversion-precision-fields + .conversion-setting-note { padding-left: 0; }
+
+.conversion-settings-unavailable {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.conversion-settings-recovery { display: flex; }
+
+/* Precision in the basic view: two width pairs, each a segmented track over
+   native radios (an unavailable width stays visible and natively disabled). */
+.conversion-precision-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.conversion-segments > legend { float: left; margin: 0 8px 0 0; line-height: 34px; }
+.conversion-segments { flex-direction: row; align-items: center; }
+
+.conversion-segments-track {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-subtle);
+}
+
+.conversion-segment {
+  min-height: 28px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.conversion-segment:has(input:checked) {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-segment-checked);
+  color: var(--color-accent-hover);
+  font-weight: 650;
+}
+
+.conversion-segment:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.conversion-segment[data-choice-state="unavailable"] { opacity: 0.48; cursor: not-allowed; }
+
+.conversion-subfolder {
+  display: grid;
+  min-width: 0;
+  max-width: 360px;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.conversion-subfolder input,
+.conversion-order > select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  background: var(--color-surface);
+  font-weight: 400;
+}
+
+/* The summary column. */
+.conversion-side > h2 { font-size: 14px; }
+.conversion-order { display: grid; min-width: 0; gap: 6px; }
+/* The scope pair spans the column, one segment per half. */
+.conversion-scope.conversion-segments { flex-direction: column; align-items: stretch; }
+.conversion-scope > legend { float: none; margin: 0 0 6px; line-height: 1.5; }
+.conversion-scope .conversion-segments-track { display: flex; }
+.conversion-scope .conversion-segment { flex: 1 1 0; min-width: 0; text-align: center; white-space: normal; }
+.conversion-scope-counts { color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.conversion-excluded-group { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 4px; }
+.conversion-excluded { align-self: stretch; }
+.conversion-excluded ul { min-width: 0; margin: 0; padding-left: 1.2em; font-size: 12px; overflow-wrap: anywhere; }
+.conversion-excluded p { margin: 4px 0 0; }
+
+.conversion-plan-sentence { font-size: 12px; line-height: 1.55; }
+
+/* The queue, both as a plan and as it runs. An ordered list, because the order
+   is the claim: these acquisitions convert in exactly this sequence, one at a
+   time. The marker is suppressed; the plan renders the position as a cell and
+   the run list as a state circle. */
+.conversion-queue-list,
+.conversion-requested-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
-.conversion-queue-list > li {
+/* The plan list, in the 300 px column: number and name on one line, then the
+   family and the output name under it. Bounded so Convert stays near. */
+.conversion-plan-list,
+.conversion-requested-list {
+  max-height: 240px;
+  overflow: auto;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.conversion-plan-list > li,
+.conversion-requested-list > li {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px 6px;
+  gap: 0 6px;
 }
 
 /* Wide enough for the bound's two digits, so the names start at one place all
-   the way down and item 10 does not shift the column that item 9 established. */
+   the way down and item 10 does not shift the column that item 9 set. */
 .conversion-queue-order {
   min-width: 1.6em;
   flex: 0 0 auto;
@@ -470,19 +745,16 @@ button:disabled,
   white-space: nowrap;
 }
 
-.conversion-queue-output {
-  color: var(--color-text-secondary);
-}
+.conversion-queue-output { color: var(--color-text-secondary); }
+.conversion-plan-list .conversion-queue-name { flex-basis: calc(100% - 2.2em); }
+.conversion-plan-list .conversion-queue-kind { margin-left: 2.2em; }
+.conversion-plan-list .conversion-queue-output { flex-basis: 8em; }
 
-/* A one-to-many output is two facts, not a name, so it takes the whole first
-   line rather than competing with the acquisition for half of one. Ellipsizing
-   it would clip the very sentence that explains why there is no filename, and
-   the range itself is short enough that a row wide enough for a filename is
-   wide enough for this. */
+/* A one-to-many output is two facts, not a name, so it wraps rather than
+   clipping the sentence that explains why there is no filename. */
 .conversion-queue-output-set {
   display: flex;
   min-width: 0;
-  flex: 1 1 12em;
   flex-wrap: wrap;
   gap: 0 6px;
   overflow: visible;
@@ -491,189 +763,302 @@ button:disabled,
   overflow-wrap: anywhere;
 }
 
-/* Quieter than the range beside it and never on its own line's own terms: it
-   is the reason for the range, so it reads as an aside rather than as a second
-   claim. */
-.conversion-queue-output-naming {
-  color: var(--color-text-secondary);
-  font-size: 0.9em;
-  font-style: italic;
-}
+.conversion-queue-output-naming { font-size: 0.9em; font-style: italic; }
 
-/* The family, quiet and unshrinkable. A truncated family name could read as a
-   different family, and which family a row is must survive any width the two
-   filenames fight over -- the row wraps before this ellipsizes. */
+/* The family, quiet and unshrinkable: a truncated family name could read as a
+   different family, so the row wraps before this ellipsizes. */
 .conversion-queue-kind {
   flex: 0 0 auto;
   color: var(--color-text-secondary);
-  font-size: 0.8em;
+  font-size: 0.9em;
   white-space: nowrap;
 }
 
-/* The state takes the next line whole rather than competing with the names for
-   the first. It is the part that changes while the user watches, and a failure
-   sentence is a sentence -- so it wraps instead of being clipped. */
-.conversion-queue-status,
+/* The run list (v5.11 .run-row): a state circle, the name and its output, the
+   state word and the row's own action on the right, and under them whatever
+   the row has to say -- sentences that wrap rather than clip. */
+.conversion-run-list > li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #ebeff5;
+}
+
+.conversion-run-list > li:last-child { border-bottom: 0; }
+
+.conversion-run-symbol {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.conversion-run-title {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.conversion-run-title > .conversion-queue-name { flex: 0 1 auto; font-weight: 650; }
+.conversion-run-title > .conversion-queue-output { flex: 1 1 6em; }
+
+.conversion-run-aside {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* The state word as a tag (v5.11 .tag); hue reinforces the word and never
+   carries the state alone. */
+.conversion-queue-status {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: #eff2f6;
+  color: #526379;
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.conversion-run-detail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  grid-column: 2 / -1;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.conversion-run-detail:empty { display: none; }
+
 .conversion-queue-attempts,
 .conversion-queue-facts,
 .conversion-queue-reason,
+.conversion-queue-retry,
 .conversion-queue-residue,
 .conversion-queue-set-result,
 .conversion-queue-set-completeness,
 .conversion-queue-set-partial {
   min-width: 0;
-  flex: 1 0 100%;
-  padding-left: 2.2em;
+  max-width: 100%;
   color: var(--color-text-secondary);
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
-/* The finalized members, by name. Its own full-width block for the reason the
-   status lines have one, and its names wrap rather than ellipsize: a truncated
-   filename is not one a user can find in a folder, which is the whole reason
-   they are shown. Bounded at twenty-four by what produced them, so the block
-   cannot grow without bound. */
 .conversion-queue-set-members {
   min-width: 0;
-  flex: 1 0 100%;
-  margin: 2px 0 0;
-  padding-left: 2.2em;
+  margin: 0;
+  padding: 0;
   color: var(--color-text-secondary);
-  font-size: 0.95em;
+  font-size: 12px;
   list-style: none;
   overflow-wrap: anywhere;
 }
 
-.conversion-queue-set-members > li {
-  min-width: 0;
-}
-
-/* The completeness claim is a sentence about what was established, so it reads
-   as one rather than as a status chip. Deliberately not coloured: what it says
-   is narrow, and a green tint would say something broader than the words. */
-.conversion-queue-set-completeness {
-  font-size: 0.95em;
-}
-
 /* A partial publication is not an ordinary failure and must not read as an
-   ordinary success. The border and the ground make it a block the eye stops
-   on; `role="note"` is what carries the same weight to a reader that cannot
-   see either. */
-.conversion-queue-set-partial {
-  margin-top: 2px;
-  border-left: 3px solid var(--color-warning-border, var(--color-text-secondary));
-  padding: 4px 8px 4px calc(2.2em - 3px);
-  border-radius: 2px;
-  background: var(--color-warning-surface, transparent);
-  color: var(--color-text-primary);
+   ordinary success: a block the eye stops on, and `role="note"` for a reader
+   who cannot see it. */
+.conversion-queue-set-partial { color: var(--color-text-primary); }
+
+.conversion-run-list > li[data-item-state="running"] > .conversion-run-symbol {
+  border-color: #b8d2f5;
+  background: var(--color-surface-selected);
+  color: var(--color-accent);
 }
 
-/* Weight and hue reinforce what `ITEM_STATE_LABEL` already says in words, so
-   the list still reads on a monochrome display and to anyone who cannot
-   separate these two colours. */
-.conversion-queue-list > li[data-item-state="running"] > .conversion-queue-status {
-  color: var(--color-text-primary);
-  font-weight: 600;
+.conversion-run-list > li[data-item-state="running"] .conversion-queue-status {
+  background: var(--color-surface-selected);
+  color: var(--color-accent-hover);
+  font-weight: 650;
 }
 
-.conversion-queue-list > li[data-item-state="failed"] > .conversion-queue-status,
-.conversion-queue-reason {
-  color: var(--color-danger);
-}
-
-/* A warning rather than a failure: the file was produced and is fine, and what
-   is left behind is a folder MSCanvas could not clear out of the user's way. */
-.conversion-queue-residue {
-  color: var(--color-warning);
-}
-
-.conversion-queue-list > li[data-item-state="finalized"] > .conversion-queue-status {
+.conversion-run-list > li[data-item-state="finalized"] > .conversion-run-symbol {
+  border-color: #bfdfc8;
+  background: var(--color-success-soft);
   color: var(--color-success);
 }
 
-/* A stop is not a failure, and neither of these is coloured like one. The word
-   is what carries the meaning -- `Cancelled`, `Not run`, `Stop could not be
-   confirmed` -- and the colour only keeps them from reading as successes. */
-.conversion-queue-list > li[data-item-state="cancelled"] > .conversion-queue-status,
-.conversion-queue-list > li[data-item-state="notRun"] > .conversion-queue-status {
-  color: var(--color-text-secondary);
+.conversion-run-list > li[data-item-state="finalized"] .conversion-queue-status {
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
-/* The one stopped state that is a warning: MSCanvas does not know whether a
-   process of its own is still running. Weighted as well as coloured, so it
-   reads on a monochrome display and to anyone who cannot separate the two. */
-.conversion-queue-list > li[data-item-state="cancellationFailed"] > .conversion-queue-status {
+.conversion-run-list > li:is([data-item-state="failed"], [data-item-state="cancellationFailed"]) > .conversion-run-symbol {
+  border-color: #e8bbb5;
+  background: var(--color-danger-soft);
   color: var(--color-danger);
-  font-weight: 600;
 }
 
-/* What a stopped queue actually did, counted apart. Given its own weight
-   because it is the line that says how many files are in the folder. */
-.conversion-stopped-summary {
-  font-weight: 600;
-  margin: 0;
+.conversion-run-list > li:is([data-item-state="failed"], [data-item-state="cancellationFailed"]) .conversion-queue-status {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
 }
 
-/* Native radios in a native fieldset. The policy is a two-way choice with a
-   caption, which is what a fieldset and a legend are; a pair of styled buttons
-   would be the same choice with the grouping left implicit. */
-.conversion-scope,
-.conversion-conflict,
-.conversion-destination {
+.conversion-queue-reason { color: var(--color-danger); }
+
+.conversion-run-list > li[data-item-state="skipped"] .conversion-queue-status {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+/* A warning rather than a failure: the file was produced and is fine, and
+   what is left behind is a folder MSCanvas could not clear out of the way. */
+.conversion-queue-residue { color: var(--color-warning); }
+
+/* The summary of a running or finished queue. */
+.conversion-run-status { font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.conversion-run-status:focus { outline: none; }
+.conversion-run-status:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+/* The same count the status sentence says, large (v5.11 .progress-num). It
+   follows the sentence in the document, so the sentence keeps its node. */
+.conversion-progress-num {
+  order: -1;
+  font-size: 27px;
+  font-weight: 650;
+  letter-spacing: -0.7px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+/* What a stopped queue actually did, counted apart: the line that says how
+   many files are in the folder. */
+.conversion-stopped-summary { font-weight: 600; }
+
+/* Adding a queue's outputs and saving its diagnostics: two offers about one
+   finished queue, in one shape, so they read as one set of choices. */
+.conversion-adoption,
+.conversion-diagnostics {
   display: flex;
-  min-width: 0;
   flex-direction: column;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  gap: 4px;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
 }
 
-.conversion-scope > legend,
-.conversion-conflict > legend,
-.conversion-destination > legend {
-  padding: 0 4px;
+.conversion-adoption > p:not(.conversion-adoption-summary),
+.conversion-diagnostics > p:not(.conversion-diagnostics-summary) {
   color: var(--color-text-secondary);
-  font-size: 0.85rem;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
-.conversion-scope > label,
-.conversion-conflict > label,
-.conversion-destination > label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
+.conversion-adoption-summary,
+.conversion-diagnostics-summary { font-weight: 600; }
+.conversion-adoption-summary:empty,
+.conversion-diagnostics-summary:empty { display: none; }
 
-.conversion-subfolder {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.conversion-subfolder input {
-  box-sizing: border-box;
-  min-width: 0;
-  width: 100%;
-}
-
-.conversion-destination .quiet-text,
-.conversion-conflict .quiet-text {
-  margin: 4px 0 0;
+/* A digest is sixty-four characters that must not be re-flowed into something
+   a reader would compare wrongly: monospaced, and allowed to break anywhere so
+   it never widens the column. */
+.conversion-diagnostics-digest {
+  font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
 
-/* Wraps rather than clipping, so the one primary action stays reachable at
-   every width this workspace supports. */
-/* Why a conversion control cannot be used.
+/* The queue's bound facts and the plan's settings (v5.11 .summary-dl). */
+.conversion-summary-dl { display: block; margin: 0; padding-top: 4px; border-top: 1px solid var(--color-border); }
+.conversion-summary-dl > div { display: flex; justify-content: space-between; gap: 10px; margin: 8px 0; padding: 0; border: 0; font-size: 12px; }
+.conversion-summary-dl dt { flex: none; max-width: 50%; color: var(--color-text-secondary); }
+.conversion-summary-dl dd { min-width: 0; margin: 0; text-align: right; overflow-wrap: anywhere; }
 
-   Mounted for the life of the panel and empty until there is something to say,
-   for the same reason the viewer's notice is: a live region that arrives in the
-   same commit as its text is not being watched when the text arrives.
+/* Open file / Open folder, a line of the row. */
+.output-open-actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.output-open-name { min-width: 0; max-width: 100%; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.output-open-actions > p { flex-basis: 100%; color: var(--color-text-secondary); font-size: 12px; }
+.output-open-actions > p:empty { display: none; }
 
-   Collapsed the way `visually-hidden` collapses rather than with `display:
-   none`, which would take it out of the accessibility tree and so be the same
-   thing as not having mounted it. */
+/* The staging cleanup, as a note (v5.11 .note.amber). */
+.conversion-recovery {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  align-self: stretch;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #ebd4a5;
+  border-radius: 6px;
+  background: var(--color-warning-soft);
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.conversion-recovery > p:empty { display: none; }
+
+/* The five judgements, one row's worth, behind a Disclosure button: sixteen
+   items times five sections is a wall nobody reads, and the row's own state
+   word already carries the summary. */
+.conversion-item-toggle { margin-left: -10px; }
+.conversion-item-detail { align-self: stretch; min-width: 0; font-size: 12px; }
+.conversion-item-judgements { margin: 4px 0 0; }
+
+/* Left-aligned and stacked: these are sentences, and a right-aligned sentence
+   is one the eye has to find the start of on every line. */
+.conversion-item-judgements > div {
+  display: grid;
+  grid-template-columns: minmax(7.5em, max-content) 1fr;
+  gap: 10px;
+  justify-content: start;
+}
+
+.conversion-item-judgements dd {
+  text-align: left;
+  font-variant-numeric: normal;
+  overflow-wrap: anywhere;
+}
+
+.conversion-item-advisories { color: var(--color-text-tertiary); }
+
+.conversion-run-identity,
+.conversion-item-digest {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+/* The manifest scrolls inside its own box rather than widening the column. */
+.conversion-item-manifest-scroll { margin-top: 8px; overflow-x: auto; }
+.conversion-item-manifest { border-collapse: collapse; font-size: 0.92em; }
+.conversion-item-manifest caption { padding-bottom: 4px; color: var(--color-text-tertiary); text-align: left; }
+
+.conversion-item-manifest th,
+.conversion-item-manifest td {
+  padding: 3px 10px 3px 0;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+/* A backend-chosen basename can be long, and a truncated one is not a name
+   anybody can find in a folder. */
+.conversion-item-manifest th[scope="row"] {
+  max-width: 22em;
+  font-weight: 500;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Why a conversion control cannot be used. Mounted for the life of the panel
+   and empty until there is something to say, so the live region is watched
+   before its text arrives; collapsed the way `visually-hidden` collapses
+   rather than with `display: none`, which would remove it from the tree. */
+.conversion-availability { display: flex; flex-direction: column; gap: 8px; }
 .conversion-availability:empty {
   position: absolute;
   overflow: hidden;
@@ -686,11 +1071,22 @@ button:disabled,
   white-space: nowrap;
 }
 
-.conversion-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
+/* A plot header's figure actions and the caption naming what they produce --
+   which plot, which range, what size -- share one line, the caption first, so
+   the header is as tall as its buttons. Under the buttons it cost each plot
+   header a line, and at 960x640 that put the selected spectrum's plot below the
+   window (PM9.3; M7.3 has it begin inside). Short of room the caption wraps
+   within its own width; the buttons never do. */
+.figure-quick-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.figure-quick-group > .figure-quick-actions { flex: none; }
+/* Each part of the caption -- plot, range, size -- is kept whole, so the
+   caption reflows only at its separators and never splits "1200 × 640 px"
+   (PM9 UI-26). Its floor is its widest part. */
+.figure-quick-context { flex: 0 1 auto; margin: 0; color: var(--color-text-secondary); }
+.figure-quick-part { white-space: nowrap; }
+.panel-header .figure-quick-context { max-width: 14em; margin: 0; white-space: normal; text-overflow: clip; text-align: right; line-height: 1.2; }
+.figure-export-source { margin: 0; overflow-wrap: anywhere; }
+.figure-export-options { min-width: 0; margin: 0; padding: 0; border: 0; }
 
 /* The family, beside the size and read like it: a fixed cell that never takes
    room from the name. */
@@ -1918,17 +2314,6 @@ button:disabled,
        window, but its 52px header plus the panel borders must remain visible. */
     min-height: 54px;
   }
-
-  /* A conversion contains form controls as well as facts. Keep a usable
-     scrollport below the roster; the existing workspace scroll owner carries
-     the extra height at narrow windows. Viewer-only tracks retain their floor. */
-  .workspace-layout:has(.conversion-panel) {
-    grid-template-rows: minmax(648px, 0.9fr) minmax(526px, 1.6fr);
-  }
-
-  .workspace-sidebar > .conversion-panel {
-    min-height: 360px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1940,25 +2325,6 @@ button:disabled,
   }
 }
 
-/* Adding a queue's outputs to the workspace: an offer beside a result, not a
-   second result. Separated from the queue's own report by a rule rather than by
-   a heading, because it is about what happens next rather than about what
-   happened. */
-.conversion-adoption {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--color-border);
-}
-
-/* The line that says how many rows arrived, weighted like the stopped summary
-   it sits below for the same reason: it is the count a user checks. */
-.conversion-adoption-summary {
-  font-weight: 600;
-  margin: 0;
-}
-
 /* The actionable half of a refusal, under the sentence that names it. A block
    rather than a run of text, because it is a second statement and reading it as
    the tail of the first is how it gets skipped. */
@@ -1968,288 +2334,6 @@ button:disabled,
   font-size: 0.8125rem;
 }
 
-/* Saving a queue's diagnostics: the same shape as adoption and separated the
-   same way, because it is the same kind of thing -- an offer about what happens
-   next, beside a result rather than part of it. Two offers of one shape read as
-   one row of choices; two shapes would read as two unrelated features. */
-.conversion-diagnostics {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--color-border);
-}
-
-.conversion-diagnostics-summary {
-  font-weight: 600;
-  margin: 0;
-}
-
-/* A digest is sixty-four characters that must not be re-flowed into something a
-   reader would compare wrongly. Monospaced so it can be read a group at a time,
-   and allowed to break anywhere so a narrow window scrolls the page rather than
-   this line. */
-.conversion-diagnostics-digest {
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
-  margin: 0;
-}
-
-/* The conversion settings, inside the panel whose action they describe. */
-.conversion-settings {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-}
-
-.conversion-settings-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.conversion-setting .quiet-text { margin-block: 4px; }
-.compact-choices button { padding: 4px 8px; border-radius: var(--radius-sm); }
-
-.conversion-settings-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: 8px;
-}
-
-.conversion-precision-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.compact-choices {
-  display: flex;
-  flex-wrap: wrap;
-  min-width: 0;
-  border: 0;
-  margin: 0;
-  padding: 0;
-  gap: 4px;
-}
-
-.compact-choices > legend {
-  font-size: 13px;
-  margin-bottom: 4px;
-}
-
-.compact-choices button,
-.conversion-setting-choice > label {
-  min-height: 32px;
-  align-items: center;
-}
-
-.compact-choices button[aria-pressed="true"] {
-  color: var(--color-accent);
-  background: var(--color-accent-soft);
-  box-shadow: inset 0 0 0 1px currentColor;
-}
-
-.conversion-recovery {
-  grid-column: 1 / -1;
-  min-width: 0;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-}
-
-.conversion-recovery p { margin: 0 0 6px; }
-.conversion-recovery button { min-height: 32px; margin-right: 6px; }
-
-@media (max-width: 1100px) {
-  .conversion-settings-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-/*
- * That the chosen combination cannot run here, said once.
- *
- * Above the groups rather than beside a control, because all four groups show
- * the same selection: a per-control sentence would say the same thing four
- * times, and three of those would sit beside values this build offers.
- */
-.conversion-settings-unavailable {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 0.82rem;
-  line-height: 1.4;
-}
-
-/*
- * The way out of a combination this build cannot run, where the ordinary
- * controls are not one. Labelled and atomic rather than a silent rewrite.
- */
-.conversion-settings-recovery {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-
-.conversion-setting {
-  display: flex;
-  min-width: 0;
-  margin: 0;
-  flex-direction: column;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  gap: 6px;
-}
-
-.conversion-setting > legend {
-  padding: 0 4px;
-  color: var(--color-text-secondary);
-  font-size: 0.85rem;
-}
-
-.conversion-setting-choice {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.conversion-setting-choice > label {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 6px;
-}
-
-/*
- * What a choice does to the data, and why it cannot be taken.
- *
- * Indented under its own control so the association is visible as well as
- * programmatic, and rendered as ordinary text rather than as a colour: a reader
- * who cannot see the difference between an enabled and a disabled radio still
- * reads the sentence that says so.
- */
-.conversion-setting-note {
-  margin: 0;
-  padding-left: 22px;
-  color: var(--color-text-secondary);
-  font-size: 0.8125rem;
-  line-height: 1.45;
-}
-
-/* A refused choice, marked by more than the browser's dimming. */
-.conversion-setting-choice[data-choice-state="unavailable"] > label {
-  color: var(--color-text-secondary);
-}
-
-/* The five judgements, one row's worth.
-
-   A disclosure rather than five open cards: sixteen items times five sections
-   is a wall nobody reads, and the row's own label already carries the summary.
-   Full width for the reason every other status line here has it -- these are
-   sentences, and a sentence that has to share a line with a filename is a
-   sentence that gets clipped. */
-.conversion-item-detail {
-  min-width: 0;
-  flex: 1 0 100%;
-  margin-top: 4px;
-  padding-left: 2.2em;
-  font-size: 0.95em;
-}
-
-.conversion-item-detail > summary {
-  min-height: 32px;
-  padding-block: 6px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.conversion-item-detail > summary:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-/* Left-aligned and stacked, unlike the panel's other metadata lists. Those are
-   short values beside short labels; these are sentences, and a right-aligned
-   sentence is one the eye has to find the start of on every line. */
-.conversion-item-judgements {
-  margin-top: 6px;
-  gap: 6px;
-}
-
-.conversion-item-judgements > div {
-  display: grid;
-  grid-template-columns: minmax(7.5em, max-content) 1fr;
-  gap: 10px;
-  justify-content: start;
-}
-
-.conversion-item-judgements dd {
-  text-align: left;
-  font-variant-numeric: normal;
-  overflow-wrap: anywhere;
-}
-
-/* An advisory fails nothing, so it reads as a note rather than as a warning.
-   Colouring it would say something the words do not. */
-.conversion-item-advisories {
-  color: var(--color-text-tertiary);
-}
-
-/* The identity is opaque and fixed width. Wrapping is what keeps it readable at
-   960px rather than pushing the panel sideways. */
-.conversion-run-identity,
-.conversion-item-digest {
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-  overflow-wrap: anywhere;
-}
-
-/* The manifest scrolls inside its own box. Six columns of measurements do not
-   fit at 960px, and the alternative to an inner scroller is a page that scrolls
-   sideways -- which moves the whole panel to read one digest. */
-.conversion-item-manifest-scroll {
-  margin-top: 8px;
-  overflow-x: auto;
-}
-
-.conversion-item-manifest {
-  border-collapse: collapse;
-  font-size: 0.92em;
-}
-
-.conversion-item-manifest caption {
-  padding-bottom: 4px;
-  color: var(--color-text-tertiary);
-  text-align: left;
-}
-
-.conversion-item-manifest th,
-.conversion-item-manifest td {
-  padding: 3px 10px 3px 0;
-  border-bottom: 1px solid var(--color-border);
-  text-align: left;
-  vertical-align: top;
-  white-space: nowrap;
-}
-
-/* The name is the one column that must not be a single unbreakable line: a
-   backend-chosen basename embeds sample identifiers and can be long, and a
-   truncated one is not a name anybody can find in a folder. */
-.conversion-item-manifest th[scope="row"] {
-  max-width: 22em;
-  font-weight: 500;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
 .figure-export-dialog { position: fixed; z-index: 110; inset: 5vh 5vw; margin: auto; width: min(1120px, 90vw); height: fit-content; max-height: 90vh; padding: 20px; background: var(--color-surface); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 12px; box-shadow: var(--shadow-panel); overflow: auto; }
 .figure-export-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .figure-export-header h2 { margin: 0; }
@@ -2264,42 +2348,3 @@ button:disabled,
 .figure-export-result { margin-top: 8px; }
 .figure-quick-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 @media (max-width: 1000px) { .figure-export-dialog { inset: 2vh 2vw; width: 96vw; max-height: 96vh; padding: 14px; } .figure-export-body { grid-template-columns: 240px minmax(0, 1fr); gap: 12px; } }
-.output-open-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-block: 4px; }
-.output-open-actions > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
-.output-open-actions > p { flex-basis: 100%; margin: 0; }
-.output-open-actions button { min-height: 32px; }
-/* Inside a queue row the group is a line of the row, indented with the row's
-   other lines rather than starting at its left edge (PM9.4 R12). */
-.conversion-queue-list > li > .output-open-actions { flex: 1 0 100%; min-width: 0; padding-left: 2.2em; }
-
-/* The next conversion, under a finished queue (PM9.4 R5). */
-.conversion-plan > h3 { margin: 0; font-size: 1rem; }
-
-/* A conversion control refused while its own request runs stays a Tab stop
-   (PM9.4 R11) and reads as refused without fading its focus ring. */
-/* The surface's link buttons -- Skip, Describe again, Dismiss, the settings
-   links -- meet the 32 px compact-control minimum like its other controls
-   (PM9.4 R12). */
-.conversion-panel .link-button { min-height: 32px; }
-
-/* The requested order before a plan arrives is the same list as the reviewed
-   one, numbered once by its own cells (PM9.4 R5). Its own rules rather than a
-   second selector on the queue list's, which the CSSOM tests find by name. */
-.conversion-requested-list { display: flex; min-width: 0; flex-direction: column; margin: 0; padding: 0; gap: 4px; font-size: 0.85rem; list-style: none; }
-.conversion-requested-list > li { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
-
-/* The rows a scope excludes, named under its counts (PM9.4 O2). A disclosure,
-   so the plan does not grow by a list nobody asked to read; the names wrap
-   rather than ellipsize, as the set members' do. */
-.conversion-excluded > summary { min-height: 32px; padding-block: 6px; cursor: pointer; }
-.conversion-excluded ul { min-width: 0; margin: 0; padding-left: 1.2em; font-size: 0.85rem; overflow-wrap: anywhere; }
-.conversion-excluded p { margin: 4px 0 0; }
-
-/* Whether Retry reruns a failure: a line of its own, like the reason (R8). */
-.conversion-queue-retry { min-width: 0; flex: 1 0 100%; padding-left: 2.2em; color: var(--color-text-secondary); overflow-wrap: anywhere; }
-
-.conversion-panel .secondary-button[aria-disabled="true"],
-.conversion-panel .link-button[aria-disabled="true"] {
-  color: var(--color-text-secondary);
-  cursor: not-allowed;
-}

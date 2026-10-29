@@ -115,9 +115,11 @@ async function renderState(
     initialConversion: state,
   });
   renderApp(api);
+  // The queue is two parts -- its rows and its summary -- so the panel that
+  // holds both is what is read.
   return await waitFor(() => {
-    const node = document.querySelector(".conversion-running");
-    if (node === null) {
+    const node = document.querySelector(".conversion-running")?.closest(".conversion-panel");
+    if (node == null) {
       throw new Error("expected a queue on screen");
     }
     return node as HTMLElement;
@@ -170,7 +172,6 @@ describe("rendered QA for the one-to-many output topology", () => {
     const memberList = ruleFor(style, ".conversion-queue-set-members");
     expect(memberList.style.getPropertyValue("overflow-wrap")).toBe("anywhere");
     expect(memberList.style.getPropertyValue("min-width")).toBe("0px");
-    expect(memberList.style.getPropertyValue("flex")).toContain("100%");
 
     const set = ruleFor(style, ".conversion-queue-output-set");
     expect(set.style.getPropertyValue("white-space")).toBe("normal");
@@ -178,13 +179,13 @@ describe("rendered QA for the one-to-many output topology", () => {
     expect(set.style.getPropertyValue("min-width")).toBe("0px");
     expect(set.style.getPropertyValue("flex-wrap")).toBe("wrap");
 
-    // And every new status line takes a row of its own and wraps, rather than
-    // competing with the two names for the first line.
+    // And every status line takes a row of its own under the names and wraps,
+    // rather than competing with the two names for the first line.
+    expect(ruleFor(style, ".conversion-run-detail").style.getPropertyValue("flex-direction")).toBe("column");
     const status = ruleFor(
       style,
-      ".conversion-queue-status, .conversion-queue-attempts, .conversion-queue-facts, .conversion-queue-reason, .conversion-queue-residue, .conversion-queue-set-result, .conversion-queue-set-completeness, .conversion-queue-set-partial",
+      ".conversion-queue-attempts, .conversion-queue-facts, .conversion-queue-reason, .conversion-queue-retry, .conversion-queue-residue, .conversion-queue-set-result, .conversion-queue-set-completeness, .conversion-queue-set-partial",
     );
-    expect(status.style.getPropertyValue("flex")).toContain("100%");
     expect(status.style.getPropertyValue("overflow-wrap")).toBe("anywhere");
     expect(status.style.getPropertyValue("min-width")).toBe("0px");
   });

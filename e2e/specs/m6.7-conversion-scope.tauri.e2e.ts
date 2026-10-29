@@ -26,7 +26,7 @@ const FIXTURE = process.env["MSCANVAS_THERMO_FIXTURE"];
 const OUTPUT_ROOT = process.env["MSCANVAS_M67_NATIVE_OUTPUT_ROOT"];
 const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
 const PANEL = "section.conversion-panel";
-const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
+const CONVERT = `${PANEL} .conversion-start`;
 const ROWS = '.grouped-roster [role="row"][data-handle]';
 const runNative = FIXTURE !== undefined && OUTPUT_ROOT !== undefined ? describe : describe.skip;
 

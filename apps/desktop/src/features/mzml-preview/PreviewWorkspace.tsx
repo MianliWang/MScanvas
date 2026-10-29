@@ -863,6 +863,7 @@ export function PreviewWorkspace() {
             plan={workspace.conversionPlan}
             resolvedScope={resolvedScope}
             onScopeChange={workspace.setConversionScope}
+            onSortChange={(sort) => workspace.dispatchRoster({ type: "sortChanged", sort })}
           />
         </section>
         <aside id="workbench-inspector" ref={inspectorRef} tabIndex={-1} className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}>

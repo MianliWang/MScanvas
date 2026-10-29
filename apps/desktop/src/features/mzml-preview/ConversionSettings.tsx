@@ -1,5 +1,7 @@
 import { conversionErrorMessage } from "./conversionMessages";
-import { useId, useState, type ReactElement } from "react";
+import { useId, useState, type ReactElement, type ReactNode } from "react";
+
+import { Button, SegmentedControl } from "../../components/ui";
 
 import type { ConversionCatalogRow, ConversionIntentDescriptor, ConversionNumericPrecision } from "./contracts";
 import { axisChoices, catalogRow, CONVERSION_AXES, recoveryIntent, selectionRefusal,
@@ -75,35 +77,43 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
   const failureId = `${prefix}-failure`;
   const unavailableId = `${prefix}-unavailable`;
   const held = configuration.configuration;
-  const retry = (describedBy?: string) => configuration.retryOffered ? <button
-    className="link-button" type="button" disabled={configuration.refusal !== null}
+  // Refused rather than native-disabled, so the control stays a Tab stop whose
+  // reason (the panel's availability notice) can be reached.
+  const retry = (describedBy?: string) => configuration.retryOffered ? <Button
+    variant="secondary" size="sm" refused={configuration.refusal !== null}
     aria-describedby={[describedBy, refusalNoticeId].filter(Boolean).join(" ") || undefined}
-    onClick={() => { if (configuration.refusal === null) configuration.retry(); }}
-  >{t("cnvSettingsAgain")}</button> : null;
+    onClick={() => configuration.retry()}
+  >{t("cnvSettingsAgain")}</Button> : null;
+  // The section names itself in every state, so the form reads as settings
+  // before the catalog has arrived as well as after.
+  const head = (controls?: ReactNode) => <div className="conversion-section-head">
+    <h3>{t("cnvSettingsTitle")}</h3>{controls}
+  </div>;
   if (held === null || held.configuration === "unattempted") return <div className="conversion-settings" data-settings-state="loading">
-    <p className="quiet-text">{t("cnvSettingsLoading")}</p>{retry()}
+    {head()}<p className="quiet-text">{t("cnvSettingsLoading")}</p>{retry()}
   </div>;
   if (held.configuration === "unavailableForBinding") return null;
   if (held.configuration === "failed") return <div className="conversion-settings" data-settings-state="failed">
+    {head()}
     <p className="quiet-text" id={failureId}>{held.error.kind === "capability_evidence_unavailable" ? t("cnvSettingsReadFailed") : conversionErrorMessage(held.error, t)}</p>
     {retry(failureId)}
   </div>;
   const selected = configuration.selectedIntentId === null ? null : catalogRow(held.catalog, configuration.selectedIntentId);
-  if (selected === null) return <div className="conversion-settings" data-settings-state="failed"><p>{t("cnvSettingsMismatch")}</p></div>;
+  if (selected === null) return <div className="conversion-settings" data-settings-state="failed">{head()}<p>{t("cnvSettingsMismatch")}</p></div>;
   const refusal = selectionRefusal(held.catalog, selected.intent.id);
   const recovery = recoveryIntent(held.catalog, held.shipped, selected.intent.id);
   return <div className="conversion-settings" data-settings-state="ready" data-settings-view={advanced ? "advanced" : "basic"}>
-    <div className="conversion-settings-heading">
-      <span><strong>{t("cnvFormat")}</strong> mzML</span>
-      <div className="compact-choices" role="group" aria-label={t("cnvSettingsView")}>
-        <button type="button" aria-pressed={!advanced} onClick={() => setAdvanced(false)}>{t("cnvBasic")}</button>
-        <button type="button" aria-pressed={advanced} onClick={() => setAdvanced(true)}>{t("cnvAdvanced")}</button>
-      </div>
-    </div>
+    {head(<>
+      {/* One format exists, so it is stated rather than offered as a choice. */}
+      <span className="conversion-format">{t("cnvFormat")} <strong>mzML</strong></span>
+      <SegmentedControl label={t("cnvSettingsView")} value={advanced ? "advanced" : "basic"}
+        options={[{ value: "basic", label: t("cnvBasic") }, { value: "advanced", label: t("cnvAdvanced") }]}
+        onChange={next => setAdvanced(next === "advanced")} />
+    </>)}
     {refusal === null ? null : <p className="conversion-settings-unavailable" data-selection-refusal={refusal} id={unavailableId} role="note">{t(SELECTION_REFUSAL[refusal])}</p>}
     {recovery === null ? null : <div className="conversion-settings-recovery">
-      <button type="button" className="link-button" aria-describedby={refusal === null ? undefined : unavailableId}
-        onClick={() => onChoose(recovery.intent.id)}>{t("cnvRecoveryShipped")}</button>
+      <Button variant="secondary" size="sm" aria-describedby={refusal === null ? undefined : unavailableId}
+        onClick={() => onChoose(recovery.intent.id)}>{t("cnvRecoveryShipped")}</Button>
     </div>}
     <div className="conversion-settings-grid">
       {CONVERSION_AXES.map(axis => axis === "precision" && !advanced
@@ -169,13 +179,16 @@ function PrecisionFields({ catalog, current, onChoose }: AxisProps) {
   return <fieldset className="conversion-setting" data-axis="precision">
     <legend>{t("cnvPrecision")}</legend>
     <div className="conversion-precision-fields">
-      {grid.map((widths, index) => <fieldset className="compact-choices" key={index}>
+      {/* Native radios drawn as a segmented pair: an unavailable width stays on
+          screen, natively disabled, and points at the reason said below. */}
+      {grid.map((widths, index) => <fieldset className="conversion-segments" key={index}>
         <legend>{t(index === 0 ? "cnvMz" : "cnvIntensity")}</legend>
-        {widths.map(({ width, state }) => <div className="conversion-setting-choice" data-choice-state={state.status} key={width}>
-          <label><input type="radio" name={`${prefix}-${index}`} checked={state.status === "selected"}
-            disabled={state.status === "unavailable"} aria-describedby={refusalId(prefix, state) ?? selectedId}
-            onChange={() => { if (state.status === "selectable") onChoose(state.intentId); }} />{t(width === 32 ? "cnv32Bit" : "cnv64Bit")}</label>
-        </div>)}
+        <div className="conversion-segments-track">
+          {widths.map(({ width, state }) => <label className="conversion-segment" data-choice-state={state.status} key={width}>
+            <input className="visually-hidden" type="radio" name={`${prefix}-${index}`} checked={state.status === "selected"}
+              disabled={state.status === "unavailable"} aria-describedby={refusalId(prefix, state) ?? selectedId}
+              onChange={() => { if (state.status === "selectable") onChoose(state.intentId); }} />{t(width === 32 ? "cnv32Bit" : "cnv64Bit")}</label>)}
+        </div>
       </fieldset>)}
     </div>
     {refusals(prefix, grid.flat().map(choice => choice.state), t)}

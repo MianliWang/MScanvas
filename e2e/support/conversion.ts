@@ -22,7 +22,7 @@ import { revealRosterRow } from "./viewer";
 export const CONVERSION_SURFACE = "#workbench-conversion";
 
 /** The next conversion's start control, never the adoption that precedes it. */
-export const CONVERT = ".conversion-plan button.primary-button, .conversion-plan .conversion-start";
+export const CONVERT = "button.conversion-start";
 
 /**
  * Ticks each row's conversion checkbox, leaving a row already ticked as it is.

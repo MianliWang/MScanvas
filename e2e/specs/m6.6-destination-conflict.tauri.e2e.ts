@@ -26,7 +26,7 @@ const FIXTURE = process.env["MSCANVAS_THERMO_FIXTURE"];
 const OUTPUT_ROOT = process.env["MSCANVAS_M66_NATIVE_OUTPUT_ROOT"];
 const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
 const PANEL = "section.conversion-panel";
-const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
+const CONVERT = `${PANEL} .conversion-start`;
 const ROWS = '.grouped-roster [role="row"][data-handle]';
 const runNative = FIXTURE !== undefined && OUTPUT_ROOT !== undefined ? describe : describe.skip;
 
@@ -364,13 +364,8 @@ runNative("M6.6 real native destination and conflict proof (requires authorized 
     expect(result.report.validation?.fullyVerified).toBe(false);
     expect(result.report.validation?.verified).toContain("source_unchanged");
     output(join(destination, "FT-HCD-MSX.mzML"));
-    // Since M7.4 the bound queue facts sit in their own closed disclosure;
-    // open it as a reader would, then read the same visible text.
-    const bound = "section.conversion-panel details.conversion-bound-details";
-    if (await browser.$(bound).getAttribute("open") === null) {
-      await reveal(`${bound} > summary`);
-      await browser.$(`${bound} > summary`).click();
-    }
+    // The bound queue facts are always on screen in the summary column.
+    await reveal("section.conversion-panel .conversion-bound-details");
     await expect(browser.$('[aria-label="Queue destination"]')).toHaveText(expect.stringContaining("Chosen local folder"));
     await snapshot("custom-finalized");
   });
