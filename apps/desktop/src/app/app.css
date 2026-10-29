@@ -387,8 +387,12 @@ button:disabled,
   font-size: 13px;
 }
 
+/* Positioned, so the visually hidden text inside each column is placed and
+   clipped by that column rather than by the surface, where it gave the surface
+   a scroll height of its own (PM9 L22). */
 .conversion-main,
 .conversion-side {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -465,6 +469,16 @@ button:disabled,
 .conversion-wide-action { width: 100%; white-space: normal; }
 .conversion-start-actions { flex-direction: column; align-items: stretch; }
 .conversion-start-actions > .ui-button--sm { align-self: flex-start; }
+/* In the summary column the start stays in reach while the plan above it
+   scrolls (v5.11 keeps its summary in view). */
+.conversion-side .conversion-start-actions {
+  position: sticky;
+  bottom: -16px;
+  margin: 0 -16px -16px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
 
 .conversion-side-note,
 .conversion-plan-pending {
@@ -971,10 +985,10 @@ button:disabled,
 }
 
 /* The queue's bound facts and the plan's settings (v5.11 .summary-dl). */
-.conversion-summary-dl { display: block; margin: 0; padding-top: 4px; border-top: 1px solid var(--color-border); }
-.conversion-summary-dl > div { display: flex; justify-content: space-between; gap: 10px; margin: 8px 0; padding: 0; border: 0; font-size: 12px; }
-.conversion-summary-dl dt { flex: none; max-width: 50%; color: var(--color-text-secondary); }
-.conversion-summary-dl dd { min-width: 0; margin: 0; text-align: right; overflow-wrap: anywhere; }
+.metadata-list.conversion-summary-dl { display: grid; gap: 8px; margin: 0; padding-top: 10px; border-top: 1px solid var(--color-border); font-size: 12px; }
+.metadata-list.conversion-summary-dl > div { display: flex; justify-content: space-between; gap: 10px; }
+.metadata-list.conversion-summary-dl dt { flex: none; max-width: 50%; color: var(--color-text-secondary); }
+.metadata-list.conversion-summary-dl dd { min-width: 0; margin: 0; text-align: right; overflow-wrap: anywhere; }
 
 /* Open file / Open folder, a line of the row. */
 .output-open-actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
