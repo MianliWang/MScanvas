@@ -118,7 +118,7 @@ runNative("M6.6 real native destination and conflict proof (requires authorized 
     await showRoster();
     const clear = browser.$("button=Clear list");
     if (await clear.isExisting()) {
-      await reveal("#workbench-roster .dataset-roster-actions");
+      await reveal("#workbench-roster .roster-head");
       await clear.click();
       await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
     }

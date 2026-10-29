@@ -748,18 +748,15 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     if (produced === undefined) throw Error("The adopted provider output is not in the roster.");
     record({ kind: "adopted provider output", fileName: produced.fileName });
     // Back to the workbench, because the preview renders where the conversion
-    // panel currently is, and then the roster's own way of opening a row: focus
-    // it, and use the action that names what it will do. A double-click on the
-    // row does not open a preview from here, which is how this chain first
-    // failed -- it waited two minutes for a table that nothing had asked for.
+    // panel currently is, and then the roster's own way of opening a row: one
+    // plain click. A double-click on the row is not a separate route, which is
+    // how this chain first failed -- it waited two minutes for a table that
+    // nothing had asked for.
     await browser.$(".workbench-navigation").$(`button=${zh.workbench}`).click();
     const producedRow = `.dataset-roster-list [role="row"][data-handle="${produced.handle}"]`;
     await browser.$(producedRow).waitForDisplayed({ timeout: 60_000 });
     await reveal(producedRow);
     await browser.$(producedRow).click();
-    const openPreview = browser.$(`button=${zh.previewFocused}`);
-    await openPreview.waitForEnabled({ timeout: 30_000 });
-    await openPreview.click();
     await browser.$('div.spectrum-table-row[data-row-position="0"]')
       .waitForDisplayed({ timeout: 120_000, timeoutMsg: "The converted mzML never opened." });
     await reveal('div.spectrum-table-row[data-row-position="0"]');

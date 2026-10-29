@@ -134,7 +134,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     await showRoster();
     const clear = browser.$("button=Clear list");
     if (await clear.isExisting()) {
-      await reveal("#workbench-roster .dataset-roster-actions");
+      await reveal("#workbench-roster .roster-head");
       await clear.waitForClickable({ timeout: 30_000 });
       await clear.click();
       await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
@@ -223,7 +223,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     await addButton.waitForEnabled({ timeout: 60_000 });
     // The roster owns its scroll; reach its acquisition control after opening it.
     await browser.waitUntil(async () => {
-      await reveal("#workbench-roster .dataset-roster-actions");
+      await reveal("#workbench-roster .roster-head");
       return addButton.isClickable();
     }, { timeout: 60_000, timeoutMsg: "Add files… never became reachable." });
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);
@@ -289,7 +289,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
         await browser.waitUntil(async () => (await conversionState()).status !== "running", { timeout: 180_000 });
         await showRoster();
         const clearAgain = browser.$("button=Clear list");
-        await reveal("#workbench-roster .dataset-roster-actions");
+        await reveal("#workbench-roster .roster-head");
         await clearAgain.waitForClickable({ timeout: 30_000 });
         await clearAgain.click();
         await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);

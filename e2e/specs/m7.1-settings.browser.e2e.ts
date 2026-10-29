@@ -119,8 +119,7 @@ async function loadWorkspace(emptySpectrum = false, refusedViewport = false) {
   // be undone. The store reads back what it was asked to save instead.
   await readBackSavedPreferences();
   // A row press views an mzML row (DatasetRoster `handleRowPress`; PM9
-  // slice-03 "Roster row click, Enter, Preview focused"), so there is no
-  // separate Preview focused step.
+  // slice-03 "Roster row click, Enter"), so there is no separate step.
   await browser.$(ROW).click();
   await browser.$('.spectrum-table[role="grid"]').waitForDisplayed();
   await chooseFirstScan();
@@ -341,7 +340,7 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     await loadWorkspace(true);
     await capture("state-empty-spectrum");
     await holdInvoke("open_mzml_preview");
-    await browser.$(`button=${en.previewFocused}`).click();
+    await browser.$(ROW).click();
     await openSettings();
     await choose("zh-CN");
     await capture("state-loading-chinese");

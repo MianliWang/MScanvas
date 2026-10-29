@@ -1419,8 +1419,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         const record = async (label: string) => {
           await frames();
           const count = await textShape(".roster-selection-context");
-          const newGroup = await browser.$(".organization-toolbar button").getLocation("y");
-          const band = await browser.$(".organization-toolbar").getSize("height");
+          const newGroup = await browser.$("[data-roster-new-group]").getLocation("y");
+          const band = await browser.$(".roster-foot-count").getSize("height");
           shapes.push({ label, count, newGroupTop: newGroup, band });
           expect(count?.lines).toBe(1);
           expect(count?.split).toEqual([]);
@@ -1439,11 +1439,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         shapes.push({ label: `ui-rework-organizing-${locale}-forced-narrow`, narrow });
         expect(narrow?.lines).toBeGreaterThan(1);
         expect(narrow?.split).toEqual([]);
-        await browser.$(".organization-toolbar button").click();
+        await browser.$("[data-roster-new-group]").click();
         await browser.$("#organization-group-name").setValue("QC");
         await browser.$(".group-name-dialog button[type='submit']").click();
         await browser.$(".group-name-dialog").waitForExist({ reverse: true });
-        await browser.$(".organization-toolbar .link-button").waitForDisplayed();
+        await browser.$(".roster-foot-count .ui-icon-button").waitForDisplayed();
         await record(`ui-rework-organizing-undo-${locale}-1366x768`);
         await metrics(960, 640);
         await revealRosterRow(MZML_ROW.handle);
@@ -1469,7 +1469,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         evidence.push({ label: `ui-rework-retained-${locale}`, primaries });
         expect(primaries).toEqual([expect.stringMatching(new RegExp(`^${prefix(words(locale).previewRetained)}`, "u"))]);
         // Add files stays offered, only quieter.
-        expect(await browser.$(".dataset-roster-actions [data-add-files]").isEnabled()).toBe(true);
+        expect(await browser.$(".roster-head [data-add-files]").isEnabled()).toBe(true);
         // At 960x640 the roster takes the evidence pane's place, the reopen is
         // off screen, and Add files is the one filled action again.
         await metrics(960, 640);
@@ -1493,7 +1493,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         expect(await capture.getAttribute("aria-disabled")).toBe("true");
         const seen = await browser.execute(() => {
           const button = document.querySelector<HTMLElement>("[data-project-capture]")!;
-          const enabled = document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]");
+          const enabled = document.querySelector<HTMLElement>(".roster-head [data-add-files]");
           const reason = (button.getAttribute("aria-describedby") ?? "")
             .split(/\s+/u)
             .map((id) => document.getElementById(id))
@@ -1680,11 +1680,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     it("UI-20: Clear list shows its focus ring unclipped and answers hover", async () => {
       await metrics(1366, 768);
       await open("populated");
-      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]")?.focus());
+      await browser.execute(() => document.querySelector<HTMLElement>(".roster-head [data-add-files]")?.focus());
       let found = false;
-      for (let step = 0; step < 8 && !found; step += 1) {
+      for (let step = 0; step < 16 && !found; step += 1) {
         await browser.keys("Tab");
-        found = await browser.execute(() => document.activeElement?.hasAttribute("data-list-wide") ?? false);
+        found = await browser.execute(() => document.activeElement?.hasAttribute("data-roster-clear") ?? false);
       }
       expect(found).toBe(true);
       const ring = await browser.execute(() => {
@@ -1698,9 +1698,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect((await focusedTreatment()).visible).toBe(true);
       expect(ring.inside).toBe(true);
       await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur());
-      const rest = await browser.execute(() => getComputedStyle(document.querySelector("[data-list-wide]")!).backgroundColor);
-      await browser.$("[data-list-wide]").moveTo();
-      const hover = await browser.execute(() => getComputedStyle(document.querySelector("[data-list-wide]")!).backgroundColor);
+      const rest = await browser.execute(() => getComputedStyle(document.querySelector("[data-roster-clear]")!).backgroundColor);
+      await browser.$("[data-roster-clear]").moveTo();
+      const hover = await browser.execute(() => getComputedStyle(document.querySelector("[data-roster-clear]")!).backgroundColor);
       evidence.push({ label: "ui-rework-clear-list", ring, rest, hover });
       expect(hover).not.toBe(rest);
       expect(await unexpectedConsole()).toEqual([]);
@@ -1953,7 +1953,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     it("UI-11: keyboard walks through the roster, Conversion, Project, Settings and Details, and the 960x640 swap, stay visible and on screen", async () => {
       await metrics(1366, 768);
       await open("populated");
-      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]")?.focus());
+      await browser.execute(() => document.querySelector<HTMLElement>(".roster-head [data-add-files]")?.focus());
       await focusWalk("ui-rework-walk-roster", 20);
       for (const [name, label] of [
         [en.conversionTask, "conversion"],
@@ -2030,7 +2030,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           detail: null,
           retryable: true,
         });
-        await browser.$(".dataset-roster-actions [data-add-files]").click();
+        await browser.$(".roster-head [data-add-files]").click();
         const owned = words(locale).errFilePickerSelectionTooLarge;
         await browser.waitUntil(async () => (await browser.execute(() => document.body.innerText)).includes(owned), {
           timeoutMsg: "the owned sentence never showed",

@@ -10,7 +10,7 @@ const HERE = dirname(fileURLToPath(import.meta.url)), REPO = resolve(HERE, "../.
 const INPUTS = resolve(REPO, ".tmp/m72-evidence/native-inputs");
 const MZML_SHA = "a1228c104790670515f948f523dfe43caa7085cedb7d57d19ed07cbca5775ea7";
 const RAW_SHA = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
-const ROW = ".grouped-roster [data-handle]", ADD = ".dataset-roster-actions [data-add-files]";
+const ROW = ".grouped-roster [data-handle]", ADD = ".roster-head [data-add-files]";
 const evidence: unknown[] = [];
 const digest = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 let output = "", processId = 0, dpi = 0, firstHandle = "", secondHandle = "", rawHandle = "";
@@ -43,7 +43,7 @@ function helper(script: string, args: string[]) {
 async function capture(label: string, validate = true) {
   const owned = metrics();
   const state = await browser.execute(() => ({ css: { width: innerWidth, height: innerHeight }, dpr: devicePixelRatio, cssZoom: getComputedStyle(document.documentElement).zoom,
-    locale: document.documentElement.lang, density: document.querySelector("[data-density]")?.getAttribute("data-density"), focus: { hasFocus: document.hasFocus(), tag: document.activeElement?.tagName, text: document.activeElement?.textContent, add: document.activeElement?.matches(".dataset-roster-actions [data-add-files]") },
+    locale: document.documentElement.lang, density: document.querySelector("[data-density]")?.getAttribute("data-density"), focus: { hasFocus: document.hasFocus(), tag: document.activeElement?.tagName, text: document.activeElement?.textContent, add: document.activeElement?.matches(".roster-head [data-add-files]") },
     rows: [...document.querySelectorAll<HTMLElement>(".grouped-roster [data-handle]")].map(row => ({ handle: row.dataset.handle, group: row.dataset.group, name: row.textContent, selected: row.getAttribute("aria-selected"), checked: row.querySelector<HTMLInputElement>("input")?.checked })),
     groupCounts: [...document.querySelectorAll(".roster-group-header")].map(group => ({ id: group.getAttribute("data-group-id"), text: group.textContent })),
     source: document.querySelector(".dataset-row.is-active")?.getAttribute("data-handle"),
@@ -261,7 +261,7 @@ describe("M7.2 affected final native workbench paths", function () {
     expect(result.closed).toBe(true);
     await browser.$(ADD).waitForEnabled();
     // No click, focus() or foreground helper after cancellation.
-    await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches(".dataset-roster-actions [data-add-files]") === true));
+    await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches(".roster-head [data-add-files]") === true));
     expect(metrics().foregroundProcessId).toBe(processId);
     const state = await capture("07-native-picker-cancel-natural-return"); expect(state.rows).toHaveLength(6);
     expect((await calls()).slice(before.length).filter(call => call.command === "open_mzml_preview")).toEqual([]);
@@ -306,7 +306,7 @@ describe("M7.2 affected final native workbench paths", function () {
     await capture("review-native-group-dissolve-before");
     await browser.$(`${group} .row-menu-trigger`).click(); await browser.keys(["End", "Enter"]);
     await browser.$(group).waitForExist({ reverse: true });
-    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches(".organization-toolbar button:first-child") === true));
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-new-group]") === true));
     expect(await browser.$(row(firstHandle)).getAttribute("data-group")).toBe("ungrouped");
     expect(await browser.$(`${row(firstHandle)} input[type="checkbox"]`).isSelected()).toBe(membership);
     expect(await calls()).toEqual(before); expect(await previewReads()).toEqual(beforeReads);
@@ -326,7 +326,7 @@ describe("M7.2 affected final native workbench paths", function () {
     await browser.$(".workbench-navigation button:nth-child(2)").click();
     await browser.$('[aria-controls="workbench-roster"]').click();
     const before = (await previewReads()).length;
-    await browser.$(".dataset-roster-actions button:nth-child(3)").click();
+    await browser.$(row(secondHandle)).click();
     await browser.$("#workbench-evidence").waitForDisplayed();
     expect(await browser.$("#workbench-roster").isDisplayed()).toBe(false);
     expect(await browser.execute(() => document.activeElement?.id)).toBe("workbench-evidence");

@@ -895,6 +895,7 @@ export const DatasetRoster = memo(function DatasetRoster({
           removeFocusDebt.current = null;
         }
       }}
+      data-roster-clear=""
       ref={clearListRef}
       size="sm"
       variant="quiet"
