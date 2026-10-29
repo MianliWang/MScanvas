@@ -3942,6 +3942,9 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     let preferences = include_str!("../../../src/features/preferences/preferencesApi.ts");
     // The project store's own boundary, beside the preference store's.
     let projects = include_str!("../../../src/features/project/projectApi.ts");
+    // The conversion preset store's, beside the preference store it shares a
+    // binding with.
+    let presets = include_str!("../../../src/features/presets/presetsApi.ts");
 
     let registered = host
         .split_once("generate_handler![")
@@ -3967,6 +3970,13 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // could reach for on its own.
             "load_ui_preferences",
             "save_ui_preferences",
+            // User-saved conversion presets (ADR 0055), addressed by name. Four
+            // commands; none names a path, and a save carries its own
+            // confirmations rather than a separate overwrite operation.
+            "list_conversion_presets",
+            "save_conversion_preset",
+            "rename_conversion_preset",
+            "delete_conversion_preset",
             // The M8.1 project store, on its own boundary for the same reason
             // the preference store has one: a project references files and the
             // roster admits them, and keeping the two boundaries apart is what
@@ -4138,7 +4148,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             api.contains(&format!("\"{name}\""))
                 || drop_transport.contains(&format!("\"{name}\""))
                 || preferences.contains(&format!("\"{name}\""))
-                || projects.contains(&format!("\"{name}\"")),
+                || projects.contains(&format!("\"{name}\""))
+                || presets.contains(&format!("\"{name}\"")),
             "the frontend never calls {name}"
         );
     }
