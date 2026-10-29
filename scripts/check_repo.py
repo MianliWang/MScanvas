@@ -163,6 +163,7 @@ def validate_project_contract(errors: list[str]) -> None:
             f"rustup toolchain install {PINNED_RUST}",
             "pnpm install --frozen-lockfile",
             "scripts/build_candidate.ps1",
+            "cargo build --release --features e2e --features tauri/custom-protocol --bin mscanvas-desktop --target-dir target/e2e",
             "scripts/inspect_candidate.ps1",
         ],
         ".github/workflows/rust.yml": [
