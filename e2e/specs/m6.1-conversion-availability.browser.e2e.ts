@@ -35,7 +35,7 @@ import {
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
 import { showBackendBanner } from "../support/backendBanner";
-import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion } from "../support/conversion";
+import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion, startAnother } from "../support/conversion";
 
 /** The binding every answer in this run describes, as a plan carries it. */
 const SETTLED_RECEIPT = firstBindingReceipt;
@@ -141,6 +141,7 @@ async function openTheWorkspace(
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
   await checkMembers([VENDOR_ROW.handle]);
   await showConversion();
+  await startAnother();
   await browser.$(START).waitForDisplayed({ timeout: 15_000 });
 }
 

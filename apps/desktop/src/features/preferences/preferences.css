@@ -51,11 +51,6 @@
 .setting-field-label { font-size: 13px; font-weight: 600; }
 .setting-field-help { max-width: 28em; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 .setting-field-control { min-width: 0; }
-.choice-field { display: flex; flex-wrap: wrap; gap: 4px; }
-.choice-field-option { display: inline-flex; min-height: 32px; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 13px; cursor: pointer; }
-.choice-field-option:has(input:checked) { border-color: var(--color-accent); background: var(--color-accent-soft); }
-.choice-field-option input { margin: 0; accent-color: var(--color-accent); }
-.choice-field-option:focus-within { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .settings-dialog-footer {
   display: flex;
   flex: none;
@@ -124,9 +119,6 @@
 /* Wraps rather than shrinking, so a long Chinese or English action label keeps
    a usable target instead of being squeezed out of one. */
 .settings-storage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-
-/* A frozen group still says what it is set to; it just cannot be changed. */
-.choice-field-option:has(input:disabled) { opacity: 0.6; cursor: default; }
 
 @media (max-width: 520px) {
   .settings-fields { padding-inline: 16px; }

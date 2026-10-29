@@ -948,6 +948,7 @@ export function PreviewWorkspace() {
               onSelect={project.inspect}
               liveDatasetHandles={liveDatasetHandles}
               onShowInWorkbench={revealInWorkbench}
+              onClose={() => closeDrawer(false)}
             />
           ) : preview.status === "loaded" ? (
             <PreviewSummary

@@ -135,6 +135,11 @@ async function convertControl(): Promise<HTMLElement> {
   return within(panel).findByRole("button", { name: /^Convert/u });
 }
 
+/** Opens the next conversion under a finished queue, as its reader does (review 6). */
+async function openNextConversion(panel: HTMLElement): Promise<void> {
+  fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
+}
+
 /** Every sentence the panel is currently giving as a reason. */
 function reasonsOnScreen(): string[] {
   return [...document.querySelectorAll("[data-live-region='conversion-availability'] p")].map(
@@ -328,6 +333,7 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     const panel = await conversionPanel();
     await within(panel).findByRole("button", { name: "Retry 1 failed" });
+    await openNextConversion(panel);
     const convert = await convertControl();
     await waitFor(() => {
       expect(convert).not.toHaveAttribute("aria-disabled");
@@ -367,6 +373,7 @@ describe("the conversion lane's one authority, as it ships", () => {
       expect(retry).not.toHaveAttribute("aria-disabled");
     });
     // The explicit empty scope refuses a new start while the bound retry is usable.
+    await openNextConversion(panel);
     expect(within(panel).getByRole("button", { name: /^Convert/u })).toHaveAttribute("aria-disabled", "true");
 
     fireEvent.click(retry);
@@ -439,6 +446,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     renderApp(api);
 
     const panel = await conversionPanel();
+    await openNextConversion(panel);
     const convert = await convertControl();
     await waitFor(() => {
       expect(convert).not.toHaveAttribute("aria-disabled");
@@ -614,6 +622,7 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     const panel = await conversionPanel();
     const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
+    await openNextConversion(panel);
     const convert = await convertControl();
     await waitFor(() => {
       expect(convert).toHaveAttribute("aria-disabled", "true");

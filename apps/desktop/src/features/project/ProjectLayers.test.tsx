@@ -208,6 +208,13 @@ describe("creating a layer from a reference", () => {
       expect(control.getAttribute("title")).toBe(en.projectLayerNeedsWorkbench);
       const reason = document.getElementById(control.getAttribute("aria-describedby") ?? "");
       expect(reason?.textContent).toBe(en.projectLayerNeedsWorkbench);
+      // Said right beside the control it explains, and the row leads with the
+      // actions that can be taken now (review 12).
+      expect(control.nextElementSibling).toBe(reason);
+      expect(control.closest(".project-row-actions")?.querySelector("button")).toHaveAttribute(
+        "data-project-relink",
+        id,
+      );
     }
   });
 

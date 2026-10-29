@@ -34,7 +34,9 @@
  * The data was already here.
  */
 
-import { Button } from "../../components/ui";
+import { useLayoutEffect, useRef } from "react";
+
+import { Button, Icon, IconButton } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import {
   artifactKey,
@@ -95,20 +97,54 @@ export interface ProvenanceDetailsProps {
   readonly liveDatasetHandles?: ReadonlySet<string>;
   /** Takes the reader to one row that is in the Workbench. Navigation only. */
   readonly onShowInWorkbench?: (handle: string) => void;
+  /**
+   * Folds Details where it is a drawer over the project (rebuild review 11).
+   * The keyboard then goes back to the row whose inspection opened it.
+   */
+  readonly onClose?: () => void;
 }
+
+/** The project control that put the current object into Details. */
+const INSPECTING_ROW = '#workbench-project [aria-controls="workbench-inspector"][aria-current="true"]';
 
 export function ProvenanceDetails({
   provenance,
   onSelect,
   liveDatasetHandles,
   onShowInWorkbench,
+  onClose,
 }: ProvenanceDetailsProps) {
   const t = useUiMessages();
   const locale = document.documentElement.lang || "en";
+  // Spent in the commit that folds the drawer, which is the one that lifts
+  // `inert` from the project: before it, the row cannot take focus.
+  const returning = useRef(false);
+  useLayoutEffect(() => {
+    if (!returning.current) return;
+    returning.current = false;
+    (document.querySelector<HTMLElement>(INSPECTING_ROW) ??
+      document.querySelector<HTMLElement>("[data-project-inspect-hint] button"))?.focus();
+  });
+  // Shown only while Details is a drawer (project.css); as a column it has
+  // the header's own toggle beside it.
+  const close = onClose === undefined ? null : (
+    <IconButton
+      size="sm"
+      className="provenance-close"
+      icon={<Icon name="close" />}
+      label={t("provenanceCloseDetails")}
+      data-provenance-close=""
+      onClick={() => {
+        returning.current = true;
+        onClose();
+      }}
+    />
+  );
 
   if (provenance === null) {
     return (
       <section className="panel provenance" aria-label={t("provenanceRegion")}>
+        {close}
         <p className="provenance-empty">{t("provenanceNothingSelected")}</p>
       </section>
     );
@@ -224,6 +260,7 @@ export function ProvenanceDetails({
 
   return (
     <section className="panel provenance" aria-label={t("provenanceRegion")}>
+      {close}
       {provenance.kind === "gone" ? (
         <>
           <p className="provenance-kind">{t("provenanceSelected")}</p>

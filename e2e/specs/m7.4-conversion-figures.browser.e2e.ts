@@ -8,6 +8,7 @@ import { ipcTable } from "../support/fixtures";
 import { consoleEntries, heldCallers, holdInvoke, installIpcBoundary, IPC_TABLE_KEY, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
 import { FIGURE_DIALOG, figureActions, openPlotMenu, plotMenuItem, plotMenuTrigger } from "../support/figure";
+import { startAnother } from "../support/conversion";
 
 const CHROMATOGRAM = "section.chromatogram-panel";
 
@@ -225,6 +226,9 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await open(scenario.width, scenario.height, scenario.dpr);
     await preferences(scenario.language, scenario.density);
     await conversion();
+    // The settings are the next conversion's, opened under the finished queue
+    // on request (rebuild review 6).
+    await startAnother();
     await browser.$('.conversion-settings[data-settings-state="ready"]').waitForExist();
     await capture("conversion-basic-" + scenario.width);
     const requestCount = (await ipcCalls()).filter(call => call.command === "describe_workspace_conversion_queue").length;

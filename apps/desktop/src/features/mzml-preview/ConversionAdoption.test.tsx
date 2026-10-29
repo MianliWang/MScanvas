@@ -209,6 +209,8 @@ describe("adding converted outputs to the workspace", () => {
     const search = screen.getByRole("searchbox", { name: /search/i });
     fireEvent.change(search, { target: { value: "run" } });
     const panel = await screen.findByRole("region", { name: "Convert" });
+    // The order is the next conversion's, opened under the finished queue.
+    fireEvent.click(within(panel).getByRole("button", { name: "Start another conversion" }));
     const sort = within(panel).getByRole("combobox", { name: "Execution order" });
     fireEvent.change(sort, { target: { value: "name-asc" } });
 
@@ -363,6 +365,7 @@ describe("adding converted outputs to the workspace", () => {
     // A quarantined session runs no process, and this one does not need to.
     expect(adopt).not.toHaveAttribute("aria-disabled");
     // Everything that would launch one is still refused.
+    fireEvent.click(within(panel).getByRole("button", { name: "Start another conversion" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });

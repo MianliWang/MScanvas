@@ -311,9 +311,56 @@ button:disabled,
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 16px;
-  padding: 16px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px 16px;
+  padding: 0 16px 16px;
   font-size: 13px;
+}
+
+/* A page head (v5.11 .page-head, compact): the title, its one-line purpose
+   and, where a page has them, its actions on the right. Shared by Conversion
+   and Project. The copy gives way before the actions do, so a long purpose
+   wraps under the title rather than pushing the actions onto a row of their
+   own. On Conversion, which has no actions, a short window puts the purpose
+   beside the title, so the head costs no more height than the old heading. */
+.page-head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.conversion-page-head { grid-column: 1 / -1; }
+
+.page-head-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 16em;
+  flex-direction: column;
+}
+
+.page-head-title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.page-head-subtitle {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+@media (max-height: 720px) {
+  .conversion-page-head .page-head-copy { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 }
 
 /* Positioned, so the visually hidden text inside each column is placed and
@@ -341,7 +388,7 @@ button:disabled,
 /* Below the two-column floor the summary goes under the form and the surface
    scrolls as one column. Not reached at the 960 px minimum window. */
 @media (max-width: 900px) {
-  .conversion-panel { grid-template-columns: minmax(0, 1fr); }
+  .conversion-panel { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
   .workbench-conversion > .conversion-panel { flex: 1 0 auto; }
   .conversion-main, .conversion-side { overflow: visible; }
 }
@@ -545,6 +592,22 @@ button:disabled,
 
 .conversion-setting > .conversion-setting-note,
 .conversion-precision-fields + .conversion-setting-note { padding-left: 0; }
+
+/* Why the dimmed choices are refused: once for the form, under the groups,
+   on a line of its own that names what it is about. */
+.conversion-settings-refusals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--color-surface-subtle);
+}
+
+.conversion-settings-refusals-label { flex: none; color: var(--color-text-primary); font-size: 11px; font-weight: 600; }
+.conversion-settings-refusals > div { min-width: 0; flex: 1 1 16em; }
+.conversion-settings-refusals .conversion-setting-note { padding-left: 0; }
 
 .conversion-settings-unavailable {
   color: var(--color-text-secondary);
@@ -879,6 +942,26 @@ button:disabled,
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
+
+/* Under the count: the share of items already settled, never a fraction of
+   the run in progress. Placed with the count, above the sentence. */
+.conversion-progress-bar {
+  order: -1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--color-surface-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.conversion-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width var(--motion-fast) var(--motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) { .conversion-progress-bar > span { transition: none; } }
 
 /* What a stopped queue actually did, counted apart: the line that says how
    many files are in the folder. */
@@ -2014,37 +2097,6 @@ button:disabled,
 .figure-export-actions { display: flex; flex: none; gap: 8px; }
 @media (prefers-reduced-motion: reduce) { .figure-preview-frame img { transition: none; } }
 .figure-quick-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.output-open-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-block: 4px; }
-.output-open-actions > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
-.output-open-actions > p { flex-basis: 100%; margin: 0; }
-.output-open-actions button { min-height: 32px; }
-/* Inside a queue row the group is a line of the row, indented with the row's
-   other lines rather than starting at its left edge (PM9.4 R12). */
-.conversion-queue-list > li > .output-open-actions { flex: 1 0 100%; min-width: 0; padding-left: 2.2em; }
 
-/* The next conversion, under a finished queue (PM9.4 R5). */
+/* The next conversion, under a finished queue, once asked for (PM9.4 R5). */
 .conversion-plan > h3 { margin: 0; font-size: 1rem; }
-
-/* A conversion control refused while its own request runs stays a Tab stop
-   (PM9.4 R11) and reads as refused without fading its focus ring. */
-
-/* The requested order before a plan arrives is the same list as the reviewed
-   one, numbered once by its own cells (PM9.4 R5). Its own rules rather than a
-   second selector on the queue list's, which the CSSOM tests find by name. */
-.conversion-requested-list { display: flex; min-width: 0; flex-direction: column; margin: 0; padding: 0; gap: 4px; font-size: 0.85rem; list-style: none; }
-.conversion-requested-list > li { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
-
-/* The rows a scope excludes, named under its counts (PM9.4 O2). A disclosure,
-   so the plan does not grow by a list nobody asked to read; the names wrap
-   rather than ellipsize, as the set members' do. */
-.conversion-excluded > summary { min-height: 32px; padding-block: 6px; cursor: pointer; }
-.conversion-excluded ul { min-width: 0; margin: 0; padding-left: 1.2em; font-size: 0.85rem; overflow-wrap: anywhere; }
-.conversion-excluded p { margin: 4px 0 0; }
-
-/* Whether Retry reruns a failure: a line of its own, like the reason (R8). */
-.conversion-queue-retry { min-width: 0; flex: 1 0 100%; padding-left: 2.2em; color: var(--color-text-secondary); overflow-wrap: anywhere; }
-
-.conversion-panel .secondary-button[aria-disabled="true"] {
-  color: var(--color-text-secondary);
-  cursor: not-allowed;
-}

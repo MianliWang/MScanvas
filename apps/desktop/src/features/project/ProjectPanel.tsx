@@ -638,21 +638,29 @@ export function ProjectPanel({
       data-project-surface=""
       aria-busy={working || undefined}
     >
-      <header className="project-header">
-        <div className="project-title">
-          <h2 id={state.open ? undefined : NONE_HINT_ID}>{state.open ? state.name : t("projectNone")}</h2>
-          {state.dirty && pending === null ? (
-            <span className="project-tag is-warning" data-project-unsaved="">
-              {t("projectUnsaved")}
-            </span>
-          ) : null}
+      {/* The page head (rebuild review 10): the project's name, one line
+          under it, and the project actions on the right. */}
+      <header className="project-header page-head">
+        <div className="page-head-copy">
+          <div className="project-title">
+            <h2 id={state.open ? undefined : NONE_HINT_ID}>{state.open ? state.name : t("projectNone")}</h2>
+            {state.dirty && pending === null ? (
+              <span className="project-tag is-warning" data-project-unsaved="">
+                {t("projectUnsaved")}
+              </span>
+            ) : null}
+          </div>
           {/* Why Save waits, said rather than only hovered: never having been
-              saved is a passing refusal, and Save As is the way through it. */}
-          {state.open && !state.published ? (
-            <span id={SAVE_LOCATION_ID} className="project-head-note">
+              saved is a passing refusal, and Save As is the way through it.
+              Once saved, the line says what the file holds. With nothing open
+              the disclosure below the head says it instead. */}
+          {!state.open ? null : state.published ? (
+            <p className="page-head-subtitle">{t("projectPageSubtitle")}</p>
+          ) : (
+            <p id={SAVE_LOCATION_ID} className="page-head-subtitle">
               {t("projectSaveNeedsLocation")}
-            </span>
-          ) : null}
+            </p>
+          )}
         </div>
         <div className="project-actions">
           {/* With nothing open, New project is the one emphasised next action
@@ -1008,6 +1016,63 @@ export function ProjectPanel({
                         ) : null}
                       </p>
                       <div className="project-row-actions">
+                        {/* What can be done now first, in a fixed order so no
+                            control moves under the keyboard: Locate… and
+                            Remove, then the Workbench bridge and the layer,
+                            whose refusal is said right beside it. */}
+                        {input.relinkProposed ? (
+                          <>
+                            <span className="project-proposal" data-project-proposal={input.id}>
+                              {t(
+                                input.relinkCandidateMatches
+                                  ? "projectRelinkMatches"
+                                  : "projectRelinkDiffers",
+                              )}
+                            </span>
+                            <Button
+                              ref={confirmRef}
+                              variant="secondary"
+                              size="sm"
+                              refused={working}
+                              reasonId={BUSY_ID}
+                              data-project-relink-commit={input.id}
+                              onClick={() => void session.commitRelink(input.id)}
+                            >
+                              {t("projectRelinkConfirm")}
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              refused={working}
+                              reasonId={BUSY_ID}
+                              onClick={() => void session.abandonRelink()}
+                            >
+                              {t("projectRelinkAbandon")}
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            refused={working}
+                            reasonId={BUSY_ID}
+                            aria-label={t("projectRelinkNamed", { name: input.label })}
+                            data-project-relink={input.id}
+                            onClick={() => void session.proposeRelink(input.id)}
+                          >
+                            {t("projectRelink")}
+                          </Button>
+                        )}
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          refused={working}
+                          reasonId={BUSY_ID}
+                          aria-label={t("projectRemoveNamed", { name: input.label })}
+                          onClick={() => void session.removeInput(input.id)}
+                        >
+                          {t("projectRemoveReference")}
+                        </Button>
                         {/* The bridge to the session workspace, and the only
                             control here that touches it. A reference already
                             represented by a live row offers to show that row
@@ -1088,67 +1153,14 @@ export function ProjectPanel({
                         >
                           {t(layer === null ? "projectCreateLayer" : "projectShowLayer")}
                         </Button>
-                        {input.relinkProposed ? (
-                          <>
-                            <span className="project-proposal" data-project-proposal={input.id}>
-                              {t(
-                                input.relinkCandidateMatches
-                                  ? "projectRelinkMatches"
-                                  : "projectRelinkDiffers",
-                              )}
-                            </span>
-                            <Button
-                              ref={confirmRef}
-                              variant="secondary"
-                              size="sm"
-                              refused={working}
-                              reasonId={BUSY_ID}
-                              data-project-relink-commit={input.id}
-                              onClick={() => void session.commitRelink(input.id)}
-                            >
-                              {t("projectRelinkConfirm")}
-                            </Button>
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              refused={working}
-                              reasonId={BUSY_ID}
-                              onClick={() => void session.abandonRelink()}
-                            >
-                              {t("projectRelinkAbandon")}
-                            </Button>
-                          </>
-                        ) : (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            refused={working}
-                            reasonId={BUSY_ID}
-                            aria-label={t("projectRelinkNamed", { name: input.label })}
-                            data-project-relink={input.id}
-                            onClick={() => void session.proposeRelink(input.id)}
-                          >
-                            {t("projectRelink")}
-                          </Button>
-                        )}
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          refused={working}
-                          reasonId={BUSY_ID}
-                          aria-label={t("projectRemoveNamed", { name: input.label })}
-                          onClick={() => void session.removeInput(input.id)}
-                        >
-                          {t("projectRemoveReference")}
-                        </Button>
+                        {/* Why Create layer waits, beside it: nothing else on
+                            the row says the reference is not in the Workbench. */}
+                        {layer === null && !attached ? (
+                          <span id={reasonId} className="project-action-reason">
+                            {t("projectLayerNeedsWorkbench")}
+                          </span>
+                        ) : null}
                       </div>
-                      {/* Why Create layer waits, shown: nothing else on the
-                          row says the reference is not in the Workbench. */}
-                      {layer === null && !attached ? (
-                        <p id={reasonId} className="project-qc-reason">
-                          {t("projectLayerNeedsWorkbench")}
-                        </p>
-                      ) : null}
                     </li>
                   );
                 })}

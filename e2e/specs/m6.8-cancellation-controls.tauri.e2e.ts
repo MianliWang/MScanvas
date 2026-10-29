@@ -23,7 +23,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
-import { waitUntilOffered } from "../support/conversion";
+import { openNextConversion, waitUntilOffered } from "../support/conversion";
 import { revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -239,6 +239,8 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     const destination = join(runRoot, `scenario-${String(scenario)}`, `converted-${String(sourceIndex)}`);
     mkdirSync(destination, { recursive: true });
     await checkAllMembers();
+    // After an earlier queue the next conversion opens on request (rebuild review 6).
+    await openNextConversion(PANEL);
     await waitUntilOffered(CONVERT, 60_000);
     await reveal(CONVERT);
     const handler = handleDialog(applicationProcessId, "conversion-folder", "choose", destination);

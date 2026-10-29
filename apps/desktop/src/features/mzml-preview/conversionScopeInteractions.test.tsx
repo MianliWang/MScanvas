@@ -184,7 +184,8 @@ describe("M6.7 through the production conversion surface", () => {
     expect(screen.queryByRole("combobox", { name: "Execution order" })).toBeNull();
     const queue = queueOf([queueItem("raw-2", "sample-2.raw")]);
     await act(async () => drain.resolve({ status: "terminal", reason: "completed", operationId: "1", queue }));
-    // Reordering the next conversion leaves the finished queue as it was.
+    // Reordering the next conversion, once opened, leaves the finished queue as it was.
+    fireEvent.click(await screen.findByRole("button", { name: "Start another conversion" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "size-desc" } });
     expect(api.beginRequests()).toHaveLength(1);
     expect(document.querySelectorAll(".conversion-running .conversion-queue-name")).toHaveLength(1);
@@ -200,6 +201,7 @@ describe("M6.7 through the production conversion surface", () => {
     render(<App />, { wrapper: wrapper(api) });
   fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
     await waitFor(() => expect(document.querySelector('[data-handle="raw-3"]')).not.toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: "Start another conversion" }));
     scopeAll(); await ready();
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-2", "raw-3"]);
     const names = () => [...document.querySelectorAll(".conversion-running .conversion-queue-name")].map((node) => node.textContent);
