@@ -362,7 +362,6 @@ describe("adding converted outputs to the workspace", () => {
     // A quarantined session runs no process, and this one does not need to.
     expect(adopt).not.toHaveAttribute("aria-disabled");
     // Everything that would launch one is still refused.
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });

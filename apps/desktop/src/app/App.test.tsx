@@ -111,8 +111,6 @@ describe("mzML preview workspace", () => {
     expect(
       screen.getByText("ProteoWizard was not found on this computer. Install or repair ProteoWizard, or choose the folder that contains msconvert.exe."),
     ).toBeVisible();
-    // Reading a file cannot succeed without a backend, so it is not offered.
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // Curating the workspace is not backend work, so it stays available: the
     // user can build the list they want and read it once ProteoWizard is there.
     expect(await screen.findByRole("button", { name: "Add files…" })).toBeEnabled();
@@ -399,7 +397,6 @@ describe("mzML preview workspace", () => {
     // both, and while a check is running every one of them is refused.
     await screen.findByText("MSCanvas could not check the backend");
 
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // Curating is not reading, so it is not closed by a backend nobody can
     // describe: the user can still build the list this session is about.
     await waitFor(() => expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled());
@@ -880,7 +877,7 @@ describe("mzML preview workspace", () => {
     // The second row is previewed explicitly, which is the only way a second
     // dataset is ever read.
     fireEvent.click(screen.getByRole("row", { name: /QC_pool_02\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await waitFor(() => {
       expect(api.openedHandles).toEqual(["file-0", "file-1"]);
     });
@@ -1768,17 +1765,18 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
     expect(api.openedHandles).toEqual(["file-0"]);
 
     open.resolve(buildPreview(3));
+    // Once the first read settles, the next activation reads.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
+      fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+      expect(api.openedHandles).toEqual(["file-0", "file-1"]);
     });
   });
 
@@ -1801,16 +1799,22 @@ describe("the session workspace roster", () => {
       expect(rosterRows()).toHaveLength(1);
     });
 
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+    // Still busy: activating the remaining row reads nothing yet.
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    expect(api.openedHandles).toEqual(["file-0"]);
 
-    open.resolve(buildPreview(3));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
+    await act(async () => {
+      open.resolve(buildPreview(3));
+      await open.promise;
     });
     // The reply landed for a row that is gone, so it put nothing back.
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
     expect(api.openedHandles).toEqual(["file-0"]);
+    // And the backend is idle again: the next activation reads.
+    await waitFor(() => {
+      fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+      expect(api.openedHandles).toEqual(["file-0", "file-1"]);
+    });
   });
 
   it("keeps the workspace and which row was being read across a backend change", async () => {
@@ -1855,7 +1859,7 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await screen.findByRole("grid", { name: "Spectra" });
 
     // The row on screen is removed, and before Rust answers the user reads
@@ -1863,7 +1867,7 @@ describe("the session workspace roster", () => {
     highlightRows(/QC_pool_01\.mzML/);
     fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await waitFor(() => {
       expect(api.openedHandles).toEqual(["file-0", "file-1"]);
     });
@@ -1903,7 +1907,7 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
 
     const remove = screen.getByRole("button", { name: "Remove highlighted" });
@@ -1959,9 +1963,10 @@ describe("the session workspace roster", () => {
     // refusal announcement all stay mounted for the life of this application.
     // M8.1 added the last of those: a project refusal that appeared beside an
     // unmounted region would be visible and silent, which is the failure this
-    // whole census exists to catch.
+    // whole census exists to catch. The roster's selection count is not among
+    // them: it lives in the roster footer, which an empty list does not show.
     const applicationRegions = regions();
-    expect(applicationRegions).toHaveLength(13);
+    expect(applicationRegions).toHaveLength(12);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -2487,7 +2492,7 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
     const row = await screen.findByRole("row", { name: /Reading…/ });
     expect(row.className).not.toContain("is-active");
@@ -2510,7 +2515,7 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
     expect(await screen.findByRole("row", { name: /Replaced/ })).toBeVisible();
     // The row stays. What the name now points at is a question for the next
@@ -2653,7 +2658,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await screen.findByRole("grid", { name: "Spectra" });
     fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
       target: { value: "name-desc" },
@@ -2702,7 +2707,6 @@ describe("adding a folder of mzML files", () => {
     // this side's own work, and a filesystem walk is no reason to stop it.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Execution order" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
     expect(selectedRowNames().join(" ")).toContain("QC_pool_02.mzML");
 
@@ -3205,7 +3209,7 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
     expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
     scan.resolve({ files: [] });
@@ -3250,7 +3254,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await screen.findByRole("grid", { name: "Spectra" });
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
@@ -3455,7 +3459,7 @@ describe("telling two identically named acquisitions apart", () => {
     renderApp(api);
 
     fireEvent.click(await screen.findByRole("row", { name: /sample\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     const summary = await screen.findByRole("region", { name: "Run" });
     const grid = screen.getByRole("grid", { name: "Spectra" });
     const readsAfterOpen = api.openCount();
@@ -3503,7 +3507,7 @@ describe("telling two identically named acquisitions apart", () => {
     renderApp(api);
 
     fireEvent.click(await screen.findByRole("row", { name: COLLIDING_ONE }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await screen.findByRole("region", { name: "Run" });
 
     // Changing installation discards backend-derived readings but deliberately

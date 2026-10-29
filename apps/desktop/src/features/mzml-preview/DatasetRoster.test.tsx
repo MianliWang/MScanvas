@@ -40,6 +40,7 @@ interface HarnessProps {
   readonly onAddFolder?: () => void;
   readonly onRemoveSelected?: () => void;
   readonly onClearList?: () => boolean;
+  readonly onConvertChecked?: () => void;
   readonly canPreview?: boolean;
   readonly canAddFiles?: boolean;
   readonly canAddFolder?: boolean;
@@ -69,6 +70,7 @@ function Harness({
   onAddFolder = () => undefined,
   onRemoveSelected = () => undefined,
   onClearList = () => true,
+  onConvertChecked,
   canPreview = true,
   canAddFiles = true,
   canAddFolder = true,
@@ -102,6 +104,7 @@ function Harness({
       onAddFiles={onAddFiles}
       onAddFolder={onAddFolder}
       onClearList={onClearList}
+      onConvertChecked={onConvertChecked}
       onReloadRoster={() => undefined}
       onRemoveSelected={onRemoveSelected}
       projection={rosterProjection(state)}
@@ -212,25 +215,17 @@ function rowNames(): string[] {
 }
 
 describe("looking at the roster through a search and a sort", () => {
-  it("labels both controls visibly and offers exactly the five sort modes", () => {
+  it("names the search box with a real label", () => {
     render(<Harness />);
 
     // Named by a real label rather than by placeholder text, which is gone the
-    // moment anything is typed into it.
+    // moment anything is typed into it. The label is visually hidden: the
+    // field's icon and placeholder say what it is to the eye.
     expect(searchBox()).toHaveAttribute("type", "search");
     // A real label associated by `for`, not a wrapper and not a placeholder:
     // a label that wraps more than one control names all of them.
-    const label = screen.getByText("Search files");
-    expect(label.tagName).toBe("LABEL");
-    expect(label).toHaveAttribute("for", searchBox().id);
-    const sort = screen.getByRole("combobox", { name: "Execution order" });
-    expect(within(sort).getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "Added order",
-      "Name: A–Z",
-      "Name: Z–A",
-      "Size: smallest first",
-      "Size: largest first",
-    ]);
+    const label = document.querySelector<HTMLLabelElement>(`label[for="${searchBox().id}"]`);
+    expect(label).toHaveTextContent("Search files");
   });
 
   it("offers neither control over a workspace with nothing in it", () => {
@@ -287,13 +282,9 @@ describe("looking at the roster through a search and a sort", () => {
     expect(searchBox()).toHaveValue("");
   });
 
-  it("keeps browsing arrangement when the explicit execution sort changes", () => {
+  it("leaves the execution order to the Conversion surface", () => {
     render(<Harness />);
-    const before = rowNames();
-    for (const sort of ["name-asc", "size-desc", "added"]) {
-      fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: sort } });
-      expect(rowNames()).toEqual(before);
-    }
+    expect(screen.queryByRole("combobox", { name: "Execution order" })).toBeNull();
   });
 
   it("retains highlighted rows hidden by search and names their hidden count", () => {
@@ -302,7 +293,7 @@ describe("looking at the roster through a search and a sort", () => {
     type("qc_pool");
     expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
     expect(rows()).toHaveLength(3);
-    expect(screen.getByText("1 highlighted · 1 hidden · 0 checked")).toBeVisible();
+    expect(screen.getByText("0 checked · 1 highlighted · 1 hidden")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
     expect(selectedNames()).toEqual(["Blank_03.mzML"]);
   });
@@ -525,12 +516,12 @@ describe("native drop roster accessibility", () => {
   });
 
   it("keeps search, selection, preview and mutation controls live during a drop", () => {
-    render(<Harness canAddFiles={false} canAddFolder={false} dropBusy rows={2} />);
+    const onActivate = vi.fn();
+    render(<Harness canAddFiles={false} canAddFolder={false} dropBusy onActivate={onActivate} rows={2} />);
 
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
-    expect(screen.getByRole("combobox", { name: "Execution order" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
     fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
+    expect(onActivate).toHaveBeenCalledWith("file-0");
     expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Clear list/ })).toBeEnabled();
   });
@@ -1246,13 +1237,13 @@ describe("the workspace roster as an accessible list", () => {
     render(<Harness />);
 
     expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    // On demand: that organization is session-only. That removing a row
-    // leaves the file on disk is said by the removal notices themselves.
-    fireEvent.click(screen.getByText("Roster help"));
-    expect(screen.getByText("Groups and arrangement last for this session only. Removing rows leaves source files unchanged.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "New group" })).toBeEnabled();
+    // No help disclosure: the keyboard text describes the list instead.
+    expect(document.querySelector("details")).toBeNull();
+    expect(screen.getByRole("treegrid")).toHaveAccessibleDescription(/Ctrl\+Z undoes organization/);
   });
 
   it("offers adding files and nothing else when the session holds none", () => {
@@ -1454,7 +1445,6 @@ describe("driving the roster from the keyboard alone", () => {
 
     // No usable backend, or a read already running: Enter must not queue one.
     expect(onActivate).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
   });
 
   it("gives the keyboard back to Add files… when the last row goes", () => {
@@ -1671,20 +1661,17 @@ describe("driving the roster from the keyboard alone", () => {
 });
 
 describe("the two ways of adding acquisitions", () => {
-  it("offers five actions, in one place, under stable names", () => {
-    render(<Harness />);
+  it("offers the two adding actions in the head and the list actions in the footer", () => {
+    render(<Harness onConvertChecked={() => undefined} />);
 
-    const actions = within(screen.getByRole("button", { name: "Add files…" }).closest(".dataset-roster-actions") as HTMLElement)
-      .getAllByRole("button")
-      .map((button) => button.textContent)
-      .filter((label) => label !== "Clear search");
-    expect(actions).toEqual([
-      "Add files…",
-      "Add mzML folder…",
-      "Preview focused",
-      "Remove highlighted",
-      "Clear list",
-    ]);
+    const names = (selector: string) =>
+      within(document.querySelector(selector) as HTMLElement)
+        .getAllByRole("button")
+        .map((button) => button.textContent);
+    expect(names(".roster-head")).toEqual(["Add files…", "Add mzML folder…"]);
+    expect(names(".roster-foot")).toEqual(["Remove highlighted", "Clear list", "New group", "Convert 0…"]);
+    // Secondary, never the filled accent: the first-run evidence state owns it.
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveClass("ui-button--secondary");
   });
 
   it("keeps the folder action's name while an import runs, and marks it busy", () => {
@@ -1837,5 +1824,98 @@ describe("saying which of two identically named rows is which", () => {
     expect(within(row).getByText("batch-1")).toBeVisible();
     expect(within(row).getByText("Missing")).toBeVisible();
     expect(within(row).getByText("Outside search")).toBeVisible();
+  });
+});
+
+describe("the roster footer", () => {
+  const check = (name: RegExp) =>
+    fireEvent.click(within(screen.getByRole("row", { name })).getByRole("checkbox"));
+
+  it("refuses Convert at zero checked rows, with the visible count as its reason", () => {
+    const onConvertChecked = vi.fn();
+    render(<Harness onConvertChecked={onConvertChecked} />);
+
+    const convert = screen.getByRole("button", { name: "Convert 0…" });
+    const count = document.getElementById("roster-selection-count");
+    expect(count).toHaveTextContent("0 checked");
+    expect(count).toBeVisible();
+    expect(convert).toHaveAttribute("aria-disabled", "true");
+    expect(convert).toHaveAccessibleDescription(/^0\s+checked$/);
+    // Refused, not disabled: it keeps its Tab stop and swallows the press.
+    expect(convert).not.toBeDisabled();
+    fireEvent.click(convert);
+    expect(onConvertChecked).not.toHaveBeenCalled();
+  });
+
+  it("converts the checked rows once any are checked", () => {
+    const onConvertChecked = vi.fn();
+    render(<Harness onConvertChecked={onConvertChecked} />);
+
+    check(/QC_pool_01\.mzML/);
+    check(/Blank_03\.mzML/);
+    const convert = screen.getByRole("button", { name: "Convert 2…" });
+    expect(convert).not.toHaveAttribute("aria-disabled");
+    expect(document.getElementById("roster-selection-count")).toHaveTextContent("2 checked");
+    fireEvent.click(convert);
+    expect(onConvertChecked).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no Convert where the surface has its own", () => {
+    render(<Harness />);
+    expect(screen.queryByRole("button", { name: /^Convert/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "New group" })).toBeInTheDocument();
+  });
+
+  it("drops the footer from an empty list, but keeps Clear while an import is unresolved", () => {
+    const { rerender } = render(<Harness onConvertChecked={() => undefined} rows={0} />);
+    expect(document.querySelector(".roster-foot")).toBeNull();
+    expect(screen.queryByRole("button", { name: "New group" })).toBeNull();
+
+    rerender(<Harness folderBusy onConvertChecked={() => undefined} rows={0} />);
+    const footer = document.querySelector(".roster-foot") as HTMLElement;
+    expect(within(footer).getAllByRole("button").map((button) => button.textContent)).toEqual(["Clear list"]);
+  });
+
+  it("offers Undo organization as a named icon action only while there is history", () => {
+    render(<Harness />);
+    expect(screen.queryByRole("button", { name: "Undo organization" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "New group" }));
+    const save = screen.getByRole("button", { name: "Save group" });
+    // An empty name is refused, and the dialog says why.
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(save).toHaveAccessibleDescription("Enter a group name of 1–120 characters.");
+    fireEvent.change(screen.getByRole("textbox", { name: "Group name" }), { target: { value: "Blanks" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save group" }));
+    expect(screen.getByRole("button", { name: "Actions for group Blanks" })).toBeInTheDocument();
+
+    const undo = screen.getByRole("button", { name: "Undo organization" });
+    expect(undo).toHaveClass("ui-icon-button");
+    fireEvent.click(undo);
+    expect(screen.queryByRole("button", { name: "Actions for group Blanks" })).toBeNull();
+  });
+});
+
+describe("the roster search field", () => {
+  it("clears with a named icon action inside the field and returns to typing", () => {
+    render(<Harness />);
+    const search = screen.getByRole("searchbox", { name: "Search files" });
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "qc" } });
+    const clear = screen.getByRole("button", { name: "Clear search" });
+    expect(clear).toHaveClass("ui-icon-button");
+    fireEvent.click(clear);
+
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
+  });
+
+  it("shows the count as a tag and keeps the whole sentence for the search box", () => {
+    render(<Harness />);
+    expect(document.querySelector(".roster-count-tag")).toHaveTextContent(/^4$/);
+    const search = screen.getByRole("searchbox", { name: "Search files" });
+    fireEvent.change(search, { target: { value: "qc" } });
+    expect(search).toHaveAccessibleDescription("3 visible / 4 acquisitions · capacity 1024");
   });
 });

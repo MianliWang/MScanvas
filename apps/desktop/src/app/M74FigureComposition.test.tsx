@@ -22,7 +22,7 @@ async function mount(options: FakePreviewApiOptions = {}) {
     spectrum: async index => ({ outcome: "spectrum", spectrum: { ...buildSpectrum(index, 12), mzLow: 100, mzHigh: 900,
       pointCount: 1_000_000, truncated: true, viewportDomain: { state: "admitted", low: 100, high: 900 } } }), ...options });
   render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}><PreviewApiProvider value={api}><App /></PreviewApiProvider></WorkspaceDropTransportProvider>);
-  fireEvent.click(await screen.findByRole("button", { name: "Preview focused" }));
+  fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
   const grid = await screen.findByRole("grid", { name: "Spectra" });
   fireEvent.click(grid.querySelector('[data-source-index="1"]')!);
   await screen.findByRole("img", { name: /^Spectrum 1,/u });
@@ -51,7 +51,7 @@ describe("M7.4 through the delivered figure owner", () => {
       fireEvent.click(within(settings).getByRole("radio", { name: UI_RESOURCES.en.simplifiedChinese }));
       fireEvent.click(within(settings).getByRole("button", { name: messages.apply }));
     }
-    fireEvent.click(await screen.findByRole("button", { name: messages.previewFocused }));
+    fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
     const grid = await screen.findByRole("grid");
     fireEvent.click(screen.getByRole("button", { name: messages.viewerExport }));
     const entry = screen.getByRole("button", { name: messages.figurePreviewLinked });

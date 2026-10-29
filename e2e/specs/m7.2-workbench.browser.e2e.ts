@@ -203,7 +203,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       // toggle would close it (panelPresentation.ts: request versus suppression).
       await revealRosterRow(selectedFile.handle);
       await holdInvoke("open_mzml_preview");
-      await browser.$(".dataset-roster-actions button:nth-child(3)").click();
+      await browser.$(row(selectedFile.handle)).click();
       await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
       await unavailable("already-open-reading");
       await metrics(960, 640, 2);
@@ -216,7 +216,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     }
   });
   it("review regression: reveals accepted roster previews and leaves rejected activation on its current surface", async () => {
-    for (const [width, language, activation] of [[960, "en", "pointer"], [1366, "zh-CN", "keyboard"], [960, "zh-CN", "button"]] as const) {
+    for (const [width, language, activation] of [[960, "en", "pointer"], [1366, "zh-CN", "keyboard"], [960, "zh-CN", "keyboard"]] as const) {
       const table: Record<string, unknown> = ipcTable();
       table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
       table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile, { ...selectedFile, handle: "unreadable-raw", fileName: "研究.raw", sourceKind: "thermo_raw" }] };
@@ -235,8 +235,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       expect(await ipcCalls()).toEqual(before);
       await holdInvoke("open_mzml_preview");
       if (activation === "pointer") await browser.$(row(selectedFile.handle)).click();
-      else if (activation === "keyboard") await browser.keys("Enter");
-      else await browser.$(".dataset-roster-actions button:nth-child(3)").click();
+      else await browser.keys("Enter");
       await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
       expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("workbench");
       expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(true);
@@ -277,7 +276,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       const retry = browser.$(language === "en" ? "button=Try reading it again" : "button=重试读取列表");
       await retry.waitForDisplayed();
       expect(await browser.$("#dataset-roster-matches").isExisting()).toBe(false);
-      expect(await browser.$(".dataset-roster-actions button:first-child").isEnabled()).toBe(true);
+      expect(await browser.$("[data-add-files]").isEnabled()).toBe(true);
       expect(await browser.$('[data-live-region="search"]').getProperty("textContent")).toBe("");
       await capture(`review-capacity-${language}-failed`);
       await setInvokeResult("get_workspace_roster", { capacity: 1024, datasets: [] });
@@ -316,7 +315,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await capture(`review-group-dissolve-${language}-before`);
       await browser.$(trigger).click(); await browser.keys(["End", "Enter"]);
       await browser.$(group).waitForExist({ reverse: true });
-      await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches(".organization-toolbar button:first-child") === true));
+      await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-new-group]") === true));
       expect(await browser.$(row(selectedFile.handle)).getAttribute("data-group")).toBe(originalGroup);
       expect(await browser.$(`${row(selectedFile.handle)} input[type="checkbox"]`).isSelected()).toBe(membership);
       expect(await ipcCalls()).toEqual(before);
@@ -415,7 +414,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       selection: document.querySelector(".roster-selection-context")?.textContent,
     })) });
     await browser.waitUntil(() => browser.execute(() => !(Reflect.get(window, "__m72MenuTargetBefore") as Element).isConnected));
-    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches(".organization-toolbar button:first-child") === true));
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-new-group]") === true));
     expect(await ipcCalls()).toEqual(before);
     expect(await browser.$(".roster-selection-context").getText()).toContain("80 highlighted · 80 hidden");
     await capture("review-menu-unmounted-target-fallback");
@@ -542,7 +541,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       { type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" },
     ] }]);
     await browser.releaseActions();
-    expect(await browser.$(".roster-selection-context").getText()).toBe("200 highlighted · 0 hidden · 0 checked");
+    expect(await browser.$(".roster-selection-context").getText()).toBe("0 checked · 200 highlighted");
     expect(await browser.$$(".grouped-roster [data-handle]").length).toBeLessThan(80);
     const before = await ipcCalls();
     await startDrag(`${row("wide-0")} .row-drag-handle`);
@@ -694,7 +693,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$(row("async-1")).click();
     await holdInvoke("remove_workspace_datasets");
     await setInvokeResult("remove_workspace_datasets", { roster: { datasets: [selectedFile, extra[0], extra[2]], capacity: 1024 }, removedHandles: ["async-1"], unknownHandles: [] });
-    await browser.$(".dataset-roster-actions button:nth-last-child(2)").click();
+    await browser.$(".roster-foot-actions button:first-child").click();
     await browser.waitUntil(async () => (await heldCallers("remove_workspace_datasets")) === 1);
     const removalCalls = await ipcCalls();
     await startDrag(`${row("async-1")} .row-drag-handle`);

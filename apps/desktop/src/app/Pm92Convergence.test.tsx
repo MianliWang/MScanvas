@@ -76,7 +76,7 @@ function shownNotices(): Element[] {
   return [...document.querySelectorAll(".shell-notices > .notice")];
 }
 
-/** Reads the first acquisition, as a reader would: focus its row, then Preview focused. */
+/** Reads the first acquisition, as a reader would: a plain click on its row. */
 async function readTheFirstAcquisition() {
   const row = await waitFor(() => {
     const found = document.querySelector<HTMLElement>('.grouped-roster [data-handle="file-0"]');
@@ -84,7 +84,6 @@ async function readTheFirstAcquisition() {
     return found;
   });
   await press(row);
-  await press(screen.getByRole("button", { name: en.previewFocused }));
   await screen.findByRole("grid", { name: "Spectra" });
 }
 
@@ -160,27 +159,24 @@ describe("PM9.2: each surface says what it is, and offers only its own next step
 });
 
 describe("PM9.2: the roster's actions, quieter but all there (L9)", () => {
-  it("keeps every action reachable by name, and marks the picked-row actions", async () => {
+  it("keeps every action reachable by name", async () => {
     mount("populated");
-    for (const name of [en.addFiles, en.addFolder, en.previewFocused, en.removeHighlighted, en.clearList, en.newGroup]) {
+    for (const name of [en.addFiles, en.addFolder, en.removeHighlighted, en.clearList, en.newGroup]) {
       expect(await screen.findAllByRole("button", { name })).toHaveLength(1);
     }
-    expect(screen.getByRole("button", { name: en.previewFocused })).toHaveAttribute("data-contextual");
-    expect(screen.getByRole("button", { name: en.removeHighlighted })).toHaveAttribute("data-contextual");
-    expect(screen.getByRole("button", { name: en.addFiles })).not.toHaveAttribute("data-contextual");
   });
 
-  it("puts the selection count on the organizing row, after New group", async () => {
+  it("leads the footer with the checked count, which is Convert's reason while it is zero", async () => {
     mount("populated");
     await screen.findByRole("button", { name: en.newGroup });
-    const toolbar = document.querySelector<HTMLElement>(".organization-toolbar")!;
-    expect(toolbar.querySelector("button")).toHaveTextContent(en.newGroup);
-    const count = toolbar.querySelector(".roster-selection-context");
-    expect(count).not.toBeNull();
-    expect(toolbar.querySelector("button")!.compareDocumentPosition(count!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Nothing highlighted or checked yet: the count keeps its place, unseen
-    // and unspoken, so the first highlight does not move the list.
-    expect(count?.querySelector(".roster-selection-idle")).toHaveAttribute("aria-hidden", "true");
+    const footer = document.querySelector<HTMLElement>(".roster-foot")!;
+    const count = footer.querySelector<HTMLElement>("#roster-selection-count")!;
+    expect(count).toBeVisible();
+    expect(count.textContent).toMatch(/^0\u00a0checked/);
+    expect(footer.querySelector("[data-roster-new-group]")).toHaveTextContent(en.newGroup);
+    const convert = screen.getByRole("button", { name: "Convert 0…" });
+    expect(convert).toHaveAttribute("aria-disabled", "true");
+    expect(convert.getAttribute("aria-describedby")).toContain("roster-selection-count");
   });
 });
 

@@ -134,7 +134,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     await showRoster();
     const clear = browser.$("button=Clear list");
     if (await clear.isExisting()) {
-      await reveal("#workbench-roster .dataset-roster-actions");
+      await reveal("#workbench-roster .roster-head");
       await clear.waitForClickable({ timeout: 30_000 });
       await clear.click();
       await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
@@ -210,7 +210,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     const addButton = browser.$("button=Add files…");
     await addButton.waitForEnabled({ timeout: 60_000 });
     await browser.waitUntil(async () => {
-      await reveal("#workbench-roster .dataset-roster-actions");
+      await reveal("#workbench-roster .roster-head");
       return addButton.isClickable();
     }, { timeout: 60_000, timeoutMsg: "Add files… never became reachable." });
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);

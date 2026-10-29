@@ -267,14 +267,18 @@ describe("the empty Project in the application shell", () => {
       const words = UI_RESOURCES[locale];
       const projects = renderShell(NO_PROJECT, locale);
       const addFiles = await screen.findByRole("button", { name: words.addFiles });
+      // The roster's Add files… is always secondary: the empty Workbench's
+      // filled first-run action belongs to the evidence pane.
       expect(currentSurface()).toBe("workbench");
+      expect(addFiles).toHaveClass("ui-button--secondary");
 
       await openProjectSurface(words);
       await screen.findByText(words.projectNone);
       // One filled action across the whole screen, the roster included (UI-19):
-      // Add files… gives up the accent, and stays offered.
+      // Add files… stays offered, as a secondary action.
       expect(shownPrimaries()).toEqual([words.projectNew]);
       expect(addFiles.closest("[hidden]")).toBeNull();
+      expect(addFiles).toHaveClass("ui-button--secondary");
       expect(addFiles.getAttribute("aria-disabled")).toBeNull();
       // Emphasis only: nothing was created, opened or picked.
       expect(projects.calls).toEqual(["getProjectState"]);

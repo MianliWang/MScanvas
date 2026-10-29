@@ -193,9 +193,9 @@ describe("M7.3 real native viewer and committed exports", function () {
     if (this.currentTest?.state === "failed") await capture("failure-" + evidence.length, false);
   });
   it("reads synthetic mzML through the real provider and activates exact sorted row bodies and keyboard indices", async () => {
-    await rememberPickerTrigger(".dataset-roster-actions [data-add-files]");
+    await rememberPickerTrigger(".roster-head [data-add-files]");
     const [chosen] = await Promise.all([helper("choose-workspace-files", ["-Action", "choose", "-Path", fixture, "-TimeoutSeconds", "35"]),
-      browser.$(".dataset-roster-actions [data-add-files]").click()]);
+      browser.$(".roster-head [data-add-files]").click()]);
     expect(chosen.closed).toBe(true); await naturalReturn("choose-synthetic-source");
     await browser.$(".grouped-roster [data-handle]").waitForDisplayed(); await browser.$(".grouped-roster [data-handle]").click();
     await browser.$(SCANS).waitForExist(); await browser.$(RT).waitForDisplayed();

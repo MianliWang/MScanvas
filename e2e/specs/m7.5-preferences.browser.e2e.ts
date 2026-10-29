@@ -531,8 +531,6 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await browser.url("/");
     await browser.$(ROW).waitForDisplayed();
     await browser.$(ROW).click();
-    await browser.$(`button=${zh.previewFocused}`).waitForEnabled();
-    await browser.$(`button=${zh.previewFocused}`).click();
     await browser.$(".inspector-panel").waitForDisplayed();
     const state = await capture("19-inspector-zh");
     expect(state.detailsOpen).toBe("true");
