@@ -80,7 +80,7 @@ async function locale(value: "en" | "zh-CN") {
   // a save confirms (PM9 baseline §11).
   await readBackSavedPreferences();
   await browser.$("[data-settings-entry]").click();
-  await browser.$(`[data-settings-dialog] input[value="${value}"]`).click();
+  await browser.$(`[data-settings-dialog] [role="radio"]:has([data-setting-value="${value}"])`).click();
   await browser.$("[data-settings-dialog]").$(value === "en" ? "button=Apply" : "button=应用").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
@@ -577,8 +577,8 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$("button=Undo organization").click();
     expect(await browser.$(row("wide-0")).getAttribute("data-group")).toBe("ungrouped");
     await browser.$("[data-settings-entry]").click();
-    await browser.$('[data-settings-dialog] input[value="zh-CN"]').click();
-    await browser.$('[data-settings-dialog] input[value="compact"]').click();
+    await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="zh-CN"])').click();
+    await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="compact"])').click();
     await browser.$('[data-settings-dialog]').$("button=应用").click();
     await browser.$('[data-settings-dialog]').waitForExist({ reverse: true });
     await metrics(1200, 800, 1.25); await capture("11-zh-compact-1200");

@@ -27,7 +27,7 @@ async function openSettings() {
   await browser.$("[data-settings-entry]").click();
   await browser.$(DIALOG).waitForDisplayed();
 }
-async function choose(value: string) { await browser.$(`${DIALOG} input[value="${value}"]`).click(); }
+async function choose(value: string) { await browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click(); }
 async function press(name: string) {
   await browser.$(DIALOG).$(name === en.close || name === zh.close ? `button[aria-label="${name}"]` : `button=${name}`).click();
 }
@@ -193,14 +193,14 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     expect(await connectivityProbe("offline")).toBe(false);
     try {
       await openSettings();
-      expect(await browser.execute(() => (document.activeElement as HTMLInputElement).value)).toBe("en");
+      expect(await browser.execute(() => document.activeElement?.querySelector("[data-setting-value]")?.getAttribute("data-setting-value"))).toBe("en");
       await choose("zh-CN");
       await choose("compact");
       const changed = await capture("02-chinese-compact-preview");
       expect(changed.rows[0].height).toBeLessThan(before.rows[0].height);
       expect(changed.rows[0].fontSize).toBe(before.rows[0].fontSize);
       expect(changed.rows.map(row => row.handle)).toEqual(before.rows.map(row => row.handle));
-      // Native radio semantics plus the actual modal's Tab and Shift-Tab loop.
+      // Radio-group semantics plus the actual modal's Tab and Shift-Tab loop.
       for (let step = 0; step < 12; step++) {
         await browser.keys("Tab");
         expect(await browser.execute(() => document.querySelector("[data-settings-dialog]")?.contains(document.activeElement))).toBe(true);
@@ -275,9 +275,9 @@ describe("M7.1 localized Settings and real shared consumers", () => {
       for (let step = 0; step < 8; step++) await browser.keys("Tab");
       expect(await browser.execute(() => document.querySelector("[data-settings-dialog]")?.contains(document.activeElement))).toBe(true);
       if (dpr === 2) {
-        await browser.execute(() => document.querySelector(".settings-dialog-actions .primary-button")!.scrollIntoView({ block: "center" }));
+        await browser.execute(() => document.querySelector(".settings-dialog-actions .ui-button--primary")!.scrollIntoView({ block: "center" }));
         const visible = await browser.execute(() => {
-          const target = document.querySelector<HTMLElement>(".settings-dialog-actions .primary-button")!;
+          const target = document.querySelector<HTMLElement>(".settings-dialog-actions .ui-button--primary")!;
           const rect = target.getBoundingClientRect();
           return rect.top >= 0 && rect.bottom <= innerHeight;
         });

@@ -198,7 +198,7 @@ async function capture(label: string, validate = true) {
       preferenceRegion: (document.querySelector("[data-live-region='preferences']")?.textContent ?? "").trim(),
       inspector: box(document.querySelector(".inspector-panel")),
       dialog: dialog === null ? null : { ...box(dialog), scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth,
-        primary: box(dialog.querySelector(".settings-dialog-actions .primary-button")) },
+        primary: box(dialog.querySelector(".settings-dialog-actions .ui-button--primary")) },
       bodyText: document.body.innerText, horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
       mockKeys: Object.keys(Reflect.get(window, "__mscanvasIpcTable__") as object), applicationOrigin: location.origin,
       resourceUrls: performance.getEntriesByType("resource").map(entry => entry.name),
@@ -273,7 +273,7 @@ async function openSettings() {
   await browser.$(ENTRY).click();
   await browser.$(DIALOG).waitForDisplayed();
 }
-async function choose(value: string) { await browser.$(`${DIALOG} input[value="${value}"]`).click(); }
+async function choose(value: string) { await browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click(); }
 async function press(label: string) { await browser.$(DIALOG).$(`button=${label}`).click(); }
 /** The dialog closed and the keyboard came back to the control that opened it. */
 async function returned() {

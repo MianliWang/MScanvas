@@ -114,7 +114,7 @@ async function openSettings(observe = false) {
   if (observe) await observeWindow("figure draft: after Settings opener click");
 }
 async function choose(value: string) {
-  const control = browser.$(`${DIALOG} input[value="${value}"]`);
+  const control = browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`);
   await control.waitForEnabled();
   await control.scrollIntoView({ block: "center" });
   await control.click();

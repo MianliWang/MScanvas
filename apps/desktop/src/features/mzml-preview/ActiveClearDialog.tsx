@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Button } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { MessageKey } from "../preferences/i18n";
 import { usePreviewApi } from "./api";
@@ -79,14 +80,21 @@ export function ActiveClearDialog({ returnTo, onClose, onEmptyRosterClosed, onEx
       }} onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { event.stopImmediatePropagation(); if (inFlight.current) event.preventDefault(); }}>
       <Dialog.Title>{t("clearActiveTitle")}</Dialog.Title>
       <Dialog.Description>{t("clearActiveHelp")}</Dialog.Description>
-      <div aria-live="polite" role="status">
+      {/* Also the visible reason each refused action points at. */}
+      <div aria-live="polite" role="status" id="active-clear-status">
         {reading ? t("clearReading") : executing ? t("clearStopping") : problem ? t(problem) : plan ? t("clearCounts", { count: plan.removableCount, total: plan.totalCount, protected: String(plan.protectedCount) }) : ""}
       </div>
       <div className="group-dialog-actions">
-        <button ref={returnButton} className="secondary-button" type="button" disabled={executing} onClick={onClose}>{t("clearReturn")}</button>
-        {plan === null && !reading ? <button ref={reevaluateButton} className="secondary-button" type="button" disabled={executing} onClick={() => setRevision(value => value + 1)}>{t("clearReevaluate")}</button> : null}
-        <button className="secondary-button" type="button" disabled={executingAction !== "removeNonRunning" && (reading || executing || !plan?.removableCount)} aria-disabled={executingAction === "removeNonRunning"} onClick={event => execute("removeNonRunning", event.currentTarget)}>{t("clearRemoveNonRunning")}</button>
-        <button className="primary-button" type="button" disabled={executingAction !== "cancelAndClear" && (reading || executing || plan === null)} aria-disabled={executingAction === "cancelAndClear"} onClick={event => execute("cancelAndClear", event.currentTarget)}>{t("clearCancelAll")}</button>
+        {/* Frozen (`disabled`) only while the other action is in flight;
+            otherwise refused, focusable, with the status above as the reason. */}
+        <Button ref={returnButton} disabled={executing} onClick={onClose}>{t("clearReturn")}</Button>
+        {plan === null && !reading ? <Button ref={reevaluateButton} disabled={executing} onClick={() => setRevision(value => value + 1)}>{t("clearReevaluate")}</Button> : null}
+        <Button disabled={executing && executingAction !== "removeNonRunning"}
+          refused={executingAction === "removeNonRunning" || reading || !plan?.removableCount} reasonId="active-clear-status"
+          onClick={event => execute("removeNonRunning", event.currentTarget)}>{t("clearRemoveNonRunning")}</Button>
+        <Button variant="primary" disabled={executing && executingAction !== "cancelAndClear"}
+          refused={executingAction === "cancelAndClear" || reading || plan === null} reasonId="active-clear-status"
+          onClick={event => execute("cancelAndClear", event.currentTarget)}>{t("clearCancelAll")}</Button>
       </div>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>;

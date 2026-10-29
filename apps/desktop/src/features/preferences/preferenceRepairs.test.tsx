@@ -368,8 +368,9 @@ describe("the panel reset and its own control", () => {
   it("keeps the keyboard and announces what it did", async () => {
     mount({ stored: storedRecord({ layout: { roster: "hidden", details: "automatic" } }) });
     await screen.findByText(en.backendMissing);
-    const reset = await screen.findByRole("button", { name: en.layoutReset });
-    await waitFor(() => expect(reset).toBeEnabled());
+    const dialog = openSettings();
+    const reset = within(dialog).getByRole("button", { name: en.layoutReset });
+    await waitFor(() => expect(reset).not.toHaveAttribute("aria-disabled"));
     reset.focus();
     fireEvent.click(reset);
     // Refused rather than removed, and refused in a way that keeps the reader
@@ -380,8 +381,8 @@ describe("the panel reset and its own control", () => {
     await waitFor(() => expect(reset).toHaveAttribute("aria-disabled", "true"));
     expect(reset.isConnected).toBe(true);
     expect(reset).toHaveFocus();
-    // The one panel action with nothing left on screen to read.
-    expect(layoutRegion()).toHaveTextContent(en.layoutResetDone);
+    // Said inside the dialog: the shell's region is aria-hidden behind it.
+    expect(dialog).toHaveTextContent(en.layoutResetDone);
   });
 });
 

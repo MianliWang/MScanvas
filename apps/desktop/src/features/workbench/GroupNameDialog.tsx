@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useRef, useState } from "react";
-import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { Button } from "../../components/ui";
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 export function GroupNameDialog({ name, rename, returnTo, onSave, onClose }: {
   readonly name: string; readonly rename: boolean; readonly returnTo: HTMLElement | null; readonly onSave: (name: string) => void; readonly onClose: () => void;
@@ -20,7 +20,7 @@ export function GroupNameDialog({ name, rename, returnTo, onSave, onClose }: {
       onEscapeKeyDown={event => { event.stopImmediatePropagation(); if (composing.current || event.isComposing || event.keyCode === 229) event.preventDefault(); }}
       onKeyDownCapture={event => { if ((composing.current || event.nativeEvent.isComposing || event.keyCode === 229) && event.key === "Enter") { event.preventDefault(); event.stopPropagation(); } }}>
       <Dialog.Title>{t(rename ? "renameGroup" : "newGroup")}</Dialog.Title>
-      <form onSubmit={event => { event.preventDefault(); if (draft.trim() && draft.length <= 120) onSave(draft); }}>
+      <form onSubmit={event => { event.preventDefault(); if (!invalid) onSave(draft); }}>
         <label htmlFor="organization-group-name">{t("groupName")}</label>
         <input id="organization-group-name" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229) { event.stopPropagation(); if (event.key === "Enter") event.preventDefault(); } }} maxLength={120} />
         {invalid ? <p className="group-name-reason" id="organization-group-name-reason">{t("organizationInvalidName")}</p> : null}

@@ -423,7 +423,9 @@ describe("durable UI preferences", () => {
     const loading = openSettings();
     expect(within(loading).getByText(en.storageLoading)).toBeVisible();
     expect(within(loading).getByRole("radio", { name: en.english })).toBeDisabled();
-    expect(within(loading).getByRole("button", { name: en.apply })).toBeDisabled();
+    // Refused, not disabled: it stays reachable and points at the note.
+    expect(within(loading).getByRole("button", { name: en.apply })).toHaveAttribute("aria-disabled", "true");
+    expect(within(loading).getByRole("button", { name: en.apply })).toHaveAccessibleDescription(en.storageLoading);
 
     await preferences.release();
     await waitFor(() => expect(document.documentElement.lang).toBe("zh-CN"));
@@ -574,9 +576,11 @@ describe("durable UI preferences", () => {
     expect(preferences.requests).toHaveLength(before);
     expect(preferences.stored()?.layout.details).toBe("shown");
 
-    // The reset is reachable from here, with no dataset and no backend.
-    const reset = screen.getByRole("button", { name: en.layoutReset });
-    expect(reset).toBeEnabled();
+    // The reset is reachable from here, with no dataset and no backend: in
+    // Settings, under Layout.
+    const dialog = openSettings();
+    const reset = within(dialog).getByRole("button", { name: en.layoutReset });
+    expect(reset).not.toHaveAttribute("aria-disabled");
     reset.focus();
     fireEvent.click(reset);
     await waitFor(() => expect(preferences.stored()?.layout).toEqual({ roster: "automatic", details: "automatic" }));
@@ -588,10 +592,11 @@ describe("durable UI preferences", () => {
     // and says why it is dimmed.
     await waitFor(() => expect(reset).toHaveAttribute("aria-disabled", "true"));
     expect(reset.isConnected).toBe(true);
-    expect(reset).toHaveAttribute("title", en.layoutNothingToReset);
+    expect(reset).toHaveAccessibleDescription(en.layoutNothingToReset);
+    expect(within(dialog).getByText(en.layoutNothingToReset)).toBeVisible();
     expect(reset).toHaveFocus();
-    // The one panel action with nothing left on screen to read says so.
-    expect(document.querySelector('[data-live-region="layout"]')).toHaveTextContent(en.layoutResetDone);
+    // Said inside the dialog: the shell's region is aria-hidden behind it.
+    expect(dialog).toHaveTextContent(en.layoutResetDone);
   });
 
   it("applies a preference change without asking the backend anything", async () => {

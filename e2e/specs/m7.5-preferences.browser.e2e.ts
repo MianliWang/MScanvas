@@ -45,7 +45,7 @@ async function openSettings() {
   await browser.$(DIALOG).waitForDisplayed();
 }
 async function choose(value: string) {
-  await browser.$(`${DIALOG} input[value="${value}"]`).click();
+  await browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click();
 }
 async function press(name: string) {
   await browser.$(DIALOG).$(`button=${name}`).click();
@@ -175,7 +175,7 @@ async function capture(label: string, expectedDpr?: number) {
         ...box(dialog),
         scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth,
         scrollHeight: dialog.scrollHeight, clientHeight: dialog.clientHeight,
-        primary: box(dialog.querySelector(".settings-dialog-actions .primary-button")),
+        primary: box(dialog.querySelector(".settings-dialog-actions .ui-button--primary")),
       },
       // Everything on screen, for the one check that is only meaningful over
       // the whole document: whether a Chinese session is reading English.
