@@ -3,13 +3,32 @@
 <title>Spectrum 7</title>
 <desc>Complete selected spectrum, 5 points. Representation unreported; m/z and intensity units unreported. The source file does not report whether these are profile samples or centroided peaks, so each mark is one measured point rather than a peak. Series: &quot;measurement&quot; is measured data. The source file reports no unit for the m/z or the Intensity axis, so none is shown.</desc>
 <rect x="0" y="0" width="1200.000" height="640.000" fill="#ffffff"/>
-<text x="64.000" y="24.000" fill="#111111" font-family="sans-serif" font-size="16.000" font-weight="600" xml:space="preserve" textLength="160.000" lengthAdjust="spacingAndGlyphs">Spectrum 7</text>
-<line x1="64.000" y1="550.000" x2="1180.000" y2="550.000" stroke="#333333" stroke-width="1"/>
-<line x1="64.000" y1="48.000" x2="64.000" y2="550.000" stroke="#333333" stroke-width="1"/>
-<path d="M64.000 550.000V494.222M342.651 550.000V48.000M619.302 550.000L623.302 550.000M901.000 550.000V296.211M1180.000 550.000V425.894" fill="none" stroke="#1f4e9c" stroke-width="1"/>
-<text x="64.000" y="564.000" fill="#111111" font-family="sans-serif" font-size="11" textLength="33.000" lengthAdjust="spacingAndGlyphs">100</text>
-<text x="1180.000" y="564.000" fill="#111111" font-family="sans-serif" font-size="11" text-anchor="end" textLength="33.000" lengthAdjust="spacingAndGlyphs">500</text>
-<text x="622.000" y="580.000" fill="#111111" font-family="sans-serif" font-size="12.000" text-anchor="middle" xml:space="preserve" textLength="36.000" lengthAdjust="spacingAndGlyphs">m/z</text>
-<text x="14.000" y="299.000" fill="#111111" font-family="sans-serif" font-size="12.000" text-anchor="middle" transform="rotate(-90 14.000 299.000)" xml:space="preserve" textLength="108.000" lengthAdjust="spacingAndGlyphs">Intensity</text>
-<text x="68.000" y="58.000" fill="#111111" font-family="sans-serif" font-size="11" textLength="44.000" lengthAdjust="spacingAndGlyphs">90.0</text>
+<text x="40.000" y="24.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="16.000" font-weight="700" xml:space="preserve">Spectrum 7</text>
+<line x1="40.000" y1="481.598" x2="1180.000" y2="481.598" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
+<line x1="40.000" y1="365.196" x2="1180.000" y2="365.196" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
+<line x1="40.000" y1="248.794" x2="1180.000" y2="248.794" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
+<line x1="40.000" y1="132.392" x2="1180.000" y2="132.392" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
+<line x1="40.000" y1="598.000" x2="1180.000" y2="598.000" stroke="#333333" stroke-width="1.000"/>
+<line x1="40.000" y1="48.000" x2="40.000" y2="598.000" stroke="#333333" stroke-width="1.000"/>
+<path d="M40.000 598.000V539.799M324.643 598.000V74.190M607.287 598.000L611.287 598.000M895.000 598.000V333.185M1180.000 598.000V468.503" fill="none" stroke="#1f4e9c" stroke-width="1.000"/>
+<line x1="36.000" y1="598.000" x2="40.000" y2="598.000" stroke="#333333" stroke-width="1.000"/>
+<text x="34.000" y="601.960" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">0</text>
+<line x1="36.000" y1="481.598" x2="40.000" y2="481.598" stroke="#333333" stroke-width="1.000"/>
+<text x="34.000" y="485.558" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">20</text>
+<line x1="36.000" y1="365.196" x2="40.000" y2="365.196" stroke="#333333" stroke-width="1.000"/>
+<text x="34.000" y="369.156" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">40</text>
+<line x1="36.000" y1="248.794" x2="40.000" y2="248.794" stroke="#333333" stroke-width="1.000"/>
+<text x="34.000" y="252.754" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">60</text>
+<line x1="36.000" y1="132.392" x2="40.000" y2="132.392" stroke="#333333" stroke-width="1.000"/>
+<text x="34.000" y="136.352" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">80</text>
+<line x1="323.930" y1="598.000" x2="323.930" y2="602.000" stroke="#333333" stroke-width="1.000"/>
+<text x="323.930" y="613.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="middle" xml:space="preserve">200</text>
+<line x1="609.287" y1="598.000" x2="609.287" y2="602.000" stroke="#333333" stroke-width="1.000"/>
+<text x="609.287" y="613.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="middle" xml:space="preserve">300</text>
+<line x1="894.643" y1="598.000" x2="894.643" y2="602.000" stroke="#333333" stroke-width="1.000"/>
+<text x="894.643" y="613.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="middle" xml:space="preserve">400</text>
+<line x1="1180.000" y1="598.000" x2="1180.000" y2="602.000" stroke="#333333" stroke-width="1.000"/>
+<text x="1180.000" y="613.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="middle" xml:space="preserve">500</text>
+<text x="610.000" y="628.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="12.000" text-anchor="middle" xml:space="preserve">m/z (unit not reported)</text>
+<text x="14.000" y="323.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="12.000" text-anchor="middle" transform="rotate(-90 14.000 323.000)" xml:space="preserve">Intensity (unit not reported)</text>
 </svg>
