@@ -32,6 +32,7 @@ mod finalized_output;
 mod fs_guard;
 mod intent;
 mod mzml;
+mod output_inspect;
 mod preview;
 mod process;
 mod sciex_completeness;
@@ -105,6 +106,11 @@ pub use mzml::{
     MzmlScanLimits, MzmlSpectrumRecord, NumericPrecisionMarker, NumericPrecisionSet,
     ProcessingAlgorithm, ProcessingHistory, RepresentationMarker, RetentionTimeUnitMarker,
     UnsafeXmlKind, inspect_file, inspect_reader,
+};
+pub use output_inspect::{
+    FinalOutputVerdict, IntermediateFacts, MzxmlEncoding, MzxmlPrecision, NonMzmlFormat,
+    OutputCheckRefusal, admit_intermediate, inspect_final_output, scan_intermediate,
+    scan_intermediate_reader,
 };
 pub use preview::{
     MAX_PREVIEW_TEXT_BYTES, MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind,

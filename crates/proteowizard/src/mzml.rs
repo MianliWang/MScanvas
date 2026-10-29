@@ -636,15 +636,15 @@ impl MzmlChromatogramRecord {
 /// Explicit inspection limits. Every limit fails closed rather than truncating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MzmlScanLimits {
-    max_document_bytes: u64,
-    max_text_run_bytes: u64,
-    max_depth: usize,
-    max_elements: u64,
-    max_attributes_per_element: usize,
-    max_name_bytes: usize,
-    max_attribute_value_bytes: usize,
-    max_spectra: u64,
-    max_chromatograms: u64,
+    pub(crate) max_document_bytes: u64,
+    pub(crate) max_text_run_bytes: u64,
+    pub(crate) max_depth: usize,
+    pub(crate) max_elements: u64,
+    pub(crate) max_attributes_per_element: usize,
+    pub(crate) max_name_bytes: usize,
+    pub(crate) max_attribute_value_bytes: usize,
+    pub(crate) max_spectra: u64,
+    pub(crate) max_chromatograms: u64,
     max_data_processing_definitions: usize,
     identity_sample_limit: usize,
 }
@@ -986,7 +986,7 @@ pub fn inspect_reader<R: BufRead>(
     state.finish(xml.get_mut().consumed())
 }
 
-fn map_xml_error(tripped: Option<MzmlLimitKind>, error: XmlError) -> MzmlScanError {
+pub(crate) fn map_xml_error(tripped: Option<MzmlLimitKind>, error: XmlError) -> MzmlScanError {
     if let Some(kind) = tripped {
         return MzmlScanError::LimitExceeded(kind);
     }
@@ -1009,17 +1009,17 @@ fn map_xml_error(tripped: Option<MzmlLimitKind>, error: XmlError) -> MzmlScanErr
 /// A buffered reader that refuses to hand out more bytes once the document or a
 /// single text run exceeds its limit. Tripping is recorded before the error is
 /// returned so a limit is never reported as an ordinary I/O failure.
-struct BoundedReader<R> {
+pub(crate) struct BoundedReader<R> {
     inner: R,
     consumed: u64,
     event_start: u64,
     max_document_bytes: u64,
     max_text_run_bytes: u64,
-    tripped: Option<MzmlLimitKind>,
+    pub(crate) tripped: Option<MzmlLimitKind>,
 }
 
 impl<R> BoundedReader<R> {
-    const fn new(inner: R, max_document_bytes: u64, max_text_run_bytes: u64) -> Self {
+    pub(crate) const fn new(inner: R, max_document_bytes: u64, max_text_run_bytes: u64) -> Self {
         Self {
             inner,
             consumed: 0,
@@ -1040,7 +1040,7 @@ impl<R> BoundedReader<R> {
     /// single node, but a reader that already holds the whole document hands
     /// back an oversized node in one refill. Measuring the finished span makes
     /// the limit hold for every reader shape, not only streaming ones.
-    fn finish_event(&mut self) -> Option<MzmlLimitKind> {
+    pub(crate) fn finish_event(&mut self) -> Option<MzmlLimitKind> {
         let span = self.consumed - self.event_start;
         self.event_start = self.consumed;
         if span > self.max_text_run_bytes {
@@ -1745,7 +1745,7 @@ impl ScanState {
     }
 }
 
-fn is_predefined_reference(name: &str) -> bool {
+pub(crate) fn is_predefined_reference(name: &str) -> bool {
     match name {
         "amp" | "lt" | "gt" | "quot" | "apos" => true,
         _ => match name.strip_prefix('#') {
@@ -1834,7 +1834,7 @@ fn optional_u64(value: Option<&str>) -> Result<Option<u64>, MzmlScanError> {
     value.map(parse_u64_decimal).transpose()
 }
 
-fn parse_u64_decimal(value: &str) -> Result<u64, MzmlScanError> {
+pub(crate) fn parse_u64_decimal(value: &str) -> Result<u64, MzmlScanError> {
     let trimmed = value.trim();
     if trimmed.is_empty() || !trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(MzmlScanError::Malformed(MzmlMalformedKind::InvalidNumber));
