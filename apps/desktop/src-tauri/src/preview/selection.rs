@@ -482,14 +482,14 @@ pub(super) enum ProposalRefusal {
 /// before the read rather than as an unreadable file after it.
 ///
 /// A SCIEX name is refused before anything is opened, so no companion is ever
-/// looked at. Every other name is put to mzML admission and refused by it, as
-/// it always was.
+/// looked at, and with the answer any unsupported name gets. Every other name
+/// is put to mzML admission and refused by it, as it always was.
 pub(super) fn accept_proposed_file(
     path: &Path,
     observed: FileIdentity,
 ) -> Result<AcceptedFile, ProposalRefusal> {
     if has_sciex_wiff_extension(path) || is_sciex_wiff_companion_name(path) {
-        return Err(ProposalRefusal::Refused(sciex_not_proposed()));
+        return Err(ProposalRefusal::Refused(unsupported_extension()));
     }
     let kind = if has_thermo_raw_extension(path) {
         DatasetSourceKind::ThermoRaw
@@ -508,12 +508,10 @@ pub(super) fn accept_proposed_file(
     admit_inspected(path, kind, inspected).map_err(ProposalRefusal::Refused)
 }
 
-/// What a dropped SCIEX file answers with.
-fn sciex_not_proposed() -> PreviewErrorDto {
+fn unsupported_extension() -> PreviewErrorDto {
     PreviewErrorDto::new(
-        "sciex_add_files_only",
-        "SCIEX WIFF acquisitions are added with Add files, which pairs the .wiff with its \
-         .wiff.scan. A folder or a drop does not add them.",
+        "unsupported_extension",
+        "MSCanvas opens .mzML files in this version.",
         false,
     )
 }
@@ -531,11 +529,7 @@ fn admit_inspected(
 ) -> Result<AcceptedFile, PreviewErrorDto> {
     let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
     if kind == DatasetSourceKind::Mzml && !has_mzml_extension(&canonical) {
-        return Err(PreviewErrorDto::new(
-            "unsupported_extension",
-            "MSCanvas opens .mzML files in this version.",
-            false,
-        ));
+        return Err(unsupported_extension());
     }
     let file_name = canonical
         .file_name()

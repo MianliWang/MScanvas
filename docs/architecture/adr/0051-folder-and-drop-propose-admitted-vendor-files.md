@@ -48,8 +48,10 @@ candidate whatever its name, as before.
   companion's name is derived from the `.wiff`'s. Upstream test data holds a
   `.wiff2` whose companion is named like a `.wiff`'s, so a walk that paired one
   would be pairing from adjacency (ADR 0027). A dropped `.wiff` or `.wiff.scan`
-  is refused by name, `sciex_add_files_only`, before anything is opened; its
-  companion is never looked at. Revisit only when a measurement shows the
+  is refused by name as `unsupported_extension` before anything is opened; its
+  companion is never looked at. A SCIEX-specific sentence pointing to
+  `Add files…` needs its own error code and owned message, added together.
+  Revisit SCIEX itself only when a measurement shows the
   pairing cannot take a same-stem `.wiff2`'s companion and the owner confirms
   the residual.
 
@@ -149,9 +151,9 @@ progress and Stop above, once the candidates are counted.
   frontend that auto-previews the first added row must pick the first added
   mzML row: vendor rows are not previewable.
 - New wire fields: `notAttemptedCount` on the folder discovery summary and the
-  drop summary, and `WorkspaceIngestionProgressDto`. New refusal:
-  `sciex_add_files_only`. `source_in_use` and `unrecognized_acquisition` can
-  now appear in folder and drop outcomes.
+  drop summary, and `WorkspaceIngestionProgressDto`. No new error code:
+  `source_in_use` and `unrecognized_acquisition` can now appear in folder and
+  drop outcomes.
 - Not done here, for the integrating and UI lanes: the two commands; renaming
   `begin_mzml_folder_import` and `choose_mzml_folder` (a mechanical commit
   across `lib.rs`, the registration test, `api.ts` and the e2e specs); the

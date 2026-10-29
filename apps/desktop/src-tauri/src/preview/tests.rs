@@ -15506,12 +15506,12 @@ fn folder_and_drop_add_thermo_and_shimadzu_files_and_never_sciex() {
         (
             "direct.wiff",
             wiff_container_bytes(&SCIEX_MARKERS),
-            "sciex_add_files_only",
+            "unsupported_extension",
         ),
         (
             "direct.wiff.scan",
             scan_companion_bytes("opaque spectral payload"),
-            "sciex_add_files_only",
+            "unsupported_extension",
         ),
     ] {
         let path = direct.file(name, &bytes);
