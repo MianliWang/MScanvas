@@ -260,7 +260,7 @@ async function preview() {
   let lastRead: object = { phase: "waiting for export readiness" };
   try {
     await browser.waitUntil(async () => {
-      if (await browser.$(FIGURE).$('button=Export SVG…').getAttribute("aria-disabled") !== "false") return false;
+      if (await browser.$(FIGURE).$('button=Export SVG…').getAttribute("aria-disabled") === "true") return false;
       const observed = await browser.execute(async css => {
         const read = Reflect.get(window, "__m74ReadPreviewBlob") as (selector: string) => Promise<ObservedPreviewBlob | null>;
         return read(css + " .figure-preview img");
@@ -278,7 +278,8 @@ async function preview() {
   return current.value;
 }
 async function scope(panel: string, name: "Current range" | "Full spectrum" | "Full run") {
-  const label = browser.$(panel).$("label*=" + name); await label.click();
+  // The figure dialog's range is a segmented control: each option is a button.
+  const label = browser.$(panel).$((panel === FIGURE ? "button*=" : "label*=") + name); await label.click();
 }
 async function edit(axis: "rt" | "mz", low: string, high: string) {
   const panel = axis === "rt" ? ".chromatogram-panel" : ".spectrum-panel";
@@ -474,7 +475,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(first.svg).toContain("spectrum index 1");
       expect(first.svg).toContain("&quot;Selected scan&quot; at 60.");
       await capture("linked-entry-selected-source");
-      await browser.$(FIGURE).$("button=Return to viewer").click();
+      await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
       const beforeNoTrace = (await previewCalls()).length;
       await browser.$("label=TIC").scrollIntoView({ block: "center" }); await browser.$("label=TIC").click();
       await blocked("Show at least one trace to export the linked figure.", "no-trace");
@@ -486,7 +487,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
         spectrumToken: firstRequest.source.spectrumToken, traces: { tic: false, bpc: true } });
       expect(restored.svg).toContain("spectrum index 1");
       expect(restored.svg).toContain("&quot;Selected scan&quot; at 60.");
-      await browser.$(FIGURE).$("button=Return to viewer").click();
+      await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
       await reveal('.spectrum-table-panel [data-source-index="2"]');
       await browser.$('.spectrum-table-panel [data-source-index="2"]').click();
       await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 2,"));
@@ -512,7 +513,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       record({ kind: "linked entry actual saved consumer and cancelled picker", fileName: basename(saved),
         bytes: statSync(saved).size, sha256: savedHash, previewSpecId: next.specId, previewBytesEqual: true });
       await capture("linked-entry-restored-source");
-      await browser.$(FIGURE).$("button=Return to viewer").click();
+      await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
       await browser.waitUntil(async () => browser.execute(css => document.hasFocus() && document.activeElement === document.querySelector(css), entrySelector));
     } finally {
       const observer = await browser.execute(() => (Reflect.get(window, "__m74StopPreviewBlobs") as () => {
@@ -546,7 +547,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(readFileSync(join(output, "spectrum-invalid-png-dpi.svg"), "utf8")).toBe(current.svg);
       await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); await preview();
       await save(FIGURE, "Export PNG…", "Export spectrum figure", join(output, "cancelled-dialog.png"), true);
-      await capture("04-native-preview-and-saved-content"); await browser.$(FIGURE).$("button=Return to viewer").click();
+      await capture("04-native-preview-and-saved-content"); await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
 
       const dataPanel = ".spectrum-panel";
       await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
@@ -569,24 +570,24 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       await edit("mz", "225", "240"); await browser.$(dataPanel).$('button=Export figure').click(); await scope(FIGURE, "Current range"); const empty = await preview();
       expect(await browser.$(FIGURE).getText()).toContain("empty spectrum figure");
       const emptySvg = join(output, "spectrum-empty-current.svg"); await save(FIGURE, "Export SVG…", "Export spectrum figure", emptySvg); expect(readFileSync(emptySvg, "utf8")).toBe(empty.svg);
-      await browser.$(FIGURE).$("button=Return to viewer").click(); await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
+      await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click(); await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
       const emptyCsv = join(output, "spectrum-empty-current.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", emptyCsv); expect(data(emptyCsv, ",")).toHaveLength(0);
       await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
 
       await edit("rt", "60", "180");
       await browser.$('.chromatogram-panel').$('button=Export figure').click(); await scope(FIGURE, "Current range"); const chrom = await preview();
       const chromSvg = join(output, "chromatogram-current.svg"); await save(FIGURE, "Export SVG…", "Export chromatogram figure", chromSvg); expect(readFileSync(chromSvg, "utf8")).toBe(chrom.svg);
-      expect(await browser.$(FIGURE).getText()).toContain("Full run"); await browser.$(FIGURE).$("button=Return to viewer").click();
+      expect(await browser.$(FIGURE).getText()).toContain("Full run"); await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
       await browser.$("#chromatogram-export-toggle").click();
       const rtCsv = join(output, "chromatogram-current.csv"); await save(".chromatogram-panel", "Export CSV…", "Export chromatogram data", rtCsv);
       expect(data(rtCsv, ",").map(row => row[0])).toEqual([1, 2, 3]);
       expect(data(rtCsv, ",").map(row => row[3])).toEqual([60, 120, 180]);
       await browser.$('.chromatogram-panel').$('button=Preview linked figure').click(); const linked = await preview();
-      expect(await browser.$(FIGURE).getText()).toContain("Bottom: that scan's full spectrum.");
+      expect(await browser.$(FIGURE).getText()).toContain("Full run"); expect(await browser.$(FIGURE).$("button=Export CSV…").isExisting()).toBe(false);
       const linkedSvg = join(output, "linked-current.svg"); await save(FIGURE, "Export SVG…", "Export linked figure", linkedSvg); expect(readFileSync(linkedSvg, "utf8")).toBe(linked.svg);
       await scope(FIGURE, "Full run"); const linkedFull = await preview(); const linkedFullSvg = join(output, "linked-full.svg");
       await save(FIGURE, "Export SVG…", "Export linked figure", linkedFullSvg); expect(readFileSync(linkedFullSvg, "utf8")).toBe(linkedFull.svg);
-      await capture("05-native-linked-scope"); await browser.$(FIGURE).$("button=Return to viewer").click();
+      await capture("05-native-linked-scope"); await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
       record({ kind: "real synthetic scientific outputs", sourceSha256: digest(path), spectrumCurrentRows: data(csv, ","), spectrumFullRows: data(fullCsv, ","), emptyRows: data(emptyCsv, ","), currentRtRows: data(rtCsv, ",") });
     } finally {
       const observer = await browser.execute(() => (Reflect.get(window, "__m74StopPreviewBlobs") as () => {
