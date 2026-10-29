@@ -293,7 +293,7 @@ writer and Rust's ownership of files.
 
 ### 7.1 Near-term engineering
 
-- CI runs no browser or native e2e; `windows-smoke.yml` has never run.
+- CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
 - Security alerts (enabled 2026-10-27), triaged 2026-10-28 — none reaches the
