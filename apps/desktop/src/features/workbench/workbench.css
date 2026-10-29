@@ -200,12 +200,38 @@
 .plot-menu-note { max-width: 300px; padding: 4px 9px 6px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
 .workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-height: 0; padding: 0; overflow: hidden; }
 .workbench-shell :is(.chromatogram-plot, .spectrum-viewport, .spectrum-viewport-plot, .spectrum-figure) { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-width: 0; min-height: 0; margin: 0; }
+/* The plot frame (review fix 3): the drawing, its value ticks left of it,
+   its position ticks under it with the position title at their right end,
+   and the value title in the drawing's top-left corner, over its headroom.
+   The labels are HTML placed by percentage over the stretched drawing, so no
+   plot height distorts them; nothing in the svg is text. */
+.plot-frame { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 14px; flex: 1 1 auto; min-width: 0; min-height: 0; padding: 0 16px 0 6px; }
+.plot-frame > svg { display: block; grid-column: 2; grid-row: 1; width: 100%; height: 100%; min-height: 0; padding: 0; }
+.plot-axis-titles { display: contents; }
+.plot-axis-title { z-index: 1; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.plot-axis-title-y { grid-column: 2; grid-row: 1; align-self: start; justify-self: start; max-width: 70%; margin-left: 0.8%; padding: 0 4px; border-radius: 3px; background: color-mix(in srgb, var(--color-surface) 85%, transparent); }
+.chromatogram-frame .plot-axis-title-y { margin-left: 6.4%; }
+.plot-axis-title-x { grid-column: 2; grid-row: 2; justify-self: end; max-width: 60%; padding-left: 6px; background: var(--color-surface); }
+.plot-x-ticks, .plot-y-ticks { position: relative; min-width: 0; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+.plot-x-ticks { grid-column: 2; grid-row: 2; }
+.plot-y-ticks { grid-column: 1; grid-row: 1; }
+/* The chromatogram's value labels sit in its drawing's own left gutter. */
+.chromatogram-y-ticks { grid-column: 2; justify-self: start; width: 6.4%; }
+.plot-tick { position: absolute; color: var(--color-text-tertiary); line-height: 14px; white-space: nowrap; }
+.plot-x-ticks .plot-tick { top: 0; transform: translateX(-50%); }
+.plot-y-ticks .plot-tick { right: 5px; transform: translateY(-50%); }
+.plot-gridlines line { stroke: var(--color-chart-grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.plot-baseline { stroke: var(--color-border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
 /* Heights from the viewport rather than fixed pixels; inside a pane with a
-   definite height the plot grows past them. The minimum is explicit: an svg's
-   automatic minimum is its aspect ratio, which a stretched viewBox makes
-   meaningless. Axis text is counter-scaled (usePlotTextSize). */
-.workbench-shell .chromatogram-svg { flex: 1 1 auto; height: clamp(90px, 22vh, 180px); min-height: 90px; padding: 4px 8px 0; }
-.workbench-shell .spectrum-plot { flex: 1 1 auto; height: clamp(160px, 30vh, 320px); min-height: 160px; padding: 6px 8px 0; touch-action: pan-y pinch-zoom; cursor: crosshair; }
+   definite height the plot grows past them. The minimums are explicit: an
+   svg's automatic minimum is its aspect ratio, which a stretched viewBox makes
+   meaningless. The spectrum frame's floor leaves its drawing 160 px; on a
+   short window the chromatogram gives way first, so that floor and the
+   spectrum's caption and range line still fit without scrolling. */
+.workbench-shell .chromatogram-frame { height: clamp(100px, calc(22vh - 16px), 184px); }
+.workbench-shell .chromatogram-svg { min-height: 60px; }
+.workbench-shell .spectrum-frame { height: clamp(174px, calc(30vh + 14px), 334px); min-height: 174px; }
+.workbench-shell .spectrum-plot { min-height: 160px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
 .workbench-shell .spectrum-caption { flex: none; padding: 0 10px; }
 .workbench-shell .spectrum-caption p { margin: 2px 0 0; font-size: 11px; line-height: 1.4; }
 .plot-foot { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0 12px; min-height: 28px; padding: 0 6px 0 10px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }

@@ -25,14 +25,14 @@ const COLUMN_LABELS = [
   "Scan",
   "RT",
   "MS",
-  "Precursor m/z",
+  "Prec. m/z",
 ];
 /** What each header is called: its short label first, then its full name where they differ. */
 const COLUMN_NAMES = [
   "Scan",
   "RT (Retention time)",
   "MS (MS level)",
-  "Precursor m/z",
+  "Prec. m/z (Precursor m/z)",
 ];
 
 const mountedStyles: HTMLStyleElement[] = [];
@@ -132,7 +132,7 @@ describe("spectrum table columns", () => {
     // One header set, not a visual copy alongside an announced one.
     expect(headers).toHaveLength(COLUMN_LABELS.length);
     expect(screen.getAllByText("RT")).toHaveLength(1);
-    expect(screen.getAllByText("Precursor m/z")).toHaveLength(1);
+    expect(screen.getAllByText("Prec. m/z")).toHaveLength(1);
     // Short enough for the side column, and still spoken in full after the
     // visible label, which is what a speech user says to press it.
     expect(headers.map((header) => within(header).getByRole("button").getAttribute("aria-label") ??

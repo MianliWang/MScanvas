@@ -686,8 +686,10 @@ describe("mzML preview workspace", () => {
         /2 points carry negative intensity\./,
       ),
     ).toBeVisible();
-    // The furthest-from-zero value sets the scale and is labelled.
-    expect(screen.getByText("-900.00")).toBeInTheDocument();
+    // The furthest-from-zero value sets the scale, and the value axis runs
+    // below zero to reach it.
+    expect(document.querySelector("svg.spectrum-plot")).toHaveAttribute("data-value-low", "-900.00");
+    expect([...document.querySelectorAll(".spectrum-frame .plot-y-ticks .plot-tick")].map(tick => tick.textContent)).toContain("-800");
     expect(screen.queryByText("no intensity above zero")).not.toBeInTheDocument();
   });
 
@@ -963,9 +965,9 @@ describe("mzML preview workspace", () => {
     // Retention time carries no unit, so it says so instead of guessing one —
     // in the detail panel and beside the table's own values.
     expect(screen.getAllByText(/\(unit not reported\)/).length).toBeGreaterThan(0);
-    expect(
-      screen.getByText(/Retention time — unit not reported · Intensity — unit not reported/),
-    ).toBeVisible();
+    // Each axis title says so, on both plots.
+    expect(screen.getByText("Retention time (unit not reported)")).toBeVisible();
+    expect(screen.getAllByText("Intensity (unit not reported)")).toHaveLength(2);
     expect(screen.queryByText(/\d\.\d+ (min|s|seconds|minutes)/)).not.toBeInTheDocument();
     expect(screen.getByText("Peak representation").nextElementSibling).toHaveTextContent(
       "Not reported",

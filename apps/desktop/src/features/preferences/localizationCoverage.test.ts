@@ -32,6 +32,7 @@ const DELIBERATELY_IDENTICAL: readonly string[] = [
   // Units, axes and machine identifiers. None of these is an English word.
   "pixels",
   "rangeMzAxis",
+  "plotAxisMz",
   "viewerExportMzWindow",
   "pngDpi",
   // Product and format identities.

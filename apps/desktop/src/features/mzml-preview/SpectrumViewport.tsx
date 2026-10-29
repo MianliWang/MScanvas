@@ -11,8 +11,7 @@ import type { PreviewError, SelectedSpectrum, SpectrumDomainRefusal } from "./co
 import { formatMz } from "./format";
 import type { SpectrumDrawing } from "./StickSpectrum";
 import {
-  SPECTRUM_AXIS_HIGH,
-  SPECTRUM_AXIS_LOW,
+  paintMzAxis,
   SPECTRUM_PLOT_DRAWN_WIDTH,
   SPECTRUM_PLOT_PADDING_LEFT,
   SPECTRUM_PLOT_VIEWBOX_WIDTH,
@@ -143,9 +142,8 @@ export function SpectrumViewport({
   const paintedRange = useRef<MzDomain | null>(null);
   const paintedNodes = useRef<{
     layer: SVGGElement | null;
-    low: SVGTextElement | null;
-    high: SVGTextElement | null;
-  }>({ layer: null, low: null, high: null });
+    plot: SVGSVGElement | null;
+  }>({ layer: null, plot: null });
   const rangeRef = useRef<HTMLParagraphElement | null>(null);
 
   /**
@@ -154,7 +152,7 @@ export function SpectrumViewport({
    * A pan is a translation of the sticks and a wheel zoom a scale about the
    * pointer, so the whole layer is transformed rather than the reduction being
    * run again: one attribute per frame instead of a pass over the projection and
-   * a re-render of the panel around it. The axis numbers and the range line are
+   * a re-render of the panel around it. The m/z ticks and the range line are
    * written beside it, because a drawing that moves under numbers that do not is
    * worse than one that does not move.
    *
@@ -186,12 +184,7 @@ export function SpectrumViewport({
         );
       }
     }
-    if (nodes.low !== null) {
-      nodes.low.textContent = formatMz(target.low);
-    }
-    if (nodes.high !== null) {
-      nodes.high.textContent = formatMz(target.high);
-    }
+    paintMzAxis(nodes.plot, target.low, target.high);
     if (rangeRef.current !== null) {
       rangeRef.current.textContent = describeRange(current, target, t);
     }
@@ -203,8 +196,7 @@ export function SpectrumViewport({
     const plot = plotRef.current;
     paintedNodes.current = {
       layer: plot?.querySelector<SVGGElement>(`g.${SPECTRUM_STICKS_LAYER}`) ?? null,
-      low: plot?.querySelector<SVGTextElement>(`text.${SPECTRUM_AXIS_LOW}`) ?? null,
-      high: plot?.querySelector<SVGTextElement>(`text.${SPECTRUM_AXIS_HIGH}`) ?? null,
+      plot,
     };
     paintedNodes.current.layer?.removeAttribute("transform");
     paintedRange.current = renderedMzDomain(state);

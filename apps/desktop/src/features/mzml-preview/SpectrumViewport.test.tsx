@@ -1559,7 +1559,7 @@ describe("panning the spectrum with a press", () => {
     expect(shown()).toEqual(published);
     expect(liveShown()).toEqual(live);
     expect(layer()?.getAttribute("transform")).toBe(transform);
-    expect(plot().querySelector("text.spectrum-axis-low")?.textContent).toBe(formatMz(live.low));
+    expect(plot()).toHaveAttribute("data-mz-low", formatMz(live.low));
     expect(ready().committed).toEqual(mzDomain(200, 300));
     releasePointer(CENTRE_X - 200);
     expect(liveShown()).toEqual(live);
@@ -1580,7 +1580,8 @@ describe("panning the spectrum with a press", () => {
     drawProjection({ ...DRAWN, low: 200, high: 300 });
 
     const layer = () => plot().querySelector("g.spectrum-sticks-layer");
-    const axisLow = () => plot().querySelector("text.spectrum-axis-low")?.textContent ?? "";
+    const axisLow = () => plot().getAttribute("data-mz-low") ?? "";
+    const ticks = () => [...document.querySelectorAll(".spectrum-frame .plot-x-ticks .plot-tick")].map((node) => Number(node.textContent));
     expect(layer()?.getAttribute("transform"), "at rest").toBeNull();
 
     pressPointer(CENTRE_X);
@@ -1595,6 +1596,12 @@ describe("panning the spectrum with a press", () => {
     expect(layer()?.getAttribute("transform"), "the sticks moved").toMatch(/translate/u);
     expect(rangeText(), "the range line moved").not.toBe(startedAt);
     expect(axisLow(), "the axis moved").toBe(formatMz(liveShown().low));
+    // And its ticks with it: every one inside the range on screen now.
+    expect(ticks().length, "ticks painted").toBeGreaterThan(1);
+    for (const tick of ticks()) {
+      expect(tick).toBeGreaterThanOrEqual(liveShown().low);
+      expect(tick).toBeLessThanOrEqual(liveShown().high);
+    }
 
     // Settling hands the drawing back to React, which redraws it at the range it
     // committed to -- so the transform left over from the gesture is gone.
@@ -1698,7 +1705,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
     drawProjection(DRAWN);
 
     expect(sticks()).not.toBeNull();
-    expect(captionLine()).toBe(`${en("plotCaption", { count: 3, total: 3 })} · ${en("plotUnits")}`);
+    expect(captionLine()).toBe(`${en("plotCaption", { count: 3, total: 3 })}`);
     // Nothing left to say, so the region says nothing: a live region whose text
     // is added and removed as a sibling node is not reliably announced.
     expect(statusText()).toBe("");
@@ -1724,7 +1731,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
     expect(statusText()).toBe(en("viewerMzLoading", { low: "220.0000", high: "260.0000" }));
     // The caption names no drawing: the status region already says one is on
     // its way, and saying it twice is what this caption used to do.
-    expect(captionLine()).toBe(en("plotUnits"));
+    expect(captionLine()).toBe("");
     expect(captionText()).not.toMatch(/Waiting for the drawing/u);
   });
 
@@ -1822,14 +1829,15 @@ describe("what the plot draws, and what it says it is drawing", () => {
     });
     send({ type: "gesture-started", domain: mzDomain(200, 300) });
 
-    const labels = [...plot().querySelectorAll("text.axis-label")].map(
+    const labels = [...document.querySelectorAll(".spectrum-frame .plot-x-ticks .plot-tick")].map(
       (node) => node.textContent ?? "",
     );
-    expect(labels).toContain("200.0000");
-    expect(labels).toContain("300.0000");
+    expect(plot()).toHaveAttribute("data-mz-low", "200.0000");
+    expect(plot()).toHaveAttribute("data-mz-high", "300.0000");
+    expect(labels).toEqual(["200", "220", "240", "260", "280", "300"]);
     // The window the points answer is nowhere on the axis.
-    expect(labels).not.toContain("100.0000");
-    expect(labels).not.toContain("500.0000");
+    expect(labels).not.toContain("100");
+    expect(labels).not.toContain("500");
   });
 
   it("keeps the drawing in hand while a gesture is in flight, and says it is not the answer", () => {
@@ -1881,7 +1889,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
 
     expect(statusText()).toBe(en("viewerMzFailed"));
     // Said once, there: the caption beneath the blank plot does not repeat it.
-    expect(captionLine()).toBe(en("plotUnits"));
+    expect(captionLine()).toBe("");
   });
 
   it("asks Rust for nothing at all while a press is dragging the plot", () => {
@@ -1946,7 +1954,7 @@ describe("a spectrum with no m/z range to navigate", () => {
     renderViewport({ domain: REFUSED });
 
     expect(sticks()).not.toBeNull();
-    expect(captionLine()).toBe(`${en("plotTransferCaption", { count: 3, total: 3 })} · ${en("plotUnits")}`);
+    expect(captionLine()).toBe(`${en("plotTransferCaption", { count: 3, total: 3 })}`);
   });
 
   it("names what happened rather than saying the spectrum is unusable", () => {

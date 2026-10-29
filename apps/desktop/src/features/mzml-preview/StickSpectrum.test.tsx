@@ -98,7 +98,7 @@ describe("what a window's caption may claim about it", () => {
     }
     renderWindow(mz, intensity, { low: 100, high: 219.9, sourcePoints: 1_200, reduced: false });
 
-    expect(caption()).toBe(`${fill(en.plotCaption, { count: 900, total: 1_200 })} · ${en.plotUnits}`);
+    expect(caption()).toBe(`${fill(en.plotCaption, { count: 900, total: 1_200 })}`);
     const disclosure = details();
     expect(disclosure).toBeVisible();
     expect(disclosure.querySelector("p")).toHaveTextContent(en.plotReduced);
@@ -113,7 +113,7 @@ describe("what a window's caption may claim about it", () => {
       reduced: false,
     });
 
-    expect(caption()).toBe(`${fill(en.plotCaption, { count: 3, total: 3 })} · ${en.plotUnits}`);
+    expect(caption()).toBe(`${fill(en.plotCaption, { count: 3, total: 3 })}`);
     // Hidden rather than opening onto nothing, and no axis restated.
     expect(details()).not.toBeVisible();
     expect(screen.queryByText(/Horizontal axis/u)).not.toBeInTheDocument();
@@ -124,7 +124,7 @@ describe("what a window's caption may claim about it", () => {
     // line says which it is, so the caption names neither.
     render(<Plot drawing={{ kind: "viewport-blank", low: 300, high: 400, reason: "failed" }} intensity={[]} mz={[]} />);
 
-    expect(caption()).toBe(en.plotUnits);
+    expect(caption()).toBe("");
     expect(screen.queryByText(/Waiting for the drawing/u)).not.toBeInTheDocument();
     expect(details()).not.toBeVisible();
   });
@@ -148,9 +148,37 @@ describe("what a window's caption may claim about it", () => {
 
     expect(screen.queryByText(en.plotFlat)).not.toBeInTheDocument();
     expect(screen.queryByText(/Vertical axis: intensity/u)).not.toBeInTheDocument();
-    // The m/z axis is still the range, because that much the plot does know.
-    expect(screen.getByText("300.0000")).toBeInTheDocument();
-    expect(screen.getByText("400.0000")).toBeInTheDocument();
+    // The m/z axis is still the range, because that much the plot does know,
+    // and the value axis has no tick at all.
+    expect(screen.getByRole("img")).toHaveAttribute("data-mz-low", "300.0000");
+    expect(screen.getByRole("img")).toHaveAttribute("data-mz-high", "400.0000");
+    expect(screen.getByText("300")).toBeInTheDocument();
+    expect(screen.getByText("400")).toBeInTheDocument();
+    expect(document.querySelectorAll(".plot-y-ticks .plot-tick")).toHaveLength(0);
+  });
+
+  it("titles each axis with what is known of its unit and ticks it at round values outside the drawing", () => {
+    render(<StickSpectrum drawing={{ kind: "viewport", low: 300, high: 302.5, sourcePoints: 3, reduced: false }}
+      intensity={[1_000, 2_850, 400]} labelledBy="caption-under-test" mz={[300.4, 301.2, 302.1]} surface={{ kind: "static" }} />);
+
+    // No unit is invented for either axis, and the caption no longer repeats it.
+    expect(screen.getByText(en.plotAxisMz)).toBeVisible();
+    expect(screen.getByText(en.plotAxisIntensity)).toBeVisible();
+    expect(caption()).not.toContain("unit");
+    const ticks = (axis: "x" | "y") => [...document.querySelectorAll(`.plot-${axis}-ticks .plot-tick`)].map((node) => node.textContent);
+    expect(ticks("x")).toEqual(["300.0", "300.5", "301.0", "301.5", "302.0", "302.5"]);
+    // Headroom above the tallest stick, and round values up to it.
+    expect(ticks("y")).toEqual(["0", "500", "1000", "1500", "2000", "2500"]);
+    // The labels are HTML beside the drawing, so nothing in it is text to stretch.
+    expect(document.querySelector("svg text")).toBeNull();
+    expect(document.querySelectorAll("svg .plot-gridlines line")).toHaveLength(6);
+  });
+
+  it("says a reported but unnamed unit, and a flat drawing, in the value axis title", () => {
+    render(<StickSpectrum drawing={{ kind: "viewport", low: 300, high: 302, sourcePoints: 2, reduced: false }} valueUnitsKnown
+      intensity={[0, 0]} labelledBy="caption-under-test" mz={[300.5, 301.5]} surface={{ kind: "static" }} />);
+
+    expect(screen.getByText(`${en.plotAxisIntensityReported} · ${en.plotFlat}`)).toBeVisible();
   });
 });
 
@@ -160,7 +188,7 @@ describe("stick plot caption", () => {
     // highest value, which is one stick.
     renderSpectrum([300, 300], [100, 200]);
 
-    expect(caption()).toBe(`${fill(en.plotTransferCaption_one, { total: 2 })} · ${en.plotUnits}`);
+    expect(caption()).toBe(`${fill(en.plotTransferCaption_one, { total: 2 })}`);
     expect(details().querySelector("p")).toHaveTextContent(en.plotTransferReduced);
   });
 
@@ -196,14 +224,14 @@ describe("stick plot caption", () => {
   it("keeps the plural when the reduction draws more than one", () => {
     renderSpectrum([300, 300, 301], [100, 200, 300]);
 
-    expect(caption()).toBe(`${fill(en.plotTransferCaption, { count: 2, total: 3 })} · ${en.plotUnits}`);
+    expect(caption()).toBe(`${fill(en.plotTransferCaption, { count: 2, total: 3 })}`);
     expect(details().querySelector("p")).toHaveTextContent(en.plotTransferReduced);
   });
 
   it("says one stick for a spectrum drawn one stick per point, and adds nothing", () => {
     renderSpectrum([300], [100]);
 
-    expect(caption()).toBe(`${fill(en.plotTransferCaption_one, { total: 1 })} · ${en.plotUnits}`);
+    expect(caption()).toBe(`${fill(en.plotTransferCaption_one, { total: 1 })}`);
     expect(details()).not.toBeVisible();
   });
 
