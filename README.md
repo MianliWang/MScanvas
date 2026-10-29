@@ -217,8 +217,14 @@ the chromatogram's, the linked two-panel figure of the two, and a stored
 targeted-MS1 result's figure of one target (SVG, PNG) and its whole-result
 CSV/TSV table -- there is no
 saved figure specification, no figure composer, and figure settings are not
-remembered across a restart. mzXML output stays disabled and fail-closed until
-representative multi-source integrity checks pass.
+remembered across a restart. mzXML output is refused at present
+([ADR 0043, CNV-D1](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d1--output-formats)
+`MZXML_REFUSED`, 2026-09-10): on the measured ProteoWizard build a multi-source
+test document lost spectra silently at exit 0, while single-source output was
+faithful. The owner's
+[option C of 2026-10-28](docs/development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)
+is to offer it in an advanced set labelled not verified by MSCanvas, with
+multi-source documents blocked, once that set has its own ADR.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
 admits regular `.mzML` files plus three precisely evidenced vendor families —
@@ -384,8 +390,9 @@ yet. See [What works today](#what-works-today).
   contract admits one;
 - linked selection across views (shipped for mzML), with one availability rule
   that says why a scan cannot be selected without taking the run away;
-- conversion to mzML through user-installed ProteoWizard, with mzXML gated behind
-  representative multi-source integrity checks;
+- conversion to mzML through user-installed ProteoWizard; mzXML is refused at
+  present and is to be offered only in the advanced, unverified set with
+  multi-source documents blocked (see [What works today](#what-works-today));
 - queue, cancellation, retry and actionable errors;
 - SVG and PNG figure export, `Copy plot`, and underlying CSV/TSV export for the
   selected spectrum and for the chromatogram -- the chromatogram over the whole
