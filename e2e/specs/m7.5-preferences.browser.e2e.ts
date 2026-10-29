@@ -127,8 +127,11 @@ async function capture(label: string, expectedDpr?: number) {
       backendCollapsed: document.querySelector("[data-backend-collapsed]") !== null,
       backendToggle: box(document.querySelector("[data-backend-toggle]")),
       backendActions: named("[data-backend-action]"),
-      helpOpen: document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open ?? null,
-      help: box(document.querySelector("[data-backend-help]")),
+      helpOpen: (() => {
+        const button = document.querySelector("[data-backend-help]");
+        return button === null ? null : button.getAttribute("aria-expanded") === "true";
+      })(),
+      help: box(document.querySelector(".backend-setup-help")),
       // The help's scroll owner. The notices area is a bounded scrollport by
       // design, so "the details element is not clipped" says nothing about
       // whether the reader can see what they opened.
@@ -140,7 +143,7 @@ async function capture(label: string, expectedDpr?: number) {
       // scrolling reaches the end of it, which is measured by actually
       // scrolling to the bottom and looking, then putting the scroll back.
       helpScrollport: (() => {
-        const help = document.querySelector("[data-backend-help]");
+        const help = document.querySelector(".backend-setup-help");
         const port = help?.closest(".shell-notices") ?? null;
         if (help === null || port === null) return null;
         const outer = port.getBoundingClientRect();
@@ -485,8 +488,8 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       expect(state.helpOpen).toBe(false);
 
       // Opened, read, and unclipped.
-      await browser.$("[data-backend-help] summary").click();
-      await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === true));
+      await browser.$("[data-backend-help]").click();
+      await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "true"));
       const opened = await capture(`17-backend-${label}-help-en`);
       expect(opened.help?.clipped).toBe(false);
       // What the reader opened is visible without having to discover that the
@@ -506,8 +509,8 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await browser.url("/");
     await browser.$("[data-backend-status]").waitForDisplayed();
     await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
-    await browser.$("[data-backend-help] summary").click();
-    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === true));
+    await browser.$("[data-backend-help]").click();
+    await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "true"));
     const chinese = await capture("18-backend-missing-help-zh");
     expect(chinese.backendReading?.text).toContain(zh.backendMissing);
     expect(chinese.backendReading?.text).toContain(zh.backendNotFound);
@@ -581,15 +584,15 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     // window cannot show eight paragraphs at once whatever the bound is, so
     // the requirement here is that the end of what the reader opened can be
     // reached -- not that it all fits.
-    await browser.$("[data-backend-help] summary").click();
-    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === true));
+    await browser.$("[data-backend-help]").click();
+    await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "true"));
     const narrowHelp = await capture("20b-narrow-help-open");
     expect(narrowHelp.helpOpen).toBe(true);
     expect(narrowHelp.help?.clipped).toBe(false);
     expect(narrowHelp.helpScrollport?.endReachable).toBe(true);
     expect(narrowHelp.help?.text).toContain(en.backendHelpSessionScope);
-    await browser.$("[data-backend-help] summary").click();
-    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === false));
+    await browser.$("[data-backend-help]").click();
+    await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "false"));
     expect(advisories.length).toBeGreaterThan(0);
     // Nothing animates into place at this setting.
     expect(narrow.rosterOpen).toBe("false");

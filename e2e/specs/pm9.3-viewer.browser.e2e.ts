@@ -307,11 +307,18 @@ async function open(options: Parameters<typeof answers>[0] = {}) {
 
 /** A header destination, by its visible name. */
 async function navigate(names: readonly string[]) {
-  await browser.execute((labels: readonly string[]) => {
-    [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
-      .find((button) => labels.includes(button.textContent ?? ""))
-      ?.click();
+  const found = await browser.execute((labels: readonly string[]) => {
+    const target = [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
+      .find((button) => labels.includes(button.textContent ?? ""));
+    target?.click();
+    return target !== undefined;
   }, names);
+  // Project is the header menu's first item, not a tab (rebuild spec 1.1).
+  if (!found) {
+    await browser.$("[data-project-menu]").click();
+    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
+    await browser.$('[data-project-menu-item="surface"]').click();
+  }
 }
 
 function row(index: number) {

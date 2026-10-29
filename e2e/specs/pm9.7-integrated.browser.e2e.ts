@@ -47,11 +47,18 @@ async function frames() {
 }
 
 async function navigate(name: string) {
-  await browser.execute((label: string) => {
-    [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
-      .find((button) => (button.textContent ?? "").trim() === label)
-      ?.click();
+  const found = await browser.execute((label: string) => {
+    const target = [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
+      .find((button) => (button.textContent ?? "").trim() === label);
+    target?.click();
+    return target !== undefined;
   }, name);
+  // Project is the header menu's first item, not a tab (rebuild spec 1.1).
+  if (!found) {
+    await browser.$("[data-project-menu]").click();
+    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
+    await browser.$('[data-project-menu-item="surface"]').click();
+  }
   await frames();
 }
 

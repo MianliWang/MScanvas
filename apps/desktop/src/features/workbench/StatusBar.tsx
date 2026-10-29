@@ -101,7 +101,7 @@ export function WorkbenchStatusBar({ backend, items, busy, dropStatus, onNavigat
       id={conversionItem && item.id === "conversionActivity" ? STATUS_BUSY_ID : undefined}
       data-shell-context={item.id} title={item.text} onClick={() => go(item.target)}>
       <span className="status-item-text">{item.text}</span>
-      {item.unsaved === true ? <span className="status-tag">{t("statusUnsaved")}</span> : null}
+      {item.unsaved === true ? <>{" "}<span className="status-tag">{t("statusUnsaved")}</span></> : null}
     </Button>)}
     {busy === null || conversionItem ? null
       : <span id={STATUS_BUSY_ID} className="status-busy" data-status-busy="">

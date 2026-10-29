@@ -167,7 +167,7 @@ describe("provenance in the application shell", () => {
     expect(within(inspector()).getByText(en.provenanceKindInput)).toBeTruthy();
   });
 
-  it("folds the contextual region away in one column rather than shrinking it", async () => {
+  it("opens the contextual region as a drawer in one column rather than shrinking it", async () => {
     renderShell({ constrained: true, roomy: false });
     await openProjectSurface();
     await screen.findByText(en.projectReferences);
@@ -177,11 +177,12 @@ describe("provenance in the application shell", () => {
     expect(inspector().hidden).toBe(true);
     await press(screen.getByRole("button", { name: en.inspectorToggle }));
 
-    // Opened, the region takes the column and the project list yields it --
-    // the existing one-column folding, not a new layout.
+    // Opened, the region is a drawer over the project list, which stays in
+    // place behind it and takes no input until the drawer folds.
     await waitFor(() => expect(inspector().hidden).toBe(false));
     expect(within(inspector()).getByText(en.provenanceKindInput)).toBeTruthy();
-    expect(document.querySelector("#workbench-project")?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector("#workbench-project")?.hasAttribute("hidden")).toBe(false);
+    expect(document.querySelector("#workbench-project")).toHaveAttribute("inert");
   });
 
   it("navigates between related objects without asking the backend for anything", async () => {

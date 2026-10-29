@@ -153,11 +153,18 @@ async function activate(id: string) {
 
 /** A header destination, found by its visible name as M9.1 finds it. */
 async function navigate(names: readonly string[]) {
-  await browser.execute((labels: readonly string[]) => {
-    [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
-      .find((button) => labels.includes(button.textContent ?? ""))
-      ?.click();
+  const found = await browser.execute((labels: readonly string[]) => {
+    const target = [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
+      .find((button) => labels.includes(button.textContent ?? ""));
+    target?.click();
+    return target !== undefined;
   }, names);
+  // Project is the header menu's first item, not a tab (rebuild spec 1.1).
+  if (!found) {
+    await browser.$("[data-project-menu]").click();
+    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
+    await browser.$('[data-project-menu-item="surface"]').click();
+  }
 }
 
 /** Home, found by its place rather than its label, so it serves either locale. */

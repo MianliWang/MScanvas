@@ -386,11 +386,18 @@ async function pressByKeyboard(scope: string, name: string) {
 }
 
 async function navigate(label: string) {
-  await browser.execute((name: string) => {
-    [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
-      .find((button) => (button.textContent ?? "") === name)
-      ?.click();
+  const found = await browser.execute((name: string) => {
+    const target = [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
+      .find((button) => (button.textContent ?? "") === name);
+    target?.click();
+    return target !== undefined;
   }, label);
+  // Project is the header menu's first item, not a tab (rebuild spec 1.1).
+  if (!found) {
+    await browser.$("[data-project-menu]").click();
+    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
+    await browser.$('[data-project-menu-item="surface"]').click();
+  }
   await frames();
 }
 

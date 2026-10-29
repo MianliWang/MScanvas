@@ -144,9 +144,11 @@
 .group-name-dialog input { width: 100%; min-height: 36px; border: 1px solid var(--color-border-strong); border-radius: 6px; padding: 6px 8px; }
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 /* The evidence grid (spec 3.1): identity, chromatogram, then the scan list
-   beside the spectrum. The plots take whatever height is left. */
+   beside the spectrum. The plots take whatever height is left; below 240 px
+   the lower row stops giving way and the evidence scrolls instead, so a tall
+   chromatogram never squeezes the spectrum and the scan list to a sliver. */
 .workbench-shell .viewer-column { flex: 1 1 auto; min-height: 0; }
-.workbench-shell .viewer-stack { display: grid; flex: 1 1 auto; grid-template-rows: 36px auto minmax(0, 1fr); gap: 8px; min-height: 0; overflow: visible; }
+.workbench-shell .viewer-stack { display: grid; flex: 1 1 auto; grid-template-rows: 36px auto minmax(240px, 1fr); gap: 8px; min-height: 0; overflow: visible; }
 .viewer-identity { display: flex; min-width: 0; align-items: baseline; gap: 12px; padding: 0 2px; }
 .viewer-identity-name { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-primary); font-size: 15px; font-weight: 650; line-height: 36px; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-identity-facts { flex: 0 1000 auto; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
