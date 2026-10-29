@@ -81,7 +81,11 @@ changes may merge again, each with the owner's approval as before.
     known to lose data still blocked. This reverses the evidence-bound catalog
     rule for that advanced set and needs its own ADR, a general filter chain in
     place of the nine fixed rows, and a capture of the full msconvert help text
-    (a ProteoWizard hold release the owner grants);
+    (a ProteoWizard hold release the owner grants). The help was captured
+    later that day ([capture](../spikes/MSCONVERT_HELP_CAPTURE.md),
+    [option inventory](../spikes/MSCONVERT_OPTION_INVENTORY.md)), and the ADR
+    is [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+    proposed;
   - **frontend:** the owner is not satisfied with either the execution or the
     scope of the current interface; the target is to be defined with the
     owner before a redesign;
@@ -112,7 +116,7 @@ changes may merge again, each with the owner's approval as before.
   calendar (section 4), so each phase asks its open questions once.
 - **ADR numbers are pre-assigned** to avoid the four features racing for 0051:
   0051 folder/drop vendor ingestion, 0052 per-output adoption, 0053 PNG text
-  metadata, 0054 spreadsheet CSV.
+  metadata, 0054 spreadsheet CSV. 0055 is msconvert parity (option C).
 
 ## 4. Pace and estimating basis
 
@@ -419,8 +423,8 @@ None can be delivered by engineering alone; each waits for one input.
 
 - The frontend's target: what "meets requirements" means in execution and
   scope, before any redesign.
-- The capture of the full msconvert help text for option C (a ProteoWizard
-  hold release).
+- Acceptance of [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)
+  (option C). The help text it needed was captured on 2026-10-28.
 - Whether to write a project-owned mzML reader in place of `msaccess` for
   viewing (a written decision and dependency approval).
 - The per-feature questions that rendered QA raises inside each slice.
