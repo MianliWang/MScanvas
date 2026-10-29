@@ -113,8 +113,24 @@ already drifted — it covered four of the boundary's five globals and none of t
 others — so a build with `e2e` on but the boundary script omitted would have
 passed it.
 
+The executable embeds the frontend compressed, so the same needles, plus the
+development origin as `127.0.0.1:1420` and `localhost:1420`, are also searched in
+the shipped `apps/desktop/dist`, and only after its files match the candidate
+manifest's `frontendInputs` hash for hash: a frontend rebuilt after the candidate
+(the release workflow once did that through `pnpm e2e:build`) is refused rather
+than inspected in the shipped one's place. The manifest must record
+`pnpm tauri build` and the inspected executable's SHA-256, so a re-derived
+manifest, which re-measures whatever `dist` holds, cannot vouch for it. The QA
+root's three refusal codes are keys of the preference-error message table
+(`storageMessages.ts`) in every build; an occurrence is exempt only in that
+form, key after `{`, `,`, whitespace or a quote and followed by the table's own
+value, at most once per key across the frontend, and anywhere else it fails the
+run. Synthetic controls show each needle is flagged when planted and the
+exemption holds only in context. The production CSP is checked for both
+development origins.
+
 Absence is the claim, so the scanner first proves it can find each marker, using
-a QA build from an earlier milestone as a positive control. That control's
+a QA build as a positive control. That control's
 identity is recorded with the result, because "detectability proven" means
 nothing without knowing what proved it, and a marker the control cannot confirm
 now **fails** the run rather than warning: a needle nobody can find establishes
