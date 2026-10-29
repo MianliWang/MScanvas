@@ -1,6 +1,9 @@
 # ADR 0056 — A project-owned mzML reader for viewing
 
-Status: **Proposed.** Date: 2026-10-28.
+Status: **Accepted** by the owner on 2026-10-29, including the dependency
+request: `base64 0.22.1` and `flate2 1.1.10` become direct dependencies of the
+product crate (both already in `Cargo.lock`, so the lock gains no package).
+Proposed 2026-10-28.
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
