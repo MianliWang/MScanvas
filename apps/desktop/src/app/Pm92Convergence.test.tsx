@@ -153,7 +153,7 @@ describe("PM9.2: each surface says what it is, and offers only its own next step
     await screen.findByText(en.projectNone);
     // With no project open, New project is the one owned next step (PM9.7 F2,
     // which replaced L1's New/Open equality); Open project stays beside it.
-    const primary = document.querySelectorAll("#workbench-project .primary-button");
+    const primary = document.querySelectorAll("#workbench-project .ui-button--primary");
     expect(primary).toHaveLength(1);
     expect(primary[0]).toHaveTextContent(en.projectNew);
   });

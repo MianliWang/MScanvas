@@ -339,6 +339,8 @@ const NONE_HINT_ID = "project-none-heading";
 const BUSY_ID = "project-busy-line";
 /** Why Save waits for a project that has never been saved: Save As first. */
 const SAVE_LOCATION_ID = "project-save-location";
+/** Why Check linked files and Capture file facts wait: nothing is referenced. */
+const NO_REFERENCES_ID = "project-no-references";
 
 export function ProjectPanel({
   session,
@@ -918,7 +920,7 @@ export function ProjectPanel({
                   size="sm"
                   icon={<Icon name="refresh" />}
                   refused={working || state.inputs.length === 0}
-                  reasonId={working ? BUSY_ID : undefined}
+                  reasonId={working ? BUSY_ID : state.inputs.length === 0 ? NO_REFERENCES_ID : undefined}
                   data-project-check=""
                   onClick={() => void session.checkLinks()}
                 >
@@ -928,7 +930,7 @@ export function ProjectPanel({
                   variant={capturePrimary ? "primary" : "secondary"}
                   size="sm"
                   refused={working || selected.length === 0}
-                  reasonId={working ? BUSY_ID : undefined}
+                  reasonId={working ? BUSY_ID : state.inputs.length === 0 ? NO_REFERENCES_ID : undefined}
                   aria-describedby={state.inputs.length > 0 && selected.length === 0 ? "project-capture-reason" : undefined}
                   title={selected.length === 0 ? t("projectCaptureNeedsSelection") : undefined}
                   data-project-capture=""
@@ -940,7 +942,7 @@ export function ProjectPanel({
             </div>
 
             {state.inputs.length === 0 ? (
-              <p className="project-empty">{t("projectNoReferences")}</p>
+              <p id={NO_REFERENCES_ID} className="project-empty">{t("projectNoReferences")}</p>
             ) : (
               <ul className="project-list">
                 {state.inputs.map((input) => {

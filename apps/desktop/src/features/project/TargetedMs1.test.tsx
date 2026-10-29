@@ -915,7 +915,10 @@ describe("a stored result reused (M9.2)", () => {
     expect(document.querySelector("[data-targeted-figure-loading]")).toBeNull();
     // Open as the user left it, for the next target too.
     expect(query("[data-targeted-figure-export]").hidden).toBe(false);
-    expect(button("svg").disabled).toBe(true);
+    // Refused, not disabled: focusable, and its reason is the size problem.
+    expect(button("svg").disabled).toBe(false);
+    expect(button("svg").getAttribute("aria-disabled")).toBe("true");
+    expect(described(button("svg"))).toEqual([en.invalidHeight]);
   });
 
   it("says a figure output only under the target it was for", async () => {
@@ -1065,13 +1068,20 @@ describe("a stored result reused (M9.2)", () => {
     const api = await inspectResult();
     await chooseDetected();
     await type(query(`[data-targeted-figure-export] input[id$="-pngDpi"]`), "high");
-    expect(button("png").disabled).toBe(true);
-    expect(button("svg").disabled).toBe(false);
+    // Refused, focusable, each pointing at the problem that closes it.
+    expect(button("png").getAttribute("aria-disabled")).toBe("true");
+    expect(button("png").disabled).toBe(false);
+    expect(described(button("png"))).toEqual([en.invalidDpi]);
+    expect(button("svg").getAttribute("aria-disabled")).toBeNull();
+    const pngCalls = vi.mocked(api.exportTargetedMs1Figure).mock.calls.length;
+    await press(button("png"));
+    expect(vi.mocked(api.exportTargetedMs1Figure).mock.calls.length).toBe(pngCalls);
 
     const drawn = vi.mocked(api.previewTargetedMs1Figure).mock.calls.length;
     await type(query(`[data-targeted-figure-export] input[id$="-heightPx"]`), "");
     for (const operation of ["svg", "png"]) {
-      expect(button(operation).disabled, operation).toBe(true);
+      expect(button(operation).getAttribute("aria-disabled"), operation).toBe("true");
+      expect(described(button(operation)), operation).toEqual([en.invalidHeight]);
     }
     // The last drawing stays while the size is being typed; nothing new is asked.
     expect(vi.mocked(api.previewTargetedMs1Figure).mock.calls.length).toBe(drawn);

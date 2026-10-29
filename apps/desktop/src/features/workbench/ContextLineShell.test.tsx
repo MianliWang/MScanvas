@@ -153,7 +153,7 @@ describe("the context line in the application shell", () => {
 
 /** The filled primaries on screen anywhere in the shell, by their text. */
 function shownPrimaries(): (string | null)[] {
-  return [...document.querySelectorAll(".workbench-shell .primary-button")]
+  return [...document.querySelectorAll(".workbench-shell :is(.primary-button, .ui-button--primary)")]
     .filter((button) => button.closest("[hidden]") === null)
     .map((button) => button.textContent);
 }

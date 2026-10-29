@@ -31,7 +31,7 @@ import {
   type FigureSettings,
   type PreviewError,
 } from "../mzml-preview/contracts";
-import { FigureSettingsFields } from "../mzml-preview/FigureSettingsFields";
+import { dpiProblemId, FigureSettingsFields, renderProblemId } from "../mzml-preview/FigureSettingsFields";
 import { validateFigureDraft, wholeCount } from "../mzml-preview/figureSettingsValidation";
 import { formatCount, formatIntensity, formatMz } from "../mzml-preview/format";
 import { ownedErrorDetail } from "../mzml-preview/ownedErrorMessages";
@@ -1838,6 +1838,7 @@ export function TargetedMs1Report({
     evidence !== null && evidence.key === evidenceKey ? evidence.value : { status: "loading" };
   const settings = figureSettings(draft);
   const validation = validateFigureDraft(draft);
+  const figurePrefix = `targeted-${ids}`;
   const running = output.state.status === "running";
   /** Whether this control started the output that is running. */
   const initiated = (operation: Operation, target: string | null) =>
@@ -2163,34 +2164,43 @@ export function TargetedMs1Report({
                       regionProps={{ className: "targeted-export-region", "data-targeted-figure-export": "" }}
                     >
                       <FigureSettingsFields
-                        idPrefix={`targeted-${ids}`}
+                        idPrefix={figurePrefix}
                         settings={draft}
                         validation={validation}
                         onFigureSetting={(field, value) => editFigure({ ...draft, [field]: value })}
                         onFigureTheme={(theme) => editFigure({ ...draft, theme })}
                       />
                       <div className="targeted-output-actions">
-                        {(["svg", "png"] as const).map((operation) => (
-                          <Button
-                            key={operation}
-                            variant="secondary"
-                            size="sm"
-                            icon={<Icon name="download" />}
-                            refused={running}
-                            disabled={
-                              (running && !initiated(operation, selectedRow.targetId)) ||
-                              validation.render !== null ||
-                              (operation === "png" && validation.dpi !== null)
-                            }
-                            data-targeted-export={operation}
-                            onClick={() => exportFigure(selectedRow.targetId, operation)}
-                          >
-                            {t(
-                              initiated(operation, selectedRow.targetId) ? "viewerExporting" : "viewerExportFormat",
-                              { name: operation.toUpperCase() },
-                            )}
-                          </Button>
-                        ))}
+                        {(["svg", "png"] as const).map((operation) => {
+                          // A size or resolution that is not a whole count
+                          // refuses the output, focusable, and points at the
+                          // field's own problem sentence.
+                          const problemId =
+                            validation.render !== null
+                              ? renderProblemId(figurePrefix)
+                              : operation === "png" && validation.dpi !== null
+                                ? dpiProblemId(figurePrefix)
+                                : null;
+                          return (
+                            <Button
+                              key={operation}
+                              variant="secondary"
+                              size="sm"
+                              icon={<Icon name="download" />}
+                              refused={running || problemId !== null}
+                              reasonId={problemId ?? undefined}
+                              // Frozen while another output's picker is out.
+                              disabled={running && !initiated(operation, selectedRow.targetId)}
+                              data-targeted-export={operation}
+                              onClick={() => exportFigure(selectedRow.targetId, operation)}
+                            >
+                              {t(
+                                initiated(operation, selectedRow.targetId) ? "viewerExporting" : "viewerExportFormat",
+                                { name: operation.toUpperCase() },
+                              )}
+                            </Button>
+                          );
+                        })}
                       </div>
                       {status("figure", selectedRow.targetId)}
                     </Disclosure>

@@ -785,8 +785,10 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(styles.shadow).toContain(styles.accent);
       expect(styles.shadow).toMatch(/\b0px 3px 0px\b/u);
       expect(styles.other).not.toBeNull();
+      // A step below the setup's heading. Since the v5.11 rebuild every panel
+      // title is in primary text (rebuild spec 1.3); the setup stays apart by
+      // its size and its accent bar.
       expect(styles.other!.fontSize).toBe("13px");
-      expect(styles.other!.color).not.toBe(styles.color);
 
       // O2: a run that left no result, then Show run with Details folded.
       await browser.execute(
