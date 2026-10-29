@@ -124,7 +124,7 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     expect(scoped).toEqual(["Stop queue", "Stop this file"]);
     // Named at the control, not in a legend somewhere else.
     expect(await browser.$("#conversion-cancel-item-scope").getText())
-      .toContain("Stop this file ends sample-2.raw and carries on with the rest of the queue.");
+      .toContain("Ends sample-2.raw; the rest of the queue continues.");
     // Nothing that would suspend the run or take a row out of the bound plan.
     for (const absent of ["Pause", "Resume", "Remove"]) {
       expect(await (await button(absent)).isExisting()).toBe(false);
@@ -176,7 +176,7 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     // Said in words, and it names who decided rather than reusing either
     // neighbouring state's sentence.
     expect(await browser.$(`${RUNNING} .conversion-queue-list > li:nth-child(3) .conversion-queue-status`).getText())
-      .toBe("Skipped — you chose not to convert this one");
+      .toBe("Skipped by you");
     // The row keeps its place and its name: this is an outcome, not a removal.
     expect(await browser.$$(`${RUNNING} .conversion-queue-list > li`).length).toBe(3);
     expect(await browser.$(`${RUNNING} .conversion-queue-list > li:nth-child(3)`).getText()).toContain("sample-3.raw");
@@ -214,7 +214,7 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     expect(states.slice(0, 3)).toEqual([
       "Converted",
       "Cancelled",
-      "Skipped — you chose not to convert this one",
+      "Skipped by you",
     ]);
     await capture("counts-partition-the-queue", PANEL);
   });

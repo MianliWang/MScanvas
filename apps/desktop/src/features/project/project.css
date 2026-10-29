@@ -60,13 +60,6 @@
   color: var(--color-text-primary);
 }
 
-.project-privacy {
-  margin: 4px 0 0;
-  max-width: 62ch;
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-}
-
 .project-actions {
   display: flex;
   flex-wrap: wrap;
@@ -122,12 +115,12 @@
   gap: 8px;
 }
 
-/* A refused action's reason, under the actions it belongs to (PM9 UI-24). */
+/* A refused action's reason, beside the action it belongs to (PM9 UI-24). */
 .project-action-reason {
-  margin: 4px 0 0;
+  margin: 0;
+  align-self: center;
   font-size: 12px;
   color: var(--color-text-secondary);
-  text-align: end;
 }
 
 .project-note,

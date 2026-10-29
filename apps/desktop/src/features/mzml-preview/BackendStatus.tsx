@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { joinSentences } from "../preferences/i18n";
 import { presentBackend, type BackendActionId } from "./backendPresentation";
 import type { BackendState } from "./usePreviewWorkspace";
 
@@ -207,9 +208,10 @@ export function BackendStatus({
    * The offline setup help.
    *
    * Reachable in every state, including the states with no reading and no
-   * installation at all, and it explains the three things a reader actually
-   * needs: that ProteoWizard is theirs to install, that a folder they choose
-   * lasts for this session only, and which control does what.
+   * installation at all. It holds only what no control says: that ProteoWizard
+   * is theirs to install, which folder to choose (the one holding
+   * msconvert.exe) and that it lasts for this session only, the support target
+   * and what needs a backend. The buttons name their own actions.
    */
   const help = (
     <details
@@ -228,11 +230,6 @@ export function BackendStatus({
       <summary>{t("backendHelpTitle")}</summary>
       <p>{t("backendHelpProvider")}</p>
       <p>{t("backendHelpSessionScope")}</p>
-      <ul>
-        <li>{t("backendHelpChoose")}</li>
-        <li>{t("backendHelpAutomatic")}</li>
-        <li>{t("backendHelpRecheck")}</li>
-      </ul>
       <p>{t("backendHelpTarget")}</p>
       <p>{t("backendHelpWithoutBackend")}</p>
     </details>
@@ -264,9 +261,9 @@ export function BackendStatus({
           build it names are announced as one thing rather than as three. */}
       <div role="status" className="backend-status-reading">
         <strong>{banner.title}</strong>
-        {banner.body.map((sentence) => (
-          <span key={sentence}>{sentence}</span>
-        ))}
+        {/* One span, joined as the locale joins sentences: separate spans get
+            the flex gap, which reads as a double space between Chinese ones. */}
+        {banner.body.length === 0 ? null : <span>{joinSentences(t, banner.body)}</span>}
         {named === null ? null : (
           <span data-backend-build="">
             {[
@@ -281,8 +278,9 @@ export function BackendStatus({
         )}
         {/* Said in the banner rather than left to the disabled controls alone.
             The picker's dialog closes before the probes run, and without this
-            the moment between reads as finished when it is not. */}
-        {busy ? <span data-backend-busy="">{t("backendCheckingInstallation")}</span> : null}
+            the moment between reads as finished when it is not. A banner whose
+            title already says it is checking does not say it twice. */}
+        {busy && banner.kind !== "checking" ? <span data-backend-busy="">{t("backendCheckingInstallation")}</span> : null}
         {/* Shown only where this build had no sentence of its own for the code,
             so it stays inspectable instead of being paraphrased away. */}
         {banner.code !== null && banner.kind === "requestFailed" ? (

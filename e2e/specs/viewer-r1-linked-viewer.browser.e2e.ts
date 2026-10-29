@@ -43,6 +43,7 @@ import {
   readout,
   revealRosterRow,
   revealThePlot,
+  selectTheSpectrum,
   selectedRowPosition,
   viewerReads,
   visibleDomain,
@@ -338,6 +339,22 @@ describe("the linked viewer, rendered", () => {
       // layout rect but no visible text is exactly what a clipped caption looks
       // like.
       await openTheViewer({ width: 960, height: 640, scans: SCANS });
+
+      // With nothing selected the readout is unseen by design, but it is still
+      // the plot's accessible description.
+      expect(
+        await browser.execute((css: string) => {
+          const node = document.querySelector(css);
+          return { idle: node?.hasAttribute("data-idle") ?? false, text: node?.textContent ?? "" };
+        }, READOUT),
+      ).toEqual({ idle: true, text: "No scan selected." });
+
+      // So the readout is read back with a scan selected, its longest line.
+      await selectTheSpectrum();
+      await browser.waitUntil(async () => (await readout()).startsWith("Selected index 0,"), {
+        timeout: 10_000,
+        timeoutMsg: "the plot never reported the selected scan",
+      });
 
       const panel = await boxOf(CHROMATOGRAM);
       for (const caption of [AXIS_CAPTION, READOUT, RANGE]) {
@@ -1536,7 +1553,9 @@ describe("the linked viewer, rendered", () => {
       // owner tests with them: Chromatogram.test.tsx "refuses a table the
       // preview did not load whole, and says why" and SpectrumTable.test.tsx
       // "does not present the end of a truncated prefix as the end of the run".
-      expect(await browser.$(CHROMATOGRAM).getText()).toContain("loaded table is incomplete");
+      expect(await browser.$(CHROMATOGRAM).getText()).toContain(
+        "Only part of the scan table is loaded; TIC/BPC need the complete table.",
+      );
 
       // The table still works, and says outright that its last row is not the
       // end of the run.

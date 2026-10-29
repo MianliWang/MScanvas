@@ -37,9 +37,9 @@ function texts(facts: ShellContextFacts, t = en) {
 }
 
 describe("the shell's context line", () => {
-  it("says that no project is open, and nothing else, when there is nothing to say", () => {
-    expect(texts(NOTHING)).toEqual([["project", "project", "Project: none open"]]);
-    expect(texts(NOTHING, zh)).toEqual([["project", "project", "项目：未打开"]]);
+  it("says nothing when there is nothing to say, not even that no project is open", () => {
+    expect(texts(NOTHING)).toEqual([]);
+    expect(texts(NOTHING, zh)).toEqual([]);
   });
 
   it("names the open project, and says so when it has unsaved changes", () => {
@@ -85,10 +85,10 @@ describe("the shell's context line", () => {
   });
 
   it("describes the conversion scope the Conversion surface resolves, not a count of its own", () => {
-    expect(texts({ ...NOTHING, conversionScope: { scope: "selected", eligible: 0 } })).toContainEqual([
+    expect(texts({ ...NOTHING, conversionScope: { scope: "selected", eligible: 3 } })).toContainEqual([
       "conversionScope",
       "conversion",
-      `Conversion: ${en("m74CnvSelected")} · 0 eligible`,
+      `Conversion: ${en("m74CnvSelected")} · 3 eligible`,
     ]);
     expect(texts({ ...NOTHING, conversionScope: { scope: "all", eligible: 12 } }, zh)).toContainEqual([
       "conversionScope",
@@ -108,6 +108,10 @@ describe("the shell's context line", () => {
       "conversion",
       text,
     ]);
+  });
+
+  it("says nothing about a scope with nothing eligible", () => {
+    expect(texts({ ...NOTHING, conversionScope: { scope: "selected", eligible: 0 } })).toEqual([]);
   });
 
   it("says nothing about an idle conversion lane", () => {

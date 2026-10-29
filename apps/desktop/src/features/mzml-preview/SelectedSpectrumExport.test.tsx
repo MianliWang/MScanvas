@@ -397,7 +397,7 @@ describe("selected spectrum export affordance", () => {
       loaded(),
       { status: "idle" },
       { widthPx: "0", heightPx: "", pngDpi: "12.5", theme: "light" },
-      "Width, Height must be a whole number of at least 1.",
+      "Width and Height must be whole numbers of at least 1.",
       "PNG DPI must be a whole number of at least 1.",
     );
 
@@ -416,7 +416,7 @@ describe("selected spectrum export affordance", () => {
     const width = screen.getByRole("textbox", { name: /^Width/u });
     expect(width).toHaveAttribute("aria-invalid", "true");
     expect(width).toHaveAccessibleDescription(
-      "Width, Height must be a whole number of at least 1.",
+      "Width and Height must be whole numbers of at least 1.",
     );
     const dpi = screen.getByRole("textbox", { name: /^PNG DPI/u });
     expect(dpi).toHaveAttribute("aria-invalid", "true");
@@ -533,7 +533,7 @@ describe("selected spectrum export affordance", () => {
     }
     const running = screen.getByRole("button", { name: "Copying plot…" });
     expect(running).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("Drawing the plot for the clipboard.");
+    expect(screen.getByRole("status")).toHaveTextContent("Copying plot…");
   });
 
   it("closes every action while a PNG is being written and says which", () => {
@@ -623,7 +623,7 @@ describe("the selected spectrum's range chooser", () => {
     withRange(null);
 
     const group = screen.getByRole("radiogroup", {
-      name: "How much of the spectrum to export",
+      name: "Spectrum range to export",
     });
     expect(group).toBeInTheDocument();
     const full = screen.getByRole("radio", { name: "Full spectrum" });
@@ -640,18 +640,18 @@ describe("the selected spectrum's range chooser", () => {
     // rather than filled in with the spectrum's own bounds -- which would read
     // as a choice the user had made.
     expect(
-      screen.getByText("Current range is the whole spectrum until a range is committed."),
+      screen.getByText("Current range: full spectrum. Selections being drawn or pending are not exported."),
     ).toBeInTheDocument();
   });
 
   it("names the exact committed bounds, and says a gesture is not exported", () => {
     withRange(mzDomain(105.25, 130.5));
 
-    const note = screen.getByText(/Current range is m\/z/u);
-    expect(note).toHaveTextContent("Current range is m/z 105.25 to 130.5.");
+    const note = screen.getByText(/Current range: m\/z/u);
+    expect(note).toHaveTextContent("Current range: m/z 105.25 to 130.5.");
     // The half a reader mid-drag needs: what is on screen right now is not what
     // pressing a button would write.
-    expect(note).toHaveTextContent("Drawing and pending selections are not exported.");
+    expect(note).toHaveTextContent("Selections being drawn or pending are not exported.");
   });
 
   it("reports a choice without taking focus away from it", () => {
@@ -674,12 +674,12 @@ describe("the selected spectrum's range chooser", () => {
     // other case in this file is written at.
     renderPanel(loaded());
 
-    expect(screen.queryByRole("radiogroup", { name: /How much of the spectrum/u })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: /Spectrum range to export/u })).toBeNull();
     expect(screen.queryByRole("radio", { name: "Current range" })).toBeNull();
     // Said honestly, and as a fact about drawability rather than about the
     // source: the data exports beside it are exactly as available as ever.
     expect(
-      screen.getByText(/This spectrum has no m\/z viewport, so there is no current range/u),
+      screen.getByText(/No m\/z range: exports cover the full spectrum\./u),
     ).toBeInTheDocument();
     for (const button of exportButtons()) {
       expect(button).toBeEnabled();
@@ -715,8 +715,8 @@ describe("the selected spectrum's range chooser", () => {
     );
 
     fireEvent.click(screen.getByText("Export spectrum"));
-    expect(screen.getByText(/This spectrum has no peaks, so there is no range/u)).toBeInTheDocument();
-    expect(screen.queryByText(/no m\/z viewport/u)).toBeNull();
+    expect(screen.getByText(/No peaks: exports cover the full spectrum\./u)).toBeInTheDocument();
+    expect(screen.queryByText(/No m\/z range/u)).toBeNull();
     expect(screen.queryByRole("radio", { name: "Current range" })).toBeNull();
     // And its full-source data exports are exactly as available as ever.
     for (const label of ["Export CSV…", "Export TSV…"]) {
@@ -728,9 +728,9 @@ describe("the selected spectrum's range chooser", () => {
     renderPanel(loaded());
 
     expect(
-      screen.getByText(/This spectrum has no m\/z viewport, so there is no current range/u),
+      screen.getByText(/No m\/z range: exports cover the full spectrum\./u),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/no peaks/u)).toBeNull();
+    expect(screen.queryByText(/No peaks/u)).toBeNull();
   });
 
   it("keeps the choice open while the one export lane is busy", () => {
@@ -772,7 +772,7 @@ describe("the selected spectrum's range chooser", () => {
     // One reading. The note is ordinary text a traversal meets once; the export
     // status region beside it is the one live region this panel has, and it is
     // empty until an export has something to report.
-    expect(screen.getAllByText(/Current range is m\/z/u)).toHaveLength(1);
+    expect(screen.getAllByText(/Current range: m\/z/u)).toHaveLength(1);
     expect(screen.getByRole("status")).toHaveTextContent("");
   });
 });
@@ -916,7 +916,7 @@ describe("what a finished range export is allowed to claim", () => {
     expect(screen.getByRole("status")).toHaveTextContent("m/z 105.25 to 130.5");
     // And the *note* did follow the viewport, which is the difference: it
     // describes what the next export would cover.
-    expect(screen.getByText(/Current range is m\/z/u)).toHaveTextContent(
+    expect(screen.getByText(/Current range: m\/z/u)).toHaveTextContent(
       "m/z 900 to 950",
     );
   });

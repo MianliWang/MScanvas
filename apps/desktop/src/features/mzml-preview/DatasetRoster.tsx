@@ -65,6 +65,8 @@ export interface DatasetRosterProps {
   readonly folderBusy: boolean;
   /** Whether a native Explorer drop is still being inspected. */
   readonly dropBusy: boolean;
+  /** Whether files can be dropped onto the window, so the empty list may say so. */
+  readonly dropAvailable?: boolean;
   /** Whether an explicit preview may be started right now. */
   readonly canPreview: boolean;
   /**
@@ -152,6 +154,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   canAddFolder,
   folderBusy,
   dropBusy,
+  dropAvailable = false,
   canPreview,
   canMutate,
   canRemove,
@@ -1060,13 +1063,13 @@ export const DatasetRoster = memo(function DatasetRoster({
           if (keyboardOn.current !== null) dispatch({ type: "focusChanged", handle: keyboardOn.current });
         }}
         empty={rowCount > 0 && visible.length === 0 ? <div className="empty-state roster-empty">
-          <strong>{t("rosterNoMatches")}</strong><span>{t("rosterNoMatchesHelp")}</span>
+          <strong>{t("rosterNoMatches")}</strong>
           {state.query ? <button className="secondary-button" onClick={clearSearch} type="button">{t("clearSearch")}</button> : null}
         </div> : rowCount === 0 ? <div className="empty-state roster-empty">
           {load.status === "failed" ? <><strong>{t("rosterFailed")}</strong><span>{ownedErrorMessage(load.error, t)}</span>
             <button className="secondary-button" disabled={!canReloadRoster} onClick={onReloadRoster} type="button">{t("rosterRetry")}</button></> :
-            load.status === "loading" ? <><strong>{t("rosterLoading")}</strong><span>{t("rosterLoadingHelp")}</span></> :
-              <><strong>{t("rosterEmpty")}</strong><span>{t("rosterEmptyHelp")}</span></>}
+            load.status === "loading" ? <strong>{t("rosterLoading")}</strong> :
+              <><strong>{t("rosterEmpty")}</strong>{dropAvailable ? <span>{t("rosterEmptyHelp")}</span> : null}</>}
         </div> : null} />
 
     </section>

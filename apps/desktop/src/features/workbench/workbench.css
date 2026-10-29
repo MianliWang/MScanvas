@@ -28,9 +28,10 @@
    Unwrapped text on this line would count at full length there and widen the
    whole shell past a narrow window, so the bar's width comes from the header
    (`contain: inline-size`). */
-.workbench-context-bar { display: flex; flex-basis: 100%; flex-wrap: nowrap; align-items: center; gap: 2px 16px; min-width: 0; margin: 4px 0 0; contain: inline-size; }
+.workbench-context-bar { display: flex; flex-basis: 100%; flex-wrap: nowrap; align-items: center; gap: 2px 16px; min-width: 0; min-height: 32px; margin: 4px 0 0; contain: inline-size; }
 .workbench-context-bar .workspace-drop-hint { flex: none; }
-.shell-backend-toggle { flex: none; min-height: 32px; padding: 2px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.3; white-space: nowrap; }
+/* Held at the line's end, so context items arriving or leaving do not move it. */
+.shell-backend-toggle { flex: none; margin-left: auto; min-height: 32px; padding: 2px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.3; white-space: nowrap; }
 .shell-backend-toggle:hover { color: var(--color-text-primary); }
 .shell-backend-toggle[aria-expanded="true"] { background: var(--color-surface-selected); }
 /* Clips only past every floor, which the widths the line is tested at never reach. */
@@ -94,6 +95,7 @@
    with a no-break space, and `keep-all` keeps CJK words whole, so the line
    breaks only at the separators (PM9 UI-16). */
 .roster-selection-context { margin: 0; padding: 4px 12px 8px; font-size: 12px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; word-break: keep-all; }
+.roster-selection-idle { visibility: hidden; }
 .grouped-roster { flex: 1 1 auto; min-height: 80px; padding: 0 4px 8px; margin: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
 .roster-group-header { display: grid; grid-template-columns: 24px minmax(0, 1fr) 28px; align-items: center; min-height: 40px; padding: 2px 4px; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-primary); }
 .group-disclosure-cell { min-width: 0; }
@@ -206,6 +208,8 @@
 .plot-range-form p { grid-column: 1 / -1; margin: 0; max-width: 64ch; }
 .plot-gesture-help p, .plot-source-details p { margin: 4px 0 8px; line-height: 1.45; max-width: 85ch; }
 .plot-range-editor[open], .plot-gesture-help[open] { flex-basis: 100%; }
+/* At the line's end whether or not the range line beside it is printed. */
+.plot-range-actions > .plot-range-editor { margin-left: auto; }
 .chromatogram-context { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; }
 .chromatogram-context > .chromatogram-axis-caption { flex: 1 1 auto; }
 .chromatogram-context > details[open] { flex-basis: 100%; }

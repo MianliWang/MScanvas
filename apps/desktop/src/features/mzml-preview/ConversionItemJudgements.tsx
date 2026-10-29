@@ -46,7 +46,7 @@ import { formatByteLength, formatCount } from "./format";
 const TERMINATION_LABEL = { exited: "cnvTermExited", cancelled: "cnvTermStopped", not_started: "cnvTermNever" } as const;
 const STAGED_PHASE_LABEL = { provider_not_invoked: "cnvBeforeProvider", provider_returned: "cnvProviderReturned", output_refused: "cnvOutputRefusedAt", publication_settled: "cnvPublicationSettled" } as const;
 const MEMBER_STATE_LABEL = { finalized: "cnvMemberFinalized", validated_not_published: "cnvMemberValidated", rejected: "cnvMemberRejected", not_published: "cnvMemberUnpublished" } as const;
-const ADOPTION_REFUSAL_LABEL = { output_missing: "cnvAdoptionReasonMissing", output_changed: "cnvAdoptionReasonChanged", output_unreadable: "cnvAdoptionReasonUnreadable", output_not_mzml: "cnvAdoptionReasonNotMzml", workspace_full: "cnvAdoptionReasonFull" } as const;
+export const ADOPTION_REFUSAL_LABEL = { output_missing: "cnvAdoptionReasonMissing", output_changed: "cnvAdoptionReasonChanged", output_unreadable: "cnvAdoptionReasonUnreadable", output_not_mzml: "cnvAdoptionReasonNotMzml", workspace_full: "cnvAdoptionReasonFull" } as const;
 
 export function processSentence(process: ConversionProcessOutcome, t: UiMessage): string {
   switch (process.kind) {

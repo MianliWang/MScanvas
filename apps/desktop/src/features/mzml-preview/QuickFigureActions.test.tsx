@@ -32,4 +32,13 @@ describe("quick scientific figure actions", () => {
     expect(button).toHaveAccessibleName(UI_RESOURCES.en.figureQuickPng);
     expect(button).toHaveFocus();
   });
+
+  it("names the plot in the group and prints only what the panel heading does not say", () => {
+    render(<SessionPreferencesProvider><QuickFigureActions busy={false} figureUnavailable={false} pngUnavailable={false}
+      context={["Spectrum 2", "Current range", "960 × 600 px"]} onPreview={() => {}} onPng={() => {}} onCopy={() => {}} /></SessionPreferencesProvider>);
+    expect(screen.getByRole("group", { name: "Spectrum 2 · Current range · 960 × 600 px" })).toBeVisible();
+    const caption = document.querySelector(".figure-quick-context")?.textContent ?? "";
+    expect(caption).not.toContain("Spectrum 2");
+    expect(caption.replace(/\s+/gu, " ")).toBe("Current range · 960 × 600 px");
+  });
 });

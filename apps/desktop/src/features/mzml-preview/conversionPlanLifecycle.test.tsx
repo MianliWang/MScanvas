@@ -506,7 +506,7 @@ describe("the plan the panel is showing", () => {
   });
 
   it("withdraws the re-ask when the failure stops being about the question asked", async () => {
-    // A control offered beside "Working out what this conversion would do…"
+    // A control offered beside "Describing this conversion…"
     // would be offering a reader a re-ask of a question they have left --
     // and pressing it would ask for exactly the thing they moved away from.
     const plans = controlledPlans();
@@ -551,9 +551,13 @@ describe("the plan the panel is showing", () => {
     await mount({ conversionPlan: plans.conversionPlan });
     const panel = await screen.findByRole("region", { name: "Convert" });
 
+    // Said once, in the notice Convert points at.
     await waitFor(() => {
-      expect(within(panel).getByText(/Working out what this conversion would do/)).toBeVisible();
+      expect(within(panel).getByText("Describing this conversion…")).toBeVisible();
     });
+    expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveAccessibleDescription(
+      expect.stringContaining("Describing this conversion…"),
+    );
     expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).queryByRole("button", { name: "Describe again" })).toBeNull();
 
@@ -570,10 +574,10 @@ describe("the plan the panel is showing", () => {
     });
     // A refused plan reads as failed, not as one being reread -- and it offers
     // the reader the one control that changes it.
-    expect(within(panel).queryByText(/Working out what this conversion would do/)).toBeNull();
+    expect(within(panel).queryByText("Describing this conversion…")).toBeNull();
     expect(within(panel).getByRole("button", { name: "Describe again" })).toBeEnabled();
     expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveAccessibleDescription(
-      expect.stringContaining("could not work out what this conversion would do"),
+      expect.stringContaining("This conversion could not be described."),
     );
   });
 

@@ -75,13 +75,10 @@ const TRACES: readonly {
  * drift -- which is how `Reset range` came to be the only one of them telling
  * the truth about being inert.
  */
-const VIEWPORT_CONTROLS: readonly {
-  readonly action: ViewportAction;
-  readonly label: string;
-}[] = [
-  { action: "zoom-in", label: "Zoom in" },
-  { action: "zoom-out", label: "Zoom out" },
-  { action: "reset", label: "Reset range" },
+const VIEWPORT_CONTROLS: readonly { readonly action: ViewportAction }[] = [
+  { action: "zoom-in" },
+  { action: "zoom-out" },
+  { action: "reset" },
 ];
 
 export interface ChromatogramProps {
@@ -262,7 +259,7 @@ export const Chromatogram = memo(function Chromatogram({
         ) : (
           <div className="empty-state">
             <strong>{t(model.reason === "no-spectra" ? "viewerNoSpectra" : "viewerTicUnavailable")}</strong>
-            <span>{t(UNAVAILABLE[model.reason])}</span>
+            {model.reason === "no-spectra" ? null : <span>{t(UNAVAILABLE[model.reason])}</span>}
           </div>
         )}
       </div>
@@ -275,12 +272,13 @@ export const Chromatogram = memo(function Chromatogram({
  *
  * Each names what happened rather than that something did. A truncation in
  * particular has to be readable as a property of this preview, because the scan
- * table beside it is on screen and does show rows.
+ * table beside it is on screen and does show rows. A run with no spectra needs
+ * no second sentence: its heading already says so.
  */
 const UNAVAILABLE = {
-  truncated: "viewerTicPrefix", "no-spectra": "viewerTicEmpty", "unusable-retention-time": "viewerTicRt",
+  truncated: "viewerTicPrefix", "unusable-retention-time": "viewerTicRt",
   "unusable-intensity": "viewerTicIntensity", "unsupported-retention-time-unit": "viewerTicUnit",
-} as const satisfies Record<ScanModelRefusal, string>;
+} as const satisfies Record<Exclude<ScanModelRefusal, "no-spectra">, string>;
 
 interface PlotProps {
   readonly points: readonly ScanPoint[];
@@ -628,8 +626,9 @@ function ChromatogramPlot({
           them would be noise rather than feedback. It is the plot's accessible
           description instead, so a reader who focuses the plot is told what is
           selected -- and the persistent selection, not the transient hover, is
-          what every keyboard route establishes. */}
-      <p className="chromatogram-readout" id="chromatogram-readout">
+          what every keyboard route establishes. With nothing selected or
+          hovered it is unseen, but still read as that description. */}
+      <p className="chromatogram-readout" id="chromatogram-readout" data-idle={hoveredPoint === null && selectedPoint === null ? "" : undefined}>
         {hoveredPoint === null
           ? selectedPoint === null ? t("viewerNoSelection") : describeScan(selectedPoint, t("viewerSelected"), t)
           : describeScan(hoveredPoint, t("viewerHover"), t)}

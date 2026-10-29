@@ -159,6 +159,7 @@ export function GroupedRosterList(props: Props) {
     </div>;
   });
   const selectedHidden = [...state.selected].filter(handle => !projection.handles.has(handle)).length;
+  const selectionCount = t("selectionContext", { total: state.selected.size, hidden: selectedHidden, checked: state.conversionMembership.size });
   const notice = state.organization.notice;
   const groupName = (id: string) => id === UNGROUPED ? t("ungrouped") : state.organization.groups.find(group => group.id === id)?.name ?? t("ungrouped");
   return <DragDropProvider manager={manager} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
@@ -168,11 +169,15 @@ export function GroupedRosterList(props: Props) {
         line -- the English count, or Undo beside New group -- the count takes
         the band's second line, whole (PM9 UI-15). New group stays this row's
         first button: a row or group menu whose own trigger has left the
-        document returns focus to it. */}
+        document returns focus to it. While nothing is highlighted or checked
+        the count is unseen and unspoken but keeps its place, so the first
+        highlight or check does not move the list; it stays mounted because it
+        is a live region. */}
     <div className="organization-toolbar">
       <button type="button" className="secondary-button" onClick={event => setEditing({ id: null, name: "", returnTo: event.currentTarget })}>{t("newGroup")}</button>
       {state.organization.history.length ? <button type="button" className="link-button" onClick={() => dispatch({ type: "organization", action: { type: "undo" } })}>{t("undoOrganization")}</button> : null}
-      <p className="roster-selection-context" aria-live="polite">{t("selectionContext", { total: state.selected.size, hidden: selectedHidden, checked: state.conversionMembership.size })}</p>
+      <p className="roster-selection-context" aria-live="polite">{state.selected.size === 0 && state.conversionMembership.size === 0
+        ? <span className="roster-selection-idle" aria-hidden="true">{selectionCount}</span> : selectionCount}</p>
     </div>
     <p id="roster-drag-instructions" className="visually-hidden">{t("dragInstructions")}</p>
     <div aria-labelledby="dataset-roster-heading" aria-multiselectable="true" aria-describedby="roster-keyboard-help" role="treegrid" className="dataset-roster-list grouped-roster" ref={rootRef}

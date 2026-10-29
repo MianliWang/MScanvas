@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
+import { UI_RESOURCES } from "../preferences/i18n";
 import { deferred } from "../../test/previewFixtures";
 import type { FigurePreviewOutcome, FigurePreviewQuestion } from "./contracts";
 import { ExportFigureDialog, type ExportFigureDialogProps } from "./ExportFigureDialog";
@@ -32,7 +33,7 @@ describe("the export-specific figure preview", () => {
     await screen.findByRole("img");
     expect(screen.getByRole("radio", { name: "Full run" })).toBeChecked();
     expect(screen.queryByRole("radio", { name: "Full spectrum" })).toBeNull();
-    if (kind === "linked") expect(screen.getByText(/lower panel always shows that scan's complete spectrum/)).toBeVisible();
+    if (kind === "linked") expect(screen.getByText(UI_RESOURCES.en.viewerLinkedHelp)).toBeVisible();
   });
   it("renders only an inert image and binds double activation to the current question", async () => {
     const onExport = vi.fn(() => true);
@@ -44,6 +45,8 @@ describe("the export-specific figure preview", () => {
     save.focus(); fireEvent.click(save); fireEvent.click(save);
     expect(onExport).toHaveBeenCalledExactlyOnceWith(question, "svg");
     expect(save).toHaveFocus();
+    // The title and the controls say what this is; nothing else describes the dialog.
+    expect(screen.getByRole("dialog")).not.toHaveAttribute("aria-describedby");
     view.unmount(); expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:figure-preview");
   });
 
@@ -103,7 +106,7 @@ describe("the export-specific figure preview", () => {
       preview: async request => ({ ...rendered(request.requestId), empty: true }) as FigurePreviewOutcome });
     render(<ExportFigureDialog {...value} />);
     await screen.findByRole("img");
-    expect(screen.getByText(/empty spectrum figure/)).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(UI_RESOURCES.en.figurePreviewEmpty);
     expect(screen.getByRole("textbox", { name: /^PNG DPI/ })).toHaveValue("1e");
     fireEvent.click(screen.getByRole("button", { name: "Export PNG…" }));
     expect(onExport).not.toHaveBeenCalled();
@@ -114,10 +117,10 @@ describe("the export-specific figure preview", () => {
   it("gives a typed refusal a retry and rejects mismatched request identities", async () => {
     const preview = vi.fn().mockResolvedValueOnce({ status: "refused", requestId: 1, error: { kind: "linked_selection_outside_range", summary: "raw owned English", detail: null, retryable: true } }).mockResolvedValueOnce(rendered(99));
     render(<ExportFigureDialog {...props({ preview })} />);
-    expect(await screen.findByText("The selected scan is outside the current RT range. Choose Full run or include the scan in the range.")).toBeVisible();
+    expect(await screen.findByText(UI_RESOURCES.en.m74ErrorLinkedRange)).toBeVisible();
     expect(screen.queryByText("raw owned English")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
-    expect(await screen.findByText("The preview could not be read. Try the preview again.")).toBeVisible();
+    expect(await screen.findByText(UI_RESOURCES.en.figurePreviewFailed)).toBeVisible();
     expect(screen.queryByRole("img")).toBeNull();
   });
 });

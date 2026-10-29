@@ -80,8 +80,7 @@ describe("a dialog that contradicted itself", () => {
     await within(dialog).findByRole("alert");
     // The footer used to read "saved on this computer and restored next time"
     // directly under an alert saying the write had failed.
-    expect(footer()).toHaveTextContent(zh.storageNotSaving);
-    expect(footer()).not.toHaveTextContent(zh.storageSaved);
+    expect(footer().textContent).toBe(zh.storageNotSaving);
   });
 
   it("stops claiming it when the stored record cannot be read at all", async () => {
@@ -89,8 +88,7 @@ describe("a dialog that contradicted itself", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(en.storedUnusableTitle);
-    expect(footer()).toHaveTextContent(en.storageNotSaving);
-    expect(footer()).not.toHaveTextContent(en.storageSaved);
+    expect(footer().textContent).toBe(en.storageNotSaving);
   });
 
   it("does not claim the old record survived a publish it could not read back", async () => {
@@ -358,7 +356,8 @@ describe("a stale answer from the other lane", () => {
     // It describes revision 0 and the session has adopted revision 1, so it
     // does not get to report the store as unreadable again.
     expect(within(openSettings()).queryByText(zh.storedUnusableTitle)).toBeNull();
-    expect(footer()).toHaveTextContent(zh.storageSaved);
+    // The normal saved state says nothing.
+    expect(footer()).toBeEmptyDOMElement();
   });
 });
 

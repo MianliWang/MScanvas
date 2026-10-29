@@ -444,9 +444,8 @@ describe("the conversion lane's one authority, as it ships", () => {
       expect(convert).not.toHaveAttribute("aria-disabled");
     });
     expect(within(panel).queryByRole("button", { name: /^Retry/u })).toBeNull();
-    expect(
-      within(panel).getByText(/would not change on another attempt/u),
-    ).toBeVisible();
+    // Each failed row says it is not retryable, which is why nothing reruns.
+    expect(within(panel).getAllByText("Not retryable: the same settings would fail again.").length).toBeGreaterThan(0);
   });
 
   it("stops calling a settled queue one that is starting", async () => {

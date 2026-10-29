@@ -166,7 +166,7 @@ async function narrowTheViewport(): Promise<void> {
     timeout: 10_000,
     timeoutMsg: "the wheel never narrowed the m/z range",
   });
-  await browser.waitUntil(async () => /Current range is m\/z [\d.]/u.test(await rangeNote()), {
+  await browser.waitUntil(async () => /Current range: m\/z [\d.]/u.test(await rangeNote()), {
     timeout: 10_000,
     timeoutMsg: "the committed window never reached the range note",
   });
@@ -226,7 +226,7 @@ describe("the selected spectrum's range chooser", () => {
     // M7.3's sentence (en.ts `viewerExportFullHelp`, c12f45d: only a confirmed
     // range is committed); the copy this first expected predates it. Also pinned
     // by SelectedSpectrumExport.test.tsx (PM9.7).
-    expect(await rangeNote()).toContain("whole spectrum until a range is committed");
+    expect(await rangeNote()).toContain("Current range: full spectrum.");
 
     await exportAndWait("Export CSV…");
 
@@ -246,7 +246,7 @@ describe("the selected spectrum's range chooser", () => {
     // Compared against what the panel *offered*, which is the promise this
     // surface made, rather than against the axis caption beside it.
     const [, low, high] =
-      /Current range is m\/z (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)/u.exec(await rangeNote()) ?? [];
+      /Current range: m\/z (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)/u.exec(await rangeNote()) ?? [];
     expect(range["scope"]).toBe("current");
     expect(Number(range["low"])).toBeCloseTo(Number(low), 3);
     expect(Number(range["high"])).toBeCloseTo(Number(high), 3);
@@ -270,7 +270,7 @@ describe("the selected spectrum's range chooser", () => {
 
     const range = (await lastCopyRange()) as Record<string, number | null>;
     const [, low] =
-      /Current range is m\/z (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)/u.exec(offered) ?? [];
+      /Current range: m\/z (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)/u.exec(offered) ?? [];
     expect(range["scope"]).toBe("current");
     expect(Number(range["low"])).toBeCloseTo(Number(low), 3);
   });
@@ -285,7 +285,7 @@ describe("the selected spectrum's range chooser", () => {
     // Absent rather than inert. A disabled radio a reader cannot explain is
     // worse than a section that says the choice is unavailable.
     await expect(browser.$(SPECTRUM).$(`label*=${CURRENT_SCOPE}`)).not.toBeExisting();
-    expect(await rangeNote()).toContain("no m/z viewport");
+    expect(await rangeNote()).toContain("No m/z range");
 
     // And every full-source export is exactly as available as ever: a viewport
     // refusal is a fact about drawability, never about the source.
@@ -357,7 +357,7 @@ describe("the selected spectrum's range chooser", () => {
     await revealTheSpectrum();
     const at = await spectrumPointAt(0.5);
     await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -500 }).perform();
-    await browser.waitUntil(async () => (await rangeNote()).includes("Current range is m/z"), {
+    await browser.waitUntil(async () => (await rangeNote()).includes("Current range: m/z"), {
       timeout: 10_000,
     });
     expect(await exportStatus()).toBe(reported);
@@ -412,7 +412,7 @@ describe("the selected spectrum's range chooser", () => {
     });
     await browser.waitUntil(
       // M7.3's sentence, as in the case above (PM9.7).
-      async () => (await rangeNote()).includes("whole spectrum until a range is committed"),
+      async () => (await rangeNote()).includes("Current range: full spectrum."),
       { timeout: 10_000, timeoutMsg: "the new spectrum kept the old scope" },
     );
 

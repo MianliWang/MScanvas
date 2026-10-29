@@ -385,8 +385,10 @@ describe("the provenance consumer", () => {
     await waitFor(() =>
       expect(document.querySelector("[data-project-inspect-hint]")).toBeTruthy(),
     );
-    expect(screen.getByText(en.provenanceInDetails)).toBeTruthy();
-    expect(screen.getByRole("button", { name: en.provenanceShowDetails })).toBeTruthy();
+    const hint = document.querySelector<HTMLElement>("[data-project-inspect-hint]")!;
+    expect(within(hint).getByRole("button", { name: en.provenanceShowDetails })).toBeTruthy();
+    // The button says where the answer went; no sentence restates it.
+    expect(hint.textContent).toBe(en.provenanceShowDetails);
   });
 
   it("renders the provenance region in Simplified Chinese", async () => {

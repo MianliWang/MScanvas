@@ -9,7 +9,7 @@
  * provider, the analysis runtime or a real file.
  */
 
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { UI_RESOURCES } from "../features/preferences/i18n";
@@ -81,11 +81,12 @@ function rosterState() {
 describe("PM9.1 populated-state baseline (synthetic, controlled)", () => {
   it("renders the first-run state with a context line that claims nothing", async () => {
     mount("empty");
-    const group = await screen.findByRole("group", { name: en.shellContextRegion });
-    expect(within(group).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Project: none open",
-    ]);
-    expect(document.querySelector(".workspace-drop-hint")).toBeTruthy();
+    await screen.findByRole("button", { name: en.home });
+    // No project, nothing viewed and nothing to convert: no item to show, and
+    // no standing hint about a drop that works.
+    expect(screen.queryByRole("group", { name: en.shellContextRegion })).toBeNull();
+    expect(document.querySelector("[data-shell-context]")).toBeNull();
+    expect(document.querySelector(".workspace-drop-hint")).toBeNull();
   });
 
   it("keeps the roster exactly as it was across a trip through the context line", async () => {
@@ -93,6 +94,11 @@ describe("PM9.1 populated-state baseline (synthetic, controlled)", () => {
     // At least two rows on screen. Not six: the roster windows its rows by
     // measured height, and a test environment without layout measures none.
     await waitFor(() => expect(rosterState().length).toBeGreaterThan(1));
+    // The scope item says something only when a row is eligible: All workspace
+    // rows holds the vendor row, without checking anything.
+    await press(screen.getByRole("button", { name: en.conversionTask }));
+    fireEvent.click(await screen.findByRole("radio", { name: en.m74CnvAll }));
+    await press(screen.getByRole("button", { name: en.home }));
     await waitFor(() => expect(contextItem("conversionScope")?.textContent).toMatch(/^Conversion: /));
     const before = rosterState();
 

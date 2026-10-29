@@ -818,10 +818,6 @@ describe("M9.3 a source from another drive, prepared and read through a verified
     await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
     await toProject();
     await review();
-    // The read path is folded since PM9.5 O1, and innerText skips a closed
-    // disclosure: open it so the capture still reads the verified-copy sentence.
-    // Opened before Run, so Run stays the last press the run's ending answers.
-    await browser.$("[data-targeted-read-path] summary").click();
     await holdInvoke("run_targeted_ms1");
     await browser.$("[data-targeted-run]").click();
     await browser.$("[data-project-busy-phase]").waitForDisplayed();
@@ -830,8 +826,7 @@ describe("M9.3 a source from another drive, prepared and read through a verified
     expect(preparing.busy).toContain(zh.targetedPhasePreparingInput);
     expect(preparing.busy).not.toContain(en.targetedPhasePreparingInput);
     expect(preparing.setup?.text).toContain(zh.targetedDomain);
-    expect(preparing.setup?.text).toContain(zh.targetedReadPath);
-    expect(preparing.setup?.text).not.toContain(en.targetedReadPath);
+    expect(preparing.setup?.text).not.toContain(en.targetedDomain);
     await setInvokeResult("run_targeted_ms1", {
       project: project({ run: "completed", view: "verifiedSnapshotInWorkArea" }),
       runId: RUN,
@@ -1086,7 +1081,6 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
       "targetedTableExports",
       "targetedTableExportHelp",
       "targetedFigureExports",
-      "targetedFigureExportHelp",
       "targetedStateSource",
     ] as const) {
       expect(narrow.report?.text).toContain(zh[key]);

@@ -475,7 +475,7 @@ describe("exporting the chromatogram, rendered", () => {
     await chooseScope("Current range");
 
     // M7.3's sentence; the copy this first expected predates it (PM9.3).
-    expect(await rangeNote()).toContain("whole run until a range is committed");
+    expect(await rangeNote()).toContain("Current range: full run.");
 
     await control("Export CSV…").click();
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
@@ -502,7 +502,7 @@ describe("exporting the chromatogram, rendered", () => {
     await chooseScope("Current range");
     // The gesture settles a moment after the last event, and the panel says
     // which range it settled on.
-    await browser.waitUntil(async () => /Current range is [\d.]/u.test(await rangeNote()), {
+    await browser.waitUntil(async () => /Current range: [\d.]/u.test(await rangeNote()), {
       timeout: 10_000,
       timeoutMsg: "the committed range never reached the panel",
     });
@@ -517,7 +517,7 @@ describe("exporting the chromatogram, rendered", () => {
     // The sentence ends in a full stop, and a greedy `[\d.]+` swallows it -- so
     // the second number is matched as a number rather than as digits-and-dots.
     const [, low, high] =
-      /Current range is (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)/u.exec(await rangeNote()) ?? [];
+      /Current range: (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)/u.exec(await rangeNote()) ?? [];
     expect(range["scope"]).toBe("current");
     expect(Number(range["low"])).toBeCloseTo(Number(low), 3);
     expect(Number(range["high"])).toBeCloseTo(Number(high), 3);
@@ -538,7 +538,7 @@ describe("exporting the chromatogram, rendered", () => {
     await browser.waitUntil(async () => (await visibleSpan()) < full, { timeout: 10_000 });
     await openExport();
     await chooseScope("Current range");
-    await browser.waitUntil(async () => /Current range is [\d.]/u.test(await rangeNote()), {
+    await browser.waitUntil(async () => /Current range: [\d.]/u.test(await rangeNote()), {
       timeout: 10_000,
     });
     const committed = await rangeNote();
@@ -614,9 +614,6 @@ describe("exporting the chromatogram, rendered", () => {
     for (const label of ["Export CSV…", "Export TSV…"]) {
       expect(await control(label).isEnabled()).toBe(true);
     }
-    expect(await browser.$(PANEL).$("*=Data exports always include both").isExisting()).toBe(
-      true,
-    );
 
     await control("Export TSV…").click();
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });

@@ -61,7 +61,7 @@ export function QcReport({ artifactId, snapshot, sourceName, recordedWhen }: QcR
 
   const retention = snapshot.retentionTime;
   const unit = (value: QcRetentionTime) =>
-    value.unit === "notEmitted" ? t("qcReportUnitNotReported") : value.unit;
+    value.unit === "notEmitted" ? t("qcReportNotReported") : value.unit;
 
   return (
     <section

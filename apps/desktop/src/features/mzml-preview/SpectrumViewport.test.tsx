@@ -84,7 +84,7 @@ const HEADING_ID = "selected-spectrum-heading";
 const HEADING = "Selected spectrum";
 
 const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Reset m/z range"] as const;
-const RETRY = "Draw this m/z range again";
+const RETRY = UI_RESOURCES.en.viewerMzRetry;
 
 /** One wheel notch inward and one outward, in the unit nearly every device uses. */
 const IN = -240;
@@ -483,9 +483,16 @@ function messages(locale: "en" | "zh-CN"): UiMessage {
   const bundle = UI_RESOURCES[locale] as Record<string, string>;
   return bindUiMessages(((key: string, values?: Record<string, unknown>) =>
     Object.entries(values ?? {}).reduce<string>(
-      (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+      (text, [name, value]) => text.replace(new RegExp(`\\{\\{${name}(?:, number)?\\}\\}`, "gu"), String(value)),
       bundle[key],
     )) as never);
+}
+
+const en = messages("en");
+
+/** The caption's own line, without the details disclosure beside it. */
+function captionLine(): string {
+  return document.querySelector("figcaption.spectrum-caption > p")?.textContent ?? "";
 }
 
 describe("the committed m/z line (PM9 UI-34)", () => {
@@ -498,19 +505,28 @@ describe("the committed m/z line (PM9 UI-34)", () => {
     return regions[0]!;
   }
 
-  /** The committed row is true of what the reducer holds now, a held gesture included. */
+  /**
+   * The committed row is true of what the reducer holds now, a held gesture
+   * included. With nothing narrower than the full range committed it is
+   * announced and not printed: the range line below the plot already says
+   * "full range". A committed part is printed, without the caption's numbers.
+   */
   function expectTruthfulLine(): void {
     const now = live();
     if (now.status !== "ready") throw new Error(`expected an admitted viewport, got ${now.status}`);
     expect(now.rangeSelection).toBeNull();
     const displayed = fixed(liveShown());
     const committed = now.committed === null ? null : fixed(now.committed);
+    if (committed === null) expect(liveLine()).toHaveClass("visually-hidden");
+    else expect(liveLine()).not.toHaveClass("visually-hidden");
+    const sentence = textOutside(liveLine(), "span.visually-hidden");
+    expect(untrue(sentence, "m/z", { committed, shown: displayed })).toBeNull();
     const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
-    expect(untrue(visible, "m/z", { committed, shown: displayed })).toBeNull();
+    expect(visible).toBe(committed === null ? "" : sentence);
+    if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
     expect(rangeText()).toContain(displayed);
     const spoken = (liveLine().textContent ?? "").replace(/\s+/gu, " ").trim();
     if (committed !== null) expect(spoken.endsWith(committed), `"${spoken}" does not end with ${committed}`).toBe(true);
-    if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
   }
 
   it("stays true through a held pan, says the commit once, and keeps nothing for another spectrum", () => {
@@ -1674,9 +1690,9 @@ describe("what the plot draws, and what it says it is drawing", () => {
     drawProjection(DRAWN);
 
     expect(sticks()).not.toBeNull();
-    expect(captionText()).toMatch(
-      /Drawn as 3 sticks of the 3 observations this spectrum has between m\/z 200\.0000 and 300\.0000/u,
-    );
+    expect(captionLine()).toBe(`${en("plotCaption", { count: 3, total: 3 })} · ${en("plotUnits")}`);
+    // Every observation is a stick, so the details have nothing to add.
+    expect(document.querySelector(".plot-source-details")).not.toBeVisible();
     // Nothing left to say, so the region says nothing: a live region whose text
     // is added and removed as a sibling node is not reliably announced.
     expect(statusText()).toBe("");
@@ -1699,13 +1715,11 @@ describe("what the plot draws, and what it says it is drawing", () => {
 
     expect(sticks()).toBeNull();
     expect(rangeText()).toBe("Showing m/z 220.0000 to 260.0000");
-    expect(statusText()).toMatch(
-      /Drawing m\/z 220\.0000 to 260\.0000 from the retained spectrum\. Nothing is drawn here until it arrives\./u,
-    );
-    // The caption speaks for the range beneath it and does not name a window:
-    // the status region above already named the one being drawn, and during a
-    // gesture the two are different ranges.
-    expect(captionText()).toMatch(/Waiting for the drawing of this range\. Nothing is drawn here yet\./u);
+    expect(statusText()).toBe(en("viewerMzLoading", { low: "220.0000", high: "260.0000" }));
+    // The caption names no drawing: the status region already says one is on
+    // its way, and saying it twice is what this caption used to do.
+    expect(captionLine()).toBe(en("plotUnits"));
+    expect(captionText()).not.toMatch(/Waiting for the drawing/u);
   });
 
   it("draws nothing for an answer to a window the viewport has already left", () => {
@@ -1736,9 +1750,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
     expect(sticks()).toBeNull();
     // Not a failure, so nothing offers to try again.
     expect(screen.queryByRole("button", { name: RETRY })).toBeNull();
-    expect(statusText()).toMatch(
-      /This spectrum reports no measured point between m\/z 200\.0000 and 300\.0000\./u,
-    );
+    expect(statusText()).toBe(en("viewerMzEmpty", { low: "200.0000", high: "300.0000" }));
   });
 
   it("tells an empty window, a drawing not yet arrived, a failure and a refusal apart", () => {
@@ -1777,9 +1789,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
       expect(text.length, name).toBeGreaterThan(0);
     }
     expect(new Set(said.values()).size).toBe(said.size);
-    const empty = said.get("a window with no point in it") ?? "";
-    expect(empty).toMatch(/reports no measured point between m\/z 200\.0000 and 300\.0000/u);
-    expect(empty).toMatch(/The range is empty; the drawing did not fail/u);
+    expect(said.get("a window with no point in it")).toBe(en("viewerMzEmpty", { low: "200.0000", high: "300.0000" }));
   });
 
   it("draws a gesture over the gesture's range, not the range its points answer", () => {
@@ -1829,12 +1839,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
 
     expect(ready().gesture).not.toBeNull();
     expect(sticks()).not.toBeNull();
-    expect(captionText()).toMatch(
-      /Showing the drawing already in hand while the range changes\./u,
-    );
-    expect(captionText()).toMatch(
-      /The retained spectrum is projected when the interaction settles\./u,
-    );
+    expect(captionLine()).toContain(en("plotTransient"));
   });
 
   it("offers to draw the range again for a failure that can be retried", () => {
@@ -1868,7 +1873,9 @@ describe("what the plot draws, and what it says it is drawing", () => {
 
     failProjection(true);
 
-    expect(statusText()).toBe("This m/z range could not be drawn.");
+    expect(statusText()).toBe(en("viewerMzFailed"));
+    // Said once, there: the caption beneath the blank plot does not repeat it.
+    expect(captionLine()).toBe(en("plotUnits"));
   });
 
   it("asks Rust for nothing at all while a press is dragging the plot", () => {
@@ -1933,16 +1940,14 @@ describe("a spectrum with no m/z range to navigate", () => {
     renderViewport({ domain: REFUSED });
 
     expect(sticks()).not.toBeNull();
-    expect(captionText()).toMatch(/Drawn as 3 sticks, one per point\./u);
+    expect(captionLine()).toBe(`${en("plotTransferCaption", { count: 3, total: 3 })} · ${en("plotUnits")}`);
   });
 
   it("names what happened rather than saying the spectrum is unusable", () => {
     renderViewport({ domain: REFUSED });
 
-    expect(statusText()).toMatch(/^The m\/z range of this spectrum cannot be navigated\./u);
-    expect(statusText()).toMatch(/source m\/z values are not increasing/u);
-    expect(statusText()).toMatch(/Points remain in the reported order/u);
-    expect(rangeText()).toBe("No m/z range to navigate.");
+    expect(statusText()).toBe(`${en("viewerMzRefused")} ${en("viewerMzUnordered")}`);
+    expect(rangeText()).toBe(en("viewerMzNoRange"));
   });
 
   it("leaves the drawing out of the tab order and offers nothing to drag", () => {

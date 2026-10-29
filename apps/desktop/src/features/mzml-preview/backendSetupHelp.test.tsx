@@ -99,13 +99,11 @@ describe("offline setup help", () => {
     expect(said).toContain(en.backendHelpProvider);
     // The real lifetime of a chosen folder: this session, and no longer.
     expect(said).toContain(en.backendHelpSessionScope);
-    // What each existing control does, named as the controls are named.
-    expect(said).toContain(en.backendHelpChoose);
-    expect(said).toContain(en.backendHelpAutomatic);
-    expect(said).toContain(en.backendHelpRecheck);
+    // The controls name themselves; the help does not restate them.
+    expect(disclosure.querySelector("ul")).toBeNull();
     // The approved support target, stated as a support target.
     expect(said).toContain("Windows 11 25H2 x64");
-    // And that a session without a backend is still a usable workspace.
+    // And what needs a backend at all.
     expect(said).toContain(en.backendHelpWithoutBackend);
   });
 
@@ -158,7 +156,6 @@ describe("offline setup help", () => {
     // Product identities and the support target stay original inside the
     // translated sentence.
     expect(said).toContain("Windows 11 25H2 x64");
-    expect(said).toContain("msconvert.exe");
     expect(said).toContain("ProteoWizard");
     // No English fallback left in a translated surface.
     expect(said).not.toContain(en.backendHelpProvider);

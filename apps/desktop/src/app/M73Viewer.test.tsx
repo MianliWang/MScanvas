@@ -101,7 +101,7 @@ describe("M7.3 through the delivered application", () => {
     expect(api.requestedSpectra).toEqual([3]);
     const search = screen.getByRole("searchbox", { name: "Search loaded scans" });
     search.focus(); fireEvent.change(search, { target: { value: "raw-1" } });
-    expect(screen.getByText(/Selected scan 3 is outside these results/u)).toBeVisible();
+    expect(screen.getByText(/Selected scan 3 is hidden by the filters/u)).toBeVisible();
     expect(screen.getByRole("button", { name: "Previous scan" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next scan" })).toBeDisabled();
     expect(screen.getByRole("img", { name: /^Spectrum 3,/u })).toBeInTheDocument();

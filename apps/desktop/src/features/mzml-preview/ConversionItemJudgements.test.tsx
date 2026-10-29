@@ -19,6 +19,9 @@ import {
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type { ConversionQueueItem, ConversionReport, SelectedFile } from "./contracts";
+import { UI_RESOURCES } from "../preferences/i18n";
+
+const en = UI_RESOURCES.en;
 
 /**
  * The five judgements on screen, per item.
@@ -214,9 +217,7 @@ describe("the five judgements of one queue item", () => {
     expect(rows).toHaveLength(2);
     for (const row of rows) {
       expect(row).toHaveTextContent("Failed");
-      expect(row).not.toHaveTextContent(
-        "MSCanvas could not remove its own temporary folder afterwards.",
-      );
+      expect(row).not.toHaveTextContent(en.m74CnvResidue);
     }
 
     const withContent = openDetails(rowFor(result, "run-1.raw"));
@@ -243,9 +244,7 @@ describe("the five judgements of one queue item", () => {
     // Neither claims an output, and neither claims a check.
     for (const details of [withContent, withoutContent]) {
       expect(within(details).getByText("No output obtained a final name.")).toBeVisible();
-      expect(
-        within(details).getByText("Nothing was checked, because nothing was validated."),
-      ).toBeVisible();
+      expect(within(details).getByText(en.cnvIntegrityNone)).toBeVisible();
     }
   });
 
@@ -280,7 +279,7 @@ describe("the five judgements of one queue item", () => {
     const integrity = details.querySelector('[data-testid="conversion-item-0-integrity"]');
     expect((integrity as HTMLElement).textContent).toBe(
       "Compared against the source document. 1 checked, 1 not established, 0 not applicable. " +
-        "2 kinds of advisory observation, which fail nothing: byte_length_differs, root_wrapper_differs.",
+        en.cnvAdvisoryMany.replace("{{n}}", "2").replace("{{codes}}", "byte_length_differs, root_wrapper_differs"),
     );
     // Advisories are named apart and are never counted as unestablished.
     expect((integrity as HTMLElement).textContent).not.toContain("2 not established");
@@ -299,7 +298,7 @@ describe("the five judgements of one queue item", () => {
     const details = openDetails(rowFor(result, "run-1.raw"));
     expect(
       within(details).getByText(
-        "The temporary working folder held more than 48 entries when the attempt to run a converter returned. MSCanvas stopped counting rather than reading all of them.",
+        en.cnvStagedBounded.replace("{{n}}", "48").replace("{{when}}", en.cnvProviderReturned),
       ),
     ).toBeVisible();
     // The exact count the reading did not take never appears, and neither do
@@ -331,7 +330,7 @@ describe("the five judgements of one queue item", () => {
     ).toBeVisible();
     // The two sentences it must not produce.
     expect(details.textContent).not.toContain("was empty");
-    expect(details.textContent).not.toContain("No temporary working folder was created");
+    expect(details.textContent).not.toContain(en.cnvStagedNone);
   });
 
   it("keeps output-only validation output-only", async () => {
@@ -413,10 +412,9 @@ describe("the five judgements of one queue item", () => {
     expect(manifest).not.toBeNull();
     expect(within(manifest as HTMLElement).getAllByText("Checked, not published")).toHaveLength(2);
     expect(within(manifest as HTMLElement).getAllByText("Finalized")).toHaveLength(1);
-    // An incomplete set keeps the existing adoption refusal.
-    expect(
-      screen.getByText("No complete output set is available to add to this workspace."),
-    ).toBeVisible();
+    // An incomplete set is not offered for adoption; the row says why.
+    expect(screen.queryByRole("button", { name: /^Add converted output/ })).toBeNull();
+    expect(within(result).getByText(en.m74CnvPartialExplanation)).toBeVisible();
   });
 
   /** A set that stopped at the member in `states` marked `rejected`. */
@@ -479,7 +477,7 @@ describe("the five judgements of one queue item", () => {
       ),
     ).toBeVisible();
     expect(details.textContent).toContain("Output-only.");
-    expect(details.textContent).not.toContain("Nothing was checked");
+    expect(details.textContent).not.toContain(en.cnvIntegrityNone);
   });
 
   it("separates the member that was refused from the ones nobody looked at", async () => {
@@ -519,11 +517,7 @@ describe("the five judgements of one queue item", () => {
     // The item's own integrity line hands the per-member answers to the
     // manifest rather than presenting one member's result as the item's. That
     // is where "which one failed" is answerable at all.
-    expect(
-      within(details).getByText(
-        /the set stopped at the one that did not pass, so nothing was published/,
-      ),
-    ).toBeVisible();
+    expect(details.textContent).toContain(en.cnvIntegritySetRefused);
   });
 
   it("states the scope of a check that passed and then could not be published", async () => {
@@ -567,7 +561,7 @@ describe("the five judgements of one queue item", () => {
         /The output passed this contract, and what failed was giving it its final name/,
       ),
     ).toBeVisible();
-    expect(details.textContent).not.toContain("Nothing was checked");
+    expect(details.textContent).not.toContain(en.cnvIntegrityNone);
   });
 
   it("keeps a retried row's earlier judgements readable while it waits", async () => {
@@ -651,11 +645,11 @@ describe("the five judgements of one queue item", () => {
   it.each([
     {
       outcome: "output_not_finalized",
-      says: "The converted file passed MSCanvas' integrity checks, and giving it its final name failed, so it was not published.",
+      says: en.m74CnvFinalizeFailed,
     },
     {
       outcome: "destination_appeared_during_run",
-      says: "A file of that name appeared in that folder while the conversion was running, so the converted file was left unpublished rather than replacing it.",
+      says: en.m74CnvAppearedDuringRun,
     },
   ])(
     "does not tell a $outcome row that no file was written",
@@ -766,9 +760,7 @@ describe("the five judgements of one queue item", () => {
     await queueResult();
 
     // The disclosure the predicate gates, on the terminal panel.
-    expect(
-      screen.getAllByText(/Output-only validation/).length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(en.m74CnvOutputOnly).length).toBeGreaterThan(0);
   });
 
   it("states the scope for a set that discovered one member and refused it", async () => {
@@ -799,7 +791,7 @@ describe("the five judgements of one queue item", () => {
         /The output did not pass this contract and was discarded rather than published\./,
       ),
     ).toBeVisible();
-    expect(details.textContent).not.toContain("Nothing was checked");
+    expect(details.textContent).not.toContain(en.cnvIntegrityNone);
   });
 
   it("never calls a refused member \"the output\" when the item had three", async () => {
@@ -824,20 +816,14 @@ describe("the five judgements of one queue item", () => {
     const result = await queueResult();
 
     const details = openDetails(rowFor(result, "Enolase_first_refused.wiff"));
-    expect(
-      within(details).getByText(
-        /Outputs are judged one at a time and the set stopped at the one that did not pass/,
-      ),
-    ).toBeVisible();
+    expect(details.textContent).toContain(en.cnvIntegritySetRefused);
     // The mode is a property of the source posture, not of any one member, and
     // the set report states it in its own right. A refusal that leaves no
     // member record must not take the scope of the claim down with it.
     expect(details.textContent).toContain("Output-only.");
     // The singular sentence belongs to an item that produced one output. Here
     // it would claim a check for two files the manifest calls unexamined.
-    expect(details.textContent).not.toContain(
-      "The output was checked against this source posture's contract",
-    );
+    expect(details.textContent).not.toContain(en.cnvIntegrityRefusedUnknown);
     const manifest = details.querySelector(".conversion-item-manifest");
     expect(within(manifest as HTMLElement).getByText("Checked and refused")).toBeVisible();
     expect(within(manifest as HTMLElement).getAllByText("Not published")).toHaveLength(2);
@@ -858,11 +844,7 @@ describe("the five judgements of one queue item", () => {
 
     const details = openDetails(rowFor(result, "run-1.raw"));
     expect(within(details).getByText("No converter was started for this item.")).toBeVisible();
-    expect(
-      within(details).getByText(
-        "No converter was given a temporary working folder, so nothing could have been written there.",
-      ),
-    ).toBeVisible();
+    expect(within(details).getByText(en.cnvStagedNone)).toBeVisible();
     expect(
       within(details).getByText("No attempt reached a converter for this item."),
     ).toBeVisible();
@@ -930,7 +912,7 @@ describe("the five judgements of one queue item", () => {
     renderApp(api);
     const result = await queueResult();
 
-    expect(await details(1)).toContain("Not added yet.");
+    expect(await details(1)).toContain(en.cnvAdoptionNotAsked);
     fireEvent.click(
       screen.getByRole("button", { name: "Add converted output to workspace" }),
     );

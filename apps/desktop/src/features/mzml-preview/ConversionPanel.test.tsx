@@ -18,6 +18,9 @@ import {
 import { pressConvert } from "../../test/conversionPanelInteractions";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type { ConversionPlanOutcome, SelectedFile, WorkspaceConversionState } from "./contracts";
+import { UI_RESOURCES } from "../preferences/i18n";
+
+const en = UI_RESOURCES.en;
 
 function acquisition(index: number): SelectedFile {
   return {
@@ -269,7 +272,7 @@ describe("destination request and queue truth", () => {
     const actual = queueResult();
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
     expect(within(actual).getByText("Destination binding").nextElementSibling?.textContent).toBe(
-      destinationStatus === "bound" ? "Bound when this queue started; revalidated before each attempt" : "No destination bound",
+      destinationStatus === "bound" ? en.m74CnvDestinationBound : en.m74CnvDestinationUnbound,
     );
     expect(within(panel).getByRole("radio", { name: "Custom local folder" })).toBeChecked();
     fireEvent.click(within(panel).getByRole("radio", { name: "Beside each source" }));
@@ -334,7 +337,9 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     await waitFor(() => {
       expect(
         within(panel).getByText(
-          /3 supported vendor acquisitions will be converted to mzML, one after another, in the order below\. 2 Thermo RAW · 1 Shimadzu LabSolutions LCD\./,
+          en.m74CnvMixedFamilies
+            .replace("{{count}}", "3")
+            .replace("{{families}}", "2 Thermo RAW · 1 Shimadzu LabSolutions LCD"),
         ),
       ).toBeVisible();
     });
@@ -363,15 +368,26 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     const panel = screen.getByRole("region", { name: "Convert" });
     const convert = within(panel).getByRole("button", { name: "Convert 0 eligible…" });
     expect(convert).toHaveAttribute("aria-disabled", "true");
-    const route =
-      "To convert, this scope needs supported vendor acquisitions: add them with Add files… in Acquisitions " +
-      "(if that list is hidden, press Acquisitions at the top of the window first) and, under Checked rows, they must be checked.";
+    const route = en.m74CnvNoticeNoConvertibleTarget
+      .replace(/\{\{toggle\}\}/g, en.rosterToggle)
+      .replace(/\{\{add\}\}/g, en.addFiles);
     // The notice follows the scope's plan answer, so it is awaited rather than
     // read synchronously; under a loaded full suite it can land a tick later.
     expect(await within(panel).findByText(route)).toBeVisible();
     await waitFor(() => expect(convert).toHaveAccessibleDescription(route));
-    expect(within(panel).queryByText("No eligible acquisitions in this scope.")).toBeNull();
+    expect(within(panel).queryByText(en.m74CnvNoEligible)).toBeNull();
     expect(document.body.textContent).not.toMatch(/Thermo RAW row/);
+  });
+
+  it("says a plan is being described once, in the notice Convert points at", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend });
+    renderApp({ ...api, describeConversion: () => new Promise(() => {}) });
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
+    await waitFor(() => expect(convert).toHaveAccessibleDescription(en.m74CnvNoticePlanReading));
+    expect(within(panel).getAllByText(en.m74CnvNoticePlanReading)).toHaveLength(1);
+    expect(panel.querySelector("#conversion-plan-pending")).toBeNull();
   });
 
   it("renders a chromatogram-only result as a success with those exact facts", async () => {
@@ -576,14 +592,8 @@ describe("queueing selected Thermo RAW conversions", () => {
     // already written.
     const stop = within(panel).getByRole("button", { name: "Stop queue" });
     expect(stop).not.toHaveAttribute("aria-disabled");
-    expect(
-      within(panel).getByText(
-        "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
-      ),
-    ).toBeVisible();
-    expect(stop).toHaveAccessibleDescription(
-      "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
-    );
+    expect(within(panel).getByText(en.m74CnvStopExplanation)).toBeVisible();
+    expect(stop).toHaveAccessibleDescription(en.m74CnvStopExplanation);
     expect(within(panel).queryByRole("button", { name: /cancel/i })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /resume/i })).toBeNull();
     // No fractional progress anywhere: nothing measures one.
@@ -643,9 +653,10 @@ describe("queueing selected Thermo RAW conversions", () => {
         "The converted file did not pass MSCanvas' integrity checks, so it was discarded.",
       ),
     ).toBeVisible();
-    // Nothing retryable, so nothing is offered, and the panel says why.
+    // Nothing retryable, so nothing is offered, and the failed row says why.
     expect(within(panel).queryByRole("button", { name: /Retry/ })).toBeNull();
-    expect(within(panel).getByText(/would not change on another attempt/)).toBeVisible();
+    expect(items[0]).toHaveTextContent(en.m74CnvWillNotRetry);
+    expect(within(panel).queryByText(en.m74CnvQuarantineRetry)).toBeNull();
   });
 
   it("offers retry only for failures another attempt could change, and states its scope", async () => {
@@ -689,9 +700,7 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
-    expect(retry).toHaveAccessibleDescription(
-      /Reruns only the failures another attempt could change, using the same folder/,
-    );
+    expect(retry).toHaveAccessibleDescription(en.m74CnvRetryScope);
 
     fireEvent.click(retry);
     await waitFor(() => {
@@ -771,11 +780,9 @@ describe("queueing selected Thermo RAW conversions", () => {
     expect(item).toHaveTextContent("3 chromatograms");
     // 28,655 bytes, as this app renders sizes everywhere else.
     expect(item).toHaveTextContent("28.0 KiB");
-    expect(item).toHaveTextContent(
-      "MSCanvas could not remove its own temporary folder afterwards.",
-    );
+    expect(item).toHaveTextContent(en.m74CnvResidue);
     // And a run that produced something did have its output judged.
-    expect(within(queueResult()).getByText(/Output-only validation\./, VISIBLE)).toBeVisible();
+    expect(within(queueResult()).getByText(en.m74CnvOutputOnly, VISIBLE)).toBeVisible();
   });
 
   it("does not claim output-only validation over files it never inspected", async () => {
@@ -821,13 +828,13 @@ describe("queueing selected Thermo RAW conversions", () => {
     // Scoped to the result. The plan below it says the same sentence about the
     // conversion the user could start next, which is a different claim and a
     // true one.
-    expect(within(queueResult()).queryByText(/Output-only validation\./, VISIBLE)).toBeNull();
+    expect(within(queueResult()).queryByText(en.m74CnvOutputOnly, VISIBLE)).toBeNull();
     // And the live region is a second path to the same claim, so it answers to
     // the same rule rather than announcing what the screen does not say.
     await waitFor(() => {
       expect(liveRegion()).toContain("0 converted, 2 skipped, 0 failed.");
     });
-    expect(liveRegion()).not.toContain("Output-only validation");
+    expect(liveRegion()).not.toContain(en.m74CnvAnnounceOutputOnly);
   });
 
   it("stops offering actions for the whole of a retry, not only for its first moment", async () => {
@@ -920,7 +927,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     // And it still says what it would do, so the reason it is unavailable is
     // the backend rather than the control having quietly changed meaning.
     expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAccessibleDescription(
-      /Reruns only the failures another attempt could change/,
+      expect.stringContaining(en.m74CnvRetryScope),
     );
   });
 
@@ -1052,10 +1059,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       // this build's whole sentence for it rather than the one line the
       // boundary happened to send.
       expect(
-        within(panel).getByText(
-          /MSCanvas saves converted files to this computer.s own drives\./u,
-          VISIBLE,
-        ),
+        within(panel).getByText(en.errDestinationIsRemote, VISIBLE),
       ).toBeVisible();
     });
     // Every item is still waiting: nothing ran.
@@ -1097,7 +1101,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     };
     noPaths(rendered);
     // A skipped item is never described as validated.
-    expect(within(panel).getAllByText(/a file of that name was already there/i).length).toBeGreaterThan(
+    expect(within(panel).getAllByText(en.m74CnvStateSkipped).length).toBeGreaterThan(
       0,
     );
   });
@@ -1119,16 +1123,13 @@ describe("queueing selected Thermo RAW conversions", () => {
     // Finishing a conversion adds nothing. The roster is still the one row the
     // user curated, and the output is an offer rather than an arrival.
     expect(rows()).toHaveLength(1);
-    expect(
-      within(panel).getByText("1 converted mzML output is ready to add to this workspace."),
-    ).toBeVisible();
+    expect(within(panel).getByText(en.m74CnvOneReady)).toBeVisible();
     const adopt = within(panel).getByRole("button", {
       name: "Add converted output to workspace",
     });
     expect(adopt).not.toHaveAttribute("aria-disabled");
-    expect(adopt).toHaveAccessibleDescription(
-      "MSCanvas verifies that each output is still the exact finalized file before adding it. Outputs are not previewed automatically.",
-    );
+    // Nothing refuses it, so nothing describes it: the label says what it does.
+    expect(adopt).not.toHaveAccessibleDescription();
     expect(api.adoptionRequests).toEqual([]);
   });
 
@@ -1168,7 +1169,6 @@ describe("queueing selected Thermo RAW conversions", () => {
       await Promise.resolve();
     });
 
-    const spoken = /MSCanvas is converting an acquisition, so those files were not added/;
-    expect(screen.getByText(spoken, VISIBLE)).toBeVisible();
+    expect(screen.getByText(en.dropConversionBusy, VISIBLE)).toBeVisible();
   });
 });

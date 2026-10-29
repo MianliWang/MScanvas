@@ -477,7 +477,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       await browser.$(FIGURE).$("button=Return to viewer").click();
       const beforeNoTrace = (await previewCalls()).length;
       await browser.$("label=TIC").scrollIntoView({ block: "center" }); await browser.$("label=TIC").click();
-      await blocked("Show at least one chromatogram trace to create a linked figure.", "no-trace");
+      await blocked("Show at least one trace to export the linked figure.", "no-trace");
       expect(await previewCalls()).toHaveLength(beforeNoTrace);
       await browser.$("label=BPC").scrollIntoView({ block: "center" }); await browser.$("label=BPC").click();
       await entry.waitForEnabled(); await reveal(entrySelector); await entry.click();
@@ -582,7 +582,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(data(rtCsv, ",").map(row => row[0])).toEqual([1, 2, 3]);
       expect(data(rtCsv, ",").map(row => row[3])).toEqual([60, 120, 180]);
       await browser.$('.chromatogram-panel').$('button=Preview linked figure').click(); const linked = await preview();
-      expect(await browser.$(FIGURE).getText()).toContain("lower panel always shows that scan's complete spectrum");
+      expect(await browser.$(FIGURE).getText()).toContain("Bottom: that scan's full spectrum.");
       const linkedSvg = join(output, "linked-current.svg"); await save(FIGURE, "Export SVG…", "Export linked figure", linkedSvg); expect(readFileSync(linkedSvg, "utf8")).toBe(linked.svg);
       await scope(FIGURE, "Full run"); const linkedFull = await preview(); const linkedFullSvg = join(output, "linked-full.svg");
       await save(FIGURE, "Export SVG…", "Export linked figure", linkedFullSvg); expect(readFileSync(linkedFullSvg, "utf8")).toBe(linkedFull.svg);
@@ -633,7 +633,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       return measured;
     });
     expect(item.adoption).toEqual({ kind: "notRequested" }); expect(await roster()).toEqual(sourceRoster);
-    expect(await browser.$(PANEL + " .conversion-adoption").getText()).toContain("10 converted mzML outputs are ready to add");
+    expect(await browser.$(PANEL + " .conversion-adoption").getText()).toContain("10 mzML outputs ready to add");
     const callStart = (await calls()).length, adoptButton = browser.$(PANEL + " .conversion-adoption button");
     let firstAdoptionRoster: WorkspaceRoster | undefined;
     for (const phase of ["first", "repeat"] as const) {

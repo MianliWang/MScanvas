@@ -35,7 +35,7 @@ import type {
  */
 
 const DIAGNOSTICS_EXPLANATION =
-  "Saves a local redacted JSON file. Known filesystem paths and internal identifiers are removed, but backend text may still contain acquisition metadata. Review the file before sharing.";
+  "Known filesystem paths and internal identifiers are removed, but backend text may still contain acquisition metadata. Review the file before sharing.";
 
 const EXPORT_LABEL = "Export failure diagnostics…";
 
@@ -190,7 +190,7 @@ describe("saving conversion diagnostics", () => {
     const panel = await panelOf(apiWith(terminal([failed("file-1", "run-1.raw")])));
 
     expect(
-      await within(panel).findByText("1 item of this queue has diagnostics worth saving."),
+      await within(panel).findByText("1 item has diagnostics."),
     ).toBeVisible();
     const action = within(panel).getByRole("button", { name: EXPORT_LABEL });
     expect(action).toBeEnabled();
@@ -212,7 +212,7 @@ describe("saving conversion diagnostics", () => {
     );
 
     expect(
-      await within(panel).findByText("2 items of this queue have diagnostics worth saving."),
+      await within(panel).findByText("2 items have diagnostics."),
     ).toBeVisible();
   });
 
@@ -224,7 +224,7 @@ describe("saving conversion diagnostics", () => {
     // Not a disabled control and not an empty state. An action that can never
     // be used here is one that only teaches its own absence, and the queue's
     // own result already says what happened to each item.
-    await within(panel).findByText(/converted mzML output/);
+    await within(panel).findByText(/mzML outputs? ready to add/);
     expect(within(panel).queryByRole("button", { name: EXPORT_LABEL })).toBeNull();
     expect(within(panel).queryByText(DIAGNOSTICS_EXPLANATION)).toBeNull();
   });
@@ -233,7 +233,7 @@ describe("saving conversion diagnostics", () => {
     const panel = await panelOf(apiWith(terminal([residual("file-1", "run-1.raw")])));
 
     expect(
-      await within(panel).findByText("1 item of this queue has diagnostics worth saving."),
+      await within(panel).findByText("1 item has diagnostics."),
     ).toBeVisible();
     expect(within(panel).getByRole("button", { name: EXPORT_LABEL })).toBeEnabled();
   });
@@ -252,7 +252,7 @@ describe("saving conversion diagnostics", () => {
     );
 
     expect(
-      await within(panel).findByText("1 item of this queue has diagnostics worth saving."),
+      await within(panel).findByText("1 item has diagnostics."),
     ).toBeVisible();
   });
 

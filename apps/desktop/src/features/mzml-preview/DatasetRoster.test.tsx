@@ -46,6 +46,7 @@ interface HarnessProps {
   readonly canReloadRoster?: boolean;
   readonly folderBusy?: boolean;
   readonly dropBusy?: boolean;
+  readonly dropAvailable?: boolean;
   readonly canMutate?: boolean;
   readonly load?: RosterLoadState;
   readonly rosterSettlementToken?: number;
@@ -74,6 +75,7 @@ function Harness({
   canReloadRoster = true,
   folderBusy = false,
   dropBusy = false,
+  dropAvailable = false,
   canMutate = true,
   load = { status: "ready" },
   rosterSettlementToken = 0,
@@ -92,6 +94,7 @@ function Harness({
       canReloadRoster={canReloadRoster}
       dispatch={dispatch}
       focusAddFilesToken={focusAddFilesToken}
+      dropAvailable={dropAvailable}
       dropBusy={dropBusy}
       folderBusy={folderBusy}
       load={load}
@@ -485,6 +488,17 @@ describe("looking at the roster through a search and a sort", () => {
 });
 
 describe("native drop roster accessibility", () => {
+  it("offers dropping files onto an empty list only while drop is available", () => {
+    const { unmount } = render(<Harness rows={0} dropAvailable />);
+    expect(screen.getByText("No acquisitions yet")).toBeVisible();
+    expect(screen.getByText("Add files… or drop them here.")).toBeVisible();
+    unmount();
+
+    render(<Harness rows={0} />);
+    expect(screen.getByText("No acquisitions yet")).toBeVisible();
+    expect(screen.queryByText(/drop them here/u)).toBeNull();
+  });
+
   it("offers an enabled Clear escape over an empty busy roster", () => {
     const onClearList = vi.fn(() => true);
     render(
@@ -1235,10 +1249,10 @@ describe("the workspace roster as an accessible list", () => {
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    // Said where the actions are, not only in a confirmation nobody has to
-    // read: removing a row is not deleting a file.
+    // On demand: that organization is session-only. That removing a row
+    // leaves the file on disk is said by the removal notices themselves.
     fireEvent.click(screen.getByText("Roster help"));
-    expect(screen.getByText(/Removing rows leaves source files unchanged/)).toBeVisible();
+    expect(screen.getByText("Groups and arrangement last for this session only. Removing rows leaves source files unchanged.")).toBeVisible();
   });
 
   it("offers adding files and nothing else when the session holds none", () => {

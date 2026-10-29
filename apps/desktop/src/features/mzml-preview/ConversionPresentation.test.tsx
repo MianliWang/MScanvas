@@ -369,32 +369,30 @@ describe("PM9.4 O5: the ellipsis only where a picker follows", () => {
   });
 });
 
-describe("PM9.4 O6: Stop and Skip explained where they are offered", () => {
+describe("PM9.4 O6: Stop explained where it is offered", () => {
   it("leaves them out of a ready review", async () => {
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend }));
     await check("run-1.raw");
     const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
     await waitFor(() => expect(convert).not.toHaveAttribute("aria-disabled"));
-    expect(convert).toHaveAccessibleDescription(/One Thermo RAW acquisition will be converted to mzML\. Output-only validation\./);
+    expect(convert).toHaveAccessibleDescription(/One Thermo RAW acquisition will be converted to mzML\. Output-only validation: not compared with the vendor source\./);
     expect(panel.textContent).not.toMatch(/Stop queue|Stop this file|Skip settles/);
   });
 
-  it("explains Skip beside the rows that offer it while the queue runs", async () => {
+  it("offers Skip on the rows that can take it, and explains Stop queue", async () => {
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1), raw(2), raw(3)], availability: availableBackend, initialConversion: running() }));
     const skip = await within(panel).findByRole("button", { name: "Skip run-3.raw" });
-    expect(skip).toHaveAccessibleDescription(en.m74CnvSkipExplanation);
-    expect(within(panel).getByText(en.m74CnvSkipExplanation)).toBeVisible();
-    // Stop queue and Stop this file keep their own explanations.
+    // Its name says what it skips; nothing else restates it.
+    expect(skip).not.toHaveAttribute("aria-describedby");
     expect(within(panel).getByRole("button", { name: "Stop queue" })).toHaveAccessibleDescription(en.m74CnvStopExplanation);
   });
+});
 
-  it("says nothing of Skip where no row offers it", async () => {
-    const panel = await panelOf(createFakePreviewApi({
-      initialDatasets: [raw(1), raw(2)], availability: availableBackend,
-      initialConversion: { status: "running", operationId: "1", queue: queueOf([converted("file-1", "run-1.raw"), queueItem("file-2", "run-2.raw", { state: "running", attempts: 1 })]) },
-    }));
-    await within(panel).findByRole("button", { name: "Stop queue" });
-    expect(within(panel).queryByText(en.m74CnvSkipExplanation)).toBeNull();
+describe("the plan summary", () => {
+  it("says the shipped precision rounds intensities, beside Convert", async () => {
+    const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend }));
+    await check("run-1.raw");
+    await waitFor(() => expect(panel.querySelector("[data-plan-precision-note]")).toHaveTextContent(en.cnvMz64I32Note));
   });
 });
 
@@ -470,7 +468,7 @@ describe("PM9.4 O8: a refused finished-queue action points at what holds it", ()
     fireEvent.click(await within(panel).findByRole("button", { name: en.stagingRecoveryButton }));
     const add = within(panel).getByRole("button", { name: en.m74CnvAddOne });
     await waitFor(() => expect(add).toHaveAttribute("aria-disabled", "true"));
-    expect(add).toHaveAccessibleDescription(`${en.m74CnvAdoptExplanation} ${en.stagingRecoveryWorking}`);
+    expect(add).toHaveAccessibleDescription(en.stagingRecoveryWorking);
     fireEvent.click(add);
     expect(api.calls()).not.toContain("adoptConversionOutputs");
     // The failed row makes diagnostics available, and the export is refused
@@ -483,7 +481,7 @@ describe("PM9.4 O8: a refused finished-queue action points at what holds it", ()
     expect(api.diagnosticsExportRequests).toEqual([]);
     await act(async () => reclaim.resolve({ status: "cleaned" }));
     await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
-    expect(add).toHaveAccessibleDescription(en.m74CnvAdoptExplanation);
+    expect(add).not.toHaveAttribute("aria-describedby");
   });
 
   it("refers staging cleanup to the running queue's status line", async () => {

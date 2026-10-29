@@ -321,7 +321,7 @@ describe("PM9.7 integrated states, rendered", () => {
         expect([create, reopen].every((selector) => selector !== null)).toBe(true);
         expect([await offered(create!), await offered(reopen!)]).toEqual([true, true]);
         // Save, Save As… and Close are refused with nothing open: they read as
-        // refused, point at the no-project sentence and say why (PM9.7 F1).
+        // refused, point at the no-project heading and say why (PM9.7 F1).
         const refused = await browser.execute(
           (labels: string[]) =>
             labels.map((label) => {
@@ -349,8 +349,9 @@ describe("PM9.7 integrated states, rendered", () => {
             refused: "true",
             disabled: false,
             opacity: "0.48",
-            title: words.projectNeedsProject,
-            describedBy: words.projectNoneHint,
+            // The visible no-project heading is the reason; no tooltip repeats it.
+            title: "",
+            describedBy: words.projectNone,
           });
         }
         // Focused, a refused action keeps its full ring rather than fading with it.

@@ -283,9 +283,6 @@ export function ChromatogramExportPanel({
       </fieldset>
       <fieldset className="spectrum-data-actions">
         <legend>{t("viewerData")}</legend>
-        <p className="chromatogram-export-note">
-          {t("viewerExportDataHelp")}
-        </p>
         <div className="spectrum-export-actions">
           {DATA_FORMATS.map(({ format }) => (
             <button
@@ -511,7 +508,7 @@ function LinkedFigureSection({
 export function LinkedFigureResult({ state, onDismiss }: { readonly state: LinkedFigureExportState; readonly onDismiss: () => void }) {
   const t = useUiMessages();
   if (state.status === "idle" || state.status === "running") return null;
-  const message = state.status === "cancelled" ? t("viewerLinkedCancelled") : state.status === "failed" ? ownedErrorMessage(state.error, t) :
+  const message = state.status === "cancelled" ? t("viewerExportCancelled") : state.status === "failed" ? ownedErrorMessage(state.error, t) :
     state.status === "copied" ? t("viewerLinkedCopied", { width: String(state.figure.width), height: String(state.figure.height),
       theme: t(state.figure.theme), index: formatCount(state.selectedIndex), count: state.sourceScanCount }) :
     t("viewerLinkedSaved", { name: state.fileName, index: formatCount(state.selectedIndex),

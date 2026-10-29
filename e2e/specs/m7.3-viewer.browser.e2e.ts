@@ -198,7 +198,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.waitUntil(async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").length === 3);
     expect(before).toEqual([]);
     await browser.$(SCANS + ' input[type="search"]').setValue("raw-1");
-    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is outside these results");
+    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is hidden by the filters");
     expect(await browser.$("button=Next scan").isEnabled()).toBe(false);
     await capture("hidden-selection");
     await browser.$("button=Clear filters and reveal").click(); await browser.$("button=Next scan").click();
@@ -297,7 +297,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.$(RT).scrollIntoView({ block: "center" });
     await clickPlot(RT, 3 / 7);
     await browser.$(MZ).waitForDisplayed();
-    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is outside these results");
+    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is hidden by the filters");
     expect(await browser.$(SCANS + " select").getValue()).toBe("1");
     expect(await browser.$("button=Next scan").isEnabled()).toBe(false);
     await capture("plot-hidden-by-ms-filter");
@@ -308,7 +308,11 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
       await clickPlot(RT, .3);
       await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum"));
       await browser.$(".spectrum-source-details").waitForExist();
-      if (kind === "empty") expect(await browser.$(".spectrum-panel").getText()).toContain("zero points");
+      // Zero points is said by the summary; the empty state says no extent is inferred.
+      if (kind === "empty") {
+        expect(await browser.$(".spectrum-panel").getText()).toContain(", 0 points.");
+        expect(await browser.$(".spectrum-panel .empty-state").getText()).toContain("No base peak or m/z range is inferred.");
+      }
       else { expect(await browser.$(MZ).getAttribute("tabindex")).toBe("-1"); expect(await browser.$("#spectrum-viewport-status").getText()).not.toBe(""); }
       await capture("spectrum-" + kind);
     }
@@ -317,21 +321,21 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await holdInvoke("project_selected_spectrum");
     await browser.$("button=Zoom in m/z").click();
     await browser.waitUntil(async () => await heldCallers("project_selected_spectrum") === 1);
-    expect(await browser.$("#spectrum-viewport-status").getText()).toContain("Nothing is drawn here until it arrives");
+    expect(await browser.$("#spectrum-viewport-status").getText()).toContain("Drawing m/z");
     await capture("projection-loading");
     await releaseInvokeHold("project_selected_spectrum");
     await browser.waitUntil(async () => await browser.$("#spectrum-viewport-status").getText() === "");
     await setInvokeRejection("project_selected_spectrum", { kind: "spectrum_projection_failed",
       summary: "Controlled retained-source refusal.", detail: "M7.3 retry fixture.", retryable: true });
     await browser.$("button=Zoom in m/z").click();
-    await browser.$("button=Draw this m/z range again").waitForDisplayed();
+    await browser.$("button=Redraw").waitForDisplayed();
     expect(await browser.$("#spectrum-viewport-status").getText()).toContain("Controlled retained-source refusal.");
     await capture("projection-failed");
     const count = (await scientificCalls()).length;
     await setInvokeResult("project_selected_spectrum", null);
-    await browser.$("button=Draw this m/z range again").click();
+    await browser.$("button=Redraw").click();
     await browser.waitUntil(async () => (await scientificCalls()).length === count + 1);
-    await browser.$("button=Draw this m/z range again").waitForExist({ reverse: true });
+    await browser.$("button=Redraw").waitForExist({ reverse: true });
     expect(await browser.$(".spectrum-caption").getText()).toMatch(/sticks? ·/u);
   });
   it("keeps numeric raw text, IME and host keys separate and supports wheel and pan with reduced motion", async () => {

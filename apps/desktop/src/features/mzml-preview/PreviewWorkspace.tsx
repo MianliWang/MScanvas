@@ -272,6 +272,8 @@ export function PreviewWorkspace() {
   const backendUnavailable =
     workspace.backend.status === "resolved" &&
     workspace.backend.availability.state === "unavailable";
+  // Copy that offers dropping files only while dropping files works.
+  const dropAvailable = workspace.dropSubscriptionStatus === "available";
   // The banner has nothing to act on only while a usable installation stands
   // and nothing is being checked, superseded or held back by the conversion
   // lane; then it folds to a phrase in the header and costs the workspace no
@@ -459,7 +461,7 @@ export function PreviewWorkspace() {
   return (
     <div className="app-shell workbench-shell" data-surface={surface} data-roster-open={rosterOpen} data-details-open={detailsOpen} data-settings-return-target="" tabIndex={-1}>
       <WorkbenchHeader surface={surface} onNavigate={setSurface}
-        detailsAvailable={detailsAvailable} rowCount={roster.datasets.length}
+        detailsAvailable={detailsAvailable}
         busy={workspace.conversion.busy}
         retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus}
         projectBusy={project.busy !== "idle"} context={shellContext}
@@ -477,11 +479,6 @@ export function PreviewWorkspace() {
                 ? t("dropRelease", { count: workspace.dropPresentation.itemCount })
                 : t("dropAdding")}
             </strong>
-            {workspace.dropPresentation.status === "importing" ? (
-              <span>
-                {t("dropInspecting")}
-              </span>
-            ) : null}
           </div>
         </div>
       )}
@@ -791,6 +788,7 @@ export function PreviewWorkspace() {
             canReloadRoster={canReloadRoster}
             dispatch={workspace.dispatchRoster}
             focusAddFilesToken={workspace.focusAddFilesToken}
+            dropAvailable={dropAvailable}
             dropBusy={workspace.dropBusy}
             folderBusy={workspace.folderBusy}
             load={workspace.rosterLoad}
@@ -952,7 +950,7 @@ export function PreviewWorkspace() {
                 exportToggle={
                   workspace.chromatogramExportToken === null ? null : (
                     <div className="figure-quick-actions"><QuickFigureActions busy={workspace.scientificExportBusy} quickVisible={!chromatogramExportOpen}
-                      context={[t("viewerChromatogram"), t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun"), `${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} px`]}
+                      context={[t("viewerChromatogram"), t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun"), `${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} ${t("pixels")}`]}
                       figureUnavailable={workspace.renderSettingsProblem !== null || (!workspace.chromatogramTraces.tic && !workspace.chromatogramTraces.bpc)}
                       pngUnavailable={workspace.pngDpiProblem !== null} onPreview={() => openFigure("chromatogram")}
                       onPng={() => workspace.exportChromatogram("png")} onCopy={workspace.copyChromatogramPlot} />
@@ -1022,9 +1020,6 @@ export function PreviewWorkspace() {
             {preview.status === "opening" ? (
               <div className="empty-state">
                 <strong>{t("readingEvidence")}</strong>
-                <span>
-                  {t("readingEvidenceHelp")}
-                </span>
               </div>
             ) : preview.status === "failed" ? (
               <div className="empty-state">
@@ -1049,7 +1044,7 @@ export function PreviewWorkspace() {
             ) : (
               <div className="empty-state">
                 <strong>{t("emptyEvidence")}</strong>
-                <span>{backendUnavailable ? t("previewBackendRequired") : t("emptyEvidenceHelp")}</span>
+                <span>{backendUnavailable ? t("previewBackendRequired") : emptyEvidenceHelp(workspace, dropAvailable, t)}</span>
                 {/* The one owned next step in this state -- the acquisition that
                     was being read, one click from being read again -- so it is
                     this surface's primary action (PM9 L1). No other state gets
@@ -1083,6 +1078,19 @@ export function PreviewWorkspace() {
  * U+00A0 rather than a plain space, because CSS collapses a trailing ordinary
  * space out of the rendered text a screen reader is given. It is not spoken.
  */
+/**
+ * The empty evidence column's next step, from what the roster holds: nothing
+ * while it is still being read, the route to data while it is empty, a pick
+ * once there is an mzML row, and why nothing opens when every row is a vendor
+ * acquisition.
+ */
+function emptyEvidenceHelp(workspace: ReturnType<typeof usePreviewWorkspace>, dropAvailable: boolean, t: UiMessage): string {
+  if (workspace.rosterLoad.status === "loading") return "";
+  const rows = workspace.roster.datasets;
+  if (rows.length === 0) return t(dropAvailable ? "emptyEvidenceDropHelp" : "emptyEvidenceHelp");
+  return t(rows.some(row => row.sourceKind === "mzml") ? "emptyEvidenceSelect" : "emptyEvidenceVendorOnly");
+}
+
 function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
   return `${t("workspaceAnnouncement", { message: formatWorkspaceNotice(notice, t).message })}${notice.sequence % 2 === 1 ? "\u00a0" : ""}`;
 }
@@ -1099,10 +1107,15 @@ function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
  * percentage: nothing measures one.
  */
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessage): string {
-  if (workspace.dropSubscriptionStatus === "unavailable") return `${t("dropUnavailable")}. ${workspace.dropSubscriptionError === null ? t("addFiles") : ownedErrorMessage(workspace.dropSubscriptionError, t)}`;
-  if (workspace.dropSubscriptionStatus === "connecting") return t("shellDropConnecting");
+  if (workspace.dropSubscriptionStatus === "unavailable") {
+    return workspace.dropSubscriptionError === null
+      ? t("shellDropUnavailable")
+      : t("messageWithDetail", { message: t("dropUnavailable"), detail: ownedErrorMessage(workspace.dropSubscriptionError, t) });
+  }
+  // Nothing to say until drop is live: a hint about a gesture that cannot work yet is noise.
+  if (workspace.dropSubscriptionStatus === "connecting") return "";
   if (workspace.dropRejectedToken > 0) return `${t(workspace.dropRejectedReason === "drop_busy" ? "dropBusy" : "dropConversionBusy")}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
-  if (workspace.dropError !== null) return `${t("dropFailed")}. ${ownedErrorMessage(workspace.dropError, t)}`;
+  if (workspace.dropError !== null) return t("messageWithDetail", { message: t("dropFailed"), detail: ownedErrorMessage(workspace.dropError, t) });
   switch (workspace.dropPresentation.status) {
     case "idle": return "";
     case "hovering": return t("dropRelease", { count: workspace.dropPresentation.itemCount });
@@ -1128,7 +1141,7 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     if (rosterLoad.status === "failed" && roster.datasets.length === 0) {
       // Nor after the read failed, which is the same ignorance by another
       // route -- and the failure itself is worth hearing.
-      return `${t("rosterFailed")}. ${ownedErrorMessage(rosterLoad.error, t)}`;
+      return t("messageWithDetail", { message: t("rosterFailed"), detail: ownedErrorMessage(rosterLoad.error, t) });
     }
     return roster.datasets.length === 0
       ? t("rosterEmptyAnnouncement")
@@ -1147,8 +1160,8 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
       // the same spectrum is worse than either of them saying less.
       return t("viewerSpectrumLoaded", { index: String(spectrum.spectrum.index), count: spectrum.spectrum.pointCount });
     case "unavailable":
-      return t("viewerSpectrumUnavailable", { index: String(spectrum.requestedIndex) });
+      return t("viewerSpectrumAbsent", { index: String(spectrum.requestedIndex) });
     case "failed":
-      return `${t("viewerSpectrumFailed", { index: String(spectrum.index) })}. ${ownedErrorMessage(spectrum.error, t)}`;
+      return t("messageWithDetail", { message: t("viewerSpectrumFailed", { index: String(spectrum.index) }), detail: ownedErrorMessage(spectrum.error, t) });
   }
 }

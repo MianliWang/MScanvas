@@ -450,8 +450,14 @@ async function rangeLine(panel: string) {
 /**
  * One plot's range row and caption, read in one script: the sentence a sighted
  * reader sees (outside .visually-hidden, the pending actions and the
- * disclosures), what the live line says, the bounds it carries, the bounds the
- * caption prints for the range on screen, and how many announcers the row has.
+ * disclosures), the sentence the line states whether printed or only
+ * announced (its committed claim, without the announced bounds), what the live
+ * line says, the bounds it carries, the bounds the caption prints for the range
+ * on screen, and how many announcers the row has.
+ *
+ * With nothing pending and nothing narrower than the full range committed, the
+ * line is announced and not printed (the caption already says "full range"), so
+ * `visible` is empty there and `sentence` is what its truth is judged on.
  */
 function rangeFacts(panel: string) {
   return browser.execute((css: string) => {
@@ -463,6 +469,15 @@ function rangeFacts(panel: string) {
       const hidden = node.parentElement?.closest(".visually-hidden, .plot-pending-actions, details");
       if (hidden === null || hidden === undefined || !row.contains(hidden)) visible += node.textContent ?? "";
     }
+    const line = row.querySelector(".plot-committed-range");
+    let sentence = "";
+    if (line !== null) {
+      const lineWalker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      for (let node = lineWalker.nextNode(); node !== null; node = lineWalker.nextNode()) {
+        const hidden = node.parentElement?.closest(".visually-hidden");
+        if (hidden === null || hidden === undefined || hidden === line || !line.contains(hidden)) sentence += node.textContent ?? "";
+      }
+    }
     const bounds = (text: string) => {
       const match = /(-?\d+\.\d+) (?:to|至) (-?\d+\.\d+)/u.exec(text);
       return match === null ? null : `${match[1]} to ${match[2]}`;
@@ -470,6 +485,7 @@ function rangeFacts(panel: string) {
     const spoken = (row.querySelector(".plot-committed-range")?.textContent ?? "").replace(/\s+/gu, " ").trim();
     return {
       visible: visible.replace(/\s+/gu, " ").trim(),
+      sentence: sentence.replace(/\s+/gu, " ").trim(),
       spoken,
       bounds: bounds(spoken),
       displayed: bounds(root.querySelector(".chromatogram-range, #spectrum-viewport-range")?.textContent ?? ""),
@@ -647,7 +663,8 @@ async function observeViewer(label: string) {
     const rows = (css: string) => {
       const node = document.querySelector(css);
       if (node === null || node.getClientRects().length === 0) return null;
-      const boxes = [...node.querySelectorAll("h2, button, label, summary, .plot-committed-range")]
+      // A committed line hidden at rest takes no row (UI-34 as revised).
+      const boxes = [...node.querySelectorAll("h2, button, label, summary, .plot-committed-range:not(.visually-hidden)")]
         .filter((item) => item.getClientRects().length > 0)
         .map((item) => item.getBoundingClientRect())
         .sort((a, b) => a.top - b.top);
@@ -863,7 +880,9 @@ function rangeIntegrity(): Promise<string[]> {
     return [...document.querySelectorAll<HTMLElement>(".plot-range-actions")].flatMap((row) => {
       const plot = row.closest(".chromatogram-panel") === null ? "m/z" : "rt";
       const problems: string[] = [];
-      const line = row.querySelector<HTMLElement>(".plot-committed-range");
+      // Only a line printed on screen can be clipped; at rest it is hidden
+      // and kept only as the announcement.
+      const line = row.querySelector<HTMLElement>(".plot-committed-range:not(.visually-hidden)");
       if (line !== null) {
         if (clipped(line) || line.scrollWidth > line.clientWidth + 1) problems.push("line clipped");
         const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
@@ -1348,7 +1367,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
       // Nothing of the previous acquisition's commit stays in the committed
       // line, neither shown nor announced (UI-34).
       const fresh = await rangeFacts(RT_PANEL);
-      expect(fresh.visible).toBe(fill(en.rangeCommittedFull, { name: en.rangeRtAxis }));
+      // At rest the caption shows the range; the line announces it and prints nothing.
+      expect(fresh.visible).toBe("");
+      expect(fresh.sentence).toBe(fill(en.rangeCommittedFull, { name: en.rangeRtAxis }));
       expect(fresh.spoken).not.toContain(fixed({ low: before.rt.low, high: before.rt.high }));
       // Recorded, not asserted: whether the run scope, the table's search and
       // the figure draft follow the new preview is not a documented contract.
@@ -1377,8 +1398,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
         // Each visible sentence against the state it is about; collected, so one
         // run says which checkpoints were false.
         const problems: string[] = [];
-        const judge = (label: string, facts: { readonly visible: string; readonly displayed: string | null }, committed: string | null) => {
-          const why = untrue(facts.visible, words.rangeRtAxis, { committed, shown: facts.displayed ?? "" }, locale);
+        // Judged on the line's sentence, printed or only announced.
+        const judge = (label: string, facts: { readonly visible: string; readonly sentence: string; readonly displayed: string | null }, committed: string | null) => {
+          const why = untrue(facts.sentence, words.rangeRtAxis, { committed, shown: facts.displayed ?? "" }, locale);
           if (why !== null) problems.push(`${label}: ${why}`);
           if (committed !== null && committed === facts.displayed && /\d/u.test(facts.visible)) problems.push(`${label}: repeats the caption: ${facts.visible}`);
         };
@@ -1468,8 +1490,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
           RT_PANEL,
         );
       const problems: string[] = [];
-      const judge = (label: string, facts: { readonly visible: string; readonly displayed: string | null }, committed: string | null) => {
-        const why = untrue(facts.visible, en.rangeRtAxis, { committed, shown: facts.displayed ?? "" });
+      // Judged on the line's sentence, printed or only announced.
+      const judge = (label: string, facts: { readonly sentence: string; readonly displayed: string | null }, committed: string | null) => {
+        const why = untrue(facts.sentence, en.rangeRtAxis, { committed, shown: facts.displayed ?? "" });
         if (why !== null) problems.push(`${label}: ${why}`);
       };
 
@@ -1550,7 +1573,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await activateRow(2);
       await waitForReads(1);
       await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
-      expect((await rangeFacts(MZ_PANEL)).visible).toBe(fill(zh.rangeCommittedFull, { name: zh.rangeMzAxis }));
+      expect((await rangeFacts(MZ_PANEL)).sentence).toBe(fill(zh.rangeCommittedFull, { name: zh.rangeMzAxis }));
       await browser.$(MZ_PANEL).$(`button=${zh.viewerMzZoomIn}`).click();
       await browser.waitUntil(
         async () => {
@@ -1599,13 +1622,14 @@ describe("PM9.3 viewer contracts, rendered", () => {
       });
       expect(rendered.line.top >= 0 && rendered.line.bottom <= 640 && rendered.line.right > rendered.line.left).toBe(true);
       // A range narrower than the spectrum is committed, and the visible label
-      // says so and nothing about the screen.
+      // says so and nothing about the screen: a current-range export takes it.
       expect(facts.displayed).not.toBe(fixed(SPECTRUM.viewportDomain));
       expect(facts.visible).toBe(fill(zh.rangeCommittedPart, { name: zh.rangeMzAxis }));
-      expect(untrue(facts.visible, zh.rangeMzAxis, { committed: facts.bounds, shown: facts.displayed ?? "" }, "zh-CN")).toBeNull();
+      expect(facts.sentence).toBe(facts.visible);
+      expect(untrue(facts.sentence, zh.rangeMzAxis, { committed: facts.bounds, shown: facts.displayed ?? "" }, "zh-CN")).toBeNull();
       // The live line carries the committed bounds, which at rest are the caption's.
       expect(facts.bounds).toBe(facts.displayed);
-      expect(facts.spoken).toBe(`${facts.visible}${fill(zh.rangeCommittedBounds, { low: low!, high: high! })}`);
+      expect(facts.spoken).toBe(`${facts.sentence}${fill(zh.rangeCommittedBounds, { low: low!, high: high! })}`);
       expect([facts.announcers, await browser.$(`${MZ_PANEL} .plot-committed-range`).getAttribute("aria-live")]).toEqual([1, "polite"]);
       // Whole, and one row where UI-32 holds range rows (columns of 690 px and wider).
       expect(integrity).toEqual([]);

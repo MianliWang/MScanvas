@@ -407,7 +407,7 @@ describe("rendered QA for the one-to-many output topology", () => {
     });
     const unconfirmedText = visibleText(unconfirmed);
     expect(unconfirmedText).toContain("Stop could not be confirmed");
-    expect(unconfirmedText).toMatch(/could not remove its own temporary folder/);
+    expect(unconfirmedText).toMatch(/could not remove its temporary folder/);
   });
 
   it("renders ten adoption outcomes with mixed results, keyed apart", async () => {
@@ -480,7 +480,7 @@ describe("rendered QA for the one-to-many output topology", () => {
     });
     // The refusal names the member and the reason, in the user's terms.
     expect(
-      screen.getByText(`${TEN_MEMBERS[9]} was not added: changed since it was converted.`),
+      screen.getByText(`${TEN_MEMBERS[9]} was not added: it changed since it was converted.`),
     ).toBeVisible();
 
     // The action stays mounted and focusable rather than being replaced, so a

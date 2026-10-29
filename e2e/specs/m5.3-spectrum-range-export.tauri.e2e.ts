@@ -97,7 +97,7 @@ async function chooseScope(value: string): Promise<void> {
 /** Commits an m/z window through the panel's own keyboard step. */
 async function zoomIn(): Promise<void> {
   await press("Zoom in m/z");
-  await browser.waitUntil(async () => /Current range is m\/z [\d.]/u.test(await rangeNote()), {
+  await browser.waitUntil(async () => /Current range: m\/z [\d.]/u.test(await rangeNote()), {
     timeout: 30_000,
     timeoutMsg: "the committed window never reached the range note",
   });
@@ -271,7 +271,7 @@ describe("a spectrum range against the real export boundary", () => {
         () => document.querySelectorAll('input[name="spectrum-range-scope"]').length,
       )) as number;
       expect(offered).toBe(0);
-      expect(await rangeNote()).toContain("no m/z viewport");
+      expect(await rangeNote()).toContain("No m/z range");
     });
 
     it("still accepts a full-source export of the same spectrum", async () => {

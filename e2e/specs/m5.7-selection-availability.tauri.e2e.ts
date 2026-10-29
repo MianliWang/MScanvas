@@ -27,9 +27,7 @@ const FIRST_ROW = 'div.spectrum-table-row[data-row-position="0"]';
 const NOTICE = "#viewer-selection-availability";
 const REGION = '[data-live-region="spectrum-selection-availability"]';
 
-const BACKEND_REASON =
-  "Selecting a scan needs ProteoWizard, and this session has no usable backend. " +
-  "See the backend status above.";
+const BACKEND_REASON = "Scan selection needs ProteoWizard, which is unavailable. See backend status.";
 
 /** How many times this document has asked the backend to read a spectrum. */
 function reads(calls: readonly { readonly command: string }[]): number {

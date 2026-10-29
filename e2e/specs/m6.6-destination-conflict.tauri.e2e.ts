@@ -403,8 +403,9 @@ runNative("M6.6 real native destination and conflict proof (requires authorized 
     await selectAll();
     const before = (await calls()).filter((call) => call.command === "begin_workspace_conversion_queue").length;
     await subfolderName("../escaped");
+    // The reading is said by the lane notice; this element appears with Rust's answer.
     await browser.$("#conversion-plan-pending").waitForDisplayed();
-    await browser.waitUntil(async () => !(await browser.$("#conversion-plan-pending").getText()).includes("Working out"));
+    await browser.$("#conversion-availability-plan-reading").waitForExist({ reverse: true });
     expect(await isRefused(CONVERT)).toBe(true);
     expect((await calls()).filter((call) => call.command === "begin_workspace_conversion_queue").length).toBe(before);
     expect(existsSync(join(dirname(dirname(first)), "escaped"))).toBe(false);

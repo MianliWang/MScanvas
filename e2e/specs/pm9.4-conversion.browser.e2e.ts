@@ -456,7 +456,7 @@ describe("PM9.4 conversion journey, rendered", () => {
     await frame("pm94-p2-no-backend-en-1366x768");
 
     const pending = await browser.execute(() => (document.querySelector("#conversion-plan-pending")?.textContent ?? "").trim());
-    expect(pending).not.toBe(en.m74CnvPlanUnknown);
+    expect(pending).not.toBe(en.m74CnvNoticePlanSettingsUnknown);
     expect(pending).toBe(word("en", "m74CnvPlanNoBackend"));
     const control = await startControl();
     expect(control?.ariaDisabled).toBe("true");

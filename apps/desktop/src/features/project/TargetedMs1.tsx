@@ -612,12 +612,6 @@ export function TargetedMs1Setup({
         {t("targetedExperimental")}
       </p>
       <p className="project-note">{t("targetedDomain")}</p>
-      {/* The scope and caveats above stay read before Run; how the source is
-          read explains a run without deciding one, so it waits to be opened. */}
-      <details className="targeted-modules" data-targeted-read-path="">
-        <summary>{t("targetedReadPathSummary")}</summary>
-        <p className="project-note">{t("targetedReadPath")}</p>
-      </details>
 
       <fieldset className="targeted-members" data-targeted-members="">
         <legend>{t("targetedAcquisitions")}</legend>
@@ -665,7 +659,7 @@ export function TargetedMs1Setup({
         </label>
       </div>
       <label className="targeted-targets">
-        <span>{t("targetedTargetsLabel")}</span>
+        <span>{t("targetedFieldTargets")}</span>
         <textarea
           ref={textarea}
           rows={6}
@@ -851,14 +845,13 @@ export function TargetedMs1Setup({
 
 /**
  * Where Show run's answer went while Details is folded: beside the press, the
- * surface's own sentence and the header's own toggle. Nothing unfolds and the
- * keyboard stays on the press until the reader asks.
+ * header's own toggle. Nothing unfolds and the keyboard stays on the press
+ * until the reader asks.
  */
 function DetailsHint({ onReveal }: { readonly onReveal: () => void }) {
   const t = useUiMessages();
   return (
     <p className="project-inspect-hint" data-targeted-details-hint="">
-      <span>{t("provenanceInDetails")}</span>
       <button type="button" className="link-button" onClick={onReveal}>
         {t("provenanceShowDetails")}
       </button>
@@ -976,7 +969,7 @@ function RunBlock({
                 ? t("targetedLastCancelled")
                 : failure === null
                   ? t("targetedLastFailed")
-                  : `${t("targetedLastFailed")} ${t(FAILURE_KEYS[failure.code])}`}
+                  : t("sentencePair", { first: t("targetedLastFailed"), second: t(FAILURE_KEYS[failure.code]) })}
           </p>
           <div className="project-actions">
             {artifactId !== null ? (
@@ -2159,7 +2152,6 @@ export function TargetedMs1Report({
                     onToggle={(event) => setFigureExportOpen(event.currentTarget.open)}
                   >
                     <summary>{t("targetedFigureExports")}</summary>
-                    <p className="project-note">{t("targetedFigureExportHelp")}</p>
                     <FigureSettingsFields
                       idPrefix={`targeted-${ids}`}
                       settings={draft}

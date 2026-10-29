@@ -1,18 +1,40 @@
 /**
- * What the plot caption says about its own drawing.
+ * What the plot caption and its details say about their own drawing.
  *
  * The counts themselves are covered where they are made -- the reduction's
  * bounds and its refusal to lose a point are in `scale.test.tsx` -- so these
- * tests assert only that the sentence agrees with the number it carries.
+ * tests assert only that the sentence agrees with the number it carries, and
+ * that the details add only what the caption and the axes cannot say.
  */
 
 import { fireEvent, screen } from "@testing-library/react";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { describe, expect, it } from "vitest";
 
+import { UI_RESOURCES } from "../preferences/i18n";
 import { StickSpectrum } from "./StickSpectrum";
 
-function renderSpectrum(mz: readonly number[], intensity: readonly number[]): void {
+const en = UI_RESOURCES.en;
+
+/** One English resource with its values written in, numbers grouped as the runtime groups them. */
+function fill(template: string, values: Readonly<Record<string, number>> = {}): string {
+  return template.replace(/\{\{\s*(\w+)(?:,\s*number)?\s*\}\}/gu, (_, name: string) => (values[name] ?? NaN).toLocaleString("en-US"));
+}
+
+function caption(): string {
+  return document.querySelector("figcaption > p")?.textContent ?? "";
+}
+
+/** The details disclosure, opened, whether or not it is shown. */
+function details(): HTMLDetailsElement {
+  const disclosure = screen.getByText("Source and drawing details");
+  const element = disclosure.closest("details")!;
+  expect(element).not.toHaveAttribute("open");
+  fireEvent.click(disclosure);
+  return element;
+}
+
+function renderSpectrum(mz: readonly number[], intensity: readonly number[], representationKnown = true): void {
   render(
     <StickSpectrum
       drawing={{
@@ -23,13 +45,10 @@ function renderSpectrum(mz: readonly number[], intensity: readonly number[]): vo
       intensity={intensity}
       labelledBy="caption-under-test"
       mz={mz}
-      representationKnown
+      representationKnown={representationKnown}
       surface={{ kind: "static" }}
     />,
   );
-  const disclosure = screen.getByText("Source and drawing details");
-  expect(disclosure.closest("details")).not.toHaveAttribute("open");
-  fireEvent.click(disclosure);
 }
 
 /** The same plot, drawn as one committed window of a retained spectrum. */
@@ -54,22 +73,17 @@ function renderWindow(
       surface={{ kind: "static" }}
     />,
   );
-  const disclosure = screen.getByText("Source and drawing details");
-  expect(disclosure.closest("details")).not.toHaveAttribute("open");
-  fireEvent.click(disclosure);
 }
 
 describe("what a window's caption may claim about it", () => {
-  it("does not say every observation is drawn when this plot collapsed some", () => {
+  it("says the drawing is grouped when this plot collapsed some observations", () => {
     /*
      * The defect this closes, at the numbers that produced it.
      *
      * Rust's projection budget is 1,800 points and this plot has 900 columns, so
      * a window holding 1,200 same-sign observations comes back *exact* --
      * `reduced` false -- and is collapsed here. Reading Rust's flag, the caption
-     * said "Drawn as 900 sticks of the 1,200 observations ... Every one of them
-     * is drawn", contradicting its own first sentence, on the plot's visible
-     * caption and in its accessible description at once.
+     * once said every observation was drawn, contradicting its own counts.
      */
     const mz: number[] = [];
     const intensity: number[] = [];
@@ -79,19 +93,14 @@ describe("what a window's caption may claim about it", () => {
     }
     renderWindow(mz, intensity, { low: 100, high: 219.9, sourcePoints: 1_200, reduced: false });
 
-    expect(screen.getByText(/^Drawn as 900 sticks of the 1,200 observations/u)).toBeVisible();
+    expect(caption()).toBe(`${fill(en.plotCaption, { count: 900, total: 1_200 })} · ${en.plotUnits}`);
+    const disclosure = details();
+    expect(disclosure).toBeVisible();
+    expect(disclosure.querySelector("p")).toHaveTextContent(en.plotReduced);
     expect(screen.queryByText(/Every one of them is drawn\./u)).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/groups observations by screen column/u),
-    ).toBeVisible();
-    // And it does not blame a shortage of columns, which for 1,200 observations
-    // happens to be true and for most windows is not.
-    expect(
-      screen.queryByText(/More were measured here than this drawing has columns/u),
-    ).not.toBeInTheDocument();
   });
 
-  it("says every observation is drawn when this plot drew every one", () => {
+  it("adds nothing to a caption whose counts already say every observation is drawn", () => {
     renderWindow([100, 110, 120], [5, 9, 7], {
       low: 100,
       high: 120,
@@ -99,16 +108,15 @@ describe("what a window's caption may claim about it", () => {
       reduced: false,
     });
 
-    expect(
-      screen.getByText(
-        /^Drawn as 3 sticks of the 3 observations this spectrum has between m\/z 100\.0000 and 120\.0000\. Every one of them is drawn\./u,
-      ),
-    ).toBeVisible();
+    expect(caption()).toBe(`${fill(en.plotCaption, { count: 3, total: 3 })} · ${en.plotUnits}`);
+    // Hidden rather than opening onto nothing, and no axis restated.
+    expect(details()).not.toBeVisible();
+    expect(screen.queryByText(/Horizontal axis/u)).not.toBeInTheDocument();
   });
 
-  it("says a range could not be drawn rather than that its drawing is on its way", () => {
-    // A failed projection is not an outstanding request, and for one that cannot
-    // be retried the "waiting" sentence would never go away.
+  it("leaves a blank range's state to the status line rather than captioning it", () => {
+    // A failed projection is not an outstanding request; the viewport's status
+    // line says which it is, so the caption names neither.
     render(
       <StickSpectrum
         drawing={{ kind: "viewport-blank", low: 300, high: 400, reason: "failed" }}
@@ -120,8 +128,9 @@ describe("what a window's caption may claim about it", () => {
       />,
     );
 
-    expect(screen.getByText(/^This range could not be drawn\. Nothing is drawn here\./u)).toBeVisible();
+    expect(caption()).toBe(en.plotUnits);
     expect(screen.queryByText(/Waiting for the drawing/u)).not.toBeInTheDocument();
+    expect(details()).not.toBeVisible();
   });
 
   it("claims nothing about intensity over a plot that holds none", () => {
@@ -142,7 +151,7 @@ describe("what a window's caption may claim about it", () => {
       />,
     );
 
-    expect(screen.queryByText("every intensity is the same")).not.toBeInTheDocument();
+    expect(screen.queryByText(en.plotFlat)).not.toBeInTheDocument();
     expect(screen.queryByText(/Vertical axis: intensity/u)).not.toBeInTheDocument();
     // The m/z axis is still the range, because that much the plot does know.
     expect(screen.getByText("300.0000")).toBeInTheDocument();
@@ -151,12 +160,13 @@ describe("what a window's caption may claim about it", () => {
 });
 
 describe("stick plot caption", () => {
-  it("says one stick when the reduction draws one", () => {
+  it("says one stick when the reduction draws one, and that points merged", () => {
     // Two points at the same m/z and the same sign reduce to the column's
     // highest value, which is one stick.
     renderSpectrum([300, 300], [100, 200]);
 
-    expect(screen.getByText(/^Drawn as 1 stick from 2 points,/)).toBeVisible();
+    expect(caption()).toBe(`${fill(en.plotTransferCaption_one, { total: 2 })} · ${en.plotUnits}`);
+    expect(details().querySelector("p")).toHaveTextContent(en.plotTransferReduced);
   });
 
   it("does not claim a negative is below the line when it is drawn on it", () => {
@@ -169,12 +179,10 @@ describe("stick plot caption", () => {
     // different things about the same measurement.
     renderSpectrum([300, 301], [-1e20, -1]);
 
-    expect(screen.getByText(/2 points carry negative intensity\./)).toBeVisible();
-    expect(
-      screen.getByText(
-        /The deepest negative in 1 columns is drawn below zero; the rest cannot be distinguished from zero/,
-      ),
-    ).toBeVisible();
+    expect(caption()).toContain(fill(en.plotNegativeCount, { count: 2 }));
+    const disclosure = details();
+    expect(disclosure).toBeVisible();
+    expect(disclosure.querySelector("p")).toHaveTextContent(fill(en.plotNegativeMixed, { count: 1 }));
   });
 
   it("says so when no negative can be drawn away from the zero line at all", () => {
@@ -184,24 +192,31 @@ describe("stick plot caption", () => {
     // let them conclude the drawing disagrees with the measurement.
     renderSpectrum([300, 301], [1e20, -1]);
 
-    expect(screen.getByText(/1 point carries negative intensity\./)).toBeVisible();
-    expect(
-      screen.getByText(
-        /too wide to distinguish the negative values from zero at this size; they are drawn on the zero line without a length\./,
-      ),
-    ).toBeVisible();
-    expect(screen.queryByText(/is drawn below the zero line/)).toBeNull();
+    expect(caption()).toContain(en.plotNegativeCount_one);
+    const text = details().querySelector("p")?.textContent ?? "";
+    expect(text).toBe(en.plotNegativeFlat);
+    expect(text).not.toContain(en.plotNegativeBelow);
   });
 
   it("keeps the plural when the reduction draws more than one", () => {
     renderSpectrum([300, 300, 301], [100, 200, 300]);
 
-    expect(screen.getByText(/^Drawn as 2 sticks from 3 points,/)).toBeVisible();
+    expect(caption()).toBe(`${fill(en.plotTransferCaption, { count: 2, total: 3 })} · ${en.plotUnits}`);
+    expect(details().querySelector("p")).toHaveTextContent(en.plotTransferReduced);
   });
 
-  it("says one stick for a spectrum drawn one stick per point", () => {
+  it("says one stick for a spectrum drawn one stick per point, and adds nothing", () => {
     renderSpectrum([300], [100]);
 
-    expect(screen.getByText(/^Drawn as 1 stick, one per point\./)).toBeVisible();
+    expect(caption()).toBe(`${fill(en.plotTransferCaption_one, { total: 1 })} · ${en.plotUnits}`);
+    expect(details()).not.toBeVisible();
+  });
+
+  it("discloses an unreported representation even when nothing else needs saying", () => {
+    renderSpectrum([300], [100], false);
+
+    const disclosure = details();
+    expect(disclosure).toBeVisible();
+    expect(disclosure.querySelector("p")?.textContent).toBe(en.plotUnknownRepresentation);
   });
 });

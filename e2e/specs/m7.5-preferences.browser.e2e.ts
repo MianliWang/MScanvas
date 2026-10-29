@@ -512,7 +512,10 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     expect(chinese.backendReading?.text).toContain(zh.backendMissing);
     expect(chinese.backendReading?.text).toContain(zh.backendNotFound);
     expect(chinese.help?.text).toContain(zh.backendHelpProvider);
-    expect(chinese.help?.text).toContain("msconvert.exe");
+    // The help no longer walks through the buttons, so the identifiers it keeps
+    // untranslated are the product name and the support target.
+    expect(chinese.help?.text).toContain(zh.backendHelpSessionScope);
+    expect(chinese.help?.text).toContain("ProteoWizard");
     expect(chinese.help?.text).toContain("Windows 11 25H2 x64");
     expect(chinese.help?.text).not.toContain(en.backendHelpProvider);
   });

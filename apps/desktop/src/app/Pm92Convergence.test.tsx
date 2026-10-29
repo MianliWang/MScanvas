@@ -10,7 +10,7 @@
  * rendered checks' (the PM9.1 browser spec's observation block).
  */
 
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { UI_RESOURCES } from "../features/preferences/i18n";
@@ -175,14 +175,24 @@ describe("PM9.2: the roster's actions, quieter but all there (L9)", () => {
     await screen.findByRole("button", { name: en.newGroup });
     const toolbar = document.querySelector<HTMLElement>(".organization-toolbar")!;
     expect(toolbar.querySelector("button")).toHaveTextContent(en.newGroup);
-    expect(within(toolbar).getByText(/highlighted/)).toHaveClass("roster-selection-context");
+    const count = toolbar.querySelector(".roster-selection-context");
+    expect(count).not.toBeNull();
+    expect(toolbar.querySelector("button")!.compareDocumentPosition(count!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Nothing highlighted or checked yet: the count keeps its place, unseen
+    // and unspoken, so the first highlight does not move the list.
+    expect(count?.querySelector(".roster-selection-idle")).toHaveAttribute("aria-hidden", "true");
   });
 });
 
 describe("PM9.2: the context line by rank (L14–L16)", () => {
   it("ranks every item, and leaves the conversion scope out on the Project surface", async () => {
-    mount("converting");
+    mount("conversionEnded");
     await waitFor(() => expect(document.querySelector('[data-shell-context="conversionActivity"]')).not.toBeNull());
+    // The scope item needs an eligible row: All workspace rows holds the
+    // vendor row, which the ended queue never converted.
+    await press(document.querySelector<HTMLElement>('[data-shell-context="conversionActivity"]')!);
+    fireEvent.click(await screen.findByRole("radio", { name: en.m74CnvAll }));
+    await waitFor(() => expect(document.querySelector('[data-shell-context="conversionScope"]')).not.toBeNull());
     const ranked = () =>
       [...document.querySelectorAll<HTMLElement>("[data-shell-context]")].map((item) => [
         item.getAttribute("data-shell-context"),

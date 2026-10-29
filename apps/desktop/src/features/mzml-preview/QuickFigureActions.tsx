@@ -5,7 +5,7 @@ import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, onPreview, onPng, onCopy, context, quickVisible = true }: {
   readonly busy: boolean; readonly figureUnavailable: boolean; readonly pngUnavailable: boolean;
   readonly onPreview: () => void; readonly onPng: () => void; readonly onCopy: () => void;
-  /** What the actions produce -- plot, range, size -- one part each. */
+  /** What the actions produce -- plot, range, size -- one part each. The plot is named, not printed. */
   readonly context: readonly string[];
   readonly quickVisible?: boolean;
 }) {
@@ -23,9 +23,10 @@ export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, on
     if (operation === "png") onPng(); else onCopy();
   };
   // The caption comes first: it names what the actions produce, and sits before
-  // them on their line rather than under them.
+  // them on their line rather than under them. The plot's name is the panel
+  // heading's, so it is spoken in the group's name and not printed again.
   return <div className="figure-quick-group" role="group" aria-label={context.join(" · ")}>
-    <p className="figure-quick-context" id={id}>{context.map((part, index) => <span key={index}>
+    <p className="figure-quick-context" id={id}>{context.slice(1).map((part, index) => <span key={index}>
       {/* The separator stays with the part before it. */}
       {index === 0 ? null : "\u00a0· "}<span className="figure-quick-part">{part}</span>
     </span>)}</p>

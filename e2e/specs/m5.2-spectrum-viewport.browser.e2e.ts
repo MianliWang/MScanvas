@@ -73,7 +73,7 @@ const VIEWPORTS = [
 /** The three controls the panel draws, by the words a person reads on them. */
 const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Reset m/z range"] as const;
 
-const RETRY = "Draw this m/z range again";
+const RETRY = "Redraw";
 
 /**
  * The window one press of `Zoom in m/z` reaches from the whole spectrum.
@@ -475,9 +475,7 @@ describe("the visible m/z viewport", () => {
       await waitForTheAxis("300.0000", "302.5000");
       const drawn = await whatIsDrawn();
       expect(drawn.sticks).toBe(6);
-      expect(drawn.caption).toContain(
-        "Drawn as 6 sticks of the 6 observations this spectrum has between m/z 300.0000 and 302.5000",
-      );
+      expect(drawn.caption).toContain("6 sticks · 6 source observations in this range");
 
       // The window Rust was asked for is the spectrum's own domain, and it was
       // asked once. Read from the ledger rather than from what came back: a
@@ -1266,9 +1264,7 @@ describe("the visible m/z viewport", () => {
       expect(drawn.sticks).toBe(4);
       // The count is Rust's about the retained source, not this document's about
       // its prefix: 372,118 observations in a region the transfer never reached.
-      expect(drawn.caption).toContain(
-        "Drawn as 4 sticks of the 372,118 observations this spectrum has between m/z 420.0000 and 780.0000.",
-      );
+      expect(drawn.caption).toContain("4 sticks · 372,118 source observations in this range");
       expect(await spectrumStatus()).toBe("");
       expect(await unexpectedConsole()).toEqual([]);
     });

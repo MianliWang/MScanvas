@@ -262,11 +262,6 @@ export interface ConversionOperation {
   /** How many of this queue's items finalized an output. */
   readonly eligibleOutputCount: number;
   /**
-   * Whether any acquisition finalized part of an output set without completing
-   * it. Read by the one sentence that must not say "nothing was converted".
-   */
-  readonly hasIncompleteOutputSet: boolean;
-  /**
    * What the last adoption of this queue did, until the queue is replaced.
    *
    * Kept so the panel can report counts beside the result it belongs to. It is
@@ -1372,19 +1367,6 @@ export function useConversionOperation(
   const eligibleOutputCount =
     state.status === "terminal" ? state.queue.adoptableOutputCount : 0;
 
-  // Whether some acquisition converted files this queue will not offer as a
-  // complete set.
-  //
-  // The one case where "nothing was converted" would be false while the offer
-  // is still absent: a partially finalized publication leaves real files in the
-  // user's folder, and the panel owes them a different sentence.
-  const hasIncompleteOutputSet =
-    state.status === "terminal" &&
-    state.queue.items.some(
-      (item) =>
-        item.result?.kind === "outputSet" && item.result.report.partial !== null,
-    );
-
   // Only a terminal queue, and only one that finalized something. A running or
   // stopping queue's outputs are not all in yet, and a retry replaces the very
   // results an adoption would be reading. Deliberately not gated on the backend
@@ -1577,7 +1559,6 @@ export function useConversionOperation(
     canAdopt,
     adopting,
     eligibleOutputCount,
-    hasIncompleteOutputSet,
     adoption,
     exportDiagnostics,
     diagnosticsAvailable: state.status === "terminal" && diagnostics.available,

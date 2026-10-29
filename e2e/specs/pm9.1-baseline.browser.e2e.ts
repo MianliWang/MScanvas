@@ -84,7 +84,6 @@ import {
   quarantinedBackend,
   queueItem,
   queueOf,
-  secondFile,
   settledAt,
   shippedIntent,
   unavailableBackend,
@@ -672,6 +671,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await open("populated");
       await viewTheRow();
       await selectTheSpectrum(0);
+      // A scope with nothing eligible is not a fact the line repeats; one
+      // checked vendor row makes it one, and the route below then has a scope.
+      expect(await contextText("conversionScope")).toBe(null);
+      await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
+      await waitForContext("conversionScope", (text) => text !== null, "names a scope with an eligible row");
       await navigate([en.projectSurface]);
       await browser.$(`button[aria-label="${fill(en.provenanceInspectInput, { name: "QC_pool_01.mzML" })}"]`).click();
       await waitForContext("inspecting", (text) => text === fill(en.shellContextInspecting, { name: "QC_pool_01.mzML" }), "names the inspected reference");
@@ -737,8 +741,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await metrics(1920, 1080);
       await open("populated");
       await viewTheRow();
-      // A session-only change of the reader's own: one more row for conversion.
-      await browser.$(`.grouped-roster [data-handle="${secondFile.handle}"] input[type="checkbox"]`).click();
+      // A session-only change of the reader's own: one more row for conversion,
+      // an eligible one, so the line names the scope it is routed through.
+      await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
+      await waitForContext("conversionScope", (text) => text !== null, "names a scope with an eligible row");
       await selectTheSpectrum(0);
       await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
       await browser.$(`button=${en.viewerMzZoomIn}`).click();
@@ -1014,7 +1020,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       );
       const beforeReplace = await ipcCalls();
       await browser.$(`button=${en.projectClose}`).click();
-      await waitForContext("project", (text) => text === en.shellContextProjectNone, "says no project is open");
+      await waitForContext("project", (text) => text === null, "names no project once none is open");
       expect(await contextText("inspecting")).toBe(null);
       await browser.$(`button=${en.projectOpen}`).click();
       await waitForContext(
@@ -1124,6 +1130,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         // last and gives way first.
         await metrics(1920, 1080);
         await open("busyInspected", locale);
+        // The line names a scope only with an eligible row in it.
+        await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
+        await waitForContext("conversionScope", (text) => text !== null, "names a scope with an eligible row");
         await navigate([en.projectSurface, zh.projectSurface]);
         await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
         await browser.$("[data-targeted-row]").waitForDisplayed();
@@ -1245,8 +1254,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
      */
     function restatesBanner(text: string) {
       return browser.execute((evidence: string) => {
+        // Sentence by sentence: the body is one span of joined sentences.
         const said = [...document.querySelectorAll<HTMLElement>("#backend-status .backend-status-reading > *")]
-          .map((node) => (node.textContent ?? "").trim())
+          .flatMap((node) => (node.textContent ?? "").split(/(?<=[.。])\s*/u))
+          .map((sentence) => sentence.trim())
           .filter((sentence) => sentence.length > 0 && evidence.includes(sentence));
         return /ProteoWizard/u.test(evidence) ? [...said, "ProteoWizard"] : said;
       }, text);
@@ -1401,6 +1412,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       it(`UI-15/16/17: the organizing row keeps the count whole, with and without Undo, in ${locale}`, async () => {
         await metrics(1366, 768);
         await open("populated", locale);
+        // The count says nothing until something is highlighted or checked.
+        await viewTheRow();
         await browser.$(".roster-selection-context").waitForDisplayed();
         const shapes: unknown[] = [];
         const record = async (label: string) => {

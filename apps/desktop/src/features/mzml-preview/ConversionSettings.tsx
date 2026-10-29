@@ -6,7 +6,7 @@ import { axisChoices, catalogRow, CONVERSION_AXES, recoveryIntent, selectionRefu
   type ConversionAxis, type ConversionAxisValues, type ConversionChoiceState } from "./conversionIntentSelection";
 import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import type { UiMessage } from "../preferences/i18n";
+import type { MessageKey, MessageParameters, UiMessage } from "../preferences/i18n";
 
 const AXIS_LABEL = { processing: "cnvProcessing", population: "cnvPopulation", precision: "cnvPrecision", compression: "cnvCompression" } as const;
 export const CONVERSION_VALUE_LABEL = {
@@ -15,12 +15,15 @@ export const CONVERSION_VALUE_LABEL = {
   precision: { mz64_intensity32: "cnvMz64I32", mz64_intensity64: "cnvMz64I64", mz32_intensity32: "cnvMz32I32", mz32_intensity64: "cnvMz32I64" },
   compression: { zlib: "cnvZlib", none: "cnvUncompressed" },
 } as const;
-const NOTE = {
-  processing: { no_additional_centroiding: "cnvNoCentroidingNote", unscoped_default_centroiding: "cnvCentroidingNote" },
-  population: { all: "cnvAllSpectraNote", ms1_only: "cnvMs1OnlyNote", ms2_only: "cnvMs2OnlyNote" },
-  precision: { mz64_intensity32: "cnvMz64I32Note", mz64_intensity64: "cnvMz64I64Note", mz32_intensity32: "cnvMz32I32Note", mz32_intensity64: "cnvMz32I64Note" },
-  compression: { zlib: "cnvZlibNote", none: "cnvUncompressedNote" },
-} as const;
+type StaticMessageKey = Exclude<MessageKey, keyof MessageParameters>;
+// Only a value that changes what is written has a note; the others say nothing
+// their label does not.
+const NOTE: { readonly [A in ConversionAxis]: Partial<Record<ConversionAxisValues[A], StaticMessageKey>> } = {
+  processing: { unscoped_default_centroiding: "cnvCentroidingNote" },
+  population: { ms1_only: "cnvMs1OnlyNote", ms2_only: "cnvMs2OnlyNote" },
+  precision: { mz64_intensity32: "cnvMz64I32Note", mz32_intensity32: "cnvMz32I32Note", mz32_intensity64: "cnvMz32I64Note" },
+  compression: {},
+};
 const REFUSAL = { notQualified: "cnvNotQualified", unavailableHere: "cnvUnavailableHere", notEvidencedForSources: "cnvNotEvidenced" } as const;
 const SELECTION_REFUSAL = { notQualified: "cnvSelectionUnqualified", unavailableHere: "cnvSelectionUnavailable", notEvidencedForSources: "cnvSelectionNotEvidenced" } as const;
 
@@ -39,22 +42,14 @@ function label<A extends ConversionAxis>(axis: A, value: ConversionAxisValues[A]
   }
 }
 
-function note<A extends ConversionAxis>(axis: A, value: ConversionAxisValues[A], t: UiMessage): string {
-  switch (axis) {
-    case "processing": return t(NOTE.processing[value as ConversionAxisValues["processing"]]);
-    case "population": return t(NOTE.population[value as ConversionAxisValues["population"]]);
-    case "precision": return t(NOTE.precision[value as ConversionAxisValues["precision"]]);
-    case "compression": return t(NOTE.compression[value as ConversionAxisValues["compression"]]);
-  }
+function note<A extends ConversionAxis>(axis: A, value: ConversionAxisValues[A], t: UiMessage): string | null {
+  const key = NOTE[axis][value];
+  return key === undefined ? null : t(key);
 }
 
-/** The actual reductions in the reviewed intent, not the next control draft. */
-export function conversionIntentDisclosures(intent: ConversionIntentDescriptor, t: UiMessage): readonly string[] {
-  const result: string[] = [];
-  if (intent.processing === "unscoped_default_centroiding") result.push(note("processing", intent.processing, t));
-  if (intent.population !== "all") result.push(note("population", intent.population, t));
-  if (intent.precision !== "mz64_intensity64") result.push(note("precision", intent.precision, t));
-  return result;
+/** What a stored precision rounds, or `null` when it rounds nothing. */
+export function precisionNote(precision: ConversionNumericPrecision, t: UiMessage): string | null {
+  return note("precision", precision, t);
 }
 
 export function ConversionSettings({ configuration, onChoose, refusalNoticeId, view, onViewChange }: {
@@ -79,7 +74,6 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
   };
   const failureId = `${prefix}-failure`;
   const unavailableId = `${prefix}-unavailable`;
-  const recoveryId = `${prefix}-recovery`;
   const held = configuration.configuration;
   const retry = (describedBy?: string) => configuration.retryOffered ? <button
     className="link-button" type="button" disabled={configuration.refusal !== null}
@@ -107,12 +101,10 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
       </div>
     </div>
     {refusal === null ? null : <p className="conversion-settings-unavailable" data-selection-refusal={refusal} id={unavailableId} role="note">{t(SELECTION_REFUSAL[refusal])}</p>}
-    {recovery === null ? null : <div className="conversion-settings-recovery" role="note">
-      <p id={recoveryId}>{t("cnvRecoveryReason")}</p>
-      <button type="button" className="link-button" aria-describedby={[refusal === null ? null : unavailableId, recoveryId].filter(Boolean).join(" ")}
+    {recovery === null ? null : <div className="conversion-settings-recovery">
+      <button type="button" className="link-button" aria-describedby={refusal === null ? undefined : unavailableId}
         onClick={() => onChoose(recovery.intent.id)}>{t("cnvRecoveryShipped")}</button>
     </div>}
-    {advanced ? <p className="quiet-text">{t("cnvFormatNote")}</p> : null}
     <div className="conversion-settings-grid">
       {CONVERSION_AXES.map(axis => axis === "precision" && !advanced
         ? <PrecisionFields key={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} />
@@ -130,25 +122,36 @@ interface AxisProps {
 function AxisFieldset({ axis, catalog, current, onChoose, advanced }: AxisProps & { readonly axis: ConversionAxis; readonly advanced: boolean }) {
   const t = useUiMessages();
   const prefix = useId();
+  const choices = axisChoices(catalog, current, axis);
   return <fieldset className="conversion-setting" data-axis={axis}>
     <legend>{t(AXIS_LABEL[axis])}</legend>
-    {axisChoices(catalog, current, axis).map(({ value, state }) => {
+    {choices.map(({ value, state }) => {
       const noteId = `${prefix}-${value}`;
-      // Refusals and possible information loss stay beside the choice in either
-      // view. Secondary explanation is disclosed without changing the intent.
+      // Possible information loss stays beside the choice in either view.
+      // Secondary explanation is disclosed without changing the intent.
       const lossWarning = value === "unscoped_default_centroiding" || (state.status === "selected" && (value === "ms1_only" || value === "ms2_only"));
-      const showNote = advanced || state.status === "unavailable" || lossWarning;
-      const disclosure = note(axis, value, t);
+      const disclosure = advanced || lossWarning ? note(axis, value, t) : null;
+      const describedBy = [refusalId(prefix, state), disclosure === null ? undefined : noteId].filter(Boolean).join(" ") || undefined;
       return <div className="conversion-setting-choice" data-choice-state={state.status} key={value}>
         <label><input type="radio" name={`${prefix}-${axis}`} value={value} checked={state.status === "selected"}
-          disabled={state.status === "unavailable"} aria-describedby={showNote ? noteId : undefined}
+          disabled={state.status === "unavailable"} aria-describedby={describedBy}
           onChange={() => { if (state.status === "selectable") onChoose(state.intentId); }} />{label(axis, value, t)}</label>
-        {showNote ? <p className="conversion-setting-note" id={noteId}>
-          {state.status === "unavailable" ? t(REFUSAL[state.reason]) : ""}{advanced || lossWarning ? ` ${disclosure}` : ""}
-        </p> : null}
+        {disclosure === null ? null : <p className="conversion-setting-note" id={noteId}>{disclosure}</p>}
       </div>;
     })}
+    {refusals(prefix, choices.map(choice => choice.state), t)}
   </fieldset>;
+}
+
+/** The group's note a refused value points at, or `undefined` for a value that is not refused. */
+function refusalId(prefix: string, state: ConversionChoiceState): string | undefined {
+  return state.status === "unavailable" ? `${prefix}-refusal-${state.reason}` : undefined;
+}
+
+/** Each refusal said once for its group, however many values it refuses. */
+function refusals(prefix: string, states: readonly ConversionChoiceState[], t: UiMessage): ReactElement[] {
+  const reasons = [...new Set(states.flatMap(state => state.status === "unavailable" ? [state.reason] : []))];
+  return reasons.map(reason => <p className="conversion-setting-note" id={`${prefix}-refusal-${reason}`} key={reason}>{t(REFUSAL[reason])}</p>);
 }
 
 function PrecisionFields({ catalog, current, onChoose }: AxisProps) {
@@ -156,25 +159,26 @@ function PrecisionFields({ catalog, current, onChoose }: AxisProps) {
   const prefix = useId();
   const choices = axisChoices(catalog, current, "precision");
   const currentWidths = WIDTHS[current.precision];
+  const selectedNote = note("precision", current.precision, t);
+  const selectedId = selectedNote === null ? undefined : `${prefix}-selected`;
+  const grid = ([0, 1] as const).map(index => ([32, 64] as const).map(width => {
+    const target = choices.find(choice => WIDTHS[choice.value][index] === width && WIDTHS[choice.value][1 - index] === currentWidths[1 - index]);
+    const state: ConversionChoiceState = target?.state ?? { status: "unavailable", reason: "notQualified" };
+    return { width, state };
+  }));
   return <fieldset className="conversion-setting" data-axis="precision">
     <legend>{t("cnvPrecision")}</legend>
     <div className="conversion-precision-fields">
-      {([0, 1] as const).map(index => <fieldset className="compact-choices" key={index}>
+      {grid.map((widths, index) => <fieldset className="compact-choices" key={index}>
         <legend>{t(index === 0 ? "cnvMz" : "cnvIntensity")}</legend>
-        {([32, 64] as const).map(width => {
-          const target = choices.find(choice => WIDTHS[choice.value][index] === width && WIDTHS[choice.value][1 - index] === currentWidths[1 - index]);
-          const state: ConversionChoiceState = target?.state ?? { status: "unavailable", reason: "notQualified" };
-          const id = `${prefix}-${index}-${width}`;
-          return <div className="conversion-setting-choice" data-choice-state={state.status} key={width}>
-            <label><input type="radio" name={`${prefix}-${index}`} checked={state.status === "selected"}
-              disabled={state.status === "unavailable"} aria-describedby={state.status === "unavailable" ? id : `${prefix}-selected`}
-              onChange={() => { if (state.status === "selectable") onChoose(state.intentId); }} />{t(width === 32 ? "cnv32Bit" : "cnv64Bit")}</label>
-            {state.status === "unavailable" ? <p className="conversion-setting-note" id={id}>{t(REFUSAL[state.reason])}</p> : null}
-          </div>;
-        })}
+        {widths.map(({ width, state }) => <div className="conversion-setting-choice" data-choice-state={state.status} key={width}>
+          <label><input type="radio" name={`${prefix}-${index}`} checked={state.status === "selected"}
+            disabled={state.status === "unavailable"} aria-describedby={refusalId(prefix, state) ?? selectedId}
+            onChange={() => { if (state.status === "selectable") onChoose(state.intentId); }} />{t(width === 32 ? "cnv32Bit" : "cnv64Bit")}</label>
+        </div>)}
       </fieldset>)}
     </div>
-    <p className="conversion-setting-note" id={`${prefix}-selected`}>{note("precision", current.precision, t)}</p>
-    <p className="quiet-text">{t("cnvPrecisionPairsHelp")}</p>
+    {refusals(prefix, grid.flat().map(choice => choice.state), t)}
+    {selectedNote === null ? null : <p className="conversion-setting-note" id={selectedId}>{selectedNote}</p>}
   </fieldset>;
 }

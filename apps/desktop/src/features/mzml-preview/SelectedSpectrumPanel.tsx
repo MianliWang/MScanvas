@@ -51,7 +51,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
           <p>{describe(state, t)}</p>}
       </div>
       {state.status === "loaded" ? <div className="spectrum-export-header-actions"><QuickFigureActions
-        context={[t("viewerSpectrumIndex", { index: String(state.spectrum.index) }), t(props.rangeScope === "current" && props.rangeAvailability === "available" ? "viewerExportCurrent" : "viewerExportFull"), `${props.figureSettings.widthPx || "—"} × ${props.figureSettings.heightPx || "—"} px`]}
+        context={[t("viewerSpectrumIndex", { index: String(state.spectrum.index) }), t(props.rangeScope === "current" && props.rangeAvailability === "available" ? "viewerExportCurrent" : "viewerExportFull"), `${props.figureSettings.widthPx || "—"} × ${props.figureSettings.heightPx || "—"} ${t("pixels")}`]}
         busy={props.scientificExportBusy} figureUnavailable={props.renderSettingsProblem !== null}
         pngUnavailable={props.pngDpiProblem !== null} onPreview={props.onOpenFigure} quickVisible={!exportOpen}
         onPng={() => props.onExport("png")} onCopy={props.onCopyPlot} />
@@ -60,7 +60,8 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
           <div hidden={!exportOpen}><SpectrumExportActions {...props} /></div>
         </details></div> : null}
     </header>
-    <div className="spectrum-body">{renderBody(state, props.onRetry, props, t)}</div>
+    {/* An absent spectrum has no body: the header line already says it is not in this run. */}
+    {state.status === "unavailable" ? null : <div className="spectrum-body">{renderBody(state, props.onRetry, props, t)}</div>}
     <p className="spectrum-export-status" role="status">
       {describeSpectrumExport(exportState, t)}
       {exportState.status === "failed" && exportState.error.detail !== null ?
@@ -134,7 +135,7 @@ function describeExportedRange(state: ExportedSpectrumRange, t: UiMessage): stri
 export function describeSpectrumExport(state: SpectrumExportState, t: UiMessage): string {
   switch (state.status) {
     case "idle": return "";
-    case "running": return state.operation === "copy" ? t("viewerExportClipboard") : t("viewerExportChoose", { name: state.operation.toUpperCase() });
+    case "running": return state.operation === "copy" ? t("viewerCopying") : t("viewerExportChoose", { name: state.operation.toUpperCase() });
     case "cancelled": return t("viewerExportCancelled");
     case "saved": return t("viewerExportSaved", { name: state.fileName, details: describeExportedRange(state, t) +
       (state.figure === null ? "" : `, ${describeFigure(state.figure, t)}`) });
@@ -151,13 +152,10 @@ function describe(state: SpectrumState, t: UiMessage): string {
     case "failed": return t("viewerSpectrumFailed", { index: formatCount(state.index) });
   }
 }
-function renderBody(state: SpectrumState, onRetry: () => void, binding: SelectedSpectrumPanelProps, t: UiMessage) {
+function renderBody(state: Exclude<SpectrumState, { readonly status: "unavailable" }>, onRetry: () => void, binding: SelectedSpectrumPanelProps, t: UiMessage) {
   switch (state.status) {
-    case "none": return <div className="empty-state"><strong>{t("viewerChooseSpectrum")}</strong><span>{t("viewerChooseHelp")}</span></div>;
-    case "loading": return <div className="empty-state"><strong>{t("viewerSpectrumLoading", { index: formatCount(state.index) })}</strong>
-      <span>{t("viewerSpectrumReading")}</span></div>;
-    case "unavailable": return <div className="empty-state"><strong>{t("viewerSpectrumUnavailable", { index: formatCount(state.requestedIndex) })}</strong>
-      <span>{t("viewerSpectrumUnavailableHelp")}</span></div>;
+    case "none": return <div className="empty-state"><span>{t("viewerChooseHelp")}</span></div>;
+    case "loading": return <div className="empty-state"><strong>{t("viewerSpectrumLoading", { index: formatCount(state.index) })}</strong></div>;
     case "failed": return <div className="empty-state"><strong>{ownedErrorMessage(state.error, t)}</strong>
       {ownedErrorDetail(state.error, t) === null ? null : <span>{ownedErrorDetail(state.error, t)}</span>}
       {state.error.retryable ? <button className="secondary-button" onClick={onRetry} type="button">{t("viewerSpectrumRetry")}</button> : null}</div>;

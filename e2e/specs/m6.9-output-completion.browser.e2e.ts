@@ -240,7 +240,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     for (const text of [withContent, withoutContent]) {
       expect(text).toContain("The converter ran to its own end, exit code 3.");
       expect(text).toContain("No output obtained a final name.");
-      expect(text).toContain("Nothing was checked, because nothing was validated.");
+      expect(text).toContain("Nothing was checked.");
     }
     expect(withContent).toContain(
       "The temporary working folder held 1 entry when the attempt to run a converter returned, at least one of them a file with content.");
@@ -310,8 +310,8 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     expect(named).toEqual(["Enolase_S1.mzML", "Enolase_S2.mzML", "Enolase_S3.mzML"]);
     // The observation was taken after publication, and says so.
     expect(text).toContain("after publication finished");
-    // The existing refusal is unchanged.
-    expect(await browser.$(PANEL).getText()).toContain("No complete output set is available to add to this workspace.");
+    // And nothing offers to add a set that is not complete.
+    expect(await browser.$(`${PANEL} .conversion-adoption`).isExisting()).toBe(false);
     await capture("partial-set-details", LIST);
   });
 
@@ -320,7 +320,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
 
     // Nothing is adopted because a queue finished.
     expect(await requests(ADOPT)).toEqual([]);
-    expect(await details(1)).toContain("Not added yet. Adding outputs to the workspace is something you ask for.");
+    expect(await details(1)).toContain("Not added yet.");
 
     const adopted = [
       { ...converted(1), adoption: { kind: "settled", added: 1, alreadyInWorkspace: 0, refused: 0, refusals: [] } } as ConversionQueueItem,
