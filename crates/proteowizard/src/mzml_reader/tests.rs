@@ -849,6 +849,24 @@ fn a_random_read_that_lands_on_another_spectrum_is_refused() {
     );
 }
 
+#[test]
+fn a_random_read_checks_element_names_as_strictly_as_a_full_pass() {
+    let document = base();
+    let table = table(&document).expect("opens");
+    // The second spectrum's own `</scan>`, misspelt at the same length so the
+    // recorded offsets stay valid.
+    let second = document.find("id=\"scan=20\"").expect("second spectrum");
+    let close = second + document[second..].find("</scan>").expect("scan end");
+    let mut misspelt = document.clone();
+    misspelt.replace_range(close..close + "</scan>".len(), "</scna>");
+    assert_eq!(
+        read_selected_spectrum_from(Cursor::new(misspelt.as_bytes()), &table, 1),
+        Err(MzmlSpectrumError::Document(MzmlScanError::Malformed(
+            MzmlMalformedKind::NotWellFormed
+        )))
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Open-level refusals (decision 1)
 // ---------------------------------------------------------------------------
