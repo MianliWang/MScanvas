@@ -79,30 +79,26 @@ function rosterState() {
 }
 
 describe("PM9.1 populated-state baseline (synthetic, controlled)", () => {
-  it("renders the first-run state with a context line that claims nothing", async () => {
+  it("renders the first-run state with a status bar that claims nothing", async () => {
     mount("empty");
     await screen.findByRole("button", { name: en.home });
-    // No project, nothing viewed and nothing to convert: no item to show, and
-    // no standing hint about a drop that works.
-    expect(screen.queryByRole("group", { name: en.shellContextRegion })).toBeNull();
+    // No project and no work: no item to show, only how files arrive.
     expect(document.querySelector("[data-shell-context]")).toBeNull();
-    expect(document.querySelector(".workspace-drop-hint")).toBeNull();
+    await waitFor(() => expect(document.querySelector(".workspace-drop-hint")?.textContent).toBe(en.shellDropHint));
   });
 
-  it("keeps the roster exactly as it was across a trip through the context line", async () => {
+  it("keeps the roster exactly as it was across a trip to Conversion and back", async () => {
     mount("populated");
     // At least two rows on screen. Not six: the roster windows its rows by
     // measured height, and a test environment without layout measures none.
     await waitFor(() => expect(rosterState().length).toBeGreaterThan(1));
-    // The scope item says something only when a row is eligible: All workspace
-    // rows holds the vendor row, without checking anything.
+    // All workspace rows holds the vendor row, without checking anything.
     await press(screen.getByRole("button", { name: en.conversionTask }));
     fireEvent.click(await screen.findByRole("radio", { name: en.m74CnvAll }));
     await press(screen.getByRole("button", { name: en.home }));
-    await waitFor(() => expect(contextItem("conversionScope")?.textContent).toMatch(/^Conversion: /));
     const before = rosterState();
 
-    await press(contextItem("conversionScope")!);
+    await press(screen.getByRole("button", { name: en.conversionTask }));
     expect(surface()).toBe("conversion");
     await press(screen.getByRole("button", { name: en.home }));
     expect(surface()).toBe("workbench");
@@ -112,7 +108,7 @@ describe("PM9.1 populated-state baseline (synthetic, controlled)", () => {
     expect(rosterState()).toEqual(before);
   });
 
-  it("shows a conversion under way in the context line and the navigation", async () => {
+  it("shows a conversion under way in the status bar and the navigation", async () => {
     mount("converting");
     await waitFor(() =>
       expect(contextItem("conversionActivity")?.textContent).toBe("In progress: Conversion running"),
@@ -158,9 +154,6 @@ describe("PM9.1 populated-state baseline (synthetic, controlled)", () => {
         expect(
           document.querySelector(`[data-targeted-report="${RESULT}"]`)?.getAttribute("data-availability"),
         ).toBe(availability),
-      );
-      expect(contextItem("inspecting")?.textContent).toBe(
-        `Inspecting: ${en.projectArtifactTargetedMs1}`,
       );
     },
   );

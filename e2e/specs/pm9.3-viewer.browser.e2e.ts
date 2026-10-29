@@ -307,11 +307,18 @@ async function open(options: Parameters<typeof answers>[0] = {}) {
 
 /** A header destination, by its visible name. */
 async function navigate(names: readonly string[]) {
-  await browser.execute((labels: readonly string[]) => {
-    [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
-      .find((button) => labels.includes(button.textContent ?? ""))
-      ?.click();
+  const found = await browser.execute((labels: readonly string[]) => {
+    const target = [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
+      .find((button) => labels.includes(button.textContent ?? ""));
+    target?.click();
+    return target !== undefined;
   }, names);
+  // Project is the header menu's first item, not a tab (rebuild spec 1.1).
+  if (!found) {
+    await browser.$("[data-project-menu]").click();
+    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
+    await browser.$('[data-project-menu-item="surface"]').click();
+  }
 }
 
 function row(index: number) {
@@ -812,9 +819,9 @@ async function observeViewer(label: string) {
         return { cut: summary.scrollWidth > summary.clientWidth + 1, covered };
       })(),
       // Which acquisition the evidence belongs to, where the shell names it
-      // (ADR 0006's Run identity; PM9.2's context line).
+      // (ADR 0006's Run identity; the Workbench's identity row, spec 3.2).
       identity: (() => {
-        const item = document.querySelector<HTMLElement>('[data-shell-context="viewing"]');
+        const item = document.querySelector<HTMLElement>(".viewer-identity-name");
         return item === null ? null : { text: item.textContent, truncated: item.scrollWidth > item.clientWidth };
       })(),
       panels: {

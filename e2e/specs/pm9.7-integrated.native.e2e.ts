@@ -110,7 +110,15 @@ async function measuredSize(width: number, height: number): Promise<void> {
 }
 
 async function navigate(label: string): Promise<void> {
-  await browser.$(".workbench-navigation").$(`button=${label}`).click();
+  const tab = browser.$(".workbench-navigation").$(`button=${label}`);
+  if (await tab.isExisting()) {
+    await tab.click();
+  } else {
+    // Project is the header menu's first item, not a tab (rebuild spec 1.1).
+    await browser.$("[data-project-menu]").click();
+    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
+    await browser.$('[data-project-menu-item="surface"]').click();
+  }
   await frames();
 }
 

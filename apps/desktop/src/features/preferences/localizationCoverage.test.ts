@@ -140,21 +140,6 @@ describe("the Simplified Chinese bundle", () => {
     expect(values).not.toContain("供应商");
   });
 
-  it("nests the Workbench route's control labels rather than retyping them (PM9.7 F3)", () => {
-    // The empty Workbench names the header toggle and the roster action. A
-    // retyped label could drift from the control it names; a nested one cannot.
-    for (const bundle of [en, zh]) {
-      for (const route of [bundle.emptyEvidenceHelp, bundle.emptyEvidenceDropHelp]) {
-        expect(route).toContain("$t(rosterToggle)");
-        expect(route).toContain("$t(addFiles)");
-        expect(route).not.toContain(bundle.rosterToggle);
-        expect(route).not.toContain(bundle.addFiles);
-      }
-      expect(bundle.emptyEvidenceSelect).toContain("$t(rosterToggle)");
-      expect(bundle.emptyEvidenceSelect).not.toContain(bundle.rosterToggle);
-    }
-  });
-
   it("names the preference file's own prefix identically, so a residue can be found", () => {
     // A reader told to look for a file has to be told the name it really has.
     expect(en.saveTemporaryLeftBehind).toContain(".mscanvas-ui-preferences-");

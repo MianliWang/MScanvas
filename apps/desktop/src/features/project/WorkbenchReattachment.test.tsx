@@ -31,6 +31,7 @@ import {
 } from "../../test/previewFixtures";
 import { PreferencesApiProvider } from "../preferences/preferencesApi";
 import { createFakePreferencesApi, storedRecord } from "../../test/preferenceFixtures";
+import { openProjectSurface } from "../../test/projectMenu";
 import { SessionPreferencesProvider } from "../preferences/SessionPreferencesProvider";
 import { UI_RESOURCES } from "../preferences/i18n";
 import {
@@ -599,7 +600,7 @@ describe("the Workbench reattachment in the application shell", () => {
       }),
     );
     projects.setAdmission(addedOne());
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
 
     await press(addControl(MATCHING));
@@ -642,7 +643,7 @@ describe("the Workbench reattachment in the application shell", () => {
         ],
       }),
     );
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     await waitFor(() => expect(getRoster).toHaveBeenCalled());
     const reads = getRoster.mock.calls.length;
@@ -677,7 +678,7 @@ describe("the Workbench reattachment in the application shell", () => {
       }),
     );
     projects.setAdmission(addedOne());
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     projects.set(admittedProject());
     await press(addControl(MATCHING));
@@ -700,7 +701,7 @@ describe("the Workbench reattachment in the application shell", () => {
         document.querySelector(`#workbench-roster [data-handle="${selectedFile.handle}"]`),
       ).toBe(null),
     );
-    await press(screen.getByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
 
     await press(
       await screen.findByRole("button", {
@@ -739,7 +740,7 @@ describe("the Workbench reattachment in the application shell", () => {
     );
     projects.setAdmission(addedOne());
     const release = projects.holdOnce("addProjectInputToWorkspace");
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
 
     await press(addControl(MATCHING));
@@ -773,7 +774,7 @@ describe("the Workbench reattachment in the application shell", () => {
       }),
     );
     projects.setAdmission(addedOne());
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     // Admit it once, then come back to the project surface.
     projects.set(
@@ -794,7 +795,7 @@ describe("the Workbench reattachment in the application shell", () => {
         document.querySelector(`#workbench-roster [data-handle="${selectedFile.handle}"]`),
       ).toBeTruthy(),
     );
-    await press(screen.getByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
 
     const show = await screen.findByRole("button", {
       name: `Show in Workbench: ${selectedFile.fileName}`,

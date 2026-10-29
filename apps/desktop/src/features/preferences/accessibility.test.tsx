@@ -276,17 +276,18 @@ describe("the backend banner, by screen reader", () => {
     expect(actions[0]).toHaveFocus();
   });
 
-  it("offers the offline help as a real disclosure, closed, with a named summary", async () => {
+  it("offers the offline help as a disclosure button, closed, with a named region", async () => {
     mount();
     await screen.findByText(en.backendMissing);
-    const help = document.querySelector<HTMLDetailsElement>("[data-backend-help]")!;
-    expect(help.open).toBe(false);
-    const summary = within(help).getByText(en.backendHelpTitle);
-    expect(summary.tagName).toBe("SUMMARY");
-    // A native disclosure, so the keyboard and the screen reader get its state
-    // from the platform rather than from an aria attribute this file wrote.
-    fireEvent.click(summary);
-    await waitFor(() => expect(help.open).toBe(true));
+    const help = screen.getByRole("button", { name: en.backendHelpTitle });
+    expect(help).toHaveAttribute("data-backend-help");
+    expect(help).toHaveAttribute("aria-expanded", "false");
+    const region = document.getElementById(help.getAttribute("aria-controls")!)!;
+    expect(region).not.toBeVisible();
+    fireEvent.click(help);
+    await waitFor(() => expect(help).toHaveAttribute("aria-expanded", "true"));
+    expect(region).toBeVisible();
+    expect(region).toHaveTextContent(en.backendHelpProvider);
   });
 
   it("keeps the long Chinese labels intact, which is what the rendered checks measure", async () => {

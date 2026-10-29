@@ -24,6 +24,7 @@ import { PreferencesApiProvider } from "../preferences/preferencesApi";
 import { createFakePreferencesApi, storedRecord } from "../../test/preferenceFixtures";
 import { UI_RESOURCES } from "../preferences/i18n";
 import { capturedProject, createFakeProjectApi } from "../../test/projectFixtures";
+import { openProjectSurface } from "../../test/projectMenu";
 import { ProjectApiProvider } from "./projectApi";
 
 const en = UI_RESOURCES.en;
@@ -113,7 +114,7 @@ describe("provenance in the application shell", () => {
     expect(toggle.getAttribute("aria-disabled")).toBe("true");
     expect(toggle.hasAttribute("disabled")).toBe(false);
 
-    await press(screen.getByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     // Still nothing selected, so still nothing to describe -- said in the
     // Project surface's own terms.
@@ -134,7 +135,7 @@ describe("provenance in the application shell", () => {
 
   it("shows provenance in the contextual region at a roomy viewport", async () => {
     renderShell({ constrained: false, roomy: true });
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
 
@@ -151,7 +152,7 @@ describe("provenance in the application shell", () => {
     // Between the one-column breakpoint and the roomy one -- the reference
     // 1366x768 case -- the inspector waits to be asked for.
     renderShell({ constrained: false, roomy: false });
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
 
@@ -166,9 +167,9 @@ describe("provenance in the application shell", () => {
     expect(within(inspector()).getByText(en.provenanceKindInput)).toBeTruthy();
   });
 
-  it("folds the contextual region away in one column rather than shrinking it", async () => {
+  it("opens the contextual region as a drawer in one column rather than shrinking it", async () => {
     renderShell({ constrained: true, roomy: false });
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
 
@@ -176,16 +177,17 @@ describe("provenance in the application shell", () => {
     expect(inspector().hidden).toBe(true);
     await press(screen.getByRole("button", { name: en.inspectorToggle }));
 
-    // Opened, the region takes the column and the project list yields it --
-    // the existing one-column folding, not a new layout.
+    // Opened, the region is a drawer over the project list, which stays in
+    // place behind it and takes no input until the drawer folds.
     await waitFor(() => expect(inspector().hidden).toBe(false));
     expect(within(inspector()).getByText(en.provenanceKindInput)).toBeTruthy();
-    expect(document.querySelector("#workbench-project")?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector("#workbench-project")?.hasAttribute("hidden")).toBe(false);
+    expect(document.querySelector("#workbench-project")).toHaveAttribute("inert");
   });
 
   it("navigates between related objects without asking the backend for anything", async () => {
     const projects = renderShell({ constrained: false, roomy: true });
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
     await waitFor(() => expect(inspector().hidden).toBe(false));

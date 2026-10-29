@@ -477,12 +477,14 @@ describe("the banner across its own request", () => {
     fireEvent.click(document.querySelector('[data-backend-action="recheck"]')!);
     await waitFor(() => expect(screen.getByText(en.backendChecking)).toBeVisible());
     // All three ways out are in the document, refused for the length of the
-    // request. A check that ends without producing a verdict used to leave this
-    // banner reading "checking" with no control of any kind.
+    // request and still reachable with their reason. A check that ends without
+    // producing a verdict used to leave this banner reading "checking" with no
+    // control of any kind.
     for (const action of ["recheck", "choose", "automatic"]) {
       const control = document.querySelector(`[data-backend-action="${action}"]`);
       expect(control, action).not.toBeNull();
-      expect(control, action).toBeDisabled();
+      expect(control, action).toHaveAttribute("aria-disabled", "true");
+      expect(control, action).toHaveAccessibleDescription(en.backendChecking);
     }
     await act(async () => { check.resolve(unavailableBackend); await Promise.resolve(); });
   });
@@ -502,12 +504,13 @@ describe("the banner across its own request", () => {
   it("does not fold away under a reader in the help when a usable verdict arrives (PM9 L10)", async () => {
     // The banner folds when a usable installation leaves it nothing to act on.
     // A reader who tabbed into the help while the check ran is not nothing:
-    // folding would take the focused summary out of rendering and drop them
-    // on the body, the regression the identity of the help exists to prevent.
+    // folding would take the focused help button out of rendering and drop
+    // them on the body, the regression the identity of the help exists to
+    // prevent.
     const check = deferred<typeof availableBackend>();
     renderAvailableAfter(check.promise);
     await waitFor(() => expect(screen.getByText(en.backendChecking)).toBeVisible());
-    const summary = document.querySelector<HTMLElement>("[data-backend-help] summary")!;
+    const summary = document.querySelector<HTMLElement>("[data-backend-help]")!;
     act(() => { summary.focus(); });
     await act(async () => { check.resolve(availableBackend); await Promise.resolve(); });
     await screen.findByText(en.backendAvailable);

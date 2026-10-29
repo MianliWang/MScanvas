@@ -178,10 +178,13 @@ async function capture(label: string, validate = true) {
       backendReading: box(document.querySelector(".backend-status-reading")),
       backendCollapsed: document.querySelector("[data-backend-collapsed]") !== null,
       backendActions: [...document.querySelectorAll("[data-backend-action]")].map(node => node.getAttribute("data-backend-action")),
-      help: box(document.querySelector("[data-backend-help]")),
-      helpOpen: document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open ?? null,
+      help: box(document.querySelector(".backend-setup-help")),
+      helpOpen: (() => {
+        const button = document.querySelector("[data-backend-help]");
+        return button === null ? null : button.getAttribute("aria-expanded") === "true";
+      })(),
       helpFitsWithoutScrolling: (() => {
-        const help = document.querySelector("[data-backend-help]"), port = help?.closest(".shell-notices") ?? null;
+        const help = document.querySelector(".backend-setup-help"), port = help?.closest(".shell-notices") ?? null;
         if (help === null || port === null) return null;
         return help.getBoundingClientRect().bottom <= port.getBoundingClientRect().bottom + 1;
       })(),
@@ -639,8 +642,8 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     // host's installation is usable the banner is folded, and its help and
     // actions are one press away (PM9.2 L10); it stays open from here on.
     await showBackendBanner();
-    await browser.$(`${HELP} summary`).click();
-    await browser.waitUntil(() => browser.execute(help => document.querySelector<HTMLDetailsElement>(help)?.open === true, HELP));
+    await browser.$(HELP).click();
+    await browser.waitUntil(() => browser.execute(help => document.querySelector(help)?.getAttribute("aria-expanded") === "true", HELP));
     const english = await capture("18-offline-help-en");
     expect(english.helpOpen).toBe(true);
     expect(english.helpFitsWithoutScrolling).toBe(true);

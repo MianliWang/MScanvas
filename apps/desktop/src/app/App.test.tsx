@@ -194,7 +194,7 @@ describe("mzML preview workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
     const reopen = await screen.findByRole("button", { name: /^Preview QC_pool_01/ });
     // The one owned next step in this state, so the surface's primary action (PM9 L1).
-    expect(reopen).toHaveClass("primary-button");
+    expect(reopen).toHaveClass("ui-button--primary");
 
     expect(reopen).toHaveTextContent("QC_pool_01.mzML");
     fireEvent.click(reopen);
@@ -432,7 +432,7 @@ describe("mzML preview workspace", () => {
     // and disappears takes a keyboard user's place with it -- and every one of
     // them is refused for the length of the request.
     for (const action of ["recheck", "choose", "automatic"]) {
-      expect(document.querySelector(`[data-backend-action="${action}"]`)).toBeDisabled();
+      expect(document.querySelector(`[data-backend-action="${action}"]`)).toHaveAttribute("aria-disabled", "true");
     }
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
 
@@ -440,8 +440,8 @@ describe("mzML preview workspace", () => {
 
     await showBackendBanner();
     const choose = await screen.findByRole("button", { name: "Choose folder…" });
-    expect(choose).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+    await waitFor(() => expect(choose).not.toHaveAttribute("aria-disabled"));
+    expect(screen.getByRole("button", { name: "Check again" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("says why a chosen folder is unusable, and offers only what it can do", async () => {
@@ -1272,8 +1272,8 @@ describe("native Explorer drop presentation", () => {
     await waitFor(() => {
       expect(api.rosterReads()).toBe(2);
     });
-    // Live drop needs no standing hint.
-    expect(document.querySelector(".workspace-drop-hint")).toBeNull();
+    // Live drop is said once, in the status bar, as how files arrive.
+    expect(document.querySelector(".workspace-drop-hint")).toHaveTextContent("Drop mzML files onto the window to add them");
 
     act(() => {
       recoveredListener?.({ sequence: 1, state: { status: "hovering", itemCount: 1 } });

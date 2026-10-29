@@ -206,9 +206,15 @@ async function frames() {
   );
 }
 
-/** Presses one of the header's destinations by position: 1 Workbench, 2 Conversion, 3 Project. */
+/** Shows a surface: 1 Workbench and 2 Conversion are the header's tabs, 3 Project is the Project menu's first item. */
 async function go(position: 1 | 2 | 3) {
-  await browser.$(`.workbench-navigation > button:nth-child(${String(position)})`).click();
+  if (position === 3) {
+    await browser.$("[data-project-menu]").click();
+    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed({ timeout: 30_000 });
+    await browser.$('[data-project-menu-item="surface"]').click();
+  } else {
+    await browser.$(`.workbench-navigation > button:nth-child(${String(position)})`).click();
+  }
   await frames();
 }
 
@@ -321,10 +327,10 @@ const STOPS: readonly Stop[] = [
     name: "backend-unavailable-help",
     table: withBackend(unavailableBackend),
     drive: async () => {
-      await browser.$("[data-backend-help] summary").waitForDisplayed({ timeout: 30_000 });
-      await browser.$("[data-backend-help] summary").click();
+      await browser.$("[data-backend-help]").waitForDisplayed({ timeout: 30_000 });
+      await browser.$("[data-backend-help]").click();
     },
-    anchor: "[data-backend-help][open]",
+    anchor: '[data-backend-help][aria-expanded="true"]',
   },
   { name: "backend-quarantined", table: withBackend(quarantinedBackend), anchor: "#backend-status:not([data-backend-collapsed])" },
   { name: "backend-folder-without-tools", table: withBackend(chosenFolderWithoutTools), anchor: "#backend-status:not([data-backend-collapsed])" },
