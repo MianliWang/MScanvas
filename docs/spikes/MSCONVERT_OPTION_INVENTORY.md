@@ -85,7 +85,7 @@ it.
 | Option | Help | MSCanvas today | Option-C tier | UI control |
 | --- | --- | --- | --- | --- |
 | `--64` | 27–28 | Verified row: 64/64 (P4, P1, L3, C1; with `--zlib=off`, C2; with `msLevel` L1, L2; with the default picker K1, K8, gated) | Verified default in those combinations; advanced with any other filter or format | "Numeric precision": m/z 64 or 32, intensity 64 or 32 |
-| `--32` | 29–30 | Verified row: 32/32 (P3, P2; with the default picker K12, gated) | As `--64` | same |
+| `--32` | 29–30 | Verified row: 32/32 (P3, P2; with the default picker K12, gated) | As `--64`. Never emitted with `--numpressLinear`: the time array takes the global precision, which must stay 64 (ADR 0055 decision 4) | same |
 | `--mz64` | 31–32 | Not emitted. The no-flag row D1 was measured with m/z at 64 bits | Verified default as the m/z half of D1; MSCanvas chooses the spelling. Not with mzXML | same |
 | `--mz32` | 33 | Verified row with `--inten64` (P5), no filter | Verified default there; advanced otherwise. Not with mzXML | same |
 | `--inten64` | 34–35 | Verified row with `--mz32` (P5), no filter | As `--mz32` | same |
@@ -98,10 +98,10 @@ it.
 | `--intenLinear` | 50–51 | Absent | Advanced, with mzMLb only, as `--mzDelta` | checkbox "Linear prediction, intensity" |
 | `--noindex` | 52 | Absent | Advanced, with mzML and mzXML; the index check is reported as not applicable, never as passed. Not with mzMLb, whose writer writes its index whatever the switch says | checkbox "Write no index" |
 | `-z [ --zlib ] [=arg(=1)]` | 54–55 | Verified row: on in eight rows; `=off` at 64/64 with no filter (C2) | Verified default (on). Off: verified default in C2's combination, advanced otherwise | checkbox "zlib compression" |
-| `--numpressLinear [=arg(=2.0e-09)]` | 56–59 | Absent | Advanced, with mzML and mzMLb; fixes m/z and RT at 64 bits, so an array the writer stores without numpress keeps every bit. On mzML each array carries the nominal 32-bit term and the numpress term, or falls back to the plain terms (ADR 0055 decision 5). Lossy by request (alters m/z and RT values within the relative tolerance) | checkbox and tolerance field |
-| `--numpressLinearAbsTol [=arg(=-1)]` | 60–66 | Absent | Advanced, with numpress linear only. Lossy by request (alters m/z and RT values within the absolute tolerance) | absolute tolerance field (m/z) |
+| `--numpressLinear [=arg(=2.0e-09)]` | 56–59 | Absent | Advanced, with mzML and mzMLb; fixes m/z and RT at 64 bits (RT through the global precision, so `--32` is not emitted), so an array the writer stores without numpress keeps every bit. On mzML each array carries the nominal 32-bit term and the numpress term, or falls back to the plain terms (ADR 0055 decision 5). Lossy by request (alters m/z and RT values within the relative tolerance, which is above 0) | checkbox, then one tolerance: relative (this field, above 0) or absolute (next row) |
+| `--numpressLinearAbsTol [=arg(=-1)]` | 60–66 | Absent | Advanced, with numpress linear only, in place of the relative tolerance, which the build then sets to 0 (help lines 65–66). Above 0: at 0 nothing checks the accuracy. Lossy by request (alters m/z and RT values within the absolute tolerance) | absolute tolerance field (m/z), the other choice of the tolerance |
 | `--numpressPic` | 67–70 | Absent | Advanced, with mzML and mzMLb, not with `--numpressSlof`; fixes intensity at 64 bits, as `--numpressLinear`. Lossy by request (alters intensities, absolute loss up to 0.5) | checkbox |
-| `--numpressSlof [=arg(=2.0e-04)]` | 71–74 | Absent | Advanced, with mzML and mzMLb, not with `--numpressPic`; fixes intensity at 64 bits, as `--numpressLinear`. Lossy by request (alters intensities within the relative tolerance) | checkbox and tolerance field |
+| `--numpressSlof [=arg(=2.0e-04)]` | 71–74 | Absent | Advanced, with mzML and mzMLb, not with `--numpressPic`; fixes intensity at 64 bits, as `--numpressLinear`. Lossy by request (alters intensities within the relative tolerance, which is above 0) | checkbox and tolerance field, above 0 |
 | `-n [ --numpressAll ]` | 75–77 | Absent | Covered by the two options it abbreviates; not offered separately | none |
 | `-g [ --gzip ]` | 78–79 | Absent | Advanced after a dependency decision. The mzML checks must read through gzip, and the conversion crate has no gzip reader (`flate2` is in the lockfile only transitively) | checkbox "gzip the whole file (.gz)" |
 

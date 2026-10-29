@@ -15,7 +15,8 @@ and the [ProteoWizard source](https://github.com/ProteoWizard/pwiz/tree/47b13cf)
 at the evidenced build's revision, `47b13cf`
 ([bootstrap status](../../../BOOTSTRAP_STATUS.md) records 3.0.26013 as that
 revision). The source was read, not run. Citations of the form
-`IO.cpp:1926` are to that revision, under `pwiz/data/msdata/`.
+`IO.cpp:1926` are to that revision, under `pwiz/data/msdata/`, except
+`msconvert.cpp`, which is under `pwiz_tools/commandline/`.
 
 ## Context
 
@@ -226,14 +227,26 @@ Rules enforced when an intent is built, not when it is displayed:
   an array without numpress when numpress would exceed its tolerance, and then
   at the role's precision (decision 5), so the fallback keeps every bit
   instead of losing more than the tolerance the user set;
-- `--numpressLinearAbsTol` exists only with `--numpressLinear`;
+- with `--numpressLinear`, which also encodes retention time, the lowering
+  never emits `--32` and spells precision with the per-array switches only.
+  msconvert sets per-array precision for m/z and intensity alone, so the time
+  array takes the global precision, which then stays at its 64-bit default
+  (`msconvert.cpp:689-724`);
+- linear numpress carries exactly one tolerance, relative or absolute
+  (`--numpressLinearAbsTol`). The build sets the relative tolerance to 0 when
+  an absolute one is given (`msconvert.cpp:775`; help lines 65–66), so the
+  two never coexist;
+- every numpress tolerance is above 0. A negative one turns numpress off
+  (`msconvert.cpp:758`, `:763`, `:769`), and 0 turns its accuracy check off
+  (help lines 59 and 74; for the absolute tolerance,
+  `BinaryDataEncoder.cpp:164`);
 - with mzMLb, compression level 0 exists only with zlib off: with zlib on, the
   build raises level 0 to 4 (`MSDataFile.cpp:249-250`);
 - numbers are finite, ranges ordered and sets non-empty.
 
 **Which encoding options each format takes** is what its writer reads. msconvert
 accepts every encoding option with every format and reports nothing
-(`msconvert.cpp:672-729`), so an option outside its format's row would be a
+(`msconvert.cpp:672-775`), so an option outside its format's row would be a
 control that cannot affect the result, which CNV-D2's obligation 2 makes
 unrepresentable.
 
@@ -243,7 +256,7 @@ unrepresentable.
 | mzXML | one global precision (`--32` or `--64`), zlib, `--noindex` | `<peaks>` holds m/z-intensity pairs at the global precision, and `compressionType` declares none or zlib; per-array precision is never read, nor the per-array numpress overrides, the only numpress msconvert sets (`Serializer_mzXML.cpp:552-584`) |
 | mzMLb | per-array precision, zlib, numpress, truncation, prediction, chunk size, compression level | The only writer that applies truncation and prediction (`IO.cpp:1628-1818`). It writes its index datasets whatever `--noindex` says (`Serializer_mzML.cpp:199-242`), so `--noindex` is not offered |
 | mz5 | per-array precision, zlib | Reads precision per array and zlib, and no other encoding option (`mz5/Configuration_mz5.cpp:173-251`, `:297-322`) |
-| mgf, text, ms1, ms2, cms1, cms2 | none | Read no encoding option. mgf, text, ms1 and ms2 write decimal text, m/z at 10, 12, 7 and 7 significant digits (`Serializer_MGF.cpp:77`, `TextWriter.hpp:426`, `Serializer_MSn.cpp:167`); cms1 and cms2 store m/z at 64 bits and intensity at 32, always compressed (`Serializer_MSn.cpp:255-307`, `:413-427`) |
+| mgf, text, ms1, ms2, cms1, cms2 | none | Read no encoding option. mgf, text, ms1 and ms2 write decimal text, m/z at 10, 12, 7 and 7 significant digits (`Serializer_MGF.cpp:77`, `TextWriter.hpp:426`, `Serializer_MSn.cpp:167`); cms1 and cms2 store m/z at 64 bits and intensity at 32, always compressed (`Serializer_MSn.cpp:255-307`, `:490`, `:499`) |
 
 The table was read from the source, not measured.
 
@@ -296,14 +309,22 @@ with three extensions:
    writes the 32-bit float term there, because numpress fixes its own word size
    (`IO.cpp:1958-1969`), so its precision is reported as not applicable.
 
+   **Under `--numpressLinear` the time array's precision is checked too.**
+   Today the check reads no precision on a time array, because no intent states
+   one. This one does: decision 4 fixes retention time at 64 bits, so a time
+   array stored without numpress is judged by the last row, as m/z is.
+
    **A numpress array can come back without numpress.** The writer decodes what
    it encoded, and when the error exceeds the tolerance it stores that array
    without numpress (`BinaryDataEncoder.cpp:202-238`, `IO.cpp:1886`):
-   - Pic always checks, against 0.5 and for overflow;
-   - Linear and Slof check when their tolerance is above 0, which it is by
-     default;
-   - with `--numpressLinearAbsTol`, an accuracy the encoder cannot reach also
-     falls back (`BinaryDataEncoder.cpp:164-170`).
+   - Pic always checks, but falls back only on a decoded value that is not
+     finite or is 1.0 or more away, so in effect only on overflow
+     (`BinaryDataEncoder.cpp:209`);
+   - Linear with a relative tolerance, and Slof, check against that tolerance,
+     which decision 4 keeps above 0;
+   - Linear with an absolute tolerance checks nothing after encoding, since the
+     relative tolerance is then 0, and falls back only when the encoder cannot
+     reach that accuracy (`BinaryDataEncoder.cpp:164-170`).
 
    Which arrays fall back depends on the data, so a fallback is not a failure.
    The array is judged by the last row, and the item's outcome reports, per
@@ -336,12 +357,19 @@ intermediate, that format blocks both until it can.
    encoding, 64/64 with zlib and an index; the requested encoding is lowered
    only in run 2. A failure here fails the item before run 2.
 
-   **So does an intermediate with nothing the format keeps.** If the
-   intermediate holds no spectrum the chosen format keeps (decision 1; for
-   mzXML, no spectrum at all), the item fails before run 2 as
-   `OutputContainsNoRecords`. Otherwise run 2 would write a file with no
-   records, such as an ms2 file of headers only, and the minimal checks below
-   would pass it.
+   **So does an intermediate with nothing the format keeps.** For a format
+   that keeps part of a document (decision 1), the item fails before run 2 as
+   `OutputContainsNoRecords` when the intermediate holds:
+   - for mzXML, no spectrum;
+   - for mgf, no spectrum above MS1 that names a selected precursor ion;
+   - for ms1 and cms1, no MS1 spectrum;
+   - for ms2 and cms2, no MS2 spectrum that names a selected precursor ion.
+
+   Otherwise run 2 would write a file with no records, such as an ms2 file of
+   headers only, and the minimal checks below would pass it. The text, mz5 and
+   mzMLb formats keep chromatograms as well as spectra, so for them decision
+   5's rule, which the intermediate has already passed, is the whole
+   condition: an intermediate holding only chromatograms goes on to run 2.
 2. **Run 2: mzML to the requested format.** Each intermediate is converted into
    a second private staging directory. Run 2 carries:
    - the format flag;
@@ -401,7 +429,11 @@ mzXML adds two checks to this route.
 **What this checks:** because the comparison is against the intermediate and
 not against the declared count, it catches any dropped spectrum, whatever the
 cause. That includes M6.10 S2's Thermo multi-controller condition if it
-occurs. S2 is still unmeasured, and this ADR does not claim otherwise.
+occurs. The build's source shows the mechanism: on a document whose native IDs
+are in the Thermo format, the writer skips every spectrum whose ID does not
+begin `controllerType=0 controllerNumber=1` (`Serializer_mzXML.cpp:774-777`),
+and the comparison fails such an item. That was read, not run; S2 is still
+unmeasured, and this ADR does not claim otherwise.
 
 **What it does not check:**
 
@@ -599,6 +631,13 @@ If the owner wants otherwise, that is its own decision, and it must at least:
   - **Decision 13** and the question table's retention row: React retains the
     selected intent as its structured value, where it retained "the selected
     admitted intent id".
+  - **The semantic finding ledger, row 1** (defect source "A frontend able to
+    compose axis values", acceptance "39 combinations unreachable by any
+    activation sequence"): this holds for the verified tier. In the advanced
+    tier React composes a structured intent and those combinations are
+    reachable; decision 4's rules, enforced in Rust, decide whether an advanced
+    intent can be built, and the admitted table alone still decides whether it
+    is verified.
 - **[ADR 0045](0045-conversion-completion-closure-and-handoff.md), the
   terminal ledger.** CNV-002's `REFUSED_WITH_EVIDENCE` stays the disposition
   of mzXML as a verified format. mzXML is offered as advanced through decision
