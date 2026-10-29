@@ -45,7 +45,7 @@ async function openSettings() {
   await browser.$(DIALOG).waitForDisplayed();
 }
 async function choose(value: string) {
-  await browser.$(`${DIALOG} input[value="${value}"]`).click();
+  await browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click();
 }
 async function press(name: string) {
   await browser.$(DIALOG).$(`button=${name}`).click();

@@ -82,8 +82,8 @@ async function preferences(language: "en" | "zh-CN", density: "comfortable" | "c
   // Settings saves the choice and the shell adopts what the save confirms.
   await readBackSavedPreferences();
   await browser.$("[data-settings-entry]").click();
-  await browser.$('[data-settings-dialog] input[value="' + language + '"]').click();
-  await browser.$('[data-settings-dialog] input[value="' + density + '"]').click();
+  await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="' + language + '"])').click();
+  await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="' + density + '"])').click();
   await browser.$("[data-settings-dialog]").$("button=" + UI_RESOURCES[language].apply).click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }

@@ -172,16 +172,20 @@ export function SettingsDialog() {
         <div className="settings-dialog-body">
           <div className="settings-fields">
             <h3 className="settings-section-title">{message("appearance")}</h3>
+            {/* `data-setting-value` names each option for the e2e drivers, which
+                cannot select a segment by a localized label. */}
             <SettingField labelId={languageId} label={message("language")}>
               <SegmentedControl labelledBy={languageId} value={preferences.effective.locale}
                 disabled={frozen}
-                options={[{ value: "en", label: message("english") }, { value: "zh-CN", label: message("simplifiedChinese") }]}
+                options={[{ value: "en", label: <span data-setting-value="en">{message("english")}</span> },
+                  { value: "zh-CN", label: <span data-setting-value="zh-CN">{message("simplifiedChinese")}</span> }]}
                 onChange={(locale) => preferences.preview({ ...preferences.effective, locale })} />
             </SettingField>
             <SettingField labelId={densityId} label={message("density")}>
               <SegmentedControl labelledBy={densityId} value={preferences.effective.density}
                 disabled={frozen}
-                options={[{ value: "comfortable", label: message("comfortable") }, { value: "compact", label: message("compact") }]}
+                options={[{ value: "comfortable", label: <span data-setting-value="comfortable">{message("comfortable")}</span> },
+                  { value: "compact", label: <span data-setting-value="compact">{message("compact")}</span> }]}
                 onChange={(density) => preferences.preview({ ...preferences.effective, density })} />
             </SettingField>
             {/* Its own section below a divider, so it does not read as a

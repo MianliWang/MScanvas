@@ -270,7 +270,7 @@ async function openSettings() {
   await browser.$(ENTRY).click();
   await browser.$(DIALOG).waitForDisplayed();
 }
-async function choose(value: string) { await browser.$(`${DIALOG} input[value="${value}"]`).click(); }
+async function choose(value: string) { await browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click(); }
 async function press(label: string) { await browser.$(DIALOG).$(`button=${label}`).click(); }
 /** The dialog closed and the keyboard came back to the control that opened it. */
 async function returned() {
