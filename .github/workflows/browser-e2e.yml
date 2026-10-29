@@ -1,0 +1,53 @@
+name: Browser e2e
+
+# The rendered browser suite (real Chrome over real Vite, IPC replaced at the
+# invoke boundary), split into shards that run at the same time. It runs on
+# Windows because the suite's geometry assertions are written against Windows
+# font metrics. Informational: it is not a required check.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: Browser e2e (${{ matrix.shard }}/6)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Install pinned pnpm
+        run: |
+          npm install --global --no-audit --no-fund pnpm@11.15.1
+          pnpm --version
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Browser suite, shard ${{ matrix.shard }} of 6
+        # Outside Windows' reserved dynamic port ranges, as on a workstation.
+        env:
+          MSCANVAS_BROWSER_DEV_PORT: "15273"
+        run: pnpm e2e:browser --shard ${{ matrix.shard }}/6
+      - name: Keep failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-e2e-failures-${{ matrix.shard }}
+          path: .tmp/**/failure-*.png
+          if-no-files-found: ignore
+          retention-days: 7
