@@ -60,8 +60,9 @@ It compared a project-owned reader (route b) with mzdata 0.68.0 (route a).
 
 This ADR moves two reads into the process: the spectrum table and the selected
 spectrum. Metadata, the run summary, and the rules that admit a read stay as
-they are. It therefore does not make mzML viewable without ProteoWizard or
-during a conversion (decision 3).
+they are, except that the preview page takes the run's retention-time range
+from the native table (decision 3). It therefore does not make mzML viewable
+without ProteoWizard or during a conversion (decision 3).
 
 ## Decisions
 
@@ -75,11 +76,12 @@ scope is closed.
 
 - mzML 1.1, plain or wrapped in `indexedmzML`;
 - the spectrum list;
-- `referenceableParamGroup` references and instrument configurations;
-- per spectrum: index, native ID, MS level, polarity, centroid or profile
+- `referenceableParamGroup` references;
+- per spectrum: index, native ID, MS level, centroid or profile
   (MS:1000127 / MS:1000128), scan start time with its declared unit, every
-  precursor, the filter string, total ion current, base peak, and the declared
-  array length (`defaultArrayLength`, or an array's own `arrayLength`);
+  precursor's selected-ion m/z and intensity, total ion current, base peak, the
+  lowest and highest observed m/z, and the declared array length
+  (`defaultArrayLength`, or an array's own `arrayLength`);
 - the m/z and intensity arrays: 32- and 64-bit float and integer values,
   zlib-compressed or uncompressed, and the unit each array declares.
 
@@ -100,8 +102,7 @@ The open, meaning the whole spectrum table, is refused for:
 - a scan start time whose declared unit is not seconds or minutes (UO:0000010,
   UO:0000031, MS:1000038); an undeclared unit stays undeclared;
 - one term stated twice with different values, counting a spectrum's own terms
-  and its param groups together, or both terms of an exclusive pair (centroid
-  and profile; positive and negative);
+  and its param groups together, or both centroid and profile;
 - a spectrum missing a value the table requires (decision 5): MS level, scan
   start time, base peak m/z and intensity, or total ion current;
 - a document beyond the limits of decision 2.
@@ -134,10 +135,12 @@ MGF, other mzML versions, non-UTF-8 documents, multi-scan combination
 semantics, the metadata sections and run summary (decision 3), and any
 computation over the decoded arrays (XIC, summed spectra, peak picking).
 
-Stored chromatograms are out of scope too, because nothing would read them. The
-product's chromatogram is a projection of the spectrum table
-(`preview/chromatogram.rs`), and the run summary's chromatogram count stays
-`msaccess`'s.
+Stored chromatograms, polarity, the filter string and instrument
+configurations are out of scope too, because nothing would read them: no
+preview DTO, service path or export uses them. The product's chromatogram is a
+projection of the spectrum table (`preview/chromatogram.rs`), and the run
+summary's chromatogram count stays unreported, as `msaccess`'s parser leaves it
+today.
 
 The reader is for viewing only. Conversion, the conversion-integrity
 inspector and targeted MS1 are unchanged; the targeted-MS1 worker still reads
@@ -202,6 +205,7 @@ neutral crate is a later mechanical change, not part of this decision.
 | Selected spectrum | native |
 | Metadata (part of the open) | `msaccess`, as today |
 | Run summary (part of the open) | `msaccess`, as today |
+| Retention-time range on the preview page | native: the lowest and highest retention time of the table's rows |
 
 Vendor rows stay `dataset_not_previewable` (ADR 0005, M3.1).
 
@@ -209,13 +213,35 @@ Vendor rows stay `dataset_not_previewable` (ADR 0005, M3.1).
 
 - The metadata view is `msaccess`'s text for five sections: file description,
   sample list, instrument configurations, software, and data processing. The
-  reader reads only instrument configurations, and reproducing the rest would
-  change what the user sees.
+  reader reads none of them, and reproducing them would change what the user
+  sees.
 - The run summary carries the retention times at 25, 50 and 75% of cumulative
   base-peak intensity. `msaccess` computes them, and the QC snapshot records
   them. Computing them natively is the computation decision 7 excludes.
 
 Moving either needs its own decision.
+
+**One retention-time scale on the preview page.** The table, the chromatogram
+and the selected spectrum show retention time as the file declares it, which
+for a Thermo file converted by `msconvert` is usually minutes. `msaccess`
+prints its own scale: the installed check's scan stored at 26.688152 min was
+printed by `spectrum_table` as `rt 1601.29`, seconds
+([item 5](../../release/beta-1/INSTALLED_CHECK.md#5-exported-numerics)). The
+scale of `run_summary`'s `MinRT` and `MaxRT` is not recorded, and is probably
+the same seconds. Shown beside the native table, they could put two scales about
+60 times apart on one page, both labelled retention time.
+
+- On a native open, the summary's retention-time range is therefore the lowest
+  and highest retention time among the table's retained rows, all of them and
+  not the transferred prefix. It carries the rows' unit, and an undeclared unit
+  stays undeclared.
+- Rows with different units, or where only some rows declare one, have no
+  range, with the same stated reason as the chromatogram. Nothing converts
+  between seconds and minutes.
+- `msaccess`'s `MinRT`, `MaxRT` and its retention times at cumulative base-peak
+  intensity are still read. They go only to the QC snapshot, and the QC report
+  shows them with their producer and their unit unreported, as today. That
+  report can differ in scale from the preview (see Risks).
 
 **One open, two readers, no fallback:**
 
@@ -223,9 +249,12 @@ Moving either needs its own decision.
   batch, under the same backend gate and `lock_against_replacement`, and inside
   the same before-and-after `SourceGeneration` check. Both readers therefore
   describe one generation of the file.
-- The open compares the run summary's spectrum count with the native table's
-  row count. A difference refuses the open with a typed error: one reader is
-  wrong, and the open cannot say which.
+- The run summary's spectrum count and the native table's row count stay two
+  readings. When they differ, both are shown and neither is chosen, as ADR 0005
+  rules and `PreviewSummary` already does (`summaryCountsDisagree`, against the
+  table's total, not its transferred rows). Both readers saw one generation of
+  the file, so the difference is between the readers, and MSCanvas has no
+  evidence about which is right.
 - The operation fixes the reader; an outcome never changes it. A native refusal
   is shown and is never reread with `msaccess`. An `msaccess` failure fails the
   open as it does today, and the native reader never stands in ("no backend
@@ -233,7 +262,7 @@ Moving either needs its own decision.
 
 **Not a second `PreviewProvider`.** `PreviewProvider::run` answers an
 `OperationAttempt` shaped around a ProteoWizard installation (ADR 0044,
-Decision 1), which a native provider would have to fake. The service calls the
+Decision 4), which a native provider would have to fake. The service calls the
 reader directly.
 
 **What a native read drops:**
@@ -254,7 +283,7 @@ same gate:
   0044's `backendUsable` and waits while a conversion runs.
 
 The gate is now also what serializes native reads. One read runs at a time,
-including a non-indexed file's full pass. A pass already under way runs to
+including an open's full pass. A pass already under way runs to
 completion, as ADR 0005 says of a backend read.
 
 **Not in this ADR: viewing without ProteoWizard, or during a conversion.**
@@ -272,25 +301,42 @@ Both need a follow-up decision. It must:
 
 ### 4. Offsets are kept with the open preview
 
-A non-indexed file needs a full pass to find its spectra. In the spike that
-took 5.8 s cold on a 482 MB file, then about 0.04 ms per spectrum. The open's
-table pass is that pass, so the offsets come with the table:
+Every open is a full pass, because no index is trusted (decision 2). In the
+spike a full pass took 5.8 s cold on a 482 MB file, then about 0.04 ms per
+spectrum. The open's table pass is that pass, so the offsets come with the
+table:
 
 - **Offsets live beside the table rows** in the dataset's retained preview
   state (`DatasetPreviewState`), with one lifetime. The next open of the
   dataset drops them, and so do removing the row and clearing the workspace. A
   selected spectrum is still checked against the file generation its open
   recorded, as today.
-- **No file handle is held.** Each read opens the file and closes it. No two
-  reads share a cursor, and between reads the session holds no handle on the
-  user's file.
+- **No read holds a file handle.** Each read opens the file and closes it, and
+  no two reads share a cursor. The only handle the session keeps on the user's
+  file is the row's identity lease (ADR 0006), as today, so a row's handle cost
+  is unchanged.
 - **One dataset at a time.** Starting an open drops every other dataset's
-  preview state, as it already drops its own. The screen shows one preview at a
-  time, and an open takes the previous one off the screen first. Today the
-  8 MiB text cap is what bounds one dataset's retained rows (about 76,000 at
-  M0's row size). Without that cap on the table, this rule bounds them across
-  the session instead. The worst case is one file at the reader's limit:
-  1,000,000 rows and offsets, and never arrays.
+  preview state, as it already drops its own. That alone does not hold the
+  bound: the commit checks only its own dataset's request epoch, and the gate
+  is released before the commit, so an older open of another dataset could
+  still commit after a newer open has started. Slice 2 closes this with the
+  cross-dataset `PreviewOpenTicket`:
+  - an open retains nothing unless its ticket is still the latest, the test a
+    stale open's run summary already meets (`reconcile_preview_run_summary`).
+    The ticket is checked while the workspace lock is held, with the export
+    slot taken after it as the leaf it is, and a stale ticket answers
+    `superseded`, as a stale epoch does;
+  - an open's start drops the other datasets' state after taking its ticket,
+    under the workspace lock, so it cannot fall between another commit's check
+    and its write;
+  - `open_preview` is the only production caller that advances the ticket; the
+    other is an e2e seed.
+
+  The screen shows one preview at a time, and an open takes the previous one
+  off the screen first. Today the 8 MiB text cap is what bounds one dataset's
+  retained rows (about 76,000 at M0's row size). Without that cap on the table,
+  this rule bounds them across the session instead. The worst case is one file
+  at the reader's limit: 1,000,000 rows and offsets, and never arrays.
 - **A selected spectrum needs its preview.** For a dataset with no retained
   preview state, a selected spectrum is refused with a typed error that asks
   for a reopen.
@@ -305,8 +351,9 @@ This decides ADR 0005's open preview-cache question for this reader.
 - the service, DTOs, chromatogram model and export mappings, in
   `apps/desktop/src-tauri/src/preview/`;
 - `apps/desktop/src-tauri/src/qc_snapshot.rs`, for one exhaustive match;
-- in the webview, the DTO contracts (`contracts.ts`), the selected-spectrum
-  panel and the chromatogram's scan model (`viewer/scanModel.ts`);
+- in the webview, the DTO contracts (`contracts.ts`), the summary's
+  retention-time line (`PreviewSummary.tsx`), the selected-spectrum panel and
+  the chromatogram's scan model (`viewer/scanModel.ts`);
 - in slice 3, the shared figure specification and how the viewer draws.
 
 No admission, gating, discovery or setup code changes.
@@ -329,8 +376,22 @@ No admission, gating, discovery or setup code changes.
     and reach no screen. A native row leaves them unreported, and slice 2 makes
     them optional.
   - The reader derives no value from the arrays.
+  - The webview still receives at most `MAX_SPECTRUM_TABLE_ROWS` (100,000)
+    rows with their total, and Rust retains them all. A native table above
+    that opens as a row-capped table does today: the scan table says it shows
+    a prefix (`scanPrefix`), and there is no chromatogram on screen
+    (`viewerTicPrefix`) or in export (`ChromatogramSource::from_rows`). Today
+    the 8 MiB cap usually refuses such a table first. `synthetic-long`
+    (250,000 spectra) is one. A chromatogram above the bound is an open
+    question below.
+- **Known facts carry their values.** `representation_known`,
+  `value_units_known` and `RetentionTimeDto.unit_known` are booleans today.
+  They can say that a fact is known, not what it is. Slice 2 replaces them, on
+  the DTOs and in `contracts.ts`, with the values a profile line and a unit
+  label need: the representation (centroid, profile or not reported), each
+  array's unit, and the retention-time unit (seconds, minutes or not reported).
 - **Selected spectrum.**
-  - `SelectedSpectrumDto` sets `representation_known` and its value units from
+  - `SelectedSpectrumDto` takes its representation and each array's unit from
     the spectrum's own terms.
   - Array values are the stored values, widened to `f64`. That is exact for
     32-bit floats and for integers up to 2^53. A 64-bit integer array holding a
@@ -342,6 +403,10 @@ No admission, gating, discovery or setup code changes.
     (MS:1000528, MS:1000527). A range the spectrum does not state is not
     reported. Slice 2 makes those fields optional, and the panel shows the
     range as not reported.
+  - `SpectrumPrecursor` requires a finite m/z and intensity today. In mzML the
+    selected ion, and its intensity (MS:1000042), are optional. Slice 2 makes
+    both values optional, and a value the precursor does not state is shown as
+    not reported, never as zero. The index stays the precursor's position.
   - Representation and value units meet the exhaustive matches in
     `preview/export.rs` (the figure and the data document), which map them
     from the evidence instead of to "unreported".
@@ -349,11 +414,16 @@ No admission, gating, discovery or setup code changes.
     describes printed text. No product code reads it, and a native spectrum
     carries the two arrays' stored widths instead.
 - **Retention time** carries its declared unit instead of
-  `UnitState::NotEmitted`. An undeclared unit stays undeclared. The new unit
-  states meet two exhaustive matches:
-  - `reported_unit_known` in `service.rs` maps them;
-  - `qc_snapshot.rs::recorded()` refuses them, because the QC path only ever
+  `UnitState::NotEmitted`. An undeclared unit stays undeclared.
+  - Retention time and the array values share one `UnitState` today
+    (`preview.rs`). Slice 2 splits it: retention time gets its own unit state,
+    and each array its own value-unit state, so no match handles a unit that
+    cannot occur there.
+  - The retention-time states meet two exhaustive matches.
+    `reported_unit_known` in `service.rs` maps them.
+    `qc_snapshot.rs::recorded()` refuses them, because the QC path only ever
     sees the `msaccess` run summary's `NotEmitted`. Schema 4 does not change.
+  - The value-unit states meet the two matches in `preview/export.rs` above.
 - **The chromatogram learns the unit.** Today a row whose retention-time unit
   is known makes the chromatogram unavailable, on screen
   (`viewer/scanModel.ts`, `unsupported-retention-time-unit`) and in export
@@ -371,9 +441,15 @@ No admission, gating, discovery or setup code changes.
   - With both sides read natively from the same terms, a disagreement can only
     mean a read landed on another spectrum, which the per-read index and ID
     check already refuses. Slice 2 makes the comparison exact and records that.
-- **Bounds stay.** Lists crossing IPC stay bounded in count, and points cross
-  only through the existing screen projection. Sending whole arrays over IPC
-  would be its own decision, as binary transfer (AGENTS.md, large arrays).
+- **Bounds stay.** Lists crossing IPC stay bounded in count.
+  - A selected spectrum's DTO carries at most `MAX_SPECTRUM_POINTS` (500,000)
+    of its points, with its total, as today.
+  - A native spectrum above that, up to decision 2's 2^23, crosses as that
+    prefix with today's notice. The drawing reads the complete retained
+    spectrum through the screen projection, and export reads it through the
+    export snapshot.
+  - Sending whole arrays over IPC would be its own decision, as binary transfer
+    (AGENTS.md, large arrays).
 - **Redaction stays.** Metadata stays `msaccess` output, redacted as today. The
   native table goes through the same `spectrum_table_dto` projection and its
   redactor.
@@ -431,7 +507,9 @@ without a written decision.
 This ADR is the written decision, and decision 1's scope is its limit. Any
 computation over the decoded arrays is an algorithm, and it needs its own
 record. That is why the run summary's retention times at cumulative base-peak
-intensity stay `msaccess`'s (decision 3).
+intensity stay `msaccess`'s (decision 3). Taking the lowest and highest of the
+table rows' own retention times, for the preview's range, is a selection from
+read values, not a computation.
 
 ### 8. Re-measure before implementing
 
@@ -451,6 +529,11 @@ exactness, timing and memory:
   files are where that matters most.
 - Each run also records the largest point count, and whether every spectrum
   states the values the table requires (decision 5).
+- If the owner releases the ProteoWizard hold for it, `msaccess run_summary`
+  runs on the same files, and the run records the scale of `MinRT` and `MaxRT`
+  against each file's declared unit. That settles the QC report's scale (see
+  Risks), not the preview page's, which no longer shows that range on a native
+  open.
 
 Before slice 1 merges, the product reader repeats that three-way comparison on
 the same files. The numbers are observations, not budgets (ADR 0005).
@@ -468,15 +551,22 @@ the same files. The numbers are observations, not budgets (ADR 0005).
      - non-finite values;
      - a declared length of 2^40 points;
      - a declared length at the cap over a zlib stream of zeros;
+     - a precursor without a selected-ion intensity;
      - a random read that lands on another spectrum.
    - The product reader's repeat of decision 8's comparison, before it merges.
 2. **Native path for mzML sources.**
    - Routing by operation, the shared-type constructors and the optional
      fields.
-   - The one batch, with its spectrum-count check.
-   - Offsets kept with the preview, for one dataset at a time.
+   - The one batch, with both spectrum counts shown when they differ.
+   - Offsets kept with the preview, for one dataset at a time, with the
+     commit's ticket check.
+   - The split unit state and the value-carrying DTOs.
    - Retention time with its unit, including the chromatogram's axis on
-     screen and in export, and exact reconciliation.
+     screen and in export, the summary's range from the native rows, and exact
+     reconciliation.
+   - Acceptance: a seconds file and a minutes file each keep their
+     chromatogram on screen and in export, with the unit on the axis; a run of
+     mixed units shows the stated reason instead.
    - Removal of the two `msaccess` operations.
 3. **UI states.**
    - Profile spectra drawn as lines and centroid spectra as sticks, through the
@@ -486,8 +576,8 @@ the same files. The numbers are observations, not budgets (ADR 0005).
      - sticks keep `ExtremePerSignPerColumn`;
      - only a spectrum the file declares profile is joined.
    - Unknown representation stays sticks, with its statement.
-   - Retention time shown with its declared unit; a chromatogram refused for
-     mixed units; an m/z range not reported.
+   - Retention time shown with its declared unit; a chromatogram and a range
+     refused for mixed units; an m/z range or a precursor value not reported.
    - Copy for the new refusals.
    - Rendered QA.
 
@@ -601,7 +691,10 @@ runner on the real file, so the comparison is directional only.
   the user sees, and the run summary's retention times at cumulative base-peak
   intensity are a computation. Each waits for its own decision (decision 3).
 - **A second `PreviewProvider`.** It would have to fabricate an installation
-  identity for ADR 0044's Decision 1.
+  identity for the `OperationAttempt` of ADR 0044's Decision 4.
+- **Refusing the open when the two spectrum counts differ.** ADR 0005 rejected
+  that: neither reading is evidence against the other, and a refusal would
+  reject an acquisition that may be valid.
 
 ## Consequences
 
@@ -611,16 +704,19 @@ runner on the real file, so the comparison is directional only.
   which closes the installed check's FAIL for mzML.
 - **Profile lines.** Profile spectra are drawn as lines and centroid spectra as
   sticks, from the file's own terms.
-- **MS-level filter on real data.** MS level, polarity and representation come
-  from each spectrum, through param groups, on full-size real files. That
+- **MS-level filter on real data.** MS level and representation come from each
+  spectrum, through param groups, on full-size real files. That
   serves the scan table's represented MS-level filter and makes an MS-level
   choice for the chromatogram possible. ADR 0033 left that choice out of R1, so
   it needs its own viewer decision.
-- **Large spectra.** Large profile spectra and large spectrum tables open
-  where the 8 MiB cap refuses them today.
+- **Large spectra and tables.** Large profile spectra open where the 8 MiB cap
+  refuses them today. So do spectrum tables above about 76,000 rows: with a
+  chromatogram up to 100,000 rows, and above that as a prefix with no
+  chromatogram and no chromatogram export (decision 5).
 - **No process per spectrum.** A selected spectrum is an in-process read.
-- **Retention-time units.** The table, the chromatogram and its export carry
-  the unit the file declares, where today every unit is unreported.
+- **Retention-time units.** The table, the chromatogram and its export, and the
+  summary's range carry the unit the file declares, where today every unit is
+  unreported.
 - **A premise for XIC, not XIC itself.** The four-decimal serialization that
   decided M5.4 for `tic`, `sic` and `slice` does not exist in-process. **This
   ADR admits no XIC.** XIC needs the new scope record the
@@ -668,6 +764,12 @@ runner on the real file, so the comparison is directional only.
   - Neither the PRIDE file nor a real profile file was measured.
 
   Decision 8 answers this, and slice 1's fixtures cover integers and units.
+- **Two retention-time scales across surfaces.** The QC report shows
+  `msaccess`'s retention times with the unit unreported, as today, while the
+  preview shows the declared unit. If `msaccess` prints seconds, a minutes
+  file's QC report reads about 60 times larger than its preview. Decision 8
+  measures the scale if the hold is released. Labelling the QC report is a
+  follow-up, because schema 4 records that unit as unreported.
 - **Strictness** is established only for the probed cases and the rules of
   decision 2.
 - **Ownership.** The project owns about 600–900 production lines plus tests,
@@ -680,6 +782,13 @@ ways forward:
 - add native decoding later, in its own decision;
 - offer an explicit, labelled "Read with ProteoWizard" action for a refused
   spectrum, which the user chooses. That is not a fallback.
+
+**Open question for the owner: a chromatogram above 100,000 spectra.** This ADR
+keeps today's row-capped state (decision 5). Two other ways:
+
+- raise `MAX_SPECTRUM_TABLE_ROWS`, which sends more rows through React;
+- send the chromatogram itself from Rust's retained rows, bounded like any
+  list, which is a viewer decision under ADR 0028.
 
 ## What this amends, on acceptance
 
@@ -698,18 +807,23 @@ ways forward:
     line for profile spectra.
   - These no longer apply to the spectrum table and selected spectra:
     - one backend process per read;
-    - the 8 MiB output ceiling;
+    - the 8 MiB output ceiling, and with it the refusal of a run cut by it. A
+      table above the transfer bound opens as a prefix with its total, under
+      the bounded-transfer rule ADR 0005 already states for every list, and
+      has no chromatogram;
     - the installation identity a selected spectrum is checked against.
   - The single backend gate still applies, and now also serializes native
     reads. Everything it says of metadata and the run summary still applies.
   - The bounded preview cache it left open is decided for this reader
     (decision 4).
   - Unchanged: the command surface, Rust's ownership of the path, bounded and
-    redacted transfer, and generation checks.
+    redacted transfer, generation checks, and two disagreeing spectrum counts
+    both shown with neither chosen.
 - **[ADR 0006](0006-multi-dataset-workspace-boundary.md).** The 1,024-row
-  capacity stands. A native read holds no file handle between reads, so a
-  row's handle cost is unchanged. Native preview state is kept for one dataset
-  at a time, so its memory does not grow with the roster.
+  capacity stands. A native read holds no file handle; the row's identity
+  lease stays its only handle, so a row's handle cost is unchanged. Native
+  preview state is kept for one dataset at a time, so its memory does not grow
+  with the roster.
 - **[ADR 0028](0028-figure-renderer-and-semantic-specification.md).** A
   profile-spectrum mark joins the shared specification under its existing
   rules (decision 9, slice 3), and no rule changes. If the mark changes the
