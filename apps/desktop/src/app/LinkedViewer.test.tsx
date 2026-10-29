@@ -690,8 +690,10 @@ describe("what the open measurement waits for", () => {
     expect(first).toBeGreaterThan(0);
 
     // A second reading of the same row, which is a whole new open.
-    fireEvent.click(screen.getByText(VENDOR_ROW.fileName));
-    fireEvent.click(screen.getByText(selectedFile.fileName));
+    // In the roster: the identity row and Details name the viewed file too.
+    const roster = screen.getByRole("treegrid", { name: "Acquisitions" });
+    fireEvent.click(within(roster).getByText(VENDOR_ROW.fileName));
+    fireEvent.click(within(roster).getByText(selectedFile.fileName));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
     await screen.findByRole("img", { name: "Chromatogram" }, { timeout: 15_000 });

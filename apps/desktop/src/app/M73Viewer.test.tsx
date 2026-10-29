@@ -67,7 +67,8 @@ function editRange(panel: HTMLElement, low: string, high: string) {
 async function chooseScope(panel: HTMLElement, name: string) {
   fireEvent.click(within(panel).getByRole("button", { name: "Export figure" }));
   const dialog = screen.getByRole("dialog");
-  fireEvent.click(within(dialog).getByRole("radio", { name }));
+  // A current range names its window after the words (rebuild spec 6).
+  fireEvent.click(within(dialog).getByRole("radio", { name: new RegExp(`^${name}`, "u") }));
   fireEvent.click(within(dialog).getByRole("button", { name: "Return to viewer" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 }

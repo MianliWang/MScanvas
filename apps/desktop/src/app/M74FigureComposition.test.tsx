@@ -39,7 +39,8 @@ async function chooseChromatogramScope(name: string) {
   const chromatogram = document.querySelector(".chromatogram-panel") as HTMLElement;
   fireEvent.click(within(chromatogram).getByRole("button", { name: "Export figure" }));
   const dialog = screen.getByRole("dialog");
-  fireEvent.click(within(dialog).getByRole("radio", { name }));
+  // A current range names its window after the words (rebuild spec 6).
+  fireEvent.click(within(dialog).getByRole("radio", { name: new RegExp(`^${name}`, "u") }));
   fireEvent.click(within(dialog).getByRole("button", { name: "Return to viewer" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 }

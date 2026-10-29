@@ -219,7 +219,7 @@ describe("what the chromatogram can be exported as", () => {
   it("sends a current range as the whole run until the viewport is committed", async () => {
     const preview = api();
     await openTheViewer(preview);
-    await inTheDialog(dialog => { fireEvent.click(within(dialog).getByRole("radio", { name: "Current range" })); });
+    await inTheDialog(dialog => { fireEvent.click(within(dialog).getByRole("radio", { name: /^Current range/u })); });
 
     fireEvent.click(await data("CSV"));
 
@@ -233,7 +233,7 @@ describe("what the chromatogram can be exported as", () => {
     const preview = api();
     await openTheViewer(preview);
     await commitAWheel();
-    await inTheDialog(dialog => { fireEvent.click(within(dialog).getByRole("radio", { name: "Current range" })); });
+    await inTheDialog(dialog => { fireEvent.click(within(dialog).getByRole("radio", { name: /^Current range/u })); });
 
     fireEvent.click(await data("CSV"));
 
@@ -253,7 +253,7 @@ describe("what the chromatogram can be exported as", () => {
     const preview = api();
     await openTheViewer(preview);
     await commitAWheel();
-    await inTheDialog(dialog => { fireEvent.click(within(dialog).getByRole("radio", { name: "Current range" })); });
+    await inTheDialog(dialog => { fireEvent.click(within(dialog).getByRole("radio", { name: /^Current range/u })); });
     const committed = document.querySelector(".chromatogram-range")?.textContent ?? "";
 
     const from = clientXFor(50 * RT_STEP);

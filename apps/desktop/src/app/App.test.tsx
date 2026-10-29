@@ -1347,6 +1347,21 @@ function rosterRow(name: RegExp): HTMLElement {
   return screen.getByRole("row", { name });
 }
 
+/**
+ * The execution order control. It is the Conversion summary's (rebuild spec
+ * 5.1), mounted with its surface whichever surface is shown.
+ */
+function executionOrder(): HTMLSelectElement {
+  return screen.getByRole("combobox", { name: "Execution order", hidden: true }) as HTMLSelectElement;
+}
+
+/** Chooses an execution order where the reader does, then returns to the Workbench. */
+function chooseExecutionOrder(value: string): void {
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/u }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value } });
+  fireEvent.click(screen.getByRole("button", { name: "Workbench" }));
+}
+
 describe("the session workspace roster", () => {
   it("shows what Rust already holds when the webview is opened again", async () => {
     // A webview can be reloaded while Rust keeps the workspace. The list on
@@ -2234,9 +2249,7 @@ describe("the session workspace roster", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
-      target: { value: "name-desc" },
-    });
+    chooseExecutionOrder("name-desc");
     fireEvent.click(rosterRows()[0] as HTMLElement);
     fireEvent.keyDown(rosterRows()[0] as HTMLElement, { key: "a", ctrlKey: true });
     fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
@@ -2257,9 +2270,7 @@ describe("the session workspace roster", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "Blank_03" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
-      target: { value: "size-asc" },
-    });
+    chooseExecutionOrder("size-asc");
 
     // Still on screen, still the same reading, and nothing re-read to keep it.
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
@@ -2281,18 +2292,16 @@ describe("the session workspace roster", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC_pool_01" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
-      target: { value: "name-desc" },
-    });
+    chooseExecutionOrder("name-desc");
     expect(rosterRows()).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
     // The arrival does not match, and is on screen because it was selected.
-    await screen.findByText("1 highlighted · 1 hidden · 1 checked");
+    await screen.findByText("1 checked · 1 highlighted · 1 hidden");
     expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
     expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC_pool_01");
-    expect(screen.getByRole("combobox", { name: "Execution order" })).toHaveValue("name-desc");
+    expect(executionOrder()).toHaveValue("name-desc");
 
     fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
 
@@ -2317,9 +2326,7 @@ describe("the session workspace roster", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC_pool_01" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
-      target: { value: "size-asc" },
-    });
+    chooseExecutionOrder("size-asc");
     expect(rosterRows()).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
@@ -2409,9 +2416,7 @@ describe("the session workspace roster", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "qc_run" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
-      target: { value: "name-asc" },
-    });
+    chooseExecutionOrder("name-asc");
 
     expect(rosterRows().length).toBeLessThan(80);
     expect(document.querySelector("#dataset-roster-matches")).toHaveTextContent("512 visible / 1024 acquisitions · capacity 1024");
@@ -2649,9 +2654,7 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await screen.findByRole("grid", { name: "Spectra" });
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
-      target: { value: "name-desc" },
-    });
+    chooseExecutionOrder("name-desc");
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
     });
@@ -2664,7 +2667,7 @@ describe("adding a folder of mzML files", () => {
       expect(screen.getByText(/Added 1 file\./, VISIBLE)).toBeVisible();
     });
     expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC");
-    expect(screen.getByRole("combobox", { name: "Execution order" })).toHaveValue("name-desc");
+    expect(executionOrder()).toHaveValue("name-desc");
     // The preview belongs to the row it was opened for, and a list operation is
     // not a reason to take it away or to read anything else.
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
@@ -2695,7 +2698,7 @@ describe("adding a folder of mzML files", () => {
     // And none of the ones that cost nothing. Curating what is on screen is
     // this side's own work, and a filesystem walk is no reason to stop it.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
-    expect(screen.getByRole("combobox", { name: "Execution order" })).toBeEnabled();
+    expect(executionOrder()).toBeEnabled();
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
     expect(selectedRowNames().join(" ")).toContain("QC_pool_02.mzML");
 
@@ -3572,7 +3575,7 @@ describe("telling two identically named acquisitions apart", () => {
     renderApp(collidingApi());
     await importTheFolder();
     const before = rosterRows().map(row => row.getAttribute("data-handle"));
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "name-asc" } });
+    chooseExecutionOrder("name-asc");
     expect(rosterRows().map(row => row.getAttribute("data-handle"))).toEqual(before);
     expect(rosterRows()[1]?.textContent).toContain("batch-2");
     expect(rosterRows()[2]?.textContent).toContain("batch-1");
@@ -3834,7 +3837,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
     // Settlement retires the one-shot debt even when it declines to move focus.
     // A later body focus and unrelated render must not revive it.
     search.blur();
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
+    fireEvent.change(executionOrder(), {
       target: { value: "name-desc" },
     });
     expect(document.body).toHaveFocus();

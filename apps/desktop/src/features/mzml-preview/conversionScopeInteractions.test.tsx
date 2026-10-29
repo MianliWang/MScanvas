@@ -178,9 +178,13 @@ describe("M6.7 through the production conversion surface", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nothing" } });
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "size-desc" } });
+    // The order belongs to the next plan's summary, which is not offered while
+    // the bound queue runs, so no order control can reach that queue.
+    expect(screen.queryByRole("combobox", { name: "Execution order" })).toBeNull();
     const queue = queueOf([queueItem("raw-2", "sample-2.raw")]);
     await act(async () => drain.resolve({ status: "terminal", reason: "completed", operationId: "1", queue }));
+    // Reordering the next conversion leaves the finished queue as it was.
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "size-desc" } });
     expect(api.beginRequests()).toHaveLength(1);
     expect(document.querySelectorAll(".conversion-running .conversion-queue-name")).toHaveLength(1);
   });
