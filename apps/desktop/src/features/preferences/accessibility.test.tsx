@@ -315,11 +315,10 @@ describe("the inspector panel's own copy", () => {
     // panel renders from: every label is a resource, translated, and the
     // unreported state stays the unreported state rather than becoming a zero.
     for (const key of [
-      "summaryRun", "summarySummary", "summarySpectra", "summaryChromatograms",
+      "summaryRun", "summarySpectra", "summaryChromatograms",
       "summaryRetentionTime", "summaryMsLevels", "summaryNoMsLevels",
-      "summaryEmptySection", "summaryTiming", "summaryTimingHelp",
-      "summaryOpenToPreview", "summaryRowToRendered", "summaryTableRender",
-      "summaryNotMeasured",
+      "summaryEmptySection", "detailsChromatogramSource", "detailsSpectrumSource",
+      "detailsSourceMetadata",
     ] as const) {
       expect(en[key].trim(), key).not.toBe("");
       expect(zh[key].trim(), key).not.toBe("");

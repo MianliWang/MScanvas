@@ -274,7 +274,7 @@ function expectTruthfulLine(): void {
   else expect(liveLine()).not.toHaveClass("visually-hidden");
   const sentence = textOutside(liveLine(), "span.visually-hidden");
   expect(untrue(sentence, "retention time", { committed, shown: displayed })).toBeNull();
-  const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
+  const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, .plot-range-toggle, .plot-range-editor");
   expect(visible).toBe(committed === null ? "" : sentence);
   expect(document.querySelector(".chromatogram-range")?.textContent).toContain(displayed);
   if (committed !== null) expect(spoken().endsWith(committed), `"${spoken()}" does not end with ${committed}`).toBe(true);
@@ -392,13 +392,6 @@ describe("what the traces are made of", () => {
     expect(axisLow()).toBe("0");
   });
 
-  it("says the values come from the loaded table and are not a stored record", () => {
-    renderChromatogram();
-
-    fireEvent.click(screen.getByText("Source and drawing details"));
-    expect(screen.getByText(UI_RESOURCES.en.viewerScanSource.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "50"))).toBeVisible();
-  });
-
   it("says neither axis carries a unit", () => {
     renderChromatogram();
 
@@ -495,11 +488,12 @@ describe("trace visibility", () => {
   it("starts on TIC alone and hands a toggle back rather than deciding it", () => {
     const { onToggleTrace } = renderChromatogram();
 
-    expect(screen.getByRole("checkbox", { name: /TIC/u })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /BPC/u })).not.toBeChecked();
+    // Two pressed toggles rather than one choice: both may be on, or neither.
+    expect(screen.getByRole("button", { name: /TIC/u })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /BPC/u })).toHaveAttribute("aria-pressed", "false");
     expect(tracePaths()).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /BPC/u }));
+    fireEvent.click(screen.getByRole("button", { name: /BPC/u }));
 
     expect(onToggleTrace.mock.calls).toEqual([["bpc"]]);
     expect(tracePaths()).toHaveLength(2);
@@ -1080,7 +1074,8 @@ describe("reaching the plot without a pointer", () => {
 
     expect(document.activeElement).toBe(plot());
     // The readout, then each axis's unit state, said once on the panel (PM9 UI-33).
-    expect(plot()).toHaveAttribute("aria-describedby", "chromatogram-readout chromatogram-units");
+    expect(plot()).toHaveAttribute("aria-describedby", "chromatogram-readout chromatogram-units plot-range-rt-gestures");
+    expect(document.querySelector("#plot-range-rt-gestures")).toHaveTextContent(UI_RESOURCES.en.rangeHelpText);
     expect(document.querySelector("#chromatogram-readout")?.textContent).toMatch(
       /^Selected index 20,/u,
     );
@@ -1253,8 +1248,13 @@ describe("the viewport control group", () => {
     return screen.getByRole("button", { name: label }) as HTMLButtonElement;
   }
 
+  /** A refused control stays focusable, as `aria-disabled` (UI-24). */
+  function refused(label: (typeof CONTROLS)[number]): boolean {
+    return control(label).getAttribute("aria-disabled") === "true";
+  }
+
   function enabledControls(): string[] {
-    return CONTROLS.filter((label) => !control(label).disabled);
+    return CONTROLS.filter((label) => !refused(label));
   }
 
   /** Presses a control without going through the roles that would refuse. */
@@ -1284,14 +1284,14 @@ describe("the viewport control group", () => {
   it("stops offering to zoom in at the narrowest viewport the run allows", () => {
     // Driven there by pressing the button, not by naming a range.
     renderChromatogram();
-    for (let step = 0; step < 200 && !control("Zoom in").disabled; step += 1) {
+    for (let step = 0; step < 200 && !refused("Zoom in"); step += 1) {
       press("Zoom in");
     }
 
-    expect(control("Zoom in")).toBeDisabled();
+    expect(refused("Zoom in")).toBe(true);
     // And the way back is still open.
-    expect(control("Zoom out")).toBeEnabled();
-    expect(control("Reset range")).toBeEnabled();
+    expect(refused("Zoom out")).toBe(false);
+    expect(refused("Reset range")).toBe(false);
   });
 
   it("offers nothing for a run whose scans all share one retention time", () => {
@@ -1318,7 +1318,7 @@ describe("the viewport control group", () => {
         press("Zoom in");
       },
       () => {
-        for (let step = 0; step < 200 && !control("Zoom in").disabled; step += 1) {
+        for (let step = 0; step < 200 && !refused("Zoom in"); step += 1) {
           press("Zoom in");
         }
       },
@@ -1329,9 +1329,9 @@ describe("the viewport control group", () => {
       for (const label of CONTROLS) {
         const before = state();
         const shownBefore = shown();
-        if (control(label).disabled) {
-          // A disabled button is refused by the DOM, and the operation refuses
-          // it too -- so neither the range nor the state moves.
+        if (refused(label)) {
+          // A refused button swallows the click, and the operation refuses it
+          // too -- so neither the range nor the state moves.
           act(() => {
             control(label).dispatchEvent(new MouseEvent("click", { bubbles: true }));
           });
@@ -1361,7 +1361,7 @@ describe("the viewport control group", () => {
      */
     renderChromatogram();
     press("Zoom in");
-    expect(control("Reset range")).toBeEnabled();
+    expect(refused("Reset range")).toBe(false);
 
     let afterReset: ViewerInteractionState | null = null;
     act(() => {
@@ -1371,7 +1371,7 @@ describe("the viewport control group", () => {
 
     expect(afterReset).not.toBeNull();
     expect(state()).toBe(afterReset);
-    expect(control("Reset range")).toBeDisabled();
+    expect(refused("Reset range")).toBe(true);
   });
 
   it("takes the same rule from the keyboard, without inventing a transition", () => {
@@ -1392,13 +1392,13 @@ describe("the viewport control group", () => {
 
     fireEvent.keyDown(plot(), { key: "+" });
     expect(state()).not.toBe(before);
-    expect(control("Zoom out")).toBeEnabled();
+    expect(refused("Zoom out")).toBe(false);
 
     plot().focus();
 
     fireEvent.keyDown(plot(), { key: "Home" });
     expect(shown()).toEqual(renderedDomain(state()));
-    expect(control("Reset range")).toBeDisabled();
+    expect(refused("Reset range")).toBe(true);
   });
 
   it("says nothing about the range when there is no chromatogram to have one", () => {
@@ -2402,7 +2402,7 @@ describe("choosing a scan while selection is unavailable", () => {
     // Described, never disabled: this plot can still be read, and marking it
     // unavailable would say the run cannot be.
     expect(plot().getAttribute("aria-describedby")).toBe(
-      "chromatogram-readout chromatogram-units viewer-selection-availability",
+      "chromatogram-readout chromatogram-units plot-range-rt-gestures viewer-selection-availability",
     );
     expect(plot().getAttribute("aria-disabled")).toBeNull();
     expect(styleOf(".chromatogram-svg").pointerEvents).not.toBe("none");
@@ -2412,7 +2412,7 @@ describe("choosing a scan while selection is unavailable", () => {
 
   it("keeps describing the readout and the units alone once selection returns", () => {
     renderChromatogram();
-    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units");
+    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units plot-range-rt-gestures");
   });
 
   it("still reports the scan under the pointer", () => {
@@ -2468,16 +2468,14 @@ describe("choosing a scan while selection is unavailable", () => {
     blocked();
     // Zoom out and Reset are the ones a full range closes, and that rule is
     // about the range rather than about the backend.
-    expect(screen.getByRole("button", { name: "Zoom in" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Zoom in" })).not.toHaveAttribute("aria-disabled");
 
     wheel({ deltaY: -400 });
     act(() => {
       vi.advanceTimersByTime(200);
     });
 
-    expect(screen.getByRole("button", { name: "Reset range" }).hasAttribute("disabled")).toBe(
-      false,
-    );
+    expect(screen.getByRole("button", { name: "Reset range" })).not.toHaveAttribute("aria-disabled");
     fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
     expect(shown()).toEqual(state().fullDomain);
   });
@@ -2485,7 +2483,7 @@ describe("choosing a scan while selection is unavailable", () => {
   it("still toggles a trace", () => {
     const { onToggleTrace } = blocked();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "BPC" }));
+    fireEvent.click(screen.getByRole("button", { name: "BPC" }));
 
     expect(onToggleTrace.mock.calls).toEqual([["bpc"]]);
   });

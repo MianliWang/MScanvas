@@ -13,7 +13,7 @@ import { ActiveClearDialog } from "./ActiveClearDialog";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 import { BackendStatus } from "./BackendStatus";
 import { Chromatogram } from "./Chromatogram";
-import { ChromatogramExportPanel, ChromatogramExportResult, LinkedFigureResult } from "./ChromatogramExportPanel";
+import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportTools, LinkedFigureResult } from "./ChromatogramExportPanel";
 import { resolveConversionScope } from "./conversionScope";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
@@ -21,9 +21,9 @@ import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
-import { QuickFigureActions } from "./QuickFigureActions";
 import type { FigurePreviewKind } from "./contracts";
 import { SpectrumTable } from "./SpectrumTable";
+import { spectrumSourceDetails } from "./SpectrumViewport";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
@@ -37,7 +37,7 @@ export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
   const [activeClear, setActiveClear] = useState<{ returnTo: HTMLElement | null } | null>(null);
   const [figureDialog, setFigureDialog] = useState<{ kind: FigurePreviewKind; returnTo: HTMLElement | null } | null>(null);
-  const openFigure = (kind: FigurePreviewKind) => setFigureDialog({ kind, returnTo: document.activeElement instanceof HTMLElement ? document.activeElement : null });
+  const openFigure = (kind: FigurePreviewKind, returnTo: HTMLElement | null = document.activeElement instanceof HTMLElement ? document.activeElement : null) => setFigureDialog({ kind, returnTo });
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
@@ -192,16 +192,6 @@ export function PreviewWorkspace() {
       evidenceRef.current?.focus({ preventScroll: true });
     }
   }, [surface, rosterOpen, detailsOpen]);
-  /**
-   * Whether the chromatogram's export surface is open.
-   *
-   * Closed to begin with, and the control that opens it sits in the panel's
-   * existing header row: the three-panel column's floors are measured, and a
-   * disclosure that added a row to the body would push a control out of a panel
-   * that clips. Local to this component -- it is a preference about what is on
-   * screen, not a fact about the run.
-   */
-  const [chromatogramExportOpen, setChromatogramExportOpen] = useState(false);
   const [restoreAddFolderFocusToken, setRestoreAddFolderFocusToken] = useState(0);
   const [restoreAddFilesFocusToken, setRestoreAddFilesFocusToken] = useState(0);
   const [activeClearFocusReturn, setActiveClearFocusReturn] = useState<ActiveClearFocusReturn | null>(null);
@@ -878,11 +868,13 @@ export function PreviewWorkspace() {
             />
           ) : preview.status === "loaded" ? (
             <PreviewSummary
+              chromatogramScanCount={workspace.scanModel.status === "ready" ? workspace.scanModel.points.length : null}
               file={previewFile ?? preview.preview.file}
-              measurements={workspace.measurements}
               metadata={preview.preview.metadata}
               runSummary={preview.preview.runSummary}
+              spectrum={spectrum.status === "loaded" ? spectrum.spectrum : null}
               spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
+              spectrumSource={spectrum.status === "loaded" ? spectrumSourceDetails(spectrum.spectrum, workspace.spectrumViewport, t) : ""}
             />
           ) : null}        </aside>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-workbench">
@@ -920,52 +912,29 @@ export function PreviewWorkspace() {
             <div className="viewer-stack">
               <Chromatogram
                 dispatch={workspace.dispatchViewerEvent}
-                exportPanel={
-                  chromatogramExportOpen && workspace.chromatogramExportToken !== null ? (
-                    <ChromatogramExportPanel
-                      onOpenLinkedFigure={() => openFigure("linked")}
-                      committedDomain={workspace.chromatogramCommittedDomain}
-                      exportState={workspace.chromatogramExport}
-                      figureSettings={workspace.figureSettings}
+                exportStatus={
+                  <ChromatogramExportStatus
+                    exportState={workspace.chromatogramExport}
+                    figureSettingsValidation={workspace.figureSettingsValidation}
+                    linkedExportState={workspace.linkedFigureExport}
+                    onDismiss={workspace.dismissChromatogramExport}
+                    onDismissLinked={workspace.dismissLinkedFigureExport}
+                    scientificExportBusy={workspace.scientificExportBusy}
+                    traces={workspace.chromatogramTraces}
+                  />
+                }
+                exportTools={
+                  workspace.chromatogramExportToken === null ? null : (
+                    <ChromatogramExportTools
                       figureSettingsValidation={workspace.figureSettingsValidation}
-                      linkedExportState={workspace.linkedFigureExport}
                       linkedUnavailable={workspace.linkedFigureUnavailable}
-                      onCopyLinkedPlot={workspace.copyLinkedPlot}
                       onCopyPlot={workspace.copyChromatogramPlot}
-                      onDismiss={workspace.dismissChromatogramExport}
-                      onDismissLinked={workspace.dismissLinkedFigureExport}
                       onExport={workspace.exportChromatogram}
-                      onExportLinked={workspace.exportLinkedFigure}
-                      onFigureSetting={workspace.setFigureSetting}
-                      onFigureTheme={workspace.setFigureTheme}
-                      onRangeScope={workspace.setChromatogramRangeScope}
-                      pngDpiProblem={workspace.pngDpiProblem}
-                      rangeScope={workspace.chromatogramRangeScope}
-                      renderSettingsProblem={workspace.renderSettingsProblem}
+                      onOpenFigure={() => openFigure("chromatogram")}
+                      onOpenLinkedFigure={trigger => openFigure("linked", trigger)}
                       scientificExportBusy={workspace.scientificExportBusy}
                       traces={workspace.chromatogramTraces}
                     />
-                  ) : null
-                }
-                exportToggle={
-                  workspace.chromatogramExportToken === null ? null : (
-                    <div className="figure-quick-actions"><QuickFigureActions busy={workspace.scientificExportBusy} quickVisible={!chromatogramExportOpen}
-                      context={[t("viewerChromatogram"), t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun"), `${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} ${t("pixels")}`]}
-                      figureUnavailable={workspace.renderSettingsProblem !== null || (!workspace.chromatogramTraces.tic && !workspace.chromatogramTraces.bpc)}
-                      pngUnavailable={workspace.pngDpiProblem !== null} onPreview={() => openFigure("chromatogram")}
-                      onPng={() => workspace.exportChromatogram("png")} onCopy={workspace.copyChromatogramPlot} />
-                    <button
-                      aria-controls="chromatogram-export-panel"
-                      aria-expanded={chromatogramExportOpen}
-                      className="secondary-button"
-                      id="chromatogram-export-toggle"
-                      onClick={() => {
-                        setChromatogramExportOpen((open) => !open);
-                      }}
-                      type="button"
-                    >
-                      {t("viewerExport")}
-                    </button></div>
                   )
                 }
                 interaction={workspace.viewerInteraction}
@@ -978,25 +947,16 @@ export function PreviewWorkspace() {
               />
               <SelectedSpectrumPanel
                 onOpenFigure={() => openFigure("spectrum")}
-                committedDomain={workspace.spectrumCommittedDomain}
                 dispatchViewport={workspace.dispatchSpectrumViewportEvent}
                 exportState={workspace.spectrumExport}
-                figureSettings={workspace.figureSettings}
                 figureSettingsValidation={workspace.figureSettingsValidation}
                 onCopyPlot={workspace.copySpectrumPlot}
                 onDismissExport={workspace.dismissSpectrumExport}
                 onExport={workspace.exportSpectrum}
-                onFigureSetting={workspace.setFigureSetting}
-                onFigureTheme={workspace.setFigureTheme}
-                onRangeScope={workspace.setSpectrumRangeScope}
                 onRetry={workspace.retrySpectrum}
                 onRetryProjection={workspace.retrySpectrumProjection}
-                pngDpiProblem={workspace.pngDpiProblem}
-                rangeAvailability={workspace.spectrumRangeAvailability}
-                rangeScope={workspace.spectrumRangeScope}
                 projectionError={workspace.spectrumProjectionError}
                 readViewport={workspace.readSpectrumViewport}
-                renderSettingsProblem={workspace.renderSettingsProblem}
                 scientificExportBusy={workspace.scientificExportBusy}
                 state={spectrum}
                 viewport={workspace.spectrumViewport}

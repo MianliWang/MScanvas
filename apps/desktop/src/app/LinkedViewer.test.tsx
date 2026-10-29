@@ -109,7 +109,7 @@ vi.mock("../features/mzml-preview/SpectrumTable", async (importOriginal) => {
 
 const VENDOR_ROW = shimadzuDataset(9);
 const SCAN_COUNT = 60;
-const ROW_HEIGHT = 30;
+const ROW_HEIGHT = 28;
 /** The plot's own width in client pixels, so viewBox units are 1:1 with them. */
 const PLOT_PIXELS = 1_000;
 const PADDING_LEFT = 64;
@@ -244,7 +244,7 @@ describe("the linked viewer", () => {
 
     const grid = screen.getByRole("grid", { name: "Spectra" });
     fireEvent.click(
-      within(grid).getByText("controllerType=0 controllerNumber=1 scan=5"),
+      grid.querySelector('[data-source-index="4"]') as HTMLElement,
     );
 
     await waitFor(() => {
@@ -271,9 +271,9 @@ describe("the linked viewer", () => {
     await waitFor(() => {
       expect(tableViewport().scrollTop).toBeGreaterThan(0);
     });
-    // Row 30 sits at canvas offset 900, and the fallback viewport leaves 564px
-    // for rows, so the least scroll that shows all of it is 366.
-    expect(tableViewport().scrollTop).toBe(30 * ROW_HEIGHT + ROW_HEIGHT - 564);
+    // Row 30 sits at canvas offset 840, and the fallback viewport leaves 570px
+    // for rows, so the least scroll that shows all of it is 298.
+    expect(tableViewport().scrollTop).toBe(30 * ROW_HEIGHT + ROW_HEIGHT - 570);
     expect(preview.requestedSpectra).toEqual([30, 30]);
   });
 
@@ -282,7 +282,7 @@ describe("the linked viewer", () => {
     await openTheViewer(preview);
     const grid = screen.getByRole("grid", { name: "Spectra" });
     fireEvent.click(
-      within(grid).getByText("controllerType=0 controllerNumber=1 scan=1"),
+      grid.querySelector('[data-source-index="0"]') as HTMLElement,
     );
     await waitFor(() => {
       expect(selectedRowPosition()).toBe(0);
@@ -304,7 +304,7 @@ describe("the linked viewer", () => {
     await openTheViewer(preview);
     const grid = screen.getByRole("grid", { name: "Spectra" });
     fireEvent.click(
-      within(grid).getByText("controllerType=0 controllerNumber=1 scan=30"),
+      grid.querySelector('[data-source-index="29"]') as HTMLElement,
     );
     await waitFor(() => {
       expect(readout()).toMatch(/^Selected index 29,/u);
@@ -329,7 +329,7 @@ describe("the linked viewer", () => {
 
     // Commit the same scan again from the table, which is a new commit.
     fireEvent.click(
-      within(grid).getByText("controllerType=0 controllerNumber=1 scan=30"),
+      grid.querySelector('[data-source-index="29"]') as HTMLElement,
     );
 
     await waitFor(() => {
@@ -348,7 +348,7 @@ describe("the linked viewer", () => {
     await openTheViewer(preview);
     const grid = screen.getByRole("grid", { name: "Spectra" });
     fireEvent.click(
-      within(grid).getByText("controllerType=0 controllerNumber=1 scan=1"),
+      grid.querySelector('[data-source-index="0"]') as HTMLElement,
     );
     await waitFor(() => {
       expect(readout()).toMatch(/^Selected index 0,/u);
@@ -392,8 +392,8 @@ describe("the linked viewer", () => {
   it("steps through scans in table order with Previous and Next", async () => {
     const preview = api();
     await openTheViewer(preview);
-    expect(screen.getByRole("button", { name: "Previous scan" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next scan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous scan" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Next scan" })).toHaveAttribute("aria-disabled", "true");
 
     clickThePlotAt(10 * RT_STEP);
     await waitFor(() => {
@@ -430,21 +430,21 @@ describe("the linked viewer", () => {
     });
     await openTheViewer(preview);
     const grid = screen.getByRole("grid", { name: "Spectra" });
-    fireEvent.click(within(grid).getByText("controllerType=0 controllerNumber=1 scan=2"));
+    fireEvent.click(grid.querySelector('[data-source-index="1"]') as HTMLElement);
     await waitFor(() => {
       expect(selectedRowPosition()).toBe(1);
     });
     await screen.findByRole("img", { name: /^Spectrum 1,/u });
-    expect(screen.getByRole("button", { name: "Previous scan" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Next scan" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Previous scan" })).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("button", { name: "Next scan" })).not.toHaveAttribute("aria-disabled");
 
     await showBackendBanner();
     fireEvent.click(screen.getAllByRole("button", { name: "Check again" })[0] as HTMLElement);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Next scan" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Next scan" })).toHaveAttribute("aria-disabled", "true");
     });
-    expect(screen.getByRole("button", { name: "Previous scan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous scan" })).toHaveAttribute("aria-disabled", "true");
     // Still there, and still spatially where they were: an action that cannot
     // act right now is disabled rather than removed.
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
@@ -531,7 +531,7 @@ describe("what a moving pointer costs", () => {
     const preview = api();
     await openTheViewer(preview);
     const grid = screen.getByRole("grid", { name: "Spectra" });
-    fireEvent.click(within(grid).getByText("controllerType=0 controllerNumber=1 scan=1"));
+    fireEvent.click(grid.querySelector('[data-source-index="0"]') as HTMLElement);
     await waitFor(() => {
       expect(selectedRowPosition()).toBe(0);
     });
@@ -611,8 +611,9 @@ describe("what the open measurement waits for", () => {
    * a measurement that waits for something never coming is a measurement nobody
    * ever gets.
    */
-  function openMeasurement(): string {
-    return screen.getByText("Open to first preview").nextElementSibling?.textContent ?? "";
+  /** How many opens have been timed; Details no longer shows session timings. */
+  function opensTimed(): number {
+    return measuredWith.filter((entry) => entry.name === "openToFirstPreview").length;
   }
 
   it("takes it with the plot on screen rather than with its placeholder", async () => {
@@ -621,7 +622,6 @@ describe("what the open measurement waits for", () => {
 
     expect(screen.getByRole("img", { name: "Chromatogram" })).toBeVisible();
     expect(document.querySelector("path.chromatogram-trace")).not.toBeNull();
-    expect(openMeasurement()).not.toBe("Not measured yet");
 
     // The discriminating half. Stopping the clock in the commit that renders
     // the placeholder would time everything except the drawing -- and would be
@@ -641,6 +641,7 @@ describe("what the open measurement waits for", () => {
      * largest -- which is the failure the repair could have introduced, so it is
      * the one pinned here.
      */
+    const before = opensTimed();
     const truncated = createFakePreviewApi({
       initialDatasets: [selectedFile, VENDOR_ROW],
       preview: {
@@ -666,15 +667,15 @@ describe("what the open measurement waits for", () => {
 
     expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
     await waitFor(() => {
-      expect(openMeasurement()).not.toBe("Not measured yet");
+      expect(opensTimed()).toBeGreaterThan(before);
     });
   });
 
   it("takes it again for the next preview", async () => {
     const preview = api();
     await openTheViewer(preview);
-    const first = openMeasurement();
-    expect(first).not.toBe("Not measured yet");
+    const first = opensTimed();
+    expect(first).toBeGreaterThan(0);
 
     // A second reading of the same row, which is a whole new open.
     fireEvent.click(screen.getByText(VENDOR_ROW.fileName));
@@ -683,7 +684,7 @@ describe("what the open measurement waits for", () => {
 
     await screen.findByRole("img", { name: "Chromatogram" }, { timeout: 15_000 });
     await waitFor(() => {
-      expect(openMeasurement()).not.toBe("Not measured yet");
+      expect(opensTimed()).toBeGreaterThan(first);
     });
     expect(document.querySelector("path.chromatogram-trace")).not.toBeNull();
   });

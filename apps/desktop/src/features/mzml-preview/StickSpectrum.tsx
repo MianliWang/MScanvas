@@ -190,13 +190,6 @@ export interface StickSpectrumProps {
   readonly mz: readonly number[];
   readonly intensity: readonly number[];
   readonly drawing: SpectrumDrawing;
-  /**
-   * Whether the file said these are profile samples or centroided peaks. When
-   * it did not, the caption says so, because a reduced profile spectrum looks
-   * like a centroid one and the reader must not have to guess which they are
-   * being shown.
-   */
-  readonly representationKnown: boolean;
   readonly valueUnitsKnown?: boolean;
   readonly labelledBy: string;
   readonly surface: SpectrumSurface;
@@ -484,11 +477,33 @@ function describeDrawing(
  * projection of the complete spectrum it retained. This component decides
  * neither -- it draws what it is handed, over the axis it is handed.
  */
+/**
+ * What the caption and the axes cannot say about a drawing: how it was reduced,
+ * how negative intensities are drawn, and an unreported representation. Shown
+ * in Details → Spectrum source; empty when there is nothing to add.
+ */
+export function describeSpectrumSource(
+  mz: readonly number[],
+  intensity: readonly number[],
+  drawing: SpectrumDrawing,
+  representationKnown: boolean,
+  t: UiMessage,
+): string {
+  const domain = drawing.kind === "transfer"
+    ? transferDomain(mz, drawing.reportedMzLow, drawing.reportedMzHigh)
+    : { low: drawing.low, high: drawing.high };
+  const reduction = reduce(mz, intensity, domain.low, domain.high);
+  return joinSentences(t, [
+    drawing.kind === "viewport" || drawing.kind === "transfer" ? describeDrawing(reduction, drawing, t) : "",
+    reduction.negativeCount > 0 ? describeNegativeDrawing(reduction, t) : "",
+    representationKnown ? "" : t("plotUnknownRepresentation"),
+  ]);
+}
+
 export function StickSpectrum({
   mz,
   intensity,
   drawing,
-  representationKnown,
   valueUnitsKnown = false,
   labelledBy,
   surface,
@@ -537,13 +552,6 @@ export function StickSpectrum({
     t(valueUnitsKnown ? "plotUnitsReported" : "plotUnits"),
     reduction.negativeCount > 0 ? t("plotNegativeCount", { count: reduction.negativeCount }) : "",
   ].filter(part => part !== "").join(" · ");
-  // Only what the caption and the axes cannot say; with nothing to add, the
-  // disclosure is hidden rather than opening onto nothing.
-  const sourceDetails = joinSentences(t, [
-    drawing.kind === "viewport" || drawing.kind === "transfer" ? describeDrawing(reduction, drawing, t) : "",
-    reduction.negativeCount > 0 ? describeNegativeDrawing(reduction, t) : "",
-    representationKnown ? "" : t("plotUnknownRepresentation"),
-  ]);
 
   return (
     <figure className="spectrum-figure">
@@ -633,9 +641,6 @@ export function StickSpectrum({
       </svg>
       <figcaption className="spectrum-caption">
         <p>{caption}</p>
-        <details className="plot-source-details" hidden={sourceDetails === ""}><summary>{t("viewerSourceDetails")}</summary>
-          <p>{sourceDetails}</p>
-        </details>
       </figcaption>
     </figure>
   );

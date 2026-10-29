@@ -1,18 +1,20 @@
 /**
- * What the plot caption and its details say about their own drawing.
+ * What the plot caption and its source sentence (Details → Spectrum source)
+ * say about their own drawing.
  *
  * The counts themselves are covered where they are made -- the reduction's
  * bounds and its refusal to lose a point are in `scale.test.tsx` -- so these
  * tests assert only that the sentence agrees with the number it carries, and
- * that the details add only what the caption and the axes cannot say.
+ * that the source sentence adds only what the caption and the axes cannot say.
  */
 
-import { fireEvent, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { describe, expect, it } from "vitest";
 
 import { UI_RESOURCES } from "../preferences/i18n";
-import { StickSpectrum } from "./StickSpectrum";
+import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { describeSpectrumSource, StickSpectrum, type SpectrumDrawing } from "./StickSpectrum";
 
 const en = UI_RESOURCES.en;
 
@@ -25,28 +27,34 @@ function caption(): string {
   return document.querySelector("figcaption > p")?.textContent ?? "";
 }
 
-/** The details disclosure, opened, whether or not it is shown. */
-function details(): HTMLDetailsElement {
-  const disclosure = screen.getByText("Source and drawing details");
-  const element = disclosure.closest("details")!;
-  expect(element).not.toHaveAttribute("open");
-  fireEvent.click(disclosure);
-  return element;
+/** The plot, and the source sentence Details shows for it (hidden when empty). */
+function Plot({ mz, intensity, drawing, representationKnown = true }: {
+  readonly mz: readonly number[]; readonly intensity: readonly number[];
+  readonly drawing: SpectrumDrawing; readonly representationKnown?: boolean;
+}) {
+  const text = describeSpectrumSource(mz, intensity, drawing, representationKnown, useUiMessages());
+  return <>
+    <StickSpectrum drawing={drawing} intensity={intensity} labelledBy="caption-under-test" mz={mz} surface={{ kind: "static" }} />
+    <div className="source-under-test" hidden={text === ""}><p>{text}</p></div>
+  </>;
+}
+
+/** The source sentence's box, whether or not it is shown. */
+function details(): HTMLElement {
+  return document.querySelector<HTMLElement>(".source-under-test")!;
 }
 
 function renderSpectrum(mz: readonly number[], intensity: readonly number[], representationKnown = true): void {
   render(
-    <StickSpectrum
+    <Plot
       drawing={{
         kind: "transfer",
         reportedMzHigh: Math.max(...mz),
         reportedMzLow: Math.min(...mz),
       }}
       intensity={intensity}
-      labelledBy="caption-under-test"
       mz={mz}
       representationKnown={representationKnown}
-      surface={{ kind: "static" }}
     />,
   );
 }
@@ -58,7 +66,7 @@ function renderWindow(
   window: { readonly low: number; readonly high: number; readonly sourcePoints: number; readonly reduced: boolean },
 ): void {
   render(
-    <StickSpectrum
+    <Plot
       drawing={{
         kind: "viewport",
         low: window.low,
@@ -67,10 +75,7 @@ function renderWindow(
         reduced: window.reduced,
       }}
       intensity={intensity}
-      labelledBy="caption-under-test"
       mz={mz}
-      representationKnown
-      surface={{ kind: "static" }}
     />,
   );
 }
@@ -117,16 +122,7 @@ describe("what a window's caption may claim about it", () => {
   it("leaves a blank range's state to the status line rather than captioning it", () => {
     // A failed projection is not an outstanding request; the viewport's status
     // line says which it is, so the caption names neither.
-    render(
-      <StickSpectrum
-        drawing={{ kind: "viewport-blank", low: 300, high: 400, reason: "failed" }}
-        intensity={[]}
-        labelledBy="caption-under-test"
-        mz={[]}
-        representationKnown
-        surface={{ kind: "static" }}
-      />,
-    );
+    render(<Plot drawing={{ kind: "viewport-blank", low: 300, high: 400, reason: "failed" }} intensity={[]} mz={[]} />);
 
     expect(caption()).toBe(en.plotUnits);
     expect(screen.queryByText(/Waiting for the drawing/u)).not.toBeInTheDocument();
@@ -146,7 +142,6 @@ describe("what a window's caption may claim about it", () => {
         intensity={[]}
         labelledBy="caption-under-test"
         mz={[]}
-        representationKnown
         surface={{ kind: "static" }}
       />,
     );

@@ -76,9 +76,21 @@ async function findSpectrumPlot(): Promise<HTMLElement> {
   return screen.findByRole("img", { name: /^Spectrum /u });
 }
 
-function selectRowByIdentifier(identifier: string): void {
+/**
+ * The scan list row for a fixture identifier. The compact list shows no
+ * identifier column, so the row is found by the source index the fixture's
+ * identifier encodes (`scan=N` is index N - 1).
+ */
+function rowByIdentifier(identifier: string): HTMLElement {
+  const scan = Number(/scan=(\d+)$/u.exec(identifier)?.[1]);
   const grid = screen.getByRole("grid", { name: "Spectra" });
-  fireEvent.click(within(grid).getByText(identifier));
+  const row = grid.querySelector<HTMLElement>(`[data-source-index="${String(scan - 1)}"]`);
+  if (row === null) throw new Error(`no row for ${identifier}`);
+  return row;
+}
+
+function selectRowByIdentifier(identifier: string): void {
+  fireEvent.click(rowByIdentifier(identifier));
 }
 
 function pressKey(key: string): void {
@@ -296,7 +308,7 @@ describe("mzML preview workspace", () => {
           : Promise.resolve<SelectedSpectrumOutcome>({ outcome: "spectrum", spectrum: buildSpectrum(index, 12) }),
     });
     await openTheFile(api);
-    const grid = await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Spectra" });
     const identifier = "controllerType=0 controllerNumber=1 scan=1";
     selectRowByIdentifier(identifier);
 
@@ -304,17 +316,17 @@ describe("mzML preview workspace", () => {
     const panel = retry.closest("section")!;
     // The failure, in the panel it happened to, beside the selection it was for.
     expect(within(panel).getByText(/could not be loaded/u)).toBeVisible();
-    expect(within(grid).getByText(identifier).closest('[role="row"]')).toHaveAttribute("aria-selected", "true");
+    expect(rowByIdentifier(identifier)).toHaveAttribute("aria-selected", "true");
     // Nothing to make a figure or a file of.
     for (const name of ["Quick PNG", "Copy plot", "Export figure"]) {
       expect(within(panel).queryByRole("button", { name })).toBeNull();
     }
-    expect(within(panel).queryByText("Export spectrum")).toBeNull();
+    expect(within(panel).queryByRole("button", { name: "More export options" })).toBeNull();
 
     failing = false;
     fireEvent.click(retry);
     expect(await within(panel).findByRole("button", { name: "Quick PNG" })).toBeVisible();
-    expect(within(grid).getByText(identifier).closest('[role="row"]')).toHaveAttribute("aria-selected", "true");
+    expect(rowByIdentifier(identifier)).toHaveAttribute("aria-selected", "true");
   });
 
   it("does not start a row read once the session has stopped trusting the backend", async () => {
@@ -544,14 +556,16 @@ describe("mzML preview workspace", () => {
     const summary = screen.getByRole("region", { name: "Run" });
     expect(within(summary).getByText(/QC_pool_01\.mzML/)).toBeVisible();
     expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "File description" })).toBeVisible();
+    // Each metadata section is folded behind a button named by the file's own heading.
+    expect(screen.getByRole("button", { name: "File description" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Software" }));
     expect(screen.getByText("software: pwiz 3.0.25000")).toBeVisible();
 
     const grid = screen.getByRole("grid", { name: "Spectra" });
     // The header row counts, so six spectra report seven rows.
     expect(grid).toHaveAttribute("aria-rowcount", "7");
     expect(within(grid).getAllByRole("row")).toHaveLength(7);
-    expect(within(grid).getByText("controllerType=0 controllerNumber=1 scan=1")).toBeVisible();
+    expect(grid.querySelector('[data-source-index="0"]')).toBeVisible();
     // The scan number has a column of its own: the identifier that carries it
     // is truncated from the right, where the scan number is.
     expect(within(grid).getByRole("columnheader", { name: "Scan" })).toBeVisible();
@@ -984,9 +998,8 @@ describe("mzML preview workspace", () => {
       "Not reported",
     );
     expect(screen.getByText("Value units").nextElementSibling).toHaveTextContent("Not reported");
-    // The same caveat is stated at the drawing, because a reduced profile
-    // spectrum looks exactly like a centroided one.
-    fireEvent.click(within(screen.getByRole("region", { name: "Selected spectrum" })).getByText("Source and drawing details"));
+    // The same caveat is stated in Details' spectrum source, because a reduced
+    // profile spectrum looks exactly like a centroided one.
     expect(
       screen.getByText(/Profile or centroid is not reported; each stick is a measured point\./),
     ).toBeVisible();

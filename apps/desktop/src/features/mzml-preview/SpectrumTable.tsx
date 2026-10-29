@@ -1,12 +1,13 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Button, Icon, IconButton } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { SCAN_SORT_KEYS } from "./viewer/scanTableView";
+import type { MessageKey } from "../preferences/i18n";
+import type { ScanSortKey } from "./viewer/scanTableView";
 import type { ScanTableView } from "./viewer/useScanTableView";
 
 import type { SpectrumRow, SpectrumTable as SpectrumTableModel } from "./contracts";
 import {
   formatCount,
-  formatIntensity,
   formatMz,
   formatRetentionTimeValue,
 } from "./format";
@@ -17,7 +18,7 @@ import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailabili
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 
 /** Fixed row height keeps the windowing arithmetic exact. Mirrored in CSS. */
-const ROW_HEIGHT = 30;
+const ROW_HEIGHT = 28;
 /**
  * The header row's height, which is a row's.
  *
@@ -26,7 +27,7 @@ const ROW_HEIGHT = 30;
  * of the scrolling box: everything below has to be placed as though the box
  * began one row lower, or a row scrolled to would arrive behind the header.
  */
-const HEADER_HEIGHT = 36;
+const HEADER_HEIGHT = 30;
 /** Rows kept rendered outside the viewport so scrolling does not flash gaps. */
 const OVERSCAN = 10;
 /**
@@ -35,19 +36,17 @@ const OVERSCAN = 10;
  */
 const FALLBACK_VIEWPORT_HEIGHT = 600;
 
-const COLUMNS = [
-  "scanIndex",
-  // Its own column, because the native identifier carries the scan number at
-  // the end and a truncated identifier is what every row would look like.
-  "scanNumber",
-  "scanIdentifier",
-  "scanMsLevel",
-  "scanRetentionTime",
-  "scanBasePeakMz",
-  "scanBasePeakIntensity",
-  "scanTotalIonCurrent",
-  "scanPrecursorMz",
-] as const;
+/**
+ * The scan list's columns, v5.11's compact four: what tells scans apart at a
+ * glance. The index, identifier, base peak and TIC of the selected scan are in
+ * Details, and the search still reaches identifiers and indices.
+ */
+const COLUMNS: readonly { readonly label: MessageKey; readonly sort: ScanSortKey; readonly cell: (row: SpectrumRow) => string }[] = [
+  { label: "scanNumber", sort: "scanNumber", cell: row => row.scanNumber === null ? "—" : formatCount(row.scanNumber) },
+  { label: "scanRetentionTime", sort: "retentionTime", cell: row => formatRetentionTimeValue(row.retentionTime) },
+  { label: "scanMsLevel", sort: "msLevel", cell: row => `MS${row.msLevel}` },
+  { label: "scanPrecursorMz", sort: "precursorMz", cell: row => row.precursorMz === null ? "—" : formatMz(row.precursorMz) },
+];
 
 export interface SpectrumTableProps {
   readonly table: SpectrumTableModel;
@@ -289,54 +288,44 @@ export const SpectrumTable = memo(function SpectrumTable({
 
   return (
     <section aria-labelledby="spectrum-table-heading" className="panel spectrum-table-panel">
-      <header className="panel-header compact">
-        <div>
-          <h2 id="spectrum-table-heading">{t("scansTitle")}</h2>
-          {/* One number while every row is loaded and none is filtered out;
-              the three counts, and the loaded-prefix disclosure, only where
-              they differ. */}
-          <p className="scan-result-count" aria-live="polite">{!table.truncated && view.options.query.trim() === "" &&
-            view.options.msLevel === null ? t("scanCountAll", { count: table.totalRowCount }) : t("scanCounts", {
-            visible: rowCount, total: table.totalRowCount, count: table.rows.length,
-          }) + (table.truncated ? ` · ${t("scanPrefix")}` : "")}</p>
+      <div className="plot-head">
+        <h2 id="spectrum-table-heading">{t("scansTitle")}</h2>
+        {/* One number while every row is loaded and none is filtered out;
+            the three counts, and the loaded-prefix disclosure, only where
+            they differ. */}
+        <p className="scan-result-count" aria-live="polite">{!table.truncated && view.options.query.trim() === "" &&
+          view.options.msLevel === null ? t("scanCountAll", { count: table.totalRowCount }) : t("scanCounts", {
+          visible: rowCount, total: table.totalRowCount, count: table.rows.length,
+        }) + (table.truncated ? ` · ${t("scanPrefix")}` : "")}</p>
+        {/* Beside the heading: these step through this table's order, and
+            they stay available for a preview whose chromatogram cannot be
+            drawn at all. */}
+        <div className="plot-tools" role="group" aria-label={t("scanNavigation")}>
+          <IconButton icon={<Icon name="chevronUp" />} label={t("scanPrevious")} onClick={onSelectPrevious} refused={!canSelectPrevious}
+            reasonId={canCommit ? undefined : SPECTRUM_SELECTION_NOTICE_ID} size="sm" />
+          <IconButton icon={<Icon name="chevronDown" />} label={t("scanNext")} onClick={onSelectNext} refused={!canSelectNext}
+            reasonId={canCommit ? undefined : SPECTRUM_SELECTION_NOTICE_ID} size="sm" />
         </div>
-        {/* Beside the heading rather than under the plot: these step through
-            this table's order, and they stay available for a preview whose
-            chromatogram cannot be drawn at all. */}
-        <fieldset className="spectrum-scan-steps">
-          <legend className="visually-hidden">{t("scanNavigation")}</legend>
-          <button
-            className="secondary-button"
-            disabled={!canSelectPrevious}
-            onClick={onSelectPrevious}
-            type="button"
-          >
-            {t("scanPrevious")}
-          </button>
-          <button
-            className="secondary-button"
-            disabled={!canSelectNext}
-            onClick={onSelectNext}
-            type="button"
-          >
-            {t("scanNext")}
-          </button>
-        </fieldset>
-      </header>
+      </div>
 
       <div className="scan-view-controls">
-        <label>{t("scanSearch")}<input type="search" value={view.options.query}
-          onChange={event => view.setQuery(event.target.value)} aria-describedby="scan-view-help" /></label>
-        <label>{t("scanMsLevel")}<select value={view.options.msLevel === null ? "all" : String(view.options.msLevel)}
+        <div className="plot-search">
+          <Icon name="search" />
+          <label className="visually-hidden" htmlFor="scan-search">{t("scanSearch")}</label>
+          <input id="scan-search" type="search" value={view.options.query} placeholder={t("scanSearch")}
+            onChange={event => view.setQuery(event.target.value)} aria-describedby="scan-view-help" />
+        </div>
+        <label className="visually-hidden" htmlFor="scan-ms-level">{t("scanMsLevel")}</label>
+        <select id="scan-ms-level" value={view.options.msLevel === null ? "all" : String(view.options.msLevel)}
           onChange={event => view.setMsLevel(event.target.value === "all" ? null : Number(event.target.value))}>
           <option value="all">{t("scanAllLevels")}</option>
           {view.msLevels.map(level => <option key={level} value={level}>MS{level}</option>)}
-        </select></label>
-        <details><summary>{t("scanHelp")}</summary><p id="scan-view-help">{t("scanHelpText")}</p></details>
+        </select>
+        <p className="visually-hidden" id="scan-view-help">{t("scanHelpText")}</p>
       </div>
       {selectedOutside ? <p className="scan-hidden-selection" aria-live="polite">
         {t("scanSelectedOutside", { name: String(selectedIndex) })}{" "}
-        <button type="button" className="secondary-button" onClick={view.clearFilters}>{t("scanReveal")}</button>
+        <Button onClick={view.clearFilters} size="sm" variant="quiet">{t("scanReveal")}</Button>
       </p> : null}
       {rowCount === 0 ? <p className="empty-state">{t(table.rows.length === 0 ? "scanEmpty" : "scanNoMatches")}</p> : null}
 
@@ -364,7 +353,6 @@ export const SpectrumTable = memo(function SpectrumTable({
           }}
           ref={viewportRef}
           role="presentation"
-          style={{ maxHeight: `${Math.min(10, rowCount) * ROW_HEIGHT + HEADER_HEIGHT + 18}px` }}
         >
           {/* Carries the width both grids resolve against, which is what makes
               the label and the value the same column rather than two that
@@ -375,15 +363,15 @@ export const SpectrumTable = memo(function SpectrumTable({
                 <span
                   aria-colindex={columnIndex + 1}
                   className="spectrum-table-cell"
-                  key={column}
+                  key={column.label}
                   role="columnheader"
-                  aria-sort={view.options.sort?.key === SCAN_SORT_KEYS[columnIndex] ? view.options.sort.direction : undefined}
+                  aria-sort={view.options.sort?.key === column.sort ? view.options.sort.direction : undefined}
                 >
-                  <button className="scan-sort-button" type="button" onClick={() => view.sortBy(SCAN_SORT_KEYS[columnIndex]!)}>
-                    {t(column)}
+                  <button className="scan-sort-button" type="button" onClick={() => view.sortBy(column.sort)}>
+                    {t(column.label)}
                     <svg aria-hidden="true" viewBox="0 0 12 12" width="12" height="12"
-                      data-direction={view.options.sort?.key === SCAN_SORT_KEYS[columnIndex] ? view.options.sort.direction : "none"}>
-                      <path d={view.options.sort?.key !== SCAN_SORT_KEYS[columnIndex] ? "M3 4 6 1 9 4 M3 8 6 11 9 8" :
+                      data-direction={view.options.sort?.key === column.sort ? view.options.sort.direction : "none"}>
+                      <path d={view.options.sort?.key !== column.sort ? "M3 4 6 1 9 4 M3 8 6 11 9 8" :
                         view.options.sort.direction === "ascending" ? "M2 8 6 4 10 8" : "M2 4 6 8 10 4"} />
                     </svg>
                   </button>
@@ -453,17 +441,7 @@ function SpectrumTableRow({
   onKeyDown,
 }: SpectrumTableRowProps) {
   const t = useUiMessages();
-  const cells = [
-    formatCount(row.index),
-    row.scanNumber === null ? "—" : formatCount(row.scanNumber),
-    row.identifier,
-    `MS${row.msLevel}`,
-    formatRetentionTimeValue(row.retentionTime),
-    formatMz(row.basePeakMz),
-    formatIntensity(row.basePeakIntensity),
-    formatIntensity(row.totalIonCurrent),
-    row.precursorMz === null ? "—" : formatMz(row.precursorMz),
-  ];
+  const cells = COLUMNS.map(column => column.cell(row));
 
   return (
     <div
@@ -494,7 +472,7 @@ function SpectrumTableRow({
         <span
           aria-colindex={columnIndex + 1}
           className="spectrum-table-cell"
-          key={COLUMNS[columnIndex]}
+          key={COLUMNS[columnIndex]?.label}
           role="gridcell"
           title={String(cell)}
         >

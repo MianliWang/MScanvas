@@ -154,7 +154,7 @@ describe("the viewer's selection availability", () => {
     // explanation that is not there is worse than none.
     expect(notice()).toBeNull();
     expect(grid().getAttribute("aria-describedby")).toBeNull();
-    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units");
+    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units plot-range-rt-gestures");
   });
 
   it("explains the closed lane once, and both surfaces point at that one sentence", async () => {
@@ -171,7 +171,7 @@ describe("the viewer's selection availability", () => {
     // Both surfaces, the same id, and the plot keeps its readout as well.
     expect(grid().getAttribute("aria-describedby")).toBe("viewer-selection-availability");
     expect(plot().getAttribute("aria-describedby")).toBe(
-      "chromatogram-readout chromatogram-units viewer-selection-availability",
+      "chromatogram-readout chromatogram-units plot-range-rt-gestures viewer-selection-availability",
     );
 
     // Announced politely, by the element that was already there.
@@ -211,11 +211,9 @@ describe("the viewer's selection availability", () => {
     expect(screen.getByText(/^Hovering/u)).toBeVisible();
 
     // And a trace toggle still answers, because it asks the backend nothing.
-    fireEvent.click(screen.getByRole("checkbox", { name: "BPC" }));
+    fireEvent.click(screen.getByRole("button", { name: "BPC" }));
     await waitFor(() => {
-      expect((screen.getByRole("checkbox", { name: "BPC" }) as HTMLInputElement).checked).toBe(
-        true,
-      );
+      expect(screen.getByRole("button", { name: "BPC" })).toHaveAttribute("aria-pressed", "true");
     });
   });
 
@@ -286,7 +284,7 @@ describe("how an empty availability region is collapsed", () => {
     return body ?? "";
   }
 
-  for (const selector of [".viewer-selection-notice:empty", ".chromatogram-export-note:empty"]) {
+  for (const selector of [".viewer-selection-notice:empty"]) {
     it(`keeps ${selector} in the accessibility tree`, () => {
       const body = ruleBody(selector);
 
@@ -320,7 +318,6 @@ describe("how an empty availability region is collapsed", () => {
     for (const selector of [
       ".viewer-column {",
       ".viewer-selection-notice:empty {",
-      ".chromatogram-export-note:empty {",
     ]) {
       expect(appStyles.split(selector).length - 1, selector).toBe(1);
     }

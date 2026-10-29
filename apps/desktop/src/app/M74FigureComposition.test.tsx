@@ -28,11 +28,33 @@ async function mount(options: FakePreviewApiOptions = {}) {
   await screen.findByRole("img", { name: /^Spectrum 1,/u });
   return { api, preview, panel: screen.getByRole("region", { name: "Selected spectrum" }) };
 }
+/** The chromatogram's ⋯ menu item for the linked figure, opened fresh. */
+async function linkedEntry(name: string): Promise<HTMLElement> {
+  const chromatogram = document.querySelector(".chromatogram-panel") as HTMLElement;
+  fireEvent.keyDown(within(chromatogram).getByRole("button", { name: UI_RESOURCES.en.plotMoreExports }), { key: "Enter" });
+  return screen.findByRole("menuitem", { name: new RegExp("^" + name, "u") });
+}
+/** Chooses the chromatogram's export scope, which lives in its figure dialog. */
+async function chooseChromatogramScope(name: string) {
+  const chromatogram = document.querySelector(".chromatogram-panel") as HTMLElement;
+  fireEvent.click(within(chromatogram).getByRole("button", { name: "Export figure" }));
+  const dialog = screen.getByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("radio", { name }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Return to viewer" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+}
 async function openFigure(panel: HTMLElement) {
   fireEvent.click(within(panel).getByRole("button", { name: "Export figure" }));
   const dialog = screen.getByRole("dialog", { name: "Export figure" });
   await within(dialog).findByRole("img", { name: "Scientific figure to export" });
   return dialog;
+}
+
+/** The linked item, in the given bundle's words. */
+function linkedEntryIn(messages: (typeof UI_RESOURCES)["en" | "zh-CN"]): Promise<HTMLElement> {
+  const chromatogram = document.querySelector(".chromatogram-panel") as HTMLElement;
+  fireEvent.keyDown(within(chromatogram).getByRole("button", { name: messages.plotMoreExports }), { key: "Enter" });
+  return screen.findByRole("menuitem", { name: new RegExp("^" + messages.figurePreviewLinked, "u") });
 }
 
 describe("M7.4 through the delivered figure owner", () => {
@@ -53,38 +75,43 @@ describe("M7.4 through the delivered figure owner", () => {
     }
     fireEvent.click(await screen.findByRole("button", { name: messages.previewFocused }));
     const grid = await screen.findByRole("grid");
-    fireEvent.click(screen.getByRole("button", { name: messages.viewerExport }));
-    const entry = screen.getByRole("button", { name: messages.figurePreviewLinked });
-    const assertBlocked = (reason: string) => {
-      expect(entry).toBeDisabled();
-      expect(entry).toHaveAttribute("aria-describedby", "chromatogram-linked-unavailable");
-      expect(entry).toHaveAccessibleDescription(reason);
-      expect(screen.getByText(reason)).toBeVisible();
-      fireEvent.click(entry);
+    const more = within(document.querySelector(".chromatogram-panel") as HTMLElement).getByRole("button", { name: messages.plotMoreExports });
+    const entry = () => linkedEntryIn(messages);
+    // A closed item says why inside itself, and choosing it opens nothing.
+    const assertBlocked = async (reason: string) => {
+      const item = await entry();
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveTextContent(reason);
+      fireEvent.click(item);
       expect(screen.queryByRole("dialog")).toBeNull();
+      fireEvent.keyDown(item, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     };
-    assertBlocked(messages.linkedNoSpectrum);
+    await assertBlocked(messages.linkedNoSpectrum);
     expect(api.requestedSpectra).toEqual([]);
     expect(preview).not.toHaveBeenCalled();
     fireEvent.click(grid.querySelector('[data-source-index="1"]')!);
-    await waitFor(() => expect(screen.getByText(messages.linkedLoading)).toBeVisible());
-    assertBlocked(messages.linkedLoading);
+    await waitFor(() => expect(api.requestedSpectra).toHaveLength(1));
+    await assertBlocked(messages.linkedLoading);
     expect(preview).not.toHaveBeenCalled();
     await act(async () => spectrum.resolve({ outcome: "spectrum", spectrum: buildSpectrum(1, 12) }));
-    await waitFor(() => expect(entry).toBeEnabled());
-    expect(entry).not.toHaveAttribute("aria-describedby");
-    fireEvent.click(entry);
+    await screen.findByRole("img", { name: /^(Spectrum|质谱) 1/u });
+    more.focus();
+    const open = await entry();
+    expect(open).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(open);
     const dialog = screen.getByRole("dialog");
     await within(dialog).findByRole("img");
     expect(preview.mock.calls.at(-1)?.[0].source).toMatchObject({ kind: "linked", chromatogramToken: "chromatogram-token", spectrumToken: "token-1", traces: { tic: true, bpc: false } });
     fireEvent.click(within(dialog).getByRole("button", { name: messages.figureExportReturn }));
+    // The dialog returns focus to the ⋯ that opened it.
+    await waitFor(() => expect(more).toHaveFocus());
     const requestsBeforeTraceChange = preview.mock.calls.length;
-    fireEvent.click(screen.getByRole("checkbox", { name: "TIC" }));
-    assertBlocked(messages.linkedNoTrace);
+    fireEvent.click(screen.getByRole("button", { name: "TIC" }));
+    await assertBlocked(messages.linkedNoTrace);
     expect(preview).toHaveBeenCalledTimes(requestsBeforeTraceChange);
-    fireEvent.click(screen.getByRole("checkbox", { name: "BPC" }));
-    expect(entry).toBeEnabled();
-    fireEvent.click(entry);
+    fireEvent.click(screen.getByRole("button", { name: "BPC" }));
+    fireEvent.click(await entry());
     await within(screen.getByRole("dialog")).findByRole("img");
     expect(preview.mock.calls.at(-1)?.[0].source).toMatchObject({ kind: "linked", spectrumToken: "token-1", traces: { tic: false, bpc: true } });
   });
@@ -94,12 +121,16 @@ describe("M7.4 through the delivered figure owner", () => {
     { field: "Height", invalid: "259", valid: "640" },
   ])("keeps linked preview available to repair $field inside the dialog", async ({ field, invalid, valid }) => {
     const { preview } = await mount();
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    const exports = document.querySelector("#chromatogram-export-panel") as HTMLElement;
-    fireEvent.change(within(exports).getByRole("textbox", { name: new RegExp("^" + field, "u") }), { target: { value: invalid } });
-    expect(document.querySelector("#chromatogram-linked-unavailable")).toBeVisible();
-    const entry = within(exports).getByRole("button", { name: "Preview linked figure" });
-    expect(entry).toBeEnabled();
+    const chromatogram = document.querySelector(".chromatogram-panel") as HTMLElement;
+    fireEvent.click(within(chromatogram).getByRole("button", { name: "Export figure" }));
+    const settings = screen.getByRole("dialog");
+    fireEvent.change(within(settings).getByRole("textbox", { name: new RegExp("^" + field, "u") }), { target: { value: invalid } });
+    fireEvent.click(within(settings).getByRole("button", { name: "Return to viewer" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The dialog can repair it, so the item stays open and says what is wrong.
+    const entry = await linkedEntry(UI_RESOURCES.en.figurePreviewLinked);
+    expect(entry).not.toHaveAttribute("aria-disabled");
+    expect(entry.textContent).not.toBe(UI_RESOURCES.en.figurePreviewLinked);
     fireEvent.click(entry);
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByRole("textbox", { name: new RegExp("^" + field, "u") }), { target: { value: valid } });
@@ -110,16 +141,14 @@ describe("M7.4 through the delivered figure owner", () => {
   it("keeps linked preview available to recover an outside scan with Full run inside the dialog", async () => {
     const { preview } = await mount({ preview: buildPreview(200) });
     const chromatogram = document.querySelector(".chromatogram-panel") as HTMLElement;
-    fireEvent.click(chromatogram.querySelector(".plot-range-editor summary")!);
+    fireEvent.click(chromatogram.querySelector(".plot-range-toggle")!);
     fireEvent.change(chromatogram.querySelector("#plot-range-rt-low")!, { target: { value: "0.5" } });
     fireEvent.change(chromatogram.querySelector("#plot-range-rt-high")!, { target: { value: "1.5" } });
     fireEvent.click(chromatogram.querySelector('.plot-range-form button[type="submit"]')!);
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    const exports = document.querySelector("#chromatogram-export-panel") as HTMLElement;
-    fireEvent.click(within(exports).getByRole("radio", { name: "Current range" }));
-    expect(await within(exports).findByText(UI_RESOURCES.en.linkedOutside)).toBeVisible();
-    const entry = within(exports).getByRole("button", { name: "Preview linked figure" });
-    expect(entry).toBeEnabled();
+    await chooseChromatogramScope("Current range");
+    const entry = await linkedEntry(UI_RESOURCES.en.figurePreviewLinked);
+    expect(entry).toHaveTextContent(UI_RESOURCES.en.linkedOutside);
+    expect(entry).not.toHaveAttribute("aria-disabled");
     fireEvent.click(entry);
     const dialog = screen.getByRole("dialog");
     fireEvent.click(within(dialog).getByRole("radio", { name: "Full run" }));
@@ -151,7 +180,7 @@ describe("M7.4 through the delivered figure owner", () => {
   it("binds preview and save to committed data and captures settings before the save picker settles", async () => {
     const save = deferred<SpectrumExportOutcome>();
     const { api, preview, panel } = await mount({ spectrumExport: () => save.promise });
-    fireEvent.click(within(panel).getByText("Edit m/z range"));
+    fireEvent.click(within(panel).getByRole("button", { name: UI_RESOURCES.en.rangeSet }));
     fireEvent.change(within(panel).getByRole("textbox", { name: "From" }), { target: { value: "200" } });
     fireEvent.change(within(panel).getByRole("textbox", { name: "To" }), { target: { value: "800" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Apply range" }));

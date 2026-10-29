@@ -180,7 +180,7 @@ describe("narrow desktop layout rules", () => {
       requireStyleRule(app, ".spectrum-table-viewport").style.getPropertyValue(
         "scroll-padding-top",
       ),
-    ).toBe("36px");
+    ).toBe("30px");
   });
 
   it("keeps the drop overlay out of layout and unable to intercept the pointer", () => {

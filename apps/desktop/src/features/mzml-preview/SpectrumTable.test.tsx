@@ -20,15 +20,11 @@ import { useScanTableView } from "./viewer/useScanTableView";
 import type { Selection } from "./viewer/interactionState";
 import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
 
+/** v5.11's compact scan list; the rest of a scan's facts are in Details. */
 const COLUMN_LABELS = [
-  "Index",
   "Scan",
-  "Identifier",
-  "MS level",
   "Retention time",
-  "Base peak m/z",
-  "Base peak intensity",
-  "Total ion current",
+  "MS level",
   "Precursor m/z",
 ];
 
@@ -120,7 +116,7 @@ afterEach(() => {
 });
 
 describe("spectrum table columns", () => {
-  it("keeps all nine labels, in order, once each", () => {
+  it("keeps all four labels, in order, once each", () => {
     renderTable();
 
     const headers = screen.getAllByRole("columnheader");
@@ -128,7 +124,7 @@ describe("spectrum table columns", () => {
     expect(headers.map((header) => header.textContent)).toEqual(COLUMN_LABELS);
     // One header set, not a visual copy alongside an announced one.
     expect(headers).toHaveLength(COLUMN_LABELS.length);
-    expect(screen.getAllByText("Total ion current")).toHaveLength(1);
+    expect(screen.getAllByText("Retention time")).toHaveLength(1);
     expect(screen.getAllByText("Precursor m/z")).toHaveLength(1);
   });
 
@@ -137,7 +133,7 @@ describe("spectrum table columns", () => {
 
     const grid = screen.getByRole("grid", { name: "Spectra" });
     expect(grid).toHaveAttribute("aria-rowcount", "401");
-    expect(grid).toHaveAttribute("aria-colcount", "9");
+    expect(grid).toHaveAttribute("aria-colcount", "4");
     // Windowed: the header row plus a bounded slice, not 400 rows.
     expect(within(grid).getAllByRole("row").length).toBeLessThan(100);
     expect(requireElement(container, ".spectrum-table-head")).toHaveAttribute("aria-rowindex", "1");
@@ -214,7 +210,7 @@ describe("spectrum table horizontal position", () => {
     const { container } = renderTable();
     const viewport = requireElement(container, ".spectrum-table-viewport");
 
-    expect(getComputedStyle(viewport).scrollPaddingTop).toBe("36px");
+    expect(getComputedStyle(viewport).scrollPaddingTop).toBe("30px");
   });
 });
 
@@ -245,7 +241,7 @@ describe("spectrum table rows", () => {
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "PageDown" });
 
-    expect(document.activeElement).toHaveAttribute("aria-rowindex", "19");
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "21");
   });
 
   it("carries exactly one tab stop among the rendered rows", () => {
@@ -275,7 +271,7 @@ describe("spectrum table rows", () => {
  * arithmetic rather than from a rendered box -- but that arithmetic is
  * `revealScrollTop`'s, and these are the two cases the wrong version of it got
  * wrong. The viewport reports no height here, so the table falls back to its
- * 600px default: the header takes a row, leaving 564px for rows of 30px each.
+ * 600px default: the 30px header leaves 570px for rows of 28px each.
  */
 describe("bringing a row into view", () => {
   function viewportOf(container: HTMLElement): HTMLElement {
@@ -288,17 +284,17 @@ describe("bringing a row into view", () => {
     const { container, commitSelection } = renderTable({ rowCount: 400 });
     const viewport = viewportOf(container);
 
-    // Row 30 sits at canvas offset 900 and the rows have 564px, so the least
-    // scroll that shows all of it is 900 + 30 - 564.
+    // Row 30 sits at canvas offset 840 and the rows have 570px, so the least
+    // scroll that shows all of it is 840 + 28 - 570.
     commitSelection(commit(30, 1));
 
-    expect(viewport.scrollTop).toBe(366);
+    expect(viewport.scrollTop).toBe(298);
   });
 
   it("puts a row above the fold exactly at the top of the canvas, header included once", () => {
     // The discriminating case. The header is `position: sticky`, so the canvas
     // already begins after it and `scrollTop = rowTop` places the row
-    // immediately below it. Subtracting the header again would land on 570 and
+    // immediately below it. Subtracting the header again would land on 530 and
     // scroll a row that was about to be perfectly placed one row too far.
     const { container, commitSelection } = renderTable({ rowCount: 400 });
     const viewport = viewportOf(container);
@@ -306,7 +302,7 @@ describe("bringing a row into view", () => {
 
     commitSelection(commit(20, 1));
 
-    expect(viewport.scrollTop).toBe(600);
+    expect(viewport.scrollTop).toBe(560);
   });
 
   it("leaves a row that is already in view exactly where it is", () => {
@@ -326,12 +322,12 @@ describe("bringing a row into view", () => {
     const { container, commitSelection } = renderTable({ rowCount: 400 });
     const viewport = viewportOf(container);
     commitSelection(commit(30, 1));
-    expect(viewport.scrollTop).toBe(366);
+    expect(viewport.scrollTop).toBe(298);
 
     fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
     commitSelection(commit(30, 2));
 
-    expect(viewport.scrollTop).toBe(366);
+    expect(viewport.scrollTop).toBe(298);
   });
 
   it("does not undo a scroll the user made while the same commit stands", () => {
@@ -375,18 +371,19 @@ describe("bringing a row into view", () => {
     fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
     commitSelection(commit(30, 1));
 
-    expect(viewport.scrollTop).toBe(366);
+    expect(viewport.scrollTop).toBe(298);
   });
 });
 
 describe("stepping through scans from the table", () => {
-  it("offers Previous and Next, and disables them where the table ends", () => {
+  it("offers Previous and Next, and refuses them where the table ends", () => {
     const { onSelectPrevious, onSelectNext } = renderTable({ canSelectNext: true });
 
     const previous = screen.getByRole("button", { name: "Previous scan" });
     const next = screen.getByRole("button", { name: "Next scan" });
-    expect(previous).toBeDisabled();
-    expect(next).toBeEnabled();
+    // Refused rather than disabled, so each stays a Tab stop (UI-24).
+    expect(previous).toHaveAttribute("aria-disabled", "true");
+    expect(next).not.toHaveAttribute("aria-disabled");
 
     fireEvent.click(next);
 
@@ -478,7 +475,7 @@ describe("the spectrum table while selection is unavailable", () => {
     expect(document.activeElement).toHaveAttribute("aria-rowindex", "3");
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "PageDown" });
-    expect(document.activeElement).toHaveAttribute("aria-rowindex", "20");
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "22");
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Home" });
     expect(document.activeElement).toHaveAttribute("aria-rowindex", "2");
