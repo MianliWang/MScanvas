@@ -8057,6 +8057,49 @@ fn an_mzml_dataset_converts_through_the_same_path_and_is_compared_to_its_source(
     );
 }
 
+/// ADR 0055: an mzML row converts through the visible queue beside itself,
+/// under a name that is not its own, compared with its source, and the source
+/// is left exactly as it was.
+#[test]
+fn an_mzml_row_converts_beside_itself_without_ever_naming_its_source() {
+    let here = TestFile::new("mzml-source-sibling");
+    let source = here.readable_mzml("run.mzML");
+    let before = fs::read(&source).expect("read the source");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = service
+        .add_dataset(&source)
+        .expect("add an mzML row")
+        .handle;
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_under_now(
+            &[handle],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::SourceSibling,
+        )
+        .expect("an mzML row is a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    let update = service.resolve_claimed_conversion(operation);
+
+    let report = sole_report(&update.state).expect("the conversion reaches an outcome");
+    assert_eq!(report.outcome, "finalized", "{report:?}");
+    assert_eq!(report.validation_mode, ValidationModeDto::SourceComparison);
+    assert_eq!(
+        report.output_file_name.as_deref(),
+        Some("run-converted.mzML")
+    );
+    assert!(here.directory.join("run-converted.mzML").is_file());
+    assert_eq!(
+        fs::read(&source).expect("read the source again"),
+        before,
+        "the source is never written"
+    );
+}
+
 /// A dataset is named by a handle the session issued, and nothing else reaches
 /// the conversion boundary.
 #[test]
@@ -9173,7 +9216,8 @@ fn the_family_recorded_at_admission_is_the_one_every_later_use_applies() {
     assert!(!DatasetSourceKind::ShimadzuLcd.is_previewable());
     assert!(is_convertible(DatasetSourceKind::ShimadzuLcd));
     assert!(is_convertible(DatasetSourceKind::ThermoRaw));
-    assert!(!is_convertible(DatasetSourceKind::Mzml));
+    // And since ADR 0055, mzML too: msconvert re-filters an mzML.
+    assert!(is_convertible(DatasetSourceKind::Mzml));
 }
 
 /// An acquisition another program is writing is not a finished acquisition.
@@ -10209,10 +10253,10 @@ fn a_vendor_row_is_refused_a_preview_by_rust_not_only_by_a_disabled_button() {
     assert_eq!(service.requests_made(&handle), 0, "no backend was asked");
 }
 
-/// The plan summary is derived from the run, and refuses a row that has nothing
-/// to convert.
+/// The plan summary is derived from the run, and states an mzML row's own name
+/// and the stronger comparison it is judged under.
 #[test]
-fn the_plan_summary_describes_the_fixed_plan_and_refuses_an_mzml_row() {
+fn the_plan_summary_describes_the_fixed_plan_for_a_vendor_and_an_mzml_row() {
     let fixture = TestFile::new("plan-summary");
     let acquisition = fixture.thermo_raw("acquisition.raw");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
@@ -10230,10 +10274,13 @@ fn the_plan_summary_describes_the_fixed_plan_and_refuses_an_mzml_row() {
     assert_eq!(summary.compression, "zlib");
     assert_eq!(summary.validation_mode, ValidationModeDto::OutputOnly);
 
-    let refused = service
+    // ADR 0055: an mzML row converts too. Its output never takes its own name,
+    // and the summary says it is compared with its source.
+    let summary = service
         .conversion_plan_summary(&mzml.handle)
-        .expect_err("an mzML row is already the output format");
-    assert_eq!(refused.kind, "dataset_not_convertible");
+        .expect("an mzML row has a plan");
+    assert_eq!(plan_output_name(&summary.items[0]), "sample-converted.mzML");
+    assert_eq!(summary.validation_mode, ValidationModeDto::SourceComparison);
 }
 
 /// The whole visible vertical: begin, claim, choose a folder, convert, report.
@@ -11260,12 +11307,13 @@ fn a_queue_is_bounded_deduplicated_and_convertible_or_it_is_refused() {
         "queue_output_name_collision",
         "the same row twice would also write one name, and that is refused first"
     );
+    // A mixed queue is admitted, and states the weaker judgement it holds.
     assert_eq!(
         service
             .conversion_queue_plan_now(&[handle.clone(), mzml.handle])
-            .expect_err("an mzML row is not queued silently")
-            .kind,
-        "dataset_not_convertible"
+            .expect("an mzML row queues beside a vendor row")
+            .validation_mode,
+        ValidationModeDto::OutputOnly
     );
     assert_eq!(
         service
@@ -30608,17 +30656,18 @@ fn the_dataset_family_list_and_its_index_agree() {
 }
 
 /// The families the visible workflow converts are derived from `is_convertible`
-/// rather than listed, and are exactly the three vendor ones.
+/// rather than listed, and are every family the roster holds.
 ///
-/// mzML is deliberately absent: the crate converts it and the visible workflow
-/// declines it, which is what makes the two centroiding rows unavailable in the
-/// vendor workflow without anything naming a vendor family.
+/// mzML joined in ADR 0055. That makes the centroiding rows available in the
+/// catalog for mzML sources; a vendor row asked for one is still refused per
+/// row, because no vendor family's evidence covers it.
 #[test]
-fn the_convertible_family_set_is_derived_and_holds_the_three_vendor_families() {
+fn the_convertible_family_set_is_derived_and_holds_every_family() {
     let derived: Vec<_> = convertible_source_kinds().collect();
     assert_eq!(
         derived,
         vec![
+            mscanvas_proteowizard::ConversionSourceKind::MzmlFile,
             mscanvas_proteowizard::ConversionSourceKind::ThermoRawFile,
             mscanvas_proteowizard::ConversionSourceKind::ShimadzuLcdFile,
             mscanvas_proteowizard::ConversionSourceKind::SciexWiffBundle,
@@ -30633,14 +30682,16 @@ fn the_convertible_family_set_is_derived_and_holds_the_three_vendor_families() {
     }
 }
 
-/// No admitted combination that asks for centroiding is offered for any family
-/// the visible workflow converts.
+/// No admitted combination that asks for centroiding is offered for any vendor
+/// family the visible workflow converts, and every one is for mzML.
 ///
 /// The product-level statement of the repair, asked through the crate's own rule
 /// rather than through a list of rows: a centroiding row admitted for a vendor
 /// family later would fail here without anyone having to remember this test.
+/// The vendor families are the ones with no source comparison, so nothing here
+/// names one.
 #[test]
-fn no_centroiding_combination_is_evidenced_for_a_family_the_workflow_converts() {
+fn no_centroiding_combination_is_evidenced_for_a_vendor_family_the_workflow_converts() {
     use mscanvas_proteowizard::{ConversionIntent, ProcessingIntent};
 
     for admitted in ConversionIntent::ADMITTED {
@@ -30650,9 +30701,10 @@ fn no_centroiding_combination_is_evidenced_for_a_family_the_workflow_converts() 
             continue;
         }
         for kind in convertible_source_kinds() {
-            assert!(
-                !admitted.intent().evidence_covers_source(kind),
-                "{:?} is offered for {kind:?}, which nobody measured it on",
+            assert_eq!(
+                admitted.intent().evidence_covers_source(kind),
+                kind.supports_source_comparison(),
+                "{:?} is offered for {kind:?} against its evidence",
                 admitted.intent()
             );
         }
@@ -30822,7 +30874,9 @@ fn begin_still_reserves_a_vendor_queue_under_an_intent_whose_evidence_covers_it(
 #[test]
 fn a_plan_for_an_intent_measured_only_on_mzml_names_the_evidence_not_the_build() {
     let fixture = TestFile::new("plan-not-evidenced-for-source");
-    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    // A build that can express the row, since ADR 0055 made the catalog offer
+    // it for mzML: the refusal left is the vendor row's own evidence.
+    let service = PreviewService::new(Box::new(ConvertingProvider::offering_every_admitted_row()));
     let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
     let receipt = current_receipt(&service);
 
@@ -30846,12 +30900,12 @@ fn a_plan_for_an_intent_measured_only_on_mzml_names_the_evidence_not_the_build()
 /// surface with one boolean and two facts to explain with it, and a test that
 /// built the reply by hand would be asserting about its own fixture.
 ///
-/// This installation's help declares mzML and zlib and nothing else, so the
-/// snapshot carries all three answers at once: the shipped row runs, the rows
-/// needing grammar it lacks are refused for the installation, and the two
-/// centroiding rows are refused for absent source evidence.
+/// This installation's help declares mzML and zlib and nothing else: the
+/// shipped row runs and the rows needing grammar it lacks are refused for the
+/// installation. Since ADR 0055 an mzML source converts, so no row is refused
+/// for absent source evidence: the centroiding rows are evidenced for mzML.
 #[test]
-fn the_catalog_wire_states_which_of_the_three_answers_each_row_got() {
+fn the_catalog_wire_states_which_answer_each_row_got() {
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
     let snapshot = service
         .read_conversion_configuration()
@@ -30873,34 +30927,19 @@ fn the_catalog_wire_states_which_of_the_three_answers_each_row_got() {
             .expect("every row keeps the boolean beside it");
         // The boolean and the discriminator are one decision, not two.
         assert_eq!(available, availability == "available");
-        let centroiding = row["intent"]["processing"]
-            .as_str()
-            .expect("every row names its processing")
-            == "unscoped_default_centroiding";
-        if centroiding {
-            assert_eq!(
-                availability, "not_evidenced_for_conversion_sources",
-                "a centroiding row was refused for the wrong reason on the wire"
-            );
-        } else {
-            assert_ne!(
-                availability, "not_evidenced_for_conversion_sources",
-                "a writer-side row was refused for absent source evidence"
-            );
-        }
+        assert_ne!(
+            availability, "not_evidenced_for_conversion_sources",
+            "every row covers a converted family, so none lacks source evidence"
+        );
     }
 
-    // All three answers really are present, so the cases above are exercised
+    // Both answers really are present, so the cases above are exercised
     // rather than vacuously satisfied by a catalog that refused everything.
     let answers: Vec<&str> = rows
         .iter()
         .map(|row| row["availability"].as_str().expect("an answer"))
         .collect();
-    for expected in [
-        "available",
-        "unsupported_by_installation",
-        "not_evidenced_for_conversion_sources",
-    ] {
+    for expected in ["available", "unsupported_by_installation"] {
         assert!(
             answers.contains(&expected),
             "no row on this wire answered {expected:?}: {answers:?}"

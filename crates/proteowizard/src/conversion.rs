@@ -132,14 +132,29 @@ impl From<RegularFileError> for ConversionOutputRejection {
     }
 }
 
+/// What an output name carries when its source already has the output's
+/// extension, so the two can never be one name.
+const SAME_FORMAT_OUTPUT_SUFFIX: &str = "-converted";
+
 /// Derives the planned conversion output file name from a source path.
 ///
 /// The stem is preserved so a converted file stays recognizable next to its
-/// acquisition; the extension always comes from the requested format.
+/// acquisition; the extension always comes from the requested format. A source
+/// already in that format (an mzML re-converted to mzML, ADR 0055) gets
+/// [`SAME_FORMAT_OUTPUT_SUFFIX`] before the extension, compared ignoring ASCII
+/// case because `sample.mzml` and `sample.mzML` are one file on Windows. That
+/// keeps an output written beside its source from ever naming the source.
 #[must_use]
 pub fn conversion_output_file_name(input: &Path, format: OpenFormat) -> Option<OsString> {
     let stem = input.file_stem().filter(|stem| !stem.is_empty())?;
     let mut name = stem.to_os_string();
+    if input.extension().is_some_and(|extension| {
+        extension
+            .as_encoded_bytes()
+            .eq_ignore_ascii_case(format.extension().as_bytes())
+    }) {
+        name.push(SAME_FORMAT_OUTPUT_SUFFIX);
+    }
     name.push(".");
     name.push(format.extension());
     Some(name)
@@ -3404,6 +3419,19 @@ mod tests {
             conversion_output_file_name(Path::new("/data/sample.mzML"), OpenFormat::MzXml),
             Some(OsString::from("sample.mzXML"))
         );
+        // A source already in the output format never derives its own name, in
+        // any case spelling of the extension.
+        for source in [
+            "/data/sample.mzML",
+            "/data/sample.MZML",
+            "/data/sample.mzml",
+        ] {
+            assert_eq!(
+                conversion_output_file_name(Path::new(source), OpenFormat::MzMl),
+                Some(OsString::from("sample-converted.mzML")),
+                "{source}"
+            );
+        }
         // A trailing separator still names the directory, so it keeps a stem.
         assert_eq!(
             conversion_output_file_name(Path::new("/data/"), OpenFormat::MzMl),

@@ -1243,13 +1243,15 @@ pub(super) const fn fixed_output_format(intent: ConversionIntent) -> ConversionO
 
 /// Which family this workflow can convert.
 ///
-/// mzML is already the format the product reads, so converting one to another
-/// is work with no product purpose; the private path supports it because the
-/// crate does, and the visible workflow declines it because a user asking for
-/// it has misunderstood what it does.
+/// Every family the roster holds, since ADR 0055 (2026-10-29).
 pub(super) const fn is_convertible(kind: DatasetSourceKind) -> bool {
     match kind {
-        DatasetSourceKind::Mzml => false,
+        // Re-filtering or re-encoding an mzML is what msconvert does for one,
+        // and ADR 0055 asks for msconvert parity. The output is compared with
+        // the source (`SourceComparison`), and its name carries the crate's
+        // same-format suffix, so an output written beside its source never
+        // names the source. Fail and Skip stay the only conflict policies.
+        DatasetSourceKind::Mzml => true,
         DatasetSourceKind::ThermoRaw => true,
         // The word ADR 0019 said would be the whole product decision, now
         // deliberately said. ADR 0020 gives this family an ingestion surface
