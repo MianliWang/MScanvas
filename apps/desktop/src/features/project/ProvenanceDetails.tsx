@@ -34,6 +34,7 @@
  * The data was already here.
  */
 
+import { Button } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import {
   artifactKey,
@@ -137,15 +138,16 @@ export function ProvenanceDetails({
     const name = label(record);
     return (
       <li key={related.id} className="provenance-link">
-        <button
-          type="button"
-          className="link-button"
+        <Button
+          variant="quiet"
+          size="sm"
+          className="provenance-related"
           aria-label={accessible(record)}
           data-provenance-link={related.id}
           onClick={() => onSelect({ kind, id: related.id })}
         >
           <span className="provenance-link-name" title={name}>{name}</span>
-        </button>
+        </Button>
         {trailing?.(record)}
       </li>
     );
@@ -269,15 +271,15 @@ export function ProvenanceDetails({
               {t(layerHandle === null ? "projectLayerDetached" : "projectLayerAttached")}
             </span>
             {layerHandle === null ? null : (
-              <button
-                type="button"
-                className="link-button"
+              <Button
+                variant="secondary"
+                size="sm"
                 aria-label={t("projectShowInWorkbenchNamed", { name: layerName })}
                 data-provenance-layer-show-in-workbench=""
                 onClick={() => onShowInWorkbench?.(layerHandle)}
               >
                 {t("projectShowInWorkbench")}
-              </button>
+              </Button>
             )}
           </p>
           <p className="provenance-section-label">{t("provenanceLayerSource")}</p>

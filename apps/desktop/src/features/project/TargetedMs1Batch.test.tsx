@@ -294,8 +294,9 @@ describe("a batch review", () => {
       `3${INPUTS[2].label}${en.targetedBatchReady}`,
     ]);
     // Each member's own plan is on request, not by default.
-    const planDetails = query<HTMLDetailsElement>("[data-targeted-batch-details]");
-    expect(planDetails.open).toBe(false);
+    const planDetails = query("[data-targeted-batch-details]");
+    expect(planDetails.hidden).toBe(true);
+    expect(query(`[aria-controls="${planDetails.id}"]`).getAttribute("aria-expanded")).toBe("false");
     expect(planDetails.textContent).toContain(SHAS[1]);
 
     const run = query("[data-targeted-run]");
@@ -651,7 +652,7 @@ describe("the batch as one path (PM9.5)", () => {
     // The same batch again is a secondary action that says what it does.
     const run = query("[data-targeted-run]");
     expect(run.textContent).toBe(en.targetedRunBatchAgain.replace("{{count}}", "3"));
-    expect(run.className).toBe("secondary-button");
+    expect(run.classList.contains("ui-button--secondary")).toBe(true);
     expect(query("[data-targeted-run-again]").textContent).toBe(en.targetedRunBatchAgainNote);
 
     // Unticking a member withdraws the review, never the ending: the member

@@ -439,7 +439,7 @@ describe("Beta 1 UX changes, rendered", () => {
 
       // Every primary under the surface, hidden or not: one, shown, and it is New project.
       const primaries = await browser.execute(() =>
-        [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .primary-button")].map((button) => ({
+        [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .ui-button--primary")].map((button) => ({
           text: (button.textContent ?? "").trim(),
           shown: button.getClientRects().length > 0,
         })),
@@ -470,7 +470,7 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(await control(add!)).toMatchObject({ primary: false });
       expect(
         await browser.execute(() =>
-          [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .primary-button")].map((button) => (button.textContent ?? "").trim()),
+          [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .ui-button--primary")].map((button) => (button.textContent ?? "").trim()),
         ),
       ).toEqual([words.projectNew]);
       await shot(`f2-empty-project-1366-${locale}`);
@@ -795,8 +795,10 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(styles.shadow).toContain(styles.accent);
       expect(styles.shadow).toMatch(/\b0px 3px 0px\b/u);
       expect(styles.other).not.toBeNull();
+      // A step below the setup's heading. Since the v5.11 rebuild every panel
+      // title is in primary text (rebuild spec 1.3); the setup stays apart by
+      // its size and its accent bar.
       expect(styles.other!.fontSize).toBe("13px");
-      expect(styles.other!.color).not.toBe(styles.color);
 
       // O2: a run that left no result, then Show run with Details folded.
       await browser.execute(

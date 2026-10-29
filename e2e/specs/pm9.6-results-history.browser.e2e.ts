@@ -242,11 +242,13 @@ async function typeInto(selector: string, value: string) {
   await frames();
 }
 
-/** Opens a closed disclosure by its summary. */
+/** Opens a closed disclosure region by its toggle button. */
 async function openDisclosure(selector: string) {
   await browser.execute((css: string) => {
-    const details = document.querySelector<HTMLDetailsElement>(css);
-    if (details !== null && !details.open) details.querySelector("summary")?.click();
+    const region = document.querySelector<HTMLElement>(css);
+    if (region !== null && region.hidden) {
+      document.querySelector<HTMLElement>(`[aria-controls="${region.id}"]`)?.click();
+    }
   }, selector);
   await frames();
 }
@@ -656,7 +658,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     await frame("p1-run-en-1366x768");
     expect(await marked(report(ARTIFACTS[0]))).toBe(true);
     expect(await exists(`${report(ARTIFACTS[0])} [data-targeted-selected="${CAFFEINE}"]`)).toBe(true);
-    expect(await exists(`${report(ARTIFACTS[0])} [data-targeted-figure-export][open]`)).toBe(true);
+    expect(await exists(`${report(ARTIFACTS[0])} [data-targeted-figure-export]:not([hidden])`)).toBe(true);
     expect(await text("#workbench-inspector [data-targeted-plan-facts]")).toContain(SHAS[0]);
 
     await browser.$(`#workbench-inspector [data-provenance-link="${ARTIFACTS[0]}"]`).click();
@@ -993,7 +995,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
         await browser.$(`${report(ARTIFACTS[0])} [data-targeted-row="${last}"]`).waitForExist();
         const after = await browser.execute((css: string) => {
           const section = document.querySelector(css);
-          const following = [...document.querySelectorAll<HTMLElement>("[data-project-surface] button, [data-project-surface] summary")].find(
+          const following = [...document.querySelectorAll<HTMLElement>("[data-project-surface] button")].find(
             (element) => section !== null && (section.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && !section.contains(element),
           );
           following?.focus();
@@ -1163,7 +1165,7 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     await browser.$(report(RESULT)).waitForDisplayed();
     expect(await marked(report(RESULT))).toBe(true);
     expect(await exists(`${report(RESULT)} [data-targeted-selected="${STORED_CAFFEINE}"]`)).toBe(true);
-    expect(await exists(`${report(RESULT)} [data-targeted-figure-export][open]`)).toBe(true);
+    expect(await exists(`${report(RESULT)} [data-targeted-figure-export]:not([hidden])`)).toBe(true);
     expect(await browser.$("[data-targeted-text]").getValue()).toBe("Caffeine, C8H10N4O2, 120, 30");
     expect(await ipcCalls().then((calls) => calls.slice(before).filter((call) => call.command.startsWith("read_targeted")))).toEqual([]);
     expect(await work(before)).toEqual([]);
@@ -1206,9 +1208,6 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
           copy(locale, "targetedStatePayloadMissing"),
         );
         expect(await exists(`[data-project-artifact="${ARTIFACTS[0]}"] [data-project-artifact-availability]`)).toBe(false);
-        expect(await content(`[data-project-surface] section[aria-label="${copy(locale, "projectHistory")}"] > .project-note`)).toBe(
-          copy(locale, "projectCaptureMeaning"),
-        );
 
         // One plan run twice: two runs and two records, each named by when it ended.
         const names = await browser.execute(

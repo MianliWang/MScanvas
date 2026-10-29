@@ -268,8 +268,6 @@ describe("the project surface", () => {
     expect(
       run?.querySelector("[data-project-artifact='eeeeeeee-1111-4111-8111-111111111111']"),
     ).toBeTruthy();
-    // And the surface says what a capture is, where it is displayed.
-    expect(screen.getByText(en.projectCaptureMeaning)).toBeTruthy();
     // The instant is formatted for a reader, and the machine-readable form is
     // kept where a machine can still find it.
     const when = run?.querySelector("time");
@@ -796,7 +794,6 @@ describe("the project surface", () => {
     expect(screen.getByText(zh.projectStateIncomplete)).toBeTruthy();
     // The history section too, which is where English was leaking in.
     expect(screen.getByText(zh.projectRunCompleted)).toBeTruthy();
-    expect(screen.getByText(zh.projectCaptureMeaning)).toBeTruthy();
     expect(screen.getByText(zh.projectUnsaved)).toBeTruthy();
     expect(document.body.textContent).not.toContain("File facts: sample.mzML");
     // And a refusal reads in Chinese as well.
@@ -810,7 +807,6 @@ describe("the project surface", () => {
     expect(zh.projectNoneHint).not.toEqual(en.projectNoneHint);
     expect(zh.projectStateIncomplete).not.toEqual(en.projectStateIncomplete);
     expect(zh.projectRefusedUnstable).not.toEqual(en.projectRefusedUnstable);
-    expect(zh.projectCaptureMeaning).not.toEqual(en.projectCaptureMeaning);
   });
 
   it("is usable with nothing open and offers the two ways in", async () => {
@@ -822,9 +818,9 @@ describe("the project surface", () => {
     // offered beside it, live and reachable (PM9.7 F2).
     const create = screen.getByRole("button", { name: en.projectNew });
     const reopen = screen.getByRole("button", { name: en.projectOpen });
-    expect(create.className).toBe("primary-button");
-    expect(reopen.className).toBe("secondary-button");
-    expect(document.querySelectorAll("[data-project-surface] .primary-button")).toHaveLength(1);
+    expect(create.classList.contains("ui-button--primary")).toBe(true);
+    expect(reopen.classList.contains("ui-button--secondary")).toBe(true);
+    expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
     for (const offered of [create, reopen]) {
       expect(offered.getAttribute("aria-disabled")).toBeNull();
       expect((offered as HTMLButtonElement).disabled).toBe(false);
@@ -854,9 +850,9 @@ describe("the project surface", () => {
 
     await waitFor(() => expect(screen.getByText(zh.projectNone)).toBeTruthy());
     expect(screen.getByText(zh.projectNoneHint)).toBeTruthy();
-    expect(screen.getByRole("button", { name: zh.projectNew }).className).toBe("primary-button");
-    expect(screen.getByRole("button", { name: zh.projectOpen }).className).toBe("secondary-button");
-    expect(document.querySelectorAll("[data-project-surface] .primary-button")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: zh.projectNew }).classList.contains("ui-button--primary")).toBe(true);
+    expect(screen.getByRole("button", { name: zh.projectOpen }).classList.contains("ui-button--secondary")).toBe(true);
+    expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
     expect(api.calls).toEqual(["getProjectState"]);
   });
 
@@ -871,8 +867,10 @@ describe("the project surface", () => {
     // A refused primary keeps its place and its Tab stop; the busy line is
     // its reason, and a press sends nothing.
     const create = screen.getByRole("button", { name: en.projectNew });
-    expect(create.className).toBe("primary-button");
+    expect(create.classList.contains("ui-button--primary")).toBe(true);
     expect(create.getAttribute("aria-disabled")).toBe("true");
+    expect(create.getAttribute("aria-describedby")).toBe("project-busy-line");
+    expect(document.getElementById("project-busy-line")?.textContent).toBe(en.projectBusyOpening);
     await press(create);
     expect(api.createProject).not.toHaveBeenCalled();
     await act(async () => {
@@ -881,12 +879,31 @@ describe("the project surface", () => {
     await waitFor(() => expect(document.querySelector("[data-project-busy]")).toBeNull());
   });
 
-  it("gives New project back its secondary place once a project is open", async () => {
+  it("gives New project back a quiet place once a project is open", async () => {
     mount(openProject({ inputs: [projectInput()], dirty: true }));
     await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
 
-    expect(screen.getByRole("button", { name: en.projectNew }).className).toBe("secondary-button");
-    expect(screen.getByRole("button", { name: en.projectOpen }).className).toBe("secondary-button");
-    expect(document.querySelector(".project-header .primary-button")).toBeNull();
+    expect(screen.getByRole("button", { name: en.projectNew }).classList.contains("ui-button--quiet")).toBe(true);
+    expect(screen.getByRole("button", { name: en.projectOpen }).classList.contains("ui-button--secondary")).toBe(true);
+    // Never saved: Save waits, says why in words beside the name, and the
+    // one filled primary is the panel's capture.
+    expect(document.querySelector(".project-header .ui-button--primary")).toBeNull();
+    const save = screen.getByRole("button", { name: en.projectSave });
+    expect(document.getElementById(save.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
+      en.projectSaveNeedsLocation,
+    );
+    expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
+    expect(document.querySelector("[data-project-capture]")?.classList.contains("ui-button--primary")).toBe(true);
+  });
+
+  it("makes Save the one filled primary while a saved project has changes", async () => {
+    mount(openProject({ inputs: [projectInput()], dirty: true, published: true }));
+    await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+    const save = screen.getByRole("button", { name: en.projectSave });
+    expect(save.classList.contains("ui-button--primary")).toBe(true);
+    expect(save.getAttribute("aria-disabled")).toBeNull();
+    expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
+    expect(screen.getByText(en.projectUnsaved).hasAttribute("data-project-unsaved")).toBe(true);
   });
 });

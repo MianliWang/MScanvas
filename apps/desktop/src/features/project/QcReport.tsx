@@ -72,9 +72,11 @@ export function QcReport({ artifactId, snapshot, sourceName, recordedWhen }: QcR
     >
       {/* Focusable from script only: a capture moves the keyboard here, to
           what it produced, and the shared focus ring shows it. */}
-      <h3 id="qc-report-title" tabIndex={-1}>
-        {t("qcReportTitle")}
-      </h3>
+      <div className="project-section-head">
+        <h3 id="qc-report-title" tabIndex={-1}>
+          {t("qcReportTitle")}
+        </h3>
+      </div>
       <p className="qc-report-of" data-qc-report-source="">
         {sourceName === null ? t("provenanceRelatedGone") : sourceName}
         {recordedWhen === null ? null : (
