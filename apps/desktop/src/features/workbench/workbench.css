@@ -214,7 +214,10 @@
 .plot-axis-title-x { grid-column: 2; grid-row: 2; justify-self: end; max-width: 60%; padding-left: 6px; background: var(--color-surface); }
 .plot-x-ticks, .plot-y-ticks { position: relative; min-width: 0; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
 .plot-x-ticks { grid-column: 2; grid-row: 2; }
-.plot-y-ticks { grid-column: 1; grid-row: 1; }
+/* A fixed width, wide enough for the longest label the ticks write ("-1.5e+6"):
+   sized from the labels, the drawing would move when a gesture redraws them,
+   and a plot whose box moves abandons the gesture. */
+.plot-y-ticks { grid-column: 1; grid-row: 1; width: calc(7ch + 8px); }
 /* The chromatogram's value labels sit in its drawing's own left gutter. */
 .chromatogram-y-ticks { grid-column: 2; justify-self: start; width: 6.4%; }
 .plot-tick { position: absolute; color: var(--color-text-tertiary); line-height: 14px; white-space: nowrap; }

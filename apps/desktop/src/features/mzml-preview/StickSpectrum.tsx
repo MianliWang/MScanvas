@@ -601,10 +601,7 @@ export function StickSpectrum({
           placed by percentage, so no plot height distorts it. */}
       <div className="plot-frame spectrum-frame">
         <p className="plot-axis-title plot-axis-title-y">{valueTitle}</p>
-        {/* As wide as its longest label: the labels are placed absolutely, so
-            they cannot size the column themselves. */}
-        <div aria-hidden="true" className="plot-y-ticks"
-          style={{ width: `calc(${String(Math.max(0, ...valueTicks.map(tick => tick.label.length)))}ch + 8px)` }}>
+        <div aria-hidden="true" className="plot-y-ticks">
           {valueTicks.map(tick => <span className="plot-tick" key={tick.value} style={{ top: `${(valueY(tick.value) / PLOT_HEIGHT) * 100}%` }}>
             {tick.label}</span>)}
         </div>
