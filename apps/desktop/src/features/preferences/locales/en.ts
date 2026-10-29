@@ -657,6 +657,8 @@ export const en = {
   dissolveGroup: "Dissolve group",
   moveGroupUp: "Move group up",
   moveGroupDown: "Move group down",
+  moveGroupFirst: "Already the first group",
+  moveGroupLast: "Already the last group",
   ungrouped: "Ungrouped",
   moveToGroup: "Move to group",
   undoOrganization: "Undo organization",

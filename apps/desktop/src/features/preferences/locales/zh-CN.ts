@@ -657,6 +657,8 @@ export const zhCN = {
   dissolveGroup: "解散分组",
   moveGroupUp: "上移分组",
   moveGroupDown: "下移分组",
+  moveGroupFirst: "已是第一个分组",
+  moveGroupLast: "已是最后一个分组",
   ungrouped: "未分组",
   moveToGroup: "移动到分组",
   undoOrganization: "撤销组织操作",

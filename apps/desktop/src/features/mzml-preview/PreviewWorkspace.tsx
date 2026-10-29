@@ -221,8 +221,11 @@ export function PreviewWorkspace() {
   const drawerKeys = (event: ReactKeyboardEvent<HTMLElement>) => {
     // Only from inside the drawer's own DOM: a menu or dialog portalled out of
     // it handles its own Esc, and React would bubble that one here too.
+    // A drag in the roster owns Esc: it cancels the drag and nothing else.
+    // dnd-kit's pointer sensor hears the key at the body, after this handler.
     if (event.key !== "Escape" || drawer === null || event.defaultPrevented || event.nativeEvent.isComposing
-      || !event.currentTarget.contains(event.target as Node)) return;
+      || !event.currentTarget.contains(event.target as Node)
+      || event.currentTarget.querySelector('[data-drag-active="true"]') !== null) return;
     event.preventDefault();
     closeDrawer(true);
   };
@@ -406,22 +409,6 @@ export function PreviewWorkspace() {
     !workspace.previewBackendBusy &&
     (!workspace.conversion.busy || workspace.conversion.adopting) &&
     !workspace.conversion.backendQuarantined;
-  // The evidence pane's one next step, reading the retained acquisition again,
-  // holds the filled accent while it is on screen; `Add files…` gives it up
-  // rather than offer a second (PM9 UI-19). In the constrained layout the two
-  // are never on screen together -- an open roster takes the pane's place --
-  // so there it keeps the accent.
-  const reopenOffered =
-    !constrained &&
-    surface === "workbench" &&
-    workspace.activeDataset !== null &&
-    preview.status !== "loaded" &&
-    preview.status !== "opening" &&
-    preview.status !== "failed";
-  // The empty Project's New project is that surface's one next step (PM9.7
-  // F2), so `Add files…` gives up the accent beside it for the same reason.
-  const addFilesQuiet =
-    reopenOffered || (!constrained && surface === "project" && !project.state.open);
   // There is deliberately no `canConvert` here any more. Converting had an
   // expression of its own on this line, strictly wider than the guard the
   // operation applied, and the panel's `Retry` answered to it as well -- three
@@ -676,30 +663,8 @@ export function PreviewWorkspace() {
           </div>
         ) : null}
 
-        {workspace.dropSubscriptionError === null ? null : (
-          // Connectivity is not a failed import: Rust may still hold a valid
-          // roster and the picker actions remain usable. Keep its recovery and
-          // wording separate from the error for one accepted Drop below.
-          <div className="notice notice-danger">
-            <strong>{t("dropUnavailable")}</strong>
-            <span>{ownedErrorMessage(workspace.dropSubscriptionError, t)}</span>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={(event) => {
-                // Keyboard activation has click detail zero. A real pointer
-                // press focuses the button before click, so activeElement on
-                // its own would manufacture a keyboard debt for mouse users.
-                if (event.detail === 0 && document.activeElement === event.currentTarget) {
-                  setRestoreAddFilesFocusToken((token) => token + 1);
-                }
-                workspace.retryDropSubscription();
-              }}
-            >
-              {t("dropReconnect")}
-            </Button>
-          </div>
-        )}
+        {/* Drop connectivity has no banner: the status bar already says file
+            drop is unavailable, and carries its reconnect beside it. */}
 
         {workspace.dropError === null ? null : (
           // The permanently mounted drop live region below is the one
@@ -897,7 +862,9 @@ export function PreviewWorkspace() {
               panels.navigate();
             }}
             onAddFiles={workspace.addFiles}
-            addFilesQuiet={addFilesQuiet}
+            // The first run's one primary (spec 3.3, 3.6): while the roster is
+            // on screen the evidence leaves the Add actions to it.
+            addFilesPrimary={surface === "workbench" && evidenceState === "first-run"}
             onAddFolder={workspace.addFolder}
             // The Workbench's one route to batch conversion. Elsewhere the
             // surface has its own next step, and on Conversion its own Convert.
@@ -1193,7 +1160,20 @@ export function PreviewWorkspace() {
         </section>
       </main>
       <WorkbenchStatusBar backend={backendItem} items={statusItems} busy={busyReason}
-        dropStatus={workspace.dropSubscriptionStatus} onNavigate={setSurface} inert={drawer !== null} />
+        dropStatus={workspace.dropSubscriptionStatus} onNavigate={setSurface} inert={drawer !== null}
+        // Connectivity is not a failed import: Rust may still hold a valid
+        // roster and the picker actions remain usable, so its recovery stays
+        // separate from the error for one accepted Drop.
+        dropProblem={workspace.dropSubscriptionError === null ? null : ownedErrorMessage(workspace.dropSubscriptionError, t)}
+        onReconnectDrop={(event) => {
+          // Keyboard activation has click detail zero. A real pointer press
+          // focuses the button before click, so activeElement on its own would
+          // manufacture a keyboard debt for mouse users.
+          if (event.detail === 0 && document.activeElement === event.currentTarget) {
+            setRestoreAddFilesFocusToken((token) => token + 1);
+          }
+          workspace.retryDropSubscription();
+        }} />
     </div>
   );
 }

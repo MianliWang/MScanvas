@@ -1229,11 +1229,12 @@ describe("native Explorer drop presentation", () => {
     const api = createFakePreviewApi({ availability: unavailableBackend });
     renderApp(api, transport);
 
-    expect(await screen.findByText("Explorer drag-and-drop is unavailable")).toBeVisible();
-    expect(
-      screen.getByText(/Explorer drag-and-drop could not connect\./u, { selector: "span:not([class])" }),
-    ).toBeVisible();
-    expect(screen.getByText("File drop unavailable; use Add files")).toBeVisible();
+    // Said once, in the status bar, with its reconnect beside it: no banner
+    // repeats it. What went wrong is the hint's title and the drop region's.
+    const hint = await screen.findByText("File drop unavailable; use Add files");
+    expect(hint).toBeVisible();
+    expect(hint).toHaveAttribute("title", "Explorer drag-and-drop could not connect.");
+    expect(screen.queryByText("Explorer drag-and-drop is unavailable")).toBeNull();
     expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
       /Explorer drag-and-drop is unavailable\..*Explorer drag-and-drop could not connect\./u,
     );
@@ -1247,7 +1248,7 @@ describe("native Explorer drop presentation", () => {
     retry.focus();
     fireEvent.click(retry, { detail: 0 });
     expect(addFiles).toHaveFocus();
-    expect(screen.queryByText("Explorer drag-and-drop is unavailable")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try connecting again" })).toBeNull();
     // Nothing is said about a gesture that cannot work yet.
     expect(document.querySelector(".workspace-drop-hint")).toBeNull();
 

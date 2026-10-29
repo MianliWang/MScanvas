@@ -1739,7 +1739,11 @@ describe("the two ways of adding acquisitions", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Try reading it again" })).toBeDisabled();
+    // Refused, not disabled: a Tab stop that points at the shell's busy reason.
+    const retry = screen.getByRole("button", { name: "Try reading it again" });
+    expect(retry).toBeEnabled();
+    expect(retry).toHaveAttribute("aria-disabled", "true");
+    expect(retry.getAttribute("aria-describedby")).toContain("shell-status-busy");
   });
 
   it("says nothing about a scan while the roster is idle", () => {

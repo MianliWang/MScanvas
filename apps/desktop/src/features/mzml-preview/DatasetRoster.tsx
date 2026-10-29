@@ -10,6 +10,7 @@ import type { RosterProjection } from "./rosterView";
 import type { RosterLoadState } from "./usePreviewWorkspace";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 import { ownedErrorMessage } from "./ownedErrorMessages";
+import { STATUS_BUSY_ID } from "../workbench/StatusBar";
 
 export interface DatasetRosterProps {
   readonly activeClearFocusReturn?: ActiveClearFocusReturn | null;
@@ -24,10 +25,10 @@ export interface DatasetRosterProps {
   readonly dispatch: (action: RosterAction) => void;
   readonly onAddFiles: () => void;
   /**
-   * Ignored. `Add files…` here is always secondary since the v5.11 rebuild:
-   * the first-run evidence state carries the filled accent instead.
+   * Whether `Add files…` is the surface's one primary: the first run, while the
+   * evidence leaves its own Add actions to the roster on screen.
    */
-  readonly addFilesQuiet?: boolean;
+  readonly addFilesPrimary?: boolean;
   readonly onAddFolder: () => void;
   /**
    * Converts the checked rows: scope "selected", then the Conversion surface.
@@ -149,6 +150,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   onReloadRoster,
   dispatch,
   onAddFiles,
+  addFilesPrimary = false,
   onAddFolder,
   onConvertChecked,
   onRemoveSelected,
@@ -988,6 +990,7 @@ export const DatasetRoster = memo(function DatasetRoster({
             }}
             ref={addFilesRef}
             size="sm"
+            variant={addFilesPrimary ? "primary" : "secondary"}
           >
             {t("addFiles")}
           </Button>
@@ -1044,7 +1047,7 @@ export const DatasetRoster = memo(function DatasetRoster({
           {state.query ? <Button onClick={clearSearch} size="sm">{t("clearSearch")}</Button> : null}
         </div> : rowCount === 0 ? <div className="empty-state roster-empty">
           {load.status === "failed" ? <><strong>{t("rosterFailed")}</strong><span>{ownedErrorMessage(load.error, t)}</span>
-            <Button disabled={!canReloadRoster} onClick={onReloadRoster} size="sm">{t("rosterRetry")}</Button></> :
+            <Button refused={!canReloadRoster} reasonId={STATUS_BUSY_ID} onClick={onReloadRoster} size="sm">{t("rosterRetry")}</Button></> :
             load.status === "loading" ? <strong>{t("rosterLoading")}</strong> :
               <><strong>{t("rosterEmpty")}</strong>{dropAvailable ? <span>{t("rosterEmptyHelp")}</span> : null}</>}
         </div> : null} />

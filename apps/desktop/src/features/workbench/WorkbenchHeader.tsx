@@ -75,8 +75,10 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, convers
     <Menu.Root>
       <Menu.Trigger asChild>
         <Button variant="quiet" size="sm" className="workbench-project-trigger" data-project-menu=""
-          aria-current={surface === "project" ? "page" : undefined} icon={<Icon name="layers" />}>
+          aria-current={surface === "project" ? "page" : undefined}>
           {t("projectSurface")}
+          {/* A menu, not a third tab: the tabs carry no icon, the menu says it opens. */}
+          <Icon name="chevronDown" size={14} />
           {/* Visual only: the status bar says what the project is doing, and a
               name added here would change the trigger's accessible name. */}
           {working ? <span className="project-work-dot" aria-hidden="true" data-project-work-dot="" /> : null}

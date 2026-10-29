@@ -239,8 +239,13 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
         else if (!menuTrigger.current?.isConnected && fallback?.isConnected) { event.preventDefault(); fallback.focus(); }
       }}>
         <Menu.Item onSelect={() => { openingDialog.current = true; onRename({ id: group.id, name: group.name, returnTo: menuTrigger.current }); }}>{t("renameGroup")}</Menu.Item>
-        <Menu.Item disabled={index <= 1} onSelect={() => { const targetId = state.organization.groups[index - 1]?.id; if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } }); }}>{t("moveGroupUp")}</Menu.Item>
-        <Menu.Item disabled={index === state.organization.groups.length - 1} onSelect={() => { const targetId = state.organization.groups[index + 1]?.id; if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } }); }}>{t("moveGroupDown")}</Menu.Item>
+        {/* Refused, not disabled: each stays reachable and says why (spec 1.4). */}
+        {([["moveGroupUp", index <= 1, -1, "moveGroupFirst"], ["moveGroupDown", index === state.organization.groups.length - 1, 1, "moveGroupLast"]] as const).map(([label, refused, step, reason]) =>
+          <Menu.Item key={label} aria-disabled={refused || undefined} onSelect={event => {
+            if (refused) { event.preventDefault(); return; }
+            const targetId = state.organization.groups[index + step]?.id;
+            if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } });
+          }}>{t(label)}{refused ? <span className="plot-menu-reason">{t(reason)}</span> : null}</Menu.Item>)}
         <Menu.Separator /><Menu.Item onSelect={() => dispatch({ type: "organization", action: { type: "dissolve", groupId: group.id } })}>{t("dissolveGroup")}</Menu.Item>
       </Menu.Content></Menu.Portal></Menu.Root></div> : null}
   </div>;
