@@ -76,8 +76,11 @@ picker) and no switch.
 
 ### 1. Three tiers, and what "known to lose data" means
 
-Every option of the verified build's help is in exactly one tier. The
-inventory assigns all 103 rows.
+Every option of the verified build's help gets a tier. The inventory assigns
+all 103 rows. A row's tier can depend on the combination and the source family:
+`--64` is verified in its measured combinations and advanced otherwise, and
+bare `peakPicking` is blocked on Thermo RAW. A row covered by another, such as
+`-n/--numpressAll` or `analyzerType`, names the row that covers it.
 
 - **Verified default.** All of ADR 0043's three admission questions hold:
   the combination is one of the measured rows; the build is the verified
