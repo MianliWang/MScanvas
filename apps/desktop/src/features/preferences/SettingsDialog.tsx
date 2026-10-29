@@ -197,7 +197,7 @@ export function SettingsDialog() {
             </SettingField>
             {/* The shell's layout region is aria-hidden behind this modal, so
                 the dialog says it here. Mounted empty, so the change is heard. */}
-            <p aria-live="polite" className="visually-hidden">
+            <p aria-live="polite" className="visually-hidden" data-live-region="settings-layout">
               {panels.announcement === "reset" ? message("layoutResetDone") : ""}
             </p>
             {preferences.problem === null ? null : <div className="settings-resource-error" role="alert" id={problemId}>
