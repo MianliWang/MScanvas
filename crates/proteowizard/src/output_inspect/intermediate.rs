@@ -13,9 +13,8 @@ const MS_LEVEL: &[u8] = b"MS:1000511";
 
 /// Counts of the spectra each non-mzML writer selects, and the X2 fact.
 ///
-/// ponytail: a second bounded pass over an intermediate that `inspect_file`
-/// already read, kept apart so `mzml.rs` stays untouched while it is being
-/// changed elsewhere. Fold these facts into `MzmlFacts` to read the file once.
+/// ponytail: a second bounded read of an intermediate `inspect_file` already
+/// read. Fold these facts into `MzmlFacts` to read the file once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntermediateFacts {
     spectra: u64,
