@@ -204,7 +204,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
         // glyph per trace on purpose (PM9.7 retirement, slice-03 §5; same
         // selector as Chromatogram.test.tsx). Still "no point drawn".
         circles: svg?.querySelectorAll('circle:not([visibility="hidden"])').length ?? 0,
-        toggles: document.querySelectorAll("label.chromatogram-trace-toggle input").length,
+        toggles: document.querySelectorAll(".plot-traces button[aria-pressed]").length,
       };
     }, PLOT);
 
@@ -214,11 +214,12 @@ describe("the linked viewer on the real Tauri WebView", () => {
     expect(await rangeCaption()).toContain("full range");
     const caption = await browser.$(".chromatogram-axis-caption").getText();
     expect(caption).toContain("unit not reported");
-    // The source sentence moved from the caption into the caption's own
-    // "Source and drawing details" disclosure (c12f45d; PM9.7 retirement,
-    // slice-03 §5). Read there, closed or open, with the same meaning.
-    const source = await browser.execute(() =>
-      document.querySelector(".chromatogram-axis-caption + details.plot-source-details")?.textContent ?? "");
+    // The source sentence lives in Details -> Chromatogram source (rebuild
+    // spec 4), so Details is shown before it is read.
+    const details = browser.$('[aria-controls="workbench-inspector"]');
+    if ((await details.getAttribute("aria-expanded")) !== "true") await details.click();
+    await browser.$("#workbench-inspector .inspector-panel").waitForDisplayed({ timeout: 30_000 });
+    const source = await browser.$("#workbench-inspector").getText();
     expect(source).toContain("Per-scan TIC/BPC from the complete scan table");
     expect(source).toContain("Not a stored chromatogram record");
     // Nothing was asked of the backend to draw it.
