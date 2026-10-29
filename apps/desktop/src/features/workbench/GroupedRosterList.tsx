@@ -143,12 +143,15 @@ export function GroupedRosterList(props: Props) {
     latest.current.onRowPress(event, handle);
   }, []);
   const items = useMemo<WindowItem[]>(() => {
+    // An empty list has no groups to show: "Ungrouped 0" under "No
+    // acquisitions yet" would be a heading over nothing.
+    if (state.datasets.length === 0) return [];
     const visible = new Map(projection.datasets.map(row => [row.handle, row]));
     return state.organization.groups.flatMap(group => [
       { key: `group:${group.id}`, group, row: null, estimate: 40 },
       ...group.handles.flatMap(handle => { const row = visible.get(handle); return row === undefined ? [] : [{ key: handle, group, row, estimate: preferences.effective.density === "compact" ? 32 : 44 }]; }),
     ]);
-  }, [state.organization.groups, projection.datasets, preferences.effective.density]);
+  }, [state.datasets.length, state.organization.groups, projection.datasets, preferences.effective.density]);
   const retained = useMemo(() => new Set([state.focused, dragSource].filter((id): id is string => id !== null)), [state.focused, dragSource]);
   const windowing = useRosterWindow(items, retained, dragSource !== null, state.focused);
   const rootRef = useCallback((node: HTMLDivElement | null) => { props.listRef.current = node; windowing.root.current = node; }, [props.listRef, windowing.root]);

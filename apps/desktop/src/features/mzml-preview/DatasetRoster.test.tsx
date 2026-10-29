@@ -1773,6 +1773,28 @@ describe("the roster footer", () => {
   });
 });
 
+describe("a group's menu", () => {
+  it("refuses a move with nowhere to go, keeps it reachable and says why", async () => {
+    render(<Harness />);
+    await chooseRosterAction("newGroup");
+    fireEvent.change(screen.getByRole("textbox", { name: "Group name" }), { target: { value: "Blanks" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save group" }));
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for group Blanks" }), { key: "Enter" });
+    const up = await screen.findByRole("menuitem", { name: /^Move group up/ });
+    const down = screen.getByRole("menuitem", { name: /^Move group down/ });
+    // The one named group sits right under Ungrouped and is the last one.
+    expect(up).toHaveAttribute("aria-disabled", "true");
+    expect(up).toHaveTextContent("Already the first group");
+    expect(down).toHaveAttribute("aria-disabled", "true");
+    expect(down).toHaveTextContent("Already the last group");
+    // Not Radix-disabled: the keyboard can land on it, and choosing it does nothing.
+    expect(up).not.toHaveAttribute("data-disabled");
+    fireEvent.click(up);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+});
+
 describe("the roster search field", () => {
   it("clears with a named icon action inside the field and returns to typing", () => {
     render(<Harness />);

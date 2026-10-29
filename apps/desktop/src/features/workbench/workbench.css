@@ -90,8 +90,10 @@
 .roster-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .roster-title h2 { margin: 0; color: var(--color-text-primary); font-size: 13px; font-weight: 650; line-height: 1.4; }
 .roster-count-tag { margin-left: auto; padding: 0 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-/* Two actions that wrap rather than clip where a label is long. */
-.roster-acquire { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Two actions on one row at the 280 px column in either language (owner
+   review); a longer label wraps rather than clips. */
+.roster-acquire { display: flex; flex-wrap: wrap; gap: 4px; }
+.roster-acquire > .ui-button { padding-inline: 8px; }
 /* v5.11 `.search`: the icon inside the field, the clear action at its edge.
    The browser's own clear glyph would be a second, unnamed one. */
 .roster-search { position: relative; flex: none; margin: 0 12px 10px; }
