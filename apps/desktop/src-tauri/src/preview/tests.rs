@@ -115,7 +115,7 @@ const SPECTRUM_TABLE_OUTPUT: &str = concat!(
     "# sample.mzML\n",
     "index\tid\tevent\tanalyzer\tmsLevel\trt\tmzLow\tmzHigh\tbasePeakMZ\tbasePeakInt\tTIC\t",
     "charge\tprecursorMZ\tthermo_monoMZ\tfilterStringMZ\tionInjectionTime\n",
-    "0\t19\t1\tFTMS\tms1\t0.10\t100\t1000\t445.12\t9000\t120000\t\t\t\t\t\n",
+    "0\t19\t1\tFTMS\tms1\t0.10\t100\t1000\t445.12\t9000\t120000\t\t\t\t\t12.5\n",
     "1\t20\t2\tFTMS\tms2\t0.20\t100\t1000\t333.33\t5000\t60000\t2\t445.12\t\t\t\n",
     "2\t21\t1\tFTMS\tms1\t0.30\t100\t1000\t500.00\t7000\t80000\t\t\t\t\t\n",
 );
@@ -1145,6 +1145,63 @@ fn opening_a_file_returns_typed_metadata_run_summary_and_rows() {
     assert_eq!(preview.spectrum_table.rows[0].precursor_mz, None);
 }
 
+/// The scan context the table reports reaches each row, and what it left empty
+/// arrives as not reported -- a present `null`, never a zero.
+#[test]
+fn a_row_carries_its_scan_context_and_null_where_none_was_reported() {
+    let file = TestFile::new("scan-context");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let preview = service
+        .open_preview(&selected.handle)
+        .expect("preview loads");
+
+    let [first, second, _] = preview.spectrum_table.rows.as_slice() else {
+        panic!("three rows");
+    };
+    assert_eq!(first.analyzer.as_deref(), Some("FTMS"));
+    assert_eq!(first.scan_event.as_deref(), Some("1"));
+    assert_eq!(first.charge, None);
+    assert_eq!(first.ion_injection_time, Some(12.5));
+    assert_eq!(second.scan_event.as_deref(), Some("2"));
+    assert_eq!(second.charge, Some(2.0));
+    assert_eq!(second.ion_injection_time, None);
+
+    let wire = serde_json::to_value(first).expect("a row serializes");
+    assert_eq!(wire["charge"], serde_json::Value::Null);
+    assert_eq!(wire["analyzer"], "FTMS");
+    assert_eq!(wire["scanEvent"], "1");
+    assert_eq!(wire["ionInjectionTime"], 12.5);
+}
+
+/// A selected spectrum carries its own formatter's scan context, and the charge
+/// and injection time of the row it was reconciled with.
+#[test]
+fn a_selected_spectrum_carries_its_scan_context() {
+    let file = TestFile::new("spectrum-context");
+    let service = PreviewService::new(Box::new(FakeProvider::available(linked_responses())));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("preview loads");
+
+    let outcome = service
+        .load_spectrum(&selected.handle, 0)
+        .expect("the spectrum loads");
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome.outcome else {
+        panic!("a present spectrum is not the unavailable outcome");
+    };
+    assert_eq!(spectrum.analyzer.as_deref(), Some("FTMS"));
+    assert_eq!(spectrum.scan_event.as_deref(), Some("1"));
+    assert_eq!(spectrum.filter_string.as_deref(), Some("synthetic"));
+    assert_eq!(spectrum.charge, None, "the row reported no charge");
+    assert_eq!(spectrum.ion_injection_time, Some(12.5));
+
+    let wire = serde_json::to_value(&*spectrum).expect("a spectrum serializes");
+    assert_eq!(wire["charge"], serde_json::Value::Null);
+    assert_eq!(wire["filterString"], "synthetic");
+}
+
 #[test]
 fn one_open_action_resolves_the_backend_once_for_every_panel() {
     let file = TestFile::new("batch");
@@ -1227,6 +1284,8 @@ fn a_selected_spectrum_returns_its_arrays_and_canonical_identity() {
     assert!(!spectrum.representation_known);
     assert!(!spectrum.value_units_known);
     assert!(!spectrum.retention_time.unit_known);
+    // No preview was opened, so no row was there to supply these.
+    assert_eq!((spectrum.charge, spectrum.ion_injection_time), (None, None));
 }
 
 #[test]
@@ -25460,8 +25519,8 @@ fn a_claimed_export_survives_a_replacement_that_was_refused_early() {
     // rebound it onto whatever is loaded now.
     assert_eq!(
         claimed.snapshot.source().scan_count(),
-        3,
-        "the export writes the run it was begun on",
+        2,
+        "the export writes the run it was begun on: its two MS1 scans",
     );
     assert_eq!(
         claimed.suggested_file_name(),
@@ -26107,7 +26166,7 @@ fn a_saved_linked_figure_is_named_as_what_it_holds_and_replaces_nothing() {
     assert_eq!(file_name, "linked.svg");
     assert_eq!(figure.dpi, None, "a vector document has no resolution");
     assert_eq!(range_scope, "full");
-    assert_eq!(source_scan_count, 3);
+    assert_eq!(source_scan_count, 2, "the run's two MS1 scans");
     assert_eq!(selected_index, 0);
     assert!(
         (selected_retention_time - 0.10).abs() < 1e-9,

@@ -529,6 +529,15 @@ export interface SpectrumRow {
   readonly basePeakIntensity: number;
   readonly totalIonCurrent: number;
   readonly precursorMz: number | null;
+  /**
+   * The scan context the table reported. `null` is not reported — never a zero
+   * or an empty string. The table carries no filter-string text; the selected
+   * spectrum does.
+   */
+  readonly analyzer: string | null;
+  readonly scanEvent: string | null;
+  readonly charge: number | null;
+  readonly ionInjectionTime: number | null;
 }
 
 export interface SpectrumTable {
@@ -669,6 +678,17 @@ export interface SelectedSpectrum {
   /** How many precursors the spectrum really has. */
   readonly totalPrecursorCount: number;
   readonly precursorsTruncated: boolean;
+  /** The scan context, under the row's names. `null` is not reported. */
+  readonly analyzer: string | null;
+  readonly scanEvent: string | null;
+  readonly filterString: string | null;
+  /**
+   * From the spectrum-table row this spectrum was reconciled with, because the
+   * selected-spectrum formatter emits neither. `null` where that row reported
+   * none or no row was reconciled.
+   */
+  readonly charge: number | null;
+  readonly ionInjectionTime: number | null;
   /** No profile/centroid marker was emitted, so none may be displayed. */
   readonly representationKnown: boolean;
   /** No array unit was emitted, so none may be displayed. */
@@ -922,7 +942,10 @@ export type ChromatogramExportOutcome =
       readonly rangeScope: ChromatogramRangeScope;
       readonly rangeLow: number;
       readonly rangeHigh: number;
-      /** How many scans the run holds, counted by Rust rather than here. */
+      /**
+       * How many scans of the chromatogram's MS level (MS1 by default) the run
+       * holds, counted by Rust rather than here.
+       */
       readonly sourceScanCount: number;
       /**
        * How many source scans the data document carries. `null` for a figure.

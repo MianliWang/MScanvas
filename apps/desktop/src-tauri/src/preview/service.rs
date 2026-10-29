@@ -20,7 +20,8 @@ use mscanvas_proteowizard::{
     ConversionSourceKind, LocalFileWriteError, LocalFileWriteFailure, MetadataEntry,
     MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult, PreviewOutcome,
     PreviewValue, Redactor, RunSummaryResult, SelectedSpectrumResult, Sha256Digest,
-    SpectrumIdentity, SpectrumTableResult, UnitState as SourceUnitState, write_new_local_file,
+    SpectrumIdentity, SpectrumTableResult, SpectrumTableRow, UnitState as SourceUnitState,
+    write_new_local_file,
 };
 
 use super::chromatogram::{
@@ -3020,21 +3021,7 @@ impl PreviewService {
         &self,
         table: &SpectrumTableResult,
     ) -> Arc<Vec<TableRowFacts>> {
-        Arc::new(
-            table
-                .rows()
-                .iter()
-                .map(|row| TableRowFacts {
-                    identity: row.identity().clone(),
-                    ms_level: row.ms_level(),
-                    retention_time: row.retention_time().value(),
-                    retention_time_unit_known: reported_unit_known(row.retention_time()),
-                    base_peak_mz: row.base_peak_mz(),
-                    base_peak_intensity: row.base_peak_intensity(),
-                    total_ion_current: row.total_ion_current(),
-                })
-                .collect(),
-        )
+        Arc::new(table.rows().iter().map(TableRowFacts::from_row).collect())
     }
 
     /// Retains one synthetic chromatogram as if a preview open had produced it.
@@ -7069,21 +7056,7 @@ impl PreviewService {
                         run_summary = Some((run_summary_dto(&result)?, result, ran_on));
                     }
                     PreviewValue::SpectrumTable(result) => {
-                        table_rows = result
-                            .rows()
-                            .iter()
-                            .map(|row| TableRowFacts {
-                                identity: row.identity().clone(),
-                                ms_level: row.ms_level(),
-                                retention_time: row.retention_time().value(),
-                                retention_time_unit_known: reported_unit_known(
-                                    row.retention_time(),
-                                ),
-                                base_peak_mz: row.base_peak_mz(),
-                                base_peak_intensity: row.base_peak_intensity(),
-                                total_ion_current: row.total_ion_current(),
-                            })
-                            .collect();
+                        table_rows = result.rows().iter().map(TableRowFacts::from_row).collect();
                         spectrum_table = Some(spectrum_table_dto(&result, &redactor)?);
                     }
                     PreviewValue::Tic(_) | PreviewValue::SelectedSpectrum(_) => {
@@ -7411,7 +7384,7 @@ impl PreviewService {
                     // If they disagree about which scan this index is, the row
                     // the user clicked and the panel beside it would describe
                     // different spectra, so the result is refused instead.
-                    if let Some(expected) = expected_row {
+                    if let Some(expected) = expected_row.as_ref() {
                         if expected.identity.reconcile(spectrum.identity()).is_err() {
                             return Err(PreviewErrorDto::new(
                                 "spectrum_identity_conflict",
@@ -7438,6 +7411,9 @@ impl PreviewService {
                     let snapshot = self.spectrum_export_slot().install(id, spectrum);
                     let projected = selected_spectrum_dto(
                         snapshot.spectrum(),
+                        // Reconciled above whenever there is one, so what it
+                        // adds describes this spectrum.
+                        expected_row.as_ref(),
                         &redactor,
                         snapshot.token().as_wire(),
                         // The verdict this snapshot settled when it was
@@ -7539,6 +7515,12 @@ pub(super) fn displayable_identifier(raw: &str, redactor: &Redactor) -> String {
     bounded_text(&redacted, MAX_IDENTIFIER_CHARS)
 }
 
+/// One backend scan-context string as the webview may show it, or `None` where
+/// the backend left it empty -- not reported, rather than an empty value.
+fn reported_text(raw: &str, redactor: &Redactor) -> Option<String> {
+    (!raw.trim().is_empty()).then(|| displayable_identifier(raw, redactor))
+}
+
 /// What the spectrum table said about one row.
 //
 // Kept so a selected spectrum can be checked against the row that produced
@@ -7558,9 +7540,28 @@ pub(super) struct TableRowFacts {
     base_peak_mz: f64,
     base_peak_intensity: f64,
     total_ion_current: f64,
+    /// Carried for the selected spectrum, whose own formatter emits neither.
+    charge: Option<f64>,
+    ion_injection_time: Option<f64>,
 }
 
 impl TableRowFacts {
+    /// The facts one parsed table row contributes, in the one shape every
+    /// retained table is built through.
+    fn from_row(row: &SpectrumTableRow) -> Self {
+        Self {
+            identity: row.identity().clone(),
+            ms_level: row.ms_level(),
+            retention_time: row.retention_time().value(),
+            retention_time_unit_known: reported_unit_known(row.retention_time()),
+            base_peak_mz: row.base_peak_mz(),
+            base_peak_intensity: row.base_peak_intensity(),
+            total_ion_current: row.total_ion_current(),
+            charge: row.charge(),
+            ion_injection_time: row.ion_injection_time(),
+        }
+    }
+
     pub(super) const fn identity(&self) -> &SpectrumIdentity {
         &self.identity
     }
@@ -7607,6 +7608,8 @@ impl TableRowFacts {
             base_peak_mz: 400.0,
             base_peak_intensity,
             total_ion_current,
+            charge: None,
+            ion_injection_time: None,
         }
     }
 
@@ -8044,6 +8047,10 @@ fn spectrum_table_dto(
             base_peak_intensity: require_finite(row.base_peak_intensity())?,
             total_ion_current: require_finite(row.total_ion_current())?,
             precursor_mz: require_finite_option(row.precursor_mz())?,
+            analyzer: reported_text(row.analyzer(), redactor),
+            scan_event: reported_text(row.event(), redactor),
+            charge: require_finite_option(row.charge())?,
+            ion_injection_time: require_finite_option(row.ion_injection_time())?,
         });
     }
     Ok(SpectrumTableDto {
@@ -8055,6 +8062,7 @@ fn spectrum_table_dto(
 
 fn selected_spectrum_dto(
     spectrum: &SelectedSpectrumResult,
+    reconciled_row: Option<&TableRowFacts>,
     redactor: &Redactor,
     export_token: String,
     viewport_domain: projection::ViewportDomain,
@@ -8104,6 +8112,19 @@ fn selected_spectrum_dto(
         precursors,
         total_precursor_count,
         precursors_truncated: total_precursor_count > MAX_PRECURSORS,
+        analyzer: spectrum
+            .mass_analyzer_type()
+            .and_then(|value| reported_text(value, redactor)),
+        scan_event: spectrum
+            .scan_event()
+            .and_then(|value| reported_text(value, redactor)),
+        filter_string: spectrum
+            .filter_string()
+            .and_then(|value| reported_text(value, redactor)),
+        charge: require_finite_option(reconciled_row.and_then(|row| row.charge))?,
+        ion_injection_time: require_finite_option(
+            reconciled_row.and_then(|row| row.ion_injection_time),
+        )?,
         // The measured selected-spectrum formatter emits neither a
         // profile/centroid marker nor array units, so both stay unknown.
         representation_known: false,

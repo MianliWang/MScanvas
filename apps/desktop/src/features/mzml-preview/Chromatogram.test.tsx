@@ -61,6 +61,10 @@ function runOf(scans: readonly Scan[], truncated = false): ScanModel {
     basePeakIntensity: scan.bpc,
     totalIonCurrent: scan.tic,
     precursorMz: null,
+    analyzer: null,
+    scanEvent: null,
+    charge: null,
+    ionInjectionTime: null,
   }));
   return buildPreviewScanModel({
     rows,
