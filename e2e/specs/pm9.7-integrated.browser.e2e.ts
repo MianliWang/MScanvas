@@ -37,8 +37,8 @@ const ANCHORS = [
 const REDUCED_MOTION_NOTICE = "You have Reduced Motion enabled on your device";
 const CONVERT = "button.conversion-start";
 const ROSTER_TOGGLE = '[aria-controls="workbench-roster"]';
-/** DESIGN_SYSTEM's focus ring: 2 px, solid, the one focus colour `#1769d1` (UI-46). */
-const RING = "2px solid rgb(23, 105, 209)";
+/** DESIGN_SYSTEM's focus ring: 2 px, solid, the one focus colour, `#1769e0` since the rebuild's tokens (spec 1.3; UI-46). */
+const RING = "2px solid rgb(23, 105, 224)";
 
 async function frames() {
   await browser.execute(

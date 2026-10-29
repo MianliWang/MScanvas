@@ -308,15 +308,15 @@ describe("the linked viewer, rendered", () => {
           expect(button.bottom).toBeLessThanOrEqual(table.bottom + 0.5);
         }
 
-        // Stacked, not overlapping. Two panels sharing pixels would hide rows
-        // behind a plot, which is the failure a screenshot would show and a
-        // unit test could not.
-        // In M7.3's order: chromatogram, selected spectrum, then scans (this
-        // was written for chromatogram, scans, spectrum; PM9.3).
+        // Clear of each other, not overlapping. Two panels sharing pixels would
+        // hide rows behind a plot, which is the failure a screenshot would show
+        // and a unit test could not. In the rebuild's order (spec 3.1): the
+        // chromatogram across the top, then the scans left of the spectrum.
         const chromatogram = await boxOf(CHROMATOGRAM);
         const spectrum = await boxOf(SPECTRUM);
         expect(chromatogram.bottom).toBeLessThanOrEqual(spectrum.top + 0.5);
-        expect(spectrum.bottom).toBeLessThanOrEqual(table.top + 0.5);
+        expect(chromatogram.bottom).toBeLessThanOrEqual(table.top + 0.5);
+        expect(table.right).toBeLessThanOrEqual(spectrum.left + 0.5);
         expect(table.height).toBeGreaterThan(0);
         expect(spectrum.height).toBeGreaterThan(0);
 
@@ -1062,7 +1062,8 @@ describe("the linked viewer, rendered", () => {
             continue;
           }
           const before = await rangeCaption();
-          await browser.$(`button=${label}`).click();
+          // Icon buttons since the rebuild (spec 3.4), so found by their names.
+          await browser.$(`button[aria-label="${label}"]`).click();
           await browser.waitUntil(async () => (await rangeCaption()) !== before, {
             timeout: 10_000,
             timeoutMsg: `${label} was offered and changed nothing`,

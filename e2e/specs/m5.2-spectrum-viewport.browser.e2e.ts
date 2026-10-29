@@ -63,6 +63,7 @@ import {
   spectrumStatus,
   viewerReads,
 } from "../support/viewer";
+import { cdp, metrics } from "../support/cdp";
 
 const VIEWPORTS = [
   { name: "1366x768", width: 1_366, height: 768 },
@@ -754,7 +755,17 @@ describe("the visible m/z viewport", () => {
       // panel cancels and then does not use is still a scroll taken away.
       await openTheSpectrum({ width: 1_366, height: 768 });
       await waitForTheDrawing();
+      // The window size the opener sets leaves a smaller page; the claim is
+      // about a 1366x768 page, so the page is sized exactly, then restored.
+      await metrics(1_366, 768);
+      try {
+        await measureTheColumn();
+      } finally {
+        await cdp("Emulation.clearDeviceMetricsOverride", {});
+      }
+    });
 
+    async function measureTheColumn(): Promise<void> {
       const stack = await stackOverflow();
       expect(stack.overflowY).toBe("auto");
       expect(stack.clientHeight).toBeGreaterThan(0);
@@ -784,7 +795,7 @@ describe("the visible m/z viewport", () => {
         expect(plot!.bottom).toBeLessThanOrEqual(plots.innerHeight);
         expect(plot!.unobstructed).toBe(true);
       }
-    });
+    }
 
     it("claims a wheel that narrows the range, and moves the range with it", async () => {
       await openTheSpectrum({ width: 1_366, height: 768 });

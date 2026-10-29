@@ -7,6 +7,9 @@ import type { FigurePreviewRequest, WorkspaceConversionUpdate } from "../../apps
 import { ipcTable } from "../support/fixtures";
 import { consoleEntries, heldCallers, holdInvoke, installIpcBoundary, IPC_TABLE_KEY, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
+import { FIGURE_DIALOG, figureActions, openPlotMenu, plotMenuItem, plotMenuTrigger } from "../support/figure";
+
+const CHROMATOGRAM = "section.chromatogram-panel";
 
 const authority = availableBackend.authority;
 const names = ["Synthetic sample 空格 very-long-member-0001.mzML", "Synthetic sample 空格 very-long-member-0002.mzML"];
@@ -151,18 +154,29 @@ describe("M7.4 conversion, recovery and export composition", () => {
     const words = UI_RESOURCES[locale];
     await open(locale === "en" ? 1366 : 960, locale === "en" ? 768 : 640);
     await preferences(locale, "comfortable");
-    await expect(browser.$("button=" + words.figurePreviewLinked)).not.toExist();
+    // The linked figure is the chromatogram's More menu item "Linked figure…"
+    // since the rebuild (spec 3.4). Its reason is printed inside the item, and
+    // a dialog it opens returns the keyboard to the menu trigger.
+    await expect(browser.$(plotMenuItem(words.figurePreviewLinked))).not.toExist();
     await viewer(false);
-    await click("#chromatogram-export-toggle");
-    const entry = browser.$("button=" + words.figurePreviewLinked);
+    const more = browser.$(plotMenuTrigger(CHROMATOGRAM));
+    const entry = browser.$(plotMenuItem(words.figurePreviewLinked));
     const previewCalls = async () => (await ipcCalls()).filter(call => call.command === "preview_figure");
     const blocked = async (reason: string, phase: string) => {
-      await expect(entry).toBeDisabled();
-      await expect(entry).toHaveAttribute("aria-describedby", "chromatogram-linked-unavailable");
-      await expect(browser.$("#chromatogram-linked-unavailable")).toHaveText(reason);
-      await entry.scrollIntoView({ block: "center" }); await entry.click();
-      await expect(browser.$(".figure-export-dialog")).not.toExist();
+      await openPlotMenu(CHROMATOGRAM);
+      await expect(entry).toHaveAttribute("aria-disabled", "true");
+      await expect(entry.$(".plot-menu-reason")).toHaveText(reason);
+      await entry.click();
+      await expect(browser.$(FIGURE_DIALOG)).not.toExist();
       await capture("linked-entry-" + phase + "-" + locale);
+      await browser.keys("Escape");
+      await expect(more).toBeFocused();
+    };
+    const opened = async () => {
+      await openPlotMenu(CHROMATOGRAM);
+      await expect(entry).not.toHaveAttribute("aria-disabled");
+      await entry.click();
+      await browser.$(".figure-preview img").waitForDisplayed();
     };
     await blocked(words.linkedNoSpectrum, "no-spectrum");
     expect(await previewCalls()).toHaveLength(0);
@@ -172,28 +186,33 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await blocked(words.linkedLoading, "loading");
     expect(await previewCalls()).toHaveLength(0);
     await releaseInvokeHold("load_selected_spectrum");
-    await expect(entry).toBeEnabled();
-    await click("button=" + words.figurePreviewLinked);
-    await browser.$(".figure-preview img").waitForDisplayed();
+    await opened();
     expect((await previewCalls()).at(-1)?.args?.request).toMatchObject({ source: { kind: "linked", traces: { tic: true, bpc: false } } });
     await capture("linked-entry-selected-" + locale);
-    await browser.$(`.figure-export-dialog button[aria-label="${words.figureExportReturn}"]`).click();
-    await expect(entry).toBeFocused();
+    await browser.$(`${FIGURE_DIALOG} button[aria-label="${words.figureExportReturn}"]`).click();
+    await expect(more).toBeFocused();
     const prior = (await previewCalls()).length;
-    await click("label=TIC");
+    // The traces are toggle buttons in the plot head (spec 3.4).
+    await browser.$(`${CHROMATOGRAM} .plot-traces`).$("button=TIC").click();
     await blocked(words.linkedNoTrace, "no-trace");
     expect(await previewCalls()).toHaveLength(prior);
-    await click("label=BPC");
-    await expect(entry).toBeEnabled();
-    await click("button=" + words.figurePreviewLinked);
-    await browser.$(".figure-preview img").waitForDisplayed();
+    await browser.$(`${CHROMATOGRAM} .plot-traces`).$("button=BPC").click();
+    await opened();
     expect((await previewCalls()).at(-1)?.args?.request).toMatchObject({ source: { kind: "linked", traces: { tic: false, bpc: true } } });
-    await browser.$(`.figure-export-dialog button[aria-label="${words.figureExportReturn}"]`).click();
-    await expect(entry).toBeFocused();
+    await browser.$(`${FIGURE_DIALOG} button[aria-label="${words.figureExportReturn}"]`).click();
+    await expect(more).toBeFocused();
+    // The keyboard path: Enter opens the menu, Enter on the item opens the
+    // dialog, and Escape returns to the trigger.
+    await browser.keys("Enter");
+    await browser.$('[role="menuitem"]').waitForDisplayed();
+    await browser.execute((xpath: string) => {
+      const item = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as HTMLElement | null;
+      item?.focus();
+    }, plotMenuItem(words.figurePreviewLinked));
     await browser.keys("Enter");
     await browser.$(".figure-preview img").waitForDisplayed();
     await browser.keys("Escape");
-    await expect(entry).toBeFocused();
+    await expect(more).toBeFocused();
   });
 
   for (const scenario of [
@@ -213,10 +232,13 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await expect(browser.$(".conversion-settings")).toHaveAttribute("data-settings-view", "advanced");
     await browser.$(".conversion-settings").$("button=" + words.cnvBasic).click();
     expect((await ipcCalls()).filter(call => call.command === "describe_workspace_conversion_queue")).toHaveLength(requestCount);
-    await click(".conversion-bound-details summary");
+    // A data list on the summary since the rebuild (spec 5), not a disclosure.
+    await browser.$(".conversion-bound-details").waitForExist();
+    await browser.$(".conversion-bound-details").scrollIntoView({ block: "center" });
     await capture("conversion-results-" + scenario.width);
     await viewer();
-    const entry = browser.$(".spectrum-panel .figure-quick-actions").$("button=" + words.figureExportTitle);
+    // Export… is named "Export figure" (spec 3.4).
+    const entry = browser.$(`${figureActions(".spectrum-panel")} button[aria-label="${words.figureExportTitle}"]`);
     await entry.scrollIntoView({ block: "center" }); await entry.click();
     await browser.$(".figure-preview img").waitForDisplayed();
     // Clicking the actual visible label must target its own raw numeric field.
@@ -325,10 +347,11 @@ describe("M7.4 conversion, recovery and export composition", () => {
     expect((await ipcCalls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(0);
     await clear.click(); await browser.$('[role="dialog"]').$("button=Remove non-running").click();
     await expect(browser.$('[role="dialog"]')).toHaveText(expect.stringContaining(UI_RESOURCES.en.clearStale));
-    await expect(browser.$('[role="dialog"]').$("button=Cancel and clear")).toBeDisabled();
+    // Refused rather than disabled, so its reason stays reachable (spec 1.4).
+    await expect(browser.$('[role="dialog"]').$("button=Cancel and clear")).toHaveAttribute("aria-disabled", "true");
     await capture("active-clear-stale");
     await browser.$('[role="dialog"]').$("button=" + UI_RESOURCES.en.clearReevaluate).click();
-    await expect(browser.$('[role="dialog"]').$("button=Cancel and clear")).toBeEnabled();
+    await expect(browser.$('[role="dialog"]').$("button=Cancel and clear")).not.toHaveAttribute("aria-disabled");
     expect((await ipcCalls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(1);
     await browser.keys("Escape");
   });
@@ -400,7 +423,7 @@ describe("M7.4 conversion, recovery and export composition", () => {
   it("uses the latest preview, keeps DPI PNG-only and makes save cancel distinct from copy", async () => {
     await open(); await viewer();
     await holdInvoke("preview_figure");
-    await browser.$(".spectrum-panel .figure-quick-actions").$("button=Export figure").click();
+    await browser.$(`${figureActions(".spectrum-panel")} button[aria-label="Export figure"]`).click();
     await browser.waitUntil(async () => await heldCallers("preview_figure") === 1);
     await browser.$('.figure-export-dialog input[id$="-widthPx"]').setValue("1400");
     const dialog = browser.$(".figure-export-dialog");
@@ -430,12 +453,15 @@ describe("M7.4 conversion, recovery and export composition", () => {
 
   it("shows an honest empty figure and leaves zero-row data export reachable", async () => {
     await open(960, 640, 2, false, true); await viewer();
-    await browser.$(".spectrum-panel .figure-quick-actions").$("button=Export figure").click();
+    await browser.$(`${figureActions(".spectrum-panel")} button[aria-label="Export figure"]`).click();
     await browser.$(".figure-preview img").waitForDisplayed();
     await expect(browser.$(".figure-preview")).toHaveText(expect.stringContaining(UI_RESOURCES.en.figurePreviewEmpty));
+    // The data export sits in the dialog and in the plot's More menu (spec 3.4, 6).
+    await expect(browser.$(FIGURE_DIALOG).$("button=Export CSV…")).not.toHaveAttribute("aria-disabled");
     await capture("empty-spectrum-preview");
     await browser.keys("Escape");
-    await click(".spectrum-export-disclosure summary");
-    await expect(browser.$(".spectrum-panel .spectrum-data-actions").$("button=Export CSV…")).toBeEnabled();
+    await openPlotMenu(".spectrum-panel");
+    await expect(browser.$(plotMenuItem("Export CSV…"))).not.toHaveAttribute("aria-disabled");
+    await browser.keys("Escape");
   });
 });
