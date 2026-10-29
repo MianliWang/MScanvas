@@ -83,7 +83,14 @@ try {
     # always fires says nothing. The two checks that can actually fail are
     # below: a dev origin reaching the shipped frontend, or reaching the
     # production CSP that is the one applied in a release build.
-    $developmentOrigin = "127.0.0.1:1420"
+    $developmentOrigins = @("127.0.0.1:1420", "localhost:1420")
+
+    # One predicate for the production CSP and its control: a directive is
+    # flagged when it names any development origin.
+    function Select-DevelopmentOriginDirective {
+        param([string[]]$Directives)
+        $Directives | Where-Object { $directive = $_; @($developmentOrigins | Where-Object { $directive -like "*$_*" }).Count -gt 0 }
+    }
 
     function Test-Marker {
         param([string]$Path, [string]$Needle)
@@ -108,6 +115,7 @@ try {
     if (-not (Test-Path -LiteralPath $Executable)) {
         throw "No candidate executable at $Executable; build one first."
     }
+    $executableSha256 = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash.ToLowerInvariant()
 
     $controlAvailable = Test-Path -LiteralPath $ControlExecutable
     # Name the control, so "detectability proven" has an attributable basis
@@ -160,12 +168,21 @@ try {
     # be the one the candidate build recorded: anything that rebuilt it in
     # between (the release workflow once ran `pnpm e2e:build` there, without
     # the Tauri hook's environment) would otherwise be inspected in its place.
+    # The manifest must record a real build of THIS executable: a re-derived
+    # one re-measures whatever dist holds now, and one written for another
+    # executable says nothing about this one.
     $manifestPath = Join-Path $EvidenceRoot "candidate-manifest.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         throw "No candidate manifest at $manifestPath; without it nothing shows apps/desktop/dist is the frontend the candidate shipped."
     }
-    $recordedFrontend = @((Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json).frontendInputs |
-        ForEach-Object { "$($_.path) $($_.sha256)" } | Sort-Object)
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
+    $recordedExecutableSha256 = $manifest["executable"]?["sha256"]
+    if ($manifest["command"] -ne "pnpm tauri build" -or $recordedExecutableSha256 -ne $executableSha256) {
+        throw ("The candidate manifest at $manifestPath does not record a 'pnpm tauri build' of the inspected executable " +
+            "(command '$($manifest["command"])', executable SHA-256 '$recordedExecutableSha256'; inspected $executableSha256), " +
+            "so its frontendInputs say nothing about what this candidate shipped.")
+    }
+    $recordedFrontend = @($manifest["frontendInputs"] | ForEach-Object { "$($_.path) $($_.sha256)" } | Sort-Object)
     $frontendAssets = @(Get-ChildItem -LiteralPath "apps/desktop/dist" -Recurse -File -ErrorAction SilentlyContinue |
         ForEach-Object {
             [ordered]@{
@@ -183,28 +200,30 @@ try {
 
     # Each occurrence of each needle in one file, read as Latin-1 so every byte
     # is one character and an ASCII needle matches exactly the bytes on disk.
-    # An occurrence is exempt only as a message-table key followed by that
-    # table's own value in matching quotes.
+    # An occurrence is exempt only as a message-table key: preceded by '{',
+    # ',', whitespace or a quote, and followed by that table's own value in
+    # matching quotes. The table holds each key once, so a key exempted more
+    # than once across the frontend fails the inspection below.
     function Find-FrontendHit {
         param([string]$Path, [string[]]$Needles, [Collections.IDictionary]$Exempt)
         $text = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($Path))
         foreach ($needle in $Needles) {
             $context = if ($Exempt.Contains($needle)) {
-                [regex]::new('\G["''`]?\s*:\s*(["''`])' + [regex]::Escape($Exempt[$needle]) + '\1')
+                [regex]::new('(?<=[{,\s"''`])\G' + [regex]::Escape($needle) +
+                    '["''`]?\s*:\s*(["''`])' + [regex]::Escape($Exempt[$needle]) + '\1')
             } else { $null }
             $at = $text.IndexOf($needle, [StringComparison]::Ordinal)
             while ($at -ge 0) {
                 [ordered]@{
                     needle = $needle
                     offset = $at
-                    exempt = ($null -ne $context) -and $context.IsMatch($text, $at + $needle.Length)
+                    exempt = ($null -ne $context) -and $context.IsMatch($text, $at)
                 }
                 $at = $text.IndexOf($needle, $at + 1, [StringComparison]::Ordinal)
             }
         }
     }
 
-    $developmentOrigins = @($developmentOrigin, "localhost:1420")
     $frontendNeedles = @($markers | ForEach-Object { $_.needle }) + $developmentOrigins
     foreach ($asset in $frontendAssets) {
         $hits = @(Find-FrontendHit -Path $asset.fullPath -Needles $frontendNeedles -Exempt $tableExemptions)
@@ -212,6 +231,8 @@ try {
         $asset.exempted = @($hits | Where-Object { $_.exempt })
         $asset.Remove("fullPath")
     }
+    $repeatedExemptions = @($frontendAssets | ForEach-Object { $_.exempted } | Group-Object { $_.needle } |
+        Where-Object { $_.Count -gt 1 } | ForEach-Object { "$($_.Name) exempted $($_.Count) times" })
     $developmentOriginInFrontend = @($frontendAssets | Where-Object { @($_.hits | Where-Object { $_.needle -in $developmentOrigins }).Count -gt 0 })
     $markersInFrontend = @($frontendAssets | ForEach-Object {
             $path = $_.path
@@ -223,28 +244,30 @@ try {
     $configuration = Get-Content -LiteralPath "apps/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
     $productionCsp = $configuration.app.security.csp
     $productionCspDirectives = @($productionCsp.PSObject.Properties | ForEach-Object { "$($_.Name) $($_.Value)" })
-    $developmentOriginInProductionCsp = @($productionCspDirectives | Where-Object { $_ -like "*$developmentOrigin*" })
+    $developmentOriginInProductionCsp = @(Select-DevelopmentOriginDirective -Directives $productionCspDirectives)
 
     # The frontend and CSP predicates are expected to find nothing, and a
     # predicate that has never fired is indistinguishable from one that cannot.
     # Run each against a synthetic input that should trip it: every frontend
     # needle planted bare must be flagged, and the message table's entries
-    # planted in their minified form must be exempt, and nothing else.
+    # planted in their minified form must be exempt, and nothing else -- not
+    # the same entries behind a character a table key cannot follow.
     $controlDirectory = Join-Path ([IO.Path]::GetTempPath()) ("mscanvas-devorigin-control-" + [Guid]::NewGuid().ToString("n"))
     $null = New-Item -ItemType Directory -Force -Path $controlDirectory
     try {
         $seededAsset = Join-Path $controlDirectory "seeded-asset.js"
         $bare = ($frontendNeedles | ForEach-Object { "f('$_');" }) -join "`n"
         $table = ($tableExemptions.GetEnumerator() | ForEach-Object { "$($_.Key):``$($_.Value)``" }) -join ","
-        Set-Content -LiteralPath $seededAsset -Value "$bare`nconst t={$table};" -Encoding utf8NoBOM
+        $offTable = ($tableExemptions.GetEnumerator() | ForEach-Object { "c?$($_.Key):`"$($_.Value)`";x$($_.Key):`"$($_.Value)`";" }) -join "`n"
+        Set-Content -LiteralPath $seededAsset -Value "$bare`nconst t={$table};`n$offTable" -Encoding utf8NoBOM
         $seededHits = @(Find-FrontendHit -Path $seededAsset -Needles $frontendNeedles -Exempt $tableExemptions)
         $flagged = @($seededHits | Where-Object { -not $_.exempt } | ForEach-Object { $_.needle } | Sort-Object -Unique)
         $frontendPredicateFires = ($flagged -join "`n") -eq (@($frontendNeedles | Sort-Object -Unique) -join "`n")
         $exemptionInContextOnly = @($seededHits | Where-Object { $_.exempt }).Count -eq $tableExemptions.Count
 
-        $seededCsp = [pscustomobject]@{ "connect-src" = "'self' http://$developmentOrigin" }
-        $seededDirectives = @($seededCsp.PSObject.Properties | ForEach-Object { "$($_.Name) $($_.Value)" })
-        $cspPredicateFires = @($seededDirectives | Where-Object { $_ -like "*$developmentOrigin*" }).Count -gt 0
+        # One directive per origin, each of which must be flagged.
+        $seededDirectives = @($developmentOrigins | ForEach-Object { "connect-src 'self' http://$_" })
+        $cspPredicateFires = @(Select-DevelopmentOriginDirective -Directives $seededDirectives).Count -eq $developmentOrigins.Count
     }
     finally {
         Remove-Item -LiteralPath $controlDirectory -Recurse -Force -ErrorAction SilentlyContinue
@@ -259,13 +282,13 @@ try {
     $report = [ordered]@{
         utc                  = [DateTime]::UtcNow.ToString("o")
         executable           = [IO.Path]::GetRelativePath($RepositoryRoot, (Resolve-Path $Executable)).Replace('\', '/')
-        executableSha256     = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash.ToLowerInvariant()
+        executableSha256     = $executableSha256
         qaControlAvailable   = $controlAvailable
         qaControl            = $controlIdentity
         markers              = @($findings)
-        markerScopeNote      = "Absence shows this scanner did not find these $($markers.Count) known QA markers in the executable or the shipped frontend. It is not proof that the candidate carries no test capability, and it is not runtime acceptance."
+        markerScopeNote      = "Absence shows this scanner did not find these $($markers.Count) known QA markers in the executable, or in the shipped frontend outside the occurrences listed under frontendAssets[].exempted (the rule is under frontendExemptions). It is not proof that the candidate carries no test capability, and it is not runtime acceptance."
         developmentOrigin    = [ordered]@{
-            origin                = $developmentOrigin
+            origins               = @($developmentOrigins)
             inShippedFrontend     = @($developmentOriginInFrontend | ForEach-Object { $_.path })
             inProductionCsp       = @($developmentOriginInProductionCsp)
             productionCsp         = @($productionCspDirectives)
@@ -273,12 +296,14 @@ try {
             controlsFired         = [ordered]@{ frontendPredicate = $frontendPredicateFires; tableExemptionInContextOnly = $exemptionInContextOnly; productionCspPredicate = $cspPredicateFires }
         }
         bundleFiles          = @($bundleFiles)
-        frontendMatchesManifest = "apps/desktop/dist matched the frontendInputs of $($manifestPath.Replace('\', '/'))"
+        frontendMatchesManifest = "apps/desktop/dist matched the frontendInputs of $($manifestPath.Replace('\', '/')), which records 'pnpm tauri build' of this executable"
+        frontendMeasured     = $manifest["frontendMeasured"]
         frontendNeedles      = @($frontendNeedles)
         frontendExemptions   = [ordered]@{
-            source  = "apps/desktop/src/features/preferences/storageMessages.ts UNAVAILABLE_PROBLEMS"
-            entries = $tableExemptions
-            rule    = "exempt only where the key is followed by ':' and this value in matching quotes"
+            source   = "apps/desktop/src/features/preferences/storageMessages.ts UNAVAILABLE_PROBLEMS"
+            entries  = $tableExemptions
+            rule     = "exempt only where the key follows '{', ',', whitespace or a quote and is followed by ':' and this value in matching quotes, at most once per key across the shipped frontend"
+            repeated = @($repeatedExemptions)
         }
         qaMarkersInShippedFrontend = @($markersInFrontend)
         frontendAssets       = @($frontendAssets)
@@ -303,6 +328,7 @@ try {
         Write-Host ("  {0,-20} {1,-8} ({2})" -f $finding.name, $state, $proof)
     }
     Write-Host ("  {0,-20} {1}" -f "qaMarkersFrontend", $(if ($markersInFrontend.Count -gt 0) { "PRESENT" } else { "absent" }))
+    Write-Host ("  {0,-20} {1}" -f "repeatedExemption", $(if ($repeatedExemptions.Count -gt 0) { "PRESENT" } else { "absent" }))
     Write-Host ("  {0,-20} {1}" -f "devOriginFrontend", $(if ($developmentOriginInFrontend.Count -gt 0) { "PRESENT" } else { "absent" }))
     Write-Host ("  {0,-20} {1}" -f "devOriginProdCsp", $(if ($developmentOriginInProductionCsp.Count -gt 0) { "PRESENT" } else { "absent" }))
     if ($unproven.Count -gt 0) {
@@ -319,8 +345,12 @@ try {
     if ($markersInFrontend.Count -gt 0) {
         throw "$($markersInFrontend.Count) QA-only marker occurrence(s) in the shipped frontend: $($markersInFrontend -join '; ')."
     }
+    if ($repeatedExemptions.Count -gt 0) {
+        throw ("The message table holds each exempt key once, but the shipped frontend matches the exemption more often: " +
+            "$($repeatedExemptions -join '; '). Only the table's own occurrence may be exempt.")
+    }
     if ($developmentOriginInProductionCsp.Count -gt 0) {
-        throw "The production CSP allows $developmentOrigin : $($developmentOriginInProductionCsp -join '; ')."
+        throw "The production CSP allows a development origin: $($developmentOriginInProductionCsp -join '; ')."
     }
     if ($leaked.Count -gt 0) {
         throw "$($leaked.Count) QA-only marker(s) present in the candidate: $(($leaked.name) -join ', ')."
