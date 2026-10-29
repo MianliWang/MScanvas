@@ -208,6 +208,9 @@
    counter-scaled (usePlotTextSize). */
 .workbench-shell .chromatogram-svg { flex: 1 1 auto; height: 94px; min-height: 94px; padding: 4px 8px 0; }
 .workbench-shell .spectrum-plot { flex: 1 1 auto; height: 166px; min-height: 166px; padding: 6px 8px 0; touch-action: pan-y pinch-zoom; cursor: crosshair; }
+/* The plot bodies clip, so a focused plot, and a control along a body's
+   edge, draws its ring inside itself, as the status bar's do. */
+.workbench-shell :is(.chromatogram-svg, .spectrum-plot, .plot-foot .ui-button, .plot-status .ui-button):focus-visible { outline-offset: -2px; }
 .workbench-shell .spectrum-caption { flex: none; padding: 0 10px; }
 .workbench-shell .spectrum-caption p { margin: 2px 0 0; font-size: 11px; line-height: 1.4; }
 .plot-foot { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0 12px; min-height: 28px; padding: 0 6px 0 10px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
