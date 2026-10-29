@@ -32,7 +32,8 @@ import { openTheSpectrum } from "../support/viewer";
 const PANEL = "section.spectrum-panel";
 const EXPORT_BLOCK = `${PANEL} .spectrum-export`;
 const STATUS = `${PANEL} > .spectrum-export-status`;
-const DARK = `${PANEL} input[type='radio'][value='dark']`;
+// The theme is a segmented control: Light, then Dark.
+const DARK = `${PANEL} .spectrum-figure-field-theme [role='radio']:last-child`;
 const PROBLEM = "#spectrum-figure-problem";
 const DPI_PROBLEM = "#spectrum-figure-dpi-problem";
 
@@ -507,7 +508,7 @@ describe("M4.2 figure settings, in the rendered interface", () => {
             // fieldset: the theme radios share the field class, and the m/z
             // range editor's closed inputs share the input class.
             ...panel.querySelectorAll(".spectrum-figure-settings .spectrum-figure-input"),
-            ...panel.querySelectorAll("input[type='radio']"),
+            ...panel.querySelectorAll("input[type='radio'], [role='radio']"),
             ...panel.querySelectorAll(".spectrum-export-actions button"),
           ];
           return {
@@ -559,15 +560,15 @@ describe("M4.2 figure settings, in the rendered interface", () => {
       }, PANEL);
       await browser.keys(["Tab"]);
       expect(
-        await browser.execute(() => (document.activeElement as HTMLInputElement | null)?.value),
-      ).toBe("light");
+        await browser.execute(() => (document.activeElement?.textContent ?? "").trim()),
+      ).toBe("Light");
 
       // A radio group is one tab stop; the arrow keys move within it, which is
       // the platform's own semantics rather than something invented here.
       await browser.keys(["ArrowDown"]);
       expect(
-        await browser.execute(() => (document.activeElement as HTMLInputElement | null)?.value),
-      ).toBe("dark");
+        await browser.execute(() => (document.activeElement?.textContent ?? "").trim()),
+      ).toBe("Dark");
 
       await browser.keys(["Tab"]);
       expect(

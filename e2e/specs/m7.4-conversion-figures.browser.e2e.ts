@@ -177,7 +177,7 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await browser.$(".figure-preview img").waitForDisplayed();
     expect((await previewCalls()).at(-1)?.args?.request).toMatchObject({ source: { kind: "linked", traces: { tic: true, bpc: false } } });
     await capture("linked-entry-selected-" + locale);
-    await browser.$("button=" + words.figureExportReturn).click();
+    await browser.$(`.figure-export-dialog button[aria-label="${words.figureExportReturn}"]`).click();
     await expect(entry).toBeFocused();
     const prior = (await previewCalls()).length;
     await click("label=TIC");
@@ -188,7 +188,7 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await click("button=" + words.figurePreviewLinked);
     await browser.$(".figure-preview img").waitForDisplayed();
     expect((await previewCalls()).at(-1)?.args?.request).toMatchObject({ source: { kind: "linked", traces: { tic: false, bpc: true } } });
-    await browser.$("button=" + words.figureExportReturn).click();
+    await browser.$(`.figure-export-dialog button[aria-label="${words.figureExportReturn}"]`).click();
     await expect(entry).toBeFocused();
     await browser.keys("Enter");
     await browser.$(".figure-preview img").waitForDisplayed();
@@ -230,9 +230,9 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await browser.$('.figure-export-dialog input[id$="-widthPx"]').click();
     await browser.keys(["Control", "a"]); await browser.keys("Backspace");
     await expect(browser.$('.figure-export-dialog input[id$="-widthPx"]')).toHaveValue("");
-    await expect(browser.$(".figure-export-dialog").$("label*=" + words.viewerExportFull)).toExist();
-    await expect(browser.$(".figure-export-dialog").$("label*=" + words.viewerExportFullRun)).not.toExist();
-    await expect(browser.$(".figure-export-dialog .spectrum-export-actions button:first-child")).toHaveAttribute("aria-disabled", "true");
+    await expect(browser.$(".figure-export-dialog").$("button*=" + words.viewerExportFull)).toExist();
+    await expect(browser.$(".figure-export-dialog").$("button*=" + words.viewerExportFullRun)).not.toExist();
+    await expect(browser.$(".figure-export-dialog .figure-export-actions button:first-child")).toHaveAttribute("aria-disabled", "true");
     await browser.$('.figure-export-dialog input[id$="-widthPx"]').setValue(" 1400 ");
     await browser.$(".figure-preview img").waitForDisplayed();
     await capture("figure-preview-" + scenario.width);
@@ -410,7 +410,7 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await browser.waitUntil(async () => (await browser.$(".figure-preview img").getAttribute("data-spec-id"))?.includes('"widthPx":1400') === true);
     await browser.$('.figure-export-dialog input[id$="-pngDpi"]').setValue("bad dpi");
     await expect(dialog.$("button=Export PNG…")).toHaveAttribute("aria-disabled", "true");
-    await expect(dialog.$("button=Export SVG…")).toHaveAttribute("aria-disabled", "false");
+    await expect(dialog.$("button=Export SVG…")).not.toHaveAttribute("aria-disabled");
     await setInvokeResult("save_selected_spectrum_export", { status: "cancelled" });
     await holdInvoke("save_selected_spectrum_export");
     await dialog.$("button=Export SVG…").click();
@@ -418,7 +418,7 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await dialog.$("button=Export SVG…").click();
     expect(await heldCallers("save_selected_spectrum_export")).toBe(1);
     await releaseInvokeHold("save_selected_spectrum_export");
-    await expect(dialog.$("button=Copy plot")).toHaveAttribute("aria-disabled", "false");
+    await expect(dialog.$("button=Copy plot")).not.toHaveAttribute("aria-disabled");
     await dialog.$("button=Copy plot").click();
     await browser.waitUntil(async () => (await ipcCalls()).some(call => call.command === "copy_selected_spectrum_plot"));
     const calls = await ipcCalls();

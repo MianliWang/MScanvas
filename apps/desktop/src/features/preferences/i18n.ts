@@ -152,6 +152,7 @@ export interface MessageParameters {
   readonly clearCounts: { readonly count: number; readonly total: number; readonly protected: string };
   readonly linkedHeight: { readonly value: string };
   readonly viewerExportRtHelp: { readonly low: string; readonly high: string };
+  readonly viewerExportRtWindow: { readonly low: string; readonly high: string };
   readonly viewerLinkedCopied: { readonly width: string; readonly height: string; readonly theme: string; readonly index: string; readonly count: number };
   readonly viewerLinkedSaved: { readonly name: string; readonly index: string; readonly rt: string; readonly count: number };
   readonly viewerChromCopied: { readonly width: string; readonly height: string; readonly theme: string; readonly count: number };
@@ -182,6 +183,7 @@ export interface MessageParameters {
   readonly viewerLoadedNone: { readonly count: number };
   readonly viewerSpectrumLoaded: { readonly index: string; readonly count: number };
   readonly viewerExportRangeHelp: { readonly low: string; readonly high: string };
+  readonly viewerExportMzWindow: { readonly low: string; readonly high: string };
   readonly viewerExportFormat: { readonly name: string };
   readonly viewerExporting: { readonly name: string };
   readonly viewerExportChoose: { readonly name: string };
