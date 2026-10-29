@@ -29,7 +29,7 @@ MSCanvas is a modern, free, open-source and local-first workspace for mass-spect
 1. add vendor RAW files or folders through normal drag-and-drop and file pickers;
 2. curate a batch with familiar multi-selection, remove-selected and one-action clear-list behavior;
 3. inspect acquisition metadata, TIC/BPC, scans and mass spectra through linked views;
-4. convert vendor data to mzML through a mature external backend such as ProteoWizard, with mzXML gated as legacy compatibility until representative source/output integrity checks pass;
+4. convert vendor data to mzML through a mature external backend such as ProteoWizard; legacy mzXML is refused at present, and is to be offered only in an advanced set labelled not verified by MSCanvas, with multi-source documents blocked (section 7.7);
 5. manage per-file progress, cancellation, failure isolation and retry;
 6. export the viewed chromatogram or spectrum as a clean scientific figure and export the underlying data.
 
@@ -135,7 +135,7 @@ The primary product through the first public beta:
 - profile and centroid spectrum views;
 - virtualized scan table;
 - linked selection and keyboard navigation;
-- RAW to mzML conversion, with legacy mzXML gated by representative integrity evidence;
+- RAW to mzML conversion; legacy mzXML is refused at present (section 7.7);
 - per-file queue, cancel, retry and output handling;
 - PNG/SVG and underlying-data export.
 
@@ -265,7 +265,7 @@ High-frequency pointer movement must not cause broad React/global-state updates 
 
 Normal mode provides semantic controls:
 
-- output format: mzML default; mzXML hidden or disabled until representative multi-source source/output integrity checks pass, then marked legacy compatibility;
+- output format: mzML. mzXML is refused at present ([ADR 0043, CNV-D1](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d1--output-formats) `MZXML_REFUSED`, 2026-09-10): on the measured ProteoWizard build a multi-source test document lost spectra silently at exit 0, while single-source output was faithful. The owner's [option C of 2026-10-28](docs/development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28) is to offer it in an advanced set labelled not verified by MSCanvas, marked legacy compatibility, with multi-source documents blocked, once that set has its own ADR;
 - output location: sibling/subfolder/custom, never inside a recognized vendor dataset root;
 - no additional centroiding;
 - explicit centroid MS2 or centroid MS1+MS2 presets, marked lossy;
@@ -627,7 +627,7 @@ Metadata, TIC/BPC, spectrum, virtualized scan table, linked selection, lazy cach
 
 ### M3 — Conversion workflow
 
-Typed mzML settings, queue, cancellation, retry, failure isolation and transactional outputs; mzXML compatibility remains gated by representative integrity checks.
+Typed mzML settings, queue, cancellation, retry, failure isolation and transactional outputs; mzXML is refused at present (section 7.7).
 
 ### M4 — Figure/data export
 
@@ -738,7 +738,7 @@ The first useful release succeeds when a researcher can, without documentation:
 2. remove selected rows or clear the list without restarting or deleting data;
 3. choose a file and inspect TIC/BPC and spectra through linked selection;
 4. understand whether centroiding will occur;
-5. convert selected/all files to mzML, and expose mzXML only after its integrity gate passes;
+5. convert selected/all files to mzML (mzXML is refused at present; section 7.7);
 6. continue after one file fails and retry only that item;
 7. find outputs and understand failures;
 8. export a clean scientific plot and its underlying data.

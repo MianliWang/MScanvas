@@ -39,8 +39,11 @@ jobs:
         shell: pwsh
         run: ./scripts/build_candidate.ps1 -EvidenceRoot candidate-evidence
       # The QA build is only the inspection's positive control; it is not shipped.
+      # Only the cargo half of `pnpm e2e:build`: its `pnpm build` would rebuild
+      # apps/desktop/dist without the Tauri hook's environment, and the
+      # inspection must scan the frontend the candidate shipped.
       - name: Build QA control executable
-        run: pnpm e2e:build
+        run: cargo build --release --features e2e --features tauri/custom-protocol --bin mscanvas-desktop --target-dir target/e2e
       - name: Inspect candidate
         shell: pwsh
         run: ./scripts/inspect_candidate.ps1 -EvidenceRoot candidate-evidence
