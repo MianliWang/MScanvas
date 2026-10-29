@@ -21,6 +21,7 @@ compile_error!(
 mod attempt;
 mod cancellation;
 mod capability;
+mod chain;
 mod command;
 mod compound_file;
 mod conversion;
@@ -37,6 +38,7 @@ mod process;
 mod sciex_completeness;
 mod sciex_wiff;
 mod sha256;
+mod structured;
 
 pub use attempt::{
     OperationRunIdentity, ProcessAttemptOutcome, StagedObservationPhase, StagedOutputEvidence,
@@ -47,6 +49,14 @@ pub use capability::{
     HelpCapabilityError, HelpExample, HelpStream, InstalledHelpCapabilities,
     NamedGrammarDeclaration, OptionArgument, OptionDeclaration, ProviderBuild, RawHelpHashes,
     Sha256Digest, Sha256DigestParseError, TicCapability,
+};
+pub use chain::{
+    ActivationType, AnalyzerKind, ChargeStatePredictor, ChromatogramStep, DeisotopeMethod,
+    Demultiplex, DemultiplexOptimization, FilterRequirement, Fraction, IntSet, Lockmass, MassUnit,
+    MzTolerance, MzToleranceUnit, NativeId, NonNegative, Orientation, Polarity, Positive,
+    PrecursorTarget, Real, ScanFilterMatch, ScanFilterText, SelectionMode, SpectrumStep,
+    StructuredIntentError, ThresholdCriterion, TitleKeyword, TitleLiteral, TitlePart,
+    TitleTemplate, Turbocharger, ZeroSampleMode,
 };
 pub use command::{
     BackendTool, CommandSpec, InputSpelling, OpenFormat, PlanError, PreviewOperation,
@@ -125,3 +135,8 @@ pub use sciex_completeness::{
 };
 pub use sciex_wiff::sciex_wiff_companion_path;
 pub use sha256::Sha256Error;
+pub use structured::{
+    IntensityArray, LinearTolerance, Lowering, Mz5Encoding, MzArray, MzMlEncoding, MzMlbEncoding,
+    MzMlbIntensityArray, MzMlbMzArray, MzMlbPlainArray, MzXmlEncoding, OutputEncoding, Precision,
+    Prediction, ProviderRequirement, SourceBlock, StructuredIntent, Switch, Tier, Truncation,
+};
