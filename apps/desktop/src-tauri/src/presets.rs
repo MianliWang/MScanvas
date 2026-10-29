@@ -45,6 +45,12 @@
 //! saved as stable-id strings then list as unusable (`notExpressible`) unless
 //! that function chooses to accept them -- fail closed, by design, rather than
 //! migrated silently.
+//!
+//! One constraint for that intent: stored values are re-serialized from the
+//! parsed JSON, and serde_json without its `float_roundtrip` feature (not
+//! enabled here) may parse a float one ULP away from what was written. A
+//! tolerance that must survive rewrites exactly is better carried as an
+//! integer or a decimal string, or the feature is a dependency decision.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -100,8 +106,8 @@ struct PresetDocument {
 }
 
 /// One stored preset. The intent is kept as the parsed value and written back
-/// as it was read: semantically unchanged, with whitespace and key order the
-/// writer's.
+/// as it was read, with whitespace and key order the writer's (and see the
+/// module's note on floats).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredPreset {
@@ -448,8 +454,11 @@ impl PresetStore {
         if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
             return failed(WriteError::Oversized);
         }
-        // Judged by this build's own reader before it is written.
-        if read_document(&bytes).as_ref() != Ok(&document) {
+        // Judged by this build's own reader before it is written. Bytes, not
+        // parsed values, are what the read-back below compares: serde_json
+        // without `float_roundtrip` may parse a written float one ULP away, and
+        // that must not make every later write fail.
+        if read_document(&bytes).is_err() {
             return PresetWriteDto::Failed {
                 problem: "invalidRecord",
                 retryable: false,
@@ -469,7 +478,7 @@ impl PresetStore {
                 temporary_left_behind: failure.temporary_left_behind,
             };
         }
-        if read(&file) != Stored::Usable(document.clone()) {
+        if local_document::read_bounded(&file, MAX_DOCUMENT_BYTES) != Ok(Some(bytes)) {
             return PresetWriteDto::Failed {
                 problem: "notConfirmed",
                 retryable: true,
@@ -840,6 +849,7 @@ mod tests {
         );
         let defaults: PresetSaveRequest =
             serde_json::from_value(json!({ "name": "A", "intent": "x" })).expect("parses");
-        assert!(!defaults.replace_existing && !defaults.replace_unusable);
+        assert!(!defaults.replace_existing);
+        assert!(!defaults.replace_unusable);
     }
 }
