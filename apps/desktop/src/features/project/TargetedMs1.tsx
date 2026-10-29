@@ -969,7 +969,7 @@ function RunBlock({
                 ? t("targetedLastCancelled")
                 : failure === null
                   ? t("targetedLastFailed")
-                  : `${t("targetedLastFailed")} ${t(FAILURE_KEYS[failure.code])}`}
+                  : t("sentencePair", { first: t("targetedLastFailed"), second: t(FAILURE_KEYS[failure.code]) })}
           </p>
           <div className="project-actions">
             {artifactId !== null ? (

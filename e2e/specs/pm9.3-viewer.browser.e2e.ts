@@ -455,9 +455,9 @@ async function rangeLine(panel: string) {
  * line says, the bounds it carries, the bounds the caption prints for the range
  * on screen, and how many announcers the row has.
  *
- * At rest the committed line is announced and not printed (the caption already
- * shows the range), so `visible` is empty there and `sentence` is what its
- * truth is judged on.
+ * With nothing pending and nothing narrower than the full range committed, the
+ * line is announced and not printed (the caption already says "full range"), so
+ * `visible` is empty there and `sentence` is what its truth is judged on.
  */
 function rangeFacts(panel: string) {
   return browser.execute((css: string) => {
@@ -1593,9 +1593,8 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await frames();
       const frame = await observeViewer("pm93-v12-zh-CN-committed-mz-960x640");
       const facts = await rangeFacts(MZ_PANEL);
-      // At rest the range on screen is the caption's; the committed line is announced only.
       const rendered = await browser.execute((css: string) => {
-        const line = document.querySelector(`${css} #spectrum-viewport-range`)!.getBoundingClientRect();
+        const line = document.querySelector(`${css} .plot-committed-range`)!.getBoundingClientRect();
         return {
           outer: { width: outerWidth, height: outerHeight },
           inner: { width: innerWidth, height: innerHeight },
@@ -1615,18 +1614,18 @@ describe("PM9.3 viewer contracts, rendered", () => {
         integrity,
       });
 
-      // Rendered in Chinese, at the narrow anchor, the range caption on screen.
+      // Rendered in Chinese, at the narrow anchor, the line on screen.
       expect({ lang: frame.lang, inner: rendered.inner, devicePixelRatio: rendered.devicePixelRatio }).toEqual({
         lang: "zh-CN",
         inner: { width: 960, height: 640 },
         devicePixelRatio: 1,
       });
       expect(rendered.line.top >= 0 && rendered.line.bottom <= 640 && rendered.line.right > rendered.line.left).toBe(true);
-      // A range narrower than the spectrum is committed, and the line's label
-      // says so and nothing about the screen; at rest it is not printed.
+      // A range narrower than the spectrum is committed, and the visible label
+      // says so and nothing about the screen: a current-range export takes it.
       expect(facts.displayed).not.toBe(fixed(SPECTRUM.viewportDomain));
-      expect(facts.visible).toBe("");
-      expect(facts.sentence).toBe(fill(zh.rangeCommittedPart, { name: zh.rangeMzAxis }));
+      expect(facts.visible).toBe(fill(zh.rangeCommittedPart, { name: zh.rangeMzAxis }));
+      expect(facts.sentence).toBe(facts.visible);
       expect(untrue(facts.sentence, zh.rangeMzAxis, { committed: facts.bounds, shown: facts.displayed ?? "" }, "zh-CN")).toBeNull();
       // The live line carries the committed bounds, which at rest are the caption's.
       expect(facts.bounds).toBe(facts.displayed);

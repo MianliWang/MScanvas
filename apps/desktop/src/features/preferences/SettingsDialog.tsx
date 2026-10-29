@@ -11,7 +11,7 @@ import {
 } from "./storageMessages";
 
 /** The only Settings entry and modal; Radix stays behind this owned surface. */
-export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
+export function SettingsDialog() {
   const preferences = useSessionPreferences();
   const message = useUiMessages();
   const languageId = useId();
@@ -172,7 +172,6 @@ export function SettingsDialog({ rowCount }: { readonly rowCount: number }) {
                 disabled={frozen}
                 options={[{ value: "comfortable", label: message("comfortable") }, { value: "compact", label: message("compact") }]}
                 onChange={(density) => preferences.preview({ ...preferences.effective, density })} />
-              <p className="setting-field-help" data-density-row-count="">{message("rosterRows", { count: rowCount })}</p>
             </SettingField>
             {preferences.problem === null ? null : <div className="settings-resource-error" role="alert">
               <p>{message("resourceError")}</p>

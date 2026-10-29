@@ -42,11 +42,13 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
         committed bounds are announced rather than printed, so the caption's
         numbers are not repeated at rest; the hidden part brings its own
         separator. Atomic, so a reader hears the whole line, not only the
-        numbers that changed. Printed only while a band is pending: at rest the
-        caption's "Showing ..." line already says the range, so the committed
-        sentence is announced but not shown. The element stays mounted either
-        way, so the live region is watched before its text changes. */}
-    <p className={`plot-committed-range${pending === null ? " visually-hidden" : ""}`} aria-live="polite" aria-atomic="true">{pending !== null
+        numbers that changed. Not printed only while nothing is pending and
+        nothing narrower than the full range is committed: there the caption's
+        "Showing ... (full range)" already says it, so the sentence is announced
+        but not shown. A committed part is printed, because a current-range
+        export takes it (PM9 UI-34). The element stays mounted either way, so
+        the live region is watched before its text changes. */}
+    <p className={`plot-committed-range${pending === null && current.committed === null ? " visually-hidden" : ""}`} aria-live="polite" aria-atomic="true">{pending !== null
       ? t("rangePending", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })
       : current.committed === null
         ? t("rangeCommittedFull", { name: axis })

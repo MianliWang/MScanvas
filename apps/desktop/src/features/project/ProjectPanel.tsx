@@ -329,10 +329,10 @@ export interface ProjectPanelProps {
 }
 
 /**
- * The no-project sentence, which is also why Save, Save As and Close are
+ * The no-project heading, which is also why Save, Save As and Close are
  * refused while nothing is open: they point at it rather than repeating it.
  */
-const NONE_HINT_ID = "project-none-hint";
+const NONE_HINT_ID = "project-none-heading";
 
 export function ProjectPanel({
   session,
@@ -614,7 +614,7 @@ export function ProjectPanel({
                 : lastTargeted?.outcome === "failed"
                   ? lastTargetedFailure === null
                     ? t("targetedLastFailed")
-                    : `${t("targetedLastFailed")} ${t(FAILURE_KEYS[lastTargetedFailure.code])}`
+                    : t("sentencePair", { first: t("targetedLastFailed"), second: t(FAILURE_KEYS[lastTargetedFailure.code]) })
                   : "";
 
   return (
@@ -626,12 +626,7 @@ export function ProjectPanel({
     >
       <header className="project-header">
         <div>
-          <h2>{state.open ? state.name : t("projectNone")}</h2>
-          {/* The one disclosure this document needs, and it is not hidden in a
-              tooltip: a project records file names, locations and content
-              digests, so it can reveal what someone was working on. Said while
-              a project is open, which is before Save As can write one. */}
-          {state.open ? <p className="project-privacy">{t("projectPrivacy")}</p> : null}
+          <h2 id={state.open ? undefined : NONE_HINT_ID}>{state.open ? state.name : t("projectNone")}</h2>
         </div>
         <div className="project-actions">
           {/* With nothing open, New project is the one emphasised next action
@@ -920,16 +915,17 @@ export function ProjectPanel({
                 >
                   {t("projectCapture")}
                 </button>
+                {/* Said, not only hovered, and beside the button it is about:
+                    the refused capture is still a Tab stop, and its reason has
+                    to reach a reader who arrives there (PM9 UI-24). With no
+                    reference at all, the empty list says so. */}
+                {state.inputs.length > 0 && selected.length === 0 ? (
+                  <p className="project-action-reason" id="project-capture-reason">
+                    {t("projectCaptureNeedsSelection")}
+                  </p>
+                ) : null}
               </div>
             </div>
-            {/* Said, not only hovered: the refused capture is still a Tab stop,
-                and its reason has to reach a reader who arrives there (PM9
-                UI-24). With no reference at all, the empty list says so. */}
-            {state.inputs.length > 0 && selected.length === 0 ? (
-              <p className="project-action-reason" id="project-capture-reason">
-                {t("projectCaptureNeedsSelection")}
-              </p>
-            ) : null}
 
             {state.inputs.length === 0 ? (
               <p className="project-empty">{t("projectNoReferences")}</p>
@@ -1023,13 +1019,9 @@ export function ProjectPanel({
                           <button
                             type="button"
                             className="secondary-button"
-                            aria-disabled={
-                              working || unavailableToAddKey(input, workspaceBusy) !== null || undefined
-                            }
+                            aria-disabled={working || addRefused !== null || undefined}
                             aria-describedby={
-                              unavailableToAddKey(input, workspaceBusy) === null
-                                ? undefined
-                                : `project-state-${input.id}`
+                              addRefused === null ? undefined : `project-state-${input.id}`
                             }
                             title={
                               addRefused === "projectAddNeedsCheck" ||
@@ -1039,11 +1031,9 @@ export function ProjectPanel({
                             }
                             aria-label={t("projectAddToWorkbenchNamed", { name: input.label })}
                             data-project-add-to-workbench={input.id}
-                            data-project-add-unavailable={
-                              unavailableToAddKey(input, workspaceBusy) ?? undefined
-                            }
+                            data-project-add-unavailable={addRefused ?? undefined}
                             onClick={() => {
-                              if (!working && unavailableToAddKey(input, workspaceBusy) === null) {
+                              if (!working && addRefused === null) {
                                 void session.addToWorkbench(input.id);
                               }
                             }}
@@ -1483,9 +1473,9 @@ export function ProjectPanel({
           </section>
         </>
       ) : (
-        <p className="project-empty" id={NONE_HINT_ID}>
-          {t("projectNoneHint")}
-        </p>
+        // The one disclosure a project needs, said before one is created: it
+        // records file names, locations and content digests.
+        <p className="project-empty">{t("projectNoneHint")}</p>
       )}
     </div>
   );

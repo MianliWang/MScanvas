@@ -144,10 +144,14 @@ describe("the Simplified Chinese bundle", () => {
     // The empty Workbench names the header toggle and the roster action. A
     // retyped label could drift from the control it names; a nested one cannot.
     for (const bundle of [en, zh]) {
-      expect(bundle.emptyEvidenceHelp).toContain("$t(rosterToggle)");
-      expect(bundle.emptyEvidenceHelp).toContain("$t(addFiles)");
-      expect(bundle.emptyEvidenceHelp).not.toContain(bundle.rosterToggle);
-      expect(bundle.emptyEvidenceHelp).not.toContain(bundle.addFiles);
+      for (const route of [bundle.emptyEvidenceHelp, bundle.emptyEvidenceDropHelp]) {
+        expect(route).toContain("$t(rosterToggle)");
+        expect(route).toContain("$t(addFiles)");
+        expect(route).not.toContain(bundle.rosterToggle);
+        expect(route).not.toContain(bundle.addFiles);
+      }
+      expect(bundle.emptyEvidenceSelect).toContain("$t(rosterToggle)");
+      expect(bundle.emptyEvidenceSelect).not.toContain(bundle.rosterToggle);
     }
   });
 

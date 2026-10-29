@@ -344,7 +344,7 @@ describe("narrow desktop layout markup", () => {
 
     expect(
       await screen.findByText(
-        "Open Acquisitions in the header if it is closed, choose Add files…, then activate an mzML row. Vendor acquisitions are not previewed; they remain available for conversion.",
+        "Choose Add files… in Acquisitions, or drop mzML files onto this window, then select one.",
       ),
     ).toBeVisible();
   });
@@ -706,7 +706,7 @@ describe("the conversion queue at each checked window size", () => {
       expect(screen.queryByRole("button", { name: "Export failure diagnostics…" })).toBeNull();
       expect(
         screen.getByText(
-          "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
+          "Stop queue keeps completed outputs.",
         ),
       ).toBeVisible();
     });

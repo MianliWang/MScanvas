@@ -1254,8 +1254,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
      */
     function restatesBanner(text: string) {
       return browser.execute((evidence: string) => {
+        // Sentence by sentence: the body is one span of joined sentences.
         const said = [...document.querySelectorAll<HTMLElement>("#backend-status .backend-status-reading > *")]
-          .map((node) => (node.textContent ?? "").trim())
+          .flatMap((node) => (node.textContent ?? "").split(/(?<=[.。])\s*/u))
+          .map((sentence) => sentence.trim())
           .filter((sentence) => sentence.length > 0 && evidence.includes(sentence));
         return /ProteoWizard/u.test(evidence) ? [...said, "ProteoWizard"] : said;
       }, text);

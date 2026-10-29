@@ -1,7 +1,7 @@
 import type { KeyboardEventHandler, Ref } from "react";
 import { useCallback, useMemo } from "react";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import type { UiMessage } from "../preferences/i18n";
+import { joinSentences, type UiMessage } from "../preferences/i18n";
 
 import { formatIntensity, formatMz } from "./format";
 import { usePlotTextSize } from "./viewer/usePlotTextSize";
@@ -539,11 +539,11 @@ export function StickSpectrum({
   ].filter(part => part !== "").join(" · ");
   // Only what the caption and the axes cannot say; with nothing to add, the
   // disclosure is hidden rather than opening onto nothing.
-  const sourceDetails = [
+  const sourceDetails = joinSentences(t, [
     drawing.kind === "viewport" || drawing.kind === "transfer" ? describeDrawing(reduction, drawing, t) : "",
     reduction.negativeCount > 0 ? describeNegativeDrawing(reduction, t) : "",
     representationKnown ? "" : t("plotUnknownRepresentation"),
-  ].filter(part => part !== "").join(" ");
+  ]);
 
   return (
     <figure className="spectrum-figure">

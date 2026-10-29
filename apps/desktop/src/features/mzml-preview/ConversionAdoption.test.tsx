@@ -151,7 +151,7 @@ describe("adding converted outputs to the workspace", () => {
     // The honest fallback, said before it is needed rather than after.
     expect(
       within(panel).getByText(
-        "If this queue is replaced, add its converted files with Add files….",
+        "If this queue is replaced, use Add files… to add its outputs.",
       ),
     ).toBeVisible();
   });

@@ -507,8 +507,9 @@ describe("the committed m/z line (PM9 UI-34)", () => {
 
   /**
    * The committed row is true of what the reducer holds now, a held gesture
-   * included. At rest it is announced and not printed: the range line below
-   * the plot already says the range.
+   * included. With nothing narrower than the full range committed it is
+   * announced and not printed: the range line below the plot already says
+   * "full range". A committed part is printed, without the caption's numbers.
    */
   function expectTruthfulLine(): void {
     const now = live();
@@ -516,9 +517,13 @@ describe("the committed m/z line (PM9 UI-34)", () => {
     expect(now.rangeSelection).toBeNull();
     const displayed = fixed(liveShown());
     const committed = now.committed === null ? null : fixed(now.committed);
-    expect(liveLine()).toHaveClass("visually-hidden");
-    expect(textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details")).toBe("");
-    expect(untrue(textOutside(liveLine(), "span.visually-hidden"), "m/z", { committed, shown: displayed })).toBeNull();
+    if (committed === null) expect(liveLine()).toHaveClass("visually-hidden");
+    else expect(liveLine()).not.toHaveClass("visually-hidden");
+    const sentence = textOutside(liveLine(), "span.visually-hidden");
+    expect(untrue(sentence, "m/z", { committed, shown: displayed })).toBeNull();
+    const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
+    expect(visible).toBe(committed === null ? "" : sentence);
+    if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
     expect(rangeText()).toContain(displayed);
     const spoken = (liveLine().textContent ?? "").replace(/\s+/gu, " ").trim();
     if (committed !== null) expect(spoken.endsWith(committed), `"${spoken}" does not end with ${committed}`).toBe(true);

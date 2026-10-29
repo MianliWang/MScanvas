@@ -1,4 +1,4 @@
-import type { UiMessage } from "../preferences/i18n";
+import { joinSentences, type UiMessage } from "../preferences/i18n";
 import { ownedErrorMessage } from "./ownedErrorMessages";
 import type { ConversionQueue, ConversionQueueItem, PreviewError } from "./contracts";
 import { conversionJudgedAnyOutput } from "./contracts";
@@ -114,11 +114,11 @@ export function announceConversion(conversion: ConversionOperation, t: UiMessage
   const counts = conversionCountParts(queue, state.reason !== "completed", t);
   // Retain the unconfirmed count even at zero for this explicit failed-stop audit.
   if (state.reason === "stopFailed" && queue.cancellationFailedCount === 0) counts.push(t("m74CnvCountUnconfirmed", { count: 0 }));
-  return [
+  return joinSentences(t, [
     prefix,
-    `${counts.join(t("m74CnvListSeparator"))}.`,
+    t("m74CnvAnnounceCounts", { parts: counts.join(t("m74CnvListSeparator")) }),
     state.reason === "stopFailed" && conversion.backendQuarantined ? t("m74CnvRestartBackend").trim() : "",
     queue.items.some(conversionJudgedOutputOnly) ? t("m74CnvAnnounceOutputOnly") : "",
     queue.error === null ? "" : conversionErrorMessage(queue.error, t),
-  ].filter(Boolean).join(" ");
+  ]);
 }

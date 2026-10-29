@@ -474,10 +474,16 @@ describe("Beta 1 UX changes, rendered", () => {
     it(`PM9.7-F3 the empty Workbench names the folded route to Add files…, and it is the route that exists, ${locale}`, async () => {
       await open(emptyTable(locale), locale, 960, 640);
       await toggleOperable();
-      const expected = say(locale, "emptyEvidenceHelp");
+      // Drop is live in this world, so the empty route offers it too.
+      const expected = say(locale, "emptyEvidenceDropHelp");
+      const offered = () => browser.waitUntil(async () => (await guidance(words.emptyEvidence))?.text === expected, {
+        timeout: 30_000,
+        timeoutMsg: "the empty Workbench never offered its route with file drop",
+      });
       const toggleText = await browser.$(ROSTER_TOGGLE).getText();
       expect(toggleText).toBe(words.rosterToggle);
 
+      await offered();
       const folded = await guidance(words.emptyEvidence);
       await shot(`f3-empty-workbench-960-${locale}`);
       expect(folded).toEqual({ text: expected, shown: true });
@@ -508,6 +514,7 @@ describe("Beta 1 UX changes, rendered", () => {
       await open(emptyTable(locale), locale, 1366, 768);
       await toggleOperable();
       expect(await shellPanels()).toMatchObject({ roster: "true", toggle: "true" });
+      await offered();
       const expanded = await guidance(words.emptyEvidence);
       expect(expanded).toEqual({ text: expected, shown: true });
       expect(await mark(".workbench-shell", words.addFiles, "data-beta1-add")).not.toBeNull();
@@ -631,10 +638,9 @@ describe("Beta 1 UX changes, rendered", () => {
         [OPEN.handle, LONG.handle, FIRST.handle]),
       ).toEqual([true, true, true]);
 
-      // O6/O7: a ready review explains neither Stop nor Skip, and says output-only for an output-only plan.
+      // O6/O7: a ready review explains no Stop, and says output-only for an output-only plan.
       const review = await browser.$(".conversion-plan").getText();
       expect(review).not.toContain(words.m74CnvStopQueue);
-      expect(review).not.toContain(words.m74CnvSkipExplanation);
       expect(await browser.$("#conversion-validation-disclosure").getText()).toBe(words.m74CnvOutputOnly);
 
       // O5: the ellipsis promises the custom folder's picker, and only that.
@@ -657,17 +663,17 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it(`PM9.4-O4/O6 a running queue explains Skip where it is offered, and a failed Stop is named in the banner, ${locale}`, async () => {
+    it(`PM9.4-O4/O6 a running queue offers Skip on the row it is about, and a failed Stop is named in the banner, ${locale}`, async () => {
       await open(conversionWorld(locale, VENDOR_AND_MZML, STARTED), locale, 1366, 768);
       await showConversion();
       await browser.$(".conversion-running").waitForExist({ timeout: 15_000 });
 
-      // O6: Skip is explained beside the row that offers it.
+      // O6: Skip is offered on the row it skips, and its name says which; no
+      // separate sentence restates it.
       const skip = await mark(CONVERSION_SURFACE, say(locale, "m74CnvSkip", { name: SECOND.fileName }), "data-beta1-skip");
       expect(skip).not.toBeNull();
-      expect(await browser.$("#conversion-skip-scope").getText()).toBe(words.m74CnvSkipExplanation);
-      expect((await control(skip!))?.described).toContain(words.m74CnvSkipExplanation);
-      await shot(`o6-running-skip-explained-1366-${locale}`);
+      expect(await browser.$("#conversion-skip-scope").isExisting()).toBe(false);
+      await shot(`o6-running-skip-offered-1366-${locale}`);
 
       // O4: the request fails; the one banner leads with the control's name.
       await setInvokeRejection("stop_workspace_conversion_queue", {

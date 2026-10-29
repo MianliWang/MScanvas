@@ -16,7 +16,8 @@ import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTra
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { PreferencesApiProvider } from "../features/preferences/preferencesApi";
 import { createFakePreferencesApi, storedRecord } from "../test/preferenceFixtures";
-import { availableBackend, createFakePreviewApi, createFakeWorkspaceDropTransport } from "../test/previewFixtures";
+import type { SelectedFile } from "../features/mzml-preview/contracts";
+import { availableBackend, createFakePreviewApi, createFakeWorkspaceDropTransport, selectedFile } from "../test/previewFixtures";
 
 /** A fixed window: constrained below 1050 px, where the roster starts folded. */
 function installViewport(constrained: boolean) {
@@ -45,18 +46,21 @@ afterEach(() => {
   restoreViewport = null;
 });
 
-const VENDOR_NOT_PREVIEWED = { en: "Vendor acquisitions are not previewed", "zh-CN": "厂商采集不提供预览" } as const;
+const VENDOR_ROW: SelectedFile = { handle: "file-9", fileName: "run-9.raw", byteLength: 78_309, sourceKind: "thermo_raw", relativeContext: null };
 
 describe.each(["en", "zh-CN"] as const)("the empty Workbench's route to data, %s", (locale) => {
   const words = UI_RESOURCES[locale];
+  /** A resource with its nested labels resolved, as the screen shows it. */
+  const said = (key: "emptyEvidenceDropHelp" | "emptyEvidenceSelect" | "emptyEvidenceVendorOnly") =>
+    words[key].replace(/\$t\((\w+)\)/gu, (_, nested: string) => words[nested as keyof typeof words]);
 
   /** The empty Workbench on a usable backend, the state PM9.7 I1 observed. */
-  async function mount(constrained: boolean) {
+  async function mount(constrained: boolean, initialDatasets: readonly SelectedFile[] = []) {
     restoreViewport = installViewport(constrained);
     render(
       <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
         <PreferencesApiProvider value={createFakePreferencesApi({ stored: storedRecord({ appearance: { locale } }) })}>
-          <PreviewApiProvider value={createFakePreviewApi({ availability: availableBackend })}>
+          <PreviewApiProvider value={createFakePreviewApi({ availability: availableBackend, initialDatasets })}>
             <App />
           </PreviewApiProvider>
         </PreferencesApiProvider>
@@ -73,13 +77,14 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's route to data, %s
 
   it("names the header toggle while the roster is folded, and leaves it folded", async () => {
     const { toggle, guidance } = await mount(true);
+    // Drop works here, so the empty list's route says so, once the
+    // subscription is live.
+    await waitFor(() => expect(guidance.textContent).toBe(said("emptyEvidenceDropHelp")));
     const text = guidance.textContent;
     // The nested labels resolved: the toggle's own words, not a resource key.
     expect(text).not.toContain("$t(");
     expect(text).toContain(toggle.textContent);
     expect(text).toContain(words.addFiles);
-    // mzML is previewed; a vendor acquisition is not, and is for conversion.
-    expect(text).toContain(VENDOR_NOT_PREVIEWED[locale]);
     // Copy, not an action: the roster is still folded and Add files… is not
     // offered anywhere else.
     expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -98,10 +103,22 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's route to data, %s
 
   it("stays true with the roster already expanded", async () => {
     const { toggle, guidance } = await mount(false);
+    await waitFor(() => expect(guidance.textContent).toBe(said("emptyEvidenceDropHelp")));
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(addFiles()).toHaveLength(1);
     expect(guidance.textContent).not.toContain("$t(");
     expect(guidance.textContent).toContain(toggle.textContent);
     expect(guidance.textContent).toContain(addFiles()[0]!.textContent);
+  });
+
+  it("asks for a pick once an mzML row is listed, and says why vendor rows open nothing", async () => {
+    const { guidance } = await mount(false, [selectedFile, VENDOR_ROW]);
+    await waitFor(() => expect(guidance).toHaveTextContent(said("emptyEvidenceSelect")));
+    expect(guidance.textContent).toBe(said("emptyEvidenceSelect"));
+  });
+
+  it("says vendor acquisitions are not previewed when they are all that is listed", async () => {
+    const { guidance } = await mount(false, [VENDOR_ROW]);
+    await waitFor(() => expect(guidance.textContent).toBe(said("emptyEvidenceVendorOnly")));
   });
 });

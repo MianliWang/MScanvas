@@ -50,7 +50,6 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
   desired.current = { key, question: sourceChanged ? null : props.question };
   const [state, setState] = useState<PreviewState>({ status: "none", key: "" });
   const [refresh, setRefresh] = useState(0);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const live = useRef(true);
   const processing = useRef(false);
   const sequence = useRef(0);
@@ -88,14 +87,19 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
     void drain();
   }, [key, refresh, acceptedSource]);
   const artifact = !sourceChanged && state.status === "answered" && state.key === key && state.answer.status === "rendered" ? state.answer : null;
-  useEffect(() => {
-    if (artifact === null) { setImageUrl(null); return; }
-    // Image context is inert: no innerHTML, object/embed, script, or DOM SVG.
-    const url = URL.createObjectURL(new Blob([artifact.svg], { type: "image/svg+xml" }));
-    setImageUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [artifact]);
   const stale = sourceChanged || state.key !== key;
+  // The last drawing stays on screen while the next one for the same source is
+  // on its way, so a settings change does not collapse the dialog. A failure,
+  // a refusal or another source clears it. Export still needs `artifact`.
+  const successorPending = !sourceChanged && (state.status === "loading" || (stale && state.status === "answered"));
+  const [shown, setShown] = useState<{ readonly url: string; readonly artifact: NonNullable<typeof artifact> } | null>(null);
+  useEffect(() => {
+    if (artifact === null) { if (!successorPending) setShown(null); return; }
+    // Image context is inert: no innerHTML, object/embed, script, or DOM SVG.
+    setShown({ url: URL.createObjectURL(new Blob([artifact.svg], { type: "image/svg+xml" })), artifact });
+  }, [artifact, successorPending]);
+  // Revoked when replaced or unmounted, not when the answer goes stale.
+  useEffect(() => () => { if (shown !== null) URL.revokeObjectURL(shown.url); }, [shown]);
   const error = !stale && state.status === "answered" && state.answer.status === "refused" ? state.answer.error : null;
   const status = sourceChanged ? t("figurePreviewSourceChanged") : stale ? t("figurePreviewStale") : state.status === "none" ? t("figurePreviewNone") : state.status === "loading" ? t("figurePreviewLoading") : state.status === "failed" ? t("figurePreviewFailed") : error ? ownedErrorMessage(error, t) : artifact?.empty ? t("figurePreviewEmpty") : t("figurePreviewCurrent");
   const save = (format: "svg" | "png") => {
@@ -125,9 +129,12 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
           </fieldset>
           <FigureSettingsFields idPrefix={`export-${id}`} settings={props.settings} validation={props.validation} onFigureSetting={(field, value) => { if (!sourceChanged) props.onSetting(field, value); }} onFigureTheme={theme => { if (!sourceChanged) props.onTheme(theme); }} />
         </fieldset><div className="figure-preview" aria-busy={state.status === "loading"}>
-          {imageUrl && artifact ? <img src={imageUrl} alt={t("figurePreviewAlt")} data-spec-id={artifact.specId} width={artifact.width} height={artifact.height} /> : <div className="figure-preview-placeholder" aria-hidden="true" />}
-          <p role="status">{status}</p>
-          {error || state.status === "failed" || stale ? <button className="secondary-button" type="button" disabled={props.busy || processing.current} onClick={() => { if (sourceChanged) setAcceptedSource(sourceKey); setRefresh(value => value + 1); }}>{t(sourceChanged ? "figurePreviewUseSource" : "figurePreviewRefresh")}</button> : null}
+          {shown ? <img src={shown.url} alt={t("figurePreviewAlt")} data-spec-id={shown.artifact.specId} width={shown.artifact.width} height={shown.artifact.height} /> : <div className="figure-preview-placeholder" aria-hidden="true" />}
+          {/* Up to date is worth saying only to a screen reader; any other status is worth seeing. The
+              line keeps its height either way, so the actions below it do not move. */}
+          <p role="status" className="figure-preview-status">{status === t("figurePreviewCurrent") ? <span className="visually-hidden">{status}</span> : status}</p>
+          {/* Not while the next drawing is already on its way: a disabled Refresh appearing for that moment moves Export. */}
+          {error || state.status === "failed" || (stale && !successorPending) ? <button className="secondary-button" type="button" disabled={props.busy || processing.current} onClick={() => { if (sourceChanged) setAcceptedSource(sourceKey); setRefresh(value => value + 1); }}>{t(sourceChanged ? "figurePreviewUseSource" : "figurePreviewRefresh")}</button> : null}
         </div></div>
         <footer><div className="spectrum-export-actions">{(["svg", "png"] as const).map(format => <button type="button" className="primary-button" key={format}
           aria-disabled={props.busy || artifact === null || (format === "png" && props.validation.dpi !== null)}

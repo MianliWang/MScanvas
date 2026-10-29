@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import type { UiMessage } from "../preferences/i18n";
+import { joinSentences, type UiMessage } from "../preferences/i18n";
 
 import { PlotRangeActions } from "./PlotRangeActions";
 import { mzInput } from "./viewer/plotInputAdapters";
@@ -419,7 +419,7 @@ function describeViewport(
     return "";
   }
   if (state.status === "refused") {
-    return `${t("viewerMzRefused")} ${t(REFUSED[state.reason.reason])}`;
+    return t("sentencePair", { first: t("viewerMzRefused"), second: t(REFUSED[state.reason.reason]) });
   }
   switch (state.projection.status) {
     case "idle":
@@ -441,7 +441,7 @@ function describeViewport(
       // boundary's own words.
       return projectionError === null
         ? t("viewerMzFailed")
-        : `${ownedErrorMessage(projectionError, t)} ${ownedErrorDetail(projectionError, t) ?? ""}`.trim();
+        : joinSentences(t, [ownedErrorMessage(projectionError, t), ownedErrorDetail(projectionError, t) ?? ""]);
     case "ready":
       return state.projection.projection.sourcePoints === 0
         ? t("viewerMzEmpty", { low: formatMz(state.projection.window.low), high: formatMz(state.projection.window.high) })

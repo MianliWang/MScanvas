@@ -341,10 +341,10 @@ describe("M8.1 project records, rendered", () => {
     expect(measured.runs[0].outcome).toBe("completed");
     // The relationship is on screen: this run produced that artifact.
     expect(measured.runs[0].artifacts).toEqual(["eeeeeeee-1111-4111-8111-111111111111"]);
-    // And what a capture is is stated where it is displayed, so nobody reads
-    // it as analysis -- nor as something a later press can take back.
+    // And what a record is is stated where it is displayed: facts only, so
+    // nobody reads it as analysis -- nor as something a later press can take back.
     const note = await browser.$(".project-note").getText();
-    expect(note).toContain("they do not convert, analyse, judge quality");
+    expect(note).toContain("Records hold facts only.");
     expect(note).toContain("cannot be removed yet");
     // Unsaved, because a capture changed the project and nothing saved it.
     expect(await browser.$("[data-project-unsaved]").isDisplayed()).toBe(true);

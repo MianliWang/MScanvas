@@ -261,20 +261,24 @@ function spoken(): string {
  * sentence has a declared truth condition and meets it against the reducer's
  * own state, the caption prints the range the plot displays, and the committed
  * bounds stay the live line's last words (PM9.3's rangeLine and LONG_RANGE read
- * them there). At rest nothing of it is printed: the caption already says the
- * range, so the sentence is announced only.
+ * them there), and at rest the line does not repeat the caption's numbers.
+ * With nothing narrower than the full range committed it is not printed at
+ * all: the caption already says "full range", so the sentence is announced only.
  */
 function expectTruthfulLine(): void {
   const now = state();
   expect(now.rangeSelection).toBeNull();
   const displayed = fixed(shown());
   const committed = now.committedDomain === null ? null : fixed(now.committedDomain);
-  expect(liveLine()).toHaveClass("visually-hidden");
-  expect(textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details")).toBe("");
+  if (committed === null) expect(liveLine()).toHaveClass("visually-hidden");
+  else expect(liveLine()).not.toHaveClass("visually-hidden");
   const sentence = textOutside(liveLine(), "span.visually-hidden");
   expect(untrue(sentence, "retention time", { committed, shown: displayed })).toBeNull();
+  const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
+  expect(visible).toBe(committed === null ? "" : sentence);
   expect(document.querySelector(".chromatogram-range")?.textContent).toContain(displayed);
   if (committed !== null) expect(spoken().endsWith(committed), `"${spoken()}" does not end with ${committed}`).toBe(true);
+  if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
 }
 
 /**
@@ -740,7 +744,8 @@ describe("choosing a scan", () => {
     renderChromatogram();
 
     expect(document.querySelector("g.chromatogram-selected")).toBeNull();
-    expect(screen.getByText(/^No scan selected\./u)).toBeVisible();
+    // Unseen, but still the plot's accessible description.
+    expect(screen.getByText(/^No scan selected\./u)).toHaveAttribute("data-idle");
   });
 });
 
@@ -873,7 +878,7 @@ describe("moving the viewport", () => {
     send({ type: "range-released", transaction: state().rangeSelection!.transaction });
     expect(state().rangeSelection?.phase).toBe("pending");
     expect(spoken()).toBe("Pending retention time: 0.1500 to 0.2500");
-    // A pending band is the one state the line is printed in.
+    // A pending band is printed.
     expect(liveLine()).not.toHaveClass("visually-hidden");
     const observer = observeLine();
 

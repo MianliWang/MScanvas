@@ -5,7 +5,7 @@ import { zhCN } from "./locales/zh-CN";
 import type { UiLocale } from "./sessionPreferences";
 
 export const UI_RESOURCES = { en, "zh-CN": zhCN } as const;
-type PluralKey = "projectMemberCount" | "projectRunInputs" | "projectArtifactMembers" | "rosterRetainedAnnouncement" | "rosterRows" | "dragPicked" | "dragCount" | "dropRelease" | "noticeAdded" | "noticeDuplicates" | "noticeUnreadable" | "noticeFull" | "noticeRemoved" | "noticeGone" | "noticeCleared" | "noticeFolderLinked" | "noticeFolderInaccessible" | "noticeDropLinkedRoot" | "noticeDropInaccessibleRoot" | "noticeDropRemoteRoot" | "noticeDropUnsupportedRoot" | "noticeDropLinkedEntry" | "noticeDropInaccessibleEntry";
+type PluralKey = "projectMemberCount" | "projectRunInputs" | "projectArtifactMembers" | "rosterRetainedAnnouncement" | "dragPicked" | "dragCount" | "dropRelease" | "noticeAdded" | "noticeDuplicates" | "noticeUnreadable" | "noticeFull" | "noticeRemoved" | "noticeGone" | "noticeCleared" | "noticeFolderLinked" | "noticeFolderInaccessible" | "noticeDropLinkedRoot" | "noticeDropInaccessibleRoot" | "noticeDropRemoteRoot" | "noticeDropUnsupportedRoot" | "noticeDropLinkedEntry" | "noticeDropInaccessibleEntry";
 export type MessageKey = Exclude<keyof typeof en, `${PluralKey}_${string}`> | PluralKey;
 export interface MessageParameters {
   readonly projectMemberCount: { readonly count: number };
@@ -221,13 +221,14 @@ export interface MessageParameters {
   readonly moreNotListed: { readonly count: number };
   readonly workspaceAnnouncement: { readonly message: string };
   readonly messageWithDetail: { readonly message: string; readonly detail: string };
+  readonly sentencePair: { readonly first: string; readonly second: string };
+  readonly m74CnvAnnounceCounts: { readonly parts: string };
   readonly noticeDuplicate: { readonly name: string };
   readonly noticeRejected: { readonly name: string; readonly summary: string };
   readonly noticeFolderLimit: { readonly reasons: string };
   readonly noticeDropLimit: { readonly reasons: string };
   readonly noticeListPair: { readonly left: string; readonly right: string };
   readonly noticeListComma: { readonly left: string; readonly right: string };
-  readonly rosterRows: { readonly count: number };
   readonly dragPicked: { readonly count: number };
   readonly dragCount: { readonly count: number };
   readonly selectionContext: { readonly total: number; readonly hidden: number; readonly checked: number };
@@ -269,6 +270,15 @@ export type MessageArguments<K extends MessageKey> = K extends keyof MessagePara
   ? [parameters: MessageParameters[K]] : [];
 export type UiMessage = <K extends MessageKey>(key: K, ...args: MessageArguments<K>) => string;
 
+/**
+ * Joins whole sentences as the locale does (`sentencePair`): a space between
+ * English sentences, none between Chinese ones. Blank parts are skipped.
+ */
+export function joinSentences(message: UiMessage, sentences: readonly string[]): string {
+  return sentences.reduce((first, second) =>
+    second.trim() === "" ? first : first === "" ? second : message("sentencePair", { first, second }), "");
+}
+
 declare module "i18next" {
   interface CustomTypeOptions {
     defaultNS: "ui";
@@ -285,7 +295,7 @@ export class ResourceProblem extends Error {
   }
 }
 
-const pluralKeys: readonly PluralKey[] = ["projectMemberCount", "projectRunInputs", "projectArtifactMembers", "rosterRetainedAnnouncement", "rosterRows", "dragPicked", "dragCount", "dropRelease", "noticeAdded", "noticeDuplicates", "noticeUnreadable", "noticeFull", "noticeRemoved", "noticeGone", "noticeCleared", "noticeFolderLinked", "noticeFolderInaccessible", "noticeDropLinkedRoot", "noticeDropInaccessibleRoot", "noticeDropRemoteRoot", "noticeDropUnsupportedRoot", "noticeDropLinkedEntry", "noticeDropInaccessibleEntry"];
+const pluralKeys: readonly PluralKey[] = ["projectMemberCount", "projectRunInputs", "projectArtifactMembers", "rosterRetainedAnnouncement", "dragPicked", "dragCount", "dropRelease", "noticeAdded", "noticeDuplicates", "noticeUnreadable", "noticeFull", "noticeRemoved", "noticeGone", "noticeCleared", "noticeFolderLinked", "noticeFolderInaccessible", "noticeDropLinkedRoot", "noticeDropInaccessibleRoot", "noticeDropRemoteRoot", "noticeDropUnsupportedRoot", "noticeDropLinkedEntry", "noticeDropInaccessibleEntry"];
 const simpleKeys = Object.keys(en).filter((key) => !pluralKeys.some(base => key.startsWith(`${base}_`)));
 const parameters = (message: string): string =>
   [...new Set([...message.matchAll(/\{\{\s*(\w+)(?:,\s*number)?\s*\}\}/gu)].map((match) => match[1]))].sort().join(",");

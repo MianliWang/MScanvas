@@ -60,6 +60,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
           <div hidden={!exportOpen}><SpectrumExportActions {...props} /></div>
         </details></div> : null}
     </header>
+    {/* An absent spectrum has no body: the header line already says it is not in this run. */}
     {state.status === "unavailable" ? null : <div className="spectrum-body">{renderBody(state, props.onRetry, props, t)}</div>}
     <p className="spectrum-export-status" role="status">
       {describeSpectrumExport(exportState, t)}
@@ -151,12 +152,10 @@ function describe(state: SpectrumState, t: UiMessage): string {
     case "failed": return t("viewerSpectrumFailed", { index: formatCount(state.index) });
   }
 }
-function renderBody(state: SpectrumState, onRetry: () => void, binding: SelectedSpectrumPanelProps, t: UiMessage) {
+function renderBody(state: Exclude<SpectrumState, { readonly status: "unavailable" }>, onRetry: () => void, binding: SelectedSpectrumPanelProps, t: UiMessage) {
   switch (state.status) {
     case "none": return <div className="empty-state"><span>{t("viewerChooseHelp")}</span></div>;
     case "loading": return <div className="empty-state"><strong>{t("viewerSpectrumLoading", { index: formatCount(state.index) })}</strong></div>;
-    // The header line already says the spectrum is not in this run.
-    case "unavailable": return null;
     case "failed": return <div className="empty-state"><strong>{ownedErrorMessage(state.error, t)}</strong>
       {ownedErrorDetail(state.error, t) === null ? null : <span>{ownedErrorDetail(state.error, t)}</span>}
       {state.error.retryable ? <button className="secondary-button" onClick={onRetry} type="button">{t("viewerSpectrumRetry")}</button> : null}</div>;

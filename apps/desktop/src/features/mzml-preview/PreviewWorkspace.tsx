@@ -272,6 +272,8 @@ export function PreviewWorkspace() {
   const backendUnavailable =
     workspace.backend.status === "resolved" &&
     workspace.backend.availability.state === "unavailable";
+  // Copy that offers dropping files only while dropping files works.
+  const dropAvailable = workspace.dropSubscriptionStatus === "available";
   // The banner has nothing to act on only while a usable installation stands
   // and nothing is being checked, superseded or held back by the conversion
   // lane; then it folds to a phrase in the header and costs the workspace no
@@ -459,7 +461,7 @@ export function PreviewWorkspace() {
   return (
     <div className="app-shell workbench-shell" data-surface={surface} data-roster-open={rosterOpen} data-details-open={detailsOpen} data-settings-return-target="" tabIndex={-1}>
       <WorkbenchHeader surface={surface} onNavigate={setSurface}
-        detailsAvailable={detailsAvailable} rowCount={roster.datasets.length}
+        detailsAvailable={detailsAvailable}
         busy={workspace.conversion.busy}
         retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus}
         projectBusy={project.busy !== "idle"} context={shellContext}
@@ -786,6 +788,7 @@ export function PreviewWorkspace() {
             canReloadRoster={canReloadRoster}
             dispatch={workspace.dispatchRoster}
             focusAddFilesToken={workspace.focusAddFilesToken}
+            dropAvailable={dropAvailable}
             dropBusy={workspace.dropBusy}
             folderBusy={workspace.folderBusy}
             load={workspace.rosterLoad}
@@ -1041,7 +1044,7 @@ export function PreviewWorkspace() {
             ) : (
               <div className="empty-state">
                 <strong>{t("emptyEvidence")}</strong>
-                <span>{backendUnavailable ? t("previewBackendRequired") : t("emptyEvidenceHelp")}</span>
+                <span>{backendUnavailable ? t("previewBackendRequired") : emptyEvidenceHelp(workspace, dropAvailable, t)}</span>
                 {/* The one owned next step in this state -- the acquisition that
                     was being read, one click from being read again -- so it is
                     this surface's primary action (PM9 L1). No other state gets
@@ -1075,6 +1078,19 @@ export function PreviewWorkspace() {
  * U+00A0 rather than a plain space, because CSS collapses a trailing ordinary
  * space out of the rendered text a screen reader is given. It is not spoken.
  */
+/**
+ * The empty evidence column's next step, from what the roster holds: nothing
+ * while it is still being read, the route to data while it is empty, a pick
+ * once there is an mzML row, and why nothing opens when every row is a vendor
+ * acquisition.
+ */
+function emptyEvidenceHelp(workspace: ReturnType<typeof usePreviewWorkspace>, dropAvailable: boolean, t: UiMessage): string {
+  if (workspace.rosterLoad.status === "loading") return "";
+  const rows = workspace.roster.datasets;
+  if (rows.length === 0) return t(dropAvailable ? "emptyEvidenceDropHelp" : "emptyEvidenceHelp");
+  return t(rows.some(row => row.sourceKind === "mzml") ? "emptyEvidenceSelect" : "emptyEvidenceVendorOnly");
+}
+
 function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
   return `${t("workspaceAnnouncement", { message: formatWorkspaceNotice(notice, t).message })}${notice.sequence % 2 === 1 ? "\u00a0" : ""}`;
 }

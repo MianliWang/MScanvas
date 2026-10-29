@@ -65,6 +65,8 @@ export interface DatasetRosterProps {
   readonly folderBusy: boolean;
   /** Whether a native Explorer drop is still being inspected. */
   readonly dropBusy: boolean;
+  /** Whether files can be dropped onto the window, so the empty list may say so. */
+  readonly dropAvailable?: boolean;
   /** Whether an explicit preview may be started right now. */
   readonly canPreview: boolean;
   /**
@@ -152,6 +154,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   canAddFolder,
   folderBusy,
   dropBusy,
+  dropAvailable = false,
   canPreview,
   canMutate,
   canRemove,
@@ -1066,7 +1069,7 @@ export const DatasetRoster = memo(function DatasetRoster({
           {load.status === "failed" ? <><strong>{t("rosterFailed")}</strong><span>{ownedErrorMessage(load.error, t)}</span>
             <button className="secondary-button" disabled={!canReloadRoster} onClick={onReloadRoster} type="button">{t("rosterRetry")}</button></> :
             load.status === "loading" ? <strong>{t("rosterLoading")}</strong> :
-              <strong>{t("rosterEmpty")}</strong>}
+              <><strong>{t("rosterEmpty")}</strong>{dropAvailable ? <span>{t("rosterEmptyHelp")}</span> : null}</>}
         </div> : null} />
 
     </section>

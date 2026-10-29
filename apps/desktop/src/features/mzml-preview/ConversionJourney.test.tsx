@@ -191,7 +191,7 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
     const failed = [...panel.querySelectorAll('li[data-item-state="failed"]')];
     expect(failed.map((row) => row.querySelector(".conversion-queue-retry")?.textContent)).toEqual([
       "Retryable",
-      "Not retryable",
+      "Not retryable: the same settings would fail again.",
     ]);
     const scope = panel.querySelector("#conversion-retry-scope");
     expect(scope).not.toBeNull();

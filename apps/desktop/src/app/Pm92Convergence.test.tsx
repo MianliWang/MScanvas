@@ -178,8 +178,9 @@ describe("PM9.2: the roster's actions, quieter but all there (L9)", () => {
     const count = toolbar.querySelector(".roster-selection-context");
     expect(count).not.toBeNull();
     expect(toolbar.querySelector("button")!.compareDocumentPosition(count!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Nothing highlighted or checked yet, so the count says nothing.
-    expect(count).toBeEmptyDOMElement();
+    // Nothing highlighted or checked yet: the count keeps its place, unseen
+    // and unspoken, so the first highlight does not move the list.
+    expect(count?.querySelector(".roster-selection-idle")).toHaveAttribute("aria-hidden", "true");
   });
 });
 

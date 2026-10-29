@@ -626,8 +626,9 @@ function ChromatogramPlot({
           them would be noise rather than feedback. It is the plot's accessible
           description instead, so a reader who focuses the plot is told what is
           selected -- and the persistent selection, not the transient hover, is
-          what every keyboard route establishes. */}
-      <p className="chromatogram-readout" id="chromatogram-readout">
+          what every keyboard route establishes. With nothing selected or
+          hovered it is unseen, but still read as that description. */}
+      <p className="chromatogram-readout" id="chromatogram-readout" data-idle={hoveredPoint === null && selectedPoint === null ? "" : undefined}>
         {hoveredPoint === null
           ? selectedPoint === null ? t("viewerNoSelection") : describeScan(selectedPoint, t("viewerSelected"), t)
           : describeScan(hoveredPoint, t("viewerHover"), t)}

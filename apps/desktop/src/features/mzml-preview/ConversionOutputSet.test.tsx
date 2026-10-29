@@ -346,11 +346,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     expect(within(result).queryByText("Converted")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Retry/ })).toBeNull();
 
-    // The sentence this must never produce, and no offer to add a set that is
-    // not complete.
-    expect(document.body.textContent).not.toContain(
-      "Nothing was converted, so there is nothing to add to the workspace.",
-    );
+    // No offer to add a set that is not complete.
     expect(document.querySelector(".conversion-adoption")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Add converted/ })).toBeNull();
     // The warning is carried by a note, not by colour alone.

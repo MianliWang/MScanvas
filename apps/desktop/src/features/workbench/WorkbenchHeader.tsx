@@ -6,10 +6,10 @@ import { fitContextLine } from "./contextLineLayout";
 import { prioritizeShellContext, shellContextItems, type ShellContextFacts } from "./shellContext";
 
 export type WorkbenchSurface = "workbench" | "conversion" | "project";
-export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCount, busy, retained, projectBusy = false, context = null, dropStatus, backend = null }: {
+export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, busy, retained, projectBusy = false, context = null, dropStatus, backend = null }: {
   readonly surface: WorkbenchSurface; readonly onNavigate: (surface: WorkbenchSurface) => void;
   readonly detailsAvailable: boolean;
-  readonly rowCount: number; readonly busy: boolean; readonly retained: boolean; readonly dropStatus: "available" | "connecting" | "unavailable";
+  readonly busy: boolean; readonly retained: boolean; readonly dropStatus: "available" | "connecting" | "unavailable";
   /** Whether the project session is doing something; the words are in the context line. */
   readonly projectBusy?: boolean;
   /** What the context line describes, or `null` for none. */
@@ -122,7 +122,7 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
       <button type="button" className="secondary-button" data-layout-reset="" aria-disabled={panels.busy || !resettable || undefined}
         title={loading ?? (resettable ? undefined : t("layoutNothingToReset"))}
         onClick={() => { if (!panels.busy && resettable) panels.reset(); }}>{t("layoutReset")}</button>
-      <SettingsDialog rowCount={rowCount} />
+      <SettingsDialog />
     </div>
     {/* Mounted from the first render and empty until there is something to
         say. A region that arrives with its text already in it is the one
@@ -149,7 +149,7 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, rowCoun
         region: each fact here is announced, where it is announced at all, by
         the surface that owns it. Its height is held when it has nothing to
         say, so the first item to arrive does not push the workspace down. */}
-    <div className="workbench-context-bar" ref={contextBar} style={{ minHeight: 32 }}>
+    <div className="workbench-context-bar" ref={contextBar}>
       {contextItems.length === 0 ? null : (
         <div className="shell-context" role="group" aria-label={t("shellContextRegion")}>
           {contextItems.map(item => <button type="button" key={item.id} className="shell-context-item"

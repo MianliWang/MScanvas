@@ -369,7 +369,7 @@ describe("PM9.4 O5: the ellipsis only where a picker follows", () => {
   });
 });
 
-describe("PM9.4 O6: Stop and Skip explained where they are offered", () => {
+describe("PM9.4 O6: Stop explained where it is offered", () => {
   it("leaves them out of a ready review", async () => {
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend }));
     await check("run-1.raw");
@@ -379,22 +379,20 @@ describe("PM9.4 O6: Stop and Skip explained where they are offered", () => {
     expect(panel.textContent).not.toMatch(/Stop queue|Stop this file|Skip settles/);
   });
 
-  it("explains Skip beside the rows that offer it while the queue runs", async () => {
+  it("offers Skip on the rows that can take it, and explains Stop queue", async () => {
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1), raw(2), raw(3)], availability: availableBackend, initialConversion: running() }));
     const skip = await within(panel).findByRole("button", { name: "Skip run-3.raw" });
-    expect(skip).toHaveAccessibleDescription(en.m74CnvSkipExplanation);
-    expect(within(panel).getByText(en.m74CnvSkipExplanation)).toBeVisible();
-    // Stop queue and Stop this file keep their own explanations.
+    // Its name says what it skips; nothing else restates it.
+    expect(skip).not.toHaveAttribute("aria-describedby");
     expect(within(panel).getByRole("button", { name: "Stop queue" })).toHaveAccessibleDescription(en.m74CnvStopExplanation);
   });
+});
 
-  it("says nothing of Skip where no row offers it", async () => {
-    const panel = await panelOf(createFakePreviewApi({
-      initialDatasets: [raw(1), raw(2)], availability: availableBackend,
-      initialConversion: { status: "running", operationId: "1", queue: queueOf([converted("file-1", "run-1.raw"), queueItem("file-2", "run-2.raw", { state: "running", attempts: 1 })]) },
-    }));
-    await within(panel).findByRole("button", { name: "Stop queue" });
-    expect(within(panel).queryByText(en.m74CnvSkipExplanation)).toBeNull();
+describe("the plan summary", () => {
+  it("says the shipped precision rounds intensities, beside Convert", async () => {
+    const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend }));
+    await check("run-1.raw");
+    await waitFor(() => expect(panel.querySelector("[data-plan-precision-note]")).toHaveTextContent(en.cnvMz64I32Note));
   });
 });
 

@@ -46,13 +46,13 @@ function acquisition(index: number): SelectedFile {
 const DATASETS = [acquisition(1), acquisition(2), acquisition(3)];
 
 const STOP_EXPLANATION =
-  "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.";
+  "Stop queue keeps completed outputs.";
 
 // The other scope's copy, written out here for the same reason the one above is:
 // asserting the rendered sentence against a constant imported from the panel
 // would pass whatever the panel happened to say.
 const CANCEL_ITEM_EXPLANATION =
-  "This file may still finish on its own. If its stop cannot be confirmed, the whole queue stops and MSCanvas needs a restart.";
+  "If this stop cannot be confirmed, the whole queue stops and MSCanvas must restart.";
 
 // What the same control says once this document has asked: the same sentence,
 // which stays true while the stop is in flight. Never the unavailable one --

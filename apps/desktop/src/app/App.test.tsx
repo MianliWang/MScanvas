@@ -107,10 +107,10 @@ describe("mzML preview workspace", () => {
     renderApp(createFakePreviewApi({ availability: unavailableBackend }));
 
     expect(await screen.findByText("No ProteoWizard installation was found")).toBeVisible();
+    // One span for the body, its sentences joined as the locale joins them.
     expect(
-      screen.getByText("ProteoWizard was not found on this computer."),
+      screen.getByText("ProteoWizard was not found on this computer. Install or repair ProteoWizard, or choose the folder that contains msconvert.exe."),
     ).toBeVisible();
-    expect(screen.getByText("Install or repair ProteoWizard, or choose its folder.")).toBeVisible();
     // Reading a file cannot succeed without a backend, so it is not offered.
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // Curating the workspace is not backend work, so it stays available: the
@@ -455,7 +455,7 @@ describe("mzML preview workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
 
     expect(await screen.findByText(/has neither msconvert.exe nor msaccess.exe/)).toBeVisible();
-    expect(screen.getByText(/Install or repair ProteoWizard, or choose its folder/)).toBeVisible();
+    expect(screen.getByText(/Install or repair ProteoWizard, or choose the folder that contains msconvert\.exe/)).toBeVisible();
     // Both ways out, and nothing that asks for an executable path.
     expect(screen.getByRole("button", { name: "Search automatically" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Choose a different folder…" })).toBeEnabled();
@@ -3046,7 +3046,7 @@ describe("adding a folder of mzML files", () => {
       ),
     ).toBeVisible();
     expect(screen.queryByText("The folder could not be added")).toBeNull();
-    expect(screen.queryByText(/workspace changed during the folder scan/)).toBeNull();
+    expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
     // Awaited, because focus is restored by an effect that runs after the
     // import settles rather than in the same commit. Asserting it
     // synchronously passed whenever that effect had already flushed and failed
@@ -3087,9 +3087,9 @@ describe("adding a folder of mzML files", () => {
 
     expect(await screen.findByText("The folder could not be added")).toBeVisible();
     // The code's owned sentence, not the boundary's English (PM9 UI-44).
-    expect(screen.getByText(/That folder could not be fully read, so the scan stopped/u)).toBeVisible();
+    expect(screen.getByText(/MSCanvas stopped scanning that folder/u)).toBeVisible();
     expect(rosterRows()).toHaveLength(0);
-    expect(screen.queryByText(/workspace changed during the folder scan/)).toBeNull();
+    expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
   });
 
   it("keeps a committed first import hidden while Clear list is still pending", async () => {
@@ -3256,7 +3256,7 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
     expect(await screen.findByText("The folder could not be added")).toBeVisible();
-    expect(screen.getByText(/That is a shortcut or link, not a folder/)).toBeVisible();
+    expect(screen.getByText(/MSCanvas does not follow links when scanning/)).toBeVisible();
     expect(rosterRows()).toHaveLength(1);
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
     // Its own channel: nothing about the workspace was changed, so saying the
@@ -3282,7 +3282,7 @@ describe("adding a folder of mzML files", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
-    expect(await screen.findByText(/so no files were added/)).toBeVisible();
+    expect(await screen.findByText(/none of its files were added/)).toBeVisible();
     expect(rosterRows()).toHaveLength(1);
   });
 

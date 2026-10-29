@@ -244,12 +244,15 @@ describe("the setup", () => {
     expect(caveats).toContain(`${en.targetedOutcomeNotDetected} is not proof`);
     expect(caveats).toContain("positive-mode, centroided MS1");
     expect(caveats).toContain("[M+H]+");
+    // The no-modify promise is said before Run, not only by the run's phases.
+    expect(caveats).toContain("The source file is never changed.");
     // The same caveats, in the words zh-CN already uses for them.
     const zhCaveats = `${zh.targetedExperimental} ${zh.targetedDomain}`;
     expect(zhCaveats).toContain("这不是鉴定");
     expect(zhCaveats).toContain(`${zh.targetedOutcomeNotDetected}并不证明`);
     expect(zhCaveats).toContain("正离子模式、已质心化的 MS1");
     expect(zhCaveats).toContain("[M+H]+");
+    expect(zhCaveats).toContain("来源文件不会被更改。");
 
     // How the source is read is not narrated in the setup; the run's Details
     // records the source view it actually used.
@@ -1753,8 +1756,12 @@ describe("a stored result in its report and in the history (PM9.6)", () => {
     expect(zh.targetedPayloadCorrupt).toContain("重新打开项目");
   });
 
-  it("names the history's note for targeted runs, in both languages (R4)", () => {
-    expect(en.projectCaptureMeaning).toContain("targeted MS1 run");
-    expect(zh.projectCaptureMeaning).toContain("靶向 MS1 运行");
+  it("keeps the history's note true of targeted runs, in both languages (R4)", () => {
+    // Each run's row says how it ended and what it stored; the note names no
+    // record type, claims no absence of analysis, and says opening runs nothing.
+    expect(en.projectCaptureMeaning).toContain("Opening one runs nothing.");
+    expect(zh.projectCaptureMeaning).toContain("打开记录不会运行任何内容。");
+    expect(en.projectCaptureMeaning).not.toMatch(/analy[sz]e/u);
+    expect(zh.projectCaptureMeaning).not.toContain("不分析");
   });
 });

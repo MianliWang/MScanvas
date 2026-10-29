@@ -406,8 +406,7 @@ describe("stepping through scans from the table", () => {
   it("gives one number while every row is loaded and none is filtered out", () => {
     renderTable({ rowCount: 40 });
     const count = () => document.querySelector(".scan-result-count")?.textContent ?? "";
-    // `scanCountAll` is new with this change; the cast keeps the test readable before the bundle has it.
-    const all = (UI_RESOURCES.en as Record<string, string>)["scanCountAll"]?.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "40");
+    const all = UI_RESOURCES.en.scanCountAll.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "40");
 
     expect(count()).toBe(all);
 

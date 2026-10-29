@@ -399,7 +399,7 @@ describe("PM9.7 integrated native rendering, controlled IPC, 144 DPI (prepared U
           };
         }), [words.projectSave, words.projectSaveAs, words.projectClose]);
         evidence.push({ kind: "F1 refused Project controls", label: at, refused });
-        for (const fact of refused) expect(fact).toMatchObject({ found: true, refused: "true", disabled: false, opacity: "0.48", title: "", describedBy: words.projectNoneHint });
+        for (const fact of refused) expect(fact).toMatchObject({ found: true, refused: "true", disabled: false, opacity: "0.48", title: "", describedBy: words.projectNone });
         const save = await mark(".project-header", words.projectSave, "data-pm97-native-save");
         expect(save).not.toBeNull();
         await reach(save!, `${at} refused Save`);

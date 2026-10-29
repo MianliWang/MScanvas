@@ -445,7 +445,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     });
     expect(within(panel).queryByRole("button", { name: /^Retry/u })).toBeNull();
     // Each failed row says it is not retryable, which is why nothing reruns.
-    expect(within(panel).getAllByText("Not retryable").length).toBeGreaterThan(0);
+    expect(within(panel).getAllByText("Not retryable: the same settings would fail again.").length).toBeGreaterThan(0);
   });
 
   it("stops calling a settled queue one that is starting", async () => {

@@ -15,11 +15,11 @@ import type {
 } from "./contracts";
 import { SOURCE_KIND_LABEL } from "./contracts";
 import type { ConversionAvailability } from "./conversionAvailability";
-import { ConversionSettings, CONVERSION_VALUE_LABEL } from "./ConversionSettings";
+import { ConversionSettings, CONVERSION_VALUE_LABEL, precisionNote } from "./ConversionSettings";
 import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
 import { OutputOpenActions } from "./OutputOpenActions";
 import { STAGING_STATUS_ID, StagingRecoveryActions } from "./StagingRecoveryActions";
-import { ConversionItemJudgements } from "./ConversionItemJudgements";
+import { ADOPTION_REFUSAL_LABEL, ConversionItemJudgements } from "./ConversionItemJudgements";
 import type { ConversionRefusal } from "./conversionNoticeRegistry";
 import { conversionNotices, conversionRefusalNoticeId } from "./conversionNoticeRegistry";
 import { formatByteLength, formatCount, formatDuration } from "./format";
@@ -61,16 +61,6 @@ function describeDestination(policy: DestinationPolicy, t: UiMessage): string {
 }
 
 /**
- * The one sentence this workflow must always say about what it verified.
- *
- * A vendor acquisition has no mzML reading, so nothing about the output can be
- * compared to a source model. Saying so before the conversion and again after
- * it is the difference between a checked file and a file that merely converted
- * without erroring.
- */
-
-
-/**
  * The plan summary sentence, family-aware.
  *
  * A homogeneous queue names its exact family, because "vendor" is vaguer than
@@ -109,103 +99,6 @@ function describeQueueFamilies(items: readonly ConversionQueuePlanItem[], t: UiM
 function outputSetSummary(maxMembers: number, t: UiMessage): string {
   return t("m74CnvOutputBound", { count: maxMembers });
 }
-
-/**
- * Why no filename is shown for a set.
- *
- * Said rather than left blank. A user who sees a name for every other row and
- * nothing for this one is owed the reason, and the reason is not that MSCanvas
- * does not know yet -- it is that the name is the backend's to choose.
- */
-
-
-/**
- * What a full set publication establishes, in the only words the evidence
- * supports.
- *
- * Every clause is load-bearing. "Identified by the SCIEX reader" is narrower
- * than "in the acquisition", and the difference is exactly what this milestone
- * did not measure: the audit proves no sample the reader found was lost, not
- * that the reader found them all.
- */
-
-
-/**
- * What a partially finalized acquisition means for the user.
- *
- * Deliberately not "nothing was converted", which is what a count-of-items
- * reading would produce and which is false: the finalized prefix is real, it is
- * in the folder they chose, and nothing here removes it. What it is not is the
- * acquisition's output set, which is why MSCanvas will not offer it as one.
- */
-
-
-/** What each staging residue means for the folder the user chose. */
-
-
-/**
- * What Stop queue does, said before it is pressed.
- *
- * Both halves matter. The first is what the user is asking for; the second is
- * what they are not losing, and without it "stop" reads as "undo" over files
- * that are already written and already theirs.
- */
-
-
-/**
- * What ending one file does, said before it is pressed.
- *
- * The difference from Stop queue is the whole reason both exist, so it is
- * stated rather than implied: this one is about the acquisition being converted
- * now, and the queue keeps going.
- */
-
-
-/**
- * What is true while a stop is in flight.
- *
- * Deliberately silent about the current item. Whether it is cancelled or
- * finishes on its own is decided by which the process boundary observes first,
- * and a prediction here is a claim the next read could contradict.
- */
-
-
-/**
- * What is true while an adoption is in flight.
- *
- * Not called converting: nothing is being converted, and a second word for the
- * same workflow would be the panel describing two things at once. No
- * percentage, because nothing measures a fraction of a file being checked.
- */
-
-
-/**
- * The one sentence this action must never be offered without.
- *
- * Three claims in order, and the order is the argument. Local, so nobody looks
- * for an upload. Redacted, so the effort is stated. And then the limit — backend
- * text is written by an instrument's software about a real acquisition, and no
- * amount of path removal makes that anonymous. It ends by asking for the one
- * thing that actually protects the user, which is reading the file.
- */
-
-
-/**
- * What is true while an export is being written.
- *
- * No percentage. The file is bounded at a couple of megabytes and is written in
- * one go, so a fraction would be a number invented to fill a progress bar.
- */
-
-
-/** Why one output was not added, in the user's terms rather than the boundary's. */
-const ADOPTION_REFUSAL_LABEL: Record<string, StaticMessageKey> = {
-  output_missing: "cnvAdoptionReasonMissing",
-  output_changed: "cnvAdoptionReasonChanged",
-  output_unreadable: "cnvAdoptionReasonUnreadable",
-  output_not_mzml: "cnvAdoptionReasonNotMzml",
-  workspace_full: "cnvAdoptionReasonFull",
-};
 
 export interface ConversionPanelProps {
   readonly conversion: ConversionOperation;
@@ -665,7 +558,7 @@ function AdoptOutputs({ conversion, refusedBy }: {
               className="quiet-text"
               key={`${String(outcome.itemIndex)}-${String(outcome.memberIndex)}`}
             >
-              {t("m74CnvNotAdded", { name: outcome.outputFileName, reason: t(ADOPTION_REFUSAL_LABEL[outcome.kind === "refused" ? outcome.reason : ""] ?? "m74CnvAdoptUnverified") })}
+              {t("m74CnvNotAdded", { name: outcome.outputFileName, reason: t((outcome.kind === "refused" ? ADOPTION_REFUSAL_LABEL[outcome.reason as keyof typeof ADOPTION_REFUSAL_LABEL] : undefined) ?? "m74CnvAdoptUnverified") })}
             </p>
           ))}
           {refused.length > 3 ? (
@@ -857,6 +750,7 @@ function PlanState({
   const t = useUiMessages();
   const current = plan.current;
   const summary = current?.plan ?? null;
+  const rounding = summary === null ? null : precisionNote(summary.intent.precision, t);
   // The rows the control names, which is what the reader selected rather than
   // what MSCanvas has finished describing. The plan is rendered in every state
   // now, so reading this off the summary made the label say "Convert 0
@@ -931,10 +825,6 @@ function PlanState({
         </details>
       )}
       <p className="quiet-text">{t("m74CnvOrder", { order: t(SORT_MESSAGE[resolvedScope.sort]) })}</p>
-      {/* About checked rows, so only where checked rows are the scope. */}
-      {resolvedScope.scope === "selected" ? (
-        <p className="quiet-text" data-testid="conversion-membership-help">{t("conversionMembershipHelp")}</p>
-      ) : null}
       {plan.capacityRefusal === null ? null : <p className="notice notice-warning" data-testid="conversion-capacity" id={CAPACITY_REFUSAL_ID}>
         {t("m74CnvCapacityExceeded", { count: plan.capacityRefusal.requestedCount, capacity: plan.capacityRefusal.capacity })}
       </p>}
@@ -1099,9 +989,15 @@ function PlanState({
               {t("m74CnvOutputOnly")}
             </p>
           ) : null}
-          {/* What this combination reduces is said once, beside the selected
-              setting above: a summary is only on screen for the current
-              selection, so repeating the loss here said it twice. */}
+          {/* Rounding is said again here because the precision setting above
+              has scrolled away by the time Convert is in reach. The other
+              losses are said once, beside their selected setting: a summary is
+              only on screen for the current selection. */}
+          {rounding === null ? null : (
+            <p className="quiet-text" role="note" data-plan-precision-note="">
+              {rounding}
+            </p>
+          )}
         </>
       )}
 
@@ -1276,8 +1172,6 @@ function QueueState({
   // Whether Stop this file has a file to describe: one it would end, or one it
   // is ending. Between items there is nothing to say.
   const cancelItemDescribed = conversion.cancellingItem || conversion.cancellableItem !== null;
-  // Whether any row offers Skip, which is when Skip is explained (PM9.4 O6).
-  const skipOffered = queue.items.some((_, index) => conversion.canSkipItem(index) || conversion.skippingItem(index));
   // The queue's one status sentence. Always the block's first element, in
   // every state and in the starting window above, so it is one DOM node from
   // the press that starts a queue to the result: the focus R11 puts on it, and
@@ -1367,13 +1261,10 @@ function QueueState({
             <p className="quiet-text" id="conversion-cancel-item-scope" role="note">
               {conversion.cancellingItem || conversion.cancellableItem === null
                 ? t("m74CnvCancelItemExplanation")
-                : `${t("m74CnvCancelNamed", { name: conversion.cancellableItem.fileName })} ${t("m74CnvCancelItemExplanation")}`}
+                : t("m74CnvCancelNamed", { name: conversion.cancellableItem.fileName })}
             </p>
           ) : null}
         </>
-      ) : null}
-      {skipOffered ? (
-        <p className="quiet-text" id="conversion-skip-scope" role="note">{t("m74CnvSkipExplanation")}</p>
       ) : null}
 
       <details className="conversion-bound-details">
@@ -1456,7 +1347,6 @@ function QueueState({
                 <button
                   type="button"
                   className="link-button conversion-queue-skip"
-                  aria-describedby="conversion-skip-scope"
                   aria-disabled={conversion.skippingItem(index) || undefined}
                   onClick={() => {
                     if (!conversion.skippingItem(index)) conversion.skipItem(index);
@@ -1765,16 +1655,6 @@ function itemStateLabel(item: ConversionQueueItem, t: UiMessage): string {
   }
   return t(ITEM_STATE_LABEL[item.state]);
 }
-
-/**
- * What a skipped output set says.
- *
- * Every one of them, not one of them: the multi-output lifecycle steps aside
- * only when it finds a file at every destination name it discovered, so a
- * sentence about "a file of that name" would describe a name this item never
- * had.
- */
-
 
 /** What each item state says, in words rather than in colour. */
 const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], StaticMessageKey> = {

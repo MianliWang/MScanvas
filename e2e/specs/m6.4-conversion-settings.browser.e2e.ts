@@ -493,13 +493,14 @@ describe("M6.4 — E2: one axis moves, and only that axis", () => {
       const input = document.querySelector(
         '[data-axis="population"] input[value="ms1_only"]',
       );
-      const id = input?.getAttribute("aria-describedby") ?? "";
-      return document.getElementById(id)?.textContent ?? "";
+      // The group's refusal, then the value's own note where it has one.
+      const ids = (input?.getAttribute("aria-describedby") ?? "").split(" ");
+      return ids.map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
     });
     // The sentence is about the combination the choice would produce. A refusal
     // that said "MS1 spectra only is not supported" would be false: it appears
     // in rows this build runs perfectly well.
-    expect(note).toContain("Not qualified with your other settings.");
+    expect(note).toContain("Not validated with these settings.");
   });
 });
 
@@ -1164,13 +1165,14 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
   const REFUSED = '[data-axis="processing"] input[value="unscoped_default_centroiding"]';
 
   /**
-   * The id of the note the refused choice names. Minted by `useId` since M7.4
-   * (`e495464`), so it is read from the control rather than written here, and
-   * looked up as an attribute: a minted id need not be a valid `#` selector.
+   * The id of the refusal note the refused choice names first; its own lossy
+   * note follows. Minted by `useId` since M7.4 (`e495464`), so it is read from
+   * the control rather than written here, and looked up as an attribute: a
+   * minted id need not be a valid `#` selector.
    */
   async function noteId(): Promise<string> {
     await advanced();
-    const id = await browser.execute((css: string) => document.querySelector(css)?.getAttribute("aria-describedby") ?? "", REFUSED);
+    const id = await browser.execute((css: string) => (document.querySelector(css)?.getAttribute("aria-describedby") ?? "").split(" ")[0] ?? "", REFUSED);
     expect(id).not.toBe("");
     return id;
   }
@@ -1179,8 +1181,8 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
   async function refusalNote(): Promise<string> {
     await advanced();
     return browser.execute((css: string) => {
-      const id = document.querySelector(css)?.getAttribute("aria-describedby") ?? "";
-      return document.getElementById(id)?.textContent ?? "";
+      const ids = (document.querySelector(css)?.getAttribute("aria-describedby") ?? "").split(" ");
+      return ids.map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
     }, REFUSED) as Promise<string>;
   }
 
@@ -1254,7 +1256,7 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
     expect(keyboard.wayOutFocused).toBe(true);
     // Described by the note whose sentence refusalNote() read above.
     const NOTE_ID = await noteId();
-    expect(keyboard.refusedDescribedBy).toBe(NOTE_ID);
+    expect(keyboard.refusedDescribedBy?.split(" ")[0]).toBe(NOTE_ID);
 
     // The new sentence is laid out rather than clipped, and showing it does not
     // make the document scroll sideways at this viewport.

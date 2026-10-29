@@ -50,6 +50,11 @@ table remains the target, including the unsupported portions called out below:
   and the `.wiff.scan` beside it, admitted together as one row, and the plan
   states the range of outputs it will produce rather than a name, because
   ProteoWizard names those documents itself.
+
+  *Changed by the self-explaining copy pass (2026-10-28; owner direction in
+  [AFTER_BETA1_PLAN §2](../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+  The capacity is no longer a standing line: it is said only when an eligible
+  scope exceeds it, in the refusal.
 - **WSP-003 — Implemented for the current mzML surface.** M1.5 accepts one or
   many regular `.mzML` files, ordinary local folders containing regular `.mzML`
   files, or a mixture of both from Windows Explorer
@@ -388,6 +393,17 @@ rounds. CNV-007's zlib is a choice now rather than a fixed default, and is
 described as a packing decision because that is what M6.2 measured when precision
 is held constant. A combination that reduces nothing produces no reassuring
 sentence: silence is the honest answer where there is nothing to disclose.
+
+*Changed by the self-explaining copy pass (2026-10-28; owner direction in
+[AFTER_BETA1_PLAN §2](../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+Only a value that changes what is written keeps a note, so the compression
+choices carry none and zlib is no longer described on screen as a packing
+decision. The review no longer repeats the reductions: each is said once,
+beside its setting. The exception is a precision's rounding (for example
+"Intensity values are rounded to 32-bit."), which is said again beside
+Convert because the precision setting has scrolled away by then. A refused
+value's reason is said once per settings group rather than under every
+refused value; each refused value is described by it.
 
 Which combinations a build can run is read from the installed ProteoWizard by one
 Rust-owned configuration read, bound to the same receipt the plan and the queue

@@ -81,6 +81,9 @@ export const config: WebdriverIO.Config = {
   baseUrl: DEV_SERVER_URL,
 
   specs: ["./specs/**/*.browser.e2e.ts"],
+  // Screenshots for a person to read, not assertions about copy: it runs alone,
+  // through `wdio.copy-tour.conf.ts`.
+  exclude: ["./specs/copy-tour.browser.e2e.ts"],
   maxInstances: 1,
 
   capabilities: [

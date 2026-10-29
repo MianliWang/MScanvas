@@ -293,11 +293,14 @@ describe("the four control groups", () => {
         refusalNoticeId={null}
       />);
     const control = within(groupFor("processing")).getByLabelText("Centroid all MS levels");
-    const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
-    expect(note?.textContent).toContain("Lossy.");
-    expect(note?.textContent).toContain("replaces the recorded profile points");
-    expect(note?.textContent).not.toContain("local-maximum");
-    expect(note?.textContent).not.toContain("vendor");
+    // Every note the control names: the group's refusal, when it is refused,
+    // and its own lossy note, which stays beside it either way.
+    const note = (control.getAttribute("aria-describedby") ?? "").split(" ")
+      .map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+    expect(note).toContain("Lossy.");
+    expect(note).toContain("replaces the recorded profile points");
+    expect(note).not.toContain("local-maximum");
+    expect(note).not.toContain("vendor");
   });
 
   it("never call the chooser for a value that cannot be chosen", () => {
