@@ -1314,7 +1314,16 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await laneFree();
 
       const linked = countOf(await ipcCalls(), "begin_linked_figure_export");
-      await press("#chromatogram-linked-section", fill(en.viewerLinkedExport, { name: "SVG" }));
+      // The linked figure is offered from the chromatogram's ⋯ menu and saved
+      // from the export dialog it opens (rebuild spec 3.4, 6).
+      await browser.$(`.chromatogram-panel button[aria-label="${en.plotMoreExports}"]`).click();
+      await browser.$(`//*[@role="menuitem"][starts-with(normalize-space(), "${en.figurePreviewLinked}")]`).click();
+      const linkedSvg = browser.$(`[role="dialog"] button=${svg}`);
+      await browser.waitUntil(async () => (await linkedSvg.getAttribute("aria-disabled")) !== "true", {
+        timeout: 15_000,
+        timeoutMsg: "the linked figure dialog never offered SVG",
+      });
+      await linkedSvg.click();
       const pair = await lastRequest("begin_linked_figure_export", linked);
       expect(pair["format"]).toBe("svg");
       expect(typeof pair["chromatogramToken"]).toBe("string");

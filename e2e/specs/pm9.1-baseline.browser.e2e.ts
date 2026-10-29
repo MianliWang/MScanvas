@@ -172,23 +172,25 @@ async function home() {
   await browser.$(".workbench-home").click();
 }
 
-/**
- * The scope as the Conversion surface resolves it, in the context line's words:
- * the checked scope and the eligible count from its own summary. `null` where
- * the surface states no scope.
- */
-function ownedScope(): Promise<string | null> {
+/** The viewed acquisition, as the Workbench identity row names it (rebuild spec 3.2). */
+function viewedName(): Promise<string | null> {
   return browser.execute(
-    (selected: string, all: string, template: string) => {
-      const checked = document.querySelector<HTMLInputElement>('input[name="conversion-scope"]:checked');
-      const eligible = /(\d+) eligible/u.exec(document.querySelector("#conversion-scope-summary")?.textContent ?? "")?.[1];
-      if (checked === null || eligible === undefined) return null;
-      return template.replace("{{scope}}", checked.value === "all" ? all : selected).replace("{{eligible}}", eligible);
-    },
-    en.m74CnvSelected,
-    en.m74CnvAll,
-    en.shellContextScope,
+    () => document.querySelector("#workbench-evidence .viewer-identity-name")?.textContent ?? null,
   ) as Promise<string | null>;
+}
+
+/** The inspected project record, as Details names it (rebuild spec 4). */
+function inspectedName(): Promise<string | null> {
+  return browser.execute(
+    () => document.querySelector("#workbench-inspector .provenance-name")?.textContent ?? null,
+  ) as Promise<string | null>;
+}
+
+async function waitForInspected(name: string | null, what: string) {
+  await browser.waitUntil(async () => (await inspectedName()) === name, {
+    timeout: 15_000,
+    timeoutMsg: `Details: ${what}`,
+  });
 }
 
 /**
@@ -207,13 +209,6 @@ function membership(): Promise<unknown> {
     counts: document.querySelector("#conversion-scope-summary")?.textContent ?? null,
     selection: document.querySelector(".roster-selection-context")?.textContent ?? null,
   }));
-}
-
-/** Which destination the navigation marks as the current page. */
-function currentDestination(): Promise<string | null> {
-  return browser.execute(
-    () => document.querySelector(".workbench-navigation > button[aria-current='page']")?.textContent ?? null,
-  ) as Promise<string | null>;
 }
 
 /**
@@ -678,50 +673,35 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await open("populated");
       await viewTheRow();
       await selectTheSpectrum(0);
-      // A scope with nothing eligible is not a fact the line repeats; one
-      // checked vendor row makes it one, and the route below then has a scope.
-      expect(await contextText("conversionScope")).toBe(null);
+      // One checked vendor row, so the scope the routes below must not touch
+      // holds an eligible row.
       await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
-      await waitForContext("conversionScope", (text) => text !== null, "names a scope with an eligible row");
       await navigate([en.projectSurface]);
       await browser.$(`button[aria-label="${fill(en.provenanceInspectInput, { name: "QC_pool_01.mzML" })}"]`).click();
-      await waitForContext("inspecting", (text) => text === fill(en.shellContextInspecting, { name: "QC_pool_01.mzML" }), "names the inspected reference");
+      await waitForInspected("QC_pool_01.mzML", "names the inspected reference");
 
-      // Each item reads its owner: the project session, the viewer, the scope
-      // the Conversion surface resolves, and what Details describes.
+      // Each fact reads its owner: the status bar the project session, the
+      // identity row the viewer, and Details what is inspected. The scope is
+      // the Conversion summary's alone; the shell no longer repeats it.
       expect(await contextText("project")).toBe(fill(en.shellContextProject, { name: "Test project" }));
-      expect(await contextText("viewing")).toMatch(new RegExp(`^${prefix(en.shellContextViewing)}QC_pool_01\\.mzML`, "u"));
-      // The scope bears on a conversion being set up, so the Project surface
-      // leaves it out (PM9.2 L14–L16); the route below reaches it from the
-      // Workbench, where it is shown.
-      expect(await contextText("conversionScope")).toBe(null);
+      expect(await viewedName()).toBe("QC_pool_01.mzML");
       expect(await contextText("conversionActivity")).toBe(null);
       expect(await contextText("projectActivity")).toBe(null);
 
       const before = await ipcCalls();
       const scopeBefore = await membership();
+      // The status bar's project item, then the header tabs: each changes the
+      // surface and nothing the scope is made of.
       const routes = [
-        ["viewing", "workbench", en.workbench],
-        ["conversionScope", "conversion", en.conversionTask],
-        ["project", "project", en.projectSurface],
-        ["viewing", "workbench", en.workbench],
-        ["inspecting", "project", en.projectSurface],
+        [() => home(), "workbench"],
+        [() => activate("project"), "project"],
+        [() => navigate([en.conversionTask]), "conversion"],
+        [() => navigate([en.workbench]), "workbench"],
+        [() => activate("project"), "project"],
       ] as const;
-      for (const [id, target, destination] of routes) {
-        await activate(id);
+      for (const [go, target] of routes) {
+        await go();
         expect(await surface()).toBe(target);
-        expect(await currentDestination()).toBe(destination);
-        // Page-sensitive, not owner-sensitive: where the scope bears on the
-        // task, the line states the one the Conversion surface resolves; on
-        // the Project surface it is absent. Either way, hiding it changes
-        // nothing it is made of.
-        if (target === "project") {
-          expect(await contextText("conversionScope")).toBe(null);
-        } else {
-          const owned = await ownedScope();
-          expect(owned).not.toBe(null);
-          expect(await contextText("conversionScope")).toBe(owned);
-        }
         expect(await membership()).toEqual(scopeBefore);
       }
       // Still the same inspected record, where Details describes it.
@@ -749,9 +729,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await open("populated");
       await viewTheRow();
       // A session-only change of the reader's own: one more row for conversion,
-      // an eligible one, so the line names the scope it is routed through.
+      // an eligible one.
       await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
-      await waitForContext("conversionScope", (text) => text !== null, "names a scope with an eligible row");
       await selectTheSpectrum(0);
       await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
       await browser.$(`button=${en.viewerMzZoomIn}`).click();
@@ -765,17 +744,17 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         roster: await rosterState(),
         scan: await selectedRowPosition(),
         view: await spectrumRangeCaption(),
-        viewing: await contextText("viewing"),
-        scope: await contextText("conversionScope"),
+        viewing: await viewedName(),
+        scope: await membership(),
       });
       const before = await held();
       const calls = await ipcCalls();
 
-      await activate("conversionScope");
+      await navigate([en.conversionTask]);
       expect(await surface()).toBe("conversion");
       await navigate([en.projectSurface]);
       expect(await surface()).toBe("project");
-      await activate("viewing");
+      await navigate([en.workbench]);
       expect(await surface()).toBe("workbench");
 
       // Navigation changed what is shown, not what is held.
@@ -861,13 +840,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           expect((await ipcCalls()).some((call) => call.command === "read_targeted_ms1_rows")).toBe(false);
         }
 
-        // The line names the record; how available its payload is stays the
-        // report's to say, so the sentence is the same in every state.
-        await waitForContext(
-          "inspecting",
-          (text) => text === fill(en.shellContextInspecting, { name: en.projectArtifactTargetedMs1 }),
-          "names the stored result",
-        );
+        // Details names the record; how available its payload is stays the
+        // report's to say, so the name is the same in every state.
+        await waitForInspected(en.projectArtifactTargetedMs1, "names the stored result");
         // Lineage stays the record's own: its producing run and its plan.
         expect(await browser.$(`#workbench-inspector [data-provenance-link="${TARGETED_RUN}"]`).isExisting()).toBe(true);
         expect(await browser.$("#workbench-inspector").getText()).toContain(PLAN_SHA);
@@ -875,7 +850,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         const calls = await ipcCalls();
         await home();
         expect(await surface()).toBe("workbench");
-        await activate("inspecting");
+        await navigate([en.projectSurface]);
         expect(await surface()).toBe("project");
         expect(await browser.$(`[data-targeted-report="${RESULT}"]`).getAttribute("data-availability")).toBe(availability);
 
@@ -915,14 +890,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await browser.$("[data-project-work-dot]").isExisting()).toBe(false);
       // The capture moved what is inspected to the record it made, as
       // `useProject` `captureQc` does when nothing else was chosen meanwhile.
-      await waitForContext(
-        "inspecting",
-        (text) => text === fill(en.shellContextInspecting, { name: en.projectArtifactQcSummary }),
-        "names the new QC record",
-      );
+      await waitForInspected(en.projectArtifactQcSummary, "names the new QC record");
 
       await home();
-      await activate("inspecting");
+      await navigate([en.projectSurface]);
       expect(await surface()).toBe("project");
       await browser.$(`[data-qc-report="${QC_ARTIFACT}"]`).waitForDisplayed();
       expect(await browser.$('#workbench-inspector [data-provenance="artifact"]').isDisplayed()).toBe(true);
@@ -986,11 +957,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await metrics(1920, 1080);
       await open("populated");
       await viewTheRow();
-      const viewing = await contextText("viewing");
+      const viewing = await viewedName();
       await navigate([en.projectSurface]);
       await browser.$(`button[aria-label="${fill(en.provenanceInspectInput, { name: "QC_pool_01.mzML" })}"]`).click();
-      const inspected = fill(en.shellContextInspecting, { name: "QC_pool_01.mzML" });
-      await waitForContext("inspecting", (text) => text === inspected, "names the inspected reference");
+      const inspected = "QC_pool_01.mzML";
+      await waitForInspected(inspected, "names the inspected reference");
 
       // A check, held, so its running state can be looked at from elsewhere.
       await holdInvoke("check_project_links");
@@ -1017,7 +988,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await releaseInvokeHold("check_project_links");
       await waitForContext("projectActivity", (text) => text === null, "leaves no busy label once settled");
       expect(await browser.$("[data-project-work-dot]").isExisting()).toBe(false);
-      expect(await contextText("inspecting")).toBe(inspected);
+      expect(await inspectedName()).toBe(inspected);
 
       // Replaced through the real buttons: Close, then Open.
       await setInvokeResult("close_project", NO_PROJECT);
@@ -1028,7 +999,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       const beforeReplace = await ipcCalls();
       await browser.$(`button=${en.projectClose}`).click();
       await waitForContext("project", (text) => text === null, "names no project once none is open");
-      expect(await contextText("inspecting")).toBe(null);
+      expect(await inspectedName()).toBe(null);
       await browser.$(`button=${en.projectOpen}`).click();
       await waitForContext(
         "project",
@@ -1037,9 +1008,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       );
       // What was inspected belonged to the project before; the new one starts
       // with nothing inspected, even with the same identifiers inside it.
-      expect(await contextText("inspecting")).toBe(null);
+      expect(await inspectedName()).toBe(null);
       // The viewer is its own owner: a project change leaves the viewed row alone.
-      expect(await contextText("viewing")).toBe(viewing);
+      expect(await viewedName()).toBe(viewing);
       // The two explicit replacements, and nothing else that starts or re-reads.
       expect(await unexpectedSince("pm9-b7-replace", beforeReplace)).toEqual(["close_project", "open_project"]);
       expect(await unexpectedConsole()).toEqual([]);
