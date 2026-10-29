@@ -819,9 +819,9 @@ async function observeViewer(label: string) {
         return { cut: summary.scrollWidth > summary.clientWidth + 1, covered };
       })(),
       // Which acquisition the evidence belongs to, where the shell names it
-      // (ADR 0006's Run identity; PM9.2's context line).
+      // (ADR 0006's Run identity; the Workbench's identity row, spec 3.2).
       identity: (() => {
-        const item = document.querySelector<HTMLElement>('[data-shell-context="viewing"]');
+        const item = document.querySelector<HTMLElement>(".viewer-identity-name");
         return item === null ? null : { text: item.textContent, truncated: item.scrollWidth > item.clientWidth };
       })(),
       panels: {

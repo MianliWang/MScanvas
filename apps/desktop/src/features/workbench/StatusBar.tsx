@@ -10,6 +10,8 @@ import type { WorkbenchSurface } from "./WorkbenchHeader";
 export const STATUS_BUSY_ID = "shell-status-busy";
 /** The backend item, which refused reads point at. Always rendered. */
 export const STATUS_BACKEND_ID = "shell-status-backend";
+/** A work or project item's id, for a refusal that it is the reason for. */
+export const statusItemId = (id: ShellContextItem["id"]) => `shell-status-${id}`;
 
 export interface StatusBackend {
   /** Green when ready, amber when it needs action, red when unavailable. */
@@ -98,7 +100,7 @@ export function WorkbenchStatusBar({ backend, items, busy, dropStatus, onNavigat
         data-backend-item="" data-backend-toggle="" aria-expanded={backend.toggle.expanded} aria-controls="backend-status"
         onClick={backend.toggle.onToggle}>{dot}{backend.text}</Button>}
     {items.map(item => <Button key={item.id} variant="quiet" size="sm" className="status-item"
-      id={conversionItem && item.id === "conversionActivity" ? STATUS_BUSY_ID : undefined}
+      id={conversionItem && item.id === "conversionActivity" ? STATUS_BUSY_ID : statusItemId(item.id)}
       data-shell-context={item.id} title={item.text} onClick={() => go(item.target)}>
       <span className="status-item-text">{item.text}</span>
       {item.unsaved === true ? <>{" "}<span className="status-tag">{t("statusUnsaved")}</span></> : null}

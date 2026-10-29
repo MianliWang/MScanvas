@@ -131,6 +131,8 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's states, %s", (loc
       fireEvent.click(within(evidence()).getByRole("button", { name: words.openInConversion }));
     });
     expect(document.querySelector(".workbench-shell")).toHaveAttribute("data-surface", "conversion");
+    // The pressed button left with the evidence; the keyboard followed.
+    expect(document.getElementById("workbench-conversion")).toHaveFocus();
     // The row is checked for conversion; nothing was read.
     expect(within(row).getByRole("checkbox")).toBeChecked();
   });

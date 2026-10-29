@@ -1605,7 +1605,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       // this headless page without system focus, and then `focus()` moves
       // `activeElement` but fires no focus event -- a state no reader is in.
       await cdp("Emulation.setFocusEmulationEnabled", { enabled: true });
-      await browser.execute(() => document.querySelector<HTMLElement>("[data-backend-help] summary")?.focus());
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-backend-help]")?.focus());
       const held = await browser.execute(() => ({
         hasFocus: document.hasFocus(),
         collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,

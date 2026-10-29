@@ -7,7 +7,7 @@ import { ProvenanceDetails } from "../project/ProvenanceDetails";
 import { useProject } from "../project/useProject";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
 import { shellContextItems } from "../workbench/shellContext";
-import { STATUS_BACKEND_ID, STATUS_BUSY_ID, WorkbenchStatusBar, statusBusyReason, type StatusBackend } from "../workbench/StatusBar";
+import { STATUS_BACKEND_ID, STATUS_BUSY_ID, WorkbenchStatusBar, statusBusyReason, statusItemId, type StatusBackend } from "../workbench/StatusBar";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { Button, EmptyState, Icon, IconButton } from "../../components/ui";
 
@@ -520,6 +520,33 @@ export function PreviewWorkspace() {
     : focusedVendor !== null ? "vendor"
     : backendUnavailable ? "backend"
     : "idle";
+  /**
+   * An evidence action that shows another surface hides the button that was
+   * pressed, so the keyboard follows to the surface it asked for rather than
+   * being left on the body.
+   */
+  const pendingSurfaceFocus = useRef<"conversion" | "project" | null>(null);
+  useLayoutEffect(() => {
+    if (pendingSurfaceFocus.current === null || pendingSurfaceFocus.current !== surface) return;
+    pendingSurfaceFocus.current = null;
+    document.getElementById(`workbench-${surface}`)?.focus({ preventScroll: true });
+  }, [surface]);
+  /**
+   * The first run's Add buttons leave when the first rows arrive. A reader who
+   * was on one continues from the evidence, which now says what to do next,
+   * rather than from the body. Read in the ref's cleanup, while the node is
+   * still in the document.
+   */
+  const firstRunHeldFocus = useRef(false);
+  const firstRunActions = useCallback((node: HTMLDivElement | null) => {
+    if (node === null) return;
+    return () => { firstRunHeldFocus.current = node.contains(document.activeElement); };
+  }, []);
+  useLayoutEffect(() => {
+    if (evidenceState === "first-run" || !firstRunHeldFocus.current) return;
+    firstRunHeldFocus.current = false;
+    if (document.activeElement === null || document.activeElement === document.body) evidenceRef.current?.focus({ preventScroll: true });
+  }, [evidenceState]);
 
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
@@ -908,7 +935,7 @@ export function PreviewWorkspace() {
             the title and the control that leads here cannot disagree; the
             region's accessible name is the title. Kept for that name and hidden
             from view (spec 1.2): the selected tab already says where this is. */}
-        <section id="workbench-project" className="workbench-project" hidden={surface !== "project"}
+        <section id="workbench-project" tabIndex={-1} className="workbench-project" hidden={surface !== "project"}
           inert={drawer !== null || undefined} aria-labelledby="surface-title-project">
           <h1 id="surface-title-project" className="surface-title visually-hidden">{t("projectSurface")}</h1>
           <ProjectPanel
@@ -931,7 +958,7 @@ export function PreviewWorkspace() {
             }}
           />
         </section>
-        <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion"}
+        <section id="workbench-conversion" tabIndex={-1} className="workbench-conversion" hidden={surface !== "conversion"}
           inert={drawer !== null || undefined} aria-labelledby="surface-title-conversion">
           <h1 id="surface-title-conversion" className="surface-title visually-hidden">{t("conversionTask")}</h1>
           <ConversionPanel
@@ -1131,7 +1158,7 @@ export function PreviewWorkspace() {
               <EmptyState
                 className="evidence-state"
                 message={<><Icon name="file" size={28} /><strong>{t("emptyEvidence")}</strong></>}
-                action={<div className="evidence-actions">
+                action={<div className="evidence-actions" ref={firstRunActions}>
                   {/* The roster's own Add buttons are these same actions; while
                       it is on screen they are not offered twice. */}
                   {rosterOpen ? null : <>
@@ -1142,7 +1169,8 @@ export function PreviewWorkspace() {
                       {t("addFolder")}
                     </Button>
                   </>}
-                  <Button refused={project.busy !== "idle"} reasonId="shell-status-projectActivity" onClick={() => {
+                  <Button refused={project.busy !== "idle"} reasonId={statusItemId("projectActivity")} onClick={() => {
+                    pendingSurfaceFocus.current = "project";
                     setSurface("project");
                     panels.navigate();
                     void project.openProject();
@@ -1164,6 +1192,7 @@ export function PreviewWorkspace() {
                   // checked rows on the Conversion surface. Nothing is read.
                   workspace.dispatchRoster({ type: "membershipChanged", handles: [focusedVendor.handle], checked: true });
                   workspace.setConversionScope("selected");
+                  pendingSurfaceFocus.current = "conversion";
                   setSurface("conversion");
                   panels.navigate();
                 }}>

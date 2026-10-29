@@ -11,7 +11,7 @@
  * tests; nothing here reads a file or runs a provider.
  */
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "../../app/App";
@@ -180,6 +180,22 @@ describe("the Project menu", () => {
     await press(await screen.findByRole("menuitem", { name: en.projectNew }));
     expect(currentSurface()).toBe("project");
     await waitFor(() => expect(projects.calls).toContain("createProject"));
+  });
+
+  it("refuses the first run's Open project… while the project is busy, and says why", async () => {
+    const projects = renderShell(NO_PROJECT);
+    const release = projects.holdOnce("createProject");
+    await openProjectMenu();
+    await press(await screen.findByRole("menuitem", { name: en.projectNew }));
+    await press(screen.getByRole("button", { name: en.home }));
+    const open = within(document.getElementById("workbench-evidence")!).getByRole("button", { name: en.projectOpen });
+    await waitFor(() => expect(open).toHaveAttribute("aria-disabled", "true"));
+    // The reason is the status bar's own item for what the project is doing.
+    expect(open).toHaveAccessibleDescription(statusItem("projectActivity").textContent ?? "");
+    expect(open).toHaveAccessibleDescription(/^In progress: /);
+    await act(async () => {
+      release();
+    });
   });
 });
 
