@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./design-system/tokens.css";
+@import "./components/ui/ui.css";
 @import "./app/app.css";
 @import "./features/preferences/preferences.css";
 @import "./features/project/project.css";
