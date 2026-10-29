@@ -1300,7 +1300,16 @@ mod tests {
     #[test]
     fn text_fields_refuse_what_would_split_or_change_them() {
         assert!(NativeId::new("controllerType=0 controllerNumber=1 scan=1").is_ok());
-        for bad in ["", "a;b", " a", "a ", "a  b", "a\tb", "a\nb", "a\u{a0}b"] {
+        for bad in [
+            "",
+            "a;b",
+            " a",
+            "a ",
+            "a\u{20}\u{20}b",
+            "a\tb",
+            "a\nb",
+            "a\u{a0}b",
+        ] {
             assert!(NativeId::new(bad).is_err(), "{bad:?}");
         }
         assert!(ScanFilterText::new("FTMS + p NSI Full ms [350.00-1800.00]").is_ok());
