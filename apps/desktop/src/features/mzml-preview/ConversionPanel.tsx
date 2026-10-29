@@ -415,9 +415,9 @@ export function ConversionPanel({
             part="rows"
             onReviewNewPlan={() => {
               plan.invalidate();
-              const panel = convertButton.current?.closest<HTMLElement>(".conversion-plan");
-              panel?.focus({ preventScroll: true });
-              panel?.scrollIntoView?.({ block: "nearest" });
+              const next = panel.current?.querySelector<HTMLElement>(".conversion-plan");
+              next?.focus({ preventScroll: true });
+              next?.scrollIntoView?.({ block: "nearest" });
             }}
             conversion={conversion}
             retryAvailability={retryAvailability}
@@ -430,9 +430,10 @@ export function ConversionPanel({
             -- one live, one hypothetical, and the hypothetical one's button
             refused -- is the panel describing two different things in the same
             shape. A finished queue is different: there the plan is how the user
-            converts something else, so it stays, under its own heading and
-            whole, below the results. The settings are the next conversion's
-            and go with it (PM9.4 R5). */}
+            converts something else, so it stays, under its own heading, below
+            the results; its summary and Convert stay in the summary column,
+            directly under the notice that explains them. The settings are the
+            next conversion's and go with it (PM9.4 R5). */}
         {conversion.busy ? null : (
           <div className="conversion-plan" tabIndex={-1} role={terminal ? "group" : undefined}
             aria-labelledby={terminal ? "conversion-next-heading" : undefined}>
@@ -445,7 +446,6 @@ export function ConversionPanel({
               onSettingsViewChange={setSettingsView}
               plan={plan}
             />
-            {terminal ? planSummary : null}
           </div>
         )}
       </div>
@@ -461,7 +461,14 @@ export function ConversionPanel({
           />
         ) : null}
         <AvailabilityNotice refusals={refusals} />
-        {queueShown ? null : planSummary}
+        {conversion.busy ? null : terminal ? (
+          // The next conversion's half of the summary column, set apart from
+          // the finished queue's and named like the settings it describes.
+          <div className="conversion-next-summary" role="group" aria-labelledby="conversion-next-summary-label">
+            <p className="conversion-field-label" id="conversion-next-summary-label">{t("m74CnvNextConversion")}</p>
+            {planSummary}
+          </div>
+        ) : planSummary}
       </div>
     </section>
   );
@@ -1545,6 +1552,7 @@ function QueueState({
               size="sm"
               aria-describedby="conversion-stop-scope"
               refused={!conversion.canStop}
+              reasonId={QUEUE_STATUS_ID}
               onClick={() => conversion.stop()}
             >{t("m74CnvStopQueue")}</Button>
             <Button
@@ -1552,6 +1560,9 @@ function QueueState({
               size="sm"
               aria-describedby={cancelItemDescribed ? "conversion-cancel-item-scope" : undefined}
               refused={conversion.cancellableItem === null}
+              // Between items the status sentence ("…starting the next") is
+              // why there is no file to stop.
+              reasonId={QUEUE_STATUS_ID}
               onClick={() => conversion.cancelCurrentItem()}
             >
               {conversion.cancellingItem ? t("m74CnvStoppingFile") : t("m74CnvStopFile")}

@@ -305,11 +305,12 @@ async function frame(label: string) {
       .filter((button) => shown(button) && !button.disabled && button.getAttribute("aria-disabled") !== "true")
       .filter((button) => getComputedStyle(button).backgroundColor === accent)
       .map((button) => (button.textContent ?? "").trim());
-    // Controls under the 32 px compact minimum (DESIGN_SYSTEM), inputs aside.
+    // Controls under the rebuild's 30 px small-button height (v5.11 rebuild
+    // spec 1.4, `--control-height-sm`), inputs aside.
     const small = [...(node?.querySelectorAll<HTMLElement>("button, summary") ?? [])]
       .filter(shown)
       .map((control) => ({ name: (control.textContent ?? "").trim().slice(0, 40), height: control.getBoundingClientRect().height }))
-      .filter((control) => control.height < 31.5);
+      .filter((control) => control.height < 29.5);
     return {
       css: { width: innerWidth, height: innerHeight },
       devicePixelRatio,
