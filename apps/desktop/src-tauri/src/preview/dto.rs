@@ -2737,6 +2737,9 @@ pub struct PreviewDto {
     /// issuing a token for a run the viewer refuses would open an export door
     /// onto a capability the product does not otherwise have.
     ///
+    /// Also `None` for a run with no scan at the chromatogram's MS level (MS1
+    /// by default), which the viewer still draws until it filters by level too.
+    ///
     /// Opaque, session-scoped, and meaningless to anything that did not receive
     /// it here. It is not a path, not a dataset handle and not an index.
     pub chromatogram_export_token: Option<String>,

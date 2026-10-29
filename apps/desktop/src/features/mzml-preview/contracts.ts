@@ -573,6 +573,9 @@ export interface Preview {
    * document receives a bounded prefix, so a token is issued only for a run the
    * viewer itself would draw.
    *
+   * Also `null` for a run with no scan at the chromatogram's MS level (MS1 by
+   * default), which the viewer still draws until it filters by level too.
+   *
    * Opaque, session-scoped, and meaningless to anything that did not receive it
    * from Rust. Not a path, not a dataset handle, not an index — and never a
    * reason for this side to believe it holds the science.

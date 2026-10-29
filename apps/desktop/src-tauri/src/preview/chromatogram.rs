@@ -453,6 +453,10 @@ impl ChromatogramSource {
     /// door onto a capability the product does not otherwise have. A truncated
     /// viewer has no chromatogram and no chromatogram export.
     ///
+    /// One refusal is not yet the viewer's: a run with no scan at the default
+    /// MS level has no chromatogram here, while the viewer draws every level
+    /// until it filters by level too.
+    ///
     /// The remaining refusals are the model's own, and are checked here for the
     /// same reason: a retention time that is not a number cannot be placed on
     /// an axis or written as a coordinate, and a unit this build cannot name
