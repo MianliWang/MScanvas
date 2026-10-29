@@ -276,9 +276,9 @@ describe("M7.1 localized Settings and real shared consumers", () => {
       for (let step = 0; step < 8; step++) await browser.keys("Tab");
       expect(await browser.execute(() => document.querySelector("[data-settings-dialog]")?.contains(document.activeElement))).toBe(true);
       if (dpr === 2) {
-        await browser.execute(() => document.querySelector(".settings-dialog-actions .primary-button")!.scrollIntoView({ block: "center" }));
+        await browser.execute(() => document.querySelector(".settings-dialog-actions .ui-button--primary")!.scrollIntoView({ block: "center" }));
         const visible = await browser.execute(() => {
-          const target = document.querySelector<HTMLElement>(".settings-dialog-actions .primary-button")!;
+          const target = document.querySelector<HTMLElement>(".settings-dialog-actions .ui-button--primary")!;
           const rect = target.getBoundingClientRect();
           return rect.top >= 0 && rect.bottom <= innerHeight;
         });

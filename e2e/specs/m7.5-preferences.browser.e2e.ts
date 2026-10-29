@@ -172,7 +172,7 @@ async function capture(label: string, expectedDpr?: number) {
         ...box(dialog),
         scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth,
         scrollHeight: dialog.scrollHeight, clientHeight: dialog.clientHeight,
-        primary: box(dialog.querySelector(".settings-dialog-actions .primary-button")),
+        primary: box(dialog.querySelector(".settings-dialog-actions .ui-button--primary")),
       },
       // Everything on screen, for the one check that is only meaningful over
       // the whole document: whether a Chinese session is reading English.

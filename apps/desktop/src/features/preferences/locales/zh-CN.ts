@@ -585,6 +585,8 @@ export const zhCN = {
   writeInvalidRecord: "MSCanvas 无法回读这些偏好，因此未保存它们。",
   writeNothingToSave: "没有需要保存的内容。",
   writeRequestFailed: "MSCanvas 无法访问自己的偏好存储。",
+  layoutSection: "布局",
+  layoutPanels: "面板",
   layoutReset: "重置布局",
   layoutUnsaved: "此面板布局未保存，重启后将使用上次保存的布局。",
   layoutRetry: "重试保存布局",

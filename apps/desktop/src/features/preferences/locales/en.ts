@@ -585,6 +585,8 @@ export const en = {
   writeInvalidRecord: "MSCanvas would not be able to read these preferences back, so it did not save them.",
   writeNothingToSave: "There was nothing to save.",
   writeRequestFailed: "MSCanvas could not reach its own preference store.",
+  layoutSection: "Layout",
+  layoutPanels: "Panels",
   layoutReset: "Reset layout",
   layoutUnsaved: "This panel arrangement is not saved, so restarting uses the last saved one.",
   layoutRetry: "Try saving the layout again",

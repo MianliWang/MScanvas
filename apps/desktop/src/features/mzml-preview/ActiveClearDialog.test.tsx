@@ -36,7 +36,9 @@ describe("active clear confirmation", () => {
     expect(close).not.toHaveBeenCalled();
     await act(async () => result.resolve({ status: "refused", reason: "stalePlan" }));
     expect(screen.getByRole("button", { name: "Check current rows" })).toHaveFocus();
-    expect(initiator).toBeDisabled();
+    // Refused with the refusal as its reason, and still focusable.
+    expect(initiator).toHaveAttribute("aria-disabled", "true");
+    expect(initiator).toHaveAccessibleDescription(en.clearStale);
   });
 
   it.each(["unchanged", "removed", "blurred", "returned"])("preserves the %s ownership claim across delayed modal cleanup", async destination => {
@@ -104,9 +106,9 @@ describe("active clear confirmation", () => {
     expect(close).not.toHaveBeenCalled();
     await act(async () => { result.resolve({ status: "refused", reason: "stalePlan" }); });
     expect(screen.getByText(en.clearStale)).toBeVisible();
-    expect(remove).toBeDisabled();
+    expect(remove).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(screen.getByRole("button", { name: "Check current rows" }));
-    await waitFor(() => expect(remove).toBeEnabled());
+    await waitFor(() => expect(remove).not.toHaveAttribute("aria-disabled"));
   });
 
   it("Return and Escape spend no mutation and restore the initiating control", async () => {
@@ -138,8 +140,10 @@ describe("active clear confirmation", () => {
     await screen.findByText(/0 of 3 rows/);
     expect(screen.queryByText(en.clearNothing)).toBeNull();
     const remove = screen.getByRole("button", { name: "Remove non-running" });
-    expect(remove).toBeDisabled(); fireEvent.click(remove);
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    expect(remove).toHaveAccessibleDescription(/0 of 3 rows/);
+    fireEvent.click(remove);
     expect(execute).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Cancel and clear" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cancel and clear" })).not.toHaveAttribute("aria-disabled");
   });
 });

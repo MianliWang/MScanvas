@@ -53,7 +53,7 @@ describe("M7.4 bilingual conversion composition", () => {
     await waitFor(() => expect(clear).toBeEnabled());
     clear.focus(); fireEvent.click(clear);
     const cancel = await screen.findByRole("button", { name: en.clearCancelAll });
-    await waitFor(() => expect(cancel).toBeEnabled());
+    await waitFor(() => expect(cancel).not.toHaveAttribute("aria-disabled"));
     cancel.focus(); fireEvent.click(cancel);
     const add = screen.getByRole("button", { name: en.addFiles, hidden: true });
     const unlock = () => {
@@ -91,7 +91,7 @@ describe("M7.4 bilingual conversion composition", () => {
     const clear = screen.getByRole("button", { name: en.clearList });
     clear.focus(); fireEvent.click(clear);
     const remove = await screen.findByRole("button", { name: en.clearRemoveNonRunning });
-    await waitFor(() => expect(remove).toBeEnabled());
+    await waitFor(() => expect(remove).not.toHaveAttribute("aria-disabled"));
     remove.focus(); fireEvent.click(remove);
     await waitFor(() => expect(clear).toHaveFocus());
     expect(screen.getByRole("button", { name: en.addFiles })).toBeDisabled();
@@ -112,7 +112,7 @@ describe("M7.4 bilingual conversion composition", () => {
     const clear = screen.getByRole("button", { name: en.clearList });
     clear.focus(); fireEvent.click(clear);
     const cancel = await screen.findByRole("button", { name: en.clearCancelAll });
-    await waitFor(() => expect(cancel).toBeEnabled());
+    await waitFor(() => expect(cancel).not.toHaveAttribute("aria-disabled"));
     cancel.focus(); fireEvent.click(cancel);
     await act(async () => result.resolve({ status: "removed", result: { roster: { capacity: 1024, datasets: [] }, removedHandles: [source.handle], unknownHandles: [] } }));
     // Radix schedules its close autofocus in the next task after unmount.

@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useRef, useState } from "react";
+import { Button } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 
 export function GroupNameDialog({ name, rename, returnTo, onSave, onClose }: {
@@ -9,6 +10,7 @@ export function GroupNameDialog({ name, rename, returnTo, onSave, onClose }: {
   const [draft, setDraft] = useState(name);
   const composing = useRef(false);
   const content = useRef<HTMLDivElement | null>(null);
+  const invalid = !draft.trim() || draft.length > 120;
   return <Dialog.Root open onOpenChange={open => { if (!open) onClose(); }}>
     <Dialog.Portal><Dialog.Overlay className="settings-overlay" /><Dialog.Content className="group-name-dialog" aria-describedby={undefined} ref={node => { if (node !== null) content.current = node; }} onPointerDownOutside={event => event.preventDefault()} onCloseAutoFocus={event => {
       event.preventDefault();
@@ -18,11 +20,12 @@ export function GroupNameDialog({ name, rename, returnTo, onSave, onClose }: {
       onEscapeKeyDown={event => { event.stopImmediatePropagation(); if (composing.current || event.isComposing || event.keyCode === 229) event.preventDefault(); }}
       onKeyDownCapture={event => { if ((composing.current || event.nativeEvent.isComposing || event.keyCode === 229) && event.key === "Enter") { event.preventDefault(); event.stopPropagation(); } }}>
       <Dialog.Title>{t(rename ? "renameGroup" : "newGroup")}</Dialog.Title>
-      <form onSubmit={event => { event.preventDefault(); if (draft.trim() && draft.length <= 120) onSave(draft); }}>
+      <form onSubmit={event => { event.preventDefault(); if (!invalid) onSave(draft); }}>
         <label htmlFor="organization-group-name">{t("groupName")}</label>
         <input id="organization-group-name" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229) { event.stopPropagation(); if (event.key === "Enter") event.preventDefault(); } }} maxLength={120} />
-        <div className="group-dialog-actions"><Dialog.Close asChild><button type="button" className="secondary-button">{t("cancel")}</button></Dialog.Close>
-          <button type="submit" className="primary-button" disabled={!draft.trim() || draft.length > 120}>{t("saveGroup")}</button></div>
+        {invalid ? <p id="organization-group-name-reason">{t("organizationInvalidName")}</p> : null}
+        <div className="group-dialog-actions"><Dialog.Close asChild><Button>{t("cancel")}</Button></Dialog.Close>
+          <Button type="submit" variant="primary" refused={invalid} reasonId="organization-group-name-reason">{t("saveGroup")}</Button></div>
       </form>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>;

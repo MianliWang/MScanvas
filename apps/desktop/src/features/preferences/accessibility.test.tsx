@@ -74,10 +74,10 @@ describe("Settings, by keyboard and by screen reader", () => {
       expect(groups[0]).not.toHaveAttribute("aria-describedby");
       expect(groups[1]).toHaveAccessibleName(bundle.density);
       expect(groups[1]).not.toHaveAttribute("aria-describedby");
-      // Every option is a real radio with a real name, so the arrow keys and
-      // the form semantics are the platform's rather than this dialog's.
+      // Every option is a segmented-control radio with a real name: a button,
+      // so the arrow keys and the single Tab stop are the radiogroup's.
       for (const name of [bundle.english, bundle.simplifiedChinese, bundle.comfortable, bundle.compact]) {
-        expect(within(dialog).getByRole("radio", { name })).toBeInstanceOf(HTMLInputElement);
+        expect(within(dialog).getByRole("radio", { name })).toBeInstanceOf(HTMLButtonElement);
       }
     }
   });
@@ -199,7 +199,9 @@ describe("the workspace shell, by keyboard", () => {
       createFakePreferencesApi({ stored: storedRecord({ layout: { roster: "hidden", details: "automatic" } }) }),
     );
     await screen.findByText(en.backendMissing);
-    const reset = await screen.findByRole("button", { name: en.layoutReset });
+    // In Settings, under Layout, since the v5.11 rebuild.
+    const dialog = openSettings();
+    const reset = within(dialog).getByRole("button", { name: en.layoutReset });
     reset.focus();
     expect(reset).toHaveFocus();
     // Activated by the keyboard, through the same handler a pointer reaches.

@@ -192,7 +192,7 @@ describe("session Settings in the real application composition", () => {
     await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(en.resourceError);
-    expect(within(dialog).getByRole("button", { name: en.apply })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: en.apply })).toHaveAttribute("aria-disabled", "true");
     press(dialog, en.recover);
     expect(within(dialog).queryByRole("alert")).toBeNull();
     choose(dialog, en.simplifiedChinese);
@@ -215,7 +215,7 @@ describe("session Settings in the real application composition", () => {
     expect(density()).toBe("compact");
     expect(within(dialog).getByRole("alert")).toHaveTextContent(zh.resourceError);
     expect(within(dialog).getByRole("alert")).toHaveTextContent("RESOURCE_MISSING");
-    expect(within(dialog).getByRole("button", { name: zh.apply })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: zh.apply })).toHaveAttribute("aria-disabled", "true");
     press(dialog, zh.recover);
     choose(dialog, zh.english);
     press(dialog, en.cancel);
@@ -248,10 +248,10 @@ describe("session Settings in the real application composition", () => {
     expect(document.documentElement.lang).toBe("zh-CN");
     expect(density()).toBe("compact");
     expect(within(dialog).getByRole("alert")).toHaveTextContent(fault === "removed" ? "RESOURCE_MISSING" : "RESOURCE_EMPTY");
-    expect(within(dialog).getByRole("button", { name: zh.apply })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: zh.apply })).toHaveAttribute("aria-disabled", "true");
     press(dialog, zh.recover);
     expect(within(dialog).queryByRole("alert")).toBeNull();
-    expect(within(dialog).getByRole("button", { name: zh.apply })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: zh.apply })).not.toHaveAttribute("aria-disabled");
     expect(api.calls()).toEqual(calls);
   });
 
