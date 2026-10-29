@@ -663,9 +663,12 @@ export function StickSpectrum({
         <div aria-hidden="true" className="plot-x-ticks" />
         <p className="plot-axis-title plot-axis-title-x">{t("plotAxisMz")}</p>
       </div>
-      {caption === "" ? null : <figcaption className="spectrum-caption">
+      {/* Always there and one line tall at least, empty or not: a plot box
+          whose height changes when a drawing arrives would jump, and would
+          abandon a gesture in progress. */}
+      <figcaption className="spectrum-caption">
         <p>{caption}</p>
-      </figcaption>}
+      </figcaption>
     </figure>
   );
 }

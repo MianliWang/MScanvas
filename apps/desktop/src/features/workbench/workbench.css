@@ -236,7 +236,7 @@
 .workbench-shell .spectrum-frame { height: clamp(174px, calc(30vh + 14px), 334px); min-height: 174px; }
 .workbench-shell .spectrum-plot { min-height: 160px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
 .workbench-shell .spectrum-caption { flex: none; padding: 0 10px; }
-.workbench-shell .spectrum-caption p { margin: 2px 0 0; font-size: 11px; line-height: 1.4; }
+.workbench-shell .spectrum-caption p { min-height: 1.4em; margin: 2px 0 0; font-size: 11px; line-height: 1.4; }
 .plot-foot { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0 12px; min-height: 28px; padding: 0 6px 0 10px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
 .plot-foot > p { margin: 0; }
 .workbench-shell .plot-foot .chromatogram-axis-caption, .workbench-shell .plot-foot .chromatogram-readout { margin: 0; font-size: 11px; }
