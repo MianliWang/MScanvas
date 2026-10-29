@@ -1088,11 +1088,6 @@ export function ProjectPanel({
                         >
                           {t(layer === null ? "projectCreateLayer" : "projectShowLayer")}
                         </Button>
-                        {layer === null && !attached ? (
-                          <span id={reasonId} className="visually-hidden">
-                            {t("projectLayerNeedsWorkbench")}
-                          </span>
-                        ) : null}
                         {input.relinkProposed ? (
                           <>
                             <span className="project-proposal" data-project-proposal={input.id}>
@@ -1147,6 +1142,13 @@ export function ProjectPanel({
                           {t("projectRemoveReference")}
                         </Button>
                       </div>
+                      {/* Why Create layer waits, shown: nothing else on the
+                          row says the reference is not in the Workbench. */}
+                      {layer === null && !attached ? (
+                        <p id={reasonId} className="project-qc-reason">
+                          {t("projectLayerNeedsWorkbench")}
+                        </p>
+                      ) : null}
                     </li>
                   );
                 })}
