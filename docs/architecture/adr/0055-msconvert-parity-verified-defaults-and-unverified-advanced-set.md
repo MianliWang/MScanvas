@@ -121,7 +121,7 @@ A format that keeps only part of a document says so in the format choice:
 mzXML and mgf keep no chromatograms, ms1 and cms1 keep MS1 spectra only, and
 ms2 and cms2 keep MS2 spectra only.
 
-Lossy-by-request options stay in the advanced set. Without this distinction
+Lossy-by-request options are offered, not blocked. Without this distinction
 every subsetting filter would look blockable, and parity would mean nothing.
 
 ### 2. The envelope, the same for both tiers
@@ -149,7 +149,8 @@ every subsetting filter would look blockable, and parity would mean nothing.
     a generated name with no whitespace, keeping its extension, before launch.
     The run reads the copy, so the content is fixed when the plan is bound.
   - The argv names the copy by a path relative to the provider's working
-    directory, so every component of the token is a generated name.
+    directory, so no component of the token comes from a chosen path or from
+    the destination's path.
   - The copies sit outside the directory output discovery reads.
   - Rust refuses the item if a token it would emit still contains whitespace.
 - **Private staging and no overwrite.** msconvert always writes into the
@@ -289,7 +290,9 @@ intermediate, that format blocks both until it can.
 
    The intermediate gets every check of decision 5: the integrity contract, the
    requested-algorithm check, SCIEX completeness and `OutputContainsNoRecords`.
-   A failure here fails the item before run 2.
+   Its precision, compression and index are judged against its own fixed
+   encoding, 64/64 with zlib and an index; the requested encoding is lowered
+   only in run 2. A failure here fails the item before run 2.
 2. **Run 2: mzML to the requested format.** Each intermediate is converted into
    a second private staging directory. Run 2 carries:
    - the format flag;
