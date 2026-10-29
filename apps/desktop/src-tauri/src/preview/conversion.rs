@@ -37,7 +37,8 @@ use mscanvas_proteowizard::{
     OutputMemberReport, OutputMemberValidation, SciexSampleCompleteness,
 };
 
-use super::backend::{ConversionBackend, backend_label};
+use super::backend::ConversionBackend;
+use super::backend::backend_label;
 use super::dto::BackendAuthorityProjectionDto;
 use super::dto::{
     ConversionBackendFactsDto, ConversionConflictPolicyDto, ConversionOutputDto,
