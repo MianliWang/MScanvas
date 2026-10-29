@@ -10,9 +10,14 @@ const REFUSAL = {
 
 const STATUS_MESSAGE = { active: "stagingRecoveryActive", cleaned: "stagingRecoveryCleaned", processUnconfirmed: "stagingRecoveryUnconfirmed", proofUnavailable: "stagingRecoveryUnknown" } as const;
 
-export function StagingRecoveryActions({ recovery, enabled, reclaim, onReview }: {
+/** The status line of the one cleanup in flight, which the actions it refuses point at (PM9.4 O8). */
+export const STAGING_STATUS_ID = "conversion-staging-status";
+
+export function StagingRecoveryActions({ recovery, enabled, refusedBy, reclaim, onReview }: {
   readonly recovery: StagingRecovery;
   readonly enabled: boolean;
+  /** What says why the action is refused while `enabled` is false. */
+  readonly refusedBy?: string | null;
   readonly reclaim: (recoveryId: string) => Promise<StagingReclaimOutcome>;
   readonly onReview: () => void;
 }) {
@@ -32,8 +37,9 @@ export function StagingRecoveryActions({ recovery, enabled, reclaim, onReview }:
   };
   return <div className="conversion-recovery" role="group" aria-label={t("stagingRecoveryTitle")}>
     <p>{status === "recoverable" ? t("stagingRecoveryOwned", { count: recovery.attempt }) : status === "cleaned" ? null : t(STATUS_MESSAGE[status])}</p>
-    <p role="status">{working ? t("stagingRecoveryWorking") : answer === "failed" ? t("stagingRecoveryFailed") : answer?.status === "refused" ? t(REFUSAL[answer.reason]) : status === "cleaned" ? t("stagingRecoveryCleaned") : ""}</p>
+    <p role="status" id={working ? STAGING_STATUS_ID : undefined}>{working ? t("stagingRecoveryWorking") : answer === "failed" ? t("stagingRecoveryFailed") : answer?.status === "refused" ? t(REFUSAL[answer.reason]) : status === "cleaned" ? t("stagingRecoveryCleaned") : ""}</p>
     {status === "recoverable" || status === "cleaned" || status === "proofUnavailable" ? <button className="secondary-button" type="button" aria-disabled={!enabled || working}
+      aria-describedby={enabled ? undefined : refusedBy ?? undefined}
       onClick={() => { if (!enabled || working) return; if (status === "recoverable") cleanup(); else onReview(); }}>
       {t(status === "recoverable" ? "stagingRecoveryButton" : "stagingReviewNewPlan")}</button> : null}
   </div>;

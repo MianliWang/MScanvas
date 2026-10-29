@@ -1,6 +1,22 @@
 # Bootstrap status
 
-**Updated:** 2026-09-24
+**Updated:** 2026-10-27
+
+**Current route, 2026-10-27:** `main` carries M7.1–M7.5 and the M8/M9 stack
+(PR #127). PM9's product convergence (frozen candidate `30b855f`; PR #131) and
+beta-1 readiness (PR #134, stacked on it) are in review. PM9.7's integrated
+browser acceptance repaired the 174 legacy browser failures recorded below; on
+the beta-1 readiness code the whole browser suite passes (34 spec files, 487
+tests). The owner's 2026-10-27 decisions in
+[ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27)
+make beta 1 an unsigned GitHub prerelease with checksums and a build-provenance
+attestation, built by the `Release candidate` workflow. The first beta-1
+candidate was built from `e6d2a49` and checked natively and installed on
+2026-10-28 ([installed check](docs/release/beta-1/INSTALLED_CHECK.md)), and
+published the same day as the
+[`v0.1.0-beta.1` prerelease](https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1).
+M10 is not started. The 2026-09-24 paragraph below is kept
+as written.
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 

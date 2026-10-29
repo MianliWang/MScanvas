@@ -291,6 +291,11 @@ export interface TargetedMs1SetupProps {
   readonly onClose: () => void;
   /** The sentence for one refusal identifier, as the surface words it. */
   readonly refusalText: (code: string) => string;
+  /**
+   * Shows the folded Details region through the header's own control; absent
+   * while Details is on screen.
+   */
+  readonly onRevealDetails?: () => void;
 }
 
 /** What the last review answered: one plan, or one plan per chosen acquisition. */
@@ -315,6 +320,7 @@ export function TargetedMs1Setup({
   busyText,
   onClose,
   refusalText,
+  onRevealDetails,
 }: TargetedMs1SetupProps) {
   const t = useUiMessages();
   const ids = useId();
@@ -565,6 +571,7 @@ export function TargetedMs1Setup({
     setOpening(artifactId);
   };
   const showRun = (runId: string) => session.inspect({ kind: "run", id: runId });
+  const inspectedRun = session.inspecting?.kind === "run" ? session.inspecting.id : null;
 
   const [only] = members;
   const reviewRefusal = refusal?.during === "reviewing" ? refusal.code : null;
@@ -605,6 +612,12 @@ export function TargetedMs1Setup({
         {t("targetedExperimental")}
       </p>
       <p className="project-note">{t("targetedDomain")}</p>
+      {/* The scope and caveats above stay read before Run; how the source is
+          read explains a run without deciding one, so it waits to be opened. */}
+      <details className="targeted-modules" data-targeted-read-path="">
+        <summary>{t("targetedReadPathSummary")}</summary>
+        <p className="project-note">{t("targetedReadPath")}</p>
+      </details>
 
       <fieldset className="targeted-members" data-targeted-members="">
         <legend>{t("targetedAcquisitions")}</legend>
@@ -808,6 +821,8 @@ export function TargetedMs1Setup({
           onStop={() => void session.cancelJob()}
           onOpen={openResult}
           onShowRun={showRun}
+          inspectedRun={inspectedRun}
+          onRevealDetails={onRevealDetails}
         />
       ) : null}
 
@@ -826,9 +841,28 @@ export function TargetedMs1Setup({
           onStop={() => void session.cancelJob()}
           onOpen={openResult}
           onShowRun={showRun}
+          inspectedRun={inspectedRun}
+          onRevealDetails={onRevealDetails}
         />
       )}
     </section>
+  );
+}
+
+/**
+ * Where Show run's answer went while Details is folded: beside the press, the
+ * surface's own sentence and the header's own toggle. Nothing unfolds and the
+ * keyboard stays on the press until the reader asks.
+ */
+function DetailsHint({ onReveal }: { readonly onReveal: () => void }) {
+  const t = useUiMessages();
+  return (
+    <p className="project-inspect-hint" data-targeted-details-hint="">
+      <span>{t("provenanceInDetails")}</span>
+      <button type="button" className="link-button" onClick={onReveal}>
+        {t("provenanceShowDetails")}
+      </button>
+    </p>
   );
 }
 
@@ -867,6 +901,8 @@ function RunBlock({
   onStop,
   onOpen,
   onShowRun,
+  inspectedRun,
+  onRevealDetails,
 }: {
   readonly headingId: string;
   readonly running: boolean;
@@ -881,6 +917,10 @@ function RunBlock({
   readonly onStop: () => void;
   readonly onOpen: (artifactId: string) => void;
   readonly onShowRun: (runId: string) => void;
+  /** The run Details is inspecting, if it is one. */
+  readonly inspectedRun: string | null;
+  /** Shows the folded Details region; absent while Details is on screen. */
+  readonly onRevealDetails: (() => void) | undefined;
 }) {
   const t = useUiMessages();
   const section = useRef<HTMLElement | null>(null);
@@ -959,6 +999,9 @@ function RunBlock({
               </button>
             )}
           </div>
+          {artifactId === null && inspectedRun === end.runId && onRevealDetails !== undefined ? (
+            <DetailsHint onReveal={onRevealDetails} />
+          ) : null}
         </>
       )}
     </section>
@@ -1328,6 +1371,8 @@ function BatchProgress({
   onStop,
   onOpen,
   onShowRun,
+  inspectedRun,
+  onRevealDetails,
 }: {
   readonly headingId: string;
   readonly members: readonly BatchMemberProgress[];
@@ -1346,6 +1391,10 @@ function BatchProgress({
   readonly onStop: () => void;
   readonly onOpen: (artifactId: string) => void;
   readonly onShowRun: (runId: string) => void;
+  /** The run Details is inspecting, if it is one. */
+  readonly inspectedRun: string | null;
+  /** Shows the folded Details region; absent while Details is on screen. */
+  readonly onRevealDetails: (() => void) | undefined;
 }) {
   const t = useUiMessages();
   const section = useRef<HTMLElement | null>(null);
@@ -1359,6 +1408,15 @@ function BatchProgress({
     }
   }, []);
   useFocusKeptOnEnd(running, section, heading);
+  // Whether the run Details is inspecting is one a member's Show run offers.
+  const shownHere =
+    !running &&
+    members.some(
+      (member) =>
+        member.runId !== null &&
+        member.runId === inspectedRun &&
+        !(member.state === "completed" && member.artifactId !== null),
+    );
   return (
     <section
       ref={section}
@@ -1455,6 +1513,7 @@ function BatchProgress({
           </tbody>
         </table>
       </div>
+      {shownHere && onRevealDetails !== undefined ? <DetailsHint onReveal={onRevealDetails} /> : null}
       <p className="project-note">{t("targetedBatchOperationalNote")}</p>
       {running && canStop ? (
         <div className="project-actions">

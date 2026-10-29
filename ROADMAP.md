@@ -25,7 +25,7 @@ This roadmap sequences product risk; it is not the authoritative feature definit
 
 ## M3 — Conversion workflow
 
-- Typed conversion settings for mzML; keep mzXML gated until representative multi-source integrity checks pass.
+- Typed conversion settings for mzML. mzXML is refused at present ([ADR 0043, CNV-D1](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d1--output-formats) `MZXML_REFUSED`, 2026-09-10): on the measured ProteoWizard build a multi-source test document lost spectra silently at exit 0, while single-source output was faithful. The owner's [option C of 2026-10-28](docs/development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28) is to offer it in an advanced set labelled not verified by MSCanvas, with multi-source documents blocked, once that set has its own ADR.
 - Queue, cancellation, retry, failure isolation and output-conflict handling.
 - Transactional outputs and basic integrity checks.
 
@@ -765,8 +765,10 @@ local closeout identities belong to PR #125. The first
 beta's support target is decided: **Windows 11 25H2 x64**, with other Windows
 versions and ARM64 not promised supported. M7.6 is **partially implemented
 and not qualified** — an NSIS per-user candidate configuration, generated
-third-party notices and inspection scripts, with installed qualification not started
-([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)) — and its
+third-party notices and inspection scripts
+([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)); the first beta-1
+candidate's installed check ran on 2026-10-28 in the owner's account
+([record](docs/release/beta-1/INSTALLED_CHECK.md)) — and its
 release qualification is **deferred / incomplete**: it resumes against a later
 product candidate that contains M8/M9, not the M7.6 one (see the
 [M9 closure](docs/product/M9_CLOSURE.md#15-after-m9)). M8 and M9 are implemented
@@ -903,6 +905,23 @@ provider-positive checks and the real targeted-MS1 engine path that PM9
 records but does not run; then a decision
 between a public beta and M10. See the
 [M9 closure](docs/product/M9_CLOSURE.md#15-after-m9).
+
+**Update, 2026-10-27.** The owner chose the public beta first; the decisions
+are in [ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27).
+PM9 (PR #131) and beta-1 readiness (PR #134) are in review: the latter takes
+up PM9's carried-forward presentation options and the repository fixes listed
+in the [post-PM9 ledger](docs/development/POST_PM9_DEFERRED_WORK.md). Still
+owed before beta 1 is published: native qualification at OS scaling, the
+live-provider check, a candidate built by the `Release candidate` workflow,
+its installed qualification and the owner's consent on its exact hashes.
+
+**Update, 2026-10-28.** PR #134 is merged, and the candidate is built and
+attested. The native campaign and the live-provider check pass apart from two
+foreground groups that need an idle desktop. Everything after beta 1 is
+ordered in [After beta 1: plan and backlog](docs/development/AFTER_BETA1_PLAN.md):
+tester fixes, dependency and Node 26 batches, signing preparation, M10, the
+four features the owner selected on 2026-10-28, and the evidence-gated items
+with the one input each waits for.
 
 ## M10 — Automation
 

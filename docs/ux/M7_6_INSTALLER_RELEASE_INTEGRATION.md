@@ -7,6 +7,27 @@ that contains M8/M9, not against the candidate this record describes (see the
 [M9 closure](../product/M9_CLOSURE.md#15-after-m9)). The sections below are
 this slice's record as it stopped.
 
+Amendment, 2026-10-27: the owner's
+[decisions of that date](../architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27)
+keep this record's unsigned posture for beta 1, now as an explicit owner
+approval, with published SHA-256 checksums and a GitHub build-provenance
+attestation from the `Release candidate` workflow; signing is reconsidered
+after beta 1. Candidates are built by that workflow on a GitHub-hosted runner
+with this record's `build_candidate.ps1`. The name is accepted
+for the prerelease by explicit owner risk acceptance, without the formal review.
+The release packet's tester-facing successors are the beta-1
+[release notes](../release/beta-1/RELEASE_NOTES.md) and
+[install and support](../release/beta-1/INSTALL_AND_SUPPORT.md) drafts.
+
+Amendment, 2026-10-28: the first beta-1 candidate (`e6d2a49`, installer
+`4bf752ad…`) was installed, used and uninstalled in the owner's own account by
+the owner's decision of that date, recorded as that and not as the clean
+standard-user qualification below; see the
+[installed check](../release/beta-1/INSTALLED_CHECK.md). It was published the
+same day as the `v0.1.0-beta.1` prerelease. The "Not started" and "nothing
+published" statements in this record describe the candidate it was written
+for.
+
 This slice does not add a user-visible feature. It turns the application M7.1 to
 M7.5 built into something a person can install, run and remove on a machine that
 has never seen a compiler, and it assembles the evidence a release would need.

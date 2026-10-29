@@ -290,7 +290,11 @@ runNative("M6.6 real native destination and conflict proof (requires authorized 
     await subfolderName("Native QA draft");
     await policy("customFolder");
     await waitUntilOffered(CONVERT, 60_000);
-    const drafts = await browser.execute(() => Array.from(document.querySelectorAll<HTMLInputElement>('section.conversion-panel input:checked')).map((input) => [input.name, input.value]));
+    // Settings radio groups are named from React useId; a remount of the
+    // settings renames the group without changing the draft.
+    // Compare each group by its stable suffix and its chosen value.
+    const checkedDrafts = () => browser.execute(() => Array.from(document.querySelectorAll<HTMLInputElement>('section.conversion-panel input:checked')).map((input) => [input.name.replace(/^_r_[0-9a-z]+_-/u, ""), input.value]));
+    const drafts = await checkedDrafts();
     for (const [width, height] of [[1366, 768], [1920, 1080], [960, 640], [1200, 800]] as const) {
       await browser.setWindowSize(width, height);
       await snapshot(`draft-${String(width)}x${String(height)}`);
@@ -334,7 +338,7 @@ runNative("M6.6 real native destination and conflict proof (requires authorized 
     await waitUntilOffered(CONVERT);
     await expect(browser.$(CONVERT)).toBeFocused();
     expect(await conversionState()).toEqual({ status: "idle" });
-    expect(await browser.execute(() => Array.from(document.querySelectorAll<HTMLInputElement>('section.conversion-panel input:checked')).map((input) => [input.name, input.value]))).toEqual(drafts);
+    expect(await checkedDrafts()).toEqual(drafts);
     await policy("namedSubfolder");
     await expect(browser.$("#conversion-subfolder-name")).toHaveValue("Native QA draft");
     expect(existsSync(join(runRoot, `scenario-${String(scenario)}`, "cancel", "Native QA draft"))).toBe(false);
@@ -360,6 +364,13 @@ runNative("M6.6 real native destination and conflict proof (requires authorized 
     expect(result.report.validation?.fullyVerified).toBe(false);
     expect(result.report.validation?.verified).toContain("source_unchanged");
     output(join(destination, "FT-HCD-MSX.mzML"));
+    // Since M7.4 the bound queue facts sit in their own closed disclosure;
+    // open it as a reader would, then read the same visible text.
+    const bound = "section.conversion-panel details.conversion-bound-details";
+    if (await browser.$(bound).getAttribute("open") === null) {
+      await reveal(`${bound} > summary`);
+      await browser.$(`${bound} > summary`).click();
+    }
     await expect(browser.$('[aria-label="Queue destination"]')).toHaveText(expect.stringContaining("Chosen local folder"));
     await snapshot("custom-finalized");
   });

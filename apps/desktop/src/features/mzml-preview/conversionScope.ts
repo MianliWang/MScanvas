@@ -13,6 +13,8 @@ export interface ResolvedConversionScope {
   readonly scope: ConversionScope;
   readonly requestedCount: number;
   readonly excludedCount: number;
+  /** The requested rows this scope cannot convert, in execution order, to name them (PM9.4 O2). */
+  readonly excluded: readonly SelectedFile[];
   readonly members: readonly SelectedFile[];
   readonly handles: readonly string[];
   readonly sort: SortMode;
@@ -34,6 +36,7 @@ export function resolveConversionScope(
     scope,
     requestedCount: requested.length,
     excludedCount: requested.length - members.length,
+    excluded: requested.filter((row) => !isConvertibleSourceKind(row.sourceKind)),
     members,
     handles: members.map((row) => row.handle),
     sort: facts.sort,

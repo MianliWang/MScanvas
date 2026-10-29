@@ -583,13 +583,17 @@ export function ProjectPanel({
       : batch !== null
         ? t("projectBusyBatch", { position: batchPosition, total: batch.length })
         : t(busyKey(busy) as "projectBusySaving");
-  // A cancel of a targeted run is a request until the run answers: every
-  // control that could send it says so, and none sends it twice.
-  const stopping = busy === "analysing" && session.stopRequested;
+  // A cancel of any accepted operation -- a targeted run, a links check, a
+  // capture or an admission -- is a request until that operation's answer is
+  // in and shown: every control that could send it says so, and none sends it
+  // twice. A targeted run's controls say "stop", the rest keep their own
+  // "cancel".
+  const stopping = session.stopRequested;
+  const requestedKey = busy === "analysing" ? "targetedStopRequested" : "projectCancelRequested";
   const announcement =
     busyKey(busy) !== null
       ? stopping
-        ? t("targetedStopRequested")
+        ? t(requestedKey)
         : t(busyKey(busy) as "projectBusySaving")
       : pending !== null
         ? t("projectUnsavedQuestion")
@@ -629,9 +633,12 @@ export function ProjectPanel({
           <p className="project-privacy">{t("projectPrivacy")}</p>
         </div>
         <div className="project-actions">
+          {/* With nothing open, New project is the one emphasised next action
+              (PM9.7 F2); Open project… stays offered beside it. Emphasis only:
+              nothing is pressed, focused or sent on its behalf. */}
           <button
             type="button"
-            className="secondary-button"
+            className={state.open ? "secondary-button" : "primary-button"}
             aria-disabled={working || undefined}
             onClick={() => {
               if (!working) void session.createProject(t("projectDefaultName"));
@@ -723,7 +730,7 @@ export function ProjectPanel({
             >
               {/* A batch's one operation is the whole batch: cancelling it is
                   the batch's Stop, so it is named that. */}
-              {t(stopping ? "targetedStopRequested" : batch === null ? "projectCancel" : "targetedBatchStop")}
+              {t(stopping ? requestedKey : batch === null ? "projectCancel" : "targetedBatchStop")}
             </button>
           )}
         </p>
@@ -822,6 +829,7 @@ export function ProjectPanel({
               onDraft={setTargetedDraft}
               busyText={busyText}
               refusalText={(code) => t(refusalKey(code))}
+              onRevealDetails={detailsPresent ? undefined : onRevealDetails}
               onClose={() => {
                 const layerId = targetedLayer.id;
                 setTargeted(null);

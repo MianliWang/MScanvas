@@ -35,7 +35,9 @@ quick PNG/Copy plot and data actions
 The first beta's support target is **Windows 11 25H2 x64**; other Windows
 versions and ARM64 are not promised supported. That is a support target, not a
 compatibility claim, and installed-candidate qualification belongs to M7.6,
-which is partial and deferred (below). No public beta is built or released.
+which is partial and deferred (below). Beta 1 was published on 2026-10-28 as the
+[`v0.1.0-beta.1` prerelease](https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1),
+with its [release notes](docs/release/beta-1/RELEASE_NOTES.md).
 
 ## Beyond the published M7.5 product
 
@@ -70,18 +72,26 @@ None of them is in an installer or a release.
   limits.
 - **A partial M7.6.** An NSIS per-user installer configuration, generated
   third-party notices, and candidate build and inspection scripts
-  ([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)). No installer
-  from it has been installed, qualified or published. M7.6 release qualification
-  is deferred and incomplete, and resumes against a later candidate that
-  contains M8 and M9.
-
-No public beta exists, and no installer containing M8 or M9 has been qualified.
+  ([M7.6 record](docs/ux/M7_6_INSTALLER_RELEASE_INTEGRATION.md)). Its first
+  beta-1 installer, which contains M8 and M9, was installed, used and
+  uninstalled in the owner's account
+  ([installed check](docs/release/beta-1/INSTALLED_CHECK.md)) and published as
+  the `v0.1.0-beta.1` prerelease; no clean-machine, standard-user qualification
+  has run.
 ProteoWizard is still yours to install; MSCanvas never downloads or bundles it.
-Known test debt travels with this source: the repository-wide browser suite
-fails 174 legacy M4–M7 and viewer tests exactly as it does on `1daf802`, the
-M7.5 `main` the stack follows (the M8 and M9 browser specs pass), and one
-App-level Vitest case can exceed its
-5-second limit under load. The integration record gives the evidence.
+
+**After M9 (in review, not yet on `main`).** PM9 converged the existing
+surfaces along the real workflow and froze candidate `30b855f`
+([PM9 route](docs/phases/pm9/slices.md)); its integrated browser acceptance
+repaired the 174 legacy browser failures that published `main` still carries.
+Beta-1 readiness then took up PM9's carried-forward presentation options,
+closed the repository and CI gaps a post-PM9 survey found, and recorded the
+owner's 2026-10-27 release decisions in
+[ADR 0047](docs/architecture/adr/0047-first-windows-beta-scope-and-implementation-route.md#owner-decisions-2026-10-27):
+beta 1 is to be an **unsigned** GitHub prerelease, with published SHA-256
+checksums and a build-provenance attestation, and without the targeted-MS1
+runtime. Draft tester documents are in [`docs/release/beta-1/`](docs/release/beta-1/RELEASE_NOTES.md).
+No beta-1 candidate has been built, installed or qualified yet.
 
 ## What works today
 
@@ -207,8 +217,14 @@ the chromatogram's, the linked two-panel figure of the two, and a stored
 targeted-MS1 result's figure of one target (SVG, PNG) and its whole-result
 CSV/TSV table -- there is no
 saved figure specification, no figure composer, and figure settings are not
-remembered across a restart. mzXML output stays disabled and fail-closed until
-representative multi-source integrity checks pass.
+remembered across a restart. mzXML output is refused at present
+([ADR 0043, CNV-D1](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d1--output-formats)
+`MZXML_REFUSED`, 2026-09-10): on the measured ProteoWizard build a multi-source
+test document lost spectra silently at exit 0, while single-source output was
+faithful. The owner's
+[option C of 2026-10-28](docs/development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)
+is to offer it in an advanced set labelled not verified by MSCanvas, with
+multi-source documents blocked, once that set has its own ADR.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
 admits regular `.mzML` files plus three precisely evidenced vendor families —
@@ -374,8 +390,9 @@ yet. See [What works today](#what-works-today).
   contract admits one;
 - linked selection across views (shipped for mzML), with one availability rule
   that says why a scan cannot be selected without taking the run away;
-- conversion to mzML through user-installed ProteoWizard, with mzXML gated behind
-  representative multi-source integrity checks;
+- conversion to mzML through user-installed ProteoWizard; mzXML is refused at
+  present and is to be offered only in the advanced, unverified set with
+  multi-source documents blocked (see [What works today](#what-works-today));
 - queue, cancellation, retry and actionable errors;
 - SVG and PNG figure export, `Copy plot`, and underlying CSV/TSV export for the
   selected spectrum and for the chromatogram -- the chromatogram over the whole

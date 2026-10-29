@@ -4,6 +4,32 @@ All notable changes will be documented here once versioned releases begin.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-beta.1 — 2026-10-28 (prerelease)
+
+[Release notes](docs/release/beta-1/RELEASE_NOTES.md) ·
+[download](https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1).
+The entries below describe the source of this prerelease (`e6d2a49`).
+
+### Changed
+
+- **One workbench along the real workflow (PM9).** Home, Workbench, Conversion
+  and Project share one shell; acquisitions are a tree you can group, with focus,
+  preview and conversion membership kept separate; the chromatogram, scans and
+  spectrum lead with their evidence; conversion runs from settings through
+  review, queue, recovery and outputs on one surface; and a targeted-MS1 request
+  is reviewed, run and reopened in place, with its report, history and explicit
+  continuation. No scientific behaviour changed.
+- **Clearer empty and refused states.** An empty Workbench or Conversion names
+  the route, *Add files…* in *Acquisitions*; with no project open, New project
+  is the one emphasised action. Conversion states one reason per refusal, names
+  the request that failed, lists the rows a scope excludes, explains Stop and
+  Skip only where they are offered and says what output validation checked.
+  The targeted setup shows its caveats first and keeps the read path one
+  disclosure away. A cancel of a links check, a capture or an admission says
+  "requested" until that operation answers.
+
 ### Added
 
 - **Targeted MS1 lookup — experimental, and development-only for now.** In a
@@ -44,15 +70,15 @@ All notable changes will be documented here once versioned releases begin.
   each of those strings in a QA build. No build containing that later work has
   been packaged or inspected yet.
 
-  A first beta, when there is one, is planned **unsigned**, so Windows will warn
-  about it. There is no advice here for getting around that, and none for
-  overriding a policy your organisation set.
+  The first beta is planned as an **unsigned** GitHub prerelease, so Windows
+  will warn about it; its SHA-256 checksum and a build-provenance attestation
+  are published with it instead. There is no advice here for getting around a
+  policy your organisation set.
 
-  Nothing here has been installed or removed on a real machine yet. Installation,
-  launch, uninstall and what the installer actually places on disk are all
-  unverified until the qualification campaign runs. That campaign is deferred:
-  it will run against a later candidate that contains the project and targeted
-  MS1 work above. No installer has been published and no public beta exists.
+  The beta-1 installer was installed, used and uninstalled in the owner's own
+  account, not on a clean machine or by a standard user; the
+  [installed check](docs/release/beta-1/INSTALLED_CHECK.md) records what it
+  placed on disk and what uninstall leaves.
 
 - **The interface remembers how you set it up, and nothing else.** Language,
   the roster's row spacing and which of the two workspace panels you asked for

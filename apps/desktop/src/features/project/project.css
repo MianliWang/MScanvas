@@ -579,6 +579,19 @@
   overflow-wrap: anywhere;
 }
 
+/* The open setup is the task in hand, not one more project section (PM9.5
+   O3): the accent bar a viewed row carries, along its top edge so it never
+   meets the experimental notice's bar, and its heading in primary text a step
+   above a section's. Still an h3 under the surface's 16px h2. */
+.targeted-setup {
+  box-shadow: inset 0 3px 0 var(--color-accent);
+}
+
+.targeted-setup > .project-section-head h3 {
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
 .targeted-experimental {
   margin: 0;
   max-width: 72ch;
@@ -740,6 +753,21 @@
   display: flex;
   align-items: center;
   cursor: pointer;
+}
+
+/* `display: flex` drops the native disclosure marker, which left these
+   summaries reading as plain text; they draw their own, turning with the
+   disclosure. The empty alternative keeps it out of the accessible name. */
+.targeted-points summary::before,
+.targeted-modules summary::before {
+  content: "\25B6" / "";
+  margin-right: 6px;
+  font-size: 0.7em;
+}
+
+.targeted-points[open] > summary::before,
+.targeted-modules[open] > summary::before {
+  content: "\25BC" / "";
 }
 
 /* A `<div>` grouping a label with its value keeps the two-column grid. */

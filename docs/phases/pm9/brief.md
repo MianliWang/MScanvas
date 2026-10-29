@@ -103,7 +103,8 @@ the merged code. They are not PM9 tasks, and PM9 does not repair them:
   re-derived candidate manifest can name the current toolchain rather than the
   one that built the installer. Owner: the repository owner, as M7.6 release
   qualification. Decision point: before such a manifest is used as release
-  evidence, or when M7.6 resumes.
+  evidence, or when M7.6 resumes. Closed after PM9 (2026-10-27) by the later
+  repair recorded at the end of the integration record's §12.
 
 ## Locked decisions (from the owner)
 

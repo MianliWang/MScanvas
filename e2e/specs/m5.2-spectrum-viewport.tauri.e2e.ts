@@ -125,12 +125,20 @@ async function statusText(): Promise<string> {
 }
 
 async function drawingCaption(): Promise<string> {
-  return (await browser.$(CAPTION).getText()).trim();
+  // The drawing statement moved into the caption's own "Source and drawing
+  // details" disclosure (c12f45d). Read the whole caption as text, closed or
+  // open, as the browser spec reads the figcaption's textContent.
+  return (await browser.execute(
+    (css: string) => document.querySelector(css)?.textContent ?? "",
+    CAPTION,
+  )).trim();
 }
 
 /** Waits until a drawing that answers the committed window is on screen. */
 async function waitForADrawing(): Promise<void> {
-  await browser.waitUntil(async () => (await drawingCaption()).startsWith("Drawn as"), {
+  // The statement now follows the caption's short summary, so it is contained
+  // rather than leading; it is only ever written for an actual drawing.
+  await browser.waitUntil(async () => (await drawingCaption()).includes("Drawn as"), {
     timeout: 30_000,
     timeoutMsg: "the real projection never produced a drawing",
   });
@@ -296,12 +304,14 @@ describe("the m/z viewport against the real projection boundary", () => {
       const from = Math.round(box.left + box.width * 0.6);
       const beforeThePress = await rangeCaption();
 
-      // Left down, moved in two stages, and deliberately not released: what is
-      // being asserted is what happens *during* a gesture.
+      // Middle button down, moved in two stages, and deliberately not released:
+      // what is being asserted is what happens *during* a gesture. Since M7.3 a
+      // primary drag proposes a range and the middle button pans (PM9.7
+      // retirement note in the browser spec).
       await browser
         .action("pointer")
         .move({ x: from, y })
-        .down()
+        .down({ button: 1 })
         .move({ duration: 60, x: from - 40, y })
         .move({ duration: 60, x: from - 80, y })
         .perform(true);
@@ -314,7 +324,7 @@ describe("the m/z viewport against the real projection boundary", () => {
       const during = await rangeCaption();
       expect(during).not.toBe(beforeThePress);
 
-      await browser.action("pointer").up().perform();
+      await browser.action("pointer").up({ button: 1 }).perform();
       await browser.waitUntil(
         async () => (await projectionRequests()).length === before + 1,
         {
@@ -549,12 +559,15 @@ describe("the m/z viewport against the real projection boundary", () => {
       expect(await statusText()).not.toContain("cannot be navigated");
 
       // Not a sequential focus target, by the attribute and by the traversal.
+      // The plot now carries tabindex="-1": focusable only programmatically,
+      // never a sequential stop (the browser spec asserts the same attribute
+      // for an unnavigable plot). The Tab traversal below still checks order.
       expect(
         await browser.execute(
           (css: string) => document.querySelector(css)?.getAttribute("tabindex"),
           PLOT,
         ),
-      ).toBeNull();
+      ).toBe("-1");
       await browser.execute(() => {
         (document.activeElement as HTMLElement | null)?.blur();
         document.body.focus();

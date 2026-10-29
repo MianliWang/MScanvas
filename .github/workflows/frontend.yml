@@ -27,6 +27,12 @@ jobs:
         run: pnpm lint
       - name: Typecheck
         run: pnpm typecheck
+      # The WebDriver specs need Chrome or a Tauri binary and are not run here,
+      # but their types are checked so a contract change cannot leave them
+      # uncompilable until the next local QA run. The root devDependencies they
+      # need come from the install step above.
+      - name: Typecheck e2e specs
+        run: pnpm e2e:typecheck
       - name: Unit tests
         run: pnpm test
       - name: Build web frontend

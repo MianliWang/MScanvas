@@ -253,6 +253,37 @@ describe("adding a project reference to the Workbench", () => {
     expect(admitted[0]?.outcomes[0]?.outcome).toBe("added");
   });
 
+  it("keeps a cancelled admission requested until its own answer (PM9.5 O4)", async () => {
+    const admitted: (WorkspaceAddResult | null)[] = [];
+    const api = mount(everyState(), { onAdmitted: (result) => admitted.push(result) });
+    api.setAdmission(addedOne());
+    await screen.findByText(en.projectReferences);
+
+    const release = api.holdOnce("addProjectInputToWorkspace");
+    await press(addControl(MATCHING));
+    const cancel = await screen.findByRole("button", { name: en.projectCancel });
+    await press(cancel);
+    await press(cancel);
+
+    // One request, naming the accepted admission; said as requested, never as
+    // done, while the admission is still out.
+    expect(api.cancelled).toEqual(["project-job-1"]);
+    expect(cancel.getAttribute("data-project-cancel")).toBe("project-job-1");
+    expect(cancel.textContent).toBe(en.projectCancelRequested);
+    expect(cancel.getAttribute("aria-disabled")).toBe("true");
+    expect(document.querySelector("[data-project-busy='admitting']")).toBeTruthy();
+    expect(admitted).toEqual([]);
+
+    // The admission's own answer ends it: here it admitted the row after all.
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(admitted).toHaveLength(1));
+    await waitFor(() => expect(document.querySelector("[data-project-cancel]")).toBeNull());
+    expect(admitted[0]?.outcomes[0]?.outcome).toBe("added");
+    expect(document.querySelector("[data-project-cancelled]")).toBeNull();
+  });
+
   it("offers to show a reference that is already a live row, and sends nothing to do it", async () => {
     const shown: string[] = [];
     const api = mount(admittedProject(), {

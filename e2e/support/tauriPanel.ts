@@ -11,7 +11,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { StoredPreferences } from "../../apps/desktop/src/features/preferences/storedPreferences";
-import { MZML_ROW, ipcTable, spectrumWithPeaks } from "./fixtures";
+import { MZML_ROW, SETTLED_AUTHORITY, ipcTable, spectrumWithPeaks } from "./fixtures";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -161,6 +161,14 @@ export function tauriTable(options: {
     },
     ...(options.extra ?? {}),
   } as Record<string, unknown>;
+  // Since 8590adb the command answers the authority projection beside the
+  // outcome (fixtures.ts' base table already does). The outcomes above and in
+  // callers' `extra` are bare; wrap them under the table's settled authority
+  // rather than answer a wire shape the application no longer speaks.
+  const spectrum = table["load_selected_spectrum"] as Record<string, unknown> | undefined;
+  if (spectrum !== undefined && !("authority" in spectrum)) {
+    table["load_selected_spectrum"] = { authority: SETTLED_AUTHORITY, outcome: spectrum };
+  }
   for (const command of options.real ?? []) {
     delete table[command];
   }

@@ -17,7 +17,13 @@
   found" from "the clipboard refused us anyway".
 #>
 [CmdletBinding()]
-param([string] $TitleContains = 'MSCanvas')
+param(
+  [string] $TitleContains = 'MSCanvas',
+  # The title alone also matches an editor open on this repository (its window
+  # title names the folder), which sorts first; the application's own process
+  # name keeps the activation on the window under test.
+  [string] $ProcessName = 'mscanvas-desktop'
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -27,11 +33,11 @@ Add-Type -Namespace MSCanvas -Name Windows -MemberDefinition @'
 '@
 
 $window = Get-Process |
-  Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like "*$TitleContains*" } |
+  Where-Object { $_.ProcessName -eq $ProcessName -and $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like "*$TitleContains*" } |
   Select-Object -First 1
 
 if ($null -eq $window) {
-  [ordered]@{ focused = $false; detail = "no window whose title contains '$TitleContains'" } |
+  [ordered]@{ focused = $false; detail = "no $ProcessName window whose title contains '$TitleContains'" } |
     ConvertTo-Json -Compress
   exit 2
 }

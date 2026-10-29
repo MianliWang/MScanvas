@@ -157,6 +157,14 @@ def validate_project_contract(errors: list[str]) -> None:
             f"pnpm@{PINNED_PNPM}",
             "pnpm install --frozen-lockfile",
         ],
+        ".github/workflows/release-candidate.yml": [
+            "node-version-file: .node-version",
+            f"pnpm@{PINNED_PNPM}",
+            f"rustup toolchain install {PINNED_RUST}",
+            "pnpm install --frozen-lockfile",
+            "scripts/build_candidate.ps1",
+            "scripts/inspect_candidate.ps1",
+        ],
         ".github/workflows/rust.yml": [
             f"cargo +{PINNED_RUST} clippy --locked",
             f"cargo +{PINNED_RUST} test --locked",

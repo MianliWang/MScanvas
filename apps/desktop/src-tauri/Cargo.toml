@@ -74,7 +74,14 @@ windows = { version = "=0.61.3", features = [
   # which is the one storage API this feature is enabled for.
   "Win32_Storage_FileSystem",
   "Win32_System_Com",
+  # `SHELLEXECUTEINFOW` and `ShellExecuteExW`, which open an exported output,
+  # are gated on this feature in 0.61.3 because the struct carries an `HKEY`.
+  # Declared here rather than left to feature unification with another crate,
+  # which a dependency update can withdraw (E0432 in Dependabot PR #128's CI).
+  "Win32_System_Registry",
   "Win32_UI_Shell",
+  # `SW_SHOWNORMAL`, the show command passed with that request.
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

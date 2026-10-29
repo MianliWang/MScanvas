@@ -1,6 +1,6 @@
 import type { UiMessage } from "../preferences/i18n";
 import { ownedErrorMessage } from "./ownedErrorMessages";
-import type { ConversionQueue, PreviewError } from "./contracts";
+import type { ConversionQueue, ConversionQueueItem, PreviewError } from "./contracts";
 import { conversionJudgedAnyOutput } from "./contracts";
 import type { ConversionUnavailableReason } from "./conversionAvailability";
 import type { ConversionOperation } from "./useConversionOperation";
@@ -47,7 +47,6 @@ const NOTICE_MESSAGE = {
   "adoption-running": "m74CnvNoticeAdoptionRunning",
   "diagnostics-exporting": "m74CnvNoticeDiagnosticsExporting",
   "workspace-settling": "m74CnvNoticeWorkspaceSettling",
-  "no-convertible-target": "m74CnvNoticeNoConvertibleTarget",
   "plan-capacity-exceeded": "m74CnvNoticePlanCapacityExceeded",
   "plan-reading": "m74CnvNoticePlanReading",
   "plan-failed": "m74CnvNoticePlanFailed",
@@ -56,10 +55,26 @@ const NOTICE_MESSAGE = {
   "plan-selection-not-evidenced": "m74CnvNoticePlanSelectionNotEvidenced",
   "queue-not-retryable": "m74CnvNoticeQueueNotRetryable",
   "nothing-to-retry": "m74CnvNoticeNothingToRetry",
-} as const satisfies Record<ConversionUnavailableReason, string>;
+} as const satisfies Record<Exclude<ConversionUnavailableReason, "no-convertible-target">, string>;
 
 export function conversionNoticeMessage(reason: ConversionUnavailableReason, t: UiMessage): string {
-  return t(NOTICE_MESSAGE[reason]);
+  // The route names the header toggle and Add files by their own labels, so
+  // the guidance and the controls cannot drift apart in either language
+  // (PM9.7 F3).
+  return reason === "no-convertible-target"
+    ? t("m74CnvNoticeNoConvertibleTarget", { toggle: t("rosterToggle"), add: t("addFiles") })
+    : t(NOTICE_MESSAGE[reason]);
+}
+
+/**
+ * Whether an item's output was judged, and judged output-only.
+ *
+ * The mode is the item's own report's, which Rust projects from the source
+ * posture, so the output-only sentence is said only of a judgement that was
+ * output-only (PM9.4 O7).
+ */
+export function conversionJudgedOutputOnly(item: ConversionQueueItem): boolean {
+  return conversionJudgedAnyOutput(item) && item.result?.report.validationMode === "output_only";
 }
 
 /** Counts describe acquisition outcomes; output member counts stay in the manifests. */
@@ -103,7 +118,7 @@ export function announceConversion(conversion: ConversionOperation, t: UiMessage
     prefix,
     `${counts.join(t("m74CnvListSeparator"))}.`,
     state.reason === "stopFailed" && conversion.backendQuarantined ? t("m74CnvRestartBackend").trim() : "",
-    queue.items.some(conversionJudgedAnyOutput) ? t("m74CnvAnnounceOutputOnly") : "",
+    queue.items.some(conversionJudgedOutputOnly) ? t("m74CnvAnnounceOutputOnly") : "",
     queue.error === null ? "" : conversionErrorMessage(queue.error, t),
   ].filter(Boolean).join(" ");
 }

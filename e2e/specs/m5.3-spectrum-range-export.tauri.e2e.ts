@@ -35,6 +35,7 @@
  * and no selector here is dressed up as having tested a filesystem path.
  */
 
+import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import {
   SEEDED_MZ_HIGH,
   SEEDED_MZ_LOW,
@@ -69,10 +70,14 @@ async function rangeNote(): Promise<string> {
   ) as Promise<string>;
 }
 
-/** Clicks a control by the words on it, through the document itself. */
+/**
+ * Clicks a spectrum control by the words on it, through the document itself.
+ * Scoped to the spectrum panel: the chromatogram panel now renders its own
+ * "Copy plot" earlier in the document.
+ */
 async function press(label: string): Promise<void> {
   await browser.execute((text: string) => {
-    const node = [...document.querySelectorAll("button")].find(
+    const node = [...document.querySelectorAll("section.spectrum-panel button")].find(
       (candidate) => candidate.textContent?.trim() === text,
     );
     (node as HTMLButtonElement | undefined)?.click();
@@ -137,7 +142,7 @@ describe("a spectrum range against the real export boundary", () => {
       });
       // The save dialog is not driven here, so the run ends in the dialog step
       // rather than in a written file. What is proved is the acceptance.
-      expect(await statusText()).not.toContain("no longer the one");
+      expect(await statusText()).not.toContain(en.m74ErrorSpectrumChanged);
     });
 
     it("carries the committed window once the current range is chosen", async () => {
@@ -156,8 +161,8 @@ describe("a spectrum range against the real export boundary", () => {
       // And the real boundary accepted it: a refusal would have published one
       // of the two typed sentences the cases below assert.
       await browser.waitUntil(async () => (await statusText()).length > 0, { timeout: 30_000 });
-      expect(await statusText()).not.toContain("not inside the spectrum");
-      expect(await statusText()).not.toContain("no m/z viewport");
+      expect(await statusText()).not.toContain(en.m74ErrorMzRange);
+      expect(await statusText()).not.toContain(en.m74ErrorNoMzRange);
     });
 
     it("reports the range Rust resolved for a real copy", async () => {
@@ -179,6 +184,14 @@ describe("a spectrum range against the real export boundary", () => {
     it("holds one scientific lane, whichever range is chosen", async () => {
       await chooseScope("current");
       await zoomIn();
+      // Hold the save half open, as its native dialog does while a person is in
+      // it (the browser harness's holdInvoke, for this boundary): the table
+      // answered it at once, which released the lane before the read below.
+      await browser.execute(() => {
+        (window as unknown as { __mscanvasIpcTable__: Record<string, unknown> }).__mscanvasIpcTable__[
+          "save_selected_spectrum_export"
+        ] = { kind: "resolve", value: { then: () => undefined } };
+      });
       const args = await afterOneMore(BEGIN, () => press("Export CSV…"));
       expect((args["range"] as Record<string, unknown>)["scope"]).toBe("current");
 
@@ -223,9 +236,10 @@ describe("a spectrum range against the real export boundary", () => {
         timeoutMsg: "the refused range never reported anything",
       });
 
-      // Rust's own sentence, and it names the axis the reader chose.
+      // Since M7.4 the panel's localized sentence for Rust's refusal code, and
+      // it still names the axis the reader chose.
       const reported = await statusText();
-      expect(reported).toContain("m/z range is not inside the spectrum");
+      expect(reported).toContain(en.m74ErrorMzRange);
       expect(reported).not.toContain("retention-time");
       // Nothing was clamped: no file, no nearest range, no silent success.
       expect(reported).not.toContain("Saved");
@@ -266,8 +280,8 @@ describe("a spectrum range against the real export boundary", () => {
       const args = await afterOneMore(BEGIN, () => press("Export CSV…"));
       expect(args["range"]).toEqual({ scope: "full", low: null, high: null });
       await browser.waitUntil(async () => (await statusText()).length > 0, { timeout: 30_000 });
-      expect(await statusText()).not.toContain("no m/z viewport");
-      expect(await statusText()).not.toContain("no longer the one");
+      expect(await statusText()).not.toContain(en.m74ErrorNoMzRange);
+      expect(await statusText()).not.toContain(en.m74ErrorSpectrumChanged);
     });
   });
 });

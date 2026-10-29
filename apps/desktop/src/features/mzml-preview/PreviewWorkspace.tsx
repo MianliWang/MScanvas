@@ -392,6 +392,10 @@ export function PreviewWorkspace() {
     preview.status !== "loaded" &&
     preview.status !== "opening" &&
     preview.status !== "failed";
+  // The empty Project's New project is that surface's one next step (PM9.7
+  // F2), so `Add files…` gives up the accent beside it for the same reason.
+  const addFilesQuiet =
+    reopenOffered || (!constrained && surface === "project" && !project.state.open);
   // There is deliberately no `canConvert` here any more. Converting had an
   // expression of its own on this line, strictly wider than the guard the
   // operation applied, and the panel's `Retry` answered to it as well -- three
@@ -799,7 +803,7 @@ export function PreviewWorkspace() {
               panels.navigate();
             }}
             onAddFiles={workspace.addFiles}
-            addFilesQuiet={reopenOffered}
+            addFilesQuiet={addFilesQuiet}
             onAddFolder={workspace.addFolder}
             canRemove={canRemove}
             onClearList={() => {

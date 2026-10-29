@@ -357,9 +357,20 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     // Scope remains explicit and the empty-state recovery is family-neutral.
+    // One reason, said once: the notice names the route, and the pending
+    // sentence that repeated it is gone from the screen and from Convert's
+    // description (PM9.4 O3, PM9.7 F3).
     const panel = screen.getByRole("region", { name: "Convert" });
-    expect(within(panel).getByRole("button", { name: "Convert 0 eligible…" })).toHaveAttribute("aria-disabled", "true");
-    expect(within(panel).getByText("No eligible acquisitions in this scope.")).toBeVisible();
+    const convert = within(panel).getByRole("button", { name: "Convert 0 eligible…" });
+    expect(convert).toHaveAttribute("aria-disabled", "true");
+    const route =
+      "To convert, this scope needs supported vendor acquisitions: add them with Add files… in Acquisitions " +
+      "(if that list is hidden, press Acquisitions at the top of the window first) and, under Checked rows, they must be checked.";
+    // The notice follows the scope's plan answer, so it is awaited rather than
+    // read synchronously; under a loaded full suite it can land a tick later.
+    expect(await within(panel).findByText(route)).toBeVisible();
+    await waitFor(() => expect(convert).toHaveAccessibleDescription(route));
+    expect(within(panel).queryByText("No eligible acquisitions in this scope.")).toBeNull();
     expect(document.body.textContent).not.toMatch(/Thermo RAW row/);
   });
 
