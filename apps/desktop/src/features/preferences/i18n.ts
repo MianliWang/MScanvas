@@ -231,7 +231,10 @@ export interface MessageParameters {
   readonly noticeListComma: { readonly left: string; readonly right: string };
   readonly dragPicked: { readonly count: number };
   readonly dragCount: { readonly count: number };
-  readonly selectionContext: { readonly total: number; readonly hidden: number; readonly checked: number };
+  readonly rosterCheckedCount: { readonly checked: number };
+  readonly rosterHighlightedCount: { readonly total: number };
+  readonly rosterHiddenCount: { readonly hidden: number };
+  readonly rosterConvertChecked: { readonly checked: number };
   readonly rosterContext: { readonly total: number; readonly visible: number; readonly capacity: number };
   readonly groupActions: { readonly name: string };
   readonly rowActions: { readonly name: string };

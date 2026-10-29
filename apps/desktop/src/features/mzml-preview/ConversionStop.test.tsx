@@ -836,7 +836,7 @@ describe("stopping a running conversion queue", () => {
     );
     // And the gates derived from that verdict close with it.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
   });
 
@@ -1085,7 +1085,6 @@ describe("stopping a running conversion queue", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // And the roster is still readable and searchable.
     expect(screen.getByRole("treegrid", { name: "Acquisitions" })).toBeVisible();
     expect(screen.getByRole("searchbox", { name: /search/i })).toBeEnabled();

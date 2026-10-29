@@ -27,7 +27,7 @@ async function mount() {
   render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
     <PreviewApiProvider value={api}><App /></PreviewApiProvider>
   </WorkspaceDropTransportProvider>);
-  fireEvent.click(await screen.findByRole("button", { name: "Preview focused" }));
+  fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
   await screen.findByRole("grid", { name: "Spectra" });
   return { api, preview };
 }

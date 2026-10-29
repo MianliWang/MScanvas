@@ -153,7 +153,7 @@ describe("the context line in the application shell", () => {
 
 /** The filled primaries on screen anywhere in the shell, by their text. */
 function shownPrimaries(): (string | null)[] {
-  return [...document.querySelectorAll(".workbench-shell .primary-button")]
+  return [...document.querySelectorAll(".workbench-shell :is(.primary-button, .ui-button--primary)")]
     .filter((button) => button.closest("[hidden]") === null)
     .map((button) => button.textContent);
 }
@@ -165,17 +165,18 @@ describe("the empty Project in the application shell", () => {
       const words = UI_RESOURCES[locale];
       const projects = renderShell(NO_PROJECT, locale);
       const addFiles = await screen.findByRole("button", { name: words.addFiles });
-      // The empty Workbench's next step is the roster's, so it keeps the accent.
+      // The roster's Add files… is always secondary: the empty Workbench's
+      // filled first-run action belongs to the evidence pane.
       expect(currentSurface()).toBe("workbench");
-      expect(addFiles.className).toBe("primary-button");
+      expect(addFiles).toHaveClass("ui-button--secondary");
 
       await press(screen.getByRole("button", { name: words.projectSurface }));
       await screen.findByText(words.projectNone);
       // One filled action across the whole screen, the roster included (UI-19):
-      // Add files… gives up the accent, and stays offered.
+      // Add files… stays offered, as a secondary action.
       expect(shownPrimaries()).toEqual([words.projectNew]);
       expect(addFiles.closest("[hidden]")).toBeNull();
-      expect(addFiles.className).toBe("secondary-button");
+      expect(addFiles).toHaveClass("ui-button--secondary");
       expect((addFiles as HTMLButtonElement).disabled).toBe(false);
       expect(addFiles.getAttribute("aria-disabled")).toBeNull();
       // Emphasis only: nothing was created, opened or picked.

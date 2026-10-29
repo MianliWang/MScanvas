@@ -978,7 +978,6 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // Reading the list is not a mutation.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
     expect(rows()).toHaveLength(3);
@@ -1133,19 +1132,17 @@ describe("queueing selected Thermo RAW conversions", () => {
     expect(api.adoptionRequests).toEqual([]);
   });
 
-  it("refuses to preview a vendor row and says what to do instead", async () => {
+  it("refuses to preview a vendor row", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [first],
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
+    const row = await screen.findByRole("row", { name: /run-1\.raw/ });
+    fireEvent.click(within(row).getByRole("checkbox"));
+    fireEvent.click(row);
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
-    const preview = screen.getByRole("button", { name: "Preview focused" });
-    expect(preview).toBeDisabled();
-    expect(preview).toHaveAccessibleDescription(
-      "Convert to mzML before previewing this acquisition.",
-    );
     expect(api.openedHandles).toEqual([]);
   });
 

@@ -144,7 +144,7 @@ async function openTheViewer(preview: PreviewApi): Promise<void> {
    * in the harness rather than anything the product did.
    */
   const SETTLING = { timeout: 15_000 } as const;
-  fireEvent.click(await screen.findByRole("button", { name: "Preview focused" }, SETTLING));
+  fireEvent.keyDown(await screen.findByRole("treegrid", {}, SETTLING), { key: "Enter" });
   await screen.findByRole("grid", { name: "Spectra" }, SETTLING);
   await screen.findByRole("img", { name: "Chromatogram" }, SETTLING);
   givePlotABox();
@@ -659,9 +659,7 @@ describe("what the open measurement waits for", () => {
         </PreviewApiProvider>
       </WorkspaceDropTransportProvider>,
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Preview focused" }, { timeout: 15_000 }),
-    );
+    fireEvent.keyDown(await screen.findByRole("treegrid", {}, { timeout: 15_000 }), { key: "Enter" });
     await screen.findByRole("grid", { name: "Spectra" }, { timeout: 15_000 });
 
     expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
@@ -679,7 +677,7 @@ describe("what the open measurement waits for", () => {
     // A second reading of the same row, which is a whole new open.
     fireEvent.click(screen.getByText(VENDOR_ROW.fileName));
     fireEvent.click(screen.getByText(selectedFile.fileName));
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
     await screen.findByRole("img", { name: "Chromatogram" }, { timeout: 15_000 });
     await waitFor(() => {

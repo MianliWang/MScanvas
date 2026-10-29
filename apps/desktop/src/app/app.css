@@ -312,59 +312,6 @@ button:disabled,
   flex-direction: column;
 }
 
-/* Search and sort. Two columns that shrink rather than wrap: wrapping them
-   would put a third line into the panel at exactly the window where there is
-   least room, and the viewer below would pay for it. `minmax(0, 1fr)` is what
-   lets them shrink at all -- a grid item's automatic minimum is its content,
-   which for an input is wider than a narrow panel has. */
-.dataset-roster-filters {
-  display: grid;
-  align-items: center;
-  gap: 6px 8px;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-/* A label beside its control rather than above it, which is one line rather
-   than two in a panel that is counting them. */
-.roster-field {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-}
-
-.roster-field > label {
-  flex: none;
-  color: var(--color-text-secondary);
-  font-size: 11px;
-}
-
-.roster-field > .link-button {
-  flex: none;
-  font-size: 11px;
-}
-
-.roster-field > input,
-.roster-field > select {
-  min-width: 0;
-  min-height: 26px;
-  flex: 1 1 auto;
-  padding: 2px 6px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: inherit;
-  font-size: 12px;
-}
-
-.roster-field > input:focus-visible,
-.roster-field > select:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 1px;
-}
-
 .workspace-sidebar > .inspector-panel {
   flex: 1 1 60%;
 }
@@ -702,14 +649,6 @@ button:disabled,
   white-space: nowrap;
 }
 
-.dataset-roster-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--color-border);
-}
-
 /* The roster owns its overflow. A long list scrolls inside this box and a long
    file name is truncated in its own cell, so neither can make the document
    wider or taller than the window. */
@@ -920,27 +859,6 @@ button:disabled,
    token used as the established generic panel-note colour. Scoped here so
    unrelated headers keep their established hierarchy. */
 .panel-header p.preview-file-identity {
-  color: var(--color-text-secondary);
-}
-
-/* While a query is hiding rows this line stops being a note about the panel and
-   becomes the only visible account of how much of the session is out of sight.
-   Ordinary text at 11px, so it takes the secondary colour rather than the
-   tertiary one, which is about 3.5:1 against the panel.
-
-   Scoped to the search state, and the reason is narrower than "the rest is
-   redundant": it is not. Unsearched, the same line carries the session's
-   capacity, which appears nowhere else, and the only statement that removing a
-   row leaves the file alone that a user sees *before* pressing the button. Both
-   deserve to be readable. But `.panel-header p` is tertiary across the whole
-   application -- the preview summary, the spectrum panel, the table's caption --
-   and that is one decision about one token, not this panel's to make on its own
-   while a search happens to be running. It belongs to a change that can weigh
-   every panel it moves and check each one rendered. What is fixed here is the
-   text this milestone added; what is left is recorded rather than implied.
-
-   Everything else about the line, its truncation included, is inherited. */
-.panel-header p.dataset-roster-matches {
   color: var(--color-text-secondary);
 }
 

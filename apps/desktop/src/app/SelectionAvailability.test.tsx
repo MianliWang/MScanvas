@@ -82,7 +82,7 @@ async function openTheViewer(preview: PreviewApi): Promise<void> {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Preview focused" }, SETTLING));
+  fireEvent.keyDown(await screen.findByRole("treegrid", {}, SETTLING), { key: "Enter" });
   await screen.findByRole("grid", { name: "Spectra" }, SETTLING);
   await screen.findByRole("img", { name: "Chromatogram" }, SETTLING);
   vi.spyOn(plot(), "getBoundingClientRect").mockReturnValue({

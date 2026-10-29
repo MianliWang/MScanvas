@@ -77,7 +77,7 @@ async function openTheViewer(preview: PreviewApi): Promise<void> {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Preview focused" }, SETTLING));
+  fireEvent.keyDown(await screen.findByRole("treegrid", {}, SETTLING), { key: "Enter" });
   await screen.findByRole("grid", { name: "Spectra" }, SETTLING);
   await screen.findByRole("img", { name: "Chromatogram" }, SETTLING);
   vi.spyOn(plot(), "getBoundingClientRect").mockReturnValue({
@@ -884,7 +884,7 @@ describe("a linked operation that outlives the pair on screen", () => {
     expect(preview.linkedFigureRequests[0]?.chromatogramToken).toBe("chromatogram-token-1");
 
     // Another run is opened over it while the write is still running.
-    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await waitFor(() => {
       expect(preview.openedHandles).toHaveLength(2);
     });

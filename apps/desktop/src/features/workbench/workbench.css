@@ -73,56 +73,67 @@
 .workbench-inspector { position: relative; grid-area: inspector; min-width: 0; min-height: 0; overflow: auto; }
 .surface-title { flex: none; margin: 0 0 8px; color: var(--color-text-primary); font-size: 16px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
 .workbench-shell .panel { border-radius: 8px; box-shadow: 0 1px 2px rgb(23 35 55 / 0.03); }
-.workbench-shell .dataset-roster-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.workbench-shell .dataset-roster-panel > .panel-header { flex: 0 0 auto; padding: 12px; }
-.workbench-shell .dataset-roster-panel .panel-header p { white-space: normal; overflow: visible; text-overflow: clip; font-size: 12px; }
-.workbench-shell .dataset-roster-filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 0 12px 8px; }
-.workbench-shell .roster-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; }
-.workbench-shell .roster-field label { font-size: 12px; }
-.workbench-shell .roster-field input, .workbench-shell .roster-field select { width: 100%; min-width: 0; min-height: 32px; font-size: 13px; }
-.workbench-shell .roster-field .link-button { grid-column: 2; justify-self: end; }
-.workbench-shell .dataset-roster-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; border-bottom: 1px solid var(--color-border); }
-.workbench-shell .dataset-roster-actions button { font-size: 12px; min-height: 32px; padding: 4px 8px; }
-.workbench-shell .dataset-roster-actions [data-contextual]:disabled { border-color: transparent; background: transparent; }
-/* Emptying the whole list is the block's least frequent action; it stays
-   where it is, quieter than adding and than acting on the picked rows (L9). */
-.workbench-shell .dataset-roster-actions [data-list-wide] { border-color: transparent; background: transparent; }
-.organization-toolbar { display: flex; flex-wrap: wrap; align-items: center; flex: 0 0 auto; gap: 4px 8px; padding: 6px 12px; }
-.organization-toolbar button { font-size: 12px; }
-.organization-toolbar .secondary-button { border-color: transparent; background: transparent; }
-.organization-toolbar .roster-selection-context { margin-left: auto; padding: 0; }
-/* Each count stays with its word, in either language: the resources join them
-   with a no-break space, and `keep-all` keeps CJK words whole, so the line
-   breaks only at the separators (PM9 UI-16). */
-.roster-selection-context { margin: 0; padding: 4px 12px 8px; font-size: 12px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; word-break: keep-all; }
-.roster-selection-idle { visibility: hidden; }
-.grouped-roster { flex: 1 1 auto; min-height: 80px; padding: 0 4px 8px; margin: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
-.roster-group-header { display: grid; grid-template-columns: 24px minmax(0, 1fr) 28px; align-items: center; min-height: 40px; padding: 2px 4px; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-primary); }
+/* Roster column (v5.11 `.roster`): head, search, list, footer. The card that
+   holds it and the border beside it belong to the shell. */
+.workbench-shell .dataset-roster-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; background: #fbfcfe; }
+.roster-head { flex: none; display: grid; gap: 8px; padding: 12px 12px 10px; }
+.roster-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.roster-title h2 { margin: 0; color: var(--color-text-primary); font-size: 13px; font-weight: 650; line-height: 1.4; }
+.roster-count-tag { margin-left: auto; padding: 0 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Two actions that wrap rather than clip where a label is long. */
+.roster-acquire { display: flex; flex-wrap: wrap; gap: 6px; }
+/* v5.11 `.search`: the icon inside the field, the clear action at its edge.
+   The browser's own clear glyph would be a second, unnamed one. */
+.roster-search { position: relative; flex: none; margin: 0 12px 10px; }
+.roster-search > .ui-icon { position: absolute; top: 8.5px; left: 10px; color: var(--color-text-secondary); pointer-events: none; }
+.roster-search > input { width: 100%; min-height: 32px; padding: 4px 34px 4px 32px; border: 1px solid var(--color-border-strong); border-radius: 5px; background: var(--color-surface); color: var(--color-text-primary); font: inherit; font-size: 13px; }
+.roster-search > input::placeholder { color: var(--color-text-secondary); }
+.roster-search > input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.roster-search > .ui-icon-button { position: absolute; top: 1px; right: 1px; }
+.grouped-roster { flex: 1 1 auto; min-height: 80px; margin: 0; padding: 4px 8px 8px; border-top: 1px solid var(--color-border); overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
+/* v5.11 `.group-label`: small, muted, the name first; the count, the group
+   checkbox and its menu on the right, in columns that line up across groups. */
+.roster-group-header { display: grid; grid-template-columns: minmax(0, 1fr) 24px 26px; align-items: center; min-height: 36px; padding: 6px 2px 2px; color: var(--color-text-secondary); }
 .group-disclosure-cell { min-width: 0; }
-.group-disclosure { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; min-height: 32px; padding: 3px; text-align: left; background: transparent; border: 0; font-size: 13px; font-weight: 600; }
-.group-disclosure > span:nth-child(2) { overflow-wrap: anywhere; flex: 1; }
-.group-disclosure > span:first-child { display: inline-block; flex: 0 0 auto; }
-.group-count { color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
-.workbench-shell .grouped-roster .dataset-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) 48px; gap: 2px; align-items: center; margin: 0; padding: 5px 4px; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; font-size: 13px; }
+.group-disclosure { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; min-height: 28px; padding: 2px 4px; border: 0; border-radius: 5px; background: transparent; color: var(--color-text-secondary); font-size: 11px; font-weight: 650; text-align: left; }
+.group-disclosure:hover { background: var(--color-row-hover); color: var(--color-text-primary); }
+.group-disclosure > span:nth-child(2) { flex: 1; overflow-wrap: anywhere; }
+.group-disclosure > span:first-child { display: inline-flex; flex: 0 0 auto; }
+.group-count { color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+/* v5.11 `.data-row`. Spacing comes from padding, never margin: the window
+   measures each row's box, and a margin would drift every row below it. */
+.workbench-shell .grouped-roster .dataset-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px; align-items: center; height: auto; margin: 0; padding: 4px 2px 4px 4px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; }
 .workbench-shell .dataset-roster-panel[data-density="comfortable"] .dataset-row { min-height: 44px; }
 .workbench-shell .dataset-roster-panel[data-density="compact"] .dataset-row { min-height: 32px; padding-top: 1px; padding-bottom: 1px; }
-.grouped-roster input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; margin: 3px; accent-color: var(--color-accent); }
-.workbench-shell .grouped-roster .dataset-row-label { min-width: 0; gap: 1px; }
-.workbench-shell .grouped-roster .dataset-row-name, .workbench-shell .grouped-roster .dataset-row-context { display: block; overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.3; }
-.dataset-row-facts { display: flex; flex-wrap: wrap; gap: 2px 6px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.25; }
+.grouped-roster input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 3px; accent-color: var(--color-accent); }
+.workbench-shell .grouped-roster .dataset-row-label { display: block; min-width: 0; }
+.workbench-shell .grouped-roster .dataset-row-name, .workbench-shell .grouped-roster .dataset-row-context { display: block; overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.35; }
+.workbench-shell .grouped-roster .dataset-row-name { color: var(--color-text-primary); font-size: 12px; font-weight: 600; }
+.dataset-row-facts { display: flex; flex-wrap: wrap; gap: 0 6px; color: var(--color-text-secondary); font-size: 11px; font-weight: 400; line-height: 1.45; }
 .roster-row-controls { display: flex; align-items: center; }
-.row-drag-handle, .row-menu-trigger { display: inline-grid; place-items: center; width: 24px; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--color-text-secondary); }
+.row-drag-handle, .row-menu-trigger { display: inline-grid; place-items: center; width: 24px; min-height: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--color-text-secondary); }
 .row-drag-handle { cursor: grab; touch-action: none; }
-.row-menu-trigger { font-size: 19px; }
-.row-drag-handle:hover, .row-menu-trigger:hover { background: var(--color-surface-selected); color: var(--color-accent); }
+.row-drag-handle:hover, .row-menu-trigger:hover { background: var(--color-surface-selected); color: var(--color-accent-hover); }
+.workbench-shell .grouped-roster .dataset-row:hover { background: var(--color-row-hover); }
+/* Highlighted rows take the blue-soft fill; the viewed row adds the border, and
+   its facts say "Viewed acquisition" in words, so it is not told by shade alone. */
 .workbench-shell .grouped-roster .dataset-row.is-selected { background: var(--color-surface-selected); }
-.workbench-shell .grouped-roster .dataset-row.is-active { box-shadow: inset 3px 0 var(--color-accent); }
+.workbench-shell .grouped-roster .dataset-row.is-active { border-color: var(--color-selected-border); background: var(--color-surface-selected); box-shadow: none; }
 .grouped-roster .is-drop-target { background: #dcecff !important; outline: 2px solid var(--color-accent); outline-offset: -2px; }
 .grouped-roster [data-drag-source="true"] { opacity: 0.35; }
 .roster-drag-overlay { display: inline-block; padding: 8px 12px; border: 1px solid var(--color-accent); border-radius: 6px; color: var(--color-text-primary); background: white; box-shadow: 0 4px 16px rgb(23 35 55 / 0.16); font-size: 13px; white-space: nowrap; pointer-events: none; }
 .organization-notice { flex: 0 0 auto; margin: 0; padding: 5px 12px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.4; }
 .organization-notice:empty { padding: 0; }
 .roster-empty { padding: 16px 10px; font-size: 13px; }
+/* v5.11 `.roster-foot`: the count and Undo, the list actions, then Convert. */
+.roster-foot { flex: none; display: grid; gap: 6px; padding: 10px 12px 12px; border-top: 1px solid var(--color-border); background: var(--color-surface); }
+.roster-foot-count { display: flex; align-items: center; gap: 6px; min-height: 28px; }
+/* Each count stays with its word, in either language: the resources join them
+   with a no-break space, and `keep-all` keeps CJK words whole, so the line
+   breaks only at the separators (PM9 UI-16). */
+.roster-selection-context { flex: 1; margin: 0; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; word-break: keep-all; }
+.roster-foot-actions { display: flex; flex-wrap: wrap; gap: 2px; }
+.roster-convert { width: 100%; }
 .roster-menu { z-index: 100; min-width: 170px; max-width: min(340px, calc(100vw - 24px)); max-height: min(420px, var(--radix-dropdown-menu-content-available-height)); overflow: auto; padding: 5px; border: 1px solid var(--color-border); border-radius: 8px; background: white; color: var(--color-text-primary); box-shadow: 0 6px 20px rgb(23 35 55 / 0.14); font-family: var(--font-ui); font-size: 13px; }
 .roster-menu [role="menuitem"] { padding: 7px 9px; min-height: 32px; border-radius: 4px; overflow-wrap: anywhere; cursor: pointer; }
 .roster-menu [data-highlighted] { background: var(--color-surface-selected); }
@@ -130,10 +141,12 @@
 .roster-menu [role="separator"] { height: 1px; background: var(--color-border); margin: 5px; }
 .roster-menu [data-radix-collection-item] ~ div:not([role]) { color: var(--color-text-secondary); }
 .group-name-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(420px, calc(100vw - 32px)); z-index: 120; padding: 24px; background: white; color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 12px 40px rgb(23 35 55 / 0.18); }
-.group-name-dialog h2 { margin: 0 0 10px; font-size: 18px; }
+.group-name-dialog h2 { margin: 0 0 10px; font-size: 17px; }
 .group-name-dialog p { margin: 0 0 20px; font-size: 13px; line-height: 1.5; color: var(--color-text-secondary); }
 .group-name-dialog label { display: block; font-size: 13px; margin-bottom: 6px; }
 .group-name-dialog input { width: 100%; min-height: 36px; border: 1px solid var(--color-border-strong); border-radius: 6px; padding: 6px 8px; }
+/* Why Save is refused, shown only while it is. */
+.group-name-dialog .group-name-reason { margin: 8px 0 0; font-size: 12px; }
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 .workbench-shell .viewer-column { flex: 1 0 auto; }
 .workbench-shell .viewer-stack { display: flex; flex-direction: column; gap: 8px; overflow: visible; min-height: 0; }
@@ -232,15 +245,7 @@
   .workbench-shell[data-details-open="true"] .workspace-layout,
   .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main"; }
   .workbench-shell .workspace-sidebar, .workbench-inspector { grid-area: main; }
-  .workbench-shell .dataset-roster-filters { grid-template-columns: 1fr 1fr; }
 }
-.roster-help { font-size: 12px; color: var(--color-text-secondary); }
-/* A compact control's 32 px, as every other disclosure summary here (PM9 UI-45). */
-.roster-help summary { min-height: 32px; padding-block: 6px; cursor: pointer; }
-/* The summary spans the clipping roster panel edge to edge, so its ring is
-   drawn inside it, as the context line's are (PM9.7 F15). */
-.roster-help summary:focus-visible { outline-offset: -2px; }
-.roster-help p { margin: 6px 0; }
 
 /* The panel arrangement is on screen either way; this says it will not survive
    a restart. Takes its own header row, as the drop hint does, so a long label

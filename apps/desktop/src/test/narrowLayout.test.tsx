@@ -325,8 +325,8 @@ describe("narrow desktop layout markup", () => {
 
     expect(await screen.findAllByRole("button", { name: "Add files…" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Preview focused" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Remove highlighted" })).toHaveLength(1);
+    // The list actions live in the roster footer, which an empty list does not show.
+    expect(screen.queryByRole("button", { name: "Remove highlighted" })).toBeNull();
     await showBackendBanner();
     expect(screen.getAllByRole("button", { name: "Check again" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Choose folder…" })).toHaveLength(1);
@@ -460,17 +460,6 @@ describe("narrow desktop layout markup", () => {
     expect(notes.getPropertyValue("overflow")).toBe("hidden");
   });
 
-  it("lets five actions wrap rather than widening the column they sit in", () => {
-    // The fifth action is what raised the panel's floor by one wrapped line.
-    // What must not happen instead is the row refusing to wrap and pushing the
-    // sidebar -- and the document -- wider than the window.
-    const app = mountStyles(appStyles);
-    const actions = requireStyleRule(app, ".dataset-roster-actions").style;
-
-    expect(actions.getPropertyValue("display")).toBe("flex");
-    expect(actions.getPropertyValue("flex-wrap")).toBe("wrap");
-  });
-
   it("lets a row's collision context give ground before the file name does", () => {
     // The name and its context share one grid cell, so the cell needs the same
     // treatment the notes track got: a minimum of zero for the part that may
@@ -526,24 +515,12 @@ describe("narrow desktop layout markup", () => {
     expect(requireStyleRule(app, ".dataset-row-kept").style.getPropertyValue("color")).toBe(
       "var(--color-text-secondary)",
     );
-    expect(requireStyleRule(app, ".roster-field > label").style.getPropertyValue("color")).toBe(
-      "var(--color-text-secondary)",
-    );
-    // And the match count, which while a query hides rows is the only visible
-    // account of how much of the session is out of sight. It owns a selector of
-    // its own rather than inheriting the header note's tertiary colour, and
-    // that selector has to out-specify `.panel-header p` to mean anything.
-    const matches = requireStyleRule(app, ".panel-header p.dataset-roster-matches").style;
-    expect(matches.getPropertyValue("color")).toBe("var(--color-text-secondary)");
-    expect(requireStyleRule(app, ".panel-header p").style.getPropertyValue("color")).toBe(
-      "var(--color-text-tertiary)",
-    );
   });
 
-  it("gives the match count its own class only while a query is hiding rows", async () => {
-    // The line has two duties. As a header note about how many files a session
-    // holds it is quiet chrome, and the roster shows the same count in full
-    // underneath; as the account of a search it is the only thing that says so.
+  it("describes the search box with the match count only while a query is hiding rows", async () => {
+    // The whole sentence stays for assistive technology; the eye reads the
+    // count tag beside the heading. While a query hides rows the search box
+    // points at the sentence, because then it is the account of the search.
     render(
       <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
         <PreviewApiProvider
@@ -556,17 +533,17 @@ describe("narrow desktop layout markup", () => {
         </PreviewApiProvider>
       </WorkspaceDropTransportProvider>,
     );
-    const line = () => document.querySelector("#dataset-roster-matches");
+    const search = () => screen.getByRole("searchbox", { name: "Search files" });
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
-    expect(line()).not.toHaveClass("dataset-roster-matches");
+    expect(search()).not.toHaveAttribute("aria-describedby");
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+    fireEvent.change(search(), {
       target: { value: "QC" },
     });
 
-    expect(line()).toHaveClass("dataset-roster-matches");
-    expect(line()).toHaveTextContent("2 visible / 3 acquisitions");
+    expect(search()).toHaveAttribute("aria-describedby", "dataset-roster-matches");
+    expect(document.querySelector("#dataset-roster-matches")).toHaveTextContent("2 visible / 3 acquisitions");
   });
 
   it("leaves the workspace roster scrolling inside its own panel", async () => {

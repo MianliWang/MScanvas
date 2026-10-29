@@ -803,6 +803,13 @@ export function PreviewWorkspace() {
             onAddFiles={workspace.addFiles}
             addFilesQuiet={addFilesQuiet}
             onAddFolder={workspace.addFolder}
+            // The Workbench's one route to batch conversion. Elsewhere the
+            // surface has its own next step, and on Conversion its own Convert.
+            onConvertChecked={surface !== "workbench" ? undefined : () => {
+              workspace.setConversionScope("selected");
+              setSurface("conversion");
+              panels.navigate();
+            }}
             canRemove={canRemove}
             onClearList={() => {
               if (!workspace.conversion.busy) return workspace.clearList();
