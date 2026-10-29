@@ -445,9 +445,11 @@ No admission, gating, discovery or setup code changes.
   - A selected spectrum's DTO carries at most `MAX_SPECTRUM_POINTS` (500,000)
     of its points, with its total, as today.
   - A native spectrum above that, up to decision 2's 2^23, crosses as that
-    prefix with today's notice. The drawing reads the complete retained
-    spectrum through the screen projection, and export reads it through the
-    export snapshot.
+    prefix with today's notices. While the screen projection is not ready,
+    drawing is limited to the transferred points (`viewerSpectrumPrefix`).
+    Once it is ready, the drawing reads the complete retained spectrum
+    (`viewerSpectrumPrefixRetained`). Export always reads the complete
+    retained spectrum, through the export snapshot.
   - Sending whole arrays over IPC would be its own decision, as binary transfer
     (AGENTS.md, large arrays).
 - **Redaction stays.** Metadata stays `msaccess` output, redacted as today. The
@@ -754,7 +756,7 @@ runner on the real file, so the comparison is directional only.
     not checked. Decision 8 records whether real files state them.
   - Interpretation remains in a few places: the scan number comes only from
     `scan=N`, the table's one precursor column shows the first precursor, and
-    activation terms are carried as written.
+    a precursor's m/z and intensity come from its first selected ion.
   - mzdata agreed on everything compared, but unusual yet valid
     vendor-converted mzML could still disagree.
 - **Representativeness.**
@@ -788,7 +790,7 @@ keeps today's row-capped state (decision 5). Two other ways:
 
 - raise `MAX_SPECTRUM_TABLE_ROWS`, which sends more rows through React;
 - send the chromatogram itself from Rust's retained rows, bounded like any
-  list, which is a viewer decision under ADR 0028.
+  list, which is a viewer decision amending ADR 0033 and ADR 0034.
 
 ## What this amends, on acceptance
 
