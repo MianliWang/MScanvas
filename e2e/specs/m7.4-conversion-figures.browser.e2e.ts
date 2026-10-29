@@ -11,6 +11,12 @@ import { FIGURE_DIALOG, figureActions, openPlotMenu, plotMenuItem, plotMenuTrigg
 import { startAnother } from "../support/conversion";
 
 const CHROMATOGRAM = "section.chromatogram-panel";
+/** The roster footer's list menu (owner review); Clear's confirmation gives the keyboard back to its trigger. */
+const listMenu = () => browser.$("#workbench-roster").$("[data-roster-list-menu]");
+async function clearList() {
+  await listMenu().click();
+  await browser.$('[role="menu"] [data-roster-clear]').click();
+}
 
 const authority = availableBackend.authority;
 const names = ["Synthetic sample 空格 very-long-member-0001.mzML", "Synthetic sample 空格 very-long-member-0002.mzML"];
@@ -339,17 +345,17 @@ describe("M7.4 conversion, recovery and export composition", () => {
 
   it("keeps Return and Escape inert and invalidates a stale active-clear confirmation", async () => {
     await open(1200, 800, 1.25, true);
-    const clear = browser.$("#workbench-roster").$("button=" + UI_RESOURCES.en.clearList);
+    const clear = listMenu();
     if (!await clear.isDisplayed()) await browser.$('[aria-controls="workbench-roster"]').click();
-    await clear.click();
+    await clearList();
     await expect(browser.$('[role="dialog"]')).toHaveText(expect.stringContaining("1 of 2 rows"));
     await browser.keys("Escape");
     await browser.$('[role="dialog"]').waitForExist({ reverse: true });
     await expect(clear).toBeFocused();
     expect((await ipcCalls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(0);
-    await clear.click(); await browser.$('[role="dialog"]').$("button=Return").click();
+    await clearList(); await browser.$('[role="dialog"]').$("button=Return").click();
     expect((await ipcCalls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(0);
-    await clear.click(); await browser.$('[role="dialog"]').$("button=Remove non-running").click();
+    await clearList(); await browser.$('[role="dialog"]').$("button=Remove non-running").click();
     await expect(browser.$('[role="dialog"]')).toHaveText(expect.stringContaining(UI_RESOURCES.en.clearStale));
     // Refused rather than disabled, so its reason stays reachable (spec 1.4).
     await expect(browser.$('[role="dialog"]').$("button=Cancel and clear")).toHaveAttribute("aria-disabled", "true");
@@ -363,8 +369,8 @@ describe("M7.4 conversion, recovery and export composition", () => {
   for (const action of ["Remove non-running", "Cancel and clear"]) {
     it(`active Clear focus retains ${action} while pending and recovers a refusal`, async () => {
       await open(1366, 768, 1, true);
-      const clear = browser.$("#workbench-roster").$("button=" + UI_RESOURCES.en.clearList);
-      await clear.click();
+      const clear = listMenu();
+      await clearList();
       const dialog = browser.$('[role="dialog"]');
       const initiator = dialog.$("button=" + action);
       await expect(initiator).toBeEnabled();
@@ -393,11 +399,11 @@ describe("M7.4 conversion, recovery and export composition", () => {
   for (const timing of ["before", "after"]) {
     it(`active Clear focus returns to Add files when conversion settles ${timing} close`, async () => {
       await open(960, 640, 1.25, true);
-      const clear = browser.$("#workbench-roster").$("button=" + UI_RESOURCES.en.clearList);
+      const clear = listMenu();
       // The roster is folded at 960 px; opened the way the store confirms it
       // (PM9 UI-23), so it does not fold again before Clear is pressed.
       await revealRosterRow(selectedFile.handle);
-      await clear.click();
+      await clearList();
       const cancel = browser.$('[role="dialog"]').$("button=Cancel and clear");
       await expect(cancel).toBeEnabled();
       await holdInvoke("execute_workspace_clear");
@@ -418,6 +424,8 @@ describe("M7.4 conversion, recovery and export composition", () => {
       if (timing === "after") { await expect(add).toBeDisabled(); await settle(); }
       await expect(add).toBeEnabled(); await expect(add).toBeFocused();
       await expect(clear).not.toExist();
+      // Nor does Clear stand alone over the emptied list.
+      await expect(browser.$("#workbench-roster").$("[data-roster-clear]")).not.toExist();
       expect((await ipcCalls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(1);
       expect((await ipcCalls()).filter(call => call.command === "begin_workspace_conversion_queue")).toHaveLength(0);
       await capture("active-clear-empty-" + timing);
