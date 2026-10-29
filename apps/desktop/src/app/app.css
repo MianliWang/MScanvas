@@ -146,15 +146,6 @@
   background: var(--color-surface-selected);
 }
 
-.link-button {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font-weight: 650;
-  text-decoration: underline;
-}
-
 button:disabled,
 .spectrum-data-actions button[aria-disabled="true"] {
   cursor: not-allowed;
@@ -2036,10 +2027,6 @@ button:disabled,
 
 /* A conversion control refused while its own request runs stays a Tab stop
    (PM9.4 R11) and reads as refused without fading its focus ring. */
-/* The surface's link buttons -- Skip, Describe again, Dismiss, the settings
-   links -- meet the 32 px compact-control minimum like its other controls
-   (PM9.4 R12). */
-.conversion-panel .link-button { min-height: 32px; }
 
 /* The requested order before a plan arrives is the same list as the reviewed
    one, numbered once by its own cells (PM9.4 R5). Its own rules rather than a
@@ -2057,8 +2044,7 @@ button:disabled,
 /* Whether Retry reruns a failure: a line of its own, like the reason (R8). */
 .conversion-queue-retry { min-width: 0; flex: 1 0 100%; padding-left: 2.2em; color: var(--color-text-secondary); overflow-wrap: anywhere; }
 
-.conversion-panel .secondary-button[aria-disabled="true"],
-.conversion-panel .link-button[aria-disabled="true"] {
+.conversion-panel .secondary-button[aria-disabled="true"] {
   color: var(--color-text-secondary);
   cursor: not-allowed;
 }
