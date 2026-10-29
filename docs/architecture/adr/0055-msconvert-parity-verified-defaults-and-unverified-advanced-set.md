@@ -227,6 +227,8 @@ Rules enforced when an intent is built, not when it is displayed:
   at the role's precision (decision 5), so the fallback keeps every bit
   instead of losing more than the tolerance the user set;
 - `--numpressLinearAbsTol` exists only with `--numpressLinear`;
+- with mzMLb, compression level 0 exists only with zlib off: with zlib on, the
+  build raises level 0 to 4 (`MSDataFile.cpp:249-250`);
 - numbers are finite, ranges ordered and sets non-empty.
 
 **Which encoding options each format takes** is what its writer reads. msconvert
@@ -238,7 +240,7 @@ unrepresentable.
 | Format | Encoding options offered | What the writer does |
 | --- | --- | --- |
 | mzML | per-array precision, zlib, numpress, `--noindex` | Reads all four; decision 5 checks them. Applies no truncation and no prediction: prediction is read only for mzMLb (`IO.cpp:1871-1876`), both are applied only on the mzMLb path (`:1628-1818`), and the encoder reads neither |
-| mzXML | one global precision (`--32` or `--64`), zlib, `--noindex` | `<peaks>` holds m/z-intensity pairs at the global precision, and `compressionType` declares none or zlib; per-array precision and numpress are never read (`Serializer_mzXML.cpp:552-584`) |
+| mzXML | one global precision (`--32` or `--64`), zlib, `--noindex` | `<peaks>` holds m/z-intensity pairs at the global precision, and `compressionType` declares none or zlib; per-array precision is never read, nor the per-array numpress overrides, the only numpress msconvert sets (`Serializer_mzXML.cpp:552-584`) |
 | mzMLb | per-array precision, zlib, numpress, truncation, prediction, chunk size, compression level | The only writer that applies truncation and prediction (`IO.cpp:1628-1818`). It writes its index datasets whatever `--noindex` says (`Serializer_mzML.cpp:199-242`), so `--noindex` is not offered |
 | mz5 | per-array precision, zlib | Reads precision per array and zlib, and no other encoding option (`mz5/Configuration_mz5.cpp:173-251`, `:297-322`) |
 | mgf, text, ms1, ms2, cms1, cms2 | none | Read no encoding option. mgf, text, ms1 and ms2 write decimal text, m/z at 10, 12, 7 and 7 significant digits (`Serializer_MGF.cpp:77`, `TextWriter.hpp:426`, `Serializer_MSn.cpp:167`); cms1 and cms2 store m/z at 64 bits and intensity at 32, always compressed (`Serializer_MSn.cpp:255-307`, `:413-427`) |

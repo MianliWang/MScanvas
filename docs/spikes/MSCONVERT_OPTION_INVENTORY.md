@@ -62,7 +62,7 @@ private staging. None is a free-text argument box.
 | `--mz5` | 16 | Absent (M6.2: not a candidate) | Advanced, written from the intermediate, offered only when the build's own help lists it (format availability is a build property, CNV-D1) | same select |
 | `--mzMLb` | 17 | Absent | Advanced, written from the intermediate, same build condition | same select |
 | `--mzMLbChunkSize arg (=1048576)` | 18 | Absent | Advanced, with mzMLb only | integer field, bytes, above 0 |
-| `--mzMLbCompressionLevel arg (=4)` | 19 | Absent | Advanced, with mzMLb only | 0–9 stepper |
+| `--mzMLbCompressionLevel arg (=4)` | 19 | Absent | Advanced, with mzMLb only; 0 only with zlib off, since with zlib on the build raises 0 to 4 | 0–9 stepper |
 | `--mgf` | 20 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps no chromatograms, and only spectra above MS1 that name a selected precursor ion; m/z as text at 10 significant digits) | same select, labelled "MS/MS spectra only" |
 | `--text` | 21 | Absent | Advanced, written from the intermediate. Lossy by request (values as text at 12 significant digits) | same select |
 | `--ms1` | 22 | Absent | Advanced, written from the intermediate. Lossy by request (the format keeps MS1 spectra only; values as text at 7 significant digits) | same select |
