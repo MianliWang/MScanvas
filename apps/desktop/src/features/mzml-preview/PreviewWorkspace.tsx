@@ -874,9 +874,11 @@ export function PreviewWorkspace() {
               panels.navigate();
             }}
             canRemove={canRemove}
-            onClearList={() => {
+            onClearList={(returnTo) => {
               if (!workspace.conversion.busy) return workspace.clearList();
-              setActiveClear({ returnTo: document.activeElement instanceof HTMLElement ? document.activeElement : null });
+              // From the list menu the item that was pressed is leaving; the
+              // confirmation returns to the menu's trigger instead.
+              setActiveClear({ returnTo: returnTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null) });
               return true;
             }}
             onReloadRoster={workspace.reloadRoster}

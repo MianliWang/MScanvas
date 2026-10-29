@@ -15,7 +15,7 @@ import type { MessageKey } from "../preferences/i18n";
 import { captureOrganizationPayload, UNGROUPED, type AcquisitionGroup, type OrganizationPayload, type OrganizationTarget, type OrganizationNotice } from "./organization";
 import { GroupNameDialog } from "./GroupNameDialog";
 import { useRosterWindow } from "./useRosterWindow";
-import { Button, Icon } from "../../components/ui";
+import { Icon } from "../../components/ui";
 
 interface Props {
   readonly state: RosterState; readonly projection: RosterProjection;
@@ -26,8 +26,8 @@ interface Props {
   readonly onKeyDown: KeyboardEventHandler<HTMLDivElement>;
   readonly onRowPress: (event: MouseEvent<HTMLElement>, handle: string) => void;
   readonly empty: ReactNode;
-  /** The roster footer, given the `New group` action this list owns. */
-  readonly footer: (newGroup: ReactNode) => ReactNode;
+  /** The roster footer, given the `New group` action this list owns and where its dialog returns the keyboard. */
+  readonly footer: (newGroup: (returnTo: HTMLElement | null) => void) => ReactNode;
 }
 const noticeKeys = {
   changed: "organizationChanged", undone: "organizationUndone", cancelled: "organizationCancelled",
@@ -197,8 +197,8 @@ export function GroupedRosterList(props: Props) {
         announcement?.kind === "target" ? t("dragTarget", { count: announcement.count, name: groupName(announcement.groupId), position: announcement.position, total: announcement.total }) : notice === null ? "" : t(noticeKeys[notice])}
     </p>
     {/* A row or group menu whose own trigger has left the document returns
-        focus to New group (`data-roster-new-group`). */}
-    {props.footer(<Button data-roster-new-group="" size="sm" variant="quiet" onClick={event => setEditing({ id: null, name: "", returnTo: event.currentTarget })}>{t("newGroup")}</Button>)}
+        focus to the footer's list menu (`data-roster-list-menu`). */}
+    {props.footer(returnTo => setEditing({ id: null, name: "", returnTo }))}
     <DragOverlay dropAnimation={null} style={{ pointerEvents: "none", display: "flex", justifyContent: "flex-end", alignItems: "center" }}><span className="roster-drag-overlay" aria-hidden="true">{t("dragCount", { count: payload.current?.handles.length ?? 0 })}</span></DragOverlay>
     {editing !== null ? <GroupNameDialog name={editing.name} rename={editing.id !== null} returnTo={editing.returnTo} onClose={() => setEditing(null)} onSave={name => {
       dispatch({ type: "organization", action: editing.id === null ? { type: "create", name } : { type: "rename", groupId: editing.id, name } }); setEditing(null);
@@ -230,7 +230,7 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
     <div role="gridcell"><MembershipCheckbox label={t("checkGroup", { name, count: group.handles.length })} checked={group.handles.length > 0 && checked === group.handles.length} mixed={checked > 0 && checked < group.handles.length}
       onChange={checked => dispatch({ type: "membershipChanged", handles: group.handles, checked })} /></div>
     {group.id !== UNGROUPED ? <div role="gridcell"><Menu.Root onOpenChange={open => {
-      if (open) menuReturnFallback.current = menuTrigger.current?.closest(".dataset-roster-panel")?.querySelector<HTMLButtonElement>("[data-roster-new-group]") ?? null;
+      if (open) menuReturnFallback.current = menuTrigger.current?.closest(".dataset-roster-panel")?.querySelector<HTMLButtonElement>("[data-roster-list-menu]") ?? null;
     }}><Menu.Trigger asChild><button ref={menuTrigger} type="button" className="row-menu-trigger" aria-label={t("groupActions", { name })}><Icon name="more" /></button></Menu.Trigger>
       <Menu.Portal><Menu.Content className="roster-menu" sideOffset={4} onCloseAutoFocus={event => {
         const fallback = menuReturnFallback.current;
@@ -291,7 +291,7 @@ const AcquisitionRow = memo(function AcquisitionRow({ row, group, state, project
           const header = Array.from(panel?.querySelectorAll<HTMLElement>(".roster-group-header") ?? [])
             .find(element => element.dataset.groupId === destination.id);
           menuReturnTarget.current = header?.querySelector<HTMLButtonElement>(".group-disclosure") ?? null;
-          menuReturnFallback.current = panel?.querySelector<HTMLButtonElement>("[data-roster-new-group]") ?? null;
+          menuReturnFallback.current = panel?.querySelector<HTMLButtonElement>("[data-roster-list-menu]") ?? null;
           moveTo(row.handle, destination.id);
         }}>{destination.id === UNGROUPED ? t("ungrouped") : destination.name}</Menu.Item>)}
       </Menu.Content></Menu.Portal></Menu.Root></div>

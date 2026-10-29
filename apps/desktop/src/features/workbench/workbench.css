@@ -135,17 +135,14 @@
 .organization-notice { flex: 0 0 auto; margin: 0; padding: 5px 12px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.4; }
 .organization-notice:empty { padding: 0; }
 .roster-empty { padding: 16px 10px; font-size: 13px; }
-/* v5.11 `.roster-foot`: the count and Undo, the list actions, then Convert. */
-.roster-foot { flex: none; display: grid; gap: 6px; padding: 10px 12px 12px; border-top: 1px solid var(--color-border); background: var(--color-surface); }
-.roster-foot-count { display: flex; align-items: center; gap: 6px; min-height: 28px; }
+/* v5.11 `.roster-foot`, one row (owner review): the count, Undo, the list
+   menu, then Convert. The count wraps inside its own space; the controls never do. */
+.roster-foot { flex: none; display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 8px 12px; border-top: 1px solid var(--color-border); background: var(--color-surface); }
+.roster-foot > .ui-button { flex: none; }
 /* Each count stays with its word, in either language: the resources join them
    with a no-break space, and `keep-all` keeps CJK words whole, so the line
    breaks only at the separators (PM9 UI-16). */
-.roster-selection-context { flex: 1; margin: 0; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; word-break: keep-all; }
-/* Pulled out by most of a quiet button's padding, so the labels line up with
-   the count above; the focus ring still clears the column edge. */
-.roster-foot-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-inline: -8px; }
-.roster-convert { width: 100%; }
+.roster-selection-context { flex: 1 1 auto; min-width: 0; margin: 0; color: var(--color-text-secondary); font-size: 11px; line-height: 1.35; font-variant-numeric: tabular-nums; word-break: keep-all; }
 .roster-menu { z-index: 100; min-width: 170px; max-width: min(340px, calc(100vw - 24px)); max-height: min(420px, var(--radix-dropdown-menu-content-available-height)); overflow: auto; padding: 5px; border: 1px solid var(--color-border); border-radius: 8px; background: white; color: var(--color-text-primary); box-shadow: 0 6px 20px rgb(23 35 55 / 0.14); font-family: var(--font-ui); font-size: 13px; }
 .roster-menu [role="menuitem"] { padding: 7px 9px; min-height: 32px; border-radius: 4px; overflow-wrap: anywhere; cursor: pointer; }
 .roster-menu [data-highlighted] { background: var(--color-surface-selected); }

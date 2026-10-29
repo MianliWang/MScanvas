@@ -1,9 +1,10 @@
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { useReducer } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { blurAsABrowserWould as blurTheWayABrowserWould } from "../../test/browserFocus";
+import { chooseRosterAction, rosterAction, rosterActionRefused, rosterListMenu } from "../../test/rosterActions";
 import type { SelectedFile } from "./contracts";
 import { DatasetRoster } from "./DatasetRoster";
 import {
@@ -515,15 +516,15 @@ describe("native drop roster accessibility", () => {
     expect(onClearList).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps search, selection, preview and mutation controls live during a drop", () => {
+  it("keeps search, selection, preview and mutation controls live during a drop", async () => {
     const onActivate = vi.fn();
     render(<Harness canAddFiles={false} canAddFolder={false} dropBusy onActivate={onActivate} rows={2} />);
 
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
     fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
     expect(onActivate).toHaveBeenCalledWith("file-0");
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /Clear list/ })).toBeEnabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(false);
+    expect(await rosterActionRefused("clearList")).toBe(false);
   });
 });
 
@@ -535,170 +536,53 @@ describe("returning the keyboard after removal", () => {
       modifiers: { ctrl: false, shift: false },
     });
 
-  it("moves a focused removal action to the survivor beside the gap", () => {
+  // Removal lives in the footer's list menu, whose trigger a removal never
+  // disables: the menu gives the keyboard back to it, and it stays there.
+  it("gives the keyboard back to the list menu, and keeps it there while the removal settles", async () => {
     const before = selectedMiddle();
-    const after = removeFrom(before, "file-1");
     const onRemoveSelected = vi.fn();
-    const { rerender } = render(
-      <Fixed onRemoveSelected={onRemoveSelected} state={before} />,
-    );
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    const survivor = screen.getByRole("row", { name: /Blank_03\.mzML/ });
-    const focusing = vi.spyOn(survivor, "focus");
-    remove.focus();
+    const { rerender } = render(<Fixed onRemoveSelected={onRemoveSelected} state={before} />);
 
-    fireEvent.click(remove);
+    await chooseRosterAction("removeHighlighted");
+    const menu = rosterListMenu();
+    await waitFor(() => expect(menu).toHaveFocus());
+    rerender(<Fixed canMutate={false} onRemoveSelected={onRemoveSelected} state={before} />);
+    expect(menu).toHaveFocus();
     rerender(
-      <Fixed canMutate={false} onRemoveSelected={onRemoveSelected} state={before} />,
-    );
-    blurAsABrowserWould(remove);
-    rerender(<Fixed onRemoveSelected={onRemoveSelected} state={before} />);
-
-    expect(document.body).toHaveFocus();
-    expect(focusing).not.toHaveBeenCalled();
-
-    rerender(
-      <Fixed
-        onRemoveSelected={onRemoveSelected}
-        rosterSettlementToken={1}
-        state={after}
-      />,
+      <Fixed onRemoveSelected={onRemoveSelected} rosterSettlementToken={1} state={removeFrom(before, "file-1")} />,
     );
 
     expect(onRemoveSelected).toHaveBeenCalledTimes(1);
-    expect(survivor).toHaveFocus();
-    expect(survivor).toHaveAttribute("tabindex", "0");
-    expect(survivor).toHaveAttribute("aria-selected", "true");
-    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+    expect(menu).toHaveFocus();
   });
 
-  it("does not take the keyboard from a destination chosen during removal", () => {
-    const before = selectedMiddle();
-    const after = removeFrom(before, "file-1");
-    const { rerender } = render(<Fixed state={before} />);
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    remove.focus();
+  it("gives the keyboard to Add files when a removal empties the list", async () => {
+    const only = rosterReducer(seeded(1), {
+      type: "rowPressed",
+      handle: "file-0",
+      modifiers: { ctrl: false, shift: false },
+    });
+    const { rerender } = render(<Fixed state={only} />);
 
-    fireEvent.click(remove);
-    rerender(<Fixed canMutate={false} state={before} />);
-    blurAsABrowserWould(remove);
-    const destination = searchBox();
-    destination.focus();
-    rerender(<Fixed rosterSettlementToken={1} state={after} />);
+    await chooseRosterAction("removeHighlighted");
+    await waitFor(() => expect(rosterListMenu()).toHaveFocus());
+    rerender(<Fixed rosterSettlementToken={1} state={removeFrom(only, "file-0")} />);
 
-    expect(destination).toHaveFocus();
-    expect(screen.getByRole("row", { name: /Blank_03\.mzML/ })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
   });
 
-  it("gives a later focused picker ownership after removal reconciliation", () => {
-    const before = selectedMiddle();
-    const after = removeFrom(before, "file-1");
-    const { rerender } = render(<Fixed state={before} />);
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    const survivor = screen.getByRole("row", { name: /Blank_03\.mzML/ });
-    const survivorFocusing = vi.spyOn(survivor, "focus");
-    remove.focus();
+  it("refuses removal with nothing highlighted, and says why where the keyboard is", async () => {
+    const onRemoveSelected = vi.fn();
+    render(<Fixed onRemoveSelected={onRemoveSelected} state={seeded(2)} />);
 
-    fireEvent.click(remove);
-    rerender(<Fixed canAddFiles={false} canMutate={false} state={before} />);
-    blurAsABrowserWould(remove);
-    // The rejected request is idle, but its authoritative roster has not
-    // answered yet. Acquisition is available again in this interval.
-    rerender(<Fixed state={before} />);
+    const item = await rosterAction("removeHighlighted");
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAccessibleDescription("No rows highlighted");
+    fireEvent.click(item);
 
-    const addFiles = screen.getByRole("button", { name: "Add files…" });
-    const addFilesFocusing = vi.spyOn(addFiles, "focus");
-    addFiles.focus();
-    addFilesFocusing.mockClear();
-    fireEvent.click(addFiles);
-    rerender(<Fixed canAddFiles={false} canMutate={false} state={before} />);
-    blurAsABrowserWould(addFiles);
-
-    // Reconciliation may answer while the later picker still owns the
-    // keyboard debt. The old removal must not use that temporary body focus.
-    rerender(
-      <Fixed
-        canAddFiles={false}
-        canMutate={false}
-        canRemove={false}
-        rosterSettlementToken={1}
-        state={after}
-      />,
-    );
-    expect(document.body).toHaveFocus();
-    expect(survivorFocusing).not.toHaveBeenCalled();
-
-    rerender(<Fixed rosterSettlementToken={1} state={after} />);
-
-    expect(addFiles).toHaveFocus();
-    expect(addFilesFocusing).toHaveBeenCalledWith({ preventScroll: true });
-    expect(survivorFocusing).not.toHaveBeenCalled();
-  });
-
-  it("keeps removal focus recovery when a later picker did not own the keyboard", () => {
-    const before = selectedMiddle();
-    const after = removeFrom(before, "file-1");
-    const { rerender } = render(<Fixed state={before} />);
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    remove.focus();
-
-    fireEvent.click(remove);
-    rerender(<Fixed canAddFiles={false} canMutate={false} state={before} />);
-    blurAsABrowserWould(remove);
-    rerender(<Fixed state={before} />);
-
-    const addFiles = screen.getByRole("button", { name: "Add files…" });
-    const addFilesFocusing = vi.spyOn(addFiles, "focus");
-    const survivor = screen.getByRole("row", { name: /Blank_03\.mzML/ });
-    const survivorFocusing = vi.spyOn(survivor, "focus");
-    // This press never held keyboard focus, so it has no later keyboard
-    // destination and must not erase the older removal recovery.
-    fireEvent.click(addFiles);
-    rerender(<Fixed canAddFiles={false} canMutate={false} state={before} />);
-    rerender(
-      <Fixed
-        canAddFiles={false}
-        canMutate={false}
-        canRemove={false}
-        rosterSettlementToken={1}
-        state={after}
-      />,
-    );
-    rerender(<Fixed rosterSettlementToken={1} state={after} />);
-
-    expect(survivor).toHaveFocus();
-    expect(survivorFocusing).toHaveBeenCalledWith({ preventScroll: true });
-    expect(addFilesFocusing).not.toHaveBeenCalled();
-  });
-
-  it("takes no keyboard focus from an unfocused removal activation", () => {
-    const before = selectedMiddle();
-    const after = removeFrom(before, "file-1");
-    const { rerender } = render(<Fixed state={before} />);
-    expect(document.body).toHaveFocus();
-
-    fireEvent.click(screen.getByRole("button", { name: "Remove highlighted" }));
-    rerender(<Fixed canMutate={false} state={before} />);
-    rerender(<Fixed rosterSettlementToken={1} state={after} />);
-
-    expect(document.body).toHaveFocus();
-  });
-
-  it("returns an unchanged removal to its re-enabled action", () => {
-    const state = selectedMiddle();
-    const { rerender } = render(<Fixed state={state} />);
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    const focusing = vi.spyOn(remove, "focus");
-    remove.focus();
-    focusing.mockClear();
-
-    fireEvent.click(remove);
-    rerender(<Fixed canMutate={false} state={state} />);
-    blurAsABrowserWould(remove);
-    rerender(<Fixed rosterSettlementToken={1} state={state} />);
-
-    expect(remove).toHaveFocus();
-    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+    expect(onRemoveSelected).not.toHaveBeenCalled();
+    // Refused, not disabled: the menu stays open on it.
+    expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 });
 
@@ -752,7 +636,8 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       );
 
       expect(onClearList).toHaveBeenCalledTimes(1);
-      const restored = screen.getByRole("button", { name: "Clear list" });
+      // Over rows Clear lives in the list menu, so its trigger is the action.
+      const restored = rosterListMenu();
       expect(restored).toHaveFocus();
       expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
 
@@ -802,7 +687,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
 
     rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
 
-    expect(screen.getByRole("button", { name: "Clear list" })).toHaveFocus();
+    expect(rosterListMenu()).toHaveFocus();
   });
 
   it("renews the debt when the user returns to the re-enabled Clear list", () => {
@@ -832,7 +717,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
 
     rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
 
-    expect(screen.getByRole("button", { name: "Clear list" })).toHaveFocus();
+    expect(rosterListMenu()).toHaveFocus();
   });
 
   it("waits for the folder as well as settlement before restoring a successful clear", () => {
@@ -873,25 +758,33 @@ describe("returning the keyboard after Clear list reconciliation", () => {
     expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
   });
 
-  it("waits for the mutation to become idle after the roster settles", () => {
+  it("keeps the keyboard on the list menu while a clear over rows settles", async () => {
     const state = seeded(1);
     const { rerender } = render(<Fixed state={state} />);
-    const clear = screen.getByRole("button", { name: "Clear list" });
-    clear.focus();
-    fireEvent.click(clear);
+
+    await chooseRosterAction("clearList");
+    const menu = rosterListMenu();
+    await waitFor(() => expect(menu).toHaveFocus());
     rerender(<Fixed canMutate={false} state={state} />);
-    blurAsABrowserWould(clear);
-
-    // Rust's roster answer can render before the request's finally handler
-    // releases the mutation gate. A disabled destination cannot receive focus.
-    rerender(
-      <Fixed canMutate={false} rosterSettlementToken={1} state={state} />,
-    );
-    expect(document.body).toHaveFocus();
-
+    rerender(<Fixed canMutate={false} rosterSettlementToken={1} state={state} />);
     rerender(<Fixed rosterSettlementToken={1} state={state} />);
 
-    expect(clear).toHaveFocus();
+    expect(menu).toHaveFocus();
+  });
+
+  it("gives the keyboard to Add files once a clear over rows has emptied the list", async () => {
+    const state = seeded(1);
+    const { rerender } = render(<Fixed state={state} />);
+
+    await chooseRosterAction("clearList");
+    await waitFor(() => expect(rosterListMenu()).toHaveFocus());
+    rerender(<Fixed canMutate={false} state={state} />);
+    // Rust's roster can answer before the request's gate is released.
+    rerender(<Fixed canAddFiles={false} canMutate={false} rosterSettlementToken={1} state={initialRosterState} />);
+    expect(document.body).toHaveFocus();
+    rerender(<Fixed rosterSettlementToken={1} state={initialRosterState} />);
+
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
   });
 
   it("does not take the keyboard from a destination chosen during reconciliation", () => {
@@ -920,7 +813,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
 
       expect(destination).toHaveFocus();
-      expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveFocus();
+      expect(rosterListMenu()).not.toHaveFocus();
       blurAsABrowserWould(destination);
       // A later, unrelated disappearance must not revive the old Clear record.
       rerender(<Fixed rosterSettlementToken={2} state={initialRosterState} />);
@@ -958,35 +851,10 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
 
       expect(document.body).toHaveFocus();
-      expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveFocus();
+      expect(rosterListMenu()).not.toHaveFocus();
     } finally {
       destination.remove();
     }
-  });
-
-  it("keeps current Clear ownership when an older removal debt settles", () => {
-    const selected = rosterReducer(seeded(1), {
-      type: "rowPressed",
-      handle: "file-0",
-      modifiers: { ctrl: false, shift: false },
-    });
-    const { rerender } = render(<Fixed state={selected} />);
-    const remove = screen.getByRole("button", { name: "Remove highlighted" });
-    remove.focus();
-    fireEvent.click(remove);
-    rerender(<Fixed canMutate={false} state={selected} />);
-    blurAsABrowserWould(remove);
-    rerender(<Fixed state={selected} />);
-
-    const clear = screen.getByRole("button", { name: "Clear list" });
-    clear.focus();
-    rerender(<Fixed rosterSettlementToken={1} state={selected} />);
-    expect(clear).toHaveFocus();
-
-    blurAsABrowserWould(clear);
-    rerender(<Fixed rosterSettlementToken={1} state={initialRosterState} />);
-
-    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
   });
 
   it("gives a later focused picker ownership after Clear list reconciliation", () => {
@@ -1024,7 +892,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed canAddFiles={false} rosterSettlementToken={1} state={seeded(1)} />,
     );
     expect(document.body).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveFocus();
+    expect(rosterListMenu()).not.toHaveFocus();
 
     rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
 
@@ -1072,7 +940,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
 
     rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
 
-    expect(screen.getByRole("button", { name: "Clear list" })).toHaveFocus();
+    expect(rosterListMenu()).toHaveFocus();
   });
 
   it("takes no keyboard focus from an unfocused Clear list activation", () => {
@@ -1115,7 +983,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
     rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
 
     expect(document.body).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveFocus();
+    expect(rosterListMenu()).not.toHaveFocus();
 
     // A later mutation has its own disabled lifetime and settlement edge. It
     // must not retroactively arm the earlier activation that acquired no gate.
@@ -1233,14 +1101,14 @@ describe("the workspace roster as an accessible list", () => {
     expect(screen.queryByText("No acquisitions yet")).toBeNull();
   });
 
-  it("keeps its actions under stable accessible names", () => {
+  it("keeps its actions under stable accessible names", async () => {
     render(<Harness />);
 
     expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "New group" })).toBeEnabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(true);
+    expect(await rosterActionRefused("clearList")).toBe(false);
+    expect(await rosterActionRefused("newGroup")).toBe(false);
     // No help disclosure: the keyboard text describes the list instead.
     expect(document.querySelector("details")).toBeNull();
     expect(screen.getByRole("treegrid")).toHaveAccessibleDescription(/Ctrl\+Z undoes organization/);
@@ -1321,14 +1189,14 @@ describe("the workspace roster as an accessible list", () => {
 });
 
 describe("selecting rows with the pointer", () => {
-  it("selects only the row that was clicked", () => {
+  it("selects only the row that was clicked", async () => {
     render(<Harness />);
 
     fireEvent.click(screen.getByRole("row", { name: /Blank_03\.mzML/ }));
 
     expect(selectedNames()).toEqual(["Blank_03.mzML"]);
     expect(tabStops()).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(false);
   });
 
   it("adds and removes one row at a time with Ctrl", () => {
@@ -1661,20 +1529,25 @@ describe("driving the roster from the keyboard alone", () => {
 });
 
 describe("the two ways of adding acquisitions", () => {
-  it("offers the two adding actions in the head and the list actions in the footer", () => {
+  it("offers the two adding actions in the head and the list actions in the footer", async () => {
     render(<Harness onConvertChecked={() => undefined} />);
 
     const names = (selector: string) =>
       within(document.querySelector(selector) as HTMLElement)
         .getAllByRole("button")
-        .map((button) => button.textContent);
+        .map((button) => button.getAttribute("aria-label") ?? button.textContent);
     expect(names(".roster-head")).toEqual(["Add files…", "Add mzML folder…"]);
-    expect(names(".roster-foot")).toEqual(["Remove highlighted", "Clear list", "New group", "Convert 0…"]);
-    // Secondary, never the filled accent: the first-run evidence state owns it.
-    expect(screen.getByRole("button", { name: "Add files…" })).toHaveClass("ui-button--secondary");
+    // One footer row: the list menu, then Convert.
+    expect(names(".roster-foot")).toEqual(["List actions", "Convert 0 checked…"]);
+    await rosterAction("removeHighlighted");
+    expect(screen.getAllByRole("menuitem").map((item) => item.firstChild?.textContent)).toEqual(
+      ["Remove highlighted", "Clear list", "New group"],
+    );
+    // Secondary unless the first run asks for the one primary.
+    expect(document.querySelector("[data-add-files]")).toHaveClass("ui-button--secondary");
   });
 
-  it("keeps the folder action's name while an import runs, and marks it busy", () => {
+  it("keeps the folder action's name while an import runs, and marks it busy", async () => {
     // The name is how a user finds an action again, so it does not move. It
     // also must not claim a folder is being scanned: the flag is set before the
     // native dialog opens, so for as long as the user spends navigating it --
@@ -1691,11 +1564,11 @@ describe("the two ways of adding acquisitions", () => {
     // And the region the import is about to change says it is not settled.
     expect(screen.getByRole("region", { name: "Acquisitions" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(true);
+    expect(await rosterActionRefused("clearList")).toBe(true);
   });
 
-  it("keeps workspace mutation controls and refuses only the roster read", () => {
+  it("keeps workspace mutation controls and refuses only the roster read", async () => {
     // The three have different concurrency contracts and are three answers, not
     // one boolean. Clearing is the reliable final-empty escape and removal still
     // manages rows already on screen; reading the list back is another statement
@@ -1713,11 +1586,11 @@ describe("the two ways of adding acquisitions", () => {
 
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    expect(await rosterActionRefused("clearList")).toBe(false);
     // `Remove selected` still needs a selected row, which is its own condition
     // and not this one.
     fireEvent.click(rows()[0] as HTMLElement);
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(false);
   });
 
   it("refuses the roster read while an import is unresolved", () => {
@@ -1839,7 +1712,7 @@ describe("the roster footer", () => {
     const onConvertChecked = vi.fn();
     render(<Harness onConvertChecked={onConvertChecked} />);
 
-    const convert = screen.getByRole("button", { name: "Convert 0…" });
+    const convert = screen.getByRole("button", { name: "Convert 0 checked…" });
     const count = document.getElementById("roster-selection-count");
     expect(count).toHaveTextContent("0 checked");
     expect(count).toBeVisible();
@@ -1857,7 +1730,7 @@ describe("the roster footer", () => {
 
     check(/QC_pool_01\.mzML/);
     check(/Blank_03\.mzML/);
-    const convert = screen.getByRole("button", { name: "Convert 2…" });
+    const convert = screen.getByRole("button", { name: "Convert 2 checked…" });
     expect(convert).not.toHaveAttribute("aria-disabled");
     expect(document.getElementById("roster-selection-count")).toHaveTextContent("2 checked");
     fireEvent.click(convert);
@@ -1867,24 +1740,24 @@ describe("the roster footer", () => {
   it("offers no Convert where the surface has its own", () => {
     render(<Harness />);
     expect(screen.queryByRole("button", { name: /^Convert/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "New group" })).toBeInTheDocument();
+    expect(rosterListMenu()).toBeInTheDocument();
   });
 
   it("drops the footer from an empty list, but keeps Clear while an import is unresolved", () => {
     const { rerender } = render(<Harness onConvertChecked={() => undefined} rows={0} />);
     expect(document.querySelector(".roster-foot")).toBeNull();
-    expect(screen.queryByRole("button", { name: "New group" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "List actions" })).toBeNull();
 
     rerender(<Harness folderBusy onConvertChecked={() => undefined} rows={0} />);
     const footer = document.querySelector(".roster-foot") as HTMLElement;
     expect(within(footer).getAllByRole("button").map((button) => button.textContent)).toEqual(["Clear list"]);
   });
 
-  it("offers Undo organization as a named icon action only while there is history", () => {
+  it("offers Undo organization as a named icon action only while there is history", async () => {
     render(<Harness />);
     expect(screen.queryByRole("button", { name: "Undo organization" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "New group" }));
+    await chooseRosterAction("newGroup");
     const save = screen.getByRole("button", { name: "Save group" });
     // An empty name is refused, and the dialog says why.
     expect(save).toHaveAttribute("aria-disabled", "true");

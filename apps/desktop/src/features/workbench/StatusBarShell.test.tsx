@@ -270,7 +270,7 @@ describe("the empty Project in the application shell", () => {
       // The first run's one filled action: with the roster on screen the
       // evidence leaves the Add actions to it (spec 3.3, 3.6).
       expect(currentSurface()).toBe("workbench");
-      expect(addFiles).toHaveClass("ui-button--primary");
+      await waitFor(() => expect(addFiles).toHaveClass("ui-button--primary"));
 
       await openProjectSurface(words);
       await screen.findByText(words.projectNone);

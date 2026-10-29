@@ -19,6 +19,7 @@ import { pressConvert } from "../../test/conversionPanelInteractions";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type { ConversionPlanOutcome, SelectedFile, WorkspaceConversionState } from "./contracts";
 import { UI_RESOURCES } from "../preferences/i18n";
+import { chooseRosterAction, rosterActionRefused } from "../../test/rosterActions";
 
 const en = UI_RESOURCES.en;
 
@@ -889,15 +890,15 @@ describe("queueing selected Thermo RAW conversions", () => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     });
     expect(within(panel).queryByRole("button", { name: "Retry 1 failed" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    expect(await rosterActionRefused("clearList")).toBe(false);
+    await chooseRosterAction("clearList");
     expect(await screen.findByRole("dialog")).toBeVisible();
     expect(api.calls()).not.toContain("clearWorkspace");
     fireEvent.click(screen.getByRole("button", { name: "Return" }));
     // Including the row being rerun. Rust would refuse to let it go, so
     // offering the action would only produce an error nobody needed to see.
     fireEvent.click(rows()[0]);
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(true);
     // And a screen reader is told now, rather than at the next poll.
     expect(liveRegion()).toContain("Retrying 1 failed.");
 
@@ -986,17 +987,17 @@ describe("queueing selected Thermo RAW conversions", () => {
       expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     });
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    expect(await rosterActionRefused("clearList")).toBe(false);
     // Reading the list is not a mutation.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
     expect(rows()).toHaveLength(3);
 
     // Selecting a queued row makes removal unavailable; an unrelated row does not.
     fireEvent.click(rows()[0]);
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(true);
     fireEvent.click(rows()[2]);
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    expect(await rosterActionRefused("removeHighlighted")).toBe(false);
+    await chooseRosterAction("clearList");
     expect(await screen.findByRole("dialog")).toBeVisible();
     expect(api.calls()).not.toContain("clearWorkspace");
     fireEvent.click(screen.getByRole("button", { name: "Return" }));

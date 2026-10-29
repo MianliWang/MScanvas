@@ -73,8 +73,13 @@ async function capture(label: string) {
 const CLEAR_SEARCH = '//button[@aria-label="Clear search" or normalize-space()="Clear search"]';
 /** An icon button since the rebuild (spec 3.3), named by its label. */
 const UNDO_ORGANIZATION = 'button[aria-label="Undo organization"]';
+/** The roster footer's list menu (owner review): Remove highlighted, Clear list, New group. */
+async function listAction(item: "remove" | "clear" | "new-group") {
+  await browser.$("[data-roster-list-menu]").click();
+  await browser.$(`[data-roster-${item}]`).click();
+}
 async function newGroup(name: string) {
-  await browser.$("button=New group").click();
+  await listAction("new-group");
   await browser.$("#organization-group-name").setValue(name);
   await browser.$("button=Save group").click();
   await browser.$(".group-name-dialog").waitForExist({ reverse: true });
@@ -320,7 +325,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await capture(`review-group-dissolve-${language}-before`);
       await browser.$(trigger).click(); await browser.keys(["End", "Enter"]);
       await browser.$(group).waitForExist({ reverse: true });
-      await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-new-group]") === true));
+      await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true));
       expect(await browser.$(row(selectedFile.handle)).getAttribute("data-group")).toBe(originalGroup);
       expect(await browser.$(`${row(selectedFile.handle)} input[type="checkbox"]`).isSelected()).toBe(membership);
       expect(await ipcCalls()).toEqual(before);
@@ -419,7 +424,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       selection: document.querySelector(".roster-selection-context")?.textContent,
     })) });
     await browser.waitUntil(() => browser.execute(() => !(Reflect.get(window, "__m72MenuTargetBefore") as Element).isConnected));
-    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-new-group]") === true));
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true));
     expect(await ipcCalls()).toEqual(before);
     expect(await browser.$(".roster-selection-context").getText()).toContain("80 highlighted · 80 hidden");
     await capture("review-menu-unmounted-target-fallback");
@@ -700,7 +705,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$(row("async-1")).click();
     await holdInvoke("remove_workspace_datasets");
     await setInvokeResult("remove_workspace_datasets", { roster: { datasets: [selectedFile, extra[0], extra[2]], capacity: 1024 }, removedHandles: ["async-1"], unknownHandles: [] });
-    await browser.$(".roster-foot-actions button:first-child").click();
+    await listAction("remove");
     await browser.waitUntil(async () => (await heldCallers("remove_workspace_datasets")) === 1);
     const removalCalls = await ipcCalls();
     await startDrag(`${row("async-1")} .row-drag-handle`);
