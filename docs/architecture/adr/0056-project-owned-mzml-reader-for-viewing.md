@@ -299,10 +299,17 @@ This decides ADR 0005's open preview-cache question for this reader.
 
 ### 5. What changes in the preview seam
 
-Slices 1 and 2 change only `crates/proteowizard/` and
-`apps/desktop/src-tauri/src/preview/`. Slice 3 changes the shared figure
-specification and how the viewer draws. No admission, gating, discovery or
-setup code changes.
+**Where the changes are:**
+
+- the reader and the shared result types, in `crates/proteowizard/`;
+- the service, DTOs, chromatogram model and export mappings, in
+  `apps/desktop/src-tauri/src/preview/`;
+- `apps/desktop/src-tauri/src/qc_snapshot.rs`, for one exhaustive match;
+- in the webview, the DTO contracts (`contracts.ts`), the selected-spectrum
+  panel and the chromatogram's scan model (`viewer/scanModel.ts`);
+- in slice 3, the shared figure specification and how the viewer draws.
+
+No admission, gating, discovery or setup code changes.
 
 - **Shared result types.** `SpectrumTableRow` and `SelectedSpectrumResult`
   (`crates/proteowizard/src/preview.rs`) have private fields and only the
@@ -333,7 +340,11 @@ setup code changes.
   - Base peak and total ion current come from the same terms as the table row.
     The m/z range comes from the lowest and highest observed m/z terms
     (MS:1000528, MS:1000527). A range the spectrum does not state is not
-    reported, and slice 2 makes those fields optional.
+    reported. Slice 2 makes those fields optional, and the panel shows the
+    range as not reported.
+  - Representation and value units meet the exhaustive matches in
+    `preview/export.rs` (the figure and the data document), which map them
+    from the evidence instead of to "unreported".
   - `NumericPrecisionEvidence` (requested and observed fraction digits)
     describes printed text. No product code reads it, and a native spectrum
     carries the two arrays' stored widths instead.
@@ -343,6 +354,16 @@ setup code changes.
   - `reported_unit_known` in `service.rs` maps them;
   - `qc_snapshot.rs::recorded()` refuses them, because the QC path only ever
     sees the `msaccess` run summary's `NotEmitted`. Schema 4 does not change.
+- **The chromatogram learns the unit.** Today a row whose retention-time unit
+  is known makes the chromatogram unavailable, on screen
+  (`viewer/scanModel.ts`, `unsupported-retention-time-unit`) and in export
+  (`chromatogram.rs::from_rows`). Its retention-time axis is `Unreported`.
+  - Native rows declare a unit, so without this change every native file would
+    lose its chromatogram. Slice 2 therefore changes both models in the same
+    change: the axis carries the declared unit, on screen and in export.
+  - A run whose rows declare different units, or where only some rows declare
+    one, has no chromatogram, with a stated reason. Nothing converts between
+    seconds and minutes.
 - **Reconciliation.**
   - `SpectrumIdentity::reconcile` compares identities exactly, and stays.
   - The tolerance lives in `TableRowFacts::contradicts()` and `differs()`
@@ -454,7 +475,8 @@ the same files. The numbers are observations, not budgets (ADR 0005).
      fields.
    - The one batch, with its spectrum-count check.
    - Offsets kept with the preview, for one dataset at a time.
-   - Retention time with its unit, and exact reconciliation.
+   - Retention time with its unit, including the chromatogram's axis on
+     screen and in export, and exact reconciliation.
    - Removal of the two `msaccess` operations.
 3. **UI states.**
    - Profile spectra drawn as lines and centroid spectra as sticks, through the
@@ -464,6 +486,8 @@ the same files. The numbers are observations, not budgets (ADR 0005).
      - sticks keep `ExtremePerSignPerColumn`;
      - only a spectrum the file declares profile is joined.
    - Unknown representation stays sticks, with its statement.
+   - Retention time shown with its declared unit; a chromatogram refused for
+     mixed units; an m/z range not reported.
    - Copy for the new refusals.
    - Rendered QA.
 
@@ -595,6 +619,8 @@ runner on the real file, so the comparison is directional only.
 - **Large spectra.** Large profile spectra and large spectrum tables open
   where the 8 MiB cap refuses them today.
 - **No process per spectrum.** A selected spectrum is an in-process read.
+- **Retention-time units.** The table, the chromatogram and its export carry
+  the unit the file declares, where today every unit is unreported.
 - **A premise for XIC, not XIC itself.** The four-decimal serialization that
   decided M5.4 for `tic`, `sic` and `slice` does not exist in-process. **This
   ADR admits no XIC.** XIC needs the new scope record the
