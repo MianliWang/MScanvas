@@ -57,7 +57,7 @@ describe("folder reservation startup barrier", () => {
       expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
       expect(clear).not.toHaveAttribute("aria-disabled");
     });
-    expect(screen.getByText("Folder import in progress…")).toBeVisible();
+    expect(screen.getAllByText("Folder import in progress…")[0]).toBeVisible();
 
     act(() => {
       scan.resolve(null);

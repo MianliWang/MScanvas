@@ -206,26 +206,26 @@ describe("PM9.2: the status bar's order (L14–L16)", () => {
 });
 
 describe("PM9.2: the Details entry at a 1366-class window (L20)", () => {
-  it("stays in the tab order, says why while there is nothing to show, and opens once there is", async () => {
+  it("always opens, says in one line that there is nothing to show yet, and shows the acquisition once there is", async () => {
     mount("populated", "medium");
     const details = await screen.findByRole("button", { name: en.inspectorToggle });
     // Closed by default here, as recorded; the entry is what has to be findable.
     expect(shell()).toHaveAttribute("data-details-open", "false");
-    expect(details).toHaveAttribute("aria-disabled", "true");
+    expect(details).not.toHaveAttribute("aria-disabled");
     expect(details).not.toBeDisabled();
-    expect(details).toHaveAttribute("title", en.inspectorUnavailable);
-    details.focus();
-    expect(details).toHaveFocus();
+    await press(details);
+    expect(shell()).toHaveAttribute("data-details-open", "true");
+    expect(document.getElementById("workbench-inspector")).toHaveTextContent(en.inspectorUnavailable);
     await press(details);
     expect(shell()).toHaveAttribute("data-details-open", "false");
 
     await readTheFirstAcquisition();
-    // The same control, now usable, still closed until asked for.
+    // The same control, still closed until asked for.
     expect(screen.getByRole("button", { name: en.inspectorToggle })).toBe(details);
-    expect(details).not.toHaveAttribute("aria-disabled");
     expect(shell()).toHaveAttribute("data-details-open", "false");
     await press(details);
     expect(shell()).toHaveAttribute("data-details-open", "true");
     expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById("workbench-inspector")).not.toHaveTextContent(en.inspectorUnavailable);
   });
 });

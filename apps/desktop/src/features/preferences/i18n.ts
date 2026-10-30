@@ -172,6 +172,9 @@ export interface MessageParameters {
   readonly viewerMzEmpty: { readonly low: string; readonly high: string };
   readonly viewerSpectrumLoading: { readonly index: string };
   readonly viewerSpectrumIndex: { readonly index: string };
+  readonly figureSourceSpectrum: { readonly scan: string; readonly name: string };
+  readonly figureSourceSpectrumIndex: { readonly index: string; readonly name: string };
+  readonly figureSourceChromatogram: { readonly name: string };
   readonly viewerSpectrumAbsent: { readonly index: string };
   readonly viewerSpectrumFailed: { readonly index: string };
   readonly viewerSpectrumSummary: { readonly index: string; readonly level: string; readonly count: number };

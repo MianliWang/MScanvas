@@ -1,6 +1,6 @@
 import { memo, useMemo } from "react";
 
-import { Disclosure } from "../../components/ui";
+import { Disclosure, Icon, IconButton } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { Metadata, RunSummary, SelectedFile, SelectedSpectrum } from "./contracts";
 import {
@@ -24,6 +24,15 @@ export interface PreviewSummaryProps {
   readonly chromatogramScanCount: number | null;
   /** The spectrum's m/z viewport, which decides what its drawing is made of. */
   readonly spectrumViewport: SpectrumViewportState;
+  /** Closes the Details drawer; its × shows only while Details is a drawer. */
+  readonly onClose?: () => void;
+}
+
+/** Details' own ×, shown only while Details is a drawer (workbench.css). */
+export function InspectorClose({ onClose }: { readonly onClose: () => void }) {
+  const t = useUiMessages();
+  return <IconButton size="sm" className="inspector-close" icon={<Icon name="close" />}
+    label={t("provenanceCloseDetails")} onClick={onClose} />;
 }
 
 /**
@@ -49,6 +58,7 @@ export const PreviewSummary = memo(function PreviewSummary({
   spectrum,
   chromatogramScanCount,
   spectrumViewport,
+  onClose,
 }: PreviewSummaryProps) {
   const t = useUiMessages();
   // A reduction over the drawn points: once per spectrum or committed window,
@@ -60,6 +70,7 @@ export const PreviewSummary = memo(function PreviewSummary({
   const fileLabel = formatDatasetLabel(file);
   return (
     <section aria-labelledby="preview-summary-heading" className="panel inspector-panel">
+      {onClose === undefined ? null : <InspectorClose onClose={onClose} />}
       <div className="inspector-section">
         {/* The filename plus only the bounded context Rust says the current
             roster needs. No absolute path crosses, and no location is

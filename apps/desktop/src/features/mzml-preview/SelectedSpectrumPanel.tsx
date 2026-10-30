@@ -72,6 +72,9 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
       </div>
       {spectrum === null ? null : <p className="spectrum-head-facts">
         <span>{`MS${spectrum.msLevel}`}</span>
+        {/* What the file declares (P5). The contract carries only whether it
+            declared one, and the backend reports none today. */}
+        {spectrum.representationKnown ? null : <span>{t("viewerRepresentationNotReported")}</span>}
         <span>{t("viewerExportPoints", { count: spectrum.pointCount })}</span>
       </p>}
       {/* The plot's accessible name, in one sentence. */}

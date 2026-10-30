@@ -31,6 +31,13 @@ export interface DatasetRosterProps {
    * evidence leaves its own Add actions to the roster on screen.
    */
   readonly addFilesPrimary?: boolean;
+  /**
+   * Whether the footer's `Convert…` is the surface's one filled primary. It
+   * yields (secondary) while the evidence beside it has its own (B2).
+   */
+  readonly convertPrimary?: boolean;
+  /** Why adding waits, shown under the Add buttons while they are refused (C13). */
+  readonly acquireReason?: string | null;
   readonly onAddFolder: () => void;
   /**
    * Converts the checked rows: scope "selected", then the Conversion surface.
@@ -165,6 +172,8 @@ export const DatasetRoster = memo(function DatasetRoster({
   dispatch,
   onAddFiles,
   addFilesPrimary = false,
+  convertPrimary = true,
+  acquireReason = null,
   onAddFolder,
   onConvertChecked,
   onRemoveSelected,
@@ -845,6 +854,8 @@ export const DatasetRoster = memo(function DatasetRoster({
       ) : null}
     </>
   );
+  const acquireReasonShown = (!canAddFiles || !canAddFolder) && acquireReason !== null && load.status === "ready";
+  const acquireReasonId = acquireReasonShown ? "roster-acquire-reason" : STATUS_BUSY_ID;
   const removeRefused = !canRemove || state.selected.size === 0;
   // Moving needs a highlighted row to move; the focused one leads when it is
   // among them, so the payload is what the reader is looking at.
@@ -964,7 +975,7 @@ export const DatasetRoster = memo(function DatasetRoster({
             reasonId="roster-selection-count"
             refused={checkedCount === 0}
             size="sm"
-            variant="primary"
+            variant={convertPrimary ? "primary" : "secondary"}
           >
             {t("rosterConvert")}
           </Button>
@@ -999,15 +1010,16 @@ export const DatasetRoster = memo(function DatasetRoster({
             folder of a vendor acquisition is not something this version can
             read. */}
         {/* Refused rather than disabled while something else holds the
-            workspace: each keeps the keyboard and points at the status bar's
-            reason, the one the shell gives every waiting workspace action. */}
+            workspace: each keeps the keyboard and says why on the line under
+            them (C13, B4). Before the list has been read, its own empty state
+            says what is happening, so they point at the status bar instead. */}
         <div className="roster-acquire">
           <Button
             data-add-files=""
             onClick={(event) => {
               startPicking(event, onAddFiles);
             }}
-            reasonId={STATUS_BUSY_ID}
+            reasonId={acquireReasonId}
             ref={addFilesRef}
             refused={!canAddFiles}
             size="sm"
@@ -1020,7 +1032,7 @@ export const DatasetRoster = memo(function DatasetRoster({
             onClick={(event) => {
               startPicking(event, onAddFolder);
             }}
-            reasonId={STATUS_BUSY_ID}
+            reasonId={acquireReasonId}
             ref={addFolderRef}
             refused={!canAddFolder}
             size="sm"
@@ -1028,6 +1040,7 @@ export const DatasetRoster = memo(function DatasetRoster({
             {t("addFolder")}
           </Button>
         </div>
+        {acquireReasonShown ? <p className="roster-acquire-reason" id="roster-acquire-reason">{acquireReason}</p> : null}
       </div>
 
       {/* Only over a list there is something to narrow. */}

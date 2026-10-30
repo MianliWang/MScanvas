@@ -2945,7 +2945,8 @@ describe("adding a folder of mzML files", () => {
       ),
     ).toBeVisible();
     expect(screen.getByText("No acquisitions yet")).toBeVisible();
-    expect(screen.getByText("Folder import in progress…", VISIBLE)).toBeVisible();
+    // In the status bar and under the refused Add buttons (C13).
+    expect(screen.getAllByText("Folder import in progress…", VISIBLE)[0]).toBeVisible();
 
     stale.reject(
       previewError({
@@ -3868,7 +3869,7 @@ describe("saying what a folder import is doing", () => {
     expect(document.body.textContent).not.toContain("the chosen folder for");
     // What is said instead is true of both halves of the operation.
     expect(spoken()).toBe(STATUS);
-    expect(screen.getByText("Folder import in progress…", VISIBLE)).toBeVisible();
+    expect(screen.getAllByText("Folder import in progress…", VISIBLE)[0]).toBeVisible();
     // And no proportion is invented for a tree nothing has counted.
     expect(spoken()).not.toMatch(/\d+\s*%/);
 

@@ -15,10 +15,9 @@ const SURFACES = ["workbench", "conversion", "project"] as const;
  * Details and Settings…. What the session is doing is the status bar's;
  * nothing here changes width when work starts or stops.
  */
-export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, conversionBusy, conversionRetained, projectBusy }: {
+export function WorkbenchHeader({ surface, onNavigate, conversionBusy, conversionRetained, projectBusy }: {
   readonly surface: WorkbenchSurface;
   readonly onNavigate: (surface: WorkbenchSurface) => void;
-  readonly detailsAvailable: boolean;
   readonly conversionBusy: boolean;
   readonly conversionRetained: boolean;
   /** A project operation is under way; the Project tab carries a dot. */
@@ -32,14 +31,14 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, convers
    */
   const go = (target: WorkbenchSurface) => { onNavigate(target); panels.navigate(); };
   const rosterOpen = panels.present.roster;
-  const detailsOpen = panels.present.details && detailsAvailable;
-  const loading = panels.busy ? t("panelsLoading") : null;
+  const detailsOpen = panels.present.details;
   /**
-   * Refused rather than disabled (UI-24): Details is closed by default below
-   * 1700 px, so its entry stays a Tab stop in every state and says why it
-   * cannot open, in the terms of the surface it is on.
+   * The one refusal left here: while the stored layout loads, both panel
+   * toggles wait. Its reason shows beside the button on hover and on keyboard
+   * focus (B4) rather than as a permanent line in the header. Details
+   * otherwise always opens; with nothing to describe it says so in one line.
    */
-  const detailsReason = loading ?? (detailsAvailable ? null : t(surface === "project" ? "provenanceNothingSelected" : "inspectorUnavailable"));
+  const loading = panels.busy ? t("panelsLoading") : null;
   const conversionWorkText = conversionBusy ? t("workActive") : conversionRetained ? t("workRetained") : null;
   /**
    * A wide window keeps the roster as a column (direction A), so there
@@ -76,17 +75,21 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, convers
     </nav>
     {conversionWorkText === null ? null : <span id={CONVERSION_WORK_ID} className="visually-hidden">{conversionWorkText}</span>}
     <div className="workbench-global-actions">
-      <Button variant="quiet" size="sm" icon={<Icon name="panelLeft" />} aria-expanded={rosterOpen} aria-controls="workbench-roster"
-        className={rosterLabelled ? undefined : "ui-icon-button"}
-        refused={panels.busy} reasonId={ROSTER_REASON_ID} title={loading ?? (rosterLabelled ? undefined : t("rosterToggle"))}
-        onClick={() => panels.toggle("roster")}>
-        <span className={rosterLabelled ? undefined : "visually-hidden"}>{t("rosterToggle")}</span>
-      </Button>
-      {loading === null ? null : <span id={ROSTER_REASON_ID} className="visually-hidden">{loading}</span>}
-      <Button variant="quiet" size="sm" icon={<Icon name="panelRight" />} aria-expanded={detailsOpen} aria-controls="workbench-inspector"
-        refused={detailsReason !== null} reasonId={DETAILS_REASON_ID} title={detailsReason ?? undefined}
-        onClick={() => panels.toggle("details")}>{t("inspectorToggle")}</Button>
-      {detailsReason === null ? null : <span id={DETAILS_REASON_ID} className="visually-hidden">{detailsReason}</span>}
+      <span className="header-action">
+        <Button variant="quiet" size="sm" icon={<Icon name="panelLeft" />} aria-expanded={rosterOpen} aria-controls="workbench-roster"
+          className={rosterLabelled ? undefined : "ui-icon-button"}
+          refused={panels.busy} reasonId={ROSTER_REASON_ID} title={rosterLabelled ? undefined : t("rosterToggle")}
+          onClick={() => panels.toggle("roster")}>
+          <span className={rosterLabelled ? undefined : "visually-hidden"}>{t("rosterToggle")}</span>
+        </Button>
+        {loading === null ? null : <span id={ROSTER_REASON_ID} className="header-action-reason">{loading}</span>}
+      </span>
+      <span className="header-action">
+        <Button variant="quiet" size="sm" icon={<Icon name="panelRight" />} aria-expanded={detailsOpen} aria-controls="workbench-inspector"
+          refused={panels.busy} reasonId={DETAILS_REASON_ID}
+          onClick={() => panels.toggle("details")}>{t("inspectorToggle")}</Button>
+        {loading === null ? null : <span id={DETAILS_REASON_ID} className="header-action-reason">{loading}</span>}
+      </span>
       <SettingsDialog />
     </div>
     {/* Mounted from the first render and empty until there is something to

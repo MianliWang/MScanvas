@@ -20,7 +20,7 @@ import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportT
 import { resolveConversionScope } from "./conversionScope";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
-import { PreviewMetadata, PreviewSummary } from "./PreviewSummary";
+import { InspectorClose, PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
@@ -172,22 +172,10 @@ export function PreviewWorkspace() {
         : null,
     [preview],
   );
-  /**
-   * Whether the contextual region has anything to describe *on this surface*.
-   *
-   * It was a loaded acquisition and nothing else, which left the Details
-   * control disabled on the Project surface -- where the region is exactly
-   * where provenance belongs. Availability is a property of the surface the
-   * user is on, so each surface answers for itself. Deliberately not a
-   * registry: there are two surfaces with contextual detail and this is what
-   * they are.
-   */
-  const detailsAvailable =
-    surface === "project" ? project.inspecting !== null : preview.status === "loaded";
-  // The request is the preference; availability is not. A details panel asked
-  // for while nothing is loaded stays asked for, and appears the moment a run
-  // does -- it never becomes authority to load one.
-  const detailsOpen = panels.present.details && detailsAvailable;
+  // Details always opens (GOALS S3, B4): with nothing to describe on this
+  // surface it says so in one line, so its toggle is never a refusal. It never
+  // becomes authority to load anything.
+  const detailsOpen = panels.present.details;
   const evidenceRef = useRef<HTMLElement | null>(null);
   const pendingRevealFocus = useRef(false);
   useLayoutEffect(() => {
@@ -201,26 +189,44 @@ export function PreviewWorkspace() {
    * card (spec 3.1). While one is open it is modal: the rest of the card and
    * the status bar are inert under a scrim, the header stays live so its toggle
    * can close it, and the keyboard moves in when it opens. Esc and the scrim
-   * fold it for space without touching the stored request, and Esc gives the
-   * keyboard back to the header toggle.
+   * fold it for space without touching the stored request, and Esc or its ×
+   * gives the keyboard back to the control that opened it (the header toggle
+   * when that control is gone).
    */
   const drawer = !constrained ? null : rosterOpen ? "roster" : detailsOpen ? "details" : null;
   const openedDrawer = useRef<typeof drawer>(null);
+  const drawerOpener = useRef<HTMLElement | null>(null);
+  const drawerReturn = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const was = openedDrawer.current;
     openedDrawer.current = drawer;
-    if (drawer === null || drawer === was) return;
+    if (drawer === null) {
+      // Spent in the commit that lifts `inert`, before which the opener
+      // cannot take the focus.
+      const target = drawerReturn.current;
+      drawerReturn.current = null;
+      drawerOpener.current = null;
+      if (target !== null && target.isConnected && target.closest("[hidden], [inert]") === null) target.focus({ preventScroll: true });
+      return;
+    }
+    if (drawer === was) return;
     const region = drawer === "roster" ? rosterRef.current : inspectorRef.current;
+    drawerOpener.current = document.activeElement instanceof HTMLElement && region?.contains(document.activeElement) !== true
+      ? document.activeElement : null;
     if (region !== null && !region.contains(document.activeElement)) region.focus({ preventScroll: true });
   }, [drawer]);
   const closeDrawer = (returnFocus: boolean) => {
     if (drawer === null) return;
+    const region = drawer === "roster" ? rosterRef.current : inspectorRef.current;
+    const opener = drawerOpener.current;
+    drawerReturn.current = !returnFocus ? null
+      : opener !== null && opener !== document.body && opener.isConnected && region?.contains(opener) !== true ? opener
+      : document.querySelector<HTMLElement>(`.workbench-header [aria-controls="${drawer === "roster" ? "workbench-roster" : "workbench-inspector"}"]`);
     panels.navigate();
-    if (returnFocus) {
-      document.querySelector<HTMLElement>(`.workbench-header [aria-controls="${drawer === "roster" ? "workbench-roster" : "workbench-inspector"}"]`)
-        ?.focus({ preventScroll: true });
-    }
   };
+  const closeDrawerRef = useRef(closeDrawer);
+  closeDrawerRef.current = closeDrawer;
+  const closeInspector = useCallback(() => closeDrawerRef.current(true), []);
   const drawerKeys = (event: ReactKeyboardEvent<HTMLElement>) => {
     // Only from inside the drawer's own DOM: a menu or dialog portalled out of
     // it handles its own Esc, and React would bubble that one here too.
@@ -475,11 +481,18 @@ export function PreviewWorkspace() {
     ? null
     : roster.datasets.find((row) => row.handle === roster.focused && row.sourceKind !== "mzml") ?? null;
   const evidenceState = preview.status !== "empty" ? preview.status
-    : roster.datasets.length === 0 ? (workspace.rosterLoad.status === "ready" ? "first-run" : "idle")
+    // While the list is being read, or could not be, the evidence never sends
+    // the reader to a list that has nothing in it yet.
+    : roster.datasets.length === 0 ? (workspace.rosterLoad.status === "ready" ? "first-run"
+      : workspace.rosterLoad.status === "failed" ? "roster-failed" : "roster-loading")
     : focusedVendor !== null ? "vendor"
     // Only where setting ProteoWizard up is the way forward: a restart is not.
     : backendView.kind === "missing" || backendView.kind === "unsupported" ? "backend"
     : "idle";
+  /** Whether the evidence shows a filled primary of its own (vendor, re-read, first run). */
+  const evidenceHasPrimary = surface === "workbench" && preview.status === "empty"
+    && (evidenceState === "vendor" || (evidenceState === "first-run" && !rosterOpen)
+      || (evidenceState === "idle" && workspace.activeDataset !== null));
   /**
    * An evidence action that shows another surface hides the button that was
    * pressed, so the keyboard follows to the surface it asked for rather than
@@ -525,7 +538,6 @@ export function PreviewWorkspace() {
     <div className="app-shell workbench-shell" data-surface={surface} data-roster-open={rosterOpen} data-details-open={detailsOpen}
       data-drawer={drawer ?? undefined} data-settings-return-target="" tabIndex={-1}>
       <WorkbenchHeader surface={surface} onNavigate={setSurface}
-        detailsAvailable={detailsAvailable}
         conversionBusy={workspace.conversion.busy}
         conversionRetained={workspace.conversion.state.status === "terminal"}
         projectBusy={project.busy !== "idle"} />
@@ -805,7 +817,8 @@ export function PreviewWorkspace() {
       }} onExecute={workspace.executeActiveClear} /> : null}
       {figureDialog !== null ? <ExportFigureDialog
         kind={figureDialog.kind}
-        sourceLabel={`${previewFile?.fileName ?? (preview.status === "loaded" ? preview.preview.file.fileName : t("viewerSpectrumNone"))} · ${figureDialog.kind === "chromatogram" ? t("viewerChromatogram") : spectrum.status === "loaded" ? t("viewerSpectrumIndex", { index: String(spectrum.spectrum.index) }) : t("viewerSpectrumNone")}`}
+        sourceLabel={figureSourceLabel(figureDialog.kind, previewFile?.fileName ?? (preview.status === "loaded" ? preview.preview.file.fileName : null),
+          spectrum.status === "loaded" ? spectrum.spectrum : null, t)}
         question={workspace.figurePreviewQuestion(figureDialog.kind)} preview={workspace.previewFigure} onExport={workspace.exportPreviewedFigure}
         onCopy={workspace.copyPreviewedFigure}
         returnTo={figureDialog.returnTo} onClose={() => setFigureDialog(null)} busy={workspace.scientificExportBusy}
@@ -854,6 +867,10 @@ export function PreviewWorkspace() {
             // The first run's one primary (spec 3.3, 3.6): while the roster is
             // on screen the evidence leaves the Add actions to it.
             addFilesPrimary={surface === "workbench" && evidenceState === "first-run"}
+            // One filled primary per screen (B2): while the evidence offers its
+            // own, the footer's Convert yields to secondary.
+            convertPrimary={!evidenceHasPrimary}
+            acquireReason={busyReason}
             onAddFolder={workspace.addFolder}
             // The Workbench's one route to batch conversion. Elsewhere the
             // surface has its own next step, and on Conversion its own Convert.
@@ -926,28 +943,6 @@ export function PreviewWorkspace() {
             onSortChange={(sort) => workspace.dispatchRoster({ type: "sortChanged", sort })}
           />
         </section>
-        <aside id="workbench-inspector" ref={inspectorRef} tabIndex={-1} className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}
-          onKeyDown={drawer === "details" ? drawerKeys : undefined}>
-          {/* One region, whichever surface is asking. The Project surface puts
-              provenance here rather than adding a navigation target of its own,
-              which is where the accepted direction puts contextual metadata. */}
-          {surface === "project" ? (
-            <ProvenanceDetails
-              provenance={project.provenance}
-              onSelect={project.inspect}
-              liveDatasetHandles={liveDatasetHandles}
-              onShowInWorkbench={revealInWorkbench}
-              onClose={() => closeDrawer(false)}
-            />
-          ) : preview.status === "loaded" ? (
-            <PreviewSummary
-              chromatogramScanCount={workspace.scanModel.status === "ready" ? workspace.scanModel.points.length : null}
-              file={previewFile ?? preview.preview.file}
-              spectrum={spectrum.status === "loaded" ? spectrum.spectrum : null}
-              spectrumViewport={workspace.spectrumViewport}
-            />
-          ) : null}
-        </aside>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench"}
           inert={drawer !== null || undefined} data-evidence={evidenceState} aria-labelledby="surface-title-workbench">
         {preview.status === "loaded" ? (
@@ -1076,8 +1071,19 @@ export function PreviewWorkspace() {
             {/* Each state centred in the card (spec 3.6): what is missing, and
                 the buttons that fill it. No paragraph explains the interface. */}
             {preview.status === "opening" ? (
-              <EmptyState className="evidence-state" message={<><Icon name="clock" size={28} /><strong>{workspace.activeDataset === null
-                ? t("readingSelected") : t("readingEvidence", { name: formatDatasetLabel(workspace.activeDataset) })}</strong></>} />
+              // The final layout's shape while the file is read (S2): the file
+              // row, then empty plot frames and table rows where they will be.
+              // ponytail: no Cancel; reading has no cancel path in Rust yet, and
+              // one needs its own narrow command.
+              <div className="viewer-skeleton" aria-busy="true">
+                <strong className="viewer-skeleton-name">{workspace.activeDataset === null
+                  ? t("readingSelected") : t("readingEvidence", { name: formatDatasetLabel(workspace.activeDataset) })}</strong>
+                <div className="viewer-skeleton-plot" aria-hidden="true"><span className="viewer-skeleton-head" /><span className="viewer-skeleton-frame" /></div>
+                <div className="viewer-skeleton-lower" aria-hidden="true">
+                  <div className="viewer-skeleton-table">{[0, 1, 2, 3, 4, 5].map(row => <span key={row} className="viewer-skeleton-row" />)}</div>
+                  <div className="viewer-skeleton-plot"><span className="viewer-skeleton-head" /><span className="viewer-skeleton-frame" /></div>
+                </div>
+              </div>
             ) : preview.status === "failed" ? (
               <EmptyState
                 className="evidence-state"
@@ -1130,7 +1136,7 @@ export function PreviewWorkspace() {
                   <strong>{formatDatasetLabel(focusedVendor)}</strong>
                   <span id="preview-needs-conversion-description">{`${SOURCE_KIND_LABEL[focusedVendor.sourceKind]} · ${t("needsConversion")}`}</span>
                 </>}
-                action={<Button variant="primary" icon={<Icon name="arrowRight" />} onClick={() => {
+                action={<Button variant="primary" onClick={() => {
                   // Checks this row and keeps every other check, then shows the
                   // checked rows on the Conversion surface. Nothing is read.
                   workspace.dispatchRoster({ type: "membershipChanged", handles: [focusedVendor.handle], checked: true });
@@ -1147,6 +1153,20 @@ export function PreviewWorkspace() {
                 className="evidence-state"
                 // The notice above carries the fix; this only says what waits on it.
                 message={<><Icon name="info" size={28} /><strong>{t("previewBackendRequired")}</strong></>}
+              />
+            ) : evidenceState === "roster-loading" || evidenceState === "roster-failed" ? (
+              <EmptyState
+                className="evidence-state"
+                // The list's own state, never an instruction to choose from a
+                // list that holds nothing yet. Said once (S4): while the roster
+                // is on screen it says it, with its retry, and this stays quiet.
+                message={<><Icon name={evidenceState === "roster-failed" ? "info" : "clock"} size={28} />
+                  {rosterOpen ? null : <strong>{t(evidenceState === "roster-failed" ? "rosterFailed" : "rosterLoading")}</strong>}</>}
+                action={evidenceState === "roster-failed" && constrained && !rosterOpen ? (
+                  <Button icon={<Icon name="panelLeft" />} onClick={() => { if (!panels.busy) panels.toggle("roster"); }}>
+                    {t("evidenceShowAcquisitions")}
+                  </Button>
+                ) : undefined}
               />
             ) : (
               <EmptyState
@@ -1174,6 +1194,37 @@ export function PreviewWorkspace() {
           </>
         )}
         </section>
+        {/* Last in the DOM as it is last on screen (roster, main, Details), so
+            Tab follows the visual order; the grid area places it. */}
+        <aside id="workbench-inspector" ref={inspectorRef} tabIndex={-1} className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}
+          onKeyDown={drawer === "details" ? drawerKeys : undefined}>
+          {/* One region, whichever surface is asking. The Project surface puts
+              provenance here rather than adding a navigation target of its own,
+              which is where the accepted direction puts contextual metadata. */}
+          {surface === "project" ? (
+            <ProvenanceDetails
+              provenance={project.provenance}
+              onSelect={project.inspect}
+              liveDatasetHandles={liveDatasetHandles}
+              onShowInWorkbench={revealInWorkbench}
+              onClose={() => closeDrawer(false)}
+            />
+          ) : preview.status === "loaded" ? (
+            <PreviewSummary
+              chromatogramScanCount={workspace.scanModel.status === "ready" ? workspace.scanModel.points.length : null}
+              file={previewFile ?? preview.preview.file}
+              spectrum={spectrum.status === "loaded" ? spectrum.spectrum : null}
+              spectrumViewport={workspace.spectrumViewport}
+              onClose={closeInspector}
+            />
+          ) : (
+            // Nothing to describe yet: one line, never a refused toggle (S3).
+            <section className="panel inspector-panel" aria-label={t("inspectorToggle")}>
+              <InspectorClose onClose={closeInspector} />
+              <p className="provenance-empty">{t("inspectorUnavailable")}</p>
+            </section>
+          )}
+        </aside>
       </main>
       <WorkbenchStatusBar backend={backendItem} items={statusItems} busy={busyReason}
         dropStatus={workspace.dropSubscriptionStatus} onNavigate={setSurface} inert={drawer !== null}
@@ -1215,9 +1266,20 @@ function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
 }
 
 /**
- * What each refusal says. Exhaustive over the reasons, so one added to the
- * boundary fails compilation here rather than being dropped in silence.
+ * The figure dialog's subtitle, in the viewer's own numbering: the scan number
+ * the spectrum head shows, and the index only where the file gives no scan
+ * number (direction A 2.5).
  */
+function figureSourceLabel(kind: "spectrum" | "chromatogram" | "linked", fileName: string | null,
+  spectrum: { readonly index: number; readonly scanNumber: number | null } | null, t: UiMessage): string {
+  if (fileName === null) return t("viewerSpectrumNone");
+  if (kind === "chromatogram") return t("figureSourceChromatogram", { name: fileName });
+  if (spectrum === null) return fileName;
+  return spectrum.scanNumber === null
+    ? t("figureSourceSpectrumIndex", { index: formatCount(spectrum.index), name: fileName })
+    : t("figureSourceSpectrum", { scan: formatCount(spectrum.scanNumber), name: fileName });
+}
+
 /**
  * What a reader is told about the conversion queue.
  *

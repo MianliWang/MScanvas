@@ -184,12 +184,10 @@ describe("the workspace shell, by keyboard", () => {
 
     const inspector = screen.getByRole("button", { name: en.inspectorToggle });
     expect(inspector).toHaveAttribute("aria-controls", "workbench-inspector");
-    // Refused because there is nothing loaded to inspect, and it says why
-    // rather than only looking grey -- and it stays in the tab order, so the
-    // reason and the control are reachable from the keyboard (PM9 L20).
-    expect(inspector).toHaveAttribute("aria-disabled", "true");
+    // Never refused (GOALS S3, B4): with nothing loaded the region opens and
+    // says so in one line. It stays in the tab order (PM9 L20).
+    expect(inspector).not.toHaveAttribute("aria-disabled");
     expect(inspector).not.toBeDisabled();
-    expect(inspector).toHaveAttribute("title", en.inspectorUnavailable);
     inspector.focus();
     expect(inspector).toHaveFocus();
   });

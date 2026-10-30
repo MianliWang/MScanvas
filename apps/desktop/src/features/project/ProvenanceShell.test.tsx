@@ -102,35 +102,26 @@ function inspector(): HTMLElement {
 }
 
 describe("provenance in the application shell", () => {
-  it("enables Details on the Project surface once an object is inspected", async () => {
+  it("keeps Details openable on every surface and says in each one's terms when there is nothing to describe", async () => {
     renderShell({ constrained: false, roomy: true });
     await screen.findByRole("button", { name: en.projectSurface });
 
-    // On the Workbench with no acquisition read there is nothing contextual to
-    // show, and the control says so.
-    // Refused with `aria-disabled`, so the one Details control stays in the
-    // tab order on every surface (PM9 L20).
+    // Never refused (GOALS S3, B4), so the one Details control stays a plain
+    // Tab stop on every surface (PM9 L20).
     const toggle = screen.getByRole("button", { name: en.inspectorToggle });
-    expect(toggle.getAttribute("aria-disabled")).toBe("true");
+    expect(toggle.hasAttribute("aria-disabled")).toBe(false);
     expect(toggle.hasAttribute("disabled")).toBe(false);
 
     await openProjectSurface();
     await screen.findByText(en.projectReferences);
-    // Still nothing selected, so still nothing to describe -- said in the
-    // Project surface's own terms.
     const onProject = screen.getByRole("button", { name: en.inspectorToggle });
     expect(onProject).toBe(toggle);
-    expect(onProject.getAttribute("aria-disabled")).toBe("true");
-    expect(onProject.getAttribute("title")).toBe(en.provenanceNothingSelected);
+    expect(onProject.hasAttribute("aria-disabled")).toBe(false);
 
     await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
 
-    // Now there is, and the region is reachable.
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: en.inspectorToggle }).hasAttribute("aria-disabled"),
-      ).toBe(false),
-    );
+    // Now there is something to describe, and the region shows it.
+    await waitFor(() => expect(inspector()).not.toHaveTextContent(en.provenanceNothingSelected));
   });
 
   it("shows provenance in the contextual region at a roomy viewport", async () => {

@@ -176,7 +176,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       expect(await consoleEntries()).toEqual([]);
     }
   });
-  it("review regression: keeps empty, reading and failed evidence reachable when details are unavailable", async () => {
+  it("review regression: keeps empty, reading and failed evidence reachable while details have nothing to show", async () => {
     for (const language of ["en", "zh-CN"] as const) {
       const table: Record<string, unknown> = ipcTable();
       table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
@@ -188,11 +188,16 @@ describe("M7.2 workbench shell and grouped roster", () => {
       // "Localization and accessibility coverage"); it was English in both.
       const backendFailure = language === "en" ? "Something went wrong while talking to the MSCanvas backend." : "与 MSCanvas 后端通信时出现问题。";
       const details = browser.$('[aria-controls="workbench-inspector"]');
+      const nothingToShow = language === "en" ? "Read an acquisition preview to see its details." : "读取采集预览后可查看详情。";
       const unavailable = async (state: string) => {
-        // Refused but focusable, so its reason is reachable (PM9.2 L20).
-        expect(await details.getAttribute("aria-disabled")).toBe("true");
-        expect(await details.getAttribute("aria-expanded")).toBe("false");
-        expect(await browser.$("#workbench-inspector").isDisplayed()).toBe(false);
+        // Never refused (GOALS S3, B4): Details always opens and, with nothing
+        // to describe, says so in one line. No drawer covers the evidence
+        // unless a press opened one.
+        expect(await details.getAttribute("aria-disabled")).toBe(null);
+        expect(await browser.$(".workbench-shell").getAttribute("data-drawer")).toBe(null);
+        if (await browser.$("#workbench-inspector").isDisplayed()) {
+          expect(await browser.$("#workbench-inspector").getText()).toBe(nothingToShow);
+        }
         expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(true);
         await capture(`review-inspector-${language}-${state}`);
       };
@@ -217,9 +222,10 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await unavailable("failed");
       await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
       await browser.$("#workbench-evidence").$(language === "en" ? "button=Try reading this file again" : "button=重试读取此文件").click();
-      await browser.waitUntil(async () => (await details.getAttribute("aria-disabled")) === null); await details.click();
+      await browser.$("#workbench-evidence .viewer-file").waitForDisplayed();
+      if (await details.getAttribute("aria-expanded") !== "true") await details.click();
       await browser.$("#workbench-inspector").waitForDisplayed();
-      expect(await browser.$("#workbench-inspector").getText()).toContain(selectedFile.fileName);
+      await browser.waitUntil(async () => (await browser.$("#workbench-inspector").getText()).includes(selectedFile.fileName));
       await capture(`review-inspector-${language}-loaded`);
       // Re-read with an already requested inspector. Availability must close it
       // immediately, even before a resize folds the constrained layout.

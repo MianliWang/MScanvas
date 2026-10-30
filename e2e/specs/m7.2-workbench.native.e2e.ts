@@ -146,7 +146,8 @@ describe("M7.2 affected final native workbench paths", function () {
     viewport = { width: 960, height: 640 };
     await helper("m7.1-size-window", ["-ExpectedDpi", String(dpi), "-CssWidth", "960", "-CssHeight", "640"]);
     await browser.waitUntil(() => browser.execute(() => innerWidth === 960 && innerHeight === 640));
-    expect(await browser.$('[aria-controls="workbench-inspector"]').getAttribute("aria-disabled")).toBe("true");
+    // Details always opens; with nothing read it says so in one line (GOALS S3).
+    expect(await browser.$('[aria-controls="workbench-inspector"]').getAttribute("aria-disabled")).toBe(null);
     expect(await browser.$("#workbench-evidence .empty-state").isDisplayed()).toBe(true);
     await capture("review-native-narrow-empty");
     viewport = normalViewport;

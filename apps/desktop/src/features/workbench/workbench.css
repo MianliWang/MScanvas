@@ -27,6 +27,11 @@
    never moves a tab (rendered review, issue 6). */
 .work-status-dot { position: absolute; top: 13px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); }
 .workbench-global-actions { display: flex; flex: none; align-items: center; gap: 6px; margin-left: auto; }
+/* A refused header toggle's reason, shown under it while it is hovered or holds
+   the keyboard (B4) rather than as a permanent line in the header. */
+.header-action { position: relative; display: inline-flex; }
+.header-action-reason { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); box-shadow: var(--shadow-panel); color: var(--color-text-primary); font-size: 12px; line-height: 1.4; white-space: nowrap; pointer-events: none; opacity: 0; }
+.header-action > .ui-button:is(:hover, :focus-visible) + .header-action-reason { opacity: 1; }
 /* A refused item dims its label, not its reason: the reason has to stay readable. */
 .roster-menu [role="menuitem"][aria-disabled="true"] { color: var(--color-text-secondary); cursor: not-allowed; }
 .status-tag { display: inline-flex; align-items: center; padding: 0 6px; border: 1px solid var(--color-warning); border-radius: 4px; color: var(--color-warning); font-size: 11px; font-weight: 600; line-height: 16px; white-space: nowrap; }
@@ -101,6 +106,7 @@
    (direction A 2.1); a longer label wraps rather than clips. */
 .roster-acquire { display: flex; flex-wrap: wrap; gap: 4px; }
 .roster-acquire > .ui-button { padding-inline: 8px; }
+.roster-acquire-reason { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.4; }
 /* v5.11 `.search`: the icon inside the field, the clear action at its edge.
    The browser's own clear glyph would be a second, unnamed one. */
 .roster-search { position: relative; flex: none; margin: 0 12px 10px; }
@@ -222,9 +228,11 @@
    which give way first so the tools keep the head's one line. */
 .spectrum-stepper { display: flex; flex: none; align-items: center; gap: 4px; }
 .spectrum-scan { min-width: 4ch; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
-.spectrum-head-facts { display: flex; flex: 1 1 0; gap: 8px; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* One line that drops whole facts from its end, never a cut word: a fact that
+   does not fit wraps onto a second line the fixed height hides (P5, the point
+   count first, then the representation). */
+.spectrum-head-facts { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: 0 8px; min-width: 0; height: 18px; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .spectrum-head-facts > span { flex: none; }
-.spectrum-head-facts > span:last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .plot-tools { flex: none; flex-wrap: nowrap; gap: 4px; margin-left: auto; }
 .plot-tools-divider { flex: none; width: 1px; height: 18px; margin: 0 2px; background: var(--color-border); }
 .figure-quick-actions { display: flex; align-items: center; gap: 4px; }
@@ -359,7 +367,12 @@
 /* Details (spec 4, v5.11 .inspector) and the Metadata tab: dt left, dd right,
    a light rule between rows, a 1 px rule between sections, sentence-case
    headings (V4). The Metadata tab scrolls inside its panel. */
-.workbench-inspector .inspector-panel { min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+.workbench-inspector .inspector-panel { position: relative; min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+.workbench-inspector .inspector-panel > .provenance-empty { padding: 14px; }
+/* Details' × only while it is a drawer; as a column the header toggle is beside it. */
+.inspector-panel > .inspector-close { display: none; }
+[data-drawer="details"] .inspector-panel > .inspector-close { position: absolute; z-index: 1; top: 8px; right: 8px; display: inline-flex; }
+[data-drawer="details"] .inspector-panel > .inspector-section:first-of-type { padding-right: 48px; }
 .preview-metadata { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .preview-metadata > .inspector-section { max-width: 720px; }
 :is(.workbench-inspector, .preview-metadata) .inspector-section { padding: 14px 14px 16px; border-bottom: 1px solid var(--color-border); }
@@ -374,6 +387,19 @@
 .inspector-text { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 .metadata-disclosure { width: 100%; justify-content: flex-start; text-align: left; white-space: normal; }
 .metadata-section { padding: 2px 0 8px 22px; }
+/* Reading (S2): the viewer's final frame, empty. The frames appear after
+   300 ms so a quick read never flashes them. */
+.viewer-skeleton { display: grid; flex: 1 1 auto; grid-template-rows: 36px minmax(0, 2fr) minmax(0, 3fr); gap: 8px; min-height: 0; }
+.viewer-skeleton-name { align-self: center; padding: 0 12px; overflow: hidden; color: var(--color-text-primary); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-skeleton-plot { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.viewer-skeleton-lower { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 12px; min-height: 0; }
+.viewer-skeleton-head { flex: none; width: 40%; height: 16px; border-radius: 4px; background: var(--color-surface-subtle); }
+.viewer-skeleton-frame { flex: 1 1 auto; min-height: 0; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-surface-subtle); }
+.viewer-skeleton-table { display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow: hidden; }
+.viewer-skeleton-row { flex: none; height: 22px; border-radius: 4px; background: var(--color-surface-subtle); }
+.viewer-skeleton > [aria-hidden="true"] { animation: viewer-skeleton-in 120ms linear 300ms both; }
+@keyframes viewer-skeleton-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .viewer-skeleton > [aria-hidden="true"] { animation-duration: 1ms; } }
 /* Evidence states (spec 3.6), centred in the card: an icon, one heading, a
    row of buttons. */
 .evidence-state { flex: 1 1 auto; min-height: 0; }
