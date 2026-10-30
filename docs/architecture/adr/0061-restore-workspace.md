@@ -87,7 +87,9 @@ own QA root. That change must land before the interface slice's rendered QA.
 ### 3. When it is written
 
 When the webview commits an arrangement (`save_workspace_restore`), which the
-interface does after each roster answer and each organization change. Rust
+interface does after each roster change and each organization change; a
+session that changes nothing writes nothing, so it does not count against an
+offer (decision 10). Rust
 composes the document from its own registry (locators and identity facts
 never come from the webview, which has no paths) and from its own restored
 rows (decision 4); the webview contributes only the groups, the order and the
@@ -99,19 +101,29 @@ that row recorded twice: it is placed like any other and written once, as the
 live row.
 
 The application is not single-instance (ADR 0060). A save is refused
-(`changedElsewhere`) when the document's name no longer holds the object this
-process last read or wrote there, so a second window never writes over the
-first one's record. Turning restore on is refused the same way. Once refused,
-the process records nothing more until it restarts, and none of its own later
-writes lifts that. Off and clear (decision 8) are not refused: they are the
-user forgetting. Off writes off. Clear keeps the switch only while the name
-still holds what this process last saw; otherwise it cannot know which switch
-the other window left, so it writes off and this process is refused from then
-on. A clear therefore never undoes another window's off, and a refused window
-cannot record its paths again over it. The check and the replacement are two
-steps, so a write landing between them is still lost; a lock beside the
-document can close that if it is ever observed. A volume that has no file ID is
-not guarded.
+(`changedElsewhere`) when the document's name holds another object than the
+one this process last read or wrote there, or nothing where it held one, so a
+window refuses to write over another window's write once it has seen it.
+Turning restore on is refused the same way. Once refused, the process records
+nothing more until it restarts, and none of its own later writes lifts that.
+A document that is there but cannot be identified just now (another program
+holds it without sharing read) refuses the save or the turn-on with
+`identityUnknown` instead; that latches nothing, and the next write looks again.
+
+Off and clear (decision 8) are not refused: they are the user forgetting. Off
+writes off. Clear keeps the switch only while the name still holds what this
+process last saw; otherwise it cannot know which switch the document holds, so
+it writes off and answers `turnedOff` with the reason (`changedElsewhere`, after
+which this process is refused as above, or `identityUnknown`), rather than the
+`saved` of an ordinary clear. A clear therefore never undoes another window's
+off, and a refused window cannot record its paths again over it.
+
+The guard is not a lock. The check and the replacement are two steps, so a
+write landing between them is still lost; and the identity this process
+remembers is read after its own replacement, so a write landing just after it
+is taken for this process's own and a later save writes over it. A lock beside
+the document can close both if they are ever observed. A volume that has no
+file ID is not guarded.
 
 *Alternatives rejected:* Rust writing after each of its own roster mutations
 cannot see the groups or the checked state, which only the webview holds, and
@@ -123,20 +135,27 @@ session on a crash.
 The document is read once, when the store opens at start. A usable document's
 rows become the session's *restored rows*: they are not Workbench rows, they
 carry `restored-N` handles distinct from live `file-N` handles, and they are
-carried into every save until they are put back or forgotten.
+carried into this session's saves until they are put back or forgotten, for as
+long as decision 10 offers them.
 
-Each read (`read_workspace_restore`) re-checks every restored row: each member
-is opened for reading only, sharing read, write and delete, without following a
-link at the name, and its file ID, volume serial and length are compared with
-the record. No byte is read and nothing is hashed, so a RAW file is never read
-whole. The answer per row is one of:
+Each read (`read_workspace_restore`) re-checks every restored row. The drive or
+share root each recorded path is on is probed once per read; a member under a
+root that does not answer is not opened. Every other member is opened for its
+attributes only, without data access, so the open never conflicts with another
+program's hold on the file, and without following a link at the name. Its file
+ID, volume serial and length are compared with the record. No byte is read and
+nothing is hashed, so a RAW file is never read whole. The answer per row is one
+of:
 
 - `matching`: the same file ID and volume serial, at the same length. This is
   not a content claim: a same-length rewrite in place matches, and so does a
   file ID the filesystem gave to a new file after the recorded one was deleted.
   Admission and the ordinary revalidation decide that when the row is used.
 - `changed`: another object at the path, or the same object at another length.
-- `missing`: nothing at the recorded path.
+- `missing`: nothing at the recorded path, on a drive or share that answers.
+- `unreachable`: the drive or share the path is on does not answer now (a
+  removed disk, an offline share, a dropped VPN). It says nothing about the
+  file, so the interface does not present it as gone.
 - `unreadable`: there, and its identity could not be established.
 - `unsafe`: a link, a directory or a device.
 
@@ -166,9 +185,12 @@ does not:
 - every row put back holds its file-identity lease, so a program that opens one
   of those files without sharing is refused, on files the user did not touch
   this session;
-- a second window would put the same rows back again;
-- it departs from the M7.5 stance that no roster or membership is remembered
-  for the user.
+- a second window would put the same rows back again.
+
+The explicit route pays the same admission cost, hashing included, but only
+when the user asks, as a project reference does (PRJ-004). Its own cost is that
+an offer the user does not take has to end somewhere, or the document grows
+into a history of every session; decision 10 bounds it.
 
 Prerequisites of the interface slice, whichever the owner chooses:
 
@@ -176,9 +198,12 @@ Prerequisites of the interface slice, whichever the owner chooses:
   ever forgotten together (clear, off). Putting one back or dismissing one
   needs a slot that survives the others leaving.
 - **A put-back command.** `add_files` is a Rust service method, not a webview
-  command; the only webview command that admits files is the picker. Putting a
-  restored row back needs a command that resolves the stored paths inside
-  Rust, admits them and retires their restored slots under one lock.
+  command. The webview commands that admit files are the picker, the folder
+  import, a drop, conversion-output adoption and `add_project_input_to_workspace`
+  (PRJ-004); none of them takes a restored row. PRJ-004 is the pattern to
+  follow: the webview names the row, and Rust resolves the stored paths,
+  admits them through the ordinary admission boundary (which hashes the file),
+  and retires the row's restored slot under the same lock.
 - **A dismiss command**, so one marked row can be removed without clearing
   every other.
 - **A context for same-named rows.** A restored row carries only its final
@@ -193,8 +218,10 @@ Prerequisites of the interface slice, whichever the owner chooses:
 - At most 1,024 rows (`MAX_WORKSPACE_DATASETS`, the session's own capacity),
   live and restored together. A save that would record more is refused
   (`tooManyRows`); the stored document stays. Admission counts only live rows,
-  so this refusal is reachable once restored rows wait beside a full
-  Workbench; the remedy is dismissing marked rows (decision 4).
+  so this refusal is reachable whenever the waiting restored rows and the live
+  rows together pass 1,024; the remedy is putting rows back, dismissing marked
+  rows (decision 4) or clearing. Decision 10 keeps the restored rows to one
+  session's worth, so the sum stays within two sessions' Workbenches.
 - At most 1,024 named groups and exactly one Ungrouped; a group name follows the
   Workbench's own rule (not blank as the webview's `trim()` judges it, at most
   120 UTF-16 units).
@@ -244,7 +271,10 @@ when restore was turned on over a refused one (decision 6, at most one per
 session), a private sibling a failed write could not remove (reported as
 `temporaryLeftBehind`), and a private sibling
 (`.mscanvas-workspace-restore-<pid>-<n>.tmp`) left by a crash or a power loss
-during a write, which nothing reports. Off and clear remove none of them.
+during a write. Off and clear remove none of them. Each read answer except
+`unavailable` counts them (`leftoverCopies`, a number, no name or path), so the
+interface can say they exist when it offers off; another window's write in
+progress is counted too.
 
 ### 8. The off switch
 
@@ -254,8 +284,9 @@ forgets every row and path that document stored, and does so even when restore
 is already off, so it also forgets a refused document. While off, a save writes
 nothing (`off`). Turning it on starts from an empty document; turning on what is
 already on writes nothing. `clear_workspace_restore` forgets every stored row
-and keeps the switch, except after another window's write, when it writes off
-(decision 3). A refused document turns restore off (decision 6).
+and keeps the switch, except when the name no longer holds what this process
+last saw, when it writes off and answers `turnedOff` (decision 3). A refused
+document turns restore off (decision 6).
 
 *Alternatives:* a field in the M7.5 preference record, rejected for now
 because that record is closed and its schema is shared with the webview's
@@ -273,13 +304,42 @@ commands, none taking or returning a path:
 
 | Command | Does |
 | --- | --- |
-| `read_workspace_restore` | The start-up restore: restored rows in their groups, each re-checked now; or `off`, `refused` (restore is off until turned on), `unavailable`. |
-| `save_workspace_restore(arrangement)` | Records the session as arranged; refused unless every row is placed once, and refused `changedElsewhere` over another process's write. |
-| `clear_workspace_restore` | Forgets every stored row; keeps the switch, or writes off after another process's write. |
-| `set_workspace_restore_enabled(enabled)` | The off switch; on is refused `changedElsewhere` over another process's write. |
+| `read_workspace_restore` | The start-up restore: restored rows in their groups, each re-checked now, with the count of rows no longer offered (`expired`); or `off`, `refused` (restore is off until turned on), `unavailable`. All but `unavailable` carry `leftoverCopies`. A row carries `sourceKind`, the roster's own key. |
+| `save_workspace_restore(arrangement)` | Records the session as arranged; refused unless every row is placed once, refused `changedElsewhere` over another process's write, and `identityUnknown` while the document cannot be identified. |
+| `clear_workspace_restore` | Forgets every stored row; keeps the switch (`saved`), or writes off and answers `turnedOff` when the document is not what this process last saw. |
+| `set_workspace_restore_enabled(enabled)` | The off switch; on is refused `changedElsewhere` or `identityUnknown` as a save is. |
 
 They are registered ahead of their interface; the command-surface test lists
 them in `AHEAD_OF_THEIR_INTERFACE` until a webview caller exists.
+
+### 10. How long a row that is not put back is offered
+
+Each stored row counts the starts that have offered it since it was last a
+Workbench row (`offered`; a live row is saved with 0). A start counts itself:
+a row whose count then passes `MAX_OFFERS` is not offered, and the read answer
+says how many such rows there were (`expired`). Nothing is written at start, so
+those rows leave the document at this session's first save, clear or off; a
+session that saves nothing ages nothing and reports the same rows again at the
+next start.
+
+*Recommendation:* `MAX_OFFERS` = 1. The next start offers the last session's
+Workbench; a session that saves without taking that offer has declined it, and
+the start after that no longer offers those rows and says so. The document is
+then the last session's Workbench plus at most that session's untaken offer,
+never a history of every session. The value is one constant, so another answer
+is a one-line change.
+
+*Alternatives:*
+
+- A larger number of offers, at the price of a larger document and an earlier
+  `tooManyRows` (decision 5).
+- Keep an offer until it is put back or dismissed, as the first draft did. With
+  the explicit Restore of decision 4, a user who never presses it makes the
+  document the union of every session until `tooManyRows` refuses every save,
+  and it keeps the path of every acquisition ever added.
+- End the whole offer at the user's first explicit choice, Restore or Start
+  fresh. `clear_workspace_restore` already is Start fresh; but a user who makes
+  neither choice still accumulates, so this needs a bound as well.
 
 ## Consequences
 
@@ -290,17 +350,30 @@ them in `AHEAD_OF_THEIR_INTERFACE` until a webview caller exists.
   row removed just before a crash can therefore come back as a restored row,
   never as a deletion.
 - Two saves of one process that arrive out of order can leave the older
-  arrangement stored until the next save. Saves carry no revision; one can be
-  added if that is ever observed.
+  arrangement stored: each takes its registry snapshot before it waits for the
+  store, so the save that publishes last can carry the older snapshot. A row
+  added just before that can then be missing at the next start, having been
+  recorded once and silently taken out again, if no later save follows. Saves
+  carry no revision; the workspace generation can serve as one if this is ever
+  observed.
 - With two windows open, the first to write keeps recording and the other is
-  refused (`changedElsewhere`) until it restarts; its session is not recorded,
-  and it is told so rather than writing over the first. A clear in either
-  window after the other one wrote turns restore off for both.
+  refused (`changedElsewhere`) once it sees that write, until it restarts; its
+  session is not recorded, and it is told so rather than writing over the
+  first. A write that races the check is not excluded (decision 3). A clear in
+  either window after the other one wrote turns restore off for both, and
+  answers `turnedOff`.
 - A document this build cannot use keeps restore off until the user turns it on.
   A user whose document was damaged has to turn restore on again.
-- The re-check is one open per member. A recorded path on an offline network
-  share waits for the operating system's own timeout; there is no per-row
-  timeout.
+- The re-check is one probe per distinct drive or share root and one
+  attribute-only open per member under a root that answers. A root that does
+  not answer waits for the operating system's own timeout once per read, not
+  once per row, and marks every row under it `unreachable`; a share that
+  answers slowly still costs one open per member, and there is no per-row
+  timeout. The read answers only after every check, so its worst case is one
+  timeout per unreachable root plus one slow open per member.
+- A restored row that is not put back is offered once more and then reported as
+  no longer offered (decision 10); a user who wants it back adds the file
+  again.
 - The interface slice cannot start before stable per-row slots and the
   put-back and dismiss commands exist (decision 4).
 
@@ -308,20 +381,29 @@ them in `AHEAD_OF_THEIR_INTERFACE` until a webview caller exists.
 
 1. Put matching rows back with one explicit Restore workspace action
    (recommended), or automatically at every start, at the costs listed in
-   decision 4?
+   decision 4? The explicit route hashes at put-back as PRJ-004 does, but only
+   when asked, and needs the offer lifetime of question 8.
 2. Restore on by default (recommended), or off until the user turns it on? On
-   by default records the paths of every acquisition the user adds, which the
-   M7.5 preference record deliberately does not.
+   by default records the paths of every acquisition the user adds, and with it
+   the roster, membership and group names, which the M7.5 preference record
+   deliberately does not; this departure belongs to the whole decision, not to
+   either put-back route.
 3. Restore each row's conversion membership (recommended), or start every row
    unchecked as M8.1 and M7.5 do?
 4. Keep the off switch in the restore document (recommended), or add it to the
    M7.5 preference record?
 5. Should off and clear also remove kept-aside copies and leftover siblings,
-   including one a crash left unreported? Recommended: no, as implemented; the
-   interface says a kept copy exists when it offers off.
+   including one a crash left? Recommended: no, as implemented; the read answer
+   counts them (`leftoverCopies`), so the interface says they exist when it
+   offers off.
 6. With two windows, refuse the later writer (recommended, as implemented), or
    make the application single-instance, or let the last writer win?
 7. For same-named restored rows, amend ADR 0006 to show the folders above the
    file, without drive, share or root, bounded from the shallow end and only on
    a collision (recommended), or show only a `restored item N` tie-break as the
    live roster does for rows added directly?
+8. How long is a row that is not put back offered (decision 10)? Recommended:
+   at one start, so a session that saves without taking the offer ends it and
+   the next start says how many rows are no longer offered. Alternatives: more
+   starts; until put back or dismissed (the document then grows with every
+   session); or until the user's first Restore or Start fresh, plus a bound.
