@@ -419,11 +419,17 @@ fn a_boundary_error_joins_the_ring_by_its_code_alone() {
     // Not written as a literal after `new(`: the repository check would read
     // it as a code the boundary sends to the webview.
     const PROBE: &str = "environment_diagnostics_ring_probe";
-    let error = PreviewErrorDto::new(PROBE, format!("{DATA} could not be read"), false)
-        .with_detail(format!(r"{PROFILE}\{DATA}"));
-    assert_eq!(error.kind, PROBE);
+    // The ring is process-wide and the rest of the suite builds errors in
+    // parallel, so 32 other codes could push the probe out before it is read.
+    // Building it again and reading at once settles that without weakening
+    // what is asserted.
+    let joined = (0..1_000).any(|_| {
+        let error = PreviewErrorDto::new(PROBE, format!("{DATA} could not be read"), false)
+            .with_detail(format!(r"{PROFILE}\{DATA}"));
+        error.kind == PROBE && recent_errors().0.iter().any(|entry| entry.code == PROBE)
+    });
+    assert!(joined, "the probe's code never reached the ring");
     let (entries, _) = recent_errors();
-    assert!(entries.iter().any(|entry| entry.code == PROBE));
     assert!(
         entries
             .iter()
