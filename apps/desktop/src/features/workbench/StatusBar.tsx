@@ -102,7 +102,7 @@ export function WorkbenchStatusBar({ backend, items, busy, dropStatus, dropProbl
    * whenever the bar resizes or what it says changes.
    */
   const barRef = useRef<HTMLDivElement>(null);
-  const said = [backend.text, busy, dropHint, unsaved, ...items.map(item => `${item.text}${item.unsaved === true ? "*" : ""}`)].join("|");
+  const said = [backend.text, busy, dropHint, unsaved, panels.save.problem, panels.save.retryable, dropStatus, ...items.map(item => `${item.text}${item.unsaved === true ? "*" : ""}`)].join("|");
   useLayoutEffect(() => {
     const bar = barRef.current;
     const hint = bar?.querySelector<HTMLElement>(".workspace-drop-hint");
