@@ -36,15 +36,14 @@
 //!
 //! ## The intent seam
 //!
-//! The intent is stored as an opaque JSON value and judged by [`check_intent`]
-//! alone, on every save and on every listing. Until ADR 0055's structured
-//! `ConversionIntent` lands, it accepts exactly today's wire: the stable id
-//! string of an admitted row. When the structured intent lands, `check_intent`
-//! becomes "deserialize the structured intent from this value and build it",
-//! answering the builder's refusal code, and nothing else here changes. Presets
-//! saved as stable-id strings then list as unusable (`notExpressible`) unless
-//! that function chooses to accept them -- fail closed, by design, rather than
-//! migrated silently.
+//! The intent is stored as the JSON value the user saved and judged by
+//! [`check_intent`] alone, on every save and on every listing. It is ADR 0055's
+//! structured intent: read by the same reader a conversion plan uses, into the
+//! crate's unvalidated parts and through its validating constructor (ADR 0058,
+//! decision 5). A preset may hold a picker step, because the user wrote it.
+//! A preset saved as a row's stable id string, as this store's first draft
+//! accepted, lists as unusable (`notExpressible`) -- fail closed, by design,
+//! rather than migrated silently.
 //!
 //! One constraint for that intent: stored values are re-serialized from the
 //! parsed JSON, and serde_json without its `float_roundtrip` feature (not
@@ -55,13 +54,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use mscanvas_proteowizard::ConversionIntent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::local_document;
 use crate::preferences::record::RecordProblem;
 use crate::preferences::storage::{WriteError, from_read_refusal, from_write_refusal};
+use crate::preview::service::read_structured_intent;
 
 /// The only document schema this build reads or writes. Anything else is
 /// refused as unsupported and left alone, never migrated.
@@ -84,18 +83,19 @@ const FILE_NAME: &str = "conversion-presets.json";
 /// Distinct from the preference record's prefix, so a residue names its owner.
 const TEMPORARY_PREFIX: &str = ".mscanvas-conversion-presets-";
 
-/// The seam the structured intent plugs into: whether this build can express
-/// `intent`, or the stable code saying why not.
+/// Whether this build can express `intent`, or the stable code saying why not.
 ///
 /// # Errors
 ///
-/// `notExpressible` for anything that is not an admitted row's stable id.
+/// `notExpressible` for a value that is not a structured intent's shape, a
+/// row's stable id string among them; otherwise the reader's own refusal
+/// (`too_large`, or the constructor's stable id).
 pub fn check_intent(intent: &Value) -> Result<(), &'static str> {
-    intent
-        .as_str()
-        .and_then(ConversionIntent::from_stable_id)
-        .map(|_| ())
-        .ok_or("notExpressible")
+    match read_structured_intent(intent) {
+        Ok(_) => Ok(()),
+        Err("malformed") => Err("notExpressible"),
+        Err(problem) => Err(problem),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -498,6 +498,7 @@ mod tests {
 
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use mscanvas_proteowizard::{ConversionIntent, StructuredIntent};
     use serde_json::json;
 
     use super::*;
@@ -556,8 +557,33 @@ mod tests {
         }
     }
 
+    /// A verified row, spelled as the structured intent it is.
     fn intent(row: usize) -> Value {
+        serde_json::to_value(StructuredIntent::from(
+            ConversionIntent::ADMITTED[row].intent(),
+        ))
+        .expect("serializes")
+    }
+
+    /// A row's stable id string: what this store's first draft saved.
+    fn stable_id(row: usize) -> Value {
         Value::String(ConversionIntent::ADMITTED[row].intent().stable_id())
+    }
+
+    /// An advanced intent the user wrote, with a picker step in it.
+    fn with_picker() -> Value {
+        json!({
+            "output": {
+                "format": "mzml",
+                "mz": { "encoding": "plain", "bits": 64 },
+                "intensity": { "encoding": "plain", "bits": 32 },
+                "zlib": true,
+                "index": true
+            },
+            "spectrumFilters": [{ "kind": "peak_picking_vendor", "msLevels": null }],
+            "chromatogramFilters": [],
+            "switches": []
+        })
     }
 
     fn save(name: &str, intent: Value) -> PresetSaveRequest {
@@ -639,6 +665,7 @@ mod tests {
             );
         }
         for bad in [
+            stable_id(0),
             json!("mzML+invented"),
             json!({ "format": "mzML" }),
             json!(null),
@@ -650,11 +677,47 @@ mod tests {
                 }
             );
         }
+        // The reader's own bound, so a preset never lists as usable what a
+        // plan would refuse as too large.
+        let mut huge = with_picker();
+        huge["spectrumFilters"] = json!([{ "kind": "peak_picking_vendor", "msLevels": null, "pad": "x".repeat(70 * 1024) }]);
+        assert_eq!(
+            store.save(&save("Fast", huge)),
+            PresetWriteDto::Refused {
+                problem: "too_large"
+            }
+        );
+        // A constructor's refusal answers with its own stable id.
+        let mut late_picker = with_picker();
+        late_picker["spectrumFilters"] = json!([
+            { "kind": "peak_picking_default" },
+            { "kind": "peak_picking_vendor", "msLevels": null }
+        ]);
+        assert!(matches!(
+            store.save(&save("Fast", late_picker)),
+            PresetWriteDto::Refused { problem } if problem != "notExpressible"
+        ));
         assert!(root.entries().is_empty());
         // Positive control in the same directory.
         assert_eq!(
             names(&store.save(&save(&"x".repeat(MAX_NAME_CHARS), intent(0)))).len(),
             1
+        );
+    }
+
+    #[test]
+    fn a_preset_may_hold_a_picker_step_because_the_user_wrote_it() {
+        let root = Root::new();
+        let store = root.store();
+        let _ = store.save(&save("Centroided", with_picker()));
+        assert_eq!(
+            store.list(),
+            PresetListDto::Listed {
+                presets: vec![PresetEntryDto::Usable {
+                    name: "Centroided".to_owned(),
+                    intent: with_picker()
+                }]
+            }
         );
     }
 
@@ -739,7 +802,10 @@ mod tests {
         root.put(
             &serde_json::to_vec(&json!({
                 "schemaVersion": 1,
-                "presets": [{ "name": "Old", "intent": kept }]
+                "presets": [
+                    { "name": "Old", "intent": kept },
+                    { "name": "Draft", "intent": stable_id(0) }
+                ]
             }))
             .expect("serializes"),
         );
@@ -747,10 +813,17 @@ mod tests {
         assert_eq!(
             store.list(),
             PresetListDto::Listed {
-                presets: vec![PresetEntryDto::Unusable {
-                    name: "Old".to_owned(),
-                    problem: "notExpressible"
-                }]
+                presets: vec![
+                    PresetEntryDto::Unusable {
+                        name: "Old".to_owned(),
+                        problem: "notExpressible"
+                    },
+                    // A stable id from the first draft is not migrated.
+                    PresetEntryDto::Unusable {
+                        name: "Draft".to_owned(),
+                        problem: "notExpressible"
+                    }
+                ]
             }
         );
         let _ = store.save(&save("New", intent(0)));
@@ -760,7 +833,11 @@ mod tests {
             stored["presets"][0],
             json!({ "name": "Older", "intent": kept })
         );
-        assert_eq!(names(&store.delete(&delete("Older"))), ["New"]);
+        assert_eq!(
+            stored["presets"][1],
+            json!({ "name": "Draft", "intent": stable_id(0) })
+        );
+        assert_eq!(names(&store.delete(&delete("Older"))), ["Draft", "New"]);
     }
 
     #[test]

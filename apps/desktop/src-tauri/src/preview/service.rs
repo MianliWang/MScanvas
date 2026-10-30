@@ -173,6 +173,7 @@ use super::selection::{
     lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
     selected_file_dto, source_kind_dto, unknown_dataset,
 };
+pub(crate) use conversion_intent::read_structured_intent;
 use conversion_intent::resolve_requested_intent;
 use mscanvas_plot_spec::spec::{Domain, FigureTheme};
 

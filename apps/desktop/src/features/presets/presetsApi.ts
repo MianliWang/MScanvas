@@ -3,17 +3,20 @@
  *
  * Four operations over presets addressed by name. None takes a path, a file
  * name or a document: where presets live is decided in Rust. MSCanvas ships no
- * preset. A preset's intent is opaque here; applying one means handing it to
- * the conversion configuration authority, which decides whether it can run.
+ * preset and selects none at startup (ADR 0058). A preset's intent is ADR
+ * 0055's structured intent and may hold a picker step; applying one means
+ * handing it to the conversion configuration authority as `intent`, which
+ * decides at plan time whether it can run.
  */
 
 import { invoke } from "@tauri-apps/api/core";
 
 import { documentAuthorityHeaders } from "../ipc/documentAuthority";
+import type { ConversionIntentWire } from "../mzml-preview/contracts";
 
 /** One preset. An unusable one is listed without its intent and cannot be applied. */
 export type PresetEntry =
-  | { readonly state: "usable"; readonly name: string; readonly intent: unknown }
+  | { readonly state: "usable"; readonly name: string; readonly intent: ConversionIntentWire }
   | { readonly state: "unusable"; readonly name: string; readonly problem: string };
 
 export type PresetListOutcome =
@@ -35,7 +38,7 @@ export type PresetWriteOutcome =
 
 export interface PresetSaveRequest {
   readonly name: string;
-  readonly intent: unknown;
+  readonly intent: ConversionIntentWire;
   /** Replace the preset that already has this name. Without it, `nameTaken`. */
   readonly replaceExisting?: boolean;
   /** Replace an unusable stored document. Without it, `storedRecordUnusable`. */
