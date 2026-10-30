@@ -1841,6 +1841,16 @@ export type StructuredConversionBeginRequest = Omit<ConversionBeginRequest, "int
 };
 
 /**
+ * The plan a structured request receives when its intent is advanced: no row
+ * describes it, so `intent` is `null`, and `canonicalIntent` is what the queue
+ * would be bound to.
+ */
+export type AdvancedConversionQueuePlan = Omit<ConversionQueuePlan, "intent" | "canonicalIntent"> & {
+  readonly intent: null;
+  readonly canonicalIntent: ConversionIntentWire;
+};
+
+/**
  * The structured conversion intent of ADR 0055 decision 4, as Rust reads it.
  *
  * Rust rebuilds and validates every value, so these types state the shape and
