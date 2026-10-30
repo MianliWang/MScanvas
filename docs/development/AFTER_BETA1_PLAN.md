@@ -398,6 +398,12 @@ writer and Rust's ownership of files.
   command is a sibling of the queue-wide one.
 - **Slices:** ADR and Rust; contract and hook; UI and copy; rendered QA.
   **Size M.**
+- **Status, 2026-10-30:** ADR and Rust done
+  ([ADR 0052](../architecture/adr/0052-per-output-adoption.md), accepted): the
+  Tauri command is `adopt_workspace_conversion_output(operationId, outputId)`,
+  refusals reuse `outputs_not_adoptable`, and the answer replaces the record on
+  the output's item. Contract and hook, UI and copy, and the 960x640 rendered
+  QA of a large SCIEX set are open.
 
 ### 6.3 PNG text metadata (FIG-002; ADR 0053)
 

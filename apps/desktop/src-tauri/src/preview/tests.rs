@@ -4281,6 +4281,9 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "cancel_current_workspace_conversion_item",
             "skip_pending_workspace_conversion_item",
             "adopt_workspace_conversion_outputs",
+            // ADR 0052: one output of the same terminal queue, by the opaque
+            // id its item carries, through the same adoption.
+            "adopt_workspace_conversion_output",
             // Two, and the same two-phase shape the destination picker uses:
             // the reservation is issued synchronously and the dialog is a
             // separate command, so a document that never received the
@@ -4346,7 +4349,21 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // Every command the product uses is a command the host registers, spelled
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
     // caller here and is deliberately not in this list.
+    //
+    // ADR 0052's per-output adoption lands in Rust before its contract and
+    // hook slice (the webview is rebuilt on its own branch), so it is the one
+    // registered command no caller names yet. Declared rather than skipped,
+    // and the declaration retires itself: once the frontend calls it, this
+    // list must lose it.
+    let awaiting_a_caller = ["adopt_workspace_conversion_output"];
     for name in &registered[1..] {
+        if awaiting_a_caller.contains(name) {
+            assert!(
+                !api.contains(&format!("\"{name}\"")),
+                "the frontend calls {name} now; remove it from awaiting_a_caller"
+            );
+            continue;
+        }
         assert!(
             api.contains(&format!("\"{name}\""))
                 || drop_transport.contains(&format!("\"{name}\""))
@@ -31286,4 +31303,5 @@ mod conversion_intent_wire;
 #[cfg(windows)]
 mod figure_preview;
 mod output_opening;
+mod per_output_adoption;
 mod staging_recovery;

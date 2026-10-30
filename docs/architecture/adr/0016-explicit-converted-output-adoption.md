@@ -27,6 +27,9 @@
   lists among the facts M8 reads. It is history rather than a statement about
   current workspace membership, it lives as long as the queue and no longer, and
   no adoption history is persisted.
+- **Superseded in part by:** [ADR 0052](0052-per-output-adoption.md),
+  2026-10-30. "Takes a whole queue" no longer holds; see the amendment at the
+  end.
 
 ## Context
 
@@ -326,3 +329,14 @@ consequences of one item being able to contribute several outcomes:
 Everything else here is unchanged: exact object and exact bytes per member,
 duplicate before capacity, per-member partial adoption, no set-level rollback,
 repeatable, no process, no preview, the same generation protocol.
+
+## Amendment, 2026-10-30 — one output of a queue may be adopted
+
+[ADR 0052](0052-per-output-adoption.md) supersedes "takes a whole queue" in
+"Adoption is explicit, and takes a whole queue". The rejection of "Adopting a
+subset the user ticks" stands: one action per output is not a second selection
+model. A second command adopts one output of the terminal queue, named by the
+opaque output id its item carries. It runs this same engine with the queue's
+candidates filtered to that one before anything is claimed, so it can adopt
+only an output this action would offer. Adoption is still explicit, still per
+terminal queue, and still never a preview. This action is unchanged.
