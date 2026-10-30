@@ -9,25 +9,25 @@ import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHe
 import { shellContextItems } from "../workbench/shellContext";
 import { STATUS_BACKEND_ID, STATUS_BUSY_ID, WorkbenchStatusBar, statusBusyReason, statusItemId, type StatusBackend } from "../workbench/StatusBar";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { Button, EmptyState, Icon, IconButton } from "../../components/ui";
+import { Button, EmptyState, Icon, IconButton, Tabs } from "../../components/ui";
 
 import { ActiveClearDialog } from "./ActiveClearDialog";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 import { BackendStatus } from "./BackendStatus";
 import { Chromatogram } from "./Chromatogram";
-import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportTools, LinkedFigureResult } from "./ChromatogramExportPanel";
+import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportTools, LinkedFigureResult, describeUnavailable } from "./ChromatogramExportPanel";
 import { resolveConversionScope } from "./conversionScope";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
-import { PreviewSummary } from "./PreviewSummary";
+import { PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
-import { SOURCE_KIND_LABEL, type FigurePreviewKind, type RunSummary } from "./contracts";
-import { SpectrumTable } from "./SpectrumTable";
+import { SOURCE_KIND_LABEL, type FigurePreviewKind } from "./contracts";
+import { SpectrumTable, scanStepReasonId } from "./SpectrumTable";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { spectrumSelectionMessage } from "./viewer/selectionMessages";
-import { formatCount, formatDatasetLabel, formatMsLevel, formatRetentionTimeValue } from "./format";
+import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
 import { reconcileOrganization } from "../workbench/organization";
 import type { WorkspaceAddResult } from "./contracts";
@@ -42,6 +42,8 @@ export function PreviewWorkspace() {
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
+  /** The open file's tab (direction A): kept across files and surfaces, so switching loses nothing. */
+  const [viewerView, setViewerView] = useState<"spectra" | "scans" | "metadata">("spectra");
   /** The two side panels, so focus can follow a drawer that opens. */
   const inspectorRef = useRef<HTMLElement | null>(null);
   const rosterRef = useRef<HTMLElement | null>(null);
@@ -830,6 +832,10 @@ export function PreviewWorkspace() {
         onScope={figureDialog.kind === "spectrum" ? workspace.setSpectrumRangeScope : workspace.setChromatogramRangeScope}
         committedDomain={figureDialog.kind === "spectrum" ? workspace.spectrumCommittedDomain : workspace.chromatogramCommittedDomain}
         onExportData={figureDialog.kind === "spectrum" ? workspace.exportSpectrum : figureDialog.kind === "chromatogram" ? workspace.exportChromatogram : undefined}
+        // A linked figure the lane would refuse says why here, beside the
+        // actions it refuses, rather than accepting a press that does nothing.
+        refusal={figureDialog.kind === "linked" && workspace.linkedFigureUnavailable !== null
+          ? describeUnavailable(workspace.linkedFigureUnavailable, t) : null}
         result={figureDialog.kind === "spectrum" ? <><p role="status">{describeSpectrumExport(workspace.spectrumExport, t)}{workspace.spectrumExport.status === "failed" ? <span className="notice-detail">{ownedErrorDetail(workspace.spectrumExport.error, t)}</span> : null}</p>
           {["saved", "copied", "cancelled", "failed"].includes(workspace.spectrumExport.status) ? <IconButton size="sm" icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={workspace.dismissSpectrumExport} /> : null}</> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} /></div>}
       /> : null}
@@ -954,120 +960,132 @@ export function PreviewWorkspace() {
             <PreviewSummary
               chromatogramScanCount={workspace.scanModel.status === "ready" ? workspace.scanModel.points.length : null}
               file={previewFile ?? preview.preview.file}
-              metadata={preview.preview.metadata}
-              runSummary={preview.preview.runSummary}
               spectrum={spectrum.status === "loaded" ? spectrum.spectrum : null}
-              spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
               spectrumViewport={workspace.spectrumViewport}
             />
-          ) : null}        </aside>
+          ) : null}
+        </aside>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench"}
           inert={drawer !== null || undefined} data-evidence={evidenceState} aria-labelledby="surface-title-workbench">
         {preview.status === "loaded" ? (
-          <div className="viewer-column">
-            <div className="viewer-stack">
-              {/* The identity row (spec 3.2): the surface's title is the file
-                  being read, with the facts the run summary reports. */}
-              <div className="viewer-identity">
-                <h1 id="surface-title-workbench" className="viewer-identity-name" title={formatDatasetLabel(previewFile ?? preview.preview.file)}>
-                  {formatDatasetLabel(previewFile ?? preview.preview.file)}
-                </h1>
-                <p className="viewer-identity-facts">{identityFacts(preview.preview.runSummary, t)}</p>
-                {/*
-                  One explanation for both committing surfaces, and one occurrence
-                  of it in the accessibility tree. Always mounted so that the
-                  announcement is watched before the text arrives, and empty --
-                  collapsed by `:empty` -- while a scan can be selected, because a
-                  working control with a sentence under it is a reason to doubt it.
-                */}
-                <p
-                  aria-live="polite"
-                  className="viewer-selection-notice"
-                  data-live-region="spectrum-selection-availability"
-                  /*
-                   * The id only while there is something to point at. The element
-                   * is permanent so that it is watched before the text arrives; a
-                   * described-by target with no text is a promise of an
-                   * explanation that is not there.
-                   */
-                  id={
-                    workspace.spectrumSelection.status === "unavailable"
-                      ? SPECTRUM_SELECTION_NOTICE_ID
-                      : undefined
-                  }
-                >
-                  {workspace.spectrumSelection.status === "unavailable"
-                    ? spectrumSelectionMessage(workspace.spectrumSelection.reason, t)
-                    : ""}
-                </p>
-              </div>
-              <Chromatogram
-                dispatch={workspace.dispatchViewerEvent}
-                exportStatus={
-                  <ChromatogramExportStatus
-                    exportState={workspace.chromatogramExport}
-                    figureSettingsValidation={workspace.figureSettingsValidation}
-                    linkedExportState={workspace.linkedFigureExport}
-                    onDismiss={workspace.dismissChromatogramExport}
-                    onDismissLinked={workspace.dismissLinkedFigureExport}
-                    scientificExportBusy={workspace.scientificExportBusy}
+          // Direction A's file row: the surface's title is the file being
+          // read, then its three views as tabs. One view is mounted at a time;
+          // what it shows lives in the workspace, so a switch loses nothing.
+          <div className="viewer-file">
+            <h1 id="surface-title-workbench" className="viewer-file-name" title={formatDatasetLabel(previewFile ?? preview.preview.file)}>
+              {formatDatasetLabel(previewFile ?? preview.preview.file)}
+            </h1>
+            <Tabs className="viewer-tabs" label={t("viewerViews")} value={viewerView} onChange={setViewerView} items={[
+              { value: "spectra", label: t("viewerTabSpectra") },
+              { value: "scans", label: t("viewerTabScans") },
+              { value: "metadata", label: t("viewerTabMetadata") },
+            ]}>
+              {viewerView === "metadata" ? (
+                <PreviewMetadata
+                  file={previewFile ?? preview.preview.file}
+                  metadata={preview.preview.metadata}
+                  runSummary={preview.preview.runSummary}
+                  spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
+                />
+              ) : (
+                <div className="viewer-view" data-view={viewerView}>
+                  {viewerView === "spectra" ? <Chromatogram
+                    dispatch={workspace.dispatchViewerEvent}
+                    exportStatus={
+                      <ChromatogramExportStatus
+                        exportState={workspace.chromatogramExport}
+                        linkedExportState={workspace.linkedFigureExport}
+                        onDismiss={workspace.dismissChromatogramExport}
+                        onDismissLinked={workspace.dismissLinkedFigureExport}
+                      />
+                    }
+                    exportTools={
+                      workspace.chromatogramExportToken === null ? undefined : leadingItems => (
+                        <ChromatogramExportTools
+                          leadingItems={leadingItems}
+                          figureSettingsValidation={workspace.figureSettingsValidation}
+                          linkedUnavailable={workspace.linkedFigureUnavailable}
+                          onCopyPlot={workspace.copyChromatogramPlot}
+                          onExport={workspace.exportChromatogram}
+                          onOpenFigure={() => openFigure("chromatogram")}
+                          onOpenLinkedFigure={trigger => openFigure("linked", trigger)}
+                          scientificExportBusy={workspace.scientificExportBusy}
+                          traces={workspace.chromatogramTraces}
+                        />
+                      )
+                    }
+                    interaction={workspace.viewerInteraction}
+                    model={workspace.scanModel}
+                    onSelect={workspace.selectSpectrum}
+                    onToggleTrace={workspace.toggleChromatogramTrace}
+                    readInteraction={workspace.readViewerInteraction}
+                    selectionAvailability={workspace.spectrumSelection}
                     traces={workspace.chromatogramTraces}
-                  />
-                }
-                exportTools={
-                  workspace.chromatogramExportToken === null ? null : (
-                    <ChromatogramExportTools
-                      figureSettingsValidation={workspace.figureSettingsValidation}
-                      linkedUnavailable={workspace.linkedFigureUnavailable}
-                      onCopyPlot={workspace.copyChromatogramPlot}
-                      onExport={workspace.exportChromatogram}
-                      onOpenFigure={() => openFigure("chromatogram")}
-                      onOpenLinkedFigure={trigger => openFigure("linked", trigger)}
-                      scientificExportBusy={workspace.scientificExportBusy}
-                      traces={workspace.chromatogramTraces}
+                  /> : null}
+                  {/* The scan list beside the spectrum it selects, or across
+                      the evidence above it on the Scans tab. */}
+                  <div className="viewer-lower">
+                    <SpectrumTable
+                      layout={viewerView === "scans" ? "full" : "compact"}
+                      view={workspace.scanTableView}
+                      onRendered={handleTableRendered}
+                      onSelect={workspace.selectSpectrum}
+                      selection={workspace.viewerInteraction.selection}
+                      selectionAvailability={workspace.spectrumSelection}
+                      table={preview.preview.spectrumTable}
                     />
-                  )
-                }
-                interaction={workspace.viewerInteraction}
-                model={workspace.scanModel}
-                onSelect={workspace.selectSpectrum}
-                onToggleTrace={workspace.toggleChromatogramTrace}
-                readInteraction={workspace.readViewerInteraction}
-                selectionAvailability={workspace.spectrumSelection}
-                traces={workspace.chromatogramTraces}
-              />
-              {/* The scan list beside the spectrum it selects (spec 3.1). */}
-              <div className="viewer-lower">
-                <SpectrumTable
-                  view={workspace.scanTableView}
-                  canSelectNext={workspace.canSelectNextScan}
-                  canSelectPrevious={workspace.canSelectPreviousScan}
-                  onRendered={handleTableRendered}
-                  onSelect={workspace.selectSpectrum}
-                  onSelectNext={workspace.selectNextScan}
-                  onSelectPrevious={workspace.selectPreviousScan}
-                  selection={workspace.viewerInteraction.selection}
-                  selectionAvailability={workspace.spectrumSelection}
-                  table={preview.preview.spectrumTable}
-                />
-                <SelectedSpectrumPanel
-                  onOpenFigure={() => openFigure("spectrum")}
-                  dispatchViewport={workspace.dispatchSpectrumViewportEvent}
-                  exportState={workspace.spectrumExport}
-                  figureSettingsValidation={workspace.figureSettingsValidation}
-                  onCopyPlot={workspace.copySpectrumPlot}
-                  onDismissExport={workspace.dismissSpectrumExport}
-                  onExport={workspace.exportSpectrum}
-                  onRetry={workspace.retrySpectrum}
-                  onRetryProjection={workspace.retrySpectrumProjection}
-                  projectionError={workspace.spectrumProjectionError}
-                  readViewport={workspace.readSpectrumViewport}
-                  scientificExportBusy={workspace.scientificExportBusy}
-                  state={spectrum}
-                  viewport={workspace.spectrumViewport}
-                />
-              </div>
-            </div>
+                    <SelectedSpectrumPanel
+                      onOpenFigure={() => openFigure("spectrum")}
+                      dispatchViewport={workspace.dispatchSpectrumViewportEvent}
+                      exportState={workspace.spectrumExport}
+                      figureSettingsValidation={workspace.figureSettingsValidation}
+                      onCopyPlot={workspace.copySpectrumPlot}
+                      onDismissExport={workspace.dismissSpectrumExport}
+                      onExport={workspace.exportSpectrum}
+                      onRetry={workspace.retrySpectrum}
+                      onRetryProjection={workspace.retrySpectrumProjection}
+                      projectionError={workspace.spectrumProjectionError}
+                      readViewport={workspace.readSpectrumViewport}
+                      scientificExportBusy={workspace.scientificExportBusy}
+                      state={spectrum}
+                      viewport={workspace.spectrumViewport}
+                      canSelectNext={workspace.canSelectNextScan}
+                      canSelectPrevious={workspace.canSelectPreviousScan}
+                      onSelectNext={workspace.selectNextScan}
+                      onSelectPrevious={workspace.selectPreviousScan}
+                      stepReasonId={scanStepReasonId(workspace.scanTableView, workspace.viewerInteraction.selection?.index ?? null, workspace.spectrumSelection)}
+                    />
+                  </div>
+                </div>
+              )}
+            </Tabs>
+            {/*
+              One explanation for both committing surfaces, and one occurrence
+              of it in the accessibility tree. Always mounted so that the
+              announcement is watched before the text arrives, and empty --
+              collapsed by `:empty` -- while a scan can be selected, because a
+              working control with a sentence under it is a reason to doubt it.
+            */}
+            <p
+              aria-live="polite"
+              className="viewer-selection-notice"
+              data-live-region="spectrum-selection-availability"
+              /*
+               * The id only while there is something to point at. The element
+               * is permanent so that it is watched before the text arrives; a
+               * described-by target with no text is a promise of an
+               * explanation that is not there.
+               */
+              id={
+                workspace.spectrumSelection.status === "unavailable"
+                  ? SPECTRUM_SELECTION_NOTICE_ID
+                  : undefined
+              }
+            >
+              {workspace.spectrumSelection.status === "unavailable"
+                ? spectrumSelectionMessage(workspace.spectrumSelection.reason, t)
+                : ""}
+            </p>
           </div>
         ) : (
           <>
@@ -1075,7 +1093,8 @@ export function PreviewWorkspace() {
             {/* Each state centred in the card (spec 3.6): what is missing, and
                 the buttons that fill it. No paragraph explains the interface. */}
             {preview.status === "opening" ? (
-              <EmptyState className="evidence-state" message={<><Icon name="clock" size={28} /><strong>{t("readingEvidence")}</strong></>} />
+              <EmptyState className="evidence-state" message={<><Icon name="clock" size={28} /><strong>{workspace.activeDataset === null
+                ? t("readingSelected") : t("readingEvidence", { name: formatDatasetLabel(workspace.activeDataset) })}</strong></>} />
             ) : preview.status === "failed" ? (
               <EmptyState
                 className="evidence-state"
@@ -1096,7 +1115,9 @@ export function PreviewWorkspace() {
             ) : evidenceState === "first-run" ? (
               <EmptyState
                 className="evidence-state"
-                message={<><Icon name="file" size={28} /><strong>{t("emptyEvidence")}</strong></>}
+                // What fills the empty Workbench, in the words of the buttons
+                // that do it: here, or the roster's Add buttons beside it.
+                message={<><Icon name="file" size={28} /><strong>{t("evidenceFirstRun")}</strong></>}
                 action={<div className="evidence-actions" ref={firstRunActions}>
                   {/* The roster's own Add buttons are these same actions; while
                       it is on screen they are not offered twice. */}
@@ -1147,15 +1168,24 @@ export function PreviewWorkspace() {
             ) : (
               <EmptyState
                 className="evidence-state"
+                // Rows and none open: the next step is in the list. Where the
+                // list is a drawer and folded, the one button here opens it.
                 message={<><Icon name="chart" size={28} /><strong>{t("emptyEvidence")}</strong></>}
-                // The one owned next step in this state -- the acquisition that
-                // was being read, one click from being read again -- so it is
-                // this surface's primary action (PM9 L1).
-                action={workspace.activeDataset !== null ? (
-                  <Button variant="primary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
-                    {t("previewRetained", { name: formatDatasetLabel(workspace.activeDataset) })}
-                  </Button>
-                ) : undefined}
+                action={workspace.activeDataset !== null || (constrained && !rosterOpen) ? <div className="evidence-actions">
+                  {/* The one owned next step in this state -- the acquisition
+                      that was being read, one click from being read again -- so
+                      it is this surface's primary action (PM9 L1). */}
+                  {workspace.activeDataset === null ? null : (
+                    <Button variant="primary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
+                      {t("previewRetained", { name: formatDatasetLabel(workspace.activeDataset) })}
+                    </Button>
+                  )}
+                  {constrained && !rosterOpen ? (
+                    <Button icon={<Icon name="panelLeft" />} onClick={() => { if (!panels.busy) panels.toggle("roster"); }}>
+                      {t("evidenceShowAcquisitions")}
+                    </Button>
+                  ) : null}
+                </div> : undefined}
               />
             )}
           </>
@@ -1179,18 +1209,6 @@ export function PreviewWorkspace() {
         }} />
     </div>
   );
-}
-
-/** The identity row's facts: `N spectra · RT a–b · MS1 n · MS2 n`, as the run summary reports them. */
-function identityFacts(summary: RunSummary, t: UiMessage): string {
-  const range = summary.retentionTimeRange;
-  return [
-    t("identitySpectra", { count: summary.totalSpectrumCount }),
-    range === null ? null : t("identityRetentionTime", {
-      range: `${formatRetentionTimeValue(range.minimum)}–${formatRetentionTimeValue(range.maximum)}`,
-    }),
-    ...summary.msLevels.map((level) => `${formatMsLevel(level.msLevel, t)} ${formatCount(level.spectrumCount)}`),
-  ].filter((part): part is string => part !== null).join(" · ");
 }
 
 /**

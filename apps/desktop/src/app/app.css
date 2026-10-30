@@ -1457,20 +1457,6 @@ button:disabled,
   gap: 6px;
 }
 
-/* The viewer column: an explanation that is usually not there, and the three
-   measured panels.
-
-   Not a fourth grid row. The rows below are measured against a 768px window and
-   a fourth track would have cost 8px of gap permanently, whether or not it had
-   anything in it. A flex column costs nothing while the notice is empty, because
-   the empty notice is taken out of flow rather than left in it. */
-.viewer-column {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  gap: 8px;
-}
-
 /* Says why a scan cannot be selected, and nothing at all otherwise.
 
    Collapsed rather than unmounted: a live region that arrives in the same commit
@@ -1493,18 +1479,6 @@ button:disabled,
   border: 0;
   clip-path: inset(50%);
   white-space: nowrap;
-}
-
-.viewer-stack {
-  min-height: 0;
-  /* Fills what the column has left, which is what it did for free as a direct
-     grid item of `.workspace-layout` and its `minmax(0, 1fr)` rows. As a flex
-     item it defaults to `0 1 auto` -- its own content -- so a tall window
-     showing a short run would have left the three scientific views bunched at
-     the top under a band of nothing. The column itself, its order and its gaps
-     are the workbench shell's (`workbench.css`); the grid tracks and floors
-     that used to be here never applied under it and are gone (PM9 UI-47). */
-  flex: 1 1 auto;
 }
 
 .chromatogram-panel {

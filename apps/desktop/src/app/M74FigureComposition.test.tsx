@@ -23,10 +23,10 @@ async function mount(options: FakePreviewApiOptions = {}) {
       pointCount: 1_000_000, truncated: true, viewportDomain: { state: "admitted", low: 100, high: 900 } } }), ...options });
   render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}><PreviewApiProvider value={api}><App /></PreviewApiProvider></WorkspaceDropTransportProvider>);
   fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
-  const grid = await screen.findByRole("grid", { name: "Spectra" });
+  const grid = await screen.findByRole("grid", { name: "Scans" });
   fireEvent.click(grid.querySelector('[data-source-index="1"]')!);
   await screen.findByRole("img", { name: /^Spectrum 1,/u });
-  return { api, preview, panel: screen.getByRole("region", { name: "Selected spectrum" }) };
+  return { api, preview, panel: screen.getByRole("region", { name: "Spectrum" }) };
 }
 /** The chromatogram's ⋯ menu item for the linked figure, opened fresh. */
 async function linkedEntry(name: string): Promise<HTMLElement> {
@@ -49,6 +49,13 @@ async function openFigure(panel: HTMLElement) {
   const dialog = screen.getByRole("dialog", { name: "Export figure" });
   await within(dialog).findByRole("img", { name: "Scientific figure to export" });
   return dialog;
+}
+
+/** Opens a plot's range editor, the first item of its ⋯ menu (direction A). */
+async function openRangeEditor(plot: HTMLElement) {
+  fireEvent.keyDown(within(plot).getByRole("button", { name: UI_RESOURCES.en.plotMoreExports }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: UI_RESOURCES.en.rangeSet }));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 }
 
 /** The linked item, in the given bundle's words. */
@@ -115,7 +122,9 @@ describe("M7.4 through the delivered figure owner", () => {
     fireEvent.click(await entry());
     await within(screen.getByRole("dialog")).findByRole("img");
     expect(preview.mock.calls.at(-1)?.[0].source).toMatchObject({ kind: "linked", spectrumToken: "token-1", traces: { tic: false, bpc: true } });
-  });
+    // Its own allowance: about 4.6 s alone (five menu round trips through the
+    // whole application), past the 5 s default whenever the suite runs loaded.
+  }, 15_000);
 
   it.each([
     { field: "Width", invalid: "", valid: "1200" },
@@ -142,7 +151,7 @@ describe("M7.4 through the delivered figure owner", () => {
   it("keeps linked preview available to recover an outside scan with Full run inside the dialog", async () => {
     const { preview } = await mount({ preview: buildPreview(200) });
     const chromatogram = document.querySelector(".chromatogram-panel") as HTMLElement;
-    fireEvent.click(chromatogram.querySelector(".plot-range-toggle")!);
+    await openRangeEditor(chromatogram);
     fireEvent.change(chromatogram.querySelector("#plot-range-rt-low")!, { target: { value: "0.5" } });
     fireEvent.change(chromatogram.querySelector("#plot-range-rt-high")!, { target: { value: "1.5" } });
     fireEvent.click(chromatogram.querySelector('.plot-range-form button[type="submit"]')!);
@@ -152,9 +161,18 @@ describe("M7.4 through the delivered figure owner", () => {
     expect(entry).not.toHaveAttribute("aria-disabled");
     fireEvent.click(entry);
     const dialog = screen.getByRole("dialog");
+    await within(dialog).findByRole("img");
+    // The lane would refuse this pair, so the dialog's actions say why beside
+    // them instead of accepting a press that starts nothing.
+    const svg = within(dialog).getByRole("button", { name: "Export SVG…" });
+    expect(svg).toHaveAttribute("aria-disabled", "true");
+    expect(svg).toHaveAccessibleDescription(UI_RESOURCES.en.linkedOutside);
+    expect(within(dialog).getByText(UI_RESOURCES.en.linkedOutside)).toBeVisible();
     fireEvent.click(within(dialog).getByRole("radio", { name: "Full run" }));
     await waitFor(() => expect(preview.mock.calls.at(-1)?.[0].source).toMatchObject({ kind: "linked", spectrumToken: "token-1", range: { scope: "full", low: null, high: null } }));
     await within(dialog).findByRole("img");
+    await waitFor(() => expect(svg).not.toHaveAttribute("aria-disabled"));
+    expect(within(dialog).queryByText(UI_RESOURCES.en.linkedOutside)).toBeNull();
   });
 
   it.each(["en", "zh-CN"] as const)("keeps the save-refusal recovery detail inside the spectrum dialog in %s", async locale => {
@@ -181,7 +199,7 @@ describe("M7.4 through the delivered figure owner", () => {
   it("binds preview and save to committed data and captures settings before the save picker settles", async () => {
     const save = deferred<SpectrumExportOutcome>();
     const { api, preview, panel } = await mount({ spectrumExport: () => save.promise });
-    fireEvent.click(within(panel).getByRole("button", { name: new RegExp(`^${UI_RESOURCES.en.rangeSet}`, "u") }));
+    await openRangeEditor(panel);
     fireEvent.change(within(panel).getByRole("textbox", { name: "From" }), { target: { value: "200" } });
     fireEvent.change(within(panel).getByRole("textbox", { name: "To" }), { target: { value: "800" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Apply range" }));

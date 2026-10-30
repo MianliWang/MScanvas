@@ -145,7 +145,7 @@ async function openTheViewer(preview: PreviewApi): Promise<void> {
    */
   const SETTLING = { timeout: 15_000 } as const;
   fireEvent.keyDown(await screen.findByRole("treegrid", {}, SETTLING), { key: "Enter" });
-  await screen.findByRole("grid", { name: "Spectra" }, SETTLING);
+  await screen.findByRole("grid", { name: "Scans" }, SETTLING);
   await screen.findByRole("img", { name: "Chromatogram" }, SETTLING);
   givePlotABox();
 }
@@ -242,7 +242,7 @@ describe("the linked viewer", () => {
     const preview = api();
     await openTheViewer(preview);
 
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     fireEvent.click(
       grid.querySelector('[data-source-index="4"]') as HTMLElement,
     );
@@ -280,7 +280,7 @@ describe("the linked viewer", () => {
   it("does not take the keyboard away from the control that committed the selection", async () => {
     const preview = api();
     await openTheViewer(preview);
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     fireEvent.click(
       grid.querySelector('[data-source-index="0"]') as HTMLElement,
     );
@@ -302,7 +302,7 @@ describe("the linked viewer", () => {
   it("reveals a marker panned out of view without giving up the span the user chose", async () => {
     const preview = api();
     await openTheViewer(preview);
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     fireEvent.click(
       grid.querySelector('[data-source-index="29"]') as HTMLElement,
     );
@@ -346,7 +346,7 @@ describe("the linked viewer", () => {
   it("does not pull a pan back once the same commit has been acted on", async () => {
     const preview = api();
     await openTheViewer(preview);
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     fireEvent.click(
       grid.querySelector('[data-source-index="0"]') as HTMLElement,
     );
@@ -372,7 +372,7 @@ describe("the linked viewer", () => {
     // process per key press.
     const preview = api();
     await openTheViewer(preview);
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     within(grid).getAllByRole("row")[1]?.focus();
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "ArrowDown" });
@@ -429,7 +429,7 @@ describe("the linked viewer", () => {
       },
     });
     await openTheViewer(preview);
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     fireEvent.click(grid.querySelector('[data-source-index="1"]') as HTMLElement);
     await waitFor(() => {
       expect(selectedRowPosition()).toBe(1);
@@ -447,7 +447,7 @@ describe("the linked viewer", () => {
     expect(screen.getByRole("button", { name: "Previous scan" })).toHaveAttribute("aria-disabled", "true");
     // Still there, and still spatially where they were: an action that cannot
     // act right now is disabled rather than removed.
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
     expect(selectedRowPosition()).toBe(1);
     expect(preview.requestedSpectra).toEqual([1]);
   });
@@ -530,7 +530,7 @@ describe("what a moving pointer costs", () => {
      */
     const preview = api();
     await openTheViewer(preview);
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     fireEvent.click(grid.querySelector('[data-source-index="0"]') as HTMLElement);
     await waitFor(() => {
       expect(selectedRowPosition()).toBe(0);
@@ -558,7 +558,7 @@ describe("what a moving pointer costs", () => {
     fireEvent.pointerMove(plot(), { clientX: 500 });
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
     fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
-    fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fit all, retention time" }));
     plot().focus();
     fireEvent.keyDown(plot(), { key: "ArrowRight" });
 
@@ -577,7 +577,7 @@ describe("what a moving pointer costs", () => {
     });
     await openTheViewer(preview);
 
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     expect(within(grid).getAllByRole("row").length).toBeLessThan(100);
     const paths = document.querySelectorAll("path.chromatogram-trace");
     expect(paths).toHaveLength(1);
@@ -661,7 +661,7 @@ describe("what the open measurement waits for", () => {
       </WorkspaceDropTransportProvider>,
     );
     fireEvent.keyDown(await screen.findByRole("treegrid", {}, { timeout: 15_000 }), { key: "Enter" });
-    await screen.findByRole("grid", { name: "Spectra" }, { timeout: 15_000 });
+    await screen.findByRole("grid", { name: "Scans" }, { timeout: 15_000 });
 
     expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
     await waitFor(() => {
@@ -675,7 +675,7 @@ describe("what the open measurement waits for", () => {
     const selects = () => measuredWith.filter((entry) => entry.name === "rowSelectToRendered").length;
     expect(selects()).toBe(0);
 
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     fireEvent.click(grid.querySelector('[data-source-index="0"]') as HTMLElement);
     await screen.findByRole("img", { name: /^Spectrum 0,/u }, { timeout: 15_000 });
     await waitFor(() => {

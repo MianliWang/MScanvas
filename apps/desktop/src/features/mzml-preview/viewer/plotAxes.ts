@@ -2,12 +2,13 @@
  * Axis ticks for the on-screen plots, and nothing that is a measurement.
  *
  * A tick is a place on an axis, labelled with the value that sits there. None
- * of it changes what is drawn, which range is on screen or what a value is:
- * the x axis keeps the viewport's own range exactly, and the value axis only
- * gains headroom above the largest visible value (and below the deepest
- * negative one), so the tallest peak is not drawn against the frame.
+ * of it changes what is drawn, which range is on screen or what a value is.
  *
- * Exports are rendered in Rust and do not read this.
+ * The range rule is the exported figure's (`crates/plot-spec`, `svg.rs`
+ * `value_axis` and `project`), so a screen plot and its export frame the data
+ * alike: the x axis is the drawn domain exactly, with no padding at either
+ * end, and the value axis gains 5% of its span above the largest value and
+ * below the deepest negative one, never across zero.
  */
 
 export interface AxisTick {
@@ -15,7 +16,7 @@ export interface AxisTick {
   readonly label: string;
 }
 
-/** The share of the visible value span left empty beyond its extremes. */
+/** The share of the visible value span left empty beyond its extremes: plot-spec's `HEADROOM`. */
 export const VALUE_HEADROOM = 0.05;
 
 /**
@@ -80,25 +81,19 @@ function labelTicks(values: readonly number[], step: number): readonly AxisTick[
 /**
  * Writes tick labels into a container that React leaves empty, each at its
  * percentage along the axis. Used for every paint, so a gesture frame and a
- * render put the same labels in the same places.
- *
- * `reserve` is an element sharing the container's row at its right end, the x
- * axis title: a label that would run under it is hidden rather than overlapped.
+ * render put the same labels in the same places. The axis titles have rows of
+ * their own, so no label ever gives way to one.
  */
 export function paintTicks(container: HTMLElement | null, ticks: readonly AxisTick[], percent: (value: number) => number,
-  axis: "x" | "y", reserve: HTMLElement | null = null): void {
+  axis: "x" | "y"): void {
   if (container === null) return;
-  const labels = ticks.map(tick => {
+  container.replaceChildren(...ticks.map(tick => {
     const label = document.createElement("span");
     label.className = "plot-tick";
     label.textContent = tick.label;
     label.style.setProperty(axis === "x" ? "left" : "top", `${percent(tick.value)}%`);
     return label;
-  });
-  container.replaceChildren(...labels);
-  const limit = reserve === null ? 0 : container.clientWidth - reserve.offsetWidth - 8;
-  if (limit <= 0) return;
-  for (const label of labels) label.hidden = label.offsetLeft + label.offsetWidth / 2 > limit;
+  }));
 }
 
 /** Light horizontal rules at the given viewBox heights, into a group React leaves empty. */

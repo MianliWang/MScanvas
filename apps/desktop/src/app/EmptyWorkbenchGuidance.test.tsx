@@ -71,7 +71,8 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's states, %s", (loc
     await waitFor(() => expect(document.documentElement.lang).toBe(locale));
     const toggle = screen.getByRole("button", { name: words.rosterToggle });
     await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
-    await within(evidence()).findByText(words.emptyEvidence);
+    // The first run names what fills it; a listed roster says where to pick.
+    await within(evidence()).findByText(initialDatasets.length === 0 ? words.evidenceFirstRun : words.emptyEvidence);
     return { toggle };
   }
 
@@ -110,7 +111,21 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's states, %s", (loc
   it("states only the heading once rows are listed and none is picked", async () => {
     await mount(false, [selectedFile, VENDOR_ROW]);
     await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "idle"));
+    expect(within(evidence()).getByText(words.emptyEvidence)).toBeVisible();
     expect(within(evidence()).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("offers the folded list when rows are listed, none is picked and the list is a drawer", async () => {
+    const { toggle } = await mount(true, [selectedFile, VENDOR_ROW]);
+    await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "idle"));
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const show = within(evidence()).getByRole("button", { name: words.evidenceShowAcquisitions });
+    // The only action here, and the same drawer the header's toggle opens.
+    expect(within(evidence()).getAllByRole("button")).toEqual([show]);
+    await act(async () => {
+      fireEvent.click(show);
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
   });
 
   it("says what a picked vendor row is, and opens it in Conversion", async () => {

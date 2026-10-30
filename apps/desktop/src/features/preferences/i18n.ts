@@ -194,9 +194,7 @@ export interface MessageParameters {
   readonly rangeCommittedBounds: { readonly low: string; readonly high: string };
   readonly rangePending: { readonly name: string; readonly low: string; readonly high: string };
   readonly rangeConfirmContext: { readonly name: string; readonly low: string; readonly high: string };
-  readonly rangeSetFor: { readonly name: string };
   readonly scanColumnName: { readonly short: string; readonly full: string };
-  readonly scanSortCurrent: { readonly name: string; readonly direction: string };
   readonly scanCountAll: { readonly count: number };
   readonly scanCounts: { readonly visible: number; readonly count: number; readonly total: number };
   readonly scanSelectedOutside: { readonly name: string };
@@ -238,6 +236,7 @@ export interface MessageParameters {
   readonly groupActions: { readonly name: string };
   readonly rowActions: { readonly name: string };
   readonly previewRetained: { readonly name: string };
+  readonly readingEvidence: { readonly name: string };
   readonly moveHandle: { readonly name: string };
   readonly checkAcquisition: { readonly name: string };
   readonly checkGroup: { readonly name: string; readonly count: number };
@@ -263,8 +262,6 @@ export interface MessageParameters {
   readonly shellContextProject: { readonly name: string };
   readonly shellContextActivity: { readonly activity: string };
   readonly statusBusy: { readonly reason: string };
-  readonly identitySpectra: { readonly count: number };
-  readonly identityRetentionTime: { readonly range: string };
 }
 export type MessageArguments<K extends MessageKey> = K extends keyof MessageParameters
   ? [parameters: MessageParameters[K]] : [];

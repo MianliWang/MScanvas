@@ -1,4 +1,4 @@
-import type { KeyboardEventHandler, Ref } from "react";
+import type { KeyboardEventHandler, ReactNode, Ref } from "react";
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { joinSentences, type UiMessage } from "../preferences/i18n";
@@ -61,7 +61,7 @@ export function paintMzAxis(plot: SVGSVGElement | null, low: number, high: numbe
   const span = high - low;
   paintTicks(frame.querySelector<HTMLElement>(".plot-x-ticks"), niceTicks(low, high),
     value => ((PLOT_PADDING_LEFT + (span > 0 ? (value - low) / span : 0.5) * SPECTRUM_PLOT_DRAWN_WIDTH) / PLOT_WIDTH) * 100,
-    "x", frame.querySelector<HTMLElement>(".plot-axis-title-x"));
+    "x");
   plot.setAttribute("data-mz-low", formatMz(low));
   plot.setAttribute("data-mz-high", formatMz(high));
 }
@@ -208,6 +208,10 @@ export interface StickSpectrumProps {
   readonly valueUnitsKnown?: boolean;
   readonly labelledBy: string;
   readonly surface: SpectrumSurface;
+  /** The line under the ticks, left of the m/z title: what range is on screen. */
+  readonly readout?: ReactNode;
+  /** Whatever sits over the drawing without taking height (the range editor, its pending band). */
+  readonly overlay?: ReactNode;
 }
 
 interface Stick {
@@ -529,6 +533,8 @@ export function StickSpectrum({
   valueUnitsKnown = false,
   labelledBy,
   surface,
+  readout,
+  overlay,
 }: StickSpectrumProps) {
   const t = useUiMessages();
   const plotNode = useRef<SVGSVGElement | null>(null);
@@ -596,9 +602,10 @@ export function StickSpectrum({
 
   return (
     <figure className="spectrum-figure">
-      {/* The drawing and its axes: value ticks left of it, m/z ticks under it,
-          each axis titled with what is known of its unit. The text is HTML
-          placed by percentage, so no plot height distorts it. */}
+      {/* The drawing and its axes: the value title on its own row above, value
+          ticks left of the drawing, m/z ticks under it, and the m/z title on
+          the line under those. The text is HTML placed by percentage, so no
+          plot height distorts it. */}
       <div className="plot-frame spectrum-frame">
         <p className="plot-axis-title plot-axis-title-y">{valueTitle}</p>
         <div aria-hidden="true" className="plot-y-ticks">
@@ -661,12 +668,18 @@ export function StickSpectrum({
           </g>
         </svg>
         <div aria-hidden="true" className="plot-x-ticks" />
+        {overlay}
+      </div>
+      {/* One line under the ticks, whatever the drawing is doing, so the box
+          never changes height when a drawing arrives (which would also
+          abandon a gesture): what range is on screen, then the m/z title. */}
+      <div className="plot-foot">
+        {readout}
         <p className="plot-axis-title plot-axis-title-x">{t("plotAxisMz")}</p>
       </div>
-      {/* Always there and one line tall at least, empty or not: a plot box
-          whose height changes when a drawing arrives would jump, and would
-          abandon a gesture in progress. */}
-      <figcaption className="spectrum-caption">
+      {/* What the drawing is made of, for a screen reader: Details says it to
+          the eye, beside the rest of the spectrum's source. */}
+      <figcaption className="spectrum-caption visually-hidden">
         <p>{caption}</p>
       </figcaption>
     </figure>

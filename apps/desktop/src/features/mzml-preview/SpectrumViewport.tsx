@@ -40,12 +40,12 @@ const STATUS_ID = "spectrum-viewport-status";
 /** Where the surface says what range is on screen. */
 const RANGE_ID = "spectrum-viewport-range";
 
-/** The head's m/z controls, in v5.11's order: out, in, reset. */
+/** The head's m/z controls, in direction A's order: −, + and the text button Fit all. */
 const ZOOM_CONTROLS = [
   { action: "zoom-out", icon: "minus" },
   { action: "zoom-in", icon: "plus" },
-  { action: "reset", icon: "fit" },
-] as const satisfies readonly { readonly action: VisibleSpectrumViewportAction; readonly icon: string }[];
+  { action: "reset", icon: null },
+] as const satisfies readonly { readonly action: VisibleSpectrumViewportAction; readonly icon: string | null }[];
 
 /**
  * The three m/z viewport controls, for the spectrum box's head toolbar.
@@ -61,10 +61,15 @@ export function SpectrumZoomControls({ state, readState, dispatch }: {
   readonly dispatch: (event: SpectrumViewportEvent) => SpectrumViewportState;
 }) {
   const t = useUiMessages();
-  return <>{ZOOM_CONTROLS.map(({ action, icon }) => <IconButton icon={<Icon name={icon} />} key={action}
-    label={t(VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.find(each => each.action === action)?.messageKey ?? "viewerMzReset")}
-    onClick={() => { applySpectrumViewportAction(readState(), dispatch, action); }}
-    reasonId={`${RANGE_ID} ${STATUS_ID}`} refused={!planSpectrumViewportAction(state, action).available} size="sm" />)}</>;
+  return <>{ZOOM_CONTROLS.map(({ action, icon }) => {
+    const label = t(VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.find(each => each.action === action)?.messageKey ?? "viewerMzReset");
+    const onClick = () => { applySpectrumViewportAction(readState(), dispatch, action); };
+    const refused = !planSpectrumViewportAction(state, action).available;
+    return icon === null
+      ? <Button key={action} aria-label={label} onClick={onClick} reasonId={`${RANGE_ID} ${STATUS_ID}`} refused={refused} size="sm">{t("plotFitAll")}</Button>
+      : <IconButton icon={<Icon name={icon} />} key={action} label={label} onClick={onClick}
+        reasonId={`${RANGE_ID} ${STATUS_ID}`} refused={refused} size="sm" variant="secondary" />;
+  })}</>;
 }
 
 /**
@@ -105,6 +110,9 @@ export interface SpectrumViewportProps {
   readonly reportedMzHigh: number;
   readonly valueUnitsKnown?: boolean;
   readonly labelledBy: string;
+  /** Whether the range editor is open; the spectrum's ⋯ menu opens it. */
+  readonly rangeEditing?: boolean;
+  readonly onRangeEditorClose?: () => void;
 }
 
 /**
@@ -135,6 +143,8 @@ export function SpectrumViewport({
   reportedMzHigh,
   valueUnitsKnown = false,
   labelledBy,
+  rangeEditing = false,
+  onRangeEditorClose = () => {},
 }: SpectrumViewportProps) {
   const t = useUiMessages();
   const plotRef = useRef<SVGSVGElement | null>(null);
@@ -229,6 +239,11 @@ export function SpectrumViewport({
   const failure =
     state.status === "ready" && state.projection.status === "failed" ? state.projection : null;
   const drawn = state.status === "ready" ? drawnPoints(state) : EMPTY_POINTS;
+  /* Not a live region. It changes on every frame of a drag, and a region that
+     announced each of them would be noise rather than feedback. It is half of
+     the plot's accessible description instead. */
+  const readout = <p className="plot-readout spectrum-viewport-range" id={RANGE_ID} ref={rangeRef}>{describeRange(state, shown, t)}</p>;
+  const overlay = <PlotRangeActions port={inputPort} editing={rangeEditing} onClose={onRangeEditorClose} />;
 
   return (
     <div className="spectrum-viewport">
@@ -242,6 +257,8 @@ export function SpectrumViewport({
             labelledBy={labelledBy}
             mz={drawn.mz}
             valueUnitsKnown={valueUnitsKnown}
+            readout={readout}
+            overlay={overlay}
             surface={{
               kind: "interactive",
               plotRef: attachPlot,
@@ -265,19 +282,11 @@ export function SpectrumViewport({
           labelledBy={labelledBy}
           mz={mz}
           valueUnitsKnown={valueUnitsKnown}
+          readout={readout}
+          overlay={overlay}
           surface={{ kind: "static" }}
         />
       )}
-
-      {/* Not a live region. It changes on every frame of a drag, and a region
-          that announced each of them would be noise rather than feedback. It is
-          half of the plot's accessible description instead. */}
-      <div className="plot-foot">
-        <p className="spectrum-viewport-range" id={RANGE_ID} ref={rangeRef}>
-          {describeRange(state, shown, t)}
-        </p>
-        <PlotRangeActions port={inputPort} />
-      </div>
 
       {/*
         One element doing both jobs: the visible account of what this viewport

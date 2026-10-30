@@ -166,37 +166,54 @@
 /* Why Save is refused, shown only while it is. */
 .group-name-dialog .group-name-reason { margin: 8px 0 0; font-size: 12px; }
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
-/* The evidence grid (spec 3.1): identity, chromatogram, then the scan list
-   beside the spectrum. Each plot row's floor is its content at the plot's
-   minimum drawable height (the plot frame's own `height` below), with the head and a
-   wrapped foot whole; the chromatogram grows to its clamp first and the lower
-   row takes the rest. Only a window that cannot fit both floors scrolls the
-   evidence -- the tracks overflow the stack, never each other. 66 px is the
-   chromatogram box's head 36, foot 28 and borders. */
-.workbench-shell .viewer-column { flex: 1 1 auto; min-height: 0; }
-.workbench-shell .viewer-stack { display: grid; flex: 1 1 auto; grid-template-rows: 36px minmax(min-content, calc(clamp(90px, 22vh, 180px) + 66px)) minmax(min-content, 1fr); gap: 8px; min-height: 0; overflow: visible; }
-.viewer-identity { display: flex; min-width: 0; align-items: baseline; gap: 12px; padding: 0 2px; }
-.viewer-identity-name { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-primary); font-size: 15px; font-weight: 650; line-height: 36px; text-overflow: ellipsis; white-space: nowrap; }
-.viewer-identity-facts { flex: 0 1000 auto; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-/* Why a scan cannot be selected: the row's right half, in amber. */
-.viewer-identity .viewer-selection-notice { flex: 0 1 auto; min-width: 0; margin: 0 0 0 auto; overflow: hidden; color: var(--color-warning); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.workbench-shell .chromatogram-panel { min-height: 0; }
-.viewer-lower { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 8px; min-height: 240px; }
+/* The open file (direction A, section 2.1): one 36 px row with the file's name
+   and its three view tabs, then the view. Flat: no evidence padding and no
+   boxes; regions are divided by hairlines. The tab list and its panel are grid
+   items of the row (`display: contents` on the Tabs wrapper), so the name and
+   the tabs share one line. */
+.workbench-evidence[data-evidence="loaded"] { padding: 0; }
+.viewer-file { display: grid; flex: 1 1 auto; grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr); grid-template-rows: 36px minmax(0, 1fr); min-width: 0; min-height: 0; }
+.viewer-file-name { grid-row: 1; grid-column: 1; min-width: 0; margin: 0; padding: 0 16px 0 12px; overflow: hidden; color: var(--color-text-primary); font-size: 14px; font-weight: 600; line-height: 36px; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-tabs { display: contents; }
+.viewer-tabs > .ui-tablist { grid-row: 1; grid-column: 2; gap: 2px; overflow: visible; border-bottom: 0; }
+.viewer-tabs .ui-tab { height: 36px; min-height: 0; padding: 2px 10px 0; color: var(--color-text-secondary); font-size: 13px; }
+.viewer-tabs .ui-tab:hover { color: var(--color-text-primary); }
+.viewer-tabs .ui-tab[aria-selected="true"] { color: var(--color-text-primary); font-weight: 600; }
+.viewer-tabs > .ui-tabpanel { display: flex; grid-row: 2; grid-column: 1 / -1; flex-direction: column; min-height: 0; overflow: hidden; border-top: 1px solid var(--color-border); }
+/* Why a scan cannot be selected: the row's right end, in amber. */
+.viewer-file > .viewer-selection-notice { grid-row: 1; grid-column: 3; align-self: center; justify-self: end; min-width: 0; max-width: 100%; margin: 0; padding: 0 12px; overflow: hidden; color: var(--color-warning); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+/* Chromatogram and spectrum: the chromatogram at its own height, then the
+   scan list beside the spectrum, which takes the rest. On the Scans tab the
+   full table is above the spectrum. */
+.viewer-view { display: grid; flex: 1 1 auto; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; }
+.viewer-view[data-view="scans"] { grid-template-rows: minmax(0, 1fr); }
+.viewer-lower { display: grid; grid-template-columns: 380px minmax(0, 1fr); min-width: 0; min-height: 0; }
+.viewer-view[data-view="spectra"] > .viewer-lower { border-top: 1px solid var(--color-border); }
 .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
-.viewer-lower > .panel { min-width: 0; min-height: 0; }
-/* Plot boxes (rebuild spec 3.4, v5.11 .plot): one line of head -- the title,
-   what is shown, one toolbar -- then the plot, which fills whatever height its
-   box is given, then a foot. Every link from the box to the svg is a flex
-   column with a zero minimum, so a pane that is given height passes it on. */
-.plot-box { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.workbench-shell .plot-box { border-radius: 6px; box-shadow: none; }
-.plot-head { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 36px; padding: 3px 6px 3px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }
-.plot-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 650; white-space: nowrap; }
-/* The subtitle gives way first, so the tools keep the head's one line. */
-.plot-head > p { flex: 1 1 0; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.plot-tools { flex: none; flex-wrap: nowrap; gap: 2px; margin-left: auto; }
-.plot-tools-divider { flex: none; width: 1px; height: 18px; margin: 0 4px; background: var(--color-border); }
-.figure-quick-actions { display: flex; align-items: center; gap: 2px; }
+.workbench-shell .viewer-view[data-view="scans"] > .viewer-lower { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr); }
+.viewer-lower > section { min-width: 0; min-height: 0; }
+.viewer-lower > .spectrum-table-panel { border-right: 1px solid var(--color-border); }
+.viewer-view[data-view="scans"] .spectrum-table-panel { border-right: 0; border-bottom: 1px solid var(--color-border); }
+/* Plot regions (direction A): one 32 px head -- the title, what is shown, one
+   toolbar -- then the plot, then one line under its ticks. Every link from the
+   region to the svg is a flex column with a zero minimum, so a pane that is
+   given height passes it on. What comes and goes (an export's result, the
+   range editor, a drawing's status) sits over the plot and never takes its
+   height. */
+.plot-box { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.workbench-shell .plot-box { border: 0; border-radius: 0; box-shadow: none; background: var(--color-surface); }
+.plot-head { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 6px; height: 32px; min-width: 0; padding: 0 8px 0 12px; }
+.plot-head h2 { flex: none; margin: 0 4px 0 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.plot-head .ui-button { min-height: 28px; padding-block: 2px; }
+.plot-head .ui-icon-button.ui-button--sm { width: 28px; }
+/* What the spectrum is: the scan between its steps, then its MS level and size,
+   which give way first so the tools keep the head's one line. */
+.spectrum-stepper { display: flex; flex: none; align-items: center; gap: 4px; }
+.spectrum-scan { min-width: 4ch; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+.spectrum-head-facts { display: flex; flex: 1 1 0; gap: 8px; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plot-tools { flex: none; flex-wrap: nowrap; gap: 4px; margin-left: auto; }
+.plot-tools-divider { flex: none; width: 1px; height: 18px; margin: 0 2px; background: var(--color-border); }
+.figure-quick-actions { display: flex; align-items: center; gap: 4px; }
 /* The traces: two toggles drawn as v5.11's segmented pair. Both may be on, or
    neither, so they are pressed buttons rather than a single choice. */
 .plot-traces { display: inline-flex; flex: none; gap: 2px; padding: 2px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); }
@@ -211,24 +228,23 @@
 .plot-menu-note { max-width: 300px; padding: 4px 9px 6px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
 .workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-height: 0; padding: 0; overflow: hidden; }
 .workbench-shell :is(.chromatogram-plot, .spectrum-viewport, .spectrum-viewport-plot, .spectrum-figure) { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-width: 0; min-height: 0; margin: 0; }
-/* The plot frame (review fix 3): the drawing, its value ticks left of it,
-   its position ticks under it with the position title at their right end,
-   and the value title in the drawing's top-left corner, over its headroom.
-   The labels are HTML placed by percentage over the stretched drawing, so no
-   plot height distorts them; nothing in the svg is text. */
-.plot-frame { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 14px; flex: 1 1 auto; min-width: 0; min-height: 0; padding: 0 16px 0 6px; }
-.plot-frame > svg { display: block; grid-column: 2; grid-row: 1; width: 100%; height: 100%; min-height: 0; padding: 0; }
-.plot-axis-titles { display: contents; }
-.plot-axis-title { z-index: 1; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
-.plot-axis-title-y { grid-column: 2; grid-row: 1; align-self: start; justify-self: start; max-width: 70%; margin-left: 0.8%; padding: 0 4px; border-radius: 3px; background: color-mix(in srgb, var(--color-surface) 85%, transparent); }
-.chromatogram-frame .plot-axis-title-y { margin-left: 6.4%; }
-.plot-axis-title-x { grid-column: 2; grid-row: 2; justify-self: end; max-width: 60%; padding-left: 6px; background: var(--color-surface); }
+/* The plot frame (review issue 2): the value title on its own row above the
+   drawing, the value ticks left of the drawing, the position ticks under it;
+   the position title is on the line under the ticks (`.plot-foot`), so no
+   tick ever gives way to a title. The labels are HTML placed by percentage
+   over the stretched drawing, so no plot height distorts them; nothing in the
+   svg is text. */
+.plot-frame { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 14px minmax(0, 1fr) 14px; flex: 1 1 auto; min-width: 0; min-height: 0; padding: 0 16px 0 6px; }
+.plot-frame > svg { display: block; grid-column: 2; grid-row: 2; width: 100%; height: 100%; min-height: 0; padding: 0; }
+.plot-axis-title { min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.plot-axis-title-y { grid-column: 1 / -1; grid-row: 1; justify-self: start; max-width: 100%; padding-left: 2px; }
+.plot-axis-title-x { flex: none; max-width: 50%; }
 .plot-x-ticks, .plot-y-ticks { position: relative; min-width: 0; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
-.plot-x-ticks { grid-column: 2; grid-row: 2; }
+.plot-x-ticks { grid-column: 2; grid-row: 3; }
 /* A fixed width, wide enough for the longest label the ticks write ("-1.5e+6"):
    sized from the labels, the drawing would move when a gesture redraws them,
    and a plot whose box moves abandons the gesture. */
-.plot-y-ticks { grid-column: 1; grid-row: 1; width: calc(7ch + 8px); }
+.plot-y-ticks { grid-column: 1; grid-row: 2; width: calc(7ch + 8px); }
 /* The chromatogram's value labels sit in its drawing's own left gutter. */
 .chromatogram-y-ticks { grid-column: 2; justify-self: start; width: 6.4%; }
 .plot-tick { position: absolute; color: var(--color-text-tertiary); line-height: 14px; white-space: nowrap; }
@@ -236,62 +252,73 @@
 .plot-y-ticks .plot-tick { right: 5px; transform: translateY(-50%); }
 .plot-gridlines line { stroke: var(--color-chart-grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .plot-baseline { stroke: var(--color-border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
-/* Each frame's height is its floor -- the plot's minimum drawable height plus
-   the 14 px tick row -- so it is what the box's content measures at its
-   floor; the evidence grid's track gives the height and the frame grows into
-   it. The minimums are explicit: an svg's automatic minimum is its aspect
-   ratio, which a stretched viewBox makes meaningless. The spectrum frame's
-   floor leaves its drawing 160 px. */
-.workbench-shell .chromatogram-frame { height: 100px; min-height: 100px; }
-.workbench-shell .chromatogram-svg { min-height: 60px; }
-.workbench-shell .spectrum-frame { height: 174px; min-height: 174px; }
-.workbench-shell .spectrum-plot { min-height: 160px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
+/* Plot bodies (direction A): the chromatogram 200 px at 768 px of window and
+   140 px at 640, growing with the window; the spectrum takes what its region
+   has left (260 and 180 px at those sizes). The minimums are explicit: an
+   svg's automatic minimum is its aspect ratio, which a stretched viewBox makes
+   meaningless. */
+.workbench-shell .chromatogram-svg { height: clamp(140px, calc(46.875vh - 160px), 360px); min-height: 0; }
+.workbench-shell .chromatogram-frame { flex: none; }
+.workbench-shell .spectrum-plot { min-height: 120px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
 /* The plot bodies clip, so a focused plot, and a control along a body's
    edge, draws its ring inside itself, as the status bar's do. */
-.workbench-shell :is(.chromatogram-svg, .spectrum-plot, .plot-foot .ui-button, .plot-status .ui-button):focus-visible { outline-offset: -2px; }
-.workbench-shell .spectrum-caption { flex: none; padding: 0 10px; }
-.workbench-shell .spectrum-caption p { min-height: 1.4em; margin: 2px 0 0; font-size: 11px; line-height: 1.4; }
-.plot-foot { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0 12px; min-height: 28px; padding: 0 6px 0 10px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
+.workbench-shell :is(.chromatogram-svg, .spectrum-plot, .plot-range-actions .ui-button, .plot-status .ui-button):focus-visible { outline-offset: -2px; }
+/* One line under the ticks: what range is on screen (and, on the
+   chromatogram, which scan is selected or hovered), then the position title. */
+.plot-foot { display: flex; flex: none; align-items: center; gap: 12px; height: 16px; min-width: 0; padding: 0 16px 0 12px; color: var(--color-text-secondary); font-size: 11px; line-height: 16px; }
 .plot-foot > p { margin: 0; }
-.workbench-shell .plot-foot .chromatogram-axis-caption, .workbench-shell .plot-foot .chromatogram-readout { margin: 0; font-size: 11px; }
+.plot-readout { display: flex; flex: 1 1 auto; gap: 12px; min-width: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plot-readout > span { flex: none; }
+.plot-readout > span:last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.workbench-shell .plot-foot :is(.chromatogram-axis-caption, .chromatogram-readout, .spectrum-viewport-range) { margin: 0; font-size: 11px; line-height: 16px; }
+.workbench-shell .plot-foot .spectrum-viewport-range { display: block; overflow: hidden; text-overflow: ellipsis; }
 .plot-foot .chromatogram-readout[data-idle] { display: none; }
-.plot-range-actions { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0 8px; }
-/* A range line gives way inside its own box before the actions beside it take
-   a second row (PM9 UI-32). 12em is wider than any one formatted value. */
-.plot-committed-range { flex: 1 1 12em; margin: 0; font-size: 11px; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.plot-pending-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.plot-range-toggle { flex: none; }
-.plot-range-editor { flex-basis: 100%; }
-.plot-range-form { display: grid; grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr) auto auto; gap: 6px; align-items: center; padding: 4px 0 8px; font-size: 12px; }
+/* The range editor and a pending band's two actions, over the drawing's top
+   right: opening them never moves the plot. */
+.plot-range-actions { position: absolute; z-index: 2; top: 16px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: calc(100% - 32px); pointer-events: none; }
+.plot-range-actions > * { pointer-events: auto; }
+.plot-committed-range:not(.visually-hidden) { margin: 0; padding: 0 6px; border-radius: 4px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.plot-pending-actions { display: flex; gap: 6px; }
+.plot-range-form { display: grid; grid-template-columns: auto minmax(80px, 1fr) auto minmax(80px, 1fr) auto auto; gap: 6px; align-items: center; width: min(560px, 100%); padding: 8px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); font-size: 12px; }
 .plot-range-form input { min-width: 0; width: 100%; }
-.plot-range-form p { grid-column: 1 / -1; margin: 0; max-width: 64ch; }
-@media (max-width: 1100px) { .plot-range-form { grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr); } }
+.plot-range-form p { grid-column: 1 / -1; margin: 0; color: var(--color-text-secondary); font-size: 11px; }
 .plot-range-band { fill: rgb(42 108 201 / .12); stroke: #286ac5; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
-.spectrum-viewport-status:not(:empty), .spectrum-viewport-retry { margin: 0 10px 6px; }
-.spectrum-viewport-retry { align-self: flex-start; }
+/* What the drawing is doing (loading, failed, an empty window), over the plot. */
+.workbench-shell .spectrum-viewport { position: relative; }
+.spectrum-viewport-status:not(:empty) { position: absolute; z-index: 1; top: 40%; left: 50%; max-width: 80%; margin: 0; padding: 4px 10px; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; text-align: center; transform: translate(-50%, -50%); }
+.spectrum-viewport-retry { position: absolute; z-index: 1; top: calc(40% + 28px); left: 50%; transform: translateX(-50%); }
 .spectrum-body > .notice, .spectrum-body > .empty-state { margin: 8px 10px; }
-/* What the last export did, and why PNG or Copy is refused; nothing at rest. */
-.plot-status { flex: none; padding: 0 6px 0 10px; color: var(--color-text-secondary); font-size: 11px; }
-.plot-reason { margin: 0; padding: 4px 0; }
-.plot-status-line { display: flex; align-items: center; gap: 4px; }
-.plot-status .spectrum-export-status, .plot-status .spectrum-export-message { margin: 0; font-size: 11px; }
+/* What the last export did, over the plot's top right corner and under its
+   head: a result never takes height from the plot. Empty at rest. */
+.plot-status { position: absolute; z-index: 3; top: 36px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: min(70%, 460px); color: var(--color-text-primary); font-size: 12px; pointer-events: none; }
+.plot-status > * { pointer-events: auto; }
+.plot-status .spectrum-export-status, .plot-status .spectrum-export-message { margin: 0; font-size: 12px; }
 .plot-status .spectrum-export-message { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
-.plot-status .spectrum-export-status:not(:empty) { padding: 2px 0; }
+.plot-status-line { display: flex; align-items: center; gap: 4px; }
+.plot-status > .spectrum-export-status:not(:empty),
+.plot-status-line:has(> .spectrum-export-status:not(:empty)) { padding: 4px 4px 4px 10px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); }
 
-/* The scan list (spec 3.5): head, filters, a compact four-column grid. */
+/* The scan list (direction A): one head with the title, the count, the search
+   and the MS-level filter, then the table. */
 .workbench-shell .spectrum-table-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.spectrum-table-panel .scan-result-count { font-variant-numeric: tabular-nums; }
-.scan-view-controls { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
-.plot-search { position: relative; flex: 1 1 140px; min-width: 0; }
-.plot-search > .ui-icon { position: absolute; top: 8px; left: 9px; color: var(--color-text-secondary); pointer-events: none; }
-.scan-view-controls input, .scan-view-controls select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: 5px; padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
-.scan-view-controls select { flex: none; max-width: 50%; }
-.scan-view-controls .plot-search > input { width: 100%; padding-left: 30px; }
-.scan-hidden-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 0; padding: 4px 8px; font-size: 12px; }
+.scan-head { display: flex; flex: none; align-items: center; gap: 8px; height: 40px; min-width: 0; padding: 0 8px 0 12px; }
+.scan-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.scan-head .scan-result-count { flex: 0 1 auto; min-width: 0; margin: 0 auto 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.plot-search { position: relative; flex: 0 1 180px; min-width: 72px; }
+.plot-search > .ui-icon { position: absolute; top: 7px; left: 8px; color: var(--color-text-secondary); pointer-events: none; }
+.scan-head input, .scan-head select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: 5px; padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
+.scan-head select { flex: none; max-width: 40%; }
+.scan-head .plot-search > input { width: 100%; padding-left: 28px; }
+.scan-hidden-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 0; padding: 4px 8px 4px 12px; font-size: 12px; }
 .spectrum-table-panel > .empty-state { flex: none; padding: 16px; }
 /* Compact enough for the side column: short labels that ellipsize rather
    than run into the next header, and a small sort glyph. */
-.workbench-shell .spectrum-table-row { gap: 4px; padding: 0 6px; }
+.workbench-shell .spectrum-table-row { gap: 4px; padding: 0 8px 0 12px; }
+/* Every sortable field across the evidence (the Scans tab); the identifier
+   reads left to right like the text it is. */
+.spectrum-table-panel[data-layout="full"] .spectrum-table-row { grid-template-columns: minmax(48px, 0.5fr) minmax(48px, 0.5fr) minmax(160px, 2.4fr) minmax(64px, 0.6fr) minmax(88px, 0.9fr) minmax(96px, 1fr) minmax(112px, 1fr) minmax(112px, 1fr) minmax(96px, 1fr); }
+.spectrum-table-panel[data-layout="full"] .spectrum-table-cell:nth-child(3) { text-align: left; }
+.spectrum-table-panel[data-layout="full"] .spectrum-table-cell:nth-child(3) .scan-sort-button { justify-content: flex-start; }
 .scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 100%; min-width: 0; min-height: 28px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .scan-sort-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .spectrum-table-cell:first-child .scan-sort-button { justify-content: flex-start; }
@@ -300,28 +327,26 @@
 .scan-sort-button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .scan-sort-button:hover { color: var(--color-text-primary); }
 .spectrum-table-head .spectrum-table-cell { overflow: hidden; }
-/* Sort scans: every field, with the chosen one checked. */
-.scan-sort-menu-label { padding: 4px 9px 2px; color: var(--color-text-secondary); font-size: 11px; font-weight: 650; }
-.scan-sort-menu [role="menuitemradio"] { position: relative; display: flex; align-items: center; min-height: 30px; padding: 6px 9px 6px 28px; border-radius: 4px; cursor: pointer; }
-.scan-sort-check { position: absolute; left: 8px; display: inline-flex; color: var(--color-accent); }
 @media (prefers-reduced-motion: reduce) { .scan-sort-button svg { transition: none; } }
 .workbench-shell .spectrum-panel { min-height: 0; }
 /* The rows fill the pane and never size it: the spectrum beside them sets the
    lower row's floor, so a long run cannot push the evidence into scrolling. */
 .workbench-shell .spectrum-table-viewport { flex: 1 1 auto; min-height: 0; contain: size; }
 
-/* Details (spec 4, v5.11 .inspector): dt left, dd right, a light rule
-   between rows, a 1 px rule between sections. */
+/* Details (spec 4, v5.11 .inspector) and the Metadata tab: dt left, dd right,
+   a light rule between rows, a 1 px rule between sections, sentence-case
+   headings (V4). The Metadata tab scrolls inside its panel. */
 .workbench-inspector .inspector-panel { min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
-.workbench-inspector .inspector-section { padding: 14px 14px 16px; border-bottom: 1px solid var(--color-border); }
-.workbench-inspector .inspector-section h2,
-.workbench-inspector .inspector-section h3 { margin: 0 0 8px; color: var(--color-text-secondary); font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
-.workbench-inspector .inspector-section h4 { margin: 12px 0 6px; font-size: 12px; font-weight: 650; }
-.workbench-inspector .preview-file-identity { margin: 0 0 8px; color: var(--color-text-primary); font-size: 15px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
-.workbench-inspector .metadata-list { gap: 0; }
-.workbench-inspector .metadata-list > div { padding: 7px 0; border-bottom: 1px solid #edf1f5; }
-.workbench-inspector .metadata-list dt { color: var(--color-text-secondary); }
-.workbench-inspector .metadata-list dd { overflow-wrap: anywhere; }
+.preview-metadata { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.preview-metadata > .inspector-section { max-width: 720px; }
+:is(.workbench-inspector, .preview-metadata) .inspector-section { padding: 14px 14px 16px; border-bottom: 1px solid var(--color-border); }
+:is(.workbench-inspector, .preview-metadata) .inspector-section :is(h2, h3) { margin: 0 0 8px; color: var(--color-text-secondary); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+:is(.workbench-inspector, .preview-metadata) .inspector-section h4 { margin: 12px 0 6px; font-size: 12px; font-weight: 650; }
+.workbench-inspector .inspector-section h2.preview-file-identity { margin: 0; color: var(--color-text-primary); font-size: 14px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+:is(.workbench-inspector, .preview-metadata) .metadata-list { gap: 0; }
+:is(.workbench-inspector, .preview-metadata) .metadata-list > div { padding: 7px 0; border-bottom: 1px solid #edf1f5; }
+:is(.workbench-inspector, .preview-metadata) .metadata-list dt { color: var(--color-text-secondary); }
+:is(.workbench-inspector, .preview-metadata) .metadata-list dd { overflow-wrap: anywhere; }
 .workbench-inspector .spectrum-facts { grid-template-columns: minmax(0, 1fr); }
 .inspector-text { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 .metadata-disclosure { width: 100%; justify-content: flex-start; text-align: left; white-space: normal; }
@@ -352,5 +377,5 @@
   .workbench-shell .workspace-sidebar, .workbench-inspector { position: absolute; z-index: 3; inset-block: 0; grid-area: auto; width: min(300px, 100%); box-shadow: 0 8px 24px rgb(23 35 55 / 0.18); }
   .workbench-shell .workspace-sidebar { left: 0; }
   .workbench-inspector { right: 0; }
-  .viewer-lower, .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 288px minmax(0, 1fr); }
+  .viewer-lower, .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
 }

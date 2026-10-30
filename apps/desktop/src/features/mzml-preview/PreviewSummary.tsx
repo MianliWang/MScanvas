@@ -18,10 +18,6 @@ import type { SpectrumViewportState } from "./viewer/spectrumViewport";
 
 export interface PreviewSummaryProps {
   readonly file: SelectedFile;
-  readonly runSummary: RunSummary;
-  readonly metadata: Metadata;
-  /** The spectrum list's own total, which is produced by a separate read. */
-  readonly spectrumListTotal: number;
   /** The selected spectrum, once one has loaded. */
   readonly spectrum: SelectedSpectrum | null;
   /** How many scans the chromatogram is drawn from, while one is drawn. */
@@ -31,8 +27,9 @@ export interface PreviewSummaryProps {
 }
 
 /**
- * Details: what the loaded acquisition is, beside every number read out of it,
- * and the selected spectrum's own facts.
+ * Details: which acquisition is open, the selected spectrum's own facts, and
+ * what each plot is drawn from. The run and the file's metadata are the
+ * Metadata tab's ({@link PreviewMetadata}), so no fact is said twice.
  *
  * Memoized because the viewer publishes a new interaction state whenever the
  * pointer crosses from one scan to another. None of that reaches these props,
@@ -49,9 +46,6 @@ export interface PreviewSummaryProps {
  */
 export const PreviewSummary = memo(function PreviewSummary({
   file,
-  runSummary,
-  metadata,
-  spectrumListTotal,
   spectrum,
   chromatogramScanCount,
   spectrumViewport,
@@ -63,21 +57,61 @@ export const PreviewSummary = memo(function PreviewSummary({
     () => (spectrum === null ? "" : spectrumSourceDetails(spectrum, spectrumViewport, t)),
     [spectrum, spectrumViewport, t],
   );
-  // The run summary and the spectrum list are two separate reads of the same
-  // file. When they disagree, showing one number here and a different one over
-  // the table would present a single acquisition with two sizes.
-  const countsDisagree = runSummary.totalSpectrumCount !== spectrumListTotal;
   const fileLabel = formatDatasetLabel(file);
   return (
     <section aria-labelledby="preview-summary-heading" className="panel inspector-panel">
       <div className="inspector-section">
-        <h2 id="preview-summary-heading">{t("summaryRun")}</h2>
         {/* The filename plus only the bounded context Rust says the current
             roster needs. No absolute path crosses, and no location is
             reconstructed here. */}
-        <p className="preview-file-identity" title={fileLabel}>
+        <h2 id="preview-summary-heading" className="preview-file-identity" title={fileLabel}>
           {t("summaryIdentity", { name: fileLabel, size: formatByteLength(file.byteLength, t) })}
-        </p>
+        </h2>
+      </div>
+      <div className="inspector-section">
+        <h3>{t("viewerSpectrum")}</h3>
+        {spectrum === null ? <p className="quiet-text">{t("viewerSpectrumNone")}</p> : <SpectrumFacts spectrum={spectrum} />}
+      </div>
+
+      {chromatogramScanCount === null ? null : (
+        <div className="inspector-section">
+          <h3>{t("detailsChromatogramSource")}</h3>
+          <p className="inspector-text">{t("viewerScanSource", { count: chromatogramScanCount })}</p>
+        </div>
+      )}
+
+      {spectrumSource === "" ? null : (
+        <div className="inspector-section">
+          <h3>{t("detailsSpectrumSource")}</h3>
+          <p className="inspector-text">{spectrumSource}</p>
+        </div>
+      )}
+    </section>
+  );
+});
+
+export interface PreviewMetadataProps {
+  readonly file: SelectedFile;
+  readonly runSummary: RunSummary;
+  readonly metadata: Metadata;
+  /** The spectrum list's own total, which is produced by a separate read. */
+  readonly spectrumListTotal: number;
+}
+
+/**
+ * The Metadata tab: what the loaded acquisition is, as the run summary reports
+ * it, and the file's own metadata sections in the file's own words.
+ */
+export const PreviewMetadata = memo(function PreviewMetadata({ file, runSummary, metadata, spectrumListTotal }: PreviewMetadataProps) {
+  const t = useUiMessages();
+  // The run summary and the spectrum list are two separate reads of the same
+  // file. When they disagree, showing one number here and a different one over
+  // the table would present a single acquisition with two sizes.
+  const countsDisagree = runSummary.totalSpectrumCount !== spectrumListTotal;
+  return (
+    <section aria-labelledby="preview-metadata-heading" className="preview-metadata">
+      <div className="inspector-section">
+        <h2 id="preview-metadata-heading">{t("summaryRun")}</h2>
         {countsDisagree ? (
           <p className="notice notice-warning" role="note">
             {t("summaryCountsDisagree", {
@@ -87,6 +121,14 @@ export const PreviewSummary = memo(function PreviewSummary({
           </p>
         ) : null}
         <dl className="metadata-list">
+          <div>
+            <dt>{t("summaryFile")}</dt>
+            <dd>{formatDatasetLabel(file)}</dd>
+          </div>
+          <div>
+            <dt>{t("summarySize")}</dt>
+            <dd>{formatByteLength(file.byteLength, t)}</dd>
+          </div>
           <div>
             <dt>{t("summarySpectra")}</dt>
             <dd>{formatCount(runSummary.totalSpectrumCount)}</dd>
@@ -134,25 +176,6 @@ export const PreviewSummary = memo(function PreviewSummary({
           </dl>
         )}
       </div>
-
-      <div className="inspector-section">
-        <h3>{t("viewerSpectrum")}</h3>
-        {spectrum === null ? <p className="quiet-text">{t("viewerSpectrumNone")}</p> : <SpectrumFacts spectrum={spectrum} />}
-      </div>
-
-      {chromatogramScanCount === null ? null : (
-        <div className="inspector-section">
-          <h3>{t("detailsChromatogramSource")}</h3>
-          <p className="inspector-text">{t("viewerScanSource", { count: chromatogramScanCount })}</p>
-        </div>
-      )}
-
-      {spectrumSource === "" ? null : (
-        <div className="inspector-section">
-          <h3>{t("detailsSpectrumSource")}</h3>
-          <p className="inspector-text">{spectrumSource}</p>
-        </div>
-      )}
 
       {metadata.sections.length === 0 ? null : (
         <div className="inspector-section">

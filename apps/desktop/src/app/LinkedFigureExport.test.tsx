@@ -53,7 +53,7 @@ async function openTheViewer(preview: PreviewApi): Promise<void> {
     </WorkspaceDropTransportProvider>,
   );
   fireEvent.keyDown(await screen.findByRole("treegrid", {}, SETTLING), { key: "Enter" });
-  await screen.findByRole("grid", { name: "Spectra" }, SETTLING);
+  await screen.findByRole("grid", { name: "Scans" }, SETTLING);
   await screen.findByRole("img", { name: "Chromatogram" }, SETTLING);
 }
 
@@ -74,11 +74,20 @@ function linkedStatus(): string {
 }
 
 async function selectAScan(row = 1): Promise<void> {
-  const grid = screen.getByRole("grid", { name: "Spectra" });
+  const grid = screen.getByRole("grid", { name: "Scans" });
   fireEvent.click(within(grid).getAllByRole("row")[row] as HTMLElement);
   await waitFor(() => {
-    expect(within(spectrumPanel()).queryByRole("button", { name: en.viewerCopy })).not.toBeNull();
+    expect(within(spectrumPanel()).queryByRole("button", { name: en.plotMoreExports })).not.toBeNull();
   }, SETTLING);
+}
+
+/** Whether a plot box's Quick PNG, under its ⋯ menu (direction A), is refused right now. */
+async function pngRefused(box: HTMLElement): Promise<boolean> {
+  fireEvent.keyDown(within(box).getByRole("button", { name: en.plotMoreExports }), { key: "Enter" });
+  const refused = (await screen.findByRole("menuitem", { name: en.figureQuickPng })).getAttribute("aria-disabled") === "true";
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  return refused;
 }
 
 /** Opens the linked figure dialog from the chromatogram's ⋯ menu, with its preview drawn. */
@@ -264,15 +273,13 @@ describe("the one scientific export lane, and a linked export that outlives its 
     await closeDialog(dialog);
 
     for (const box of [panel(), spectrumPanel()]) {
-      expect(within(box).getByRole("button", { name: en.figureQuickPng })).toHaveAttribute("aria-disabled", "true");
+      expect(await pngRefused(box)).toBe(true);
     }
     // Another scan: the export still holds the lane, but it no longer names
     // the pair on screen, so its result is not said about this one.
     await selectAScan(3);
     act(() => { release(); });
-    await waitFor(() => {
-      expect(within(panel()).getByRole("button", { name: en.figureQuickPng })).not.toHaveAttribute("aria-disabled");
-    });
+    await waitFor(async () => expect(await pngRefused(panel())).toBe(false));
     expect(linkedStatus()).toBe("");
   });
 });

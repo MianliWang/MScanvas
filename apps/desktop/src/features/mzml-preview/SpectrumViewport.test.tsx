@@ -81,9 +81,9 @@ const PLOT_PIXELS = SPECTRUM_PLOT_VIEWBOX_WIDTH;
 const CENTRE_X = SPECTRUM_PLOT_PADDING_LEFT + SPECTRUM_PLOT_DRAWN_WIDTH / 2;
 
 const HEADING_ID = "selected-spectrum-heading";
-const HEADING = "Selected spectrum";
+const HEADING = "Spectrum";
 
-const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Reset m/z range"] as const;
+const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Fit all, m/z"] as const;
 const RETRY = UI_RESOURCES.en.viewerMzRetry;
 
 /** One wheel notch inward and one outward, in the unit nearly every device uses. */
@@ -149,12 +149,15 @@ function Harness({
   mz,
   onRetryProjection,
   projectionError,
+  rangeEditing = false,
 }: {
   readonly domain: SpectrumViewportDomain | null;
   readonly intensity: readonly number[];
   readonly mz: readonly number[];
   readonly onRetryProjection: () => void;
   readonly projectionError: PreviewError | null;
+  /** The range editor open, as the spectrum's ⋯ menu opens it. */
+  readonly rangeEditing?: boolean;
 }) {
   const viewport = useSpectrumViewport();
   controller = viewport;
@@ -181,6 +184,7 @@ function Harness({
         reportedMzHigh={500}
         reportedMzLow={100}
         state={viewport.state}
+        rangeEditing={rangeEditing}
       />
       {/* The head's m/z controls, as the spectrum box renders them. */}
       <SpectrumZoomControls dispatch={viewport.dispatch} readState={viewport.current} state={viewport.state} />
@@ -192,11 +196,13 @@ function renderViewport(
   options: {
     readonly domain?: SpectrumViewportDomain | null;
     readonly projectionError?: PreviewError | null;
+    readonly rangeEditing?: boolean;
   } = {},
 ): { readonly onRetryProjection: ReturnType<typeof vi.fn> } {
   const onRetryProjection = vi.fn();
   render(
     <Harness
+      rangeEditing={options.rangeEditing}
       domain={options.domain === undefined ? FULL : options.domain}
       intensity={TRANSFERRED_INTENSITY}
       mz={TRANSFERRED_MZ}
@@ -579,20 +585,20 @@ describe("what each m/z control would do", () => {
       domain: FULL,
       reach: () => undefined,
       // Nothing wider to show, and nothing to go back to.
-      expected: { "Zoom in m/z": true, "Zoom out m/z": false, "Reset m/z range": false },
+      expected: { "Zoom in m/z": true, "Zoom out m/z": false, "Fit all, m/z": false },
     },
     {
       name: "an ordinary subrange",
       domain: FULL,
       reach: commitSubrange,
-      expected: { "Zoom in m/z": true, "Zoom out m/z": true, "Reset m/z range": true },
+      expected: { "Zoom in m/z": true, "Zoom out m/z": true, "Fit all, m/z": true },
     },
     {
       name: "the narrowest window this spectrum allows",
       domain: FULL,
       reach: commitNarrowest,
       // Nothing narrower to show, but plenty wider.
-      expected: { "Zoom in m/z": false, "Zoom out m/z": true, "Reset m/z range": true },
+      expected: { "Zoom in m/z": false, "Zoom out m/z": true, "Fit all, m/z": true },
     },
     {
       name: "a spectrum whose points all report one m/z",
@@ -601,13 +607,13 @@ describe("what each m/z control would do", () => {
       // A zero-width domain has no subrange and no superrange. The points are
       // still drawn -- there is nothing to zoom, which is not the same as
       // nothing to see.
-      expected: { "Zoom in m/z": false, "Zoom out m/z": false, "Reset m/z range": false },
+      expected: { "Zoom in m/z": false, "Zoom out m/z": false, "Fit all, m/z": false },
     },
     {
       name: "a spectrum whose m/z range Rust refused",
       domain: REFUSED,
       reach: () => undefined,
-      expected: { "Zoom in m/z": false, "Zoom out m/z": false, "Reset m/z range": false },
+      expected: { "Zoom in m/z": false, "Zoom out m/z": false, "Fit all, m/z": false },
     },
   ];
 
@@ -711,17 +717,17 @@ describe("pressing a control", () => {
      */
     renderViewport();
     commitSubrange();
-    expect(refused("Reset m/z range")).toBe(false);
+    expect(refused("Fit all, m/z")).toBe(false);
 
     let afterReset: SpectrumViewportState | null = null;
     act(() => {
       afterReset = dispatchNow({ type: "viewport-reset" });
-      control("Reset m/z range").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      control("Fit all, m/z").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(afterReset).not.toBeNull();
     expect(state()).toBe(afterReset);
-    expect(refused("Reset m/z range")).toBe(true);
+    expect(refused("Fit all, m/z")).toBe(true);
   });
 
   it("zooms the window the live state holds, not the one the render drew", () => {
@@ -763,7 +769,7 @@ describe("pressing a control", () => {
     renderViewport();
     commitSubrange();
 
-    fireEvent.click(control("Reset m/z range"));
+    fireEvent.click(control("Fit all, m/z"));
 
     expect(ready().committed).toBeNull();
     expect(rangeText()).toBe("Showing m/z 100.0000 to 500.0000 (full range)");
@@ -2047,11 +2053,12 @@ describe("a viewport that is admitted and has nothing to do", () => {
     }
   });
 
-  it("names its Set range… by its axis, and says why Apply is refused in its editor", () => {
-    renderViewport({ domain: FLAT });
+  it("says why Apply is refused in its range editor, which takes the keyboard when it opens", () => {
+    renderViewport({ domain: FLAT, rangeEditing: true });
 
-    // Two plots each have one; the axis is what tells them apart.
-    fireEvent.click(screen.getByRole("button", { name: "Set range… (m/z)" }));
+    // Opened from the spectrum's ⋯ menu; it is over the plot and holds From first.
+    expect(screen.getByRole("form", { name: UI_RESOURCES.en.rangeSet })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "From" })).toHaveFocus();
     const apply = screen.getByRole("button", { name: "Apply range" });
     expect(apply).toHaveAttribute("aria-disabled", "true");
     expect(apply).not.toBeDisabled();

@@ -28,7 +28,7 @@ async function mount() {
     <PreviewApiProvider value={api}><App /></PreviewApiProvider>
   </WorkspaceDropTransportProvider>);
   fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
-  await screen.findByRole("grid", { name: "Spectra" });
+  await screen.findByRole("grid", { name: UI_RESOURCES.en.scansTitle });
   return { api, preview };
 }
 const grid = () => screen.getByRole("grid");
@@ -39,7 +39,7 @@ function selectRow(index: number, cell = 2) {
   if (!row) throw new Error(`Source row ${index} is not displayed`);
   fireEvent.click(within(row).getAllByRole("gridcell")[cell]);
 }
-const spectrumPanel = () => screen.getByRole("region", { name: "Selected spectrum" });
+const spectrumPanel = () => screen.getByRole("region", { name: UI_RESOURCES.en.viewerSpectrum });
 const chromatogramPanel = () => screen.getByRole("region", { name: "Chromatogram" });
 function plotIn(panel: HTMLElement) {
   const plot = within(panel).getByRole("img");
@@ -59,12 +59,14 @@ function releaseBand(plot: HTMLElement, axis: "rt" | "mz") {
 }
 /** The RT header shows its short label first and its full name after it. */
 const RT_HEADER = "RT (Retention time)";
-/** Each plot names its Set range… with its axis, so a panel finds its own by the shared start. */
-const SET_RANGE = new RegExp(`^${UI_RESOURCES.en.rangeSet}`, "u");
-const setRangeFor = (locale: "en" | "zh-CN", axis: "rangeRtAxis" | "rangeMzAxis") =>
-  UI_RESOURCES[locale].rangeSetFor.replace("{{name}}", UI_RESOURCES[locale][axis]);
-function editRange(panel: HTMLElement, low: string, high: string) {
-  fireEvent.click(within(panel).getByRole("button", { name: SET_RANGE }));
+/** Each plot's Set range… is the first item of its own ⋯ menu (direction A). */
+async function openRangeEditor(panel: HTMLElement, locale: "en" | "zh-CN" = "en") {
+  fireEvent.keyDown(within(panel).getByRole("button", { name: UI_RESOURCES[locale].plotMoreExports }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: UI_RESOURCES[locale].rangeSet }));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+}
+async function editRange(panel: HTMLElement, low: string, high: string) {
+  await openRangeEditor(panel);
   fireEvent.change(within(panel).getByRole("textbox", { name: "From" }), { target: { value: low } });
   fireEvent.change(within(panel).getByRole("textbox", { name: "To" }), { target: { value: high } });
   fireEvent.click(within(panel).getByRole("button", { name: "Apply range" }));
@@ -147,7 +149,7 @@ describe("M7.3 through the delivered application", () => {
     await screen.findByRole("img", { name: /^Spectrum 4,/u });
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(1));
     const mzPanel = spectrumPanel(); const rtPanel = chromatogramPanel();
-    editRange(mzPanel, "2e2", "800"); editRange(rtPanel, "1", "6");
+    await editRange(mzPanel, "2e2", "800"); await editRange(rtPanel, "1", "6");
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(2));
     expect(api.spectrumProjectionRequests[1]).toEqual({ exportToken: "token-4", low: 200, high: 800 });
     await chooseScope(mzPanel, "Current range");
@@ -212,7 +214,7 @@ describe("M7.3 through the delivered application", () => {
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(1));
     const panel = spectrumPanel(); const plot = plotIn(panel);
     startBand(plot, "mz"); releaseBand(plot, "mz");
-    fireEvent.click(within(panel).getByRole("button", { name: setRangeFor("en", "rangeMzAxis") }));
+    await openRangeEditor(panel);
     const from = within(panel).getByRole("textbox", { name: "From" }) as HTMLInputElement;
     from.focus(); fireEvent.change(from, { target: { value: "2e" } }); from.setSelectionRange(1, 1);
     fireEvent.compositionStart(from); fireEvent.keyDown(from, { key: "Enter", isComposing: true });
@@ -232,7 +234,8 @@ describe("M7.3 through the delivered application", () => {
     expect(screen.getByText(UI_RESOURCES["zh-CN"].rangeInvalid)).toBeVisible();
     from.focus(); fireEvent.keyDown(from, { key: "Escape" });
     expect(from).not.toBeInTheDocument();
-    expect(within(panel).getByRole("button", { name: setRangeFor("zh-CN", "rangeMzAxis") })).toHaveFocus();
+    // Closing gives the keyboard back to the ⋯ trigger the editor came from.
+    expect(within(panel).getByRole("button", { name: UI_RESOURCES["zh-CN"].plotMoreExports })).toHaveFocus();
     expect(api.spectrumProjectionRequests).toHaveLength(1);
   });
 });

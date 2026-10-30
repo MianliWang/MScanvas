@@ -23,6 +23,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import appStyles from "./app.css?raw";
+import workbenchStyles from "../features/workbench/workbench.css?raw";
 
 import type { BackendAvailability } from "../features/mzml-preview/contracts";
 import type { PreviewApi } from "../features/mzml-preview/api";
@@ -83,7 +84,7 @@ async function openTheViewer(preview: PreviewApi): Promise<void> {
     </WorkspaceDropTransportProvider>,
   );
   fireEvent.keyDown(await screen.findByRole("treegrid", {}, SETTLING), { key: "Enter" });
-  await screen.findByRole("grid", { name: "Spectra" }, SETTLING);
+  await screen.findByRole("grid", { name: "Scans" }, SETTLING);
   await screen.findByRole("img", { name: "Chromatogram" }, SETTLING);
   vi.spyOn(plot(), "getBoundingClientRect").mockReturnValue({
     x: 0,
@@ -103,7 +104,7 @@ function plot(): HTMLElement {
 }
 
 function grid(): HTMLElement {
-  return screen.getByRole("grid", { name: "Spectra" });
+  return screen.getByRole("grid", { name: "Scans" });
 }
 
 /** The one availability explanation, while there is one. */
@@ -154,7 +155,7 @@ describe("the viewer's selection availability", () => {
     // explanation that is not there is worse than none.
     expect(notice()).toBeNull();
     expect(grid().getAttribute("aria-describedby")).toBeNull();
-    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units plot-range-rt-gestures");
+    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures");
   });
 
   it("explains the closed lane once, and both surfaces point at that one sentence", async () => {
@@ -171,7 +172,7 @@ describe("the viewer's selection availability", () => {
     // Both surfaces, the same id, and the plot keeps its readout as well.
     expect(grid().getAttribute("aria-describedby")).toBe("viewer-selection-availability");
     expect(plot().getAttribute("aria-describedby")).toBe(
-      "chromatogram-readout chromatogram-units plot-range-rt-gestures viewer-selection-availability",
+      "chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures viewer-selection-availability",
     );
 
     // Announced politely, by the element that was already there.
@@ -299,24 +300,24 @@ describe("how an empty availability region is collapsed", () => {
     });
   }
 
-  it("lets the three-panel stack fill the column the notice shares", () => {
+  it("lets the open file's row and view fill the evidence the notice shares", () => {
     /*
-     * The stack was a direct grid item of `.workspace-layout`, whose
-     * `minmax(0, 1fr)` rows stretched it. Wrapping it in a flex column takes
-     * that away: a flex item defaults to `0 1 auto`, so it would take its own
-     * content height -- floored by the three tracks and nothing more -- and a
-     * tall window showing a short run would show a band of nothing beneath the
-     * three scientific views.
+     * The evidence is a flex column. A flex item defaults to `0 1 auto`, so the
+     * file row (where the notice sits) and the view under its tabs would take
+     * their own content height, and a tall window showing a short run would
+     * show a band of nothing beneath the scientific views.
      */
-    const body = ruleBody(".viewer-stack");
-    expect(body).toContain("flex: 1 1 auto");
-    expect(body).toContain("min-height: 0");
+    for (const selector of [".viewer-file", ".viewer-view"]) {
+      const body = workbenchStyles.split(`\n${selector} {`)[1]?.split("}")[0];
+      expect(body, `Expected a CSS rule for ${selector}`).toBeDefined();
+      expect(body, selector).toContain("flex: 1 1 auto");
+      expect(body, selector).toContain("min-height: 0");
+    }
   });
 
   it("declares each of them exactly once", () => {
-    // Written twice, a later copy silently decides. Both of these were, once.
+    // Written twice, a later copy silently decides. This one was, once.
     for (const selector of [
-      ".viewer-column {",
       ".viewer-selection-notice:empty {",
     ]) {
       expect(appStyles.split(selector).length - 1, selector).toBe(1);

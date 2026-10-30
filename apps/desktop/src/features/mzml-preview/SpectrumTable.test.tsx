@@ -14,7 +14,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import appStyles from "../../app/app.css?raw";
 import { buildRows } from "../../test/previewFixtures";
 import { UI_RESOURCES } from "../preferences/i18n";
-import { SpectrumTable, type SpectrumTableProps } from "./SpectrumTable";
+import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
+import { SpectrumTable, scanStepReasonId, type SpectrumTableProps } from "./SpectrumTable";
+import { initialSpectrumViewportState } from "./viewer/spectrumViewport";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { useScanTableView } from "./viewer/useScanTableView";
 import type { Selection } from "./viewer/interactionState";
@@ -50,6 +52,7 @@ function commit(index: number, revision: number): Selection {
 }
 
 interface TableOptions {
+  readonly layout?: "compact" | "full";
   readonly rowCount?: number;
   readonly selection?: Selection | null;
   readonly truncated?: boolean;
@@ -66,6 +69,7 @@ function renderTable(options: TableOptions = {}) {
   const onSelectPrevious = vi.fn();
   const onSelectNext = vi.fn();
   const props = (selection: Selection | null) => ({
+    layout: options.layout,
     canSelectNext: options.canSelectNext ?? false,
     canSelectPrevious: options.canSelectPrevious ?? false,
     onRendered,
@@ -140,44 +144,37 @@ describe("spectrum table columns", () => {
     expect(within(headers[1]!).getByRole("button")).toHaveAttribute("title", "Retention time");
   });
 
-  it("sorts by any field from Sort scans, not only by the four columns, and returns to file order", async () => {
-    const { container } = renderTable({ rowCount: 6 });
+  it("puts every field the table sorts by under its own header on the Scans tab (P11)", () => {
+    const { container } = renderTable({ rowCount: 6, layout: "full" });
     const order = () => [...container.querySelectorAll("[data-source-index]")].map((row) => row.getAttribute("data-source-index"));
-    const open = async () => {
-      fireEvent.keyDown(screen.getByRole("button", { name: /^Sort scans/u }), { key: "Enter" });
-      return screen.findByRole("menu");
-    };
-    expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
-
-    // Total ion current has no column; it is one of the five fields in Details.
-    let menu = await open();
-    expect(within(menu).getAllByRole("menuitemradio").map((item) => item.textContent)).toEqual([
-      "File order", "Index", "Scan", "Identifier", "MS level", "Retention time", "Base peak m/z",
+    const headers = () => screen.getAllByRole("columnheader");
+    expect(headers().map((header) => header.textContent)).toEqual([
+      "Index", "Scan", "Identifier", "MS level", "Retention time", "Base peak m/z",
       "Base peak intensity", "Total ion current", "Precursor m/z",
     ]);
-    expect(within(menu).getByRole("menuitemradio", { name: "File order" })).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Total ion current" }));
+    expect(screen.getByRole("grid", { name: "Scans" })).toHaveAttribute("aria-colcount", "9");
     expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
-    expect(screen.getByRole("button", { name: "Sort scans: Total ion current, Ascending" })).toBeInTheDocument();
 
-    menu = await open();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Descending" }));
+    // Total ion current, which has no column beside the spectrum, sorts from
+    // its own header, and its header says which way.
+    const tic = () => within(headers()[7]!).getByRole("button", { name: "Total ion current" });
+    fireEvent.click(tic());
+    expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
+    fireEvent.click(tic());
     expect(order()).toEqual(["5", "4", "3", "2", "1", "0"]);
-    // Not one of the columns, so no header claims the order.
-    expect(container.querySelector("[aria-sort]")).toBeNull();
-
-    menu = await open();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "File order" }));
+    expect(headers()[7]).toHaveAttribute("aria-sort", "descending");
+    // The index ascending is the file's own order.
+    fireEvent.click(within(headers()[0]!).getByRole("button", { name: "Index" }));
     expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
-    menu = await open();
-    // With no field chosen there is no direction to choose.
-    expect(within(menu).queryByRole("menuitemradio", { name: "Descending" })).toBeNull();
+    expect(headers()[0]).toHaveAttribute("aria-sort", "ascending");
+    // The identifier is a cell of its own, as the file spells it.
+    expect(within(screen.getAllByRole("row")[1]!).getAllByRole("gridcell")[2]).toHaveTextContent("controllerType=0 controllerNumber=1 scan=1");
   });
 
   it("still counts every row the run has, not the rendered window", () => {
     const { container } = renderTable({ rowCount: 400 });
 
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     expect(grid).toHaveAttribute("aria-rowcount", "401");
     expect(grid).toHaveAttribute("aria-colcount", "4");
     // Windowed: the header row plus a bounded slice, not 400 rows.
@@ -264,7 +261,7 @@ describe("spectrum table rows", () => {
   it("moves focus with the arrows and commits only on Enter", () => {
     // Each selection launches one backend read, so arrowing must not select.
     const { onSelect } = renderTable();
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     const rows = within(grid).getAllByRole("row");
 
     rows[1]?.focus();
@@ -282,7 +279,7 @@ describe("spectrum table rows", () => {
     // row shorter than that box. Counting the whole box would page the focus
     // one row further than the user can see.
     renderTable({ rowCount: 400 });
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     within(grid).getAllByRole("row")[1]?.focus();
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "PageDown" });
@@ -299,7 +296,7 @@ describe("spectrum table rows", () => {
   it("marks the selected row for a reader as well as for the eye", () => {
     renderTable({ rowCount: 40, selection: commit(3, 1) });
 
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     const selected = within(grid)
       .getAllByRole("row")
       .filter((row) => row.getAttribute("aria-selected") === "true");
@@ -486,7 +483,7 @@ describe("the spectrum table while selection is unavailable", () => {
   }
 
   function grid(): HTMLElement {
-    return screen.getByRole("grid", { name: "Spectra" });
+    return screen.getByRole("grid", { name: "Scans" });
   }
 
   it("does not commit a clicked row", () => {
@@ -618,7 +615,27 @@ describe("the spectrum table while selection is unavailable", () => {
   });
 });
 
-function TestSpectrumTable(props: Omit<SpectrumTableProps, "view">) {
+interface StepProps {
+  readonly canSelectPrevious: boolean;
+  readonly canSelectNext: boolean;
+  readonly onSelectPrevious: () => void;
+  readonly onSelectNext: () => void;
+}
+
+/**
+ * The table and the spectrum head's scan steps (direction A), wired as the
+ * workspace wires them: the steps walk this table's order, and point at the
+ * table's sentence when its filters hide the selection.
+ */
+function TestSpectrumTable({ canSelectPrevious, canSelectNext, onSelectPrevious, onSelectNext, ...props }: Omit<SpectrumTableProps, "view"> & StepProps) {
   const view = useScanTableView(props.table.rows);
-  return <SpectrumTable {...props} view={view} />;
+  return <>
+    <SpectrumTable {...props} view={view} />
+    <SelectedSpectrumPanel state={{ status: "none" }} onOpenFigure={() => {}} onRetry={() => {}} viewport={initialSpectrumViewportState}
+      dispatchViewport={() => initialSpectrumViewportState} readViewport={() => initialSpectrumViewportState} projectionError={null}
+      onRetryProjection={() => {}} exportState={{ status: "idle" }} scientificExportBusy={false} onExport={() => {}} onCopyPlot={() => {}}
+      onDismissExport={() => {}} figureSettingsValidation={{ render: null, dpi: null }}
+      canSelectPrevious={canSelectPrevious} canSelectNext={canSelectNext} onSelectPrevious={onSelectPrevious} onSelectNext={onSelectNext}
+      stepReasonId={scanStepReasonId(view, props.selection?.index ?? null, props.selectionAvailability)} />
+  </>;
 }

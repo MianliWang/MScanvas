@@ -27,13 +27,9 @@ function renderTable(rowCount: number) {
   const onRendered = vi.fn();
   const result = render(
     <TestSpectrumTable
-      canSelectNext={false}
-      canSelectPrevious={false}
       onRendered={onRendered}
       onSelect={onSelect}
       selectionAvailability={{ status: "available" }}
-      onSelectNext={() => undefined}
-      onSelectPrevious={() => undefined}
       selection={null}
       table={{ rows, totalRowCount: rowCount, truncated: false }}
     />,
@@ -69,12 +65,12 @@ describe("spectrum table at acquisition scale", () => {
   it("keeps the mounted row count bounded while reporting the real total", () => {
     const { onRendered } = renderTable(REPRESENTATIVE_ROW_COUNT);
 
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     expect(grid).toHaveAttribute("aria-rowcount", String(REPRESENTATIVE_ROW_COUNT + 1));
     // Header plus one window. The bound is what matters, not the exact number.
     expect(within(grid).getAllByRole("row").length).toBeLessThan(100);
     // Every row loaded and nothing filtered: one count, the real total.
-    expect(screen.getByText("36,319 spectra")).toBeVisible();
+    expect(screen.getByText("36,319")).toBeVisible();
 
     const [renderedRowCount] = onRendered.mock.calls.at(-1) ?? [];
     expect(renderedRowCount).toBeLessThan(100);
@@ -86,7 +82,7 @@ describe("spectrum table at acquisition scale", () => {
 
     fireEvent.scroll(viewport, { target: { scrollTop: REPRESENTATIVE_ROW_COUNT * 30 } });
 
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     const rows = within(grid).getAllByRole("row");
     expect(rows.length).toBeLessThan(100);
     // The final spectrum is reachable and is the one the file actually ends on.
@@ -98,12 +94,12 @@ describe("spectrum table at acquisition scale", () => {
 
   it("jumps to the end with the keyboard and keeps exactly one tab stop", () => {
     const { container, onSelect } = renderTable(REPRESENTATIVE_ROW_COUNT);
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
 
     within(grid).getAllByRole("row")[1]?.focus();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "End" });
 
-    const rows = within(screen.getByRole("grid", { name: "Spectra" })).getAllByRole("row");
+    const rows = within(screen.getByRole("grid", { name: "Scans" })).getAllByRole("row");
     expect(rows.length).toBeLessThan(100);
     const tabStops = container.querySelectorAll('[role="row"][tabindex="0"]');
     expect(tabStops).toHaveLength(1);
