@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200.000" height="640.000" viewBox="0 0 1200.000 640.000" role="img">
+<title>Caffeine, the &quot;one&quot; — Detected (ambiguous)</title>
+<desc>Targeted MS1 lookup (experimental) of C8H10N4O2: detected, ambiguous: the engine selected the shaded feature from 2 candidates, the others outlined. The points are the M and M+1 values the engine extracted, as this stored result holds them; nothing was re-extracted. Result 00000000-0000-4000-8000-000000000053; plan 0000000000000000000000000000000000000000000000000000000000000000. An ordered trace over the separation axis. Series: &quot;M (m/z 195.0877)&quot; is measured data, &quot;M+1 (m/z 196.0911)&quot; is a second measured series. Every sample is marked as well as joined: &quot;M (m/z 195.0877)&quot; with filled dots, &quot;M+1 (m/z 196.0911)&quot; with open dots. The source file reports no unit for the Intensity axis, so none is shown. One marker line is drawn on the Retention time axis: &quot;Apex&quot; at 120.0. Intervals on the Retention time axis, drawn with window ends as dotted lines, the selected interval as a shaded band, considered intervals as dashed outlines: the window &quot;RT window&quot; from 90.0 to 150.0; the selected interval &quot;Feature&quot; from 114.0 to 126.0; a considered interval &quot;Candidate&quot; from 95.0 to 99.0.</desc>
+<rect x="0" y="0" width="1200.000" height="640.000" fill="#ffffff"/>
+<text x="51.471" y="24.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="16.000" font-weight="700" xml:space="preserve">Caffeine, the &quot;one&quot; — Detected (ambiguous)</text>
+<line x1="51.471" y1="467.048" x2="1180.000" y2="467.048" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
+<line x1="51.471" y1="336.095" x2="1180.000" y2="336.095" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
+<line x1="51.471" y1="205.143" x2="1180.000" y2="205.143" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
+<line x1="51.471" y1="74.190" x2="1180.000" y2="74.190" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
+<line x1="51.471" y1="598.000" x2="1180.000" y2="598.000" stroke="#333333" stroke-width="1.000"/>
+<line x1="51.471" y1="48.000" x2="51.471" y2="598.000" stroke="#333333" stroke-width="1.000"/>
+<line x1="51.471" y1="48.000" x2="51.471" y2="598.000" stroke="#333333" stroke-width="1.000" stroke-dasharray="1 3"/>
+<line x1="1180.000" y1="48.000" x2="1180.000" y2="598.000" stroke="#333333" stroke-width="1.000" stroke-dasharray="1 3"/>
+<rect x="502.882" y="48.000" width="225.706" height="550.000" fill="#1f4e9c" fill-opacity="0.16"/>
+<rect x="145.515" y="48.000" width="75.235" height="550.000" fill="none" stroke="#5c5c5c" stroke-width="1.000" stroke-dasharray="2 2"/>
+<path d="M239.559 598.000L427.647 467.048L615.735 74.190L803.824 493.238L991.912 598.000" fill="none" stroke="#1f4e9c" stroke-width="1.000"/>
+<circle cx="239.559" cy="598.000" r="2.500" fill="#1f4e9c"/>
+<circle cx="427.647" cy="467.048" r="2.500" fill="#1f4e9c"/>
+<circle cx="615.735" cy="74.190" r="2.500" fill="#1f4e9c"/>
+<circle cx="803.824" cy="493.238" r="2.500" fill="#1f4e9c"/>
+<circle cx="991.912" cy="598.000" r="2.500" fill="#1f4e9c"/>
+<path d="M239.559 598.000L427.647 584.905L615.735 545.619L803.824 587.524L991.912 598.000" fill="none" stroke="#9a4a00" stroke-width="1.000" stroke-dasharray="6 3"/>
+<circle cx="239.559" cy="598.000" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
+<circle cx="427.647" cy="584.905" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
+<circle cx="615.735" cy="545.619" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
+<circle cx="803.824" cy="587.524" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
+<circle cx="991.912" cy="598.000" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
+<line x1="1067.799" y1="55.333" x2="1085.799" y2="55.333" stroke="#1f4e9c" stroke-width="1.000"/>
+<circle cx="1076.799" cy="55.333" r="2.500" fill="#1f4e9c"/>
+<text x="1176.000" y="59.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">M (m/z 195.0877)</text>
+<line x1="1055.258" y1="69.333" x2="1073.258" y2="69.333" stroke="#9a4a00" stroke-width="1.000" stroke-dasharray="6 3"/>
+<circle cx="1064.258" cy="69.333" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
+<text x="1176.000" y="73.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">M+1 (m/z 196.0911)</text>
+<line x1="615.735" y1="48.000" x2="615.735" y2="598.000" stroke="#b3261e" stroke-width="1.000" stroke-dasharray="4 3"/>
+<text x="618.735" y="60.000" fill="#b3261e" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000"><tspan x="618.735" y="60.000" xml:space="preserve">Apex</tspan></text>
+<line x1="47.471" y1="598.000" x2="51.471" y2="598.000" stroke="#333333" stroke-width="1.000"/>
+<text x="45.471" y="601.960" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">0</text>
+<line x1="47.471" y1="467.048" x2="51.471" y2="467.048" stroke="#333333" stroke-width="1.000"/>
+<text x="45.471" y="471.008" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">500</text>
+<line x1="47.471" y1="336.095" x2="51.471" y2="336.095" stroke="#333333" stroke-width="1.000"/>
+<text x="45.471" y="340.055" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">1000</text>
+<line x1="47.471" y1="205.143" x2="51.471" y2="205.143" stroke="#333333" stroke-width="1.000"/>
+<text x="45.471" y="209.103" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">1500</text>
+<line x1="47.471" y1="74.190" x2="51.471" y2="74.190" stroke="#333333" stroke-width="1.000"/>
+<text x="45.471" y="78.150" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">2000</text>
+<line x1="239.559" y1="598.000" x2="239.559" y2="602.000" stroke="#333333" stroke-width="1.000"/>
+<text x="239.559" y="613.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="middle" xml:space="preserve">100</text>
+<line x1="615.735" y1="598.000" x2="615.735" y2="602.000" stroke="#333333" stroke-width="1.000"/>
+<text x="615.735" y="613.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="middle" xml:space="preserve">120</text>
+<line x1="991.912" y1="598.000" x2="991.912" y2="602.000" stroke="#333333" stroke-width="1.000"/>
+<text x="991.912" y="613.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="middle" xml:space="preserve">140</text>
+<text x="615.735" y="628.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="12.000" text-anchor="middle" xml:space="preserve">Retention time (s)</text>
+<text x="14.000" y="323.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="12.000" text-anchor="middle" transform="rotate(-90 14.000 323.000)" xml:space="preserve">Intensity (unit not reported)</text>
+</svg>

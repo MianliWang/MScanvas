@@ -22,6 +22,12 @@ mod reattachment;
 /// The targeted MS1 supervisor: the only place the recipe's worker process is
 /// started, behind the executor boundary the project store runs it through.
 mod targeted_ms1;
+/// The view cache of ADR 0060: where a Thermo RAW file's converted copy is
+/// kept for viewing. Slice 1 is the library alone; slice 2's operation and
+/// commands are its first callers, so until then only its tests use it.
+#[cfg(windows)]
+#[cfg_attr(not(test), allow(dead_code))]
+mod view_cache;
 
 use preferences::UiPreferenceStore;
 use preferences::dto::{UiPreferenceReadDto, UiPreferenceSaveDto, UiPreferenceWriteDto};
