@@ -226,7 +226,8 @@ guessing at it.
 two public profile acquisitions
 ([Thermo vendor centroiding evidence](THERMO_VENDOR_CENTROIDING_EVIDENCE.md)).
 `msLevel=1-` is a verified row for Thermo RAW
-([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).
+([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)),
+and since a third acquisition later that day, so is `msLevel=2-`.
 This record's state for the candidate is left as it was measured here.*
 
 ## Measurements

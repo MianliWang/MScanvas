@@ -366,7 +366,8 @@ disposition; none is dropped because the ledger above has four rows.
 
 *2026-10-30: what the vendor algorithm does is answered for Thermo RAW
 ([Thermo vendor centroiding evidence](THERMO_VENDOR_CENTROIDING_EVIDENCE.md)),
-and `peakPicking vendor msLevel=1-` is a verified row there
+and `peakPicking vendor msLevel=1-` and, later that day,
+`peakPicking vendor msLevel=2-` are verified rows there
 ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).*
 
 M6.2 named the missing input as *a lawful vendor acquisition of an admitted

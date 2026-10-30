@@ -52,7 +52,10 @@ Vendor families convert only on that one executable digest.
   `peakPicking vendor msLevel=1-` is now a verified row, and other vendor
   scopes on Thermo RAW are advanced and labelled, with output checks
   ([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).
-  On other vendor families it stays unchecked and refused.*
+  On other vendor families it stays unchecked and refused. Later the same day
+  a third acquisition measured Orbitrap profile MS2, and
+  `peakPicking vendor msLevel=2-` became a verified row too; every other
+  vendor scope stays advanced.*
 - **"Settings outside the admitted catalog"**, which the after-beta-1 plan
   lists as staying refused.
 
@@ -276,7 +279,10 @@ Every other buildable intent is advanced. Steps are lowered in chain order.
 *2026-10-30: ten rows. The tenth is Thermo vendor centroiding of every MS
 level, `peakPicking vendor msLevel=1-`. It is mzML at m/z 64-bit and intensity
 32-bit with zlib, cases `TV1` and `TE1`, and its source domain is Thermo RAW
-([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).*
+([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).
+Later on 2026-10-30: eleven rows. The tenth also cites `TQ1`, and the eleventh
+is Thermo vendor centroiding of MS2 and above, `peakPicking vendor msLevel=2-`,
+with the same encoding and source domain, cases `TV2`, `TE2` and `TQ2`.*
 
 The existing capability probe reads which formats, switches and filters a build
 accepts, from that build's own help. This is evidence of spelling only, as
