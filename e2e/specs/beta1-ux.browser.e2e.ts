@@ -263,12 +263,8 @@ async function navigate(name: string) {
     target?.click();
     return target !== undefined;
   }, name);
-  // Project is the header menu's first item, not a tab (rebuild spec 1.1).
-  if (!found) {
-    await browser.$("[data-project-menu]").click();
-    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
-    await browser.$('[data-project-menu-item="surface"]').click();
-  }
+  // Workbench, Conversion and Project are all header tabs (direction A).
+  if (!found) throw new Error(`no header tab named ${name}`);
   await frames();
 }
 

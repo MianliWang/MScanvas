@@ -46,9 +46,13 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, convers
       <strong>MSCanvas</strong>
     </button>
     <nav className="workbench-navigation" aria-label={t("navigation")}>
-      {SURFACES.map(target => <button type="button" key={target} data-surface-tab={target}
+      {SURFACES.map(target => {
+        const label = t(target === "workbench" ? "workbench" : target === "conversion" ? "conversionTask" : "projectSurface");
+        return <button type="button" key={target} data-surface-tab={target}
         aria-current={surface === target ? "page" : undefined} onClick={() => go(target)}>
-        {t(target === "workbench" ? "workbench" : target === "conversion" ? "conversionTask" : "projectSurface")}
+        {/* The label reserves its bold width, so becoming current never moves
+            the tabs after it. */}
+        <span className="workbench-tab-label" data-label={label}>{label}</span>
         {/* In the tab's own padding, out of flow: a dot that comes and goes
             never moves the tabs after it (rendered review, issue 6). */}
         {target === "conversion" && (conversionBusy || conversionRetained)
@@ -56,7 +60,8 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, convers
         {/* Visual only: the status bar says what the project is doing. */}
         {target === "project" && projectBusy
           ? <span className="work-status-dot" aria-hidden="true" data-project-work-dot="" /> : null}
-      </button>)}
+      </button>;
+      })}
     </nav>
     <div className="workbench-global-actions">
       {/* At every width: below 1050 px it opens the roster's drawer, and above

@@ -15,6 +15,10 @@
 .workbench-navigation > button { position: relative; display: inline-flex; align-items: center; padding: 0 14px; border: 0; background: transparent; color: var(--color-text-secondary); font-size: 13px; white-space: nowrap; }
 .workbench-navigation > button:hover { color: var(--color-text-primary); }
 .workbench-navigation > button[aria-current="page"] { color: var(--color-accent-hover); font-weight: 650; }
+/* The bold label's width, held by an invisible copy with no accessible text,
+   so the current tab's weight never moves the tabs after it. */
+.workbench-tab-label { display: inline-flex; flex-direction: column; align-items: center; }
+.workbench-tab-label::after { height: 0; overflow: hidden; visibility: hidden; font-weight: 650; content: attr(data-label) / ""; }
 /* v5.11's underline: 3 px, inset 13 px, along the header's foot. */
 .workbench-navigation > button[aria-current="page"]::after { position: absolute; right: 13px; bottom: 0; left: 13px; height: 3px; border-radius: 3px 3px 0 0; background: var(--color-accent); content: ""; }
 /* The nav buttons fill the row, so the ring is drawn inside them. */

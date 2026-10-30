@@ -14,3 +14,16 @@ export async function showBackendBanner(): Promise<void> {
     await browser.$('#backend-status[data-backend-mode="popover"]').waitForDisplayed();
   }
 }
+
+/**
+ * Closes the ProteoWizard details, if open, with Esc from inside them, as a
+ * keyboard reader does. They float over the workspace, so a spec that goes on
+ * to press what is beneath them closes them first.
+ */
+export async function hideBackendBanner(): Promise<void> {
+  const open = browser.$('#backend-status[data-backend-mode="popover"]');
+  if (!(await open.isExisting())) return;
+  await browser.execute(() => document.getElementById("backend-status")?.focus());
+  await browser.keys("Escape");
+  await open.waitForExist({ reverse: true });
+}

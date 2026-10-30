@@ -178,13 +178,16 @@ async function capture(label: string, validate = true) {
       backendReading: box(document.querySelector(".backend-status-reading")),
       backendCollapsed: document.querySelector("[data-backend-collapsed]") !== null,
       backendActions: [...document.querySelectorAll("[data-backend-action]")].map(node => node.getAttribute("data-backend-action")),
-      help: box(document.querySelector(".backend-setup-help")),
+      // The region the help button opens; on the one-line notice its wrapper
+      // has no box of its own (display: contents).
+      help: box(document.querySelector(".backend-setup-help-body")),
       helpOpen: (() => {
         const button = document.querySelector("[data-backend-help]");
         return button === null ? null : button.getAttribute("aria-expanded") === "true";
       })(),
       helpFitsWithoutScrolling: (() => {
-        const help = document.querySelector(".backend-setup-help"), port = help?.closest(".shell-notices") ?? null;
+        const help = document.querySelector(".backend-setup-help-body");
+        const port = help?.closest('#backend-status[data-backend-mode="popover"]') ?? help?.closest(".shell-notices") ?? null;
         if (help === null || port === null) return null;
         return help.getBoundingClientRect().bottom <= port.getBoundingClientRect().bottom + 1;
       })(),

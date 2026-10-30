@@ -40,7 +40,7 @@ import {
   viewerReads,
   visibleSpan,
 } from "../support/viewer";
-import { showBackendBanner } from "../support/backendBanner";
+import { hideBackendBanner, showBackendBanner } from "../support/backendBanner";
 
 const VIEWPORTS = [
   { name: "1920x1080", width: 1_920, height: 1_080 },
@@ -77,6 +77,8 @@ async function recheckTheBackend(verdict: unknown): Promise<void> {
     throw new Error("the backend banner offers no recheck action");
   }
   await recheck.click();
+  // The details float over the viewer this spec goes on to press.
+  await hideBackendBanner();
 }
 
 async function noticeText(): Promise<string | null> {
