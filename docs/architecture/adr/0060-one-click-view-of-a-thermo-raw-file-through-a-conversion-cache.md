@@ -5,8 +5,9 @@ that day ([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.m
 decision 2, "One-click view RAW";
 [after-beta-1 plan, section 2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28),
 decision 5 of 2026-10-30) and asked that its details follow the
-recommendations. This record states those recommendations. Nothing here is
-implemented. The questions still open for the owner are listed
+recommendations. This record states those recommendations. Slice 1, the cache
+library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/172),
+2026-10-30); nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
 Related: [0005](0005-mzml-preview-boundary.md),
@@ -440,6 +441,9 @@ provider-sha256=<64 lowercase hex>
 intent=<canonical intent>
 ```
 
+- **The bytes hashed** (dated note, 2026-10-30, slice 1): that text in UTF-8,
+  each line ended by one LF, the last included. The intent is one line of at
+  most 1 KiB without control characters; anything else makes no key.
 - **`source-sha256`** is the SHA-256 of the RAW's bytes.
 - **`provider-sha256`** is the SHA-256 of the installed `msconvert.exe`, the
   identity the capability probe already reads and ADR 0043's contract 3 binds
@@ -519,6 +523,10 @@ writer can also reset `LastWriteTime` and `ChangeTime`.
 5. Room is made under the cap (decision 9).
 6. `entry` is renamed to `entries\<key>` with no replacement (`MoveFileExW`
    without `MOVEFILE_REPLACE_EXISTING`). The attempt directory is then removed.
+   (Dated note, 2026-10-30, slice 1: the attempt directory itself, `entry`'s
+   parent, is held without delete sharing from its creation until its
+   removal, so its name cannot be swapped for a link while paths through it
+   are used. That handle is outside `entry` and does not stop this rename.)
 
 Step 4 closes Checking output. Steps 5 and 6 are the Storing phase, and they
 cannot be cancelled (decision 10). The new entry's verification after step 6
