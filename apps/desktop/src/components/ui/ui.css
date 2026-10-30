@@ -93,15 +93,9 @@
   background: var(--color-accent-hover);
 }
 
-/* Quiet rests exactly as secondary does: white, framed, ink text, so no text
-   action reads as a link and none reads as refused (rendered review, issue 1).
-   It differs only on hover. An icon reads as a control by its glyph, so an
-   icon button keeps v5.11's bare rest and takes the frame on hover. */
-.ui-icon-button.ui-button--quiet {
-  border-color: transparent;
-  background: transparent;
-}
-
+/* Quiet rests exactly as secondary does, icon buttons included: white, framed,
+   ink text, so no action is bare at rest (GOALS B1, B3). It differs only on
+   hover. */
 .ui-button--quiet:hover:not(:disabled):not([aria-disabled="true"]) {
   border-color: var(--color-border-strong);
   background: var(--color-surface-selected);
@@ -123,31 +117,24 @@
   color: var(--color-accent-hover);
 }
 
-/* Refused (aria-disabled) stays a Tab stop. The primary gives up its fill
-   rather than fading, so its focus ring keeps full contrast (UI-24); the rest
-   fade, except while they hold the ring (PM9.7 F1), which v5.11's flat
-   opacity would fade too. */
+/* Refused (aria-disabled) stays a Tab stop and has one look whatever its
+   variant (GOALS B4, B5): a dashed edge, the grey well and muted text, never
+   opacity, so the focus ring keeps full contrast and a refused primary is no
+   louder than an enabled secondary. Focus adds the ring and nothing else. */
 .ui-button[aria-disabled="true"],
 .ui-button:disabled {
   cursor: not-allowed;
 }
 
-.ui-button--primary[aria-disabled="true"] {
+.ui-button[aria-disabled="true"] {
+  border-style: dashed;
   border-color: var(--color-border-strong);
   background: var(--color-surface-subtle);
   box-shadow: none;
   color: var(--color-text-secondary);
 }
 
-/* A second channel that stays while the ring is on it: the grey well and the
-   muted text, so a focused refusal never looks like an enabled button. */
-.ui-button:not(.ui-button--primary)[aria-disabled="true"] {
-  border-color: var(--color-border);
-  background: var(--color-surface-subtle);
-  color: var(--color-text-secondary);
-}
-
-.ui-button:not(.ui-button--primary)[aria-disabled="true"]:not(:focus-visible),
+/* Native disabled is kept only for controls that are frozen, not refused. */
 .ui-button:disabled {
   opacity: 0.48;
 }
@@ -219,6 +206,17 @@
 .ui-segmented__option:disabled {
   cursor: not-allowed;
   opacity: 0.48;
+}
+
+/* Refused, in the button's one refused look (B4): a dashed edge and muted text. */
+.ui-segmented__option[aria-disabled="true"] {
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}
+
+.ui-segmented__option[aria-disabled="true"]:not(:focus-visible) {
+  outline: 1px dashed var(--color-border-strong);
+  outline-offset: -3px;
 }
 
 /* Tabs */

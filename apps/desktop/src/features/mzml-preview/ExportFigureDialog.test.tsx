@@ -70,11 +70,21 @@ describe("the export-specific figure preview", () => {
     expect(onExportData).toHaveBeenCalledTimes(1);
   });
 
-  it("freezes the range on the full spectrum and says why when there is no range to narrow to", async () => {
-    render(<ExportFigureDialog {...props({ rangeAvailability: "noPeaks" })} />);
+  it("refuses the current range, keeps the group a Tab stop and says why when there is no range to narrow to", async () => {
+    const onScope = vi.fn();
+    render(<ExportFigureDialog {...props({ rangeAvailability: "noPeaks", onScope })} />);
     await screen.findByRole("img");
-    expect(screen.getByRole("radio", { name: "Full spectrum" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "Current range" })).toBeDisabled();
+    const full = screen.getByRole("radio", { name: "Full spectrum" });
+    expect(full).toBeChecked();
+    expect(full).not.toBeDisabled();
+    expect(full).toHaveAttribute("tabindex", "0");
+    const current = screen.getByRole("radio", { name: "Current range" });
+    expect(current).not.toBeDisabled();
+    expect(current).toHaveAttribute("aria-disabled", "true");
+    expect(current).toHaveAccessibleDescription(UI_RESOURCES.en.viewerExportNoPeaks);
+    fireEvent.click(current);
+    fireEvent.keyDown(full, { key: "ArrowLeft" });
+    expect(onScope).not.toHaveBeenCalled();
     expect(screen.getByText(UI_RESOURCES.en.viewerExportNoPeaks)).toBeVisible();
   });
   it("renders only an inert image and binds double activation to the current question", async () => {
@@ -128,7 +138,8 @@ describe("the export-specific figure preview", () => {
     view.rerender(<ExportFigureDialog {...original} question={replacement} sourceLabel="replacement.mzML · Spectrum 2" />);
     expect(screen.getByText("replacement.mzML · Spectrum 2")).toBeVisible();
     expect(screen.queryByRole("img")).toBeNull();
-    expect(screen.getByRole("textbox", { name: /Width/ })).toBeDisabled();
+    // Not native-disabled (B4): the settings stay reachable and ignore input.
+    expect(screen.getByRole("textbox", { name: /Width/ })).not.toBeDisabled();
     fireEvent.change(screen.getByRole("textbox", { name: /Width/ }), { target: { value: "999" } });
     fireEvent.click(screen.getByRole("button", { name: "Export SVG…" }));
     expect(original.onSetting).not.toHaveBeenCalled();

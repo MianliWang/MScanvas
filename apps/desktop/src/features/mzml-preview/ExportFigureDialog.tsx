@@ -119,7 +119,7 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
     if (!dispatched.current) setState({ status: "none", key: "" });
   };
   const prefix = `export-${id}`;
-  const ids = { range: `${id}-range`, data: `${id}-data`, dataNote: `${id}-data-note`, status: `${id}-status`, result: `${id}-result`,
+  const ids = { range: `${id}-range`, rangeNote: `${id}-range-note`, data: `${id}-data`, dataNote: `${id}-data-note`, status: `${id}-status`, result: `${id}-result`,
     refusal: `${id}-refusal` };
   // A refused action points at the visible line that says why: the preview
   // status (no current drawing, or one rendering) and, while an export runs,
@@ -146,24 +146,28 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
           <IconButton ref={close} icon={<Icon name="close" />} label={t("figureExportReturn")} onClick={props.onClose} />
         </header>
         <div className="figure-export-body">
-          <fieldset className="figure-export-options" disabled={sourceChanged}>
+          {/* Never native-disabled: while the source has changed every handler
+              below ignores its input, and the status line says why (B4). */}
+          <fieldset className="figure-export-options">
             <div className="figure-export-section">
               <span className="figure-export-label" id={ids.range}>{t(props.kind === "spectrum" ? "viewerExportScope" : "viewerExportRunScope")}</span>
-              {/* A spectrum with nothing to narrow to has one range: the group stays,
-                  frozen on the full source, and the line under it says why. */}
-              <SegmentedControl labelledBy={ids.range} className="figure-export-range" value={props.scope} disabled={rangeNote !== null}
+              {/* A spectrum with nothing to narrow to has one range: "Current" is
+                  refused, the group stays a Tab stop, and the line under it says why. */}
+              <SegmentedControl labelledBy={ids.range} className="figure-export-range" value={props.scope} reasonId={ids.rangeNote}
                 options={[
-                  { value: "current", label: <>{t("viewerExportCurrent")}{rangeWindow === null ? null : <>{" "}<span className="figure-export-window">{rangeWindow}</span></>}</> },
+                  { value: "current", refused: rangeNote !== null,
+                    label: <>{t("viewerExportCurrent")}{rangeWindow === null ? null : <>{" "}<span className="figure-export-window">{rangeWindow}</span></>}</> },
                   { value: "full", label: t(props.kind === "spectrum" ? "viewerExportFull" : "viewerExportFullRun") },
                 ]} onChange={scope => { if (!sourceChanged) props.onScope(scope); }} />
-              {rangeNote === null ? null : <p className="figure-export-note">{rangeNote}</p>}
+              {rangeNote === null ? null : <p className="figure-export-note" id={ids.rangeNote}>{rangeNote}</p>}
             </div>
             <FigureSettingsFields idPrefix={prefix} settings={props.settings} validation={props.validation} onFigureSetting={(field, value) => { if (!sourceChanged) props.onSetting(field, value); }} onFigureTheme={theme => { if (!sourceChanged) props.onTheme(theme); }} />
             {onExportData === undefined ? null : <div className="figure-export-section figure-export-data" role="group" aria-labelledby={ids.data}>
               <span className="figure-export-label" id={ids.data}>{t("viewerData")}</span>
               <div className="figure-export-data-actions">{(["csv", "tsv"] as const).map(format => <Button key={format} size="sm"
                 aria-describedby={props.kind === "chromatogram" ? ids.dataNote : undefined}
-                refused={props.busy} reasonId={busyReason} onClick={() => { if (!props.busy && !sourceChanged) onExportData(format); }}>
+                refused={props.busy || sourceChanged} reasonId={props.busy ? busyReason : ids.status}
+                onClick={() => { if (!props.busy && !sourceChanged) onExportData(format); }}>
                 {t("viewerExportFormat", { name: format.toUpperCase() })}</Button>)}</div>
               {/* What a chromatogram data document holds, which the traces on screen do not change. */}
               {props.kind === "chromatogram" ? <p className="figure-export-note" id={ids.dataNote}>{t("viewerExportTraceHelp")}</p> : null}
