@@ -380,9 +380,11 @@ a row's evidence against the M6.2 ledger in `scripts/msconvert_evidence.py`. It
 does not know the case ids `TV1`, `TE1`, `TV2` and `TE2`, so the change that adds
 the rows must extend it.
 
-**The MS1+ row is CNV-005's "MS1+MS2" preset, and the MS2+ row is its "MS2"
-preset.** Both also act on MS3 and above, so the preset labels should say "MS1
-and above" and "MS2 and above".
+**The MS1+ row is CNV-005's "MS1+MS2" centroid choice, and the MS2+ row is its
+"MS2" choice.** Both are verified-catalog rows, not user-saved presets in
+[ADR 0058](../architecture/adr/0058-user-saved-conversion-presets.md)'s sense.
+Both also act on MS3 and above, so their labels should say "MS1 and above" and
+"MS2 and above".
 
 **`ms_levels: None` stays out of the verified table.** It lowers to bare
 `peakPicking vendor`, and `TV3` shows it byte-identical to `1-` on 3a only. If the
