@@ -104,7 +104,7 @@ fn layout(roster: PanelPresentation, details: PanelPresentation) -> UiPreference
 
 fn saved(outcome: &UiPreferenceSaveDto) -> UiPreferences {
     match outcome {
-        UiPreferenceSaveDto::Saved { preferences, .. } => *preferences,
+        UiPreferenceSaveDto::Saved { preferences, .. } => preferences.clone(),
         other => panic!("expected a saved record, got {other:?}"),
     }
 }
@@ -123,9 +123,74 @@ fn a_valid_record_round_trips_through_its_own_reader() {
             roster: PanelPresentation::Hidden,
             details: PanelPresentation::Shown,
         },
+        backend_folder: Some(installation_folder()),
     };
     let bytes = write_record(&record).expect("the serialized record");
     assert_eq!(read_record(&bytes), Ok(record));
+}
+
+/// An absolute folder on whatever platform runs the test, so "absolute" is
+/// judged the way the platform judges it.
+fn installation_folder() -> String {
+    std::env::temp_dir()
+        .join("ProteoWizard 3.0.26204")
+        .to_str()
+        .expect("a Unicode temporary directory")
+        .to_owned()
+}
+
+fn with_folder(folder: &str) -> Vec<u8> {
+    write_record(&UiPreferences {
+        backend_folder: Some(folder.to_owned()),
+        ..UiPreferences::default()
+    })
+    .expect("the serialized record")
+}
+
+#[test]
+fn a_schema_one_record_without_a_folder_reads_as_one_that_remembers_none() {
+    // Every record beta 1 wrote. Adding the field needed no migration because
+    // its absence is its default.
+    let beta_one = br#"{"schemaVersion":1,"appearance":{"locale":"zh-CN","density":"compact"},"layout":{"roster":"shown","details":"hidden"}}"#;
+    let record = read_record(beta_one).expect("a beta-1 record is still schema 1");
+    assert_eq!(record.backend_folder, None);
+    assert_eq!(record.appearance.locale, UiLocale::ZhCn);
+}
+
+#[test]
+fn a_stored_folder_must_be_absolute_bounded_and_printable() {
+    // Positive control first, in the same shape as every refusal below.
+    assert!(read_record(&with_folder(&installation_folder())).is_ok());
+    let too_long = format!(
+        "{}{}",
+        installation_folder(),
+        "x".repeat(record::MAX_BACKEND_FOLDER_BYTES)
+    );
+    for folder in [
+        "ProteoWizard".to_owned(),
+        String::new(),
+        too_long,
+        format!("{}\u{7}", installation_folder()),
+    ] {
+        assert_eq!(
+            read_record(&with_folder(&folder)),
+            Err(RecordProblem::Malformed),
+            "{folder:?} must not be accepted"
+        );
+    }
+    // The bound keeps a record holding the longest folder, every separator
+    // escaped, inside the record's own limit.
+    let separators = format!("{}\\", installation_folder())
+        .chars()
+        .chain(std::iter::repeat('\\'))
+        .take(record::MAX_BACKEND_FOLDER_BYTES)
+        .collect::<String>();
+    let longest = with_folder(&separators);
+    assert!(
+        longest.len() as u64 <= MAX_RECORD_BYTES,
+        "{}",
+        longest.len()
+    );
 }
 
 #[test]
@@ -259,6 +324,7 @@ fn publishing_replaces_the_stored_record_and_leaves_no_temporary() {
             roster: PanelPresentation::Hidden,
             details: PanelPresentation::Shown,
         },
+        backend_folder: None,
     };
     storage::publish(&root.root(), &second).expect("the replacing publish");
     assert_eq!(storage::read(&root.root()), StoredRecord::Usable(second));
@@ -293,7 +359,7 @@ fn a_locked_published_name_fails_the_publish_and_preserves_the_old_record() {
             locale: UiLocale::ZhCn,
             density: RosterDensity::Compact,
         },
-        ..original
+        ..original.clone()
     };
     let failure = storage::publish(&root.root(), &replacement).expect_err("a refusal");
     assert_eq!(failure.error, WriteError::NotPublished);
@@ -541,6 +607,120 @@ fn a_refused_write_reports_failure_without_advancing_the_revision() {
         retried,
         UiPreferenceSaveDto::Saved { revision: 2, .. }
     ));
+}
+
+// ------------------------------------------------------ remembered folder
+
+#[test]
+fn a_remembered_folder_survives_other_commits_and_can_be_forgotten() {
+    let root = Root::new("remembered-folder");
+    let store = root.store();
+    let folder = PathBuf::from(installation_folder());
+    assert_eq!(store.remembered_backend_folder(), None);
+
+    let remembered = saved(&store.remember_backend_folder(Some(&folder)));
+    assert_eq!(remembered.backend_folder, Some(installation_folder()));
+    assert_eq!(store.remembered_backend_folder(), Some(folder.clone()));
+
+    // A Settings apply and a panel toggle each commit only their own group,
+    // and the merge base is what is stored, so neither drops the folder.
+    let _ = saved(&store.save(&appearance(UiLocale::ZhCn, RosterDensity::Compact)));
+    let _ = saved(&store.save(&layout(PanelPresentation::Hidden, PanelPresentation::Shown)));
+    assert_eq!(store.remembered_backend_folder(), Some(folder));
+
+    let forgotten = saved(&store.remember_backend_folder(None));
+    assert_eq!(forgotten.backend_folder, None);
+    assert_eq!(forgotten.appearance.locale, UiLocale::ZhCn);
+    assert_eq!(store.remembered_backend_folder(), None);
+    // Forgotten is gone, not blanked: the document is byte for byte what a
+    // record that never remembered one is.
+    assert_eq!(
+        root.stored_bytes(),
+        write_record(&UiPreferences {
+            appearance: AppearancePreferences {
+                locale: UiLocale::ZhCn,
+                density: RosterDensity::Compact,
+            },
+            layout: LayoutPreferences {
+                roster: PanelPresentation::Hidden,
+                details: PanelPresentation::Shown,
+            },
+            ..UiPreferences::default()
+        })
+        .expect("bytes")
+    );
+}
+
+#[test]
+fn a_folder_is_never_remembered_over_a_record_this_build_refused() {
+    let root = Root::new("remembered-over-unusable");
+    let store = root.store();
+    let future = br#"{"schemaVersion":2,"appearance":{"locale":"en","density":"comfortable"},"layout":{"roster":"automatic","details":"automatic"}}"#;
+    root.store_bytes(future);
+    assert!(matches!(
+        store.remember_backend_folder(Some(&PathBuf::from(installation_folder()))),
+        UiPreferenceSaveDto::StoredRecordUnusable {
+            problem: "unsupportedVersion",
+            ..
+        }
+    ));
+    assert!(matches!(
+        store.remember_backend_folder(None),
+        UiPreferenceSaveDto::StoredRecordUnusable { .. }
+    ));
+    assert_eq!(root.stored_bytes(), future);
+    assert_eq!(store.remembered_backend_folder(), None);
+}
+
+#[test]
+fn a_relative_folder_is_refused_without_a_write() {
+    let root = Root::new("remembered-relative");
+    let store = root.store();
+    let _ = saved(&store.save(&appearance(UiLocale::En, RosterDensity::Compact)));
+    let before = root.stored_bytes();
+    assert!(matches!(
+        store.remember_backend_folder(Some(&PathBuf::from("ProteoWizard"))),
+        UiPreferenceSaveDto::Failed {
+            problem: "invalidRecord",
+            ..
+        }
+    ));
+    assert_eq!(root.stored_bytes(), before);
+}
+
+#[test]
+fn the_webview_never_receives_the_remembered_folder() {
+    let root = Root::new("remembered-wire");
+    let store = root.store();
+    let folder = installation_folder();
+    let remembered = store.remember_backend_folder(Some(&PathBuf::from(&folder)));
+    let loaded = store.load();
+    // Rust holds it ...
+    assert!(matches!(
+        &loaded,
+        UiPreferenceReadDto::Loaded { preferences, .. }
+            if preferences.backend_folder.as_deref() == Some(folder.as_str())
+    ));
+    // ... and neither answer a document receives names it, or the field.
+    for outcome in [
+        serde_json::to_value(&remembered).expect("the saved outcome"),
+        serde_json::to_value(&loaded).expect("the loaded outcome"),
+    ] {
+        let rendered = outcome.to_string();
+        assert!(!rendered.contains("ProteoWizard 3.0.26204"), "{rendered}");
+        assert!(!rendered.contains("backendFolder"), "{rendered}");
+        assert_eq!(
+            outcome["preferences"]["schemaVersion"],
+            record::SCHEMA_VERSION
+        );
+    }
+}
+
+#[test]
+fn the_write_payload_cannot_name_a_backend_folder() {
+    let payload =
+        r#"{"appearance":{"locale":"en","density":"comfortable"},"backendFolder":"D:\\pwiz"}"#;
+    assert!(serde_json::from_str::<dto::UiPreferenceWriteDto>(payload).is_err());
 }
 
 // ------------------------------------------------------------- wire contract

@@ -57,9 +57,10 @@ use super::dto::{
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, ChromatogramRangeDto, ChromatogramTracesDto,
     DropIngestionResultDto, DropScanLimitDto, FigureSettingsDto, LinkedFigureExportOutcomeDto,
-    MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto,
-    SelectedSpectrumOutcomeDto, SpectrumExportOutcomeDto, SpectrumRangeDto, WorkspaceAddOutcomeDto,
-    WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
+    MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto, RememberedFolderDto,
+    SelectedFileDto, SelectedSpectrumOutcomeDto, SpectrumExportOutcomeDto, SpectrumRangeDto,
+    WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto,
+    WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
     ConversionAttemptResultDto, ConversionItemAdoptionDto, ConversionProcessDto,
@@ -877,6 +878,200 @@ fn a_chosen_folder_with_no_installation_can_be_undone() {
     assert_eq!(restored.availability.state, "available");
     assert_eq!(restored.availability.origin, "automatic");
     assert!(restored.availability.failure.is_none());
+}
+
+#[test]
+fn a_remembered_folder_that_still_works_is_where_the_session_starts() {
+    let provider = FakeProvider::only_when_chosen();
+    let world = provider.clone_world();
+    let service = PreviewService::new(Box::new(provider));
+
+    service.start_on_remembered_folder(PathBuf::from(r"C:\pwiz"));
+    // Seeding launches nothing; the first reading is the one that probes.
+    assert_eq!(world.availability_count(), 0);
+
+    let reading = service.inspect_backend();
+    assert_eq!(world.availability_count(), 1);
+    assert_eq!(reading.availability.state, "available");
+    assert_eq!(reading.availability.origin, "chosen");
+    assert!(reading.remembered.stored);
+    assert_eq!(reading.remembered.refused_at_startup, None);
+    // The status indicator's data: the build, and where it lives.
+    assert_eq!(reading.availability.release.as_deref(), Some("3.0.26204"));
+    assert_eq!(reading.location.as_deref(), Some(r"C:\fake\chosen"));
+}
+
+#[test]
+fn a_remembered_folder_that_no_longer_works_is_reported_and_searched_past() {
+    let provider = FakeProvider::available(Vec::new());
+    let world = provider.clone_world();
+    let service = PreviewService::new(Box::new(provider));
+    service.start_on_remembered_folder(PathBuf::from(r"C:\unplugged"));
+
+    let reading = service.inspect_backend();
+    // One look at the folder, one automatic search: no retry loop.
+    assert_eq!(world.availability_count(), 2);
+    assert_eq!(reading.availability.state, "available");
+    assert_eq!(reading.availability.origin, "automatic");
+    assert_eq!(reading.location.as_deref(), Some(r"C:\fake\installed"));
+    let refusal = reading
+        .remembered
+        .refused_at_startup
+        .as_ref()
+        .expect("the reason the remembered folder was not used");
+    assert_eq!(refusal.kind, "backend_not_found");
+    // Still remembered: startup never writes, and only the user forgets.
+    assert!(reading.remembered.stored);
+
+    // A later reading keeps the reason and does not go back to the folder.
+    let later = service.inspect_backend();
+    assert_eq!(world.availability_count(), 3);
+    assert_eq!(later.availability.origin, "automatic");
+    assert_eq!(later.remembered, reading.remembered);
+
+    // Choosing again, or forgetting, retires the startup story.
+    let automatic = service.use_installation(None);
+    assert_eq!(automatic.remembered.refused_at_startup, None);
+    assert!(automatic.remembered.stored);
+    service.note_folder_stored(false);
+    assert_eq!(service.remembered_folder(), RememberedFolderDto::default());
+}
+
+/// A machine whose look at the remembered folder loses a process.
+struct LosesAProcessInTheFolder {
+    inner: FakeProvider,
+    world: FakeWorld,
+}
+
+impl PreviewProvider for LosesAProcessInTheFolder {
+    fn discovery_lost_a_process(&self) -> bool {
+        self.inner.discovery_lost_a_process()
+    }
+
+    fn use_installation(&self, home: Option<PathBuf>) {
+        self.inner.use_installation(home);
+    }
+
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        if self.inner.chosen.lock().expect("test lock").is_some() {
+            self.world.discovery_loses_a_process();
+        }
+        self.inner.availability()
+    }
+
+    fn run(
+        &self,
+        source: &Path,
+        operation: &PreviewOperation,
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        self.inner.run(source, operation)
+    }
+}
+
+#[test]
+fn a_remembered_folder_whose_look_loses_a_process_searches_no_further() {
+    let inner = FakeProvider::available(Vec::new());
+    let world = inner.clone_world();
+    let service = PreviewService::new(Box::new(LosesAProcessInTheFolder {
+        inner,
+        world: world.clone(),
+    }));
+    service.start_on_remembered_folder(PathBuf::from(r"C:\unplugged"));
+
+    let reading = service.inspect_backend();
+    // The folder was looked at once, and the automatic search never started.
+    assert_eq!(world.availability_count(), 1);
+    assert_eq!(
+        reading.availability.failure.map(|failure| failure.kind),
+        Some("backend_quarantined".to_owned())
+    );
+    assert_eq!(reading.location, None);
+}
+
+#[test]
+fn a_remembered_folder_is_superseded_by_a_choice_made_before_the_first_reading() {
+    let provider = FakeProvider::available(Vec::new());
+    let service = PreviewService::new(Box::new(provider));
+    service.start_on_remembered_folder(PathBuf::from(r"C:\unplugged"));
+
+    // The user acted first, so their choice is what the session is on; the
+    // remembered folder's trial is over without a fallback being taken.
+    let chosen = service.use_installation(Some(PathBuf::from(r"C:\elsewhere")));
+    assert_eq!(chosen.availability.origin, "chosen");
+    assert_eq!(chosen.availability.state, "unavailable");
+    assert_eq!(service.inspect_backend().availability.origin, "chosen");
+    assert_eq!(service.remembered_folder().refused_at_startup, None);
+}
+
+#[test]
+fn a_usable_chosen_folder_is_remembered_and_an_unusable_one_is_not() {
+    let service = PreviewService::new(Box::new(FakeProvider::only_when_chosen()));
+    let asked = Mutex::new(Vec::new());
+
+    let remembered = service.choose_installation(PathBuf::from(r"C:\pwiz"), |folder| {
+        asked.lock().expect("test lock").push(folder.to_path_buf());
+        Ok(())
+    });
+    assert_eq!(remembered.availability.state, "available");
+    assert!(remembered.remembered.stored);
+    assert_eq!(remembered.remembered.not_remembered, None);
+    assert_eq!(
+        *asked.lock().expect("test lock"),
+        [PathBuf::from(r"C:\pwiz")]
+    );
+
+    // A store refusal keeps the folder for the session and says why the next
+    // launch will not start on it; what was stored before is unchanged.
+    let refused = service.choose_installation(PathBuf::from(r"C:\pwiz"), |_| Err("notPublished"));
+    assert_eq!(refused.availability.origin, "chosen");
+    assert!(refused.remembered.stored);
+    assert_eq!(
+        refused.remembered.not_remembered.as_deref(),
+        Some("notPublished")
+    );
+
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+    let unusable = service.choose_installation(PathBuf::from(r"C:\empty"), |_| {
+        panic!("a folder that is not usable is never remembered")
+    });
+    assert_eq!(unusable.availability.state, "unavailable");
+    assert_eq!(unusable.remembered, RememberedFolderDto::default());
+}
+
+#[test]
+fn a_remembered_folder_never_re_points_a_session_already_settled() {
+    let provider = FakeProvider::only_when_chosen();
+    let world = provider.clone_world();
+    let service = PreviewService::new(Box::new(provider));
+    let before = service.inspect_backend();
+    assert_eq!(before.availability.origin, "automatic");
+
+    service.start_on_remembered_folder(PathBuf::from(r"C:\pwiz"));
+    let after = service.inspect_backend();
+    assert_eq!(after.availability.origin, "automatic");
+    assert_eq!(after.authority, before.authority);
+    assert!(after.remembered.stored);
+    assert_eq!(world.availability_count(), 2);
+}
+
+#[test]
+fn an_unusable_reading_names_no_location() {
+    let service = PreviewService::new(Box::new(FakeProvider::unavailable()));
+    let reading = service.inspect_backend();
+    assert_eq!(reading.availability.state, "unavailable");
+    assert_eq!(reading.location, None);
+    assert_eq!(reading.remembered, RememberedFolderDto::default());
+    let rendered = serde_json::to_value(&reading).expect("the reading serializes");
+    assert_eq!(rendered["location"], serde_json::Value::Null);
+    assert_eq!(rendered["remembered"]["stored"], false);
+    assert_eq!(
+        rendered["remembered"]["refusedAtStartup"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        rendered["remembered"]["notRemembered"],
+        serde_json::Value::Null
+    );
 }
 
 /// A provider that says when its batch has finished, so a test can queue an
@@ -3960,11 +4155,13 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         registered,
         [
             "get_bootstrap_status",
-            // The UI preference store. Two commands, and deliberately not
-            // three: reading and committing are the whole boundary, and the
-            // reset-and-replace of an unusable record is a commit that carries
-            // its confirmation rather than a separate operation a document
-            // could reach for on its own.
+            // The UI preference store. Two commands for the record the
+            // webview owns: reading and committing are the whole boundary,
+            // and the reset-and-replace of an unusable record is a commit
+            // that carries its confirmation rather than a separate operation
+            // a document could reach for on its own. The remembered
+            // ProteoWizard folder's forget sits with the installation
+            // commands below, because what it clears was written by Rust.
             "load_ui_preferences",
             "save_ui_preferences",
             // The M8.1 project store, on its own boundary for the same reason
@@ -4039,6 +4236,10 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "inspect_backend",
             "choose_backend_installation",
             "use_automatic_backend_discovery",
+            // Forgets the folder a chosen installation left remembered. A
+            // preference commit with no payload: it can only clear, and what it
+            // clears was written by Rust after a picker choice.
+            "forget_backend_installation",
             // The conversion-settings read, beside the two that change which
             // installation is bound: it answers for whichever binding those two
             // leave behind, and it is one command because the answer is one
