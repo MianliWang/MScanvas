@@ -30,12 +30,14 @@ use super::chromatogram::{
     svg_document as chromatogram_svg,
 };
 use super::conversion::conversion_source_kind;
+#[cfg(test)]
+use mscanvas_proteowizard::ConflictPolicy;
+#[cfg(test)]
+use mscanvas_proteowizard::ConversionIntent;
 use mscanvas_proteowizard::{
     AdmittedSetRun, MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed, SetRunSeam,
     run_admitted_multi_output_conversion_seamed,
 };
-#[cfg(test)]
-use mscanvas_proteowizard::{ConflictPolicy, ConversionIntent};
 #[allow(clippy::wildcard_imports)]
 use mscanvas_proteowizard::{ConversionAttempt, ConversionCancellation, OwnedTreeDisposition};
 
