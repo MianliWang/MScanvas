@@ -448,6 +448,8 @@ export const zhCN = {
   viewerCursorLabel: "扫描 {{scan}}，RT {{rt}}",
   scanUnitNotReported: "（未报告单位）",
   viewerSelectNeedsBackend: "设置 ProteoWizard 后即可选择扫描。",
+  viewerSelectAfterCheck: "检查结束后即可选择扫描。",
+  viewerSelectAfterConversion: "转换结束后即可选择扫描。",
   figureSourceSpectrum: "质谱，扫描 {{scan}}，{{name}}",
   figureSourceSpectrumIndex: "质谱 {{index}}，{{name}}",
   figureSourceChromatogram: "色谱图，{{name}}",

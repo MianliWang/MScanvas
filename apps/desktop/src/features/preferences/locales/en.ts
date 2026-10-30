@@ -448,6 +448,8 @@ export const en = {
   viewerCursorLabel: "Scan {{scan}}, RT {{rt}}",
   scanUnitNotReported: "(unit not reported)",
   viewerSelectNeedsBackend: "Set up ProteoWizard to select scans.",
+  viewerSelectAfterCheck: "Scans can be selected once the check ends.",
+  viewerSelectAfterConversion: "Scans can be selected once the conversion ends.",
   figureSourceSpectrum: "Spectrum, scan {{scan}}, {{name}}",
   figureSourceSpectrumIndex: "Spectrum {{index}}, {{name}}",
   figureSourceChromatogram: "Chromatogram, {{name}}",

@@ -1015,9 +1015,13 @@ export function PreviewWorkspace() {
                     />
                     <SelectedSpectrumPanel
                       onOpenFigure={() => openFigure("spectrum")}
+                      // What would make a choice possible, in a few words; the
+                      // full sentence is the controls' description (once).
                       selectionRefusal={workspace.spectrumSelection.status !== "unavailable" ? null
                         : workspace.spectrumSelection.reason === "backend-unavailable" ? t("viewerSelectNeedsBackend")
-                        : spectrumSelectionMessage(workspace.spectrumSelection.reason, t)}
+                        : workspace.spectrumSelection.reason === "backend-changing" ? t("viewerSelectAfterCheck")
+                        : workspace.spectrumSelection.reason === "conversion-running" ? t("viewerSelectAfterConversion")
+                        : null}
                       dispatchViewport={workspace.dispatchSpectrumViewportEvent}
                       exportState={workspace.spectrumExport}
                       figureSettingsValidation={workspace.figureSettingsValidation}

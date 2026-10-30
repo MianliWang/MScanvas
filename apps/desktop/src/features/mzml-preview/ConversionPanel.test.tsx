@@ -186,7 +186,7 @@ describe("destination request and queue truth", () => {
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     await act(async () => picker.resolve({ status: "idle" }));
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close Settings" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Settings…" })).toHaveFocus());
     expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled");
   });
