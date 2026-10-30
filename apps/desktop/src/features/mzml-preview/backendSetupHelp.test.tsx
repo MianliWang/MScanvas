@@ -102,7 +102,8 @@ describe("offline setup help", () => {
     const said = helpRegion().textContent ?? "";
     // MSCanvas never downloads, installs or bundles a provider.
     expect(said).toContain(en.backendHelpProvider);
-    // The real lifetime of a chosen folder: this session, and no longer.
+    // Which folder to choose. Since #158 Rust remembers a usable choice across
+    // launches, so the help no longer claims a session-only lifetime.
     expect(said).toContain(en.backendHelpSessionScope);
     // The controls name themselves; the help does not restate them.
     expect(helpRegion().querySelector("ul")).toBeNull();

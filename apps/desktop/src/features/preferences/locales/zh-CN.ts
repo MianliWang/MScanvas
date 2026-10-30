@@ -909,7 +909,7 @@ export const zhCN = {
   backendChosenIncompatible: "你选择的文件夹中的工具不属于同一个 ProteoWizard 构建。",
   backendHelpTitle: "设置 ProteoWizard",
   backendHelpProvider: "ProteoWizard 由你自行安装并获得授权；MSCanvas 从不下载、安装或附带它。",
-  backendHelpSessionScope: "请选择包含 msconvert.exe 的文件夹；仅对本次会话有效。",
+  backendHelpSessionScope: "请选择包含 msconvert.exe 的文件夹。",
   backendHelpTarget: "本 beta 仅支持 Windows 11 25H2 x64。",
   backendHelpWithoutBackend: "读取运行数据、转换和图形导出需要 ProteoWizard。",
   backendQuarantined: "重启 MSCanvas 后才能再次使用 ProteoWizard",

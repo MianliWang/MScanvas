@@ -745,19 +745,16 @@ describe("the Workbench reattachment in the application shell", () => {
 
     await press(addControl(MATCHING));
 
-    // While it is out, the Workbench's own acquisition actions wait.
+    // While it is out, the Workbench's own acquisition actions wait: refused,
+    // still focusable, with the status bar's reason (never native disabled).
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: en.addFiles }).hasAttribute("disabled"),
-      ).toBe(true),
+      expect(screen.getByRole("button", { name: en.addFiles })).toHaveAttribute("aria-disabled", "true"),
     );
     await act(async () => {
       release();
     });
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: en.addFiles }).hasAttribute("disabled"),
-      ).toBe(false),
+      expect(screen.getByRole("button", { name: en.addFiles })).not.toHaveAttribute("aria-disabled"),
     );
   });
 

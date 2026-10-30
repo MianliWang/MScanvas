@@ -928,7 +928,7 @@ export const en = {
   backendChosenIncompatible: "The tools in the folder you chose do not belong to the same ProteoWizard build.",
   backendHelpTitle: "Setting up ProteoWizard",
   backendHelpProvider: "You install and license ProteoWizard yourself; MSCanvas never downloads, installs or bundles it.",
-  backendHelpSessionScope: "Choose the folder that contains msconvert.exe; it applies to this session only.",
+  backendHelpSessionScope: "Choose the folder that contains msconvert.exe.",
   backendHelpTarget: "Supported in this beta: Windows 11 25H2 x64 only.",
   backendHelpWithoutBackend: "Reading a run, converting and figure export need ProteoWizard.",
   backendQuarantined: "Restart MSCanvas to use ProteoWizard again",

@@ -223,7 +223,7 @@ export function BackendStatus({
       {/* The offline setup help, reachable in every state, including the
           states with no reading and no installation at all. It holds only
           what no control says: that ProteoWizard is theirs to install, which
-          folder to choose and that it lasts for this session only, the support
+          folder to choose, the support
           target and what needs a backend. */}
       <div className="backend-setup-help" hidden={mode === "hidden"}>
         <Disclosure

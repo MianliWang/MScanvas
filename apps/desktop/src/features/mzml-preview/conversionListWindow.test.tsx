@@ -40,7 +40,7 @@ function renderApp(api: FakePreviewApi) {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 /** A plan for every requested row, as Rust's describe would answer it at full size. */
