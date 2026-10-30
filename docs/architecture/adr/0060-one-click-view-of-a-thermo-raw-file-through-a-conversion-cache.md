@@ -29,7 +29,9 @@ and M0's `msaccess` timings.
 Design reference: interface direction A (roster on the left; per-file tabs
 Chromatogram and spectrum, Scans and Metadata; the chromatogram above the scan
 list and the spectrum; bordered buttons; a status bar). Its clickable demo is a
-local scratch build and is not committed.
+local scratch build and is not committed. The design-goal identifiers cited
+here (B2, I8, S4, W7) are those of the design-goals draft of 2026-10-29, which
+is not committed either; each citation states the rule it relies on.
 
 ## Context
 
@@ -131,9 +133,9 @@ For a **Thermo RAW** row, that state becomes:
 
 1. Move to the row and activate it with Enter or Space. It is highlighted, and
    nothing starts.
-2. Press Enter again on the highlighted RAW row. That presses View, as a second
-   activation of a highlighted mzML row means "open it". Or Tab to View and
-   press Enter or Space.
+2. Press Enter again on the highlighted RAW row. That presses View. This is a
+   new rule for RAW rows only: Enter on a row that is already highlighted
+   means "view it". Or Tab to View and press Enter or Space.
 3. View with… opens with Enter, Space or Down. Up and Down move, Enter chooses,
    and Escape closes the menu and returns focus to its button.
 4. While the operation runs, focus stays where it was, so the roster stays
@@ -232,7 +234,7 @@ names has a button (design goal S4).
 | The cache has no folder (decision 6) | `view_cache_unavailable` | "MSCanvas has no folder for its view cache on this computer." | Convert this file… |
 | The cache folder exists but carries no MSCanvas marker | `view_cache_root_unrecognized` | "The view cache folder was not made by MSCanvas, so MSCanvas will not write to it." | Convert this file… |
 | The RAW is larger than half the entry ceiling (decision 9) | `view_cache_entry_too_large` | "This file is too large to view through the cache." | Convert this file… |
-| Not enough free disk space (decision 9) | `view_cache_no_space` | "The view cache needs about {n} GB free; {m} GB are free." | Clear view cache, Convert this file… |
+| Not enough free disk space (decision 9) | `view_cache_no_space` | "The view cache needs about {n} GiB free; {m} GiB are free." | Clear view cache, Convert this file… |
 | The intent sent by View with… is not one Rust offers now | `raw_view_intent_not_offered` | "That setting is not available for this file now." | View |
 
 **The build gate is ADR 0055's, unchanged.** A view is a conversion of a
@@ -546,8 +548,9 @@ kind, with this build's tables.
 
 **Clear view cache** is in Settings, in a View cache row.
 
-- The row reads "{n} views, {x} GB of 10 GB", beside a danger-bordered **Clear
-  view cache** button. One line under it keeps the irreversible-action
+- The row reads "{n} views, {x} GiB of 10 GiB", beside a danger-bordered
+  **Clear view cache** button. Every size in the copy is in GiB, the cap's
+  unit. One line under it keeps the irreversible-action
   disclosure: "Removes only MSCanvas's converted copies. RAW files and your
   outputs are not touched."
 - There is no confirmation dialog, because everything it removes is app-owned
@@ -555,7 +558,7 @@ kind, with this build's tables.
 - It removes every unpinned entry and every staging attempt whose owner is gone.
 - It is refused while a view conversion runs, with "Preparing {name} for
   viewing." and Show {name}.
-- The result replaces the summary line, for example "Removed 3 views (1.6 GB).
+- The result replaces the summary line, for example "Removed 3 views (1.6 GiB).
   1 in use was kept." Entries that could not be removed, and unrecognized items
   left in place, are counted the same way.
 - It is offered again as the recovery of `view_cache_no_space`.
@@ -620,9 +623,12 @@ source, and states the conversion.
   keys: `#source_kind`, `#source_sha256`, `#conversion_provider_release`,
   `#conversion_provider_sha256`, `#conversion_intent` and
   `#conversion_verified`.
-  - A document that carries them takes the next schema version of its own
-    format (spectrum full source, spectrum range and chromatogram), which the
-    slice assigns.
+  - A document that carries them takes a new schema version, which the slice
+    assigns. The spectrum's full-source and range documents share one `#format`
+    (`mscanvas_spectrum_export`) and one version sequence, in which 1 (full
+    source) and 2 (range) are taken, so each provenance-bearing spectrum kind
+    gets a version above 2. The chromatogram document takes the next version
+    of its own sequence.
   - An export from an mzML row stays byte-identical to today.
 - No export carries a cache path or the cache key.
 
@@ -843,8 +849,8 @@ Shots at 1366x768 and 960x640, in `en` and `zh-CN`, of:
   the reasons (design goal W7).
 - [ ] Keyboard only, through the whole of decision 1's path, with the focus
   visible at every step.
-- [ ] No horizontal page scroll, no clipped label, and contrast as design goal
-  A1 requires.
+- [ ] No horizontal page scroll, no clipped label, text contrast of at least
+  4.5:1, and focus rings, icons and field edges of at least 3:1.
 - [ ] A screen reader hears each phase once, the open once, and a failure once.
 
 ### 16. Delivery order and dependencies
@@ -918,6 +924,11 @@ verified default, and it says so.
 
 - **Disk:** up to 10 GiB by default on the volume holding the application
   data, usually the system volume, plus the transient bound of decision 9.
+- **RAW files over 2 GiB cannot be viewed this way.** The bound comes from the
+  4 GiB document limit the inspector and the viewing reader share
+  (`MzmlScanLimits`, ADR 0056 decision 2), and profile outputs measured at least
+  1.9 times their source. Long Orbitrap and Astral runs can exceed it.
+  Convert this file… stays their route (open question 7).
 - **Time:** a first view of a 276 MB RAW takes about a minute of conversion
   (`TE0`: 63.6 s) plus the hash and the open. A hit costs two hashes and the
   open. Neither is measured end to end yet; native QA records both.
@@ -995,3 +1006,7 @@ owner chooses otherwise.
    `msaccess` on the two public files, plus a cancel and a two-process eviction
    check (decision 14). Without it, the slices merge on fake-provider and
    browser evidence, and the timings stay unmeasured.
+7. **Viewing RAW files over 2 GiB.** Raising the 4 GiB document limit of the
+   inspector and the viewing reader would amend ADR 0056 decision 2, whose caps
+   are a resource contract. *Default: the limit stays, and such files go
+   through Convert this file….*
