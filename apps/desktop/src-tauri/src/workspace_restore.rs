@@ -811,7 +811,9 @@ fn publish(
     match local_document::publish_through_temporary(directory, &target, &bytes, TEMPORARY_PREFIX) {
         Ok(()) => {
             // ponytail: read after the rename, so a write by another process
-            // in between is taken for this one's.
+            // in between is taken for this one's; and an identity that cannot
+            // be read just now makes the next save answer `changedElsewhere`,
+            // which stops recording rather than writing over anything.
             lane.published = local_document::object_identity(&target);
             lane.startup = Startup::Loaded;
             WorkspaceRestoreWriteDto::Saved
