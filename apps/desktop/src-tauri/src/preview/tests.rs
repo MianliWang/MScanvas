@@ -14345,13 +14345,13 @@ fn a_skip_of_a_row_that_never_ran_is_the_users_decision() {
 }
 
 /// A queue-level refusal the session can recover from settles what it never
-/// reached as not run, and a retry still reaches it.
+/// reached as not run, and a retry reruns the failures only.
 ///
 /// Left pending, such a row read "Waiting" in a queue that was over and was
-/// counted nowhere. Settled as not run, a retry must still convert it, as it
-/// did when it was left pending: what a rerun converts does not change.
+/// counted nowhere, and a retry labelled as rerunning failures converted it
+/// too. Settled as not run, it is what a stop leaves: a new queue's to convert.
 #[test]
-fn a_recoverable_queue_refusal_settles_unreached_rows_as_not_run_and_a_retry_reaches_them() {
+fn a_recoverable_queue_refusal_settles_unreached_rows_as_not_run_and_a_retry_leaves_them() {
     let cancellation = ConversionCancellation::new();
     let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
     slot.release_attempt(operation, 0, attempt);
@@ -14401,9 +14401,9 @@ fn a_recoverable_queue_refusal_settles_unreached_rows_as_not_run_and_a_retry_rea
             .collect::<Vec<_>>(),
         vec![
             ConversionQueueItemStateDto::Pending,
-            ConversionQueueItemStateDto::Pending
+            ConversionQueueItemStateDto::NotRun
         ],
-        "and the retry reaches it, as it did when it was left pending"
+        "the retry reruns the failure and not the row never run"
     );
 }
 

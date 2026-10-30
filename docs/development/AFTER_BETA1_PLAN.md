@@ -504,20 +504,25 @@ writer and Rust's ownership of files.
   data unless Delete the application data is selected, which the bundled
   template says removes both (not yet observed); decide whether the uninstaller
   should remove the key by default, and check the selected path.
-  - *2026-10-30, read from the NSIS template of Tauri CLI 2.12.4 (the locked
-    version; no installer hooks are configured), not observed for the checked
-    path:* under `installMode` `currentUser` the registry root is HKCU. Every
-    uninstall that is not an update removes the install folder's files, the
-    shortcuts, the uninstall entry and the `Run` value. Only an interactive
-    uninstall with Delete the application data checked also deletes
-    `HKCU\Software\MSCanvas contributors\MSCanvas` (the install location and
-    the installer language), then the parent key if it is empty, and
-    `%APPDATA%\org.mscanvas.desktop` and `%LOCALAPPDATA%\org.mscanvas.desktop`
-    whole (preferences, presets, WebView2 data, and the view cache once it
-    ships); `/S`, `/P` and `/UPDATE` never do. Proposed: leave both opt-in (the
-    folder holds user-authored presets; the next install reads the key for its
-    location), and decide before the view cache ships whether uninstall
-    removes the cache alone. A release-path change, so the owner's.
+  - *2026-10-30, read (not run) from `Section Uninstall` of the NSIS template
+    embedded in the locked `@tauri-apps/cli-win32-x64-msvc` 2.12.4 binary; no
+    installer hooks are configured; not observed for the checked path:* under
+    `installMode` `currentUser` the registry root is HKCU. Every uninstall
+    deletes by name the executable, the two bundled resources and
+    `uninstall.exe`, then the install folder only if it is then empty
+    (`RMDir` without `/r`), and the uninstall entry; one that is not an update
+    also deletes the Start menu and desktop shortcuts that point at this
+    install and the `Run` value. Only with Delete the application data checked
+    -- a box on the confirm page, which `/S` and `/P` skip and `/UPDATE`
+    ignores -- does it also delete `HKCU\Software\MSCanvas contributors\MSCanvas`
+    (the install location and the installer language), then the parent key if
+    it is empty, and `%APPDATA%\org.mscanvas.desktop` and
+    `%LOCALAPPDATA%\org.mscanvas.desktop` recursively (preferences, presets,
+    WebView2 data, and the view cache once it ships). Proposed: leave both
+    opt-in (the folder holds user-authored presets; the next install reads the
+    key for its location); the alternatives are an `NSIS_HOOK_POSTUNINSTALL`
+    that always deletes the key, or removing only the view cache once it
+    ships. A release-path change, so the owner's.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
@@ -525,9 +530,10 @@ writer and Rust's ownership of files.
   - *2026-10-30:* a run whose new plan alone takes the document past the
     bound is refused `oversized` before its worker starts and records nothing.
     The bound and what a run records are unchanged; a run that fits with its
-    plan, or reruns a recorded one, is still measured after its attempt. In
-    the M9 closure's measurement the fifth batch's thirteenth member is now
-    refused before its worker.
+    plan, or reruns a recorded one, is still measured after its attempt (a
+    run record is about 4.7 kB of a member's 54.8 kB). In the M9 closure's
+    measurement the fifth batch's thirteenth member is now refused before its
+    worker.
 - Defects and gaps: Save As does not reserve the result-store name; the M9.1
   Save As pre-copy refusal has no dedicated test; a recoverable queue-level
   refusal leaves later items showing "Waiting".
@@ -536,7 +542,9 @@ writer and Rust's ownership of files.
     other writer can take it (every Save As to a new name now leaves a
     `.payloads` folder; proposed, for the owner); the pre-copy refusal has a
     test that counts copies; a recoverable queue-level refusal settles the rows
-    it kept from starting as Not run, and a retry still converts them.
+    it kept from starting as Not run, as a stop does, and a retry reruns the
+    failures only, as its label and the panel say; those rows are converted by
+    a new queue (before, a retry converted them; proposed, for the owner).
 - PM9 options left to the owner: the request-error banner beside its control
   (PM9.4 O4), Retry bound to an operation id (PM9.4 F1), Rust-projected
   parameter bounds for exact range wording (PM9.5 F1).

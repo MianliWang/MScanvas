@@ -1206,7 +1206,7 @@ fn measure_how_many_of_the_largest_batches_one_project_document_holds() {
     eprintln!(
         "M9C_EVIDENCE size: empty_bytes={empty} first_batch_bytes={first} \
          per_member_bytes={} whole_batches={batches} refused_member_index={refused} \
-         members_recorded={recorded} final_bytes={} bound_bytes={bound} \
+         halted_batch_attempts={attempts} members_recorded={recorded} final_bytes={} bound_bytes={bound} \
          per_member_plan_bytes={} per_member_run_bytes={} per_member_artifact_bytes={} \
          sizes={sizes:?}",
         first / members.len() as u64,

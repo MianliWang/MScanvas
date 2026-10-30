@@ -369,8 +369,8 @@ pub(super) enum ItemState {
     ///
     /// A stop is one way that happens and not the only one: any queue-level
     /// refusal settles the rest of the queue this way, and that queue is
-    /// `Completed` -- retried, it reaches those rows again, unless the refusal
-    /// was a session that lost track of a process it started.
+    /// `Completed`. A retry does not rerun such a row in place; converting it
+    /// is a new queue.
     NotRun,
     /// The user settled this item without running it, while the queue carried
     /// on with the rest.
@@ -2543,9 +2543,9 @@ impl ConversionSlot {
         // rather than left pending: a `Pending` row in a terminal queue is
         // rendered as "Waiting" and counted nowhere, which describes a queue
         // that is still going. `strand_pending` puts what a retry moved back to
-        // pending back to the result it earned, and a retry moves what it marks
-        // back to pending (`begin_retry`), so what a rerun converts is
-        // unchanged. A refusal that lands on a stopped queue is still a stop.
+        // pending back to the result it earned. A retry reruns failures only,
+        // as it says; a row never run is a new queue's, as after a stop. A
+        // refusal that lands on a stopped queue is still a stop.
         queue.strand_pending();
         let reason = if self.stop_requested {
             TerminalReason::Stopped
@@ -2586,8 +2586,7 @@ impl ConversionSlot {
         true
     }
 
-    /// Moves every retryable failure back to pending for another pass, with
-    /// every row a queue-level refusal kept from starting.
+    /// Moves every retryable failure back to pending for another pass.
     //
     // Successes, skips and non-retryable failures are left exactly as they
     // are, and the order never changes: a retry is the same queue again, not a
@@ -2609,12 +2608,7 @@ impl ConversionSlot {
         }
         let mut queue = queue.clone();
         for item in &mut queue.items {
-            // `NotRun` in a queue that ran to its own end is only ever what a
-            // refusal kept from starting: a stopped queue is not retried, and a
-            // quarantined session refuses the retry before it reaches here.
-            if (item.state == ItemState::Failed && item.retryable)
-                || item.state == ItemState::NotRun
-            {
+            if item.state == ItemState::Failed && item.retryable {
                 item.state = ItemState::Pending;
             }
         }
