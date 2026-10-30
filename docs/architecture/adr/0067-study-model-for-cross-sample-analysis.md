@@ -88,8 +88,10 @@ A project holds zero or more **studies**. A study has a durable `StudyId`
     by first becoming a project reference through the existing explicit
     action (PRJ-001, PRJ-002), which hashes it. Workspace rows, paths and
     `DatasetId` are session-only (ADR 0006) and never name a sample;
-  - an **imported column**: a sample column of an imported feature table
-    (Track A) that has no acquisition in the project. Such a sample can enter
+  - an **imported column**: a sample column of an imported feature table that
+    has no acquisition in the project. Importing such a table is part of
+    "Track A", the analysis work that needs no Python runtime (imported
+    tables, sample metadata and Rust statistics). Such a sample can enter
     statistics and nothing that reads an acquisition.
 
   A layer backs at most one sample of a study (`studyDuplicateSource`
@@ -100,7 +102,8 @@ A project holds zero or more **studies**. A study has a durable `StudyId`
   one of each. Ids make a rename one edit and keep a statistic's group
   identity stable;
 - an **injection order** for each sample: a positive integer, unique within
-  its batch, or `null` where unknown. A computation that needs the order
+  its batch (or within the study, for samples with no batch), or `null` where
+  unknown. A computation that needs the order
   refuses a study in which any included sample lacks it; it does not guess.
 
 The study is **current state**, edited in place like layers, not history. What
@@ -109,7 +112,9 @@ study never rewrites a result and does not grow the history.
 
 Bounds, as product guards for the first build, not scientific limits: at most
 1,024 samples per study (the roster's capacity, ADR 0057) and at most 64
-studies per project. A study record costs about 250–300 bytes per sample
+studies per project. Layer-backed samples are already capped at 512 by the
+project's input bound, so 1,024 binds only when imported columns are
+included. A study record costs about 250–300 bytes per sample
 pretty-printed, about 90 kB for 300 samples **[arith]**.
 
 Removing a sample from a study deletes no input, no source file and no
@@ -207,7 +212,12 @@ no record.
   (decision 5), and each output file's length and digest. It holds an output
   for each sample that completed (per-sample steps), or the step's result
   (cross-sample steps, only when the invocation completed). Its record says
-  `complete`, `partial` or `noResult`.
+  `complete`, `partial` or `noResult`. Unlike M9's result record, which lists
+  each payload file's length and digest, a study artifact's record names its
+  payload only by the manifest's length and SHA-256; the manifest inside the
+  payload lists every file, the ledger and every chunk. That is what keeps the
+  record's size independent of the sample count. For a Rust step, such as
+  statistics, the run "starts" when its computation starts.
 - **Refused before the first invocation**: nothing is recorded, as for a
   single run.
 
