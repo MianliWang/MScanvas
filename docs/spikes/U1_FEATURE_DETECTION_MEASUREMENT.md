@@ -398,14 +398,25 @@ Recommendations for the owner and the U1 recipe record. Nothing here changes
 | Recipe | Wall budget | Job commit cap | Threads | Admission before the load |
 | --- | --- | --- | --- | --- |
 | Targeted MS1 (M9, today) | 600 s, unchanged | 4 GiB, unchanged | `OMP_NUM_THREADS=1`, unchanged | as today |
-| U1 single-file feature detection | **600 s.** It covers the 290 s pessimistic sum about twice. | **4 GiB**, with the admission rule | **`OMP_NUM_THREADS=4`.** It halves the wall time where the feature stages cost (1e3), and the extra 0.1 GiB is in the admission figure | **Refuse, typed, above 80 M MS1 centroid peaks.** Refuse a `noise_threshold_int` below 1e3 until a lower value is measured |
+| U1 single-file feature detection | **600 s.** It covers the 290 s pessimistic sum about twice. | **4 GiB**, with the admission rule | **`OMP_NUM_THREADS=4`.** It halves the wall time where the feature stages cost (1e3), and the extra 0.1 GiB is in the admission figure | **Refuse, typed, above 150 M MS1 centroid peaks at a `noise_threshold_int` of 1e4 or more, and above 80 M below 1e4.** Refuse a threshold below 1e3 until a lower value is measured |
 
 How the U1 limits follow from the data:
 
-- **80 M MS1 peaks.** At the worst density measured (B at 1e3: 42.8 bytes per
-  peak, plus 0.16 GiB fixed with four threads), 80 M peaks predict about
-  3.35 GiB. That leaves about 16 % headroom under the cap. A (48 M) and B (25 M)
-  both pass, and so does a file of about 1.6 × A.
+- **Two tiers, from the worst density measured at each threshold.** Each
+  includes 0.16 GiB fixed for four threads:
+  - at 1e3, B used 42.8 bytes per MS1 peak, so 80 M peaks predict about
+    3.35 GiB;
+  - at 1e4, B used 22.6 bytes per MS1 peak, so 150 M peaks predict about
+    3.32 GiB.
+
+  Either tier leaves 16–17 % headroom under the cap.
+- **What passes.** A (48 M) and B (25 M) pass both tiers. At 1e4 and above, so
+  does a 2 GiB file at A's density, about 109 M peaks. At 1e3, a file of about
+  1.6 × A still passes. A 2 GiB file is refused there.
+- **What the count cannot see.** The pre-load count sees the MS1 peaks but not
+  how many lie above the threshold. That fraction set B's density: about 14 %
+  of its peaks at 1e3, 4 % at 1e4. A denser biological Orbitrap run could exceed
+  the headroom, and the Job cap is the backstop for that case.
 - **Counting before the load.** The adapter already parses the whole file with
   expat to count spectra, in 4–6 s here. The same pass can sum the MS1
   spectra's `defaultArrayLength` before the engine loads anything. Today that
