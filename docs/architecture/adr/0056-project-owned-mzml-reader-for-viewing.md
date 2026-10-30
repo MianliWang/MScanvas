@@ -372,9 +372,11 @@ Both need a follow-up decision. It must:
 > - the shared `SpectrumTableRow` still leaves a native row's charge
 >   unreported (decision 5).
 >
-> It widens decision 1's out-of-scope list (polarity, instrument
-> configurations, the chromatogram count) for the library only. It is put to
-> the owner with the pull request.
+> It widens decision 1 for the library only: polarity; the precursor charge
+> (MS:1000041), beyond "It reads"; the metadata sections with their
+> userParams, instrument configurations among them (decision 3); the run
+> summary; and the chromatogram count, elements counted and never decoded. The
+> filter string stays unread. It is put to the owner with the pull request.
 >
 > - **Per spectrum.** `MzmlSpectrumRow` carries polarity (MS:1000130,
 >   MS:1000129) from the spectrum's own terms and its param groups; a polarity
@@ -389,7 +391,9 @@ Both need a follow-up decision. It must:
 > - **Run summary** (`MzmlRunSummary`). The spectra and `chromatogram`
 >   elements the pass counted, one bucket per declared MS level with the
 >   lowest first, and the lowest and highest retention time of the rows in
->   their one unit, or no range for mixed units. It has no retention time at
+>   their one unit, or no range for mixed units. That range is already native:
+>   the desktop's `retention_time_range_dto` computes it from the table rows,
+>   so the follow-up keeps one of the two copies. It has no retention time at
 >   a share of cumulative base-peak intensity: that is decision 7's excluded
 >   computation, and stays `msaccess`'s.
 > - **No new refusal.** These facts stay out of decision 1's conflicting-term
@@ -397,6 +401,10 @@ Both need a follow-up decision. It must:
 >   - a polarity or charge stated two ways is conflicting, and a charge that is
 >     not an integer is unreadable; neither is reported;
 >   - a metadata attribute that does not normalize is not reported;
+>   - a metadata accession or unit accession that is not `PREFIX:ID`, the
+>     rule an array's unit follows, is not reported;
+>   - metadata parameters are carried as stated, in document order, and never
+>     judged, so conflicting ones are all kept;
 >   - metadata above 4 MiB, counting the param groups, is not reported at all,
 >     never in part.
 >
@@ -404,8 +412,11 @@ Both need a follow-up decision. It must:
 > - **Comparison with `msaccess`.** No mzML is committed together with a
 >   recorded `run_summary` of it, because R0 kept output digests only. A
 >   generated pair checks the spectrum count, the MS-level buckets and a
->   whole-second range against the parser. A real-file comparison needs a
->   ProteoWizard hold release.
+>   whole-second range against the parser. The native summary buckets every
+>   declared level, has no `MS(others)` bucket and omits a level with no
+>   spectra; which levels `msaccess` puts in `MS(others)` is not recorded, so
+>   the generated pair, levels 1 and 2 only, does not test that. A real-file
+>   comparison, which needs a ProteoWizard hold release, checks it.
 
 ### 4. Offsets are kept with the open preview
 
