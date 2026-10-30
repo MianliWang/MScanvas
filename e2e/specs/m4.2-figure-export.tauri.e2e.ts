@@ -27,6 +27,7 @@ import {
   focusApplicationWindow,
   ipcCalls,
   loadWith,
+  openSpectrumFigureDialog,
   pressDialogAction,
   selectFirstSpectrum,
   statusText,
@@ -89,6 +90,7 @@ describe("M4.2 on the real Tauri WebView", () => {
       }),
     );
     await selectFirstSpectrum();
+    await openSpectrumFigureDialog();
   });
 
   it("renders every figure control and the settings it starts at", async () => {

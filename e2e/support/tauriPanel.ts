@@ -249,9 +249,10 @@ export async function openTauriPreview(handle: string): Promise<void> {
 }
 
 /**
- * Drives the shipped interface to a loaded spectrum and its export controls:
- * the spectrum head's Export… opens the figure dialog, which holds them. The
- * dialog is presentation only and keeps the selected spectrum and its token.
+ * Drives the shipped interface to a loaded spectrum. Its export controls are
+ * in the figure dialog, which a spec that exports opens next with
+ * `openSpectrumFigureDialog()`; a modal left open here would cover the viewer
+ * for the specs that pan, zoom or select.
  */
 export async function selectFirstSpectrum(): Promise<void> {
   const firstSpectrum = 'div.spectrum-table-row[data-row-position="0"]';
@@ -260,10 +261,12 @@ export async function selectFirstSpectrum(): Promise<void> {
   await browser.$(firstSpectrum).click();
   // Exists, never displayed: the summary is the plot's visually hidden label.
   await browser.$("#selected-spectrum-summary").waitForExist({ timeout: 60_000 });
-  await openSpectrumFigureDialog();
 }
 
-/** Opens the spectrum's figure dialog from its head's Export…, as a person does. */
+/**
+ * Opens the spectrum's figure dialog from its head's Export…, as a person does.
+ * The dialog is presentation only and keeps the selected spectrum and its token.
+ */
 export async function openSpectrumFigureDialog(): Promise<void> {
   const entry = browser.$(".spectrum-panel .figure-quick-actions > button:first-child");
   await entry.waitForDisplayed({ timeout: 60_000 });

@@ -22,6 +22,7 @@ import {
   chooseFigure,
   clipboardIsUsable,
   loadWith,
+  openSpectrumFigureDialog,
   pressDialogAction,
   selectFirstSpectrum,
   tauriTable,
@@ -79,6 +80,7 @@ describe("M4.2 Copy plot, read back from outside the application", () => {
     clearClipboard();
     await loadWith(tauriTable({ real: ["copy_selected_spectrum_plot"] }));
     await selectFirstSpectrum();
+    await openSpectrumFigureDialog();
   });
 
   after(() => {
@@ -113,6 +115,7 @@ describe("M4.2 Copy plot, read back from outside the application", () => {
     clearClipboard();
     await loadWith(tauriTable({ real: ["copy_selected_spectrum_plot"] }));
     await selectFirstSpectrum();
+    await openSpectrumFigureDialog();
     await chooseFigure({ width: "420", height: "300", theme: "dark" });
     await pressDialogAction("Copy plot");
     expect(await waitForOutcome()).toContain("Copied the plot");
