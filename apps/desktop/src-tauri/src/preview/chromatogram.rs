@@ -1538,9 +1538,10 @@ mod tests {
         // holding this file must not take it for a chromatogram the instrument
         // recorded.
         assert!(document.contains("not a stored chromatogram record"));
-        assert!(document.contains("Retention time"));
-        // Neither axis claims a unit.
-        assert!(!document.contains("Retention time ("));
+        // Neither axis claims a unit: each says, where a unit would be, that
+        // none was reported.
+        assert!(document.contains(">Retention time (unit not reported)<"));
+        assert!(document.contains(">Intensity (unit not reported)<"));
     }
 
     /// One scan is a run, and it draws.
@@ -2066,7 +2067,8 @@ mod tests {
     /// Two panels needed no contract change: the renderer has carried a
     /// `Vec<PanelSpec>` since ADR 0028, and ordered vertical bands already place
     /// and describe them. Version 3 (M9.2) added sample marks and intervals,
-    /// and a linked figure uses neither -- which is why its bytes are unchanged.
+    /// and version 4 printed sizes and edited axis titles; a linked figure at
+    /// pixel settings uses none of them.
     #[test]
     fn a_linked_figure_needs_no_new_schema_version() {
         let source = ordinary();
@@ -2075,7 +2077,8 @@ mod tests {
             figure.schema_version(),
             mscanvas_plot_spec::spec::SCHEMA_VERSION
         );
-        assert_eq!(figure.schema_version(), 3);
+        assert_eq!(figure.schema_version(), 4);
+        assert!(figure.size().print().is_none() && figure.x_axis_title().is_none());
         assert!(figure.panels().iter().all(|panel| {
             panel.intervals().is_empty()
                 && panel.series().iter().all(|series| !series.marks_samples())
