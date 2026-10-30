@@ -690,15 +690,18 @@ Slice 1 therefore meets this decision's merge condition.
 >   labels, which admit no quoting.
 > - **Figures.** The export maps a declared profile spectrum to a joined trace
 >   (decision 5), so its SVG, PNG, `Copy plot` and figure preview draw a line.
->   A current range cuts the line at each edge at the interpolated height,
->   and that height also sets the window's value scale, as the chromatogram's
->   does. The caption states the declared representation and units. The
+>   Where the line crosses a current range's edge between two samples, it is
+>   cut there at the interpolated height, and that height also sets the
+>   window's value scale, as the chromatogram's does. The caption states the
+>   declared representation and units; the linked figure's caption gives each
+>   panel its own units, because the chromatogram's intensity has none. The
 >   screen draws sticks until slice 3. Centroid and undeclared spectra are
 >   unchanged.
 > - **Data-document values.** The spectrum documents (schemas 1 and 2) and the
->   chromatogram document (schema 1) keep their fields. Their representation
->   and unit fields now also carry the file's declared values. Whether that
->   needs a new schema version is an open owner question.
+>   chromatogram document (schema 1) keep their fields. The spectrum's
+>   representation and unit fields and the chromatogram's retention-time unit
+>   now also carry the file's declared values. Whether that needs a new schema
+>   version is an open owner question.
 > - **Reconciliation is exact** (`TableRowFacts::contradicts`), including the
 >   retention-time unit.
 > - **Decision 4.** An open takes its ticket and drops every other dataset's
