@@ -89,11 +89,10 @@ async function readTheFirstAcquisition() {
 }
 
 describe("PM9.2: the backend banner folds when there is nothing to act on (L10)", () => {
-  it("keeps a usable installation's reading as a phrase in the header, and no band", async () => {
+  it("keeps a usable installation's reading as a phrase in the status bar, and no band", async () => {
     mount("populated");
-    await waitFor(() => expect(backendToggle()).not.toBeNull());
+    await waitFor(() => expect(backendToggle()).toHaveAccessibleName(en.backendReadyShort));
     const toggle = backendToggle()!;
-    expect(toggle).toHaveAccessibleName(en.backendReadyShort);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveAttribute("aria-controls", "backend-status");
     // No banner takes a row, and its actions are out of the way...
@@ -103,9 +102,10 @@ describe("PM9.2: the backend banner folds when there is nothing to act on (L10)"
     const reading = document.querySelector('#backend-status [role="status"]');
     expect(reading).toHaveTextContent(en.backendAvailable);
 
+    // The details open over the bar, never as a band in the track.
     await press(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(shownNotices()).toHaveLength(1);
+    expect(shownNotices().map(notice => notice.getAttribute("data-backend-mode"))).toEqual(["popover"]);
     expect(screen.getByRole("button", { name: en.backendRecheck })).toBeVisible();
 
     await press(toggle);
@@ -113,12 +113,16 @@ describe("PM9.2: the backend banner folds when there is nothing to act on (L10)"
     expect(shownNotices()).toEqual([]);
   });
 
-  it("keeps a banner that has something to act on on screen, with no way to fold it", async () => {
+  it("keeps a state with something to act on as one line with its one fix", async () => {
     mount("empty");
     await screen.findByText("No ProteoWizard installation was found");
-    expect(backendToggle()).toBeNull();
-    expect(shownNotices()).toHaveLength(1);
+    expect(shownNotices().map(notice => notice.getAttribute("data-backend-mode"))).toEqual(["notice"]);
     expect(screen.getByRole("button", { name: en.backendChoose })).toBeVisible();
+    // Check again is in the details, which the status bar's item opens.
+    expect(screen.queryByRole("button", { name: en.backendRecheck })).toBeNull();
+    expect(backendToggle()).toHaveAccessibleName(en.backendStatusMissing);
+    await press(backendToggle()!);
+    expect(screen.getByRole("button", { name: en.backendRecheck })).toBeVisible();
   });
 });
 
@@ -132,7 +136,7 @@ describe("PM9.2: each surface says what it is, and offers only its own next step
     ] as const;
     for (const [target, name] of surfaces) {
       if (target === "project") await openProjectSurface();
-      else if (target === "conversion") await press(screen.getByRole("button", { name: /^Conversion & results/ }));
+      else if (target === "conversion") await press(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
       await waitFor(() => expect(shell()).toHaveAttribute("data-surface", target));
       const titles = screen.getAllByRole("heading", { level: 1 });
       expect(titles.map((title) => title.textContent)).toEqual([name]);
@@ -141,7 +145,7 @@ describe("PM9.2: each surface says what it is, and offers only its own next step
     // The titles are headings, not buttons: the navigation is still found once.
     expect(screen.getAllByRole("button", { name: en.workbench })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: en.projectSurface })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: /^Conversion & results/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Conversion(\s|$)/ })).toHaveLength(1);
   });
 
   it("invents no primary action on a surface that has no owned next step", async () => {

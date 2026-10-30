@@ -41,7 +41,7 @@ function renderApp(api: FakePreviewApi) {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 async function check(name: RegExp) {

@@ -1,5 +1,5 @@
 /**
- * The Conversion & results surface, reached the way a reader reaches it since
+ * The Conversion surface, reached the way a reader reaches it since
  * M7.2.
  *
  * Three things changed under the M6 specs, and none of them is a product
@@ -74,7 +74,7 @@ export async function checkMembers(handles: readonly string[]): Promise<void> {
   }
 }
 
-/** Presses the header's Conversion & results destination and waits for the surface. */
+/** Presses the header's Conversion destination and waits for the surface. */
 export async function showConversion(): Promise<void> {
   await browser.execute((labels: readonly string[]) => {
     [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]

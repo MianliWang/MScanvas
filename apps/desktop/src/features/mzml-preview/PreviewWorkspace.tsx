@@ -14,6 +14,7 @@ import { Button, EmptyState, Icon, IconButton } from "../../components/ui";
 import { ActiveClearDialog } from "./ActiveClearDialog";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 import { BackendStatus } from "./BackendStatus";
+import { presentBackend } from "./backendPresentation";
 import { Chromatogram } from "./Chromatogram";
 import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportTools, LinkedFigureResult } from "./ChromatogramExportPanel";
 import { resolveConversionScope } from "./conversionScope";
@@ -293,23 +294,14 @@ export function PreviewWorkspace() {
   const backendUsable =
     workspace.backend.status === "resolved" &&
     workspace.backend.availability.state === "available";
-  // Deliberately not the negation of the above. This is the one state that has
-  // something specific to tell the user about installing ProteoWizard, and
-  // saying it while a check is still running would be a guess.
-  const backendUnavailable =
-    workspace.backend.status === "resolved" &&
-    workspace.backend.availability.state === "unavailable";
   // Copy that offers dropping files only while dropping files works.
   const dropAvailable = workspace.dropSubscriptionStatus === "available";
-  // The banner has nothing to act on only while a usable installation stands
-  // and nothing is being checked, superseded or held back by the conversion
-  // lane; then it folds to a phrase in the header and costs the workspace no
-  // height (PM9 L10). Every other state keeps it on screen. Whether the reader
-  // opened it again is presentation for this session and stored nowhere.
-  const [backendExpanded, setBackendExpanded] = useState(false);
-  const backendQuiet =
-    backendUsable && !workspace.backendReadingStale && !workspace.conversion.backendQuarantined;
-  const backendCollapsed = backendQuiet && !workspace.backendBusy && !backendExpanded;
+  // ProteoWizard is an icon and a short label in the status bar; its details
+  // open over the bar from there. Whether they are open is presentation for
+  // this session and stored nowhere.
+  const [backendOpen, setBackendOpen] = useState(false);
+  const closeBackend = useCallback(() => { setBackendOpen(false); }, []);
+  const backendView = presentBackend(workspace.backend, workspace.backendReadingStale, t, workspace.conversion.backendQuarantined);
 
   // Curating the workspace is not backend work, so it stays available when no
   // ProteoWizard is installed. What it waits for is a picker already on screen,
@@ -460,22 +452,11 @@ export function PreviewWorkspace() {
     conversionBusy: workspace.conversion.busy,
     rosterLoad: workspace.rosterLoad.status,
   }, t);
-  /**
-   * Shows the backend banner and puts the keyboard on it. Focus anywhere in
-   * the banner engages it, which unfolds a quiet one.
-   */
-  const showBackend = () => {
-    setBackendExpanded(true);
-    document.getElementById("backend-status")?.focus();
-  };
-  const backendRequestFailed = workspace.backend.status === "failed";
   const backendItem: StatusBackend = {
-    tone: backendQuiet ? "ready" : backendUnavailable || backendRequestFailed ? "unavailable" : "attention",
-    text: t(backendQuiet ? "backendReadyShort"
-      : workspace.backend.status === "checking" ? "backendStatusChecking"
-      : backendUnavailable || backendRequestFailed ? "backendStatusUnavailable" : "backendStatusAttention"),
-    toggle: backendQuiet ? { expanded: !backendCollapsed, onToggle: () => setBackendExpanded(backendCollapsed) } : null,
-    onShow: showBackend,
+    tone: backendView.status.tone,
+    text: backendView.status.label,
+    expanded: backendOpen,
+    onToggle: () => setBackendOpen((was) => !was),
   };
   /**
    * The visible reason a refused read points at: the backend item when the
@@ -494,7 +475,8 @@ export function PreviewWorkspace() {
   const evidenceState = preview.status !== "empty" ? preview.status
     : roster.datasets.length === 0 ? (workspace.rosterLoad.status === "ready" ? "first-run" : "idle")
     : focusedVendor !== null ? "vendor"
-    : backendUnavailable ? "backend"
+    // Only where setting ProteoWizard up is the way forward: a restart is not.
+    : backendView.kind === "missing" || backendView.kind === "unsupported" ? "backend"
     : "idle";
   /**
    * An evidence action that shows another surface hides the button that was
@@ -544,7 +526,7 @@ export function PreviewWorkspace() {
         detailsAvailable={detailsAvailable}
         conversionBusy={workspace.conversion.busy}
         conversionRetained={workspace.conversion.state.status === "terminal"}
-        project={project} />
+        projectBusy={project.busy !== "idle"} />
 
       {workspace.dropPresentation.status === "idle" ? null : (
         <div
@@ -572,8 +554,9 @@ export function PreviewWorkspace() {
           onUseAutomaticDiscovery={workspace.useAutomaticDiscovery}
           readingSuperseded={workspace.backendReadingStale}
           state={workspace.backend}
-          collapsed={backendCollapsed}
-          onEngage={() => setBackendExpanded(true)}
+          laneQuarantined={workspace.conversion.backendQuarantined}
+          open={backendOpen}
+          onClose={closeBackend}
         />
 
         {/* A picker that would not open is its own problem. It never replaces
@@ -1141,8 +1124,8 @@ export function PreviewWorkspace() {
             ) : evidenceState === "backend" ? (
               <EmptyState
                 className="evidence-state"
+                // The notice above carries the fix; this only says what waits on it.
                 message={<><Icon name="info" size={28} /><strong>{t("previewBackendRequired")}</strong></>}
-                action={<Button onClick={showBackend}>{t("backendShowStatus")}</Button>}
               />
             ) : (
               <EmptyState

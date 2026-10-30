@@ -34,7 +34,7 @@ import {
   shippedIntent,
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
-import { showBackendBanner } from "../support/backendBanner";
+import { hideBackendBanner, showBackendBanner } from "../support/backendBanner";
 import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion, startAnother } from "../support/conversion";
 
 /** The binding every answer in this run describes, as a plan carries it. */
@@ -190,6 +190,8 @@ async function recheckTheBackend(verdict: unknown): Promise<void> {
     throw new Error("the backend banner offers no recheck action");
   }
   await recheck.click();
+  // The details float over the surface this spec goes on to press.
+  await hideBackendBanner();
 }
 
 async function blockTheLane(): Promise<void> {

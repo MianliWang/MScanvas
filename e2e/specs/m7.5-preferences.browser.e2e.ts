@@ -131,10 +131,13 @@ async function capture(label: string, expectedDpr?: number) {
         const button = document.querySelector("[data-backend-help]");
         return button === null ? null : button.getAttribute("aria-expanded") === "true";
       })(),
-      help: box(document.querySelector(".backend-setup-help")),
-      // The help's scroll owner. The notices area is a bounded scrollport by
-      // design, so "the details element is not clipped" says nothing about
-      // whether the reader can see what they opened.
+      // The region the help button opens. On the one-line notice its wrapper
+      // lays out as its children (display: contents) and has no box of its own.
+      help: box(document.querySelector(".backend-setup-help-body")),
+      // The help's scroll owner: the notices area, a bounded scrollport by
+      // design, or the ProteoWizard details over the status bar, which scroll
+      // themselves. "Not clipped" says nothing about whether the reader can see
+      // what they opened.
       //
       // Two different questions, because they have different answers at
       // different heights. Whether it fits is the one that matters where there
@@ -143,8 +146,8 @@ async function capture(label: string, expectedDpr?: number) {
       // scrolling reaches the end of it, which is measured by actually
       // scrolling to the bottom and looking, then putting the scroll back.
       helpScrollport: (() => {
-        const help = document.querySelector(".backend-setup-help");
-        const port = help?.closest(".shell-notices") ?? null;
+        const help = document.querySelector(".backend-setup-help-body");
+        const port = help?.closest('#backend-status[data-backend-mode="popover"]') ?? help?.closest(".shell-notices") ?? null;
         if (help === null || port === null) return null;
         const outer = port.getBoundingClientRect();
         const inner = help.getBoundingClientRect();
@@ -205,7 +208,10 @@ async function capture(label: string, expectedDpr?: number) {
   } else if (state.backendReading !== null) {
     // Reported as one object per control, so a failure names which one rather
     // than needing an assertion message the pinned matcher does not take.
+    // Only the actions shown: the one-line notice offers its one fix and keeps
+    // the rest, hidden, for the details over the status bar.
     const clipped = Object.entries(state.backendActions)
+      .filter(([, action]) => action !== null && action.width > 0)
       .filter(([, action]) => action?.clipped === true || (action?.height ?? 0) < 24)
       .map(([id]) => `${label}:${id}`);
     expect(clipped).toEqual([]);
@@ -492,13 +498,16 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       await browser.url("/");
       await browser.$("[data-backend-status]").waitForExist();
       await browser.waitUntil(() => browser.execute(want => document.querySelector("[data-backend-status]")?.getAttribute("data-backend-status") === want, expected));
-      // A usable installation folds the banner; its actions and help are one
-      // press away (PM9.2 L10).
+      // Every state's actions and help are in the details, which the status
+      // bar's ProteoWizard item opens.
       await showBackendBanner();
       const state = await capture(`16-backend-${label}-en`);
       expect(state.backendStatus).toBe(expected);
-      // Every state offers a way to ask again, and the help is beside it.
-      expect(Object.keys(state.backendActions)).toContain("recheck");
+      // Every state a check could change offers a way to ask again. A
+      // quarantined session offers none: only a restart fixes it, and no
+      // control here restarts (rendered review, issue 3). The help is in all.
+      if (expected === "quarantined") expect(state.backendActions).toEqual({});
+      else expect(Object.keys(state.backendActions)).toContain("recheck");
       expect(state.help).not.toBeNull();
       expect(state.helpOpen).toBe(false);
 

@@ -1052,6 +1052,10 @@ describe("M6.4 — E11: the banner stops naming a build it has left", () => {
         timeout: 30_000,
         timeoutMsg: "the banner never disclaimed the reading the poll superseded",
       });
+      // A superseded reading is not a verdict, so it puts nothing new in the
+      // track; its disclaimer and every way out are in the ProteoWizard
+      // details, which the status bar's item opens.
+      await showBackendBanner();
 
       const notice = await boxOf('[data-backend-reading="superseded"]');
       expect(notice.height).toBeGreaterThan(0);

@@ -20,11 +20,11 @@ function mount(api: FakePreviewApi) {
   render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
     <PreviewApiProvider value={api}><App /></PreviewApiProvider>
   </WorkspaceDropTransportProvider>);
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 async function chinese() {
-  fireEvent.click(screen.getByRole("button", { name: en.settings }));
+  fireEvent.click(screen.getByRole("button", { name: en.settingsEntry }));
   const settings = screen.getByRole("dialog", { name: en.settings });
   fireEvent.click(within(settings).getByRole("radio", { name: en.simplifiedChinese }));
   fireEvent.click(within(settings).getByRole("button", { name: zh.apply }));
@@ -203,7 +203,9 @@ describe("M7.4 bilingual conversion composition", () => {
     await waitFor(() => expect(button).not.toHaveAttribute("aria-disabled"));
     const snapshot = structuredClone(terminal);
     await chinese();
-    const panel = screen.getByRole("region", { name: zh.m74CnvTitle });
+    // The panel inside the Conversion surface: in Chinese the surface's tab
+    // name and the panel's heading are both "转换".
+    const panel = within(document.getElementById("workbench-conversion")!).getByRole("region", { name: zh.m74CnvTitle });
     expect(panel).toHaveTextContent("共 1 项：已转换 0 项、重名跳过 0 项、失败 1 项。");
     expect(panel).toHaveTextContent(raw);
     expect(document.querySelector('[data-live-region="conversion"]')).toHaveTextContent("失败 1 项");

@@ -25,7 +25,7 @@ import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "..
 import { CONVERT, checkMembers, waitUntilOffered } from "../support/conversion";
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails } from "../support/harness";
 import { MZML_ROW } from "../support/fixtures";
-import { EMPTY_ROSTER, NO_PROJECT, RESULT, scenario, type Locale } from "../support/pm9Scenarios";
+import { EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
   admittedIntents,
@@ -56,6 +56,8 @@ const VIEWPORTS = [
 
 const AUTHORITY = settledAt(1, 1);
 const OPERATION = "copy-tour-queue";
+/** ProteoWizard's details, open over the status bar. */
+const POPOVER = '#backend-status[data-backend-mode="popover"]';
 const raw = (index: number, fileName: string): SelectedFile => ({
   handle: `raw-${String(index)}`,
   fileName,
@@ -180,15 +182,9 @@ async function frames() {
   );
 }
 
-/** Shows a surface: 1 Workbench and 2 Conversion are the header's tabs, 3 Project is the Project menu's first item. */
+/** Shows a surface: the header's tabs are 1 Workbench, 2 Conversion and 3 Project. */
 async function go(position: 1 | 2 | 3) {
-  if (position === 3) {
-    await browser.$("[data-project-menu]").click();
-    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed({ timeout: 30_000 });
-    await browser.$('[data-project-menu-item="surface"]').click();
-  } else {
-    await browser.$(`.workbench-navigation > button:nth-child(${String(position)})`).click();
-  }
+  await browser.$(`.workbench-navigation > button:nth-child(${String(position)})`).click();
   await frames();
 }
 
@@ -223,6 +219,23 @@ interface Stop {
   readonly drive?: () => Promise<void>;
   /** What must be on screen before the shot. */
   readonly anchor: string;
+  /** Leaves the keyboard where the state put it, so its focus ring is in the shot. */
+  readonly keepFocus?: boolean;
+}
+
+/** A crowded status bar: a conversion under way, a long unsaved project name, drop that stopped working. */
+function crowdedTable(locale: Locale) {
+  const table = scenario("converting", locale);
+  table.get_project_state = capturedProject({ name: "Plasma QC batch 08 replicate 04 long acquisition review", dirty: true });
+  table.subscribe_workspace_drop_updates = null;
+  return table;
+}
+
+/** Focuses `css` by script, then presses Tab `tabs` times, so the ring is a keyboard one. */
+async function tabFrom(css: string, tabs: number) {
+  await browser.execute((selector: string) => document.querySelector<HTMLElement>(selector)?.focus(), css);
+  for (let press = 0; press < tabs; press += 1) await browser.keys("Tab");
+  await frames();
 }
 
 function emptyTable(locale: Locale) {
@@ -282,30 +295,67 @@ const STOPS: readonly Stop[] = [
     },
     anchor: ".figure-export-dialog",
   },
-  { name: "backend-checking", table: populated, hold: ["inspect_backend"], anchor: "#backend-status" },
-  {
-    name: "backend-available",
-    table: populated,
-    drive: async () => {
-      const toggle = browser.$("[data-backend-toggle]");
-      await toggle.waitForExist({ timeout: 30_000 });
-      if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
-    },
-    anchor: "#backend-status:not([data-backend-collapsed])",
-  },
-  { name: "backend-chosen", table: withBackend(chosenBackend), drive: expandBackend, anchor: "#backend-status:not([data-backend-collapsed])" },
-  { name: "backend-unavailable", table: withBackend(unavailableBackend), anchor: '#backend-status[data-backend-status]:not([data-backend-collapsed])' },
+  // ProteoWizard: an item in the status bar; a one-line notice while no usable
+  // backend stands; its details open over the bar from the item.
+  { name: "backend-checking", table: populated, hold: ["inspect_backend"], anchor: '[data-backend-item] [data-tone="pending"]' },
+  { name: "backend-available", table: populated, anchor: '#backend-status[data-backend-mode="hidden"][data-backend-status="available"]' },
+  { name: "backend-available-open", table: populated, drive: expandBackend, anchor: POPOVER },
+  { name: "backend-chosen-open", table: withBackend(chosenBackend), drive: expandBackend, anchor: POPOVER },
+  { name: "backend-unavailable", table: withBackend(unavailableBackend), anchor: '#backend-status[data-backend-mode="notice"]' },
+  { name: "backend-unavailable-open", table: withBackend(unavailableBackend), drive: expandBackend, anchor: POPOVER },
   {
     name: "backend-unavailable-help",
     table: withBackend(unavailableBackend),
     drive: async () => {
-      await browser.$("[data-backend-help]").waitForDisplayed({ timeout: 30_000 });
-      await browser.$("[data-backend-help]").click();
+      await browser.$('#backend-status[data-backend-mode="notice"] [data-backend-help]').waitForDisplayed({ timeout: 30_000 });
+      await browser.$('#backend-status[data-backend-mode="notice"] [data-backend-help]').click();
     },
     anchor: '[data-backend-help][aria-expanded="true"]',
   },
-  { name: "backend-quarantined", table: withBackend(quarantinedBackend), anchor: "#backend-status:not([data-backend-collapsed])" },
-  { name: "backend-folder-without-tools", table: withBackend(chosenFolderWithoutTools), anchor: "#backend-status:not([data-backend-collapsed])" },
+  { name: "backend-quarantined", table: withBackend(quarantinedBackend), anchor: '#backend-status[data-backend-mode="notice"][data-backend-status="quarantined"]' },
+  { name: "backend-quarantined-open", table: withBackend(quarantinedBackend), drive: expandBackend, anchor: POPOVER },
+  { name: "backend-folder-without-tools", table: withBackend(chosenFolderWithoutTools), anchor: '#backend-status[data-backend-mode="notice"]' },
+  { name: "backend-folder-without-tools-open", table: withBackend(chosenFolderWithoutTools), drive: expandBackend, anchor: POPOVER },
+  {
+    // Opened from the keyboard: Enter on the item, then Tab to the first action.
+    name: "backend-open-keyboard",
+    table: withBackend(unavailableBackend),
+    keepFocus: true,
+    drive: async () => {
+      await browser.$('#backend-status[data-backend-mode="notice"]').waitForExist({ timeout: 30_000 });
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-backend-item]")?.focus());
+      await browser.keys("Enter");
+      await browser.$(POPOVER).waitForDisplayed();
+      await browser.keys("Tab");
+      await frames();
+    },
+    anchor: `${POPOVER} [data-backend-action]:focus-visible`,
+  },
+  {
+    // The header by keyboard: the ring on the Conversion tab.
+    name: "header-focus",
+    table: populated,
+    keepFocus: true,
+    drive: () => tabFrom(".workbench-home", 2),
+    anchor: '.workbench-navigation > [data-surface-tab="conversion"]:focus-visible',
+  },
+  {
+    // Acquisitions by keyboard: its icon alone where the roster is a column,
+    // labelled where it is a drawer.
+    name: "header-roster-focus",
+    table: populated,
+    keepFocus: true,
+    drive: () => tabFrom(".workbench-home", 4),
+    anchor: '.workbench-header [aria-controls="workbench-roster"]:focus-visible',
+  },
+  {
+    // Every status-bar item at once, in a window that has to cut something.
+    name: "status-crowded",
+    table: crowdedTable,
+    keepFocus: true,
+    drive: () => tabFrom("[data-backend-item]", 1),
+    anchor: '[data-shell-context="conversionActivity"]:focus-visible',
+  },
   {
     name: "conversion-ready",
     table: (locale) => conversionWorld(locale, { status: "idle" }),
@@ -341,16 +391,6 @@ const STOPS: readonly Stop[] = [
     drive: () => go(2),
     anchor: 'li[data-item-state="finalized"]',
   },
-  {
-    // The header's Project menu, open over the Workbench (rebuild spec 1.1).
-    name: "project-menu",
-    table: populated,
-    drive: async () => {
-      await browser.$("[data-project-menu]").click();
-      await browser.$('[data-project-menu-item="surface"]').waitForDisplayed({ timeout: 30_000 });
-    },
-    anchor: '[role="menu"] [data-project-menu-item="surface"]',
-  },
   { name: "project-empty", table: emptyTable, drive: () => go(3), anchor: "[data-project-surface]" },
   { name: "project-records", table: populated, drive: () => go(3), anchor: "[data-project-surface]" },
   { name: "project-result", table: (locale) => scenario("projectWithResult", locale), drive: () => go(3), anchor: `[data-project-inspect-artifact="${RESULT}"]` },
@@ -373,12 +413,27 @@ const STOPS: readonly Stop[] = [
     },
     anchor: "[data-settings-dialog]",
   },
+  {
+    // The refused Reset layout holding the ring, beside a Reset defaults that
+    // is not refused: the two must not look alike (rendered review, issue 1).
+    name: "settings-refused-focus",
+    table: populated,
+    drive: async () => {
+      await browser.$("[data-settings-entry]").click();
+      await browser.$("[data-settings-dialog]").waitForDisplayed();
+      await browser.keys("Tab");
+      await browser.keys("Tab");
+      await frames();
+    },
+    anchor: '[data-layout-reset][aria-disabled="true"]:focus-visible',
+  },
 ];
 
 async function expandBackend() {
-  const toggle = browser.$("[data-backend-toggle]");
-  await toggle.waitForExist({ timeout: 30_000 });
-  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+  const item = browser.$("[data-backend-item]");
+  await item.waitForExist({ timeout: 30_000 });
+  if ((await item.getAttribute("aria-expanded")) === "false") await item.click();
+  await browser.$(POPOVER).waitForDisplayed();
 }
 
 async function open(stop: Stop, locale: Locale, width: number, height: number) {
@@ -394,8 +449,8 @@ async function open(stop: Stop, locale: Locale, width: number, height: number) {
 }
 
 /** The viewport, as it is, with nothing focused that the state did not focus itself. */
-async function capture(file: string) {
-  await browser.execute(() => {
+async function capture(file: string, keepFocus = false) {
+  if (!keepFocus) await browser.execute(() => {
     const active = document.activeElement;
     // A dialog or an open menu keeps its focus: blurring it would close a menu.
     if (active instanceof HTMLElement && active.closest('[role="dialog"], [role="menu"]') === null) active.blur();
@@ -451,6 +506,23 @@ async function layoutFacts() {
       documentOverflowX: document.documentElement.scrollWidth - innerWidth,
       sideways,
       linkButtonsOrDetails: document.querySelectorAll("details, .link-button").length,
+      // The shell's own facts: where each tab starts (a dot must not move
+      // one), the bar's height, the ProteoWizard details' box, and every
+      // visible button whose label is cut.
+      tabs: [...document.querySelectorAll(".workbench-navigation > button")].map((tab) => Math.round(tab.getBoundingClientRect().left)),
+      statusBar: Math.round(document.querySelector(".workbench-status")?.getBoundingClientRect().height ?? 0),
+      backend: (() => {
+        const details = document.getElementById("backend-status");
+        const box = details?.getBoundingClientRect();
+        return details === null || box === undefined ? null : {
+          mode: details.getAttribute("data-backend-mode"),
+          top: Math.round(box.top), bottom: Math.round(box.bottom), height: Math.round(box.height),
+          onScreen: box.top >= 0 && box.bottom <= innerHeight && box.right <= innerWidth,
+        };
+      })(),
+      clippedButtons: [...document.querySelectorAll<HTMLElement>("button")]
+        .filter((button) => button.offsetParent !== null && !button.closest(".visually-hidden") && button.scrollWidth > button.clientWidth + 1)
+        .map((button) => (button.textContent ?? "").trim() || button.getAttribute("aria-label") || "?"),
     };
   });
 }
@@ -477,7 +549,7 @@ describe("Copy tour, rendered", () => {
           await open(stop, locale, width, height);
           await stop.drive?.();
           await browser.$(stop.anchor).waitForExist({ timeout: 30_000, timeoutMsg: `${stop.name}: ${stop.anchor} never appeared` });
-          await capture(file);
+          await capture(file, stop.keepFocus);
           const text = await browser.execute(() => document.body.innerText);
           captured.push({ file, state: stop.name, locale, viewport: `${String(width)}x${String(height)}`, text, layout: await layoutFacts() });
           // Judged after the shot, so a failure still leaves its picture.

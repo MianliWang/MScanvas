@@ -203,7 +203,7 @@ runNative("M6.6 real native destination and conflict proof (requires authorized 
   }
 
   async function showConversion(): Promise<void> {
-    await browser.$("button=Conversion & results").click();
+    await browser.$("button=Conversion").click();
     await browser.$("#workbench-conversion").waitForDisplayed();
   }
 

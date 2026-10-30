@@ -194,7 +194,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
   }
 
   async function showConversion(): Promise<void> {
-    await browser.$("button=Conversion & results").click();
+    await browser.$("button=Conversion").click();
     await browser.$("#workbench-conversion").waitForDisplayed();
   }
 

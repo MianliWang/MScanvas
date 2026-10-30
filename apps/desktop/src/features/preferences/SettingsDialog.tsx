@@ -108,7 +108,7 @@ export function SettingsDialog() {
   }}>
     <Dialog.Trigger asChild>
       <Button variant="quiet" size="sm" icon={<Icon name="settings" />} className="settings-entry" ref={opener} data-settings-entry="">
-        {message("settings")}
+        {message("settingsEntry")}
       </Button>
     </Dialog.Trigger>
     <p aria-live="polite" className="visually-hidden" data-live-region="preferences">

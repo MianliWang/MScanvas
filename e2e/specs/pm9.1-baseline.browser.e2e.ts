@@ -146,6 +146,15 @@ async function waitForContext(id: string, expected: (text: string | null) => boo
   });
 }
 
+/** What the Conversion tab's description says about its work; its name stays the tab's own. */
+function conversionTabDescription() {
+  return browser.execute(() => {
+    const tab = document.querySelector('.workbench-navigation [data-surface-tab="conversion"]');
+    const id = tab?.getAttribute("aria-describedby") ?? null;
+    return id === null ? null : (document.getElementById(id)?.textContent ?? null);
+  }) as Promise<string | null>;
+}
+
 /** Activates one context item with a real pointer click. */
 async function activate(id: string) {
   await browser.$(`[data-shell-context="${id}"]`).click();
@@ -159,12 +168,8 @@ async function navigate(names: readonly string[]) {
     target?.click();
     return target !== undefined;
   }, names);
-  // Project is the header menu's first item, not a tab (rebuild spec 1.1).
-  if (!found) {
-    await browser.$("[data-project-menu]").click();
-    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
-    await browser.$('[data-project-menu-item="surface"]').click();
-  }
+  // Workbench, Conversion and Project are all header tabs (direction A).
+  if (!found) throw new Error(`no header tab named ${names.join(" / ")}`);
 }
 
 /** Home, found by its place rather than its label, so it serves either locale. */
@@ -925,9 +930,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await open("converting");
       const running = fill(en.shellContextActivity, { activity: en.shellConversionRunning });
       await waitForContext("conversionActivity", (text) => text === running, "says the conversion runs");
-      expect(
-        await browser.$(".workbench-navigation .work-status-dot").getAttribute("aria-label"),
-      ).toBe(en.workActive);
+      expect(await browser.$(".workbench-navigation .work-status-dot").isExisting()).toBe(true);
+      expect(await conversionTabDescription()).toBe(en.workActive);
 
       // Away and back while it runs: the lane keeps polling its slot, and that
       // read is the only request.
@@ -954,7 +958,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await contextText("conversionActivity")).toBe(running);
       await releaseInvokeHold(poll);
       await waitForContext("conversionActivity", (text) => text === en.shellConversionRetained, "reports the settled queue");
-      expect(await browser.$(".workbench-navigation .work-status-dot").getAttribute("aria-label")).toBe(en.workRetained);
+      expect(await conversionTabDescription()).toBe(en.workRetained);
       expect(
         await browser.execute(
           (busy: string) =>
@@ -1104,8 +1108,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       // where focus is.
       await metrics(1366, 768);
       await open("populated", "en");
-      // The usable reading folds the banner; observe() expects it folded.
-      await browser.$("[data-backend-toggle]").waitForExist();
+      // A usable reading leaves nothing in the track; observe() expects that.
+      await browser.$('#backend-status[data-backend-status="available"]').waitForExist();
       await frames();
       const label = "pm9-2-details-refused-en-1366x768";
       await observe(label);
@@ -1159,7 +1163,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         const words = locale === "en" ? en : zh;
         await metrics(1366, 768);
         await open("populated", locale);
-        await browser.$("[data-backend-toggle]").waitForExist();
+        await browser.$('#backend-status[data-backend-status="available"]').waitForExist();
         for (const [target, name] of [
           ["workbench", words.workbench],
           ["conversion", words.conversionTask],
@@ -1204,27 +1208,33 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       });
     }
 
-    it("PM9.2 L10: the folded reading's toggle hands the keyboard to the banner when it has something to say", async () => {
+    it("PM9.2 L10: ProteoWizard's details stay open under the reader through a check, and Esc gives the keyboard back", async () => {
       await metrics(1366, 768);
       await open("populated", "en");
-      // Queried afresh each time: the toggle leaves, and a new one returns.
-      const toggle = () => browser.$("[data-backend-toggle]");
-      await toggle().waitForExist();
-      // Opened by a real press, which leaves the keyboard on the toggle.
-      await toggle().click();
-      expect(await browser.execute(() => document.activeElement?.hasAttribute("data-backend-toggle") ?? false)).toBe(true);
-      // A check the reader did not start from the toggle: pressed by script,
-      // so the keyboard stays where it was, and held so the state can be read.
+      const item = browser.$("[data-backend-item]");
+      await browser.$('#backend-status[data-backend-status="available"]').waitForExist();
+      expect(await item.getText()).toBe(en.backendReadyShort);
+      // Opened by a real press: the keyboard comes along into the details.
+      await item.click();
+      await browser.$('#backend-status[data-backend-mode="popover"]').waitForDisplayed();
+      expect(await browser.execute(() => document.activeElement?.id ?? null)).toBe("backend-status");
+      // A check the reader did not start from here: pressed by script, so the
+      // keyboard stays where it was, and held so the state can be read.
       await holdInvoke("inspect_backend");
       await browser.execute(() => document.querySelector<HTMLButtonElement>('[data-backend-action="recheck"]')?.click());
-      await browser.waitUntil(async () => !(await toggle().isExisting()), { timeoutMsg: "the toggle stayed while checking" });
+      await browser.waitUntil(async () => (await item.getText()) === en.backendStatusChecking, { timeoutMsg: "the item never said it was checking" });
       expect(await browser.execute(() => document.activeElement?.id ?? null)).toBe("backend-status");
       await releaseInvokeHold("inspect_backend");
-      await browser.waitUntil(async () => await toggle().isExisting(), { timeoutMsg: "no quiet verdict" });
-      // Engaged: the banner stays open under the reader, and so does the keyboard.
+      await browser.waitUntil(async () => (await item.getText()) === en.backendReadyShort, { timeoutMsg: "no usable verdict" });
+      // A verdict never closes details the reader opened, nor moves the keyboard.
       expect(await browser.execute(() => document.activeElement?.id ?? null)).toBe("backend-status");
-      expect(await toggle().getAttribute("aria-expanded")).toBe("true");
-      expect(await browser.$("#backend-status").getAttribute("data-backend-collapsed")).toBe(null);
+      expect(await item.getAttribute("aria-expanded")).toBe("true");
+      expect(await browser.$("#backend-status").getAttribute("data-backend-mode")).toBe("popover");
+      // Esc closes them and hands the keyboard back to the item.
+      await browser.keys("Escape");
+      await browser.waitUntil(async () => (await item.getAttribute("aria-expanded")) === "false");
+      expect(await browser.execute(() => document.activeElement?.hasAttribute("data-backend-item") ?? false)).toBe(true);
+      expect(await browser.$("#backend-status").getAttribute("data-backend-mode")).toBe("hidden");
       expect(await unexpectedConsole()).toEqual([]);
     });
   });
@@ -1631,12 +1641,16 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await surfaceFrame(`ui-rework-${kind}-${locale}-1366x768`);
           const text = await emptyStateText();
           expect(text).not.toBe("");
-          expect(await restatesBanner(text)).toEqual([]);
+          // The evidence may say what waits on ProteoWizard ("Set up
+          // ProteoWizard to read plots and scans.", rendered review issue 12),
+          // but repeats no sentence of the notice and offers no second fix.
+          expect((await restatesBanner(text)).filter((said) => said !== "ProteoWizard")).toEqual([]);
+          expect(await browser.execute(() => document.querySelectorAll("#workbench-evidence .evidence-state button").length)).toBe(0);
           expect(await unexpectedConsole()).toEqual([]);
         });
       }
 
-      it(`UI-06: a superseded reading stays on screen with its actions, in ${locale}`, async () => {
+      it(`UI-06: a superseded reading is never shown as ready, and its actions are one press away, in ${locale}`, async () => {
         await metrics(1366, 768);
         await open("converting", locale);
         await setInvokeResult("inspect_backend", { ...availableBackend, authority: settledAt(2, 2) });
@@ -1649,18 +1663,27 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await metrics(width, height);
           await frames();
           await surfaceFrame(`ui-rework-superseded-${locale}-${String(width)}x${String(height)}`);
-          const seen = await browser.execute(() => ({
-            collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,
-            toggle: document.querySelector("[data-backend-toggle]") !== null,
+          // Not a verdict: the item stops saying ready, and the track keeps
+          // what the last verdict (usable) left there, which is nothing.
+          const seen = () => browser.execute(() => ({
+            mode: document.querySelector("#backend-status")?.getAttribute("data-backend-mode") ?? null,
+            tone: document.querySelector("[data-backend-item] [data-tone]")?.getAttribute("data-tone") ?? null,
             actions: [...document.querySelectorAll<HTMLElement>("[data-backend-action]")].filter((a) => a.getClientRects().length > 0).length,
           }));
-          expect(seen).toEqual({ collapsed: false, toggle: false, actions: 3 });
+          expect(await seen()).toEqual({ mode: "hidden", tone: "pending", actions: 0 });
+          // Every way out is in the details, one press away.
+          await browser.$("[data-backend-item]").click();
+          await browser.$('#backend-status[data-backend-mode="popover"]').waitForDisplayed();
+          await frames();
+          expect(await seen()).toEqual({ mode: "popover", tone: "pending", actions: 3 });
+          await browser.keys("Escape");
+          await browser.$('#backend-status[data-backend-mode="hidden"]').waitForExist();
         }
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
 
-    it("UI-07: a verdict that arrives while the reader is in the banner's help does not fold it", async () => {
+    it("UI-07: a verdict that arrives while the reader is in the details' help does not close them", async () => {
       await metrics(1366, 768);
       await openTable(scenario("populated"), { hold: ["inspect_backend"] });
       await browser.$('[data-backend-status="checking"]').waitForExist();
@@ -1669,22 +1692,26 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       // this headless page without system focus, and then `focus()` moves
       // `activeElement` but fires no focus event -- a state no reader is in.
       await cdp("Emulation.setFocusEmulationEnabled", { enabled: true });
+      // The first check leaves nothing in the track; the details open from
+      // the status bar's item.
+      await browser.$("[data-backend-item]").click();
+      await browser.$('#backend-status[data-backend-mode="popover"]').waitForDisplayed();
       await browser.execute(() => document.querySelector<HTMLElement>("[data-backend-help]")?.focus());
       const held = await browser.execute(() => ({
         hasFocus: document.hasFocus(),
-        collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,
+        mode: document.querySelector("#backend-status")?.getAttribute("data-backend-mode") ?? null,
         focus: document.activeElement?.closest("[data-backend-help]") !== null,
       }));
-      expect(held).toEqual({ hasFocus: true, collapsed: false, focus: true });
+      expect(held).toEqual({ hasFocus: true, mode: "popover", focus: true });
       await releaseInvokeHold("inspect_backend");
       await browser.$('[data-backend-status="available"]').waitForExist();
       await frames();
       const seen = await browser.execute(() => ({
-        collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,
-        expanded: document.querySelector("[data-backend-toggle]")?.getAttribute("aria-expanded") ?? null,
+        mode: document.querySelector("#backend-status")?.getAttribute("data-backend-mode") ?? null,
+        expanded: document.querySelector("[data-backend-item]")?.getAttribute("aria-expanded") ?? null,
         focus: document.activeElement?.closest("[data-backend-help]") !== null,
       }));
-      expect(seen).toEqual({ collapsed: false, expanded: "true", focus: true });
+      expect(seen).toEqual({ mode: "popover", expanded: "true", focus: true });
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -1923,10 +1950,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
 
       it(`UI-01: the header, notices and content share one left edge, in ${locale}`, async () => {
         await metrics(1920, 1080);
-        await open("populated", locale);
-        // The folded backend reading, opened from the header, is a notice.
-        await browser.$("[data-backend-toggle]").click();
-        await browser.$(".shell-notices > .notice").waitForDisplayed();
+        const table = scenario("populated", locale);
+        table["inspect_backend"] = unavailableBackend;
+        await openTable(table);
+        // No usable backend is a one-line notice in the track.
+        await browser.$('.shell-notices > #backend-status[data-backend-mode="notice"]').waitForDisplayed();
         for (const [width, height] of [
           [1920, 1080],
           [1366, 768],

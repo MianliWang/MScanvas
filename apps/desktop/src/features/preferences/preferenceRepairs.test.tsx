@@ -502,45 +502,45 @@ describe("the banner across its own request", () => {
     </WorkspaceDropTransportProvider>);
   }
 
-  it("does not fold away under a reader in the help when a usable verdict arrives (PM9 L10)", async () => {
-    // The banner folds when a usable installation leaves it nothing to act on.
-    // A reader who tabbed into the help while the check ran is not nothing:
-    // folding would take the focused help button out of rendering and drop
-    // them on the body, the regression the identity of the help exists to
-    // prevent.
+  it("keeps open details under a reader in the help when a usable verdict arrives (PM9 L10)", async () => {
+    // A usable verdict is silent, but details the reader opened are theirs to
+    // close: closing them under a focused help button would drop the reader on
+    // the body, the regression the identity of the help exists to prevent.
     const check = deferred<typeof availableBackend>();
     renderAvailableAfter(check.promise);
-    await waitFor(() => expect(screen.getByText(en.backendChecking)).toBeVisible());
+    await waitFor(() => expect(screen.getByText(en.backendChecking)).toBeInTheDocument());
+    fireEvent.click(document.querySelector<HTMLElement>("[data-backend-item]")!);
     const summary = document.querySelector<HTMLElement>("[data-backend-help]")!;
     act(() => { summary.focus(); });
     await act(async () => { check.resolve(availableBackend); await Promise.resolve(); });
     await screen.findByText(en.backendAvailable);
-    expect(document.querySelector("#backend-status")).not.toHaveAttribute("data-backend-collapsed");
+    expect(document.querySelector("#backend-status")).toHaveAttribute("data-backend-mode", "popover");
     expect(summary).toBeVisible();
     expect(summary).toHaveFocus();
   });
 
-  it("hands the header toggle's place to the banner when it has something to say again (PM9 L10)", async () => {
-    // The phrase in the header exists only while the banner is quiet. A check
-    // the reader did not start from it removes it, and a reader who was on it
-    // continues from the banner that replaced it rather than from the body.
+  it("hands the keyboard to the status bar's item when a usable verdict removes the notice (S5)", async () => {
+    // Success leaves nothing behind in the main area. A reader who pressed the
+    // notice's fix continues from the item that now says "ready", not from the
+    // body.
     const check = deferred<typeof availableBackend>();
-    renderAvailableAfter(check.promise, 1);
-    const toggle = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-backend-toggle]");
-      if (found === null) throw new Error("not folded yet");
-      return found;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: () => check.promise,
     });
-    fireEvent.click(toggle);
-    act(() => { toggle.focus(); });
-    // Pressed without taking the keyboard, as a check started elsewhere would be.
-    fireEvent.click(document.querySelector('[data-backend-action="recheck"]')!);
-    await waitFor(() => expect(document.querySelector("[data-backend-toggle]")).toBeNull());
-    expect(document.querySelector("#backend-status")).toHaveFocus();
+    render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreferencesApiProvider value={createFakePreferencesApi()}>
+        <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+      </PreferencesApiProvider>
+    </WorkspaceDropTransportProvider>);
+    await screen.findByText(en.backendMissing);
+    const choose = screen.getByRole("button", { name: en.backendChoose });
+    act(() => { choose.focus(); });
+    fireEvent.click(choose);
     await act(async () => { check.resolve(availableBackend); await Promise.resolve(); });
-    await screen.findByText(en.backendAvailable);
-    // Still engaged: the reader is in it, so the quiet verdict leaves it open.
-    expect(document.querySelector("#backend-status")).toHaveFocus();
-    expect(document.querySelector("[data-backend-toggle]")).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(document.querySelector("#backend-status")).toHaveAttribute("data-backend-mode", "hidden"));
+    const item = document.querySelector<HTMLElement>("[data-backend-item]")!;
+    expect(item).toHaveAccessibleName(en.backendReadyShort);
+    expect(item).toHaveFocus();
   });
 });

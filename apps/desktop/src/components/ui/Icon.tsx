@@ -30,6 +30,8 @@ const PATHS = {
   panelLeft: "M3 4h18v16H3z M9 4v16",
   panelRight: "M3 4h18v16H3z M15 4v16",
   fit: "M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5",
+  checkCircle: "M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18 M8 12.5l2.7 2.7L16.5 9.5",
+  alert: "M12 3.5 2.5 20h19z M12 9.5v5 M12 17.2v.3",
 } as const;
 
 export type IconName = keyof typeof PATHS;
