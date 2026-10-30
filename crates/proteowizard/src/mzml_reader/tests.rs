@@ -1636,6 +1636,15 @@ fn a_charge_stated_two_ways_or_unreadably_is_not_reported_and_the_open_stands() 
             format!("{}{}", charge("2"), charge("x")),
             MzmlDeclared::Unreadable,
         ),
+        // The reason does not depend on the order of the statements.
+        (
+            format!("{}{}{}", charge("2"), charge("3"), charge("x")),
+            MzmlDeclared::Unreadable,
+        ),
+        (
+            format!("{}{}{}", charge("2"), charge("x"), charge("3")),
+            MzmlDeclared::Unreadable,
+        ),
     ];
     for (terms, expected) in cases {
         let document = document(&[ms1_default(0), ms2_first_ion_stating(&terms)]);
@@ -2043,6 +2052,40 @@ fn a_metadata_attribute_that_does_not_normalize_is_not_reported() {
         .expect("the source file");
     assert_eq!(source_file.sensitive_attribute("location"), None);
     assert_eq!(source_file.sensitive_attribute("name"), Some("run.raw"));
+}
+
+#[test]
+fn a_metadata_accession_that_is_not_prefix_id_is_not_reported() {
+    let document = described(&[ms1_default(0), ms2(1)]).replacen(
+        &cv("MS:1000002", "sample name", "sample one"),
+        &cvu("D:/private/x", "sample name", "sample one", "not one"),
+        1,
+    );
+    let table = table(&document).expect("opens");
+    assert_eq!(table.rows(), rows(&base()));
+    let MzmlMetadata::Read(elements) = table.metadata() else {
+        panic!("read");
+    };
+    let of = |kind| {
+        elements
+            .iter()
+            .find(|element| element.kind() == kind)
+            .expect("stated")
+    };
+    let param = &of(MzmlMetadataKind::Sample).params()[0];
+    assert!(param.is_cv_param());
+    assert_eq!(param.accession(), None);
+    assert_eq!(param.unit_accession(), None);
+    assert_eq!(param.sensitive_value(), Some("sample one"));
+
+    // A userParam stays one, and a cvParam keeps its kind with or without an
+    // accession.
+    let kinds: Vec<_> = of(MzmlMetadataKind::InstrumentConfiguration)
+        .params()
+        .iter()
+        .map(MzmlParam::is_cv_param)
+        .collect();
+    assert_eq!(kinds, [true, true, false]);
 }
 
 #[test]

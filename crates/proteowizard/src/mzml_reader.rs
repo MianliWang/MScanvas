@@ -22,9 +22,11 @@
 //! namespace-prefixed document reads like its unprefixed form. Every refusal is
 //! typed, and nothing is skipped, guessed or computed from the arrays.
 //!
-//! Polarity, charge and the run-level metadata are read without refusing: a
-//! value stated two ways, or in a form that cannot be read, is not reported,
-//! and the open stands as it did before they were read.
+//! Polarity, charge and the run-level metadata are read without refusing, and
+//! the open stands as it did before they were read. A polarity or charge
+//! stated two ways, or in a form that cannot be read, is not reported.
+//! Metadata parameters are carried as stated, in document order, and never
+//! judged, so conflicting ones are all kept.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -347,7 +349,8 @@ pub enum MzmlDeclared<T> {
     /// Stated more than once, counting param groups, with values that differ.
     Conflicting,
     /// Stated in a form this reader cannot read, such as a charge that is not
-    /// an integer.
+    /// an integer. It wins over `Conflicting`, so the reason does not depend
+    /// on the order of the statements.
     Unreadable,
 }
 
@@ -356,8 +359,8 @@ impl<T: PartialEq> MzmlDeclared<T> {
     fn and(self, other: Self) -> Self {
         match (self, other) {
             (Self::NotDeclared, other) | (other, Self::NotDeclared) => other,
-            (Self::Conflicting, _) | (_, Self::Conflicting) => Self::Conflicting,
             (Self::Unreadable, _) | (_, Self::Unreadable) => Self::Unreadable,
+            (Self::Conflicting, _) | (_, Self::Conflicting) => Self::Conflicting,
             (Self::Value(left), Self::Value(right)) if left == right => Self::Value(left),
             (Self::Value(_), Self::Value(_)) => Self::Conflicting,
         }
@@ -438,7 +441,7 @@ impl MzmlSpectrumRow {
     }
 
     /// From the spectrum's own terms and its param groups; a polarity stated
-    /// only inside its scan is not the spectrum's.
+    /// only inside its scan is not the spectrum's, and reads as `NotDeclared`.
     #[must_use]
     pub const fn polarity(&self) -> MzmlDeclared<MzmlPolarity> {
         self.polarity
@@ -632,11 +635,14 @@ pub enum MzmlMetadataKind {
     Run,
 }
 
-/// One parameter as a metadata element states it: a `cvParam`, which has an
-/// accession, or a `userParam`, which has none. An empty value is not
-/// reported. The text is the file's, unchecked, and may be sensitive.
+/// One parameter as a metadata element states it: a `cvParam` or a
+/// `userParam`. The accession and unit accession are kept only as `PREFIX:ID`
+/// (the rule an array's unit follows); any other text, and an empty value, is
+/// not reported. The name and value are the file's, unchecked, and may be
+/// sensitive. `unitName`, `unitCvRef` and `type` are not kept.
 #[derive(Clone, PartialEq, Eq)]
 pub struct MzmlParam {
+    cv: bool,
     accession: Option<String>,
     name: Option<String>,
     value: Option<String>,
@@ -644,6 +650,12 @@ pub struct MzmlParam {
 }
 
 impl MzmlParam {
+    /// Whether the document states it as a `cvParam`, whatever its accession.
+    #[must_use]
+    pub const fn is_cv_param(&self) -> bool {
+        self.cv
+    }
+
     #[must_use]
     pub fn accession(&self) -> Option<&str> {
         self.accession.as_deref()
@@ -682,7 +694,7 @@ impl fmt::Debug for MzmlParam {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MzmlParam")
-            .field("cv", &self.accession.is_some())
+            .field("cv", &self.cv)
             .field("value_stated", &self.value.is_some())
             .finish_non_exhaustive()
     }
@@ -1881,15 +1893,21 @@ impl<'t> Pass<'t> {
         if !in_group && self.metadata.element_at(depth).is_none() {
             return;
         }
+        let accession = |value: Option<&Cow<'_, str>>| {
+            value
+                .filter(|value| is_accession(value))
+                .map(|value| value.as_ref().to_owned())
+        };
         let param = MzmlParam {
+            cv,
             accession: if cv {
-                param_text(attributes.accession.as_ref())
+                accession(attributes.accession.as_ref())
             } else {
                 None
             },
             name: param_text(attributes.name.as_ref()),
             value: param_text(attributes.value.as_ref()),
-            unit_accession: param_text(attributes.unit_accession.as_ref()),
+            unit_accession: accession(attributes.unit_accession.as_ref()),
         };
         if !self.metadata.spend(param.byte_len()) {
             return;
@@ -2505,7 +2523,8 @@ fn widen(bytes: &[u8], data_type: BinaryDataType) -> Result<Vec<f64>, ArrayProbl
 /// Whether a declared unit is an accession, `PREFIX:ID` with each part 1 to 32
 /// ASCII letters or digits. A unit reaches export documents and figure labels,
 /// which admit no delimiter, line break or markup, so anything else is refused
-/// rather than carried.
+/// rather than carried. A metadata parameter's accession or unit accession
+/// that fails it is not reported instead.
 fn is_accession(value: &str) -> bool {
     let part = |part: &str| {
         (1..=32).contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_alphanumeric())
