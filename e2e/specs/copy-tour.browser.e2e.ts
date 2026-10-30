@@ -755,7 +755,8 @@ async function layoutFacts() {
       // (headers, heads, names), and any placeholder wider than its field.
       // A middle ellipsis's head is listed too: it is a deliberate cut.
       clippedText: [...document.querySelectorAll<HTMLElement>("h1, h2, h3, th, [role='columnheader'] span, .plot-head span, .plot-head p, .ui-middle-ellipsis__head, .viewer-file-name, .roster-selection-context")]
-        .filter((node) => node.offsetParent !== null && !node.closest(".visually-hidden") && node.scrollWidth > node.clientWidth + 1)
+        // A name hidden by clipping (a rail's title while its status titles it) is not cut text.
+        .filter((node) => node.offsetParent !== null && !node.closest(".visually-hidden") && getComputedStyle(node).clipPath === "none" && node.scrollWidth > node.clientWidth + 1)
         .map((node) => `${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0] ?? ""}: ${(node.textContent ?? "").trim().slice(0, 60)}`),
       clippedPlaceholders: [...document.querySelectorAll<HTMLInputElement>("input[placeholder]")]
         .filter((input) => {
