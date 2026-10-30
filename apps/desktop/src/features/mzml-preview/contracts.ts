@@ -1764,10 +1764,10 @@ export interface ConversionQueuePlan {
    *
    * Rust reconstructs it from the admitted table and answers with what it
    * resolved, so the panel renders the semantic the queue would be bound with
-   * rather than the identity it happened to send. `null` for an advanced
-   * intent, which no row describes.
+   * rather than the identity it happened to send. A row request always gets a
+   * row; an advanced intent's plan is {@link AdvancedConversionQueuePlan}.
    */
-  readonly intent: ConversionIntentDescriptor | null;
+  readonly intent: ConversionIntentDescriptor;
   /**
    * The structured intent this plan is bound to, in Rust's canonical form: a
    * row's own structured form, or the advanced intent rebuilt and
