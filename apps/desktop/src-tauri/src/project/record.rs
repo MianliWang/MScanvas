@@ -31,11 +31,13 @@ use uuid::Uuid;
 /// run could consume a layer and an artifact could hold a QC snapshot, and
 /// schema 3 the shape before a run could execute a reviewed recipe plan and an
 /// artifact could reference a result stored beside the document. None of them
-/// was published outside development, so a document carrying any of them is
-/// refused exactly as any other version is: a migration path would be code for
-/// a format no user ever held. A later schema belongs to the build that wrote
-/// it.
-pub const SCHEMA_VERSION: u32 = 4;
+/// was published outside development. Schema 4, the shape before an input
+/// could carry the "not verified by MSCanvas" label of a conversion
+/// ([`NotVerifiedByMscanvas`]), was published in beta 1; it is refused like
+/// any other version, as the owner's decision of 2026-10-29 that bumps the
+/// schema leaves it, and nothing migrates. A later schema belongs to the build
+/// that wrote it.
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// The largest project document this build will read.
 ///
@@ -293,6 +295,50 @@ pub struct InputRecord {
     pub label: String,
     pub locator: Locator,
     pub members: Vec<MemberRecord>,
+    /// The label of the conversion that produced this input's primary, when
+    /// this session converted and adopted that object and the conversion was
+    /// not verified by MSCanvas. Absent means nothing is recorded, never that
+    /// the input was verified. History, like the baseline: written once, at
+    /// registration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_verified_by_mscanvas: Option<NotVerifiedByMscanvas>,
+}
+
+/// The "not verified by MSCanvas" label of one conversion (ADR 0055; owner
+/// decision 2 of 2026-10-29): its settings were outside the verified rows,
+/// its build has no measured row, or both. It stays with an adopted output,
+/// in the session and in the project, so "converted" is not read as
+/// "verified".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NotVerifiedByMscanvas {
+    pub unverified_settings: bool,
+    /// The release of the build without a measured row, as the conversion
+    /// reported it. `None` on a measured build.
+    pub unverified_build_release: Option<String>,
+}
+
+impl NotVerifiedByMscanvas {
+    /// The label of one conversion, or `None` when nothing about it was
+    /// unverified.
+    #[must_use]
+    pub fn of(unverified_settings: bool, unverified_build_release: Option<String>) -> Option<Self> {
+        (unverified_settings || unverified_build_release.is_some()).then_some(Self {
+            unverified_settings,
+            unverified_build_release,
+        })
+    }
+
+    /// Two labels of one object as one: what either says stays said.
+    #[must_use]
+    pub fn merged(self, other: Self) -> Self {
+        Self {
+            unverified_settings: self.unverified_settings || other.unverified_settings,
+            unverified_build_release: self
+                .unverified_build_release
+                .or(other.unverified_build_release),
+        }
+    }
 }
 
 /// What one member's bytes actually were when an operation looked.
@@ -2022,6 +2068,16 @@ pub fn validate_qc_snapshot(snapshot: &AcquisitionQcSnapshotV1) -> Result<(), Do
 fn validate_input(input: &InputRecord) -> Result<(), DocumentProblem> {
     bounded_label(&input.label)?;
     validate_locator(&input.locator)?;
+    if let Some(label) = &input.not_verified_by_mscanvas {
+        // A label that says nothing is not a label, and a stored one is never
+        // dropped to make the document fit.
+        if !label.unverified_settings && label.unverified_build_release.is_none() {
+            return Err(DocumentProblem::InconsistentRecord);
+        }
+        if let Some(release) = &label.unverified_build_release {
+            bounded_label(release)?;
+        }
+    }
     if input.members.is_empty() || input.members.len() > MAX_MEMBERS {
         return Err(DocumentProblem::InconsistentRecord);
     }

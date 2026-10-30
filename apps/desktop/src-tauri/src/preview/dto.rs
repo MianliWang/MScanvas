@@ -168,6 +168,11 @@ pub struct SelectedFileDto {
     /// which is the only reason ADR 0006 permits saying anything at all. It is
     /// display only -- not searched, not sorted by, and not part of identity.
     pub relative_context: Option<String>,
+    /// The "not verified by MSCanvas" label of the conversion this session
+    /// adopted this row's object from, or `null` (ADR 0055; owner decision 2
+    /// of 2026-10-29). `null` is the answer for every row not adopted from a
+    /// labelled conversion, and never itself a claim of verification.
+    pub not_verified_by_mscanvas: Option<crate::project::record::NotVerifiedByMscanvas>,
 }
 
 /// The complete family vocabulary a roster row can carry.

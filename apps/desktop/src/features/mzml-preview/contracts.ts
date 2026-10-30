@@ -318,6 +318,23 @@ export interface SelectedFile {
    * own name — the least that has to be said to tell identical names apart.
    */
   readonly relativeContext: string | null;
+  /**
+   * The "not verified by MSCanvas" label of the conversion this session
+   * adopted the row's object from (ADR 0055; owner decision 2 of 2026-10-29).
+   * `null` is never a claim of verification. Optional only until fixtures
+   * carry it; Rust always sends it.
+   */
+  readonly notVerifiedByMscanvas?: NotVerifiedByMscanvas | null;
+}
+
+/**
+ * Why a converted output is "not verified by MSCanvas": its settings were
+ * outside the verified rows, its build has no measured row (named by its
+ * release), or both. At least one half is always set.
+ */
+export interface NotVerifiedByMscanvas {
+  readonly unverifiedSettings: boolean;
+  readonly unverifiedBuildRelease: string | null;
 }
 
 /**

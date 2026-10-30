@@ -59,7 +59,7 @@ use super::dto::{
     queue_is_empty, queue_too_large,
 };
 use super::installation::InstallationIdentity;
-use super::selection::{DatasetId, DatasetSourceKind};
+use super::selection::{DatasetId, DatasetSourceKind, NotVerifiedByMscanvas};
 
 const CONVERSION_RESERVATION_PREFIX: &str = "conversion-reservation-";
 
@@ -2279,11 +2279,6 @@ impl ConversionSlot {
             .items
             .get(index)
             .and_then(|item| queue.destination_for(item.dataset).cloned());
-        // ADR 0055 decision 2 (owner, 2026-10-29) carries the "not verified by
-        // MSCanvas" flag into an adopted output's provenance. Until the project
-        // record carries it, an advanced output is finalized and reported with
-        // its label but is not offered for adoption, so the label is never lost.
-        let adoptable = queue.intent.row().is_some();
         let Some(item) = queue.items.get_mut(index) else {
             return false;
         };
@@ -2329,6 +2324,15 @@ impl ConversionSlot {
                     item.set_run = None;
                 }
                 let planned = item.output.planned_name().unwrap_or_default().to_owned();
+                // The label the item's own report carries, so the adopted row
+                // and the queue outcome cannot disagree (ADR 0055; owner
+                // decision 2 of 2026-10-29).
+                let not_verified = item.report.as_ref().and_then(|report| {
+                    NotVerifiedByMscanvas::of(
+                        report.unverified_settings(),
+                        report.unverified_build_release().map(str::to_owned),
+                    )
+                });
                 let ticket = finalized.zip(destination).map(|(finalized, destination)| {
                     Arc::new(FinalizedOutputAdoptionTicket::new(
                         operation,
@@ -2337,12 +2341,11 @@ impl ConversionSlot {
                         planned,
                         destination,
                         *finalized,
+                        not_verified,
                     ))
                 });
                 item.finalized_outputs = ticket.iter().cloned().collect();
-                item.adoption = ticket
-                    .filter(|_| adoptable)
-                    .map(QueueAdoptionAuthority::Single);
+                item.adoption = ticket.map(QueueAdoptionAuthority::Single);
             }
             ItemOutcome::ReportedSet(settlement) => {
                 let settlement = *settlement;

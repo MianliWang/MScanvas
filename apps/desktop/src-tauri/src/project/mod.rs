@@ -1034,7 +1034,29 @@ impl ProjectStore {
     /// # Errors
     ///
     /// [`ProjectError::Unavailable`] where a member could not be observed.
+    #[cfg(test)]
     pub fn register_input(&self, primary: &Path) -> Result<InputId, ProjectError> {
+        self.register_input_labelled(primary, |_| None)
+    }
+
+    /// [`Self::register_input`], recording the "not verified by MSCanvas"
+    /// label the session holds for the object whose bytes were hashed (ADR
+    /// 0055; owner decision 2 of 2026-10-29).
+    ///
+    /// `label_of` is asked about the primary's object identity as read through
+    /// the handle its bytes were hashed through, with this store's lock
+    /// released, so the label belongs to what was measured rather than to a
+    /// name. A volume with no identity to give records no label: the session
+    /// admitted no row from one.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::register_input`].
+    pub fn register_input_labelled(
+        &self,
+        primary: &Path,
+        label_of: impl FnOnce(ObjectIdentity) -> Option<record::NotVerifiedByMscanvas>,
+    ) -> Result<InputId, ProjectError> {
         let (generation, base) = {
             let session = self.locked();
             let project = session.open()?;
@@ -1051,7 +1073,7 @@ impl ProjectStore {
         // and hashes the file, and a large one would otherwise block every
         // other description of the project for as long as it took.
         let companions = mandated_companions(primary);
-        let members =
+        let (members, identity) =
             observe::register_members(primary, &companions).map_err(ProjectError::Unavailable)?;
         let locator = observe::registered_locator(primary, base.as_deref());
         let label = display_label(primary);
@@ -1061,6 +1083,7 @@ impl ProjectStore {
             label,
             locator,
             members,
+            not_verified_by_mscanvas: identity.and_then(label_of),
         };
         record::validate_locator(&input.locator).map_err(ProjectError::Document)?;
 

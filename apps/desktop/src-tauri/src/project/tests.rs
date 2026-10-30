@@ -143,6 +143,51 @@ fn never_minted() -> ProjectJobId {
 // Identity through a roundtrip
 // ---------------------------------------------------------------------------
 
+/// ADR 0055, owner decision 2 of 2026-10-29: the label the session holds for
+/// the object whose bytes were hashed is recorded, and survives a save and a
+/// reopen. The session is asked about that object, never about a name.
+#[test]
+fn a_registered_reference_records_the_label_the_session_holds_for_its_object() {
+    let scratch = Scratch::new("label");
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    let labelled = scratch.write("converted.mzML", b"converted bytes");
+    let plain = scratch.write("plain.mzML", b"other bytes");
+    let label = record::NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    let mut asked = None;
+    store
+        .register_input_labelled(&labelled, |identity| {
+            asked = Some(identity);
+            label.clone()
+        })
+        .expect("register");
+    assert!(asked.is_some(), "asked about the hashed object");
+    store
+        .register_input_labelled(&plain, |_| None)
+        .expect("register");
+    let described = store.describe();
+    assert_eq!(described.inputs[0].not_verified_by_mscanvas, label);
+    assert_eq!(described.inputs[1].not_verified_by_mscanvas, None);
+
+    let project_document = scratch.join("project.mscanvas");
+    store.save_as(&project_document).expect("save as");
+    let reopened = ProjectStore::new();
+    reopened
+        .open_document(&project_document, false)
+        .expect("open");
+    let after = reopened.describe();
+    assert_eq!(after.inputs[0].not_verified_by_mscanvas, label);
+    assert_eq!(after.inputs[1].not_verified_by_mscanvas, None);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(&project_document).expect("read")).expect("json");
+    assert_eq!(
+        saved["inputs"][0]["notVerifiedByMscanvas"],
+        serde_json::json!({ "unverifiedSettings": true, "unverifiedBuildRelease": "3.0.26204" })
+    );
+    // Absent, not null, where nothing is recorded.
+    assert!(saved["inputs"][1].get("notVerifiedByMscanvas").is_none());
+}
+
 #[test]
 fn every_identifier_survives_a_save_and_reopen_unchanged() {
     let scratch = Scratch::new("identity");
@@ -932,6 +977,7 @@ fn valid_document() -> ProjectDocument {
                 sha256: "A".repeat(64),
             },
         }],
+        not_verified_by_mscanvas: None,
     });
     document.runs.push(RunRecord {
         id: RunId::new(),
@@ -3479,14 +3525,14 @@ fn a_document_with_a_remembered_row_and_a_layer_serializes_no_session_fact() {
 }
 
 #[test]
-fn the_development_only_earlier_schemas_are_refused_rather_than_migrated() {
-    assert_eq!(record::SCHEMA_VERSION, 4);
-    assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 4);
+fn the_earlier_schemas_are_refused_rather_than_migrated() {
+    assert_eq!(record::SCHEMA_VERSION, 5);
+    assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 5);
 
-    // Schema 3 is M8's, and it was never published either: M9.1 refuses it
-    // exactly as M8.5 refused schema 2, rather than carrying a migration for
-    // a format no user holds.
-    for earlier in [1, 2, 3] {
+    // Schema 3 is M8's, and it was never published: M9.1 refuses it exactly as
+    // M8.5 refused schema 2. Schema 4 was published in beta 1 and is refused
+    // the same way (owner decision of 2026-10-29).
+    for earlier in [1, 2, 3, 4] {
         let mut document = valid_document();
         document.schema_version = earlier;
         assert_eq!(
@@ -4481,10 +4527,12 @@ fn the_size_measure_keeps_room_for_the_widest_revision() {
 }
 
 // ---------------------------------------------------------------------------
-// The canonical schema-4 document
+// The canonical schema-5 document, and schema 4 refused
 // ---------------------------------------------------------------------------
 
-/// Schema 4 as this build writes it, frozen at the M9 closure.
+/// Schema 5 as this build writes it: schema 4 as frozen at the M9 closure,
+/// with two inputs carrying the "not verified by MSCanvas" label in both of
+/// its shapes.
 ///
 /// Every other document test builds its document from these types and so moves
 /// with them. This one is a file holding every word schema 4 can store: each
@@ -4501,16 +4549,61 @@ fn the_size_measure_keeps_room_for_the_widest_revision() {
 /// same JSON value (key order aside). A word added to a vocabulary cannot fail
 /// here; adding one is a schema decision, recorded with the schema.
 ///
-/// Schema 4 is unpublished: this pins the current meaning, and no promise to
-/// documents written by earlier M9 development builds. Change it only with the
-/// schema, and say so where the schema's disposition is recorded.
+/// This pins the current meaning. Change it only with the schema, and say so
+/// where the schema's disposition is recorded.
 #[test]
-fn the_canonical_schema_four_document_reads_and_writes_back_unchanged() {
-    const CANONICAL: &str = include_str!("schema_4_canonical.json");
+fn the_canonical_schema_five_document_reads_and_writes_back_unchanged() {
+    const CANONICAL: &str = include_str!("schema_5_canonical.json");
     let document = record::parse(CANONICAL.as_bytes()).expect("the canonical document is read");
     let expected: serde_json::Value = serde_json::from_str(CANONICAL).expect("json");
     let written: serde_json::Value =
         serde_json::from_slice(&record::serialize(&document).expect("written")).expect("json");
     assert_eq!(written, expected);
     assert_eq!(document.schema_version, record::SCHEMA_VERSION);
+    assert_eq!(
+        document.inputs[0].not_verified_by_mscanvas,
+        Some(record::NotVerifiedByMscanvas {
+            unverified_settings: true,
+            unverified_build_release: None,
+        })
+    );
+    assert_eq!(document.inputs[1].not_verified_by_mscanvas, None);
+}
+
+/// Beta 1's schema-4 document, as frozen at the M9 closure, is refused as
+/// another version rather than read as malformed or migrated: the owner's
+/// schema bump of 2026-10-29 leaves the refusal of other versions unchanged.
+#[test]
+fn the_canonical_schema_four_document_is_refused_as_another_version() {
+    const OLDER: &str = include_str!("schema_4_canonical.json");
+    assert_eq!(
+        record::parse(OLDER.as_bytes()),
+        Err(DocumentProblem::UnsupportedVersion)
+    );
+}
+
+#[test]
+fn a_label_that_says_nothing_or_holds_an_unbounded_release_is_refused() {
+    let mut document = valid_document();
+    document.inputs[0].not_verified_by_mscanvas = Some(record::NotVerifiedByMscanvas {
+        unverified_settings: false,
+        unverified_build_release: None,
+    });
+    assert_eq!(refused(&document), DocumentProblem::InconsistentRecord);
+    for release in [
+        String::new(),
+        "3.0\n26204".to_owned(),
+        "9".repeat(record::MAX_LABEL_CHARS + 1),
+    ] {
+        document.inputs[0].not_verified_by_mscanvas = Some(record::NotVerifiedByMscanvas {
+            unverified_settings: false,
+            unverified_build_release: Some(release),
+        });
+        assert_eq!(refused(&document), DocumentProblem::Malformed);
+    }
+    // Positive control: either half alone is a label.
+    document.inputs[0].not_verified_by_mscanvas =
+        record::NotVerifiedByMscanvas::of(false, Some("3.0.26204".to_owned()));
+    let bytes = record::serialize(&document).expect("serialize");
+    assert_eq!(record::parse(&bytes).expect("a label"), document);
 }

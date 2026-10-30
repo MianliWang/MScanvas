@@ -15394,6 +15394,7 @@ fn test_queue_item_named(index: usize, file_name: &str) -> QueueItem {
             byte_length: 78_309,
             source_kind: DatasetSourceKindDto::ThermoRaw,
             relative_context: None,
+            not_verified_by_mscanvas: None,
         },
         super::operation::ItemOutputTopology::KnownSingle {
             basename: file_name.replace(".raw", ".mzML"),
@@ -15964,6 +15965,7 @@ fn a_queue_reports_each_distinct_family_once_in_first_appearance_order() {
         byte_length: 1,
         source_kind: kind,
         relative_context: None,
+        not_verified_by_mscanvas: None,
     };
     let item = |index: u64, name: &str, kind: DatasetSourceKind, wire: DatasetSourceKindDto| {
         QueueItem::new(

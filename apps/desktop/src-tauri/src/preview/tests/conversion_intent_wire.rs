@@ -192,7 +192,7 @@ fn an_intent_the_build_cannot_express_is_refused_with_the_missing_name() {
 }
 
 #[test]
-fn an_advanced_mzml_conversion_runs_is_labelled_and_is_not_offered_for_adoption() {
+fn an_advanced_mzml_conversion_runs_is_labelled_and_its_adopted_row_keeps_the_label() {
     let fixture = TestFile::new("wire-advanced-run");
     let (service, handle) = mzml_service(&fixture);
     let document = current_document(&service);
@@ -231,10 +231,42 @@ fn an_advanced_mzml_conversion_runs_is_labelled_and_is_not_offered_for_adoption(
     let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
         panic!("the queue is terminal");
     };
-    assert_eq!(
-        queue.adoptable_output_count, 0,
-        "an advanced output is not adopted until its provenance carries the label"
-    );
+    assert_eq!(queue.adoptable_output_count, 1);
+
+    // ADR 0055, owner decision 2 of 2026-10-29: the adopted row carries the
+    // label, and the source row does not gain one.
+    let adopted = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .expect("the labelled output is adoptable");
+    let [WorkspaceOutputAdoptionOutcomeDto::Added { dataset, .. }] = adopted.outcomes.as_slice()
+    else {
+        panic!("one output added: {:?}", adopted.outcomes);
+    };
+    let label = crate::project::record::NotVerifiedByMscanvas::of(true, None);
+    assert_eq!(dataset.not_verified_by_mscanvas, label);
+    let roster = service.roster().datasets;
+    assert_eq!(roster.len(), 2);
+    assert_eq!(roster[0].not_verified_by_mscanvas, None);
+    assert_eq!(roster[1].not_verified_by_mscanvas, label);
+
+    // A project registration of that object asks the session about it and
+    // records the label; the source's object has none.
+    let projects = crate::project::ProjectStore::new();
+    projects.create("Labels".to_owned(), false).expect("new");
+    let output = fixture.directory.join("run-converted.mzML");
+    projects
+        .register_input_labelled(&output, |identity| {
+            service.not_verified_label_of_object(identity)
+        })
+        .expect("the output registers");
+    projects
+        .register_input_labelled(&fixture.directory.join("run.mzML"), |identity| {
+            service.not_verified_label_of_object(identity)
+        })
+        .expect("the source registers");
+    let described = projects.describe();
+    assert_eq!(described.inputs[0].not_verified_by_mscanvas, label);
+    assert_eq!(described.inputs[1].not_verified_by_mscanvas, None);
 }
 
 /// Every step kind, switch and encoding shape `contracts.ts` declares, in

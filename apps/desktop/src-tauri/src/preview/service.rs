@@ -168,10 +168,10 @@ use super::operation::{ItemOutputTopology, SetStopFacts};
 use super::projection::{self, ProjectionRefusal};
 use super::selection::DatasetSourceKind;
 use super::selection::{
-    AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
-    accept_mzml_file, accept_workspace_file, candidate_display_name, file_identity,
-    lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
-    selected_file_dto, source_kind_dto, unknown_dataset,
+    AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity,
+    NotVerifiedByMscanvas, RevocationReason, accept_mzml_file, accept_workspace_file,
+    candidate_display_name, file_identity, lock_against_replacement, open_conversion_source,
+    relative_contexts, revalidate, selected_file_dto, source_kind_dto, unknown_dataset,
 };
 pub(crate) use conversion_intent::read_structured_intent;
 use conversion_intent::resolve_requested_intent;
@@ -372,7 +372,12 @@ fn roster_of(workspace: &Workspace) -> WorkspaceRosterDto {
             .iter()
             .filter_map(|id| {
                 workspace.registry.get(*id).map(|dataset| {
-                    selected_file_dto(*id, dataset.file(), contexts.get(id).cloned())
+                    selected_file_dto(
+                        *id,
+                        dataset.file(),
+                        contexts.get(id).cloned(),
+                        dataset.not_verified(),
+                    )
                 })
             })
             .collect(),
@@ -386,10 +391,14 @@ fn roster_of(workspace: &Workspace) -> WorkspaceRosterDto {
 /// same dataset in the roster beside it can never disagree about its context.
 fn dataset_dto(workspace: &Workspace, id: DatasetId) -> Option<SelectedFileDto> {
     let contexts = relative_contexts(&workspace.registry);
-    workspace
-        .registry
-        .get(id)
-        .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+    workspace.registry.get(id).map(|dataset| {
+        selected_file_dto(
+            id,
+            dataset.file(),
+            contexts.get(&id).cloned(),
+            dataset.not_verified(),
+        )
+    })
 }
 
 /// What happened to one candidate, before it is described.
@@ -422,10 +431,14 @@ fn describe_outcomes(
 ) -> Vec<WorkspaceAddOutcomeDto> {
     let contexts = relative_contexts(&workspace.registry);
     let describe = |id: DatasetId| {
-        workspace
-            .registry
-            .get(id)
-            .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+        workspace.registry.get(id).map(|dataset| {
+            selected_file_dto(
+                id,
+                dataset.file(),
+                contexts.get(&id).cloned(),
+                dataset.not_verified(),
+            )
+        })
     };
     pending
         .into_iter()
@@ -1394,6 +1407,28 @@ impl PreviewService {
         let identities = workspace.registry.get(id)?.object_identities();
         drop(workspace);
         Some(identities)
+    }
+
+    /// The "not verified by MSCanvas" label of the row whose primary is the
+    /// object `identity` names, where this session adopted it from a labelled
+    /// conversion (ADR 0055; owner decision 2 of 2026-10-29).
+    ///
+    /// Asked by a project registration about the object it just hashed, so
+    /// the label follows the object whatever route the user registers it by.
+    /// A row's identity is one its lease holds, so a match is that row's own
+    /// object. Memory only; reads nothing.
+    pub(crate) fn not_verified_label_of_object(
+        &self,
+        identity: (u64, [u8; 16]),
+    ) -> Option<NotVerifiedByMscanvas> {
+        let workspace = self.workspace();
+        let registry = &workspace.registry;
+        registry
+            .ids()
+            .iter()
+            .filter_map(|id| registry.get(*id))
+            .find(|dataset| dataset.object_identities().first() == Some(&identity))
+            .and_then(|dataset| dataset.not_verified().cloned())
     }
 
     /// The run summary the preview on screen established for one row, and
@@ -7202,7 +7237,7 @@ impl PreviewService {
         // request has not been superseded, not that the row is still there --
         // and the accepted file is what the read was actually of.
         let described =
-            dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None));
+            dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None, None));
         drop(workspace);
         // After the workspace lock, because the export slots are a leaf. Every
         // path here takes them in that order and none takes them together, so
@@ -8516,6 +8551,7 @@ fn commit_adoption_candidates(
                         ticket.source(),
                         ticket.source_display_name().to_owned(),
                         ticket.operation(),
+                        ticket.not_verified().cloned(),
                     );
                     // Released here and not a statement earlier. What was
                     // proved about this file is that it is the finalized
@@ -8613,10 +8649,14 @@ fn describe_adoptions(
 ) -> Vec<WorkspaceOutputAdoptionOutcomeDto> {
     let contexts = relative_contexts(&workspace.registry);
     let describe = |id: DatasetId| {
-        workspace
-            .registry
-            .get(id)
-            .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+        workspace.registry.get(id).map(|dataset| {
+            selected_file_dto(
+                id,
+                dataset.file(),
+                contexts.get(&id).cloned(),
+                dataset.not_verified(),
+            )
+        })
     };
     pending
         .into_iter()

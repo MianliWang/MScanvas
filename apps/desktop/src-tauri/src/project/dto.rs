@@ -78,6 +78,9 @@ pub struct InputDto {
     /// already holds. A handle naming no live row therefore means "not
     /// currently in the workspace", which is the true answer.
     pub workbench_dataset_handle: Option<String>,
+    /// The "not verified by MSCanvas" label recorded for this input, or
+    /// `null` when none is recorded -- which never means verified.
+    pub not_verified_by_mscanvas: Option<super::record::NotVerifiedByMscanvas>,
 }
 
 /// One recorded artifact.
@@ -629,6 +632,7 @@ pub(super) fn describe(
                     .map(ToString::to_string)
                     .collect(),
                 workbench_dataset_handle: project.admitted_row(input.id).map(ToOwned::to_owned),
+                not_verified_by_mscanvas: input.not_verified_by_mscanvas.clone(),
             }
         })
         .collect();

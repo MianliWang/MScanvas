@@ -567,6 +567,23 @@ Each later in its own slice:
   > schema 4 (`project/record.rs`), which refuses every other version today, so
   > the slice that bumps it states what the new build does with a schema-4
   > document.
+
+  > **Implemented on `be/integrate` (draft PR #161), 2026-10-29.**
+  >
+  > - **Session.** An adoption ticket carries the item report's label
+  >   (`unverifiedSettings`, `unverifiedBuildRelease`), and the adopted row
+  >   keeps it as `notVerifiedByMscanvas` on the roster row. A row the user
+  >   had added another way gains the label when the same object is adopted.
+  >   Advanced outputs are offered for adoption again.
+  > - **Project.** Schema 5 adds `notVerifiedByMscanvas` to an input. It is
+  >   recorded at registration when the object whose bytes were hashed is a
+  >   row this session adopted from a labelled conversion, whatever route
+  >   registered it. Absent means nothing is recorded, never verified. A
+  >   label with neither half set is refused as inconsistent.
+  > - **A schema-4 document is refused as `unsupportedVersion`**, like every
+  >   other version, and nothing migrates. Beta 1's projects therefore do not
+  >   open in this build. That is a release decision for the owner before
+  >   merge.
 - **A larger settings surface.** It cuts against the owner's direction to
   remove secondary explanations. It is collapsed by default, with one label
   and no prose.

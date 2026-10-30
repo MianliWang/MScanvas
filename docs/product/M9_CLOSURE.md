@@ -193,6 +193,14 @@ failure.
 
 ## 4. Schema 4 — the canonical disposition
 
+*Note, 2026-10-29:* superseded on `be/integrate` (draft PR #161) by schema 5,
+which adds the "not verified by MSCanvas" label to an input (ADR 0055, owner
+decision 2). The canonical document is now `schema_5_canonical.json`, read and
+written back by
+`project::tests::the_canonical_schema_five_document_reads_and_writes_back_unchanged`;
+`schema_4_canonical.json` stays as the older document schema 5 refuses
+(`the_canonical_schema_four_document_is_refused_as_another_version`).
+
 **Schema 4 is the current unpublished development schema, and its
 compatibility promise begins only if and when this source line is published.**
 

@@ -863,7 +863,7 @@ fn a_result_is_published_before_it_is_referenced_and_saved_only_by_save() {
     );
     store.save().expect("save");
     let saved = document_json(&document);
-    assert_eq!(saved["schemaVersion"], 4);
+    assert_eq!(saved["schemaVersion"], record::SCHEMA_VERSION);
     assert_eq!(saved["artifacts"][0]["id"], artifact.to_string());
     assert_eq!(saved["plans"][0]["planSha256"], plan.plan_sha256);
     // The record names the result by digest and never by path.
@@ -4200,6 +4200,7 @@ fn plan_over(source: &Path, adapter: &'static [u8]) -> TargetedMs1Plan {
                 sha256: digest,
             },
         }],
+        not_verified_by_mscanvas: None,
     };
     let layer = record::LayerRecord {
         id: LayerId::new(),

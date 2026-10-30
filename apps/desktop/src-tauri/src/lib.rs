@@ -368,7 +368,9 @@ async fn save_project_as(
 ///
 /// Registering a file records where it is and what it currently contains. It
 /// asserts nothing about the file being a supported acquisition, and it admits
-/// nothing to the workspace roster.
+/// nothing to the workspace roster. Where the object hashed is a row this
+/// session adopted from a conversion not verified by MSCanvas, its label is
+/// recorded with it (ADR 0055; owner decision 2 of 2026-10-29).
 #[tauri::command]
 async fn add_project_input(
     app: tauri::AppHandle,
@@ -379,11 +381,16 @@ async fn add_project_input(
 ) -> Result<Option<project::dto::ProjectStateDto>, PreviewErrorDto> {
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let projects = Arc::clone(&projects);
+    let service = Arc::clone(&service);
     let Some(chosen) = chosen_file(&app, preview::dialog::PROJECT_INPUT_DIALOG).await? else {
         return Ok(None);
     };
     off_the_async_runtime(move || {
-        projects.register_input(&chosen).map_err(project_error)?;
+        projects
+            .register_input_labelled(&chosen, |identity| {
+                service.not_verified_label_of_object(identity)
+            })
+            .map_err(project_error)?;
         Ok(Some(projects.describe()))
     })
     .await?
