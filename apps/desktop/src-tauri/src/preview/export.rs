@@ -56,7 +56,7 @@
 use std::sync::Arc;
 
 use mscanvas_plot_spec::spec::{
-    AxisSpec, Caption, DataScope, Domain, FigureSpec, Label, MIN_FIGURE_CHROME_HEIGHT,
+    AxisSpec, Caption, DataScope, Domain, FigureSize, FigureSpec, Label, MIN_FIGURE_CHROME_HEIGHT,
     MIN_PANEL_HEIGHT, MeasurementRefusal, PanelSpec, PlotKind, SeriesSpec, SpecError,
     SpectrumRepresentation, StyleRole, UnitState, measurement_domains,
 };
@@ -70,7 +70,10 @@ use super::chromatogram::{
     ResolvedRange, TraceSet,
 };
 use super::dialog::SaveDialogFacts;
-use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
+use super::figure::{
+    FigureRaster, FigureRenderSettings, PngDpi, RasterFailure, RasterPlan, encode_png, encode_tiff,
+    rasterize,
+};
 use super::installation::InstallationIdentity;
 use super::projection::{self, ProjectionRefusal, ViewportDomain};
 use super::selection::DatasetId;
@@ -2098,6 +2101,85 @@ pub(super) fn png_of(
 ) -> Result<Vec<u8>, FigureFailure> {
     let raster = raster_of(figure, settings)?;
     encode_png(&raster, dpi.get()).map_err(FigureFailure::Raster)
+}
+
+/// The words a user typed for a title, or the default where they typed none.
+///
+/// Empty -- or only spaces -- means the figure's own default, so clearing a
+/// field is how a user asks for it back. Anything else is held to the label
+/// rule and refused rather than repaired.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the publication-export integration")
+)]
+pub(super) fn edited_text(text: &str) -> Result<Option<Label>, SpecError> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    Label::new(text).map(Some)
+}
+
+/// One built figure at a publication size, with the user's own words.
+///
+/// The figure is whatever an export already builds -- a spectrum, a
+/// chromatogram, the linked pair -- so its science is unchanged and only its
+/// size and its words move. An empty title keeps the builder's own; an empty
+/// axis title keeps the panel's label; and no title, edited or not, changes a
+/// unit the source did or did not report.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the publication-export integration")
+)]
+pub(super) fn publication_figure(
+    figure: FigureSpec,
+    size: FigureSize,
+    title: &str,
+    x_axis_title: &str,
+    y_axis_title: &str,
+) -> Result<FigureSpec, SpecError> {
+    let figure = figure
+        .with_size(size)?
+        .with_axis_titles(edited_text(x_axis_title)?, edited_text(y_axis_title)?)?;
+    Ok(match edited_text(title)? {
+        Some(title) => figure.with_title(title),
+        None => figure,
+    })
+}
+
+/// Rasterizes one already-specified figure onto the pixels a plan allows.
+///
+/// The same SVG the vector export writes. A printed figure is scaled from its
+/// millimetres onto the plan's pixels; a pixel figure is drawn at its own. The
+/// plan is what asked the raster budget, so nothing reaches the rasterizer
+/// without it.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the publication-export integration")
+)]
+pub(super) fn raster_at(
+    figure: &FigureSpec,
+    plan: RasterPlan,
+) -> Result<FigureRaster, FigureFailure> {
+    let svg = mscanvas_plot_spec::svg::render(figure);
+    rasterize(&svg, plan.width(), plan.height()).map_err(FigureFailure::Raster)
+}
+
+/// The PNG of one figure at a plan's pixels, recording the plan's resolution.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the publication-export integration")
+)]
+pub(super) fn png_at(figure: &FigureSpec, plan: RasterPlan) -> Result<Vec<u8>, FigureFailure> {
+    encode_png(&raster_at(figure, plan)?, plan.dpi().get()).map_err(FigureFailure::Raster)
+}
+
+/// The TIFF of one figure at a plan's pixels, recording the plan's resolution.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the publication-export integration")
+)]
+pub(super) fn tiff_at(figure: &FigureSpec, plan: RasterPlan) -> Result<Vec<u8>, FigureFailure> {
+    encode_tiff(&raster_at(figure, plan)?, plan.dpi().get()).map_err(FigureFailure::Raster)
 }
 
 /// Renders one selected spectrum as the PNG document a user receives.
@@ -6298,5 +6380,98 @@ mod tests {
             Some(owner(2))
         );
         assert!(slots.run_summary_for("not-a-token").is_none());
+    }
+
+    // ------------------------------------------------ the publication figure
+
+    fn single_column() -> FigureSize {
+        use mscanvas_plot_spec::spec::{DEFAULT_LINE_PT, DEFAULT_TEXT_PT, PrintSize};
+        FigureSize::printed(
+            PrintSize::new(85.0, 60.0, DEFAULT_TEXT_PT, DEFAULT_LINE_PT).expect("a size"),
+        )
+        .expect("a single column")
+    }
+
+    #[test]
+    fn an_empty_edited_title_is_the_default_and_anything_else_is_checked() {
+        assert_eq!(edited_text(""), Ok(None));
+        assert_eq!(edited_text("   "), Ok(None));
+        assert_eq!(
+            edited_text("Signal").map(|label| label.map(|label| label.as_str().to_owned())),
+            Ok(Some("Signal".to_owned()))
+        );
+        assert_eq!(edited_text("two\nlines"), Err(SpecError::LabelNotPrintable));
+    }
+
+    #[test]
+    fn a_publication_spectrum_keeps_its_science_and_takes_the_user_words() {
+        let built = figure_spec(&golden_spectrum(), defaults(), ResolvedSpectrumRange::Full)
+            .expect("specifiable");
+
+        // Nothing typed: the builder's title and the panel's own axis labels.
+        let plain = publication_figure(built.clone(), single_column(), "", "", "")
+            .expect("a publication figure");
+        assert_eq!(plain.panels(), built.panels(), "the science is unchanged");
+        assert_eq!(plain.title(), built.title());
+        let document = mscanvas_plot_spec::svg::render(&plain);
+        assert!(document.contains("width=\"85.000mm\" height=\"60.000mm\""));
+        assert!(document.contains(">m/z (unit not reported)<"), "{document}");
+        assert!(
+            document.contains(">Intensity (unit not reported)<"),
+            "{document}"
+        );
+
+        // Typed words replace the label, and never the unreported unit.
+        let edited = publication_figure(built, single_column(), "Enolase, scan 7", "", "Signal")
+            .expect("a publication figure");
+        let document = mscanvas_plot_spec::svg::render(&edited);
+        assert!(
+            document.contains("<title>Enolase, scan 7</title>"),
+            "{document}"
+        );
+        assert!(
+            document.contains(">Signal (unit not reported)<"),
+            "{document}"
+        );
+        assert!(document.contains(">m/z (unit not reported)<"), "{document}");
+    }
+
+    #[test]
+    fn a_printed_figure_exports_as_png_and_tiff_at_its_resolution() {
+        let figure = publication_figure(
+            figure_spec(&golden_spectrum(), defaults(), ResolvedSpectrumRange::Full)
+                .expect("specifiable"),
+            single_column(),
+            "",
+            "",
+            "",
+        )
+        .expect("a publication figure");
+        let plan = RasterPlan::new(figure.size(), resolution(300)).expect("inside the budget");
+
+        let png = png_at(&figure, plan).expect("a PNG");
+        let decoder = png::Decoder::new(std::io::Cursor::new(&png));
+        let reader = decoder.read_info().expect("the PNG parses");
+        assert_eq!((reader.info().width, reader.info().height), (1_004, 709));
+
+        let tiff = tiff_at(&figure, plan).expect("a TIFF");
+        let mut decoder =
+            tiff::decoder::Decoder::new(std::io::Cursor::new(&tiff)).expect("the TIFF parses");
+        assert_eq!(decoder.dimensions().expect("dimensions"), (1_004, 709));
+        assert_eq!(&tiff[..4], b"II*\0", "a little-endian TIFF");
+
+        // And the two rasters are one drawing.
+        let pixels = raster_at(&figure, plan).expect("pixels");
+        let tiff::decoder::DecodingResult::U8(samples) =
+            decoder.read_image().expect("the samples decode")
+        else {
+            panic!("eight-bit samples");
+        };
+        let rgb: Vec<u8> = pixels
+            .rgba()
+            .chunks_exact(4)
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
+            .collect();
+        assert_eq!(samples, rgb);
     }
 }

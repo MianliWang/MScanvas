@@ -18,6 +18,12 @@ SUPPORTED_NODE = ">=22.13.0 <23"
 MINIMUM_NODE = "22.13.0"
 PINNED_PNPM = "11.15.1"
 PINNED_RUST = "1.97.1"
+# The QA control build: the cargo half of `pnpm e2e:build`, run alone by the
+# release workflow so the shipped apps/desktop/dist is not rebuilt.
+QA_CONTROL_BUILD = (
+    "cargo build --release --features e2e --features tauri/custom-protocol"
+    " --bin mscanvas-desktop --target-dir target/e2e"
+)
 
 REQUIRED = [
     "PROJECT_PROPOSAL.md",
@@ -128,6 +134,8 @@ def validate_project_contract(errors: list[str]) -> None:
         fail(f"root Node engine must remain {SUPPORTED_NODE}", errors)
     if engines.get("pnpm") != PINNED_PNPM:
         fail(f"root pnpm engine must remain exactly {PINNED_PNPM}", errors)
+    if package.get("scripts", {}).get("e2e:build") != f"pnpm build && {QA_CONTROL_BUILD}":
+        fail(f'root e2e:build must remain "pnpm build && {QA_CONTROL_BUILD}"', errors)
 
     node_version = (ROOT / ".node-version").read_text(encoding="utf-8").strip()
     if node_version != PINNED_NODE:
@@ -152,6 +160,12 @@ def validate_project_contract(errors: list[str]) -> None:
             "pnpm install --frozen-lockfile",
             "pnpm lint",
         ],
+        ".github/workflows/browser-e2e.yml": [
+            "node-version-file: .node-version",
+            f"pnpm@{PINNED_PNPM}",
+            "pnpm install --frozen-lockfile",
+            "pnpm e2e:browser --shard",
+        ],
         ".github/workflows/windows-smoke.yml": [
             "node-version-file: .node-version",
             f"pnpm@{PINNED_PNPM}",
@@ -163,6 +177,7 @@ def validate_project_contract(errors: list[str]) -> None:
             f"rustup toolchain install {PINNED_RUST}",
             "pnpm install --frozen-lockfile",
             "scripts/build_candidate.ps1",
+            QA_CONTROL_BUILD,
             "scripts/inspect_candidate.ps1",
         ],
         ".github/workflows/rust.yml": [
@@ -189,6 +204,12 @@ def validate_project_contract(errors: list[str]) -> None:
             fail(f"non-frozen pnpm install is forbidden in {relative}", errors)
         if "corepack prepare" in text:
             fail(f"stale bundled Corepack activation is forbidden in {relative}", errors)
+
+    # `pnpm e2e:build` would rebuild the shipped frontend before it is inspected.
+    # Comments may name it; a step may not run it.
+    release_workflow = (ROOT / ".github/workflows/release-candidate.yml").read_text(encoding="utf-8")
+    if re.search(r"^[^#\n]*e2e:build", release_workflow, re.MULTILINE):
+        fail("release-candidate.yml must not run e2e:build; it rebuilds the shipped frontend", errors)
 
     capability = json.loads(
         (ROOT / "apps/desktop/src-tauri/capabilities/default.json").read_text(

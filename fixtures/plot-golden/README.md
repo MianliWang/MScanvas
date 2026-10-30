@@ -23,3 +23,10 @@ file holds.
 
 The three were generated from canonical main (`c03974c`) before the refactor
 and are byte-identical after it.
+
+They were regenerated once since, deliberately, for the publication figure
+(figure schema 4): round ticks with outside value labels and gridlines,
+`(unit not reported)` in the axis titles, and text measured in the named face
+rather than stretched. The data they draw is unchanged and every `<desc>` is
+byte-identical to the earlier documents; only the axes and the text moved. See
+`docs/architecture/FIGURE_MODEL.md`.

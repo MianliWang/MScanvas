@@ -16,3 +16,8 @@ trim_trailing_whitespace = false
 
 [*.ps1]
 end_of_line = crlf
+
+# A byte-exact provider capture; see .gitattributes.
+[docs/spikes/evidence/msconvert-3.0.26013-help.txt]
+end_of_line = crlf
+trim_trailing_whitespace = false

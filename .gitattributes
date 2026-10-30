@@ -8,3 +8,7 @@
 *.ico binary
 *.pdf binary
 *.zip binary
+# A byte-exact provider capture: CRLF line endings and trailing spaces are part
+# of the evidence its SHA-256 is recorded over, so neither eol normalization nor
+# whitespace checks may apply (docs/spikes/MSCONVERT_HELP_CAPTURE.md).
+docs/spikes/evidence/msconvert-3.0.26013-help.txt -text -whitespace

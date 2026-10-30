@@ -3,10 +3,17 @@
 //! This is deliberately a small closed record rather than a serialization of
 //! application state. What may be durable is enumerated here, each field has a
 //! finite validated domain, and anything a reader does not recognise is a
-//! refusal rather than data to carry forward. Nothing scientific, nothing that
-//! locates a file, and nothing that could be mistaken for authority over a
-//! backend, a conversion or a dataset is representable in this type at all --
-//! the allowlist is the type, not a filter applied to a wider one.
+//! refusal rather than data to carry forward. Nothing scientific, no
+//! acquisition, dataset or destination, and nothing that could be mistaken for
+//! authority over a conversion or a dataset is representable in this type at
+//! all -- the allowlist is the type, not a filter applied to a wider one.
+//!
+//! One location is: the ProteoWizard folder a user chose, so the next launch
+//! can start on it. It is not authority either. A stored folder binds nothing
+//! by being read; it is handed to the same discovery a picker choice goes
+//! through, and a folder that no longer holds usable tools is reported and
+//! searched past rather than trusted. It never reaches the webview through this
+//! store: the preference transfer objects carry a path-free view.
 
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +32,13 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// become an unbounded read, and the margin exists so that formatting or a
 /// future field never turns a legitimate record into a refusal.
 pub const MAX_RECORD_BYTES: u64 = 16 * 1024;
+
+/// The longest ProteoWizard folder this build stores, in UTF-8 bytes.
+///
+/// Far above any installation path a person would pick, and low enough that a
+/// record holding one -- every backslash escaped -- still sits well inside
+/// [`MAX_RECORD_BYTES`].
+pub const MAX_BACKEND_FOLDER_BYTES: usize = 4 * 1024;
 
 /// The interface language, restricted to the locales this build actually
 /// bundles.
@@ -110,12 +124,22 @@ impl Default for LayoutPreferences {
 /// not know is refused rather than retained: keeping it would make the store a
 /// place to park opaque data, and writing the record back would then publish
 /// something no validator here has ever judged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiPreferences {
     pub schema_version: u32,
     pub appearance: AppearancePreferences,
     pub layout: LayoutPreferences,
+    /// The ProteoWizard folder the next launch starts discovery on, if the
+    /// user chose one that worked.
+    ///
+    /// Optional and omitted when absent, so a record without it is still
+    /// schema 1 and a record that never had one is written byte for byte as
+    /// before: adding it needs no migration. Written only by Rust, after a
+    /// picker choice read as usable; the webview's write payload cannot name
+    /// it. Validated on read: absolute, bounded, no control characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_folder: Option<String>,
 }
 
 impl Default for UiPreferences {
@@ -124,8 +148,22 @@ impl Default for UiPreferences {
             schema_version: SCHEMA_VERSION,
             appearance: AppearancePreferences::default(),
             layout: LayoutPreferences::default(),
+            backend_folder: None,
         }
     }
+}
+
+/// Whether a folder is one this record may hold.
+///
+/// Absolute, because a relative one would be resolved against whatever the
+/// process's working directory happens to be. Bounded, so the record stays
+/// inside its own limit. And free of control characters, which no folder a
+/// picker returns contains and which would otherwise be text nobody can see.
+#[must_use]
+pub fn storable_backend_folder(folder: &str) -> bool {
+    folder.len() <= MAX_BACKEND_FOLDER_BYTES
+        && std::path::Path::new(folder).is_absolute()
+        && !folder.chars().any(char::is_control)
 }
 
 /// Why a stored record could not be used.
@@ -199,6 +237,13 @@ pub fn read_record(bytes: &[u8]) -> Result<UiPreferences, RecordProblem> {
     // with the fields beside it is exactly the thing not to publish onward.
     if record.schema_version != SCHEMA_VERSION {
         return Err(RecordProblem::UnsupportedVersion);
+    }
+    if record
+        .backend_folder
+        .as_deref()
+        .is_some_and(|folder| !storable_backend_folder(folder))
+    {
+        return Err(RecordProblem::Malformed);
     }
     Ok(record)
 }

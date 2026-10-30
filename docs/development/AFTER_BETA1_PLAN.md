@@ -51,11 +51,15 @@ changes may merge again, each with the owner's approval as before.
   slice; section 6.1 records what SCIEX's derived companion adds).
 - **Not selected now:** stored-result clipboard copy, a subfolder default and a
   queue capacity above 16 (the last needs a stated basis). Other
-  evidence-gated items stay gated.
+  evidence-gated items stay gated. *2026-10-29: the queue capacity is
+  selected, at 1,024 ([ADR 0057](../architecture/adr/0057-conversion-capacity-and-viewing-during-conversion.md);
+  below).*
 - **Dependencies and Node 26:** after publication, in batches, before beta 2.
 - **Merging:** test-only and docs-only pull requests may be merged by the
   maintainer agent once every required check passes; product, dependency and
-  release changes still go to the owner.
+  release changes still go to the owner. *2026-10-29: product pull requests may
+  be merged too, once every required check passes and no review thread is
+  open. A dependency or release change keeps its own approval.*
 - **This plan** is tracked in the repository and updated as items complete.
 - **Feature design answers** (after the read-only briefs and their critiques):
   - folder/drop proposes **Thermo RAW and Shimadzu LCD only**; SCIEX stays
@@ -81,7 +85,11 @@ changes may merge again, each with the owner's approval as before.
     known to lose data still blocked. This reverses the evidence-bound catalog
     rule for that advanced set and needs its own ADR, a general filter chain in
     place of the nine fixed rows, and a capture of the full msconvert help text
-    (a ProteoWizard hold release the owner grants);
+    (a ProteoWizard hold release the owner grants). The help was captured
+    later that day ([capture](../spikes/MSCONVERT_HELP_CAPTURE.md),
+    [option inventory](../spikes/MSCONVERT_OPTION_INVENTORY.md)), and the ADR
+    is [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+    proposed;
   - **frontend:** the owner is not satisfied with either the execution or the
     scope of the current interface; the target is to be defined with the
     owner before a redesign;
@@ -94,6 +102,97 @@ changes may merge again, each with the owner's approval as before.
     [lieflat-charts](https://github.com/larashero3-dotcom/lieflat-charts) is a
     reference for chart design, not a dependency: its licence (PolyForm
     Noncommercial) does not allow copying it into this Apache-2.0 project.
+
+**Owner decisions, 2026-10-29** (every recommendation put to the owner was
+accepted):
+
+1. **`serde` in the conversion crate.** `serde` becomes a direct dependency of
+   `crates/proteowizard`; it is already a workspace dependency and in
+   `Cargo.lock`, so no package is added. The wire deserializes into the
+   crate's unvalidated parts, and the structured intent's validating
+   constructor checks them ([ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+   dependency note).
+2. **The "not verified by MSCanvas" flag survives adoption.** It is carried
+   into an adopted output's provenance, in the session and in the project
+   document, not only into the queue outcome and diagnostics. A project schema
+   bump is accepted (ADR 0055, risks).
+3. **Conversion capacity and viewing during conversion**
+   ([ADR 0057](../architecture/adr/0057-conversion-capacity-and-viewing-during-conversion.md)):
+   - an open preview's selected spectra may be read natively during a
+     conversion, once ADR 0056's reader is integrated;
+   - opening a new preview during a conversion stays refused for now, because
+     it would run `msaccess` beside `msconvert`;
+   - queue capacity rises from 16 to 1,024, the roster cap, so one checked
+     roster converts as one queue; conversion lists must be windowed;
+   - parallel conversion waits for a throughput measurement under a bounded
+     ProteoWizard hold release (week 2); until then conversion stays serial.
+4. **User-saved conversion presets**
+   ([ADR 0058](../architecture/adr/0058-user-saved-conversion-presets.md)):
+   presets are user-saved only, MSCanvas ships none, and none is selected at
+   startup. A preset may hold a picker step because the user wrote it, and
+   applying it shows the step's lossy effect in the plan summary. ADR 0055's
+   decision 7 now reads "no default or MSCanvas-authored preset inserts a
+   picker".
+5. **Numpress in the viewer.** The viewer keeps the typed refusal. An adopted
+   numpress output opens, and its spectra show that refusal
+   ([ADR 0056](../architecture/adr/0056-project-owned-mzml-reader-for-viewing.md),
+   open question).
+
+**Still open** (not decided on 2026-10-29):
+
+- the R0 real-file comparison for the reader (ADR 0056, decision 8): the PRIDE
+  `PXD081190` download, an MS1 profile-mode file from the owner, and a
+  ProteoWizard hold release. *R0 ran on 2026-10-29 on public files
+  ([PR #157](https://github.com/MianliWang/MScanvas/pull/157)) and did not
+  pass: the reader refused the `PXD081190` file, whose `<mzML>` has no
+  `version` attribute. Decision 2 below amends ADR 0056. R0 ran again on
+  2026-10-30 and passed: the reader reads both files exactly
+  ([record](../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md));*
+- whether product pull requests may be merged without the owner. *Answered
+  2026-10-29: they may (the merging bullet above);*
+- which demo direction the interface follows.
+
+**Owner decisions, 2026-10-30** (Thermo first, Bruker compatibility later when
+there is capacity, no decompilation, and every other point as recommended):
+
+1. **Vendor formats stay on the vendors' own readers**
+   ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md)).
+   Thermo comes first, and Bruker waits until there is capacity. MSCanvas does
+   not decompile or reverse engineer vendor software and writes no decoder of
+   its own for a vendor format. Vendor files go through the official vendor
+   readers, inside the user's own ProteoWizard `msconvert`. A Bruker TDF
+   preview through an existing permissively licensed open reader (timsrust or
+   mzdata) stays a later, separate decision.
+2. **mzML version from the schema location.** When `<mzML>` has no `version`
+   attribute, the reader takes the version from the xsd file name in that
+   element's `xsi:schemaLocation`, as ProteoWizard does. A stated version
+   that is not `1.1.x` is still refused
+   ([ADR 0056](../architecture/adr/0056-project-owned-mzml-reader-for-viewing.md),
+   decision 1).
+3. **The chosen ProteoWizard folder is remembered across launches**
+   ([PR #158](https://github.com/MianliWang/MScanvas/pull/158)). This reverses
+   ADR 0005's "for the session only, never written to disk", and the
+   installation's folder may be sent to the webview
+   ([ADR 0005](../architecture/adr/0005-mzml-preview-boundary.md)).
+4. **`tiff` is a direct production dependency** of the desktop crate, at
+   `=0.11.3` with only `lzw`
+   ([PR #159](https://github.com/MianliWang/MScanvas/pull/159)). It is already
+   in `Cargo.lock` through `image`, so no package is added
+   ([ADR 0030](../architecture/adr/0030-png-copy-plot-and-figure-settings.md),
+   dependencies).
+5. **One-click view RAW** is accepted. Selecting a Thermo RAW row to view
+   converts it with the verified defaults into an MSCanvas-owned cache, never
+   the user's destination and never overwriting, then opens the result. It is
+   designed and implemented later. *2026-10-30: designed in
+   [ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+   whose details follow the recommendations as the owner asked; it lists the
+   questions still open.*
+6. **Thermo vendor centroiding.** "MS1 and up" (`peakPicking vendor
+   msLevel=1-`) becomes a verified row on the evidenced build. "MS2 and up"
+   stays in the advanced tier, labelled not verified, until a public Orbitrap
+   profile-MS2 file is measured
+   ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
+   [PR #162](https://github.com/MianliWang/MScanvas/pull/162)).
 
 ## 3. Parallel execution rules
 
@@ -112,7 +211,10 @@ changes may merge again, each with the owner's approval as before.
   calendar (section 4), so each phase asks its open questions once.
 - **ADR numbers are pre-assigned** to avoid the four features racing for 0051:
   0051 folder/drop vendor ingestion, 0052 per-output adoption, 0053 PNG text
-  metadata, 0054 spreadsheet CSV.
+  metadata, 0054 spreadsheet CSV. 0055 is msconvert parity (option C), 0056
+  the mzML reader for viewing, 0057 conversion capacity and viewing during
+  conversion, 0058 user-saved conversion presets, 0059 the vendor format
+  strategy, 0060 one-click view of a Thermo RAW file.
 
 ## 4. Pace and estimating basis
 
@@ -133,6 +235,14 @@ stretches came from memory admission, owner decisions and idle gaps. The
 estimates below count sessions and add the gates explicitly.
 
 ## 5. Phases and tracks
+
+**Vendor priority (2026-10-30,
+[ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md)):**
+Thermo RAW first: vendor centroiding's verified row, one-click view RAW and
+folder/drop. Bruker compatibility comes later, when there is capacity, by its
+own decision. Every vendor format stays on the official readers inside the
+user's ProteoWizard; no work decompiles vendor software or decodes a vendor
+format in-house.
 
 **Phase 0 — beta 1 (now; about one day of work plus one idle-desktop window).**
 Section 1.
@@ -289,20 +399,35 @@ writer and Rust's ownership of files.
 
 ### 7.1 Near-term engineering
 
-- CI runs no browser or native e2e; `windows-smoke.yml` has never run.
+- One-click view of a Thermo RAW file
+  ([ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+  VIEW-009): four slices after ADR 0056's slices 2 and 3 (the cache library;
+  the operation and its commands; the interface; export provenance). The
+  interface slice waits on the owner's choice of interface direction. Native QA
+  needs a bounded ProteoWizard hold release.
+- CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
 - Security alerts (enabled 2026-10-27), triaged 2026-10-28 — none reaches the
   beta-1 installer:
-  - npm alerts are build and test tooling (vite, undici, serialize-javascript
-    and others); #133 closes the vite ones, and the rest are rechecked after
-    each dependency batch;
+  - npm alerts are build and test tooling; the undici, serialize-javascript
+    and source-map-js ones were fixed on 2026-10-30, and extract-zip has no
+    fix before WebdriverIO 10 (see the security fixes in
+    [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md));
   - Pillow is in the development-only targeted-MS1 runtime lock
     (`experiments/m9_0/runtime/requirements-cp313-win_amd64.lock.txt`), is not
-    imported by project code and is not shipped; update it when that runtime
-    is next provisioned and before any release ships the runtime;
-  - `glib` (Rust) is not in the Windows dependency tree; it follows the cargo
-    batch.
+    imported by project code and is not shipped; bumping it changes the pinned
+    runtime manifest digest, so update it when that runtime is next provisioned
+    and before any release ships the runtime;
+  - `glib` (Rust) is only in Tauri's Linux GTK backend, not in the Windows
+    dependency tree; the fix needs gtk-rs 0.20 and the cargo batch keeps glib
+    0.18.5;
+  - owner decision, 2026-10-30: these 44 alerts (Pillow 41, extract-zip 2,
+    glib 1) are not dismissed; they stay open and are fixed later as above (see
+    [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md)).
+- `PM9.7-I2 … zh-CN-1366x768` (`e2e/specs/pm9.7-integrated.browser.e2e.ts:397`,
+  the scrolled-to-end check) is flaky in CI: it failed on `main` at `7c2c774`
+  and on PR #167 at `9f7b1be` with no frontend change, and passed on rerun.
 - The real targeted-MS1 engine qualification and, before any release ships the
   runtime, its packaging, licence qualification and worker confinement.
 - Exported values are not the stored binary values: a spectrum is read through
@@ -383,9 +508,9 @@ None can be delivered by engineering alone; each waits for one input.
 | --- | --- | --- |
 | Folder/drop vendor files | Owner decision (given 2026-10-28 for Thermo and Shimadzu; section 6.1). SCIEX: a measurement that its derived companion cannot pair with a same-stem `.wiff2` | M–L |
 | XIC (VIEW-007) | A new scope record for a bounded project-owned mzML array decoder: a new candidate, not a repair of PX's refused one, rerunning all 77 rows; a written decision on reader work and dependency approval | L–XL |
-| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim | M–L |
-| Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader | M |
-| Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family) | XL |
+| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2)* | M–L |
+| Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
+| Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |
 
 ### 7.6 Refused or not adopted
 
@@ -398,11 +523,19 @@ None can be delivered by engineering alone; each waits for one input.
   rerun to replace a damaged result, diagnostics upload. "Terminal" means
   closed for the route that decided it, not impossible.
 - **Reversible, not selected:** explicit overwrite (needs a new finalization
-  contract), queue capacity above 16 (needs a stated basis), pause/resume and
-  parallel conversion (need a measured need), the settings summary and the
-  steppers (kept by PM9's freeze), presets and target-file import (overlap
-  M10), on-screen result sorting and filtering, view-scoped export, history
-  notes, stored-result clipboard copy.
+  contract), pause/resume (needs a measured need), the settings summary and the
+  steppers (kept by PM9's freeze), target-file import (overlaps M10), on-screen
+  result sorting and filtering, view-scoped export, history notes,
+  stored-result clipboard copy.
+  - *2026-10-29:* three entries left this list.
+    - **Queue capacity above 16** is selected at 1,024, on the basis
+      [ADR 0057](../architecture/adr/0057-conversion-capacity-and-viewing-during-conversion.md)
+      states.
+    - **Parallel conversion** is no longer waiting for a need. It waits for
+      ADR 0057's throughput measurement under a bounded hold release, and
+      conversion stays serial until then.
+    - **Presets** are adopted as user-saved conversion presets
+      ([ADR 0058](../architecture/adr/0058-user-saved-conversion-presets.md)).
 - **Owned elsewhere:** Workbench restore on reopen (WSP-010), surviving queue
   and adoption history (RUN-007), remembered choices (M7.5 preferences),
   saved typed plans and large unattended batches (M10).
@@ -418,11 +551,24 @@ None can be delivered by engineering alone; each waits for one input.
 ## 9. Open owner decisions
 
 - The frontend's target: what "meets requirements" means in execution and
-  scope, before any redesign.
-- The capture of the full msconvert help text for option C (a ProteoWizard
-  hold release).
-- Whether to write a project-owned mzML reader in place of `msaccess` for
-  viewing (a written decision and dependency approval).
+  scope, before any redesign, and which demo direction the interface follows.
+  *ADR 0060's interface slice waits on the direction (its open question 8).*
+- *Answered 2026-10-29:* the owner accepted
+  [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)
+  (option C) and
+  [ADR 0056](../architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)
+  with its dependency request, and chose the typed refusal for numpress,
+  truncation and prediction (section 2).
+- ADR 0056's re-measurement (R0): the PRIDE `PXD081190` download, an MS1
+  profile-mode file the owner authorizes, and a ProteoWizard hold release.
+  *R0 ran on 2026-10-29 and did not pass; the owner amended ADR 0056's
+  decision 1 on 2026-10-30, and the rerun that day passed
+  ([record](../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md)).*
+- *Answered 2026-10-29:* product pull requests may be merged without the
+  owner, once every required check passes and no review thread is open.
+- *Answered 2026-10-30* (section 2): the vendor format strategy (ADR 0059),
+  the mzML version rule, the remembered ProteoWizard folder, the `tiff`
+  dependency, one-click view RAW and Thermo vendor centroiding.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted.

@@ -19,11 +19,22 @@
 //! resolution *metadata* and multiplies nothing: a user who asks for 1200 x 640
 //! receives 1200 x 640 whatever DPI they chose, which is the only reading under
 //! which the two formats describe the same figure.
+//!
+//! ## A printed figure
+//!
+//! A figure sized on paper -- millimetres, with its text and lines in points --
+//! is the other reading, and the one a journal asks for. Its SVG states the
+//! millimetres, and its raster is that paper at the chosen resolution:
+//! `round(mm / 25.4 x dpi)` pixels each way, recorded as that resolution. A
+//! [`RasterPlan`] is the one place either reading becomes a pixel count, and it
+//! is only made through the raster budget.
 
 use png::{BitDepth, ColorType, Encoder, PixelDimensions, Unit};
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg::fontdb::{Database, Family, Query};
 use resvg::usvg::{Options, Tree};
+use tiff::encoder::{Compression, Rational, TiffEncoder, colortype};
+use tiff::tags::ResolutionUnit;
 
 use mscanvas_plot_spec::spec::{
     FigureSize, FigureTheme, MAX_FIGURE_EDGE, MIN_FIGURE_CHROME_HEIGHT, MIN_FIGURE_WIDTH,
@@ -234,11 +245,79 @@ impl PngDpi {
 pub(super) fn validate_raster_budget(
     settings: FigureRenderSettings,
 ) -> Result<(), SettingsRefusal> {
-    let pixels = u64::from(settings.width()) * u64::from(settings.height());
+    validate_pixel_budget(settings.width(), settings.height())
+}
+
+/// The budget itself, over a pixel count however it was arrived at.
+fn validate_pixel_budget(width: u32, height: u32) -> Result<(), SettingsRefusal> {
+    let pixels = u64::from(width) * u64::from(height);
     if pixels > MAX_RASTER_PIXELS {
         return Err(SettingsRefusal::RasterBudget);
     }
     Ok(())
+}
+
+/// The pixels one raster export will allocate, and the resolution it records.
+///
+/// Made only through the raster budget, so a caller holding one has been told
+/// the pixmap fits before anything is allocated. A figure sized in pixels keeps
+/// its pixels whatever the resolution, exactly as M4.2 defined; a printed one is
+/// its paper at the resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the publication-export integration")
+)]
+pub(super) struct RasterPlan {
+    width: u32,
+    height: u32,
+    dpi: PngDpi,
+}
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the publication-export integration")
+)]
+impl RasterPlan {
+    /// The pixels `size` comes to at `dpi`, refused over the raster budget.
+    pub(super) fn new(size: FigureSize, dpi: PngDpi) -> Result<Self, SettingsRefusal> {
+        let (width, height) = match size.print() {
+            Some(print) => (
+                pixels_on_paper(print.width_mm(), dpi),
+                pixels_on_paper(print.height_mm(), dpi),
+            ),
+            // Integers already: a pixel figure's edges come from the wire as
+            // whole pixels.
+            None => (size.width().round() as u32, size.height().round() as u32),
+        };
+        validate_pixel_budget(width, height)?;
+        Ok(Self { width, height, dpi })
+    }
+
+    pub(super) const fn width(self) -> u32 {
+        self.width
+    }
+
+    pub(super) const fn height(self) -> u32 {
+        self.height
+    }
+
+    pub(super) const fn dpi(self) -> PngDpi {
+        self.dpi
+    }
+}
+
+/// How many whole pixels `mm` of paper is at `dpi`.
+///
+/// Bounded by the contract's 600 mm edge and this boundary's 1200 DPI, so the
+/// answer -- at most 28,347 -- always fits.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the publication-export integration")
+)]
+fn pixels_on_paper(mm: f64, dpi: PngDpi) -> u32 {
+    const MM_PER_INCH: f64 = 25.4;
+    (mm / MM_PER_INCH * f64::from(dpi.get())).round() as u32
 }
 
 /// Why a figure could not be turned into pixels.
@@ -328,7 +407,15 @@ fn rasterize_using(
 
     let tree = Tree::from_str(svg, &options).map_err(|_| RasterFailure::Unrenderable)?;
     let mut pixmap = Pixmap::new(width, height).ok_or(RasterFailure::OutOfMemory)?;
-    resvg::render(&tree, Transform::default(), &mut pixmap.as_mut());
+    // The document onto exactly these pixels. A figure sized in pixels is
+    // already this size, so the scale is one and nothing moves; a printed one
+    // states millimetres, and is scaled from what they come to at the
+    // rasterizer's own 96 per inch onto the pixel count its resolution asked
+    // for -- the rounded count, so no edge is left a pixel short.
+    let drawn = tree.size();
+    let transform =
+        Transform::from_scale(width as f32 / drawn.width(), height as f32 / drawn.height());
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
 
     // Demultiplied, because a PNG stores straight alpha and the pixmap stores
     // premultiplied. The figure's background is opaque so this is the identity
@@ -404,9 +491,42 @@ pub(super) fn encode_png(raster: &FigureRaster, dpi: u32) -> Result<Vec<u8>, Ras
     Ok(bytes)
 }
 
+/// Encodes one raster as a TIFF carrying the requested physical resolution.
+///
+/// RGB, eight bits a sample, LZW-compressed, with the resolution in pixels per
+/// inch. The alpha channel is left out: a figure is drawn on an opaque
+/// background, so it carries nothing, and an alpha channel is what some
+/// journal-side tools misread as a transparent image.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the publication-export integration")
+)]
+pub(super) fn encode_tiff(raster: &FigureRaster, dpi: u32) -> Result<Vec<u8>, RasterFailure> {
+    let rgb: Vec<u8> = raster
+        .rgba()
+        .chunks_exact(4)
+        .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
+        .collect();
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    {
+        let mut encoder = TiffEncoder::new(&mut bytes)
+            .map_err(|_| RasterFailure::NotEncodable)?
+            .with_compression(Compression::Lzw);
+        let mut image = encoder
+            .new_image::<colortype::RGB8>(raster.width, raster.height)
+            .map_err(|_| RasterFailure::NotEncodable)?;
+        image.resolution(ResolutionUnit::Inch, Rational { n: dpi, d: 1 });
+        image
+            .write_data(&rgb)
+            .map_err(|_| RasterFailure::NotEncodable)?;
+    }
+    Ok(bytes.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mscanvas_plot_spec::spec::{DEFAULT_LINE_PT, DEFAULT_TEXT_PT, PrintSize};
 
     /// A document of the shape this application produces: an opaque background
     /// and text in the generic family the figure renderer asks for.
@@ -646,6 +766,119 @@ mod tests {
                 dpi,
                 "{dpi} DPI survives conversion to whole pixels per metre"
             );
+        }
+    }
+
+    fn printed(width_mm: f64, height_mm: f64) -> FigureSize {
+        FigureSize::printed(
+            PrintSize::new(width_mm, height_mm, DEFAULT_TEXT_PT, DEFAULT_LINE_PT)
+                .expect("a printed size"),
+        )
+        .expect("a printed figure")
+    }
+
+    /// A printed document of the shape the renderer writes: millimetres over a
+    /// viewBox in figure units.
+    fn printed_document(size: FigureSize) -> String {
+        let print = size.print().expect("printed");
+        format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}mm\" height=\"{}mm\" \
+             viewBox=\"0 0 {} {}\"><rect x=\"0\" y=\"0\" width=\"{}\" height=\"{}\" \
+             fill=\"#ffffff\"/></svg>",
+            print.width_mm(),
+            print.height_mm(),
+            size.width(),
+            size.height(),
+            size.width(),
+            size.height(),
+        )
+    }
+
+    #[test]
+    fn a_printed_figure_rasterizes_at_its_paper_times_the_resolution() {
+        let size = printed(85.0, 60.0);
+        let plan = RasterPlan::new(size, PngDpi::from_wire(300).expect("a resolution"))
+            .expect("inside the budget");
+        // 85 mm and 60 mm at 300 per inch, rounded to whole pixels.
+        assert_eq!((plan.width(), plan.height()), (1_004, 709));
+
+        let raster = rasterize(&printed_document(size), plan.width(), plan.height())
+            .expect("the figure rasterizes");
+        assert_eq!((raster.width(), raster.height()), (1_004, 709));
+        // Scaled onto every pixel: no strip at the edge is left unpainted.
+        assert!(
+            raster
+                .rgba()
+                .chunks_exact(4)
+                .all(|pixel| pixel == [255, 255, 255, 255])
+        );
+
+        // At 600 the same paper is twice the pixels.
+        let fine = RasterPlan::new(size, PngDpi::from_wire(600).expect("a resolution"))
+            .expect("inside the budget");
+        assert_eq!((fine.width(), fine.height()), (2_008, 1_417));
+    }
+
+    #[test]
+    fn a_pixel_figure_keeps_its_pixels_whatever_the_resolution() {
+        let size = FigureSize::new(1_200.0, 640.0).expect("a size");
+        for dpi in [MIN_PNG_DPI, 300, MAX_PNG_DPI] {
+            let plan = RasterPlan::new(size, PngDpi::from_wire(dpi).expect("a resolution"))
+                .expect("inside the budget");
+            assert_eq!(
+                (plan.width(), plan.height(), plan.dpi().get()),
+                (1_200, 640, dpi)
+            );
+        }
+    }
+
+    #[test]
+    fn a_printed_raster_past_the_budget_is_refused_before_allocation() {
+        // 600 mm square at 1200 DPI is 28,346 pixels a side, 800 megapixels.
+        let size = printed(600.0, 600.0);
+        assert_eq!(
+            RasterPlan::new(size, PngDpi::from_wire(MAX_PNG_DPI).expect("a resolution")),
+            Err(SettingsRefusal::RasterBudget)
+        );
+        RasterPlan::new(size, PngDpi::from_wire(MIN_PNG_DPI).expect("a resolution"))
+            .expect("the same paper at 72 DPI fits");
+    }
+
+    #[test]
+    fn a_tiff_carries_rgb_pixels_and_the_requested_resolution() {
+        use tiff::decoder::{Decoder, DecodingResult};
+        use tiff::tags::Tag;
+
+        let raster = rasterize(&document(120, 60, "#ffffff", "#000000"), 120, 60).expect("renders");
+        for dpi in [MIN_PNG_DPI, DEFAULT_PNG_DPI, MAX_PNG_DPI] {
+            let bytes = encode_tiff(&raster, dpi).expect("encodes");
+            let mut decoder = Decoder::new(std::io::Cursor::new(&bytes)).expect("the TIFF parses");
+            assert_eq!(decoder.dimensions().expect("dimensions"), (120, 60));
+            assert_eq!(
+                decoder.colortype().expect("a colour type"),
+                tiff::ColorType::RGB(8)
+            );
+            assert_eq!(
+                decoder
+                    .get_tag_u32(Tag::ResolutionUnit)
+                    .expect("a resolution unit"),
+                2,
+                "inches"
+            );
+            let resolution = decoder
+                .get_tag_u32_vec(Tag::XResolution)
+                .expect("a horizontal resolution");
+            assert_eq!(resolution, [dpi, 1]);
+            let DecodingResult::U8(pixels) = decoder.read_image().expect("the pixels decode")
+            else {
+                panic!("eight-bit samples");
+            };
+            let expected: Vec<u8> = raster
+                .rgba()
+                .chunks_exact(4)
+                .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
+                .collect();
+            assert_eq!(pixels, expected, "the same pixels, without alpha");
         }
     }
 }

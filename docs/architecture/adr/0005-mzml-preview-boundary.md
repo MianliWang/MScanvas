@@ -14,6 +14,12 @@
   `dataset_not_previewable` rather than reaching a backend that has nothing to
   open. See [ADR 0012](0012-first-visible-thermo-conversion.md); everything
   this ADR says about reading mzML is unchanged.
+- Amended: 2026-10-29 ([ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md))
+  — the one-backend-process rule, by a note at that rule below.
+- Amended: 2026-10-30 (owner decision, [plan section 2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28))
+  — a chosen installation is remembered across launches, and its folder may be
+  sent to the webview, by notes at the installation rule and in the
+  consequences below.
 
 ## Context
 
@@ -71,6 +77,18 @@ is rather than removed in a slice that is about something else.
   beside the new one, and every banner state offers the way back — including
   the state where the call itself failed, which is precisely the state that
   cannot say which installation was in use.
+
+  > **Amended 2026-10-30 by the owner's decision** (plan section 2, decision 3;
+  > implemented by draft [PR #158](https://github.com/MianliWang/MScanvas/pull/158),
+  > not yet merged). A chosen folder that reads as usable is remembered across
+  > launches. It is written to the preference record and checked again at
+  > startup by the existing discovery. If it no longer works there, the reason
+  > is reported and discovery goes back to the automatic search, which is
+  > discovery, not a backend fallback. **Forget** clears it. This reverses "for
+  > the session only" and "never written to disk" above. The webview still
+  > names no path, but a usable reading now carries the installation's folder
+  > as one bounded display field. It is the only installation path sent to the
+  > webview, and it never enters diagnostics or project documents.
 - **File acceptance is decided in Rust** — extension, canonical resolution, and
   regular-file posture including symlink and reparse-point rejection — so a
   frontend defect cannot widen what the backend will open. On Windows all of it
@@ -178,6 +196,16 @@ is rather than removed in a slice that is about something else.
   the row already being read, that bounds what fast navigation costs. What
   remains is that a read already under way runs to completion; stopping it
   needs real backend cancellation, which ADR 0003 still lists as an open gate.
+
+  > **Amended 2026-10-29 by [ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md).**
+  > The rule stands for ProteoWizard processes: one at a time, conversion
+  > included. A native mzML read (ADR 0056) is not a backend process. Once
+  > ADR 0056's native path ships, a selected spectrum of an already-open
+  > preview is read natively while a conversion holds the gate, serialized by
+  > a native-read lane of its own. Opening a preview during a conversion stays
+  > refused, because the open still runs `msaccess`. Parallel conversion would
+  > be the first exception to this rule; it waits for ADR 0057's throughput
+  > measurement and its own amendment of this paragraph.
 - The three operations of one open action read the file separately, and
   combining results from two generations of it would describe an acquisition
   that never existed. The file's length and modification time are therefore
@@ -212,7 +240,8 @@ is rather than removed in a slice that is about something else.
   command or picker for, so a chosen folder's failure is reported from a cause
   established here instead — missing, not a directory, unreadable, missing
   either tool or both, a probe failure, or a mismatched pair — and never by
-  forwarding the crate's advice.
+  forwarding the crate's advice. *2026-10-30: a usable chosen folder now lasts
+  across launches (see the note at the installation rule above).*
 - Which installation is in use is decided by what actually resolved, not by
   what was requested. The two come apart in both directions: automatic
   discovery falls back to another release when the one in use is removed, and a
