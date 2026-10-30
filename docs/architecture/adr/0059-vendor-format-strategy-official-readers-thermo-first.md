@@ -118,6 +118,44 @@ The Thermo work the owner selected on 2026-10-30
   `peakPicking vendor msLevel=2-` ("MS2 and up") stays in the advanced tier,
   labelled not verified, until a public Orbitrap profile-MS2 file is measured
   ([evidence](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)).
+
+  > **Implemented 2026-10-30** (branch `be/thermo-ms1`, into `be/integrate`).
+  >
+  > - **MS1 and up is the tenth verified row**, `VendorCentroidingFromMs1`:
+  >   mzML, every spectrum, m/z 64-bit and intensity 32-bit with no precision
+  >   flag, zlib, cases `TV1` and `TE1`. It lowers to
+  >   `--mzML --zlib --filter "peakPicking vendor msLevel=1-"`.
+  >   - It is verified only on the evidenced executable. On another build that
+  >     reports its release it converts Thermo RAW labelled "not verified", with
+  >     that release, under ADR 0055's relaxed gate. A build that reports no
+  >     release converts no Thermo RAW.
+  >   - Its source domain is the Thermo RAW family, not the two measured
+  >     instrument models. The evidence left that choice open. This change
+  >     takes CNV-D2's argument that one bundled reader picks for every Thermo
+  >     instrument, for MS1 and up only.
+  > - **MS2 and up, and every other vendor scope, is advanced on Thermo RAW,
+  >   labelled not verified.** Before this change the code refused any vendor
+  >   picker as not checkable. Its output check knew only the default picker's
+  >   request, which refuses a vendor picker as unrequested and wants every
+  >   spectrum centroid, so a correct `msLevel=2-` output would have failed.
+  >   The check now judges a vendor picker on Thermo RAW at its requested scope:
+  >   - the run adds exactly one method naming `Thermo/Xcalibur peak picking`,
+  >     and no other picker;
+  >   - that method's `ms levels` record is what this build writes for the
+  >     scope: none for `1-`, the interval otherwise. It is the only witness
+  >     of a scope the build discarded;
+  >   - every in-scope spectrum declares centroid. Out-of-scope spectra are not
+  >     judged, and the filter string's `p`/`c` is never read.
+  > - **Unchanged:**
+  >   - the vendor picker stays blocked on mzML sources and anywhere but first;
+  >   - bare `peakPicking` on Thermo RAW stays blocked;
+  >   - on Shimadzu LCD and SCIEX WIFF the vendor picker has no output check,
+  >     because their readers' picker names were never measured, so it is
+  >     refused as not checkable;
+  >   - the shipped default stays "no additional centroiding".
+  > - The capability probe now reads a spectrum-filter declaration that the
+  >   help wraps over up to three lines. The 3.0.26013 help puts `peakPicking`'s
+  >   `[msLevel=<ms_levels>]` on the second line.
 - **One-click view RAW.** Selecting a Thermo RAW row to view converts it with
   the verified defaults into an MSCanvas-owned cache, never the user's
   destination and never overwriting, then opens the result. It is to be
@@ -296,7 +334,8 @@ Law:
 ## Consequences
 
 - **No code changes.** The admitted families, conversion and viewing are
-  unchanged.
+  unchanged. *2026-10-30: except decision 2's vendor centroiding, implemented
+  as its note records.*
 - **"Thermo direct preview" changes shape.** The
   [plan](../../development/AFTER_BETA1_PLAN.md#75-evidence-gated-items) gated
   it on "an independent reference that does not pass through the same vendor

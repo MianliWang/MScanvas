@@ -10,13 +10,13 @@ import type { UiMessage } from "../preferences/i18n";
 
 const AXIS_LABEL = { processing: "cnvProcessing", population: "cnvPopulation", precision: "cnvPrecision", compression: "cnvCompression" } as const;
 export const CONVERSION_VALUE_LABEL = {
-  processing: { no_additional_centroiding: "cnvNoCentroiding", unscoped_default_centroiding: "cnvCentroiding" },
+  processing: { no_additional_centroiding: "cnvNoCentroiding", unscoped_default_centroiding: "cnvCentroiding", vendor_centroiding_from_ms1: "cnvVendorCentroiding" },
   population: { all: "cnvAllSpectra", ms1_only: "cnvMs1Only", ms2_only: "cnvMs2Only" },
   precision: { mz64_intensity32: "cnvMz64I32", mz64_intensity64: "cnvMz64I64", mz32_intensity32: "cnvMz32I32", mz32_intensity64: "cnvMz32I64" },
   compression: { zlib: "cnvZlib", none: "cnvUncompressed" },
 } as const;
 const NOTE = {
-  processing: { no_additional_centroiding: "cnvNoCentroidingNote", unscoped_default_centroiding: "cnvCentroidingNote" },
+  processing: { no_additional_centroiding: "cnvNoCentroidingNote", unscoped_default_centroiding: "cnvCentroidingNote", vendor_centroiding_from_ms1: "cnvVendorCentroidingNote" },
   population: { all: "cnvAllSpectraNote", ms1_only: "cnvMs1OnlyNote", ms2_only: "cnvMs2OnlyNote" },
   precision: { mz64_intensity32: "cnvMz64I32Note", mz64_intensity64: "cnvMz64I64Note", mz32_intensity32: "cnvMz32I32Note", mz32_intensity64: "cnvMz32I64Note" },
   compression: { zlib: "cnvZlibNote", none: "cnvUncompressedNote" },
@@ -51,7 +51,7 @@ function note<A extends ConversionAxis>(axis: A, value: ConversionAxisValues[A],
 /** The actual reductions in the reviewed intent, not the next control draft. */
 export function conversionIntentDisclosures(intent: ConversionIntentDescriptor, t: UiMessage): readonly string[] {
   const result: string[] = [];
-  if (intent.processing === "unscoped_default_centroiding") result.push(note("processing", intent.processing, t));
+  if (intent.processing !== "no_additional_centroiding") result.push(note("processing", intent.processing, t));
   if (intent.population !== "all") result.push(note("population", intent.population, t));
   if (intent.precision !== "mz64_intensity64") result.push(note("precision", intent.precision, t));
   return result;
@@ -136,7 +136,7 @@ function AxisFieldset({ axis, catalog, current, onChoose, advanced }: AxisProps 
       const noteId = `${prefix}-${value}`;
       // Refusals and possible information loss stay beside the choice in either
       // view. Secondary explanation is disclosed without changing the intent.
-      const lossWarning = value === "unscoped_default_centroiding" || (state.status === "selected" && (value === "ms1_only" || value === "ms2_only"));
+      const lossWarning = value === "unscoped_default_centroiding" || value === "vendor_centroiding_from_ms1" || (state.status === "selected" && (value === "ms1_only" || value === "ms2_only"));
       const showNote = advanced || state.status === "unavailable" || lossWarning;
       const disclosure = note(axis, value, t);
       return <div className="conversion-setting-choice" data-choice-state={state.status} key={value}>

@@ -98,7 +98,7 @@ fn strings(tokens: Vec<OsString>) -> Vec<String> {
         .collect()
 }
 
-/// The guard for all nine rows: each one's structured form is buildable,
+/// The guard for every admitted row: each one's structured form is buildable,
 /// lowers byte for byte to the row's own argv, and looks up as that row.
 #[test]
 fn every_verified_row_lowers_to_its_own_argv_and_looks_up_as_itself() {
@@ -610,6 +610,149 @@ fn the_pickers_are_blocked_on_the_sources_they_were_measured_failing_on() {
     ] {
         assert_eq!(vendor.tier(kind, &capabilities), Ok(Tier::Advanced));
     }
+}
+
+fn vendor_with(ms_levels: Option<IntSet>) -> StructuredIntent {
+    intent_with(SpectrumStep::PeakPickingVendor { ms_levels })
+}
+
+fn vendor_from(first: u32) -> StructuredIntent {
+    vendor_with(Some(IntSet::new([(first, None)]).expect("set")))
+}
+
+fn vendor_row() -> ConversionIntent {
+    ConversionIntent::admitted(
+        OutputFormat::MzMl,
+        ProcessingIntent::VendorCentroidingFromMs1,
+        SpectrumPopulation::All,
+        NumericPrecision::Mz64Intensity32,
+        CompressionIntent::Zlib,
+    )
+    .expect("TV1, TE1")
+}
+
+/// ADR 0059, decision 2: Thermo vendor centroiding of every level is verified
+/// on the evidenced build and on Thermo RAW alone. MS2 and above, and the
+/// unscoped spelling, stay advanced; another build verifies nothing.
+#[test]
+fn vendor_centroiding_is_verified_only_on_thermo_raw_from_ms1_on_the_evidenced_build() {
+    let verified = capabilities(REAL_HELP, verified_build());
+    // The help wraps `msLevel=` onto the declaration's second line, and the
+    // probe reads it there.
+    let picker = verified
+        .spectrum_filter("peakPicking")
+        .expect("peakPicking is declared");
+    assert!(picker.accepts_invocation(1, &["msLevel"]));
+    assert!(picker.accepts_invocation(0, &[]));
+    assert_eq!(
+        picker.normalized_signature(),
+        "[<PickerType> [snr=<minimum signal-to-noise ratio>] [peakSpace=<minimum peak spacing>] [msLevel=<ms_levels>]]"
+    );
+    // The wire's `msLevels: [{ start: 1, end: null }]` is the row's form.
+    assert_eq!(vendor_from(1), StructuredIntent::from(vendor_row()));
+    assert_eq!(
+        direct(&vendor_from(1)),
+        [
+            "--mzML",
+            "--zlib",
+            "--filter",
+            "peakPicking vendor msLevel=1-"
+        ]
+    );
+    assert_eq!(
+        vendor_from(1).tier(ConversionSourceKind::ThermoRawFile, &verified),
+        Ok(Tier::Verified(vendor_row()))
+    );
+    assert_eq!(
+        vendor_from(2).tier(ConversionSourceKind::ThermoRawFile, &verified),
+        Ok(Tier::Advanced),
+        "MS2 and above stays advanced until Orbitrap profile MS2 is measured"
+    );
+    assert_eq!(
+        vendor_with(None).tier(ConversionSourceKind::ThermoRawFile, &verified),
+        Ok(Tier::Advanced),
+        "the unscoped spelling is not the row"
+    );
+    let other = capabilities(REAL_HELP, Sha256Digest::from_bytes([0xCD; 32]));
+    assert_eq!(
+        vendor_from(1).tier(ConversionSourceKind::ThermoRawFile, &other),
+        Ok(Tier::Advanced)
+    );
+
+    assert_eq!(
+        vendor_from(1).tier(ConversionSourceKind::MzmlFile, &verified),
+        Err(SourceBlock::VendorPickerOnMzmlSource)
+    );
+    for kind in [
+        ConversionSourceKind::ShimadzuLcdFile,
+        ConversionSourceKind::SciexWiffBundle,
+    ] {
+        assert!(!vendor_row().evidence_covers_source(kind), "{kind:?}");
+        assert_eq!(vendor_from(1).tier(kind, &verified), Ok(Tier::Advanced));
+        assert!(vendor_from(1).integrity_route(kind).is_none(), "{kind:?}");
+    }
+    assert_eq!(
+        centroiding_row().tier(ConversionSourceKind::ThermoRawFile, &verified),
+        Err(SourceBlock::DefaultPickerOnThermoRaw)
+    );
+}
+
+/// The vendor picker on Thermo RAW is judged as the row's algorithm at its own
+/// scope. Anywhere else, or beside the default picker, it has no checks and is
+/// refused as not checkable.
+#[test]
+fn the_vendor_picker_has_output_checks_on_thermo_raw_only() {
+    let interval = |first, last| Some(IntSet::new([(first, last)]).expect("one interval"));
+    for (ms_levels, expected) in [
+        (None, PickerLevels::EVERY_LEVEL),
+        (interval(1, None), PickerLevels::EVERY_LEVEL),
+        (
+            interval(2, None),
+            PickerLevels {
+                first: 2,
+                last: None,
+            },
+        ),
+        (
+            interval(1, Some(2)),
+            PickerLevels {
+                first: 1,
+                last: Some(2),
+            },
+        ),
+    ] {
+        let route = vendor_with(ms_levels)
+            .integrity_route(ConversionSourceKind::ThermoRawFile)
+            .expect("checks on Thermo RAW");
+        assert_eq!(route.judged_as, vendor_row());
+        assert_eq!(route.checks.vendor_levels, Some(expected));
+        assert!(route.checks.changes.spectrum_array_lengths);
+    }
+    for kind in SOURCE_KINDS {
+        if kind != ConversionSourceKind::ThermoRawFile {
+            assert!(
+                vendor_with(None).integrity_route(kind).is_none(),
+                "{kind:?}"
+            );
+        }
+    }
+    let both = build(
+        plain_mzml(),
+        vec![
+            SpectrumStep::PeakPickingVendor { ms_levels: None },
+            SpectrumStep::PeakPickingDefault,
+        ],
+    );
+    assert!(
+        both.integrity_route(ConversionSourceKind::ThermoRawFile)
+            .is_none()
+    );
+    assert_eq!(
+        shipped()
+            .integrity_route(ConversionSourceKind::ThermoRawFile)
+            .map(|route| (route.judged_as, route.checks.vendor_levels)),
+        Some((ConversionIntent::SHIPPED, None))
+    );
 }
 
 /// One of every spectrum step, with valid values.

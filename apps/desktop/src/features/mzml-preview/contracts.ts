@@ -80,7 +80,10 @@ export interface BackendAuthorityProjection {
  * standing for both would have to pick a spelling and misdescribe the other.
  */
 export type ConversionIntentFormat = "mzml";
-export type ConversionProcessing = "no_additional_centroiding" | "unscoped_default_centroiding";
+export type ConversionProcessing =
+  | "no_additional_centroiding"
+  | "unscoped_default_centroiding"
+  | "vendor_centroiding_from_ms1";
 export type ConversionSpectrumPopulation = "all" | "ms1_only" | "ms2_only";
 export type ConversionNumericPrecision =
   | "mz64_intensity32"

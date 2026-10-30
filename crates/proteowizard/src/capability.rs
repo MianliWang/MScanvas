@@ -930,10 +930,31 @@ impl HelpParser {
     fn parse_stream(&mut self, text: &str) -> Result<(), HelpCapabilityError> {
         let mut section = Section::Other;
         let mut previous_blank = true;
+        // A spectrum-filter declaration whose `[` are not all closed on its
+        // first line, and how many lines it has taken since. The 3.0.26013 help
+        // wraps `peakPicking`'s `msLevel=` onto a second line.
+        let mut open_declaration: Option<(String, usize)> = None;
 
         for raw_line in text.lines() {
             let line = raw_line.trim_end_matches('\r');
             let trimmed = line.trim();
+
+            if let Some((mut joined, taken)) = open_declaration.take() {
+                if !trimmed.is_empty() {
+                    joined.push(' ');
+                    joined.push_str(trimmed);
+                }
+                if !trimmed.is_empty()
+                    && has_open_bracket(&joined)
+                    && taken + 2 < MAX_DECLARATION_LINES
+                {
+                    open_declaration = Some((joined, taken + 1));
+                } else {
+                    self.insert_spectrum_filter(&joined)?;
+                }
+                previous_blank = trimmed.is_empty();
+                continue;
+            }
 
             if let Some(program) = trimmed.strip_prefix("Usage: ") {
                 let actual = program.split_ascii_whitespace().next().unwrap_or_default();
@@ -994,14 +1015,10 @@ impl HelpParser {
                     }
                 }
                 Section::SpectrumFilters if previous_blank => {
-                    if let Some((name, declaration)) = parse_named_grammar_declaration(line, 0) {
-                        insert_unique(
-                            &mut self.spectrum_filters,
-                            DeclarationKind::SpectrumFilter,
-                            name,
-                            declaration,
-                            |value| value.normalized_signature.clone(),
-                        )?;
+                    if leading_spaces(line) == 0 && has_open_bracket(line) {
+                        open_declaration = Some((line.to_owned(), 0));
+                    } else {
+                        self.insert_spectrum_filter(line)?;
                     }
                 }
                 Section::AnalysisQueries => {
@@ -1026,6 +1043,22 @@ impl HelpParser {
             }
 
             previous_blank = trimmed.is_empty();
+        }
+        if let Some((joined, _)) = open_declaration {
+            self.insert_spectrum_filter(&joined)?;
+        }
+        Ok(())
+    }
+
+    fn insert_spectrum_filter(&mut self, line: &str) -> Result<(), HelpCapabilityError> {
+        if let Some((name, declaration)) = parse_named_grammar_declaration(line, 0) {
+            insert_unique(
+                &mut self.spectrum_filters,
+                DeclarationKind::SpectrumFilter,
+                name,
+                declaration,
+                |value| value.normalized_signature.clone(),
+            )?;
         }
         Ok(())
     }
@@ -1052,6 +1085,16 @@ impl HelpParser {
             examples: self.examples,
         })
     }
+}
+
+/// The most lines one spectrum-filter declaration may span, its first included.
+/// The longest in the 3.0.26013 help spans two.
+const MAX_DECLARATION_LINES: usize = 3;
+
+/// Whether a declaration opens more `[` than it closes.
+fn has_open_bracket(text: &str) -> bool {
+    text.bytes().filter(|byte| *byte == b'[').count()
+        > text.bytes().filter(|byte| *byte == b']').count()
 }
 
 fn tool_program(tool: BackendTool) -> &'static str {

@@ -187,7 +187,10 @@ there is capacity, no decompilation, and every other point as recommended):
    stays in the advanced tier, labelled not verified, until a public Orbitrap
    profile-MS2 file is measured
    ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
-   [PR #162](https://github.com/MianliWang/MScanvas/pull/162)).
+   [PR #162](https://github.com/MianliWang/MScanvas/pull/162)). *Implemented
+   2026-10-30 on `be/thermo-ms1`;
+   [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)
+   records how.*
 
 ## 3. Parallel execution rules
 

@@ -181,6 +181,75 @@ fn an_intent_without_output_checks_or_blocked_for_the_source_never_becomes_a_que
     assert_eq!(reason(&error), Some("vendor_picker_on_mzml_source"));
 }
 
+fn vendor_picker_from(first: u32) -> Value {
+    mzml_64_32(json!([{
+        "kind": "peak_picking_vendor",
+        "msLevels": [{ "start": first, "end": null }]
+    }]))
+}
+
+/// ADR 0059, decision 2, on the wire: on a Thermo RAW row and the evidenced
+/// build, vendor centroiding from MS1 is the verified row, unlabelled; from MS2
+/// it plans as advanced, labelled "not verified". On an mzML row the row is
+/// refused for its evidence and the step for its source.
+#[test]
+fn thermo_vendor_centroiding_is_the_verified_row_from_ms1_and_advanced_from_ms2() {
+    let fixture = TestFile::new("wire-thermo-vendor");
+    let service = PreviewService::new(Box::new(ConvertingProvider::offering_every_admitted_row()));
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("acquisition.raw"))
+        .expect("add a Thermo row")
+        .handle;
+    let row = ConversionIntent::from_stable_id(
+        "mzml+vendor_centroiding_from_ms1+all+mz64_intensity32+zlib",
+    )
+    .expect("the vendor-centroiding row");
+
+    for intent in [
+        plan_request(
+            &service,
+            std::slice::from_ref(&thermo),
+            Some(row.stable_id()),
+            None,
+        ),
+        plan_request(
+            &service,
+            std::slice::from_ref(&thermo),
+            None,
+            Some(vendor_picker_from(1)),
+        ),
+    ] {
+        let ConversionPlanOutcomeDto::Planned { plan } =
+            service.conversion_queue_plan(&intent).expect("a row plan")
+        else {
+            panic!("expected a plan");
+        };
+        assert_eq!(
+            plan.intent.as_ref().map(|intent| intent.id.clone()),
+            Some(row.stable_id())
+        );
+        assert!(!plan.items[0].unverified_settings);
+        assert_eq!(plan.items[0].unverified_build_release, None);
+    }
+
+    let plan = planned(&service, &[thermo], vendor_picker_from(2)).expect("an advanced plan");
+    assert_eq!(plan.intent, None, "MS2 and above is not a row");
+    assert!(plan.items[0].unverified_settings);
+
+    let (service, mzml) = mzml_service(&fixture);
+    let error = service
+        .conversion_queue_plan(&plan_request(
+            &service,
+            std::slice::from_ref(&mzml),
+            Some(row.stable_id()),
+            None,
+        ))
+        .expect_err("refused");
+    assert_eq!(error.kind, "conversion_settings_not_evidenced_for_source");
+    let error = planned(&service, &[mzml], vendor_picker_from(2)).expect_err("refused");
+    assert_eq!(reason(&error), Some("vendor_picker_on_mzml_source"));
+}
+
 #[test]
 fn an_intent_the_build_cannot_express_is_refused_with_the_missing_name() {
     let fixture = TestFile::new("wire-unsupported");

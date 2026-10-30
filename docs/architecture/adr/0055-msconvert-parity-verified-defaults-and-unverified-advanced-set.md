@@ -46,7 +46,13 @@ Vendor families convert only on that one executable digest.
 - **`peakPicking cwt`**. It silently returned one of three peaks, and it
   aborted with an unterminated document on unflanked input (M6.2).
 - **Vendor centroiding** stays evidence-blocked. No lawful profile-mode
-  vendor acquisition exists for it.
+  vendor acquisition exists for it. *2026-10-30: superseded for Thermo RAW.
+  Two public profile acquisitions were measured
+  ([evidence](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)).
+  `peakPicking vendor msLevel=1-` is now a verified row, and other vendor
+  scopes on Thermo RAW are advanced and labelled, with output checks
+  ([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).
+  On other vendor families it stays unchecked and refused.*
 - **"Settings outside the admitted catalog"**, which the after-beta-1 plan
   lists as staying refused.
 
@@ -267,6 +273,10 @@ and "is this verified?" remains one lookup in it: the intent equals a row, the
 installed build can express it, the executable is the verified build, and the
 source is in the row's source domain. These are decision 1's four conditions.
 Every other buildable intent is advanced. Steps are lowered in chain order.
+*2026-10-30: ten rows. The tenth is Thermo vendor centroiding of every MS
+level, `peakPicking vendor msLevel=1-`. It is mzML at m/z 64-bit and intensity
+32-bit with zlib, cases `TV1` and `TE1`, and its source domain is Thermo RAW
+([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).*
 
 The existing capability probe reads which formats, switches and filters a build
 accepts, from that build's own help. This is evidence of spelling only, as
@@ -459,7 +469,9 @@ is the list. In short:
   local-maximum picker instead.
 - **`peakPicking vendor` anywhere but first.** The help requires first.
 - **Bare `peakPicking` on Thermo RAW.** The vendor picker runs, and the check
-  refuses it (M6.10 S1).
+  refuses it (M6.10 S1). *2026-10-30: still blocked. The request names the
+  default picker; the Thermo vendor picker is asked for as `peakPicking
+  vendor` (ADR 0059).*
 - **Picker parameters a picker ignores.**
 - **Encoding options the chosen format's writer does not read** (decision 4's
   table), truncation and prediction outside mzMLb among them. They could not
