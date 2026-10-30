@@ -1042,15 +1042,14 @@ describe("a stored result reused (M9.2)", () => {
     const release = api.holdOnce("exportTargetedMs1Table");
     await press(button("csv"));
     expect(status("table").textContent).toBe("Choose where to save the CSV file.");
-    // The pressed control keeps focus across the native picker: marked, not
-    // disabled. Every other output is disabled.
-    expect(button("csv").disabled).toBe(false);
+    // Every output is refused, never native-disabled (B4): each stays a Tab
+    // stop and the table's refusals point at the line that says what runs.
     for (const operation of ["csv", "tsv", "svg", "png"]) {
       expect(button(operation).getAttribute("aria-disabled"), operation).toBe("true");
+      expect(button(operation).disabled, operation).toBe(false);
     }
-    for (const operation of ["tsv", "svg", "png"]) {
-      expect(button(operation).disabled, operation).toBe(true);
-    }
+    expect(button("tsv")).toHaveAccessibleDescription("Choose where to save the CSV file.");
+    for (const operation of ["tsv", "svg", "png"]) await press(button(operation));
     await press(button("csv"));
     expect(api.exportTargetedMs1Table).toHaveBeenCalledTimes(1);
     await press(button("svg"));

@@ -216,30 +216,30 @@ describe("M7.1 localized Settings and real shared consumers", () => {
       expect(await browser.execute(() => document.querySelector("[data-settings-dialog]")?.contains(document.activeElement))).toBe(true);
       await browser.action("pointer").move({ x: 2, y: 2 }).down().up().perform();
       expect(await browser.$(DIALOG).isExisting()).toBe(true);
-      await press(zh.apply);
+      await press(zh.close);
       await returned();
       expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
       expect(await browser.execute(() => (window as unknown as { m71Nodes: Element[] }).m71Nodes.every(node => node.isConnected))).toBe(true);
       await openSettings();
       await press(zh.reset);
-      const reset = await capture("03-reset-preview-english");
+      const reset = await capture("03-reset-applied-english");
       expect(reset.rows[0].height).toBe(before.rows[0].height);
-      await press(en.cancel);
-      await returned();
-      expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
-      await openSettings();
-      await choose("en");
+      // Applied at once (GOALS D4): Chinese again is one more choice, and
+      // Escape closes without undoing anything.
+      await choose("zh-CN");
       await browser.keys("Escape");
       await returned();
       expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
-      // M7.5 made Apply durable: it publishes the appearance group it applied
-      // and nothing else (docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
-      // "Startup, Settings and layout semantics"; m7.5's browser case asserts
-      // the same request). Reset then Cancel, and Escape, still write nothing.
+      // Each choice publishes the appearance group it applied and nothing else
+      // (docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md, "Startup, Settings
+      // and layout semantics").
       const after = await ipcCalls();
       expect(after.slice(0, calls.length)).toEqual(calls);
       expect(after.slice(calls.length)).toEqual([
+        { command: "save_ui_preferences", args: { request: { appearance: { locale: "zh-CN", density: "comfortable" } } } },
         { command: "save_ui_preferences", args: { request: { appearance: { locale: "zh-CN", density: "compact" } } } },
+        { command: "save_ui_preferences", args: { request: { appearance: { locale: "en", density: "comfortable" } } } },
+        { command: "save_ui_preferences", args: { request: { appearance: { locale: "zh-CN", density: "comfortable" } } } },
       ]);
       // The draft survived Settings: reopened, the dialog shows what was typed.
       await openFigureExports();
@@ -286,16 +286,16 @@ describe("M7.1 localized Settings and real shared consumers", () => {
       for (let step = 0; step < 8; step++) await browser.keys("Tab");
       expect(await browser.execute(() => document.querySelector("[data-settings-dialog]")?.contains(document.activeElement))).toBe(true);
       if (dpr === 2) {
-        await browser.execute(() => document.querySelector(".settings-dialog-actions .ui-button--primary")!.scrollIntoView({ block: "center" }));
+        await browser.execute(() => document.querySelector("[data-settings-close]")!.scrollIntoView({ block: "center" }));
         const visible = await browser.execute(() => {
-          const target = document.querySelector<HTMLElement>(".settings-dialog-actions .ui-button--primary")!;
+          const target = document.querySelector<HTMLElement>("[data-settings-close]")!;
           const rect = target.getBoundingClientRect();
           return rect.top >= 0 && rect.bottom <= innerHeight;
         });
         expect(visible).toBe(true);
         await capture("layout-480x320-dpr-2-footer", dpr);
       }
-      await press(index % 2 === 0 ? zh.apply : en.apply);
+      await press(index % 2 === 0 ? zh.close : en.close);
       await returned();
       // The figure fields must be pointer/focus reachable at the same scale
       // after Settings returns, in the dialog that now holds them.
@@ -357,7 +357,9 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     await openSettings();
     await choose("zh-CN");
     await capture("state-loading-chinese");
-    await press(zh.cancel);
+    // Applied at once (D4): English again before the next English states.
+    await choose("en");
+    await press(en.close);
     await returned();
     await releaseInvokeHold("open_mzml_preview");
     await browser.$('.spectrum-table[role="grid"]').waitForDisplayed();
@@ -366,7 +368,7 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     await browser.waitUntil(async () => (await browser.$(".spectrum-panel").getText()).includes("Controlled provider refusal"));
     await openSettings();
     await capture("state-provider-error-english");
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     await loadWorkspace(false, true);
     await capture("state-unsupported-viewport");

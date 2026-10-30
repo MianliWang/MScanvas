@@ -65,7 +65,9 @@
 .settings-dialog-footer > p { flex: 1 1 200px; margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 /* Saved normally, there is nothing to say and no gap to leave. */
 .settings-dialog-footer > p:empty { display: none; }
-.settings-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.settings-dialog-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+/* Reset defaults' reason, on its row (B4). */
+.settings-reset-reason { color: var(--color-text-secondary); font-size: 12px; }
 .settings-resource-error { margin: 16px 0 0; padding: 12px; border: 1px solid var(--color-danger); border-radius: 6px; font-size: 13px; line-height: 1.5; }
 .settings-resource-error p { margin: 0 0 8px; }
 .spectrum-figure-settings .setting-field { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }

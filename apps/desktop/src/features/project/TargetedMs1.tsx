@@ -1908,7 +1908,7 @@ export function TargetedMs1Report({
       output.region === region && output.target === target ? output.state : ({ status: "idle" } as const);
     const detail = state.status === "failed" ? ownedErrorDetail(state.error, t) : null;
     return (
-      <p className="targeted-output" role="status" data-targeted-output={state.status}>
+      <p className="targeted-output" role="status" data-targeted-output={state.status} id={`${ids}-${region}-output`}>
         {describeOutput(state, t, outputError)}
         {detail === null ? null : <span className="notice-detail">{detail}</span>}
       </p>
@@ -2028,9 +2028,10 @@ export function TargetedMs1Report({
                   size="sm"
                   icon={<Icon name="download" />}
                   // The pressed control keeps focus across the native picker;
-                  // `start` refuses a repeat, keyboard or pointer.
+                  // `start` refuses a repeat, keyboard or pointer. Refused, not
+                  // native-disabled, and the output line says what is running.
                   refused={running}
-                  disabled={running && !initiated(format, null)}
+                  reasonId={running ? `${ids}-table-output` : undefined}
                   data-targeted-export={format}
                   onClick={() => exportTable(format)}
                 >
@@ -2194,9 +2195,9 @@ export function TargetedMs1Report({
                               size="sm"
                               icon={<Icon name="download" />}
                               refused={running || problemId !== null}
-                              reasonId={problemId ?? undefined}
-                              // Frozen while another output's picker is out.
-                              disabled={running && !initiated(operation, selectedRow.targetId)}
+                              // Refused while another output's picker is out,
+                              // pointing at the line that says so.
+                              reasonId={problemId ?? (running ? `${ids}-figure-output` : undefined)}
                               data-targeted-export={operation}
                               onClick={() => exportFigure(selectedRow.targetId, operation)}
                             >

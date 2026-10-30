@@ -178,7 +178,8 @@ async function capture(label: string, expectedDpr?: number) {
         ...box(dialog),
         scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth,
         scrollHeight: dialog.scrollHeight, clientHeight: dialog.clientHeight,
-        primary: box(dialog.querySelector(".settings-dialog-actions .ui-button--primary")),
+        // The one Close (GOALS D4): Settings apply immediately.
+        close: box(dialog.querySelector("[data-settings-close]")),
       },
       // Everything on screen, for the one check that is only meaningful over
       // the whole document: whether a Chinese session is reading English.
@@ -224,7 +225,7 @@ async function capture(label: string, expectedDpr?: number) {
     expect(state.dialog.bottom).toBeLessThanOrEqual(state.cssViewport.height + 1);
     // The dialog itself scrolls; its footer action must be reachable.
     expect(state.dialog.scrollWidth).toBeLessThanOrEqual(state.dialog.clientWidth + 1);
-    expect(state.dialog.primary?.clipped).toBe(false);
+    expect(state.dialog.close?.clipped).toBe(false);
   }
   return state;
 }
@@ -296,7 +297,7 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       expect(state.rosterOpen).toBe("true");
       await openSettings();
       await capture(`02-restored-settings-${label}`, dpr);
-      await press(zh.cancel);
+      await press(zh.close);
       await returned();
     }
     await metrics(1920, 1080, 1);
@@ -310,16 +311,17 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     let calls = await ipcCalls();
     expect(calls.filter(call => call.command === "save_ui_preferences")).toEqual([]);
 
-    await openSettings();
-    await choose("zh-CN");
-    await choose("compact");
-    await capture("03-settings-preview-zh-compact");
     await setInvokeResult("save_ui_preferences", {
       outcome: "saved",
       revision: 1,
       preferences: record({ locale: "zh-CN", density: "compact" }),
     });
-    await press(zh.apply);
+    await openSettings();
+    // Each choice applies and saves at once (GOALS D4).
+    await choose("zh-CN");
+    await choose("compact");
+    await capture("03-settings-applied-zh-compact");
+    await press(zh.close);
     await returned();
     const applied = await capture("04-applied-zh-compact");
     expect(applied.locale).toBe("zh-CN");
@@ -327,9 +329,9 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     expect(applied.preferenceRegion).toBe(zh.applied);
     calls = await ipcCalls();
     const saved = calls.filter(call => call.command === "save_ui_preferences");
-    expect(saved).toHaveLength(1);
+    expect(saved).toHaveLength(2);
     // Only the group Settings owns, and nothing that locates or names anything.
-    expect(saved[0]?.args).toEqual({ request: { appearance: { locale: "zh-CN", density: "compact" } } });
+    expect(saved[1]?.args).toEqual({ request: { appearance: { locale: "zh-CN", density: "compact" } } });
 
     // A write that fails keeps the choices on screen and never claims they are
     // saved -- the footer and the alert have to agree.
@@ -338,7 +340,6 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     });
     await openSettings();
     await choose("en");
-    await press(en.apply);
     await browser.$("[data-save='failed']").waitForDisplayed();
     const failed = await capture("05-save-failed-retry-and-session-only");
     expect(failed.saveFailure?.text).toContain(en.writeNotPublished);
@@ -346,13 +347,14 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     expect(failed.saveFailure?.clipped).toBe(false);
     // The named session-only action, which claims no write.
     await press(en.saveSessionOnly);
+    await press(en.close);
     await returned();
     const sessionOnly = await capture("06-session-only-applied");
     expect(sessionOnly.locale).toBe("en");
     expect(sessionOnly.preferenceRegion).toBe(en.sessionOnlyApplied);
     await openSettings();
     expect((await capture("07-session-only-note")).storageNote?.text).toBe(en.sessionOnlyNote);
-    await press(en.cancel);
+    await press(en.close);
     await returned();
   });
 
@@ -370,12 +372,11 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     expect(unusable.storedRecordAlert?.clipped).toBe(false);
     expect(unusable.storageNote?.text).toBe(en.storageNotSaving);
 
-    // An ordinary apply is refused and says so about that press.
+    // An ordinary choice is refused and says so about that choice.
     await setInvokeResult("save_ui_preferences", {
       outcome: "storedRecordUnusable", problem: "unsupportedVersion", revision: 0,
     });
     await choose("zh-CN");
-    await press(zh.apply);
     await browser.$("[data-save='refused']").waitForDisplayed();
     const refused = await capture("09-apply-refused-by-stored-record");
     expect(refused.saveRefused?.text).toContain(zh.saveRefusedTitle);
@@ -385,6 +386,8 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       outcome: "saved", revision: 1, preferences: record({ locale: "zh-CN", density: "comfortable" }),
     });
     await press(zh.storedReplace);
+    await browser.$("[data-stored-record='unusable']").waitForExist({ reverse: true });
+    await press(zh.close);
     await returned();
     const replaced = await capture("10-stored-record-replaced");
     expect(replaced.preferenceRegion).toBe(zh.storedReplaced);
@@ -632,11 +635,11 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     const dialog = await capture("21-narrow-settings-unusable");
     expect(dialog.reducedMotion).toBe(true);
     expect(dialog.dialogAnimation === null || dialog.dialogAnimation === "none").toBe(true);
-    // Both the recovery block and the footer fit, and the Apply action is
-    // reachable without a horizontal scroll.
+    // Both the recovery block and the footer fit, and Close is reachable
+    // without a horizontal scroll.
     expect(dialog.storedRecordAlert?.clipped).toBe(false);
-    expect(dialog.dialog?.primary?.insideViewport).toBe(true);
-    await press(en.cancel);
+    expect(dialog.dialog?.close?.insideViewport).toBe(true);
+    await press(en.close);
     await returned();
     await reducedMotion(false);
 

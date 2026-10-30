@@ -27,7 +27,7 @@ async function chinese() {
   fireEvent.click(screen.getByRole("button", { name: en.settingsEntry }));
   const settings = screen.getByRole("dialog", { name: en.settings });
   fireEvent.click(within(settings).getByRole("radio", { name: en.simplifiedChinese }));
-  fireEvent.click(within(settings).getByRole("button", { name: zh.apply }));
+  fireEvent.click(within(settings).getByRole("button", { name: zh.close }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(document.documentElement.lang).toBe("zh-CN");
 }

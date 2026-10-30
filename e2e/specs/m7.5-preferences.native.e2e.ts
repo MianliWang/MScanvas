@@ -201,7 +201,7 @@ async function capture(label: string, validate = true) {
       preferenceRegion: (document.querySelector("[data-live-region='preferences']")?.textContent ?? "").trim(),
       inspector: box(document.querySelector(".inspector-panel")),
       dialog: dialog === null ? null : { ...box(dialog), scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth,
-        primary: box(dialog.querySelector(".settings-dialog-actions .ui-button--primary")) },
+        primary: box(dialog.querySelector("[data-settings-close]")) },
       bodyText: document.body.innerText, horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
       mockKeys: Object.keys(Reflect.get(window, "__mscanvasIpcTable__") as object), applicationOrigin: location.origin,
       resourceUrls: performance.getEntriesByType("resource").map(entry => entry.name),
@@ -421,7 +421,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await choose("zh-CN");
     await choose("compact");
     await capture("02-settings-draft-zh-compact");
-    await press(zh.apply);
+    await press(zh.close);
     await returned();
     const applied = await capture("03-applied-zh-compact");
     expect(applied.locale).toBe("zh-CN");
@@ -510,7 +510,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await choose("en");
     const draft = await capture("07-draft-previewed-not-saved");
     expect(draft.locale).toBe("en");
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     expect(untouched(before, noted("after Cancel"))).toEqual({ bytes: true, entries: true, temporaries: [] });
     expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
@@ -519,7 +519,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await openSettings();
     await press(zh.reset);
     await capture("08-reset-draft-only");
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     expect(untouched(before, noted("after Reset then Cancel"))).toEqual({ bytes: true, entries: true, temporaries: [] });
     // A draft is a draft: neither Cancel dispatched a write of any kind.
@@ -531,7 +531,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     try {
       await openSettings();
       await choose("comfortable");
-      await press(zh.apply);
+      await press(zh.close);
       await browser.$("[data-save='failed']").waitForDisplayed({ timeout: 30_000 });
       refused = await capture("09-real-write-refusal");
       // The exact refusal, named: written, but unable to take the saved name.
@@ -565,7 +565,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
 
     // Released, and the same apply now lands. The refusal was the filesystem.
     await openSettings();
-    await press(zh.apply);
+    await press(zh.close);
     await returned();
     const persisted = noted("after the refusal was released");
     expect(replaced(before, persisted)).toBe(true);
@@ -591,7 +591,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     const alerted = await capture("14-unusable-record-explained");
     expect(alerted.storedRecordAlert?.text).toContain(en.storedUnsupportedVersion);
     expect(alerted.storageNote?.text).toBe(en.storageNotSaving);
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     // Reading it, starting on it and cancelling out of it all left it alone.
     expect(untouched(seeded, noted("after a startup that could not use it"))).toEqual({ bytes: true, entries: true, temporaries: [] });
@@ -627,7 +627,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     const settled = await capture("16-recovered-state-cleared");
     expect(settled.storedRecordAlert).toBeNull();
     expect(settled.storageNote?.text).toBe("");
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     expect(sameBytes(replacement, noted("after confirming the recovery cleared"))).toBe(true);
   });
@@ -659,7 +659,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     const beforeLocale = await probes();
     await openSettings();
     await choose("zh-CN");
-    await press(zh.apply);
+    await press(zh.close);
     await returned();
     const chinese = await capture("19-offline-help-zh");
     expect(chinese.locale).toBe("zh-CN");

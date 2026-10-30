@@ -94,7 +94,7 @@ async function preferences(language: "en" | "zh-CN", density: "comfortable" | "c
   await browser.$("[data-settings-entry]").click();
   await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="' + language + '"])').click();
   await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="' + density + '"])').click();
-  await browser.$("[data-settings-dialog]").$("button=" + UI_RESOURCES[language].apply).click();
+  await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
 async function conversion() {

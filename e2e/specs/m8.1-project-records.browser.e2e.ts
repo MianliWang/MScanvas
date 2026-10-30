@@ -572,7 +572,7 @@ describe("M8.1 project records, rendered", () => {
     await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="zh-CN"])').click();
     // The dialog relabels itself as soon as the language is selected, so the
     // control that applies a switch to Chinese is already the Chinese one.
-    await browser.$("[data-settings-dialog]").$("button=应用").click();
+    await browser.$("[data-settings-close]").click();
     await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
     await browser.$("button=项目").click();
     await browser.$("[data-project-surface]").waitForDisplayed();

@@ -103,7 +103,7 @@ async function settings(locale: "en" | "zh-CN", density: "comfortable" | "compac
   await browser.$("[data-settings-entry]").click();
   await browser.$(`[data-settings-dialog] [role="radio"]:has([data-setting-value="${locale}"])`).click();
   await browser.$(`[data-settings-dialog] [role="radio"]:has([data-setting-value="${density}"])`).click();
-  await browser.$("[data-settings-dialog]").$(locale === "en" ? "button=Apply" : "button=应用").click();
+  await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
   await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches("[data-settings-entry]") === true));
 }

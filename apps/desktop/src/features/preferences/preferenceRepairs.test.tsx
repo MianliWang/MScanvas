@@ -31,7 +31,6 @@ import {
 } from "../../test/preferenceFixtures";
 import { PreferencesApiProvider } from "./preferencesApi";
 import type { PreferenceWriteRequest } from "./storedPreferences";
-import { blurAsABrowserWould } from "../../test/browserFocus";
 import { UI_RESOURCES } from "./i18n";
 
 const en = UI_RESOURCES.en;
@@ -76,7 +75,6 @@ describe("a dialog that contradicted itself", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     await within(dialog).findByRole("alert");
     // The footer used to read "saved on this computer and restored next time"
     // directly under an alert saying the write had failed.
@@ -96,7 +94,6 @@ describe("a dialog that contradicted itself", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     const uncertain = await within(dialog).findByRole("alert");
     // The rename succeeded and only the read-back failed, so "restarting uses
     // the last saved preferences" is the one thing MSCanvas cannot say.
@@ -113,7 +110,6 @@ describe("a dialog that contradicted itself", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     await waitFor(() => expect(within(dialog).getAllByRole("alert")).toHaveLength(2));
     const refused = within(dialog).getAllByRole("alert")[1]!;
     expect(refused.dataset.save).toBe("refused");
@@ -121,24 +117,17 @@ describe("a dialog that contradicted itself", () => {
     expect(refused).toHaveTextContent(zh.storedUnsupportedVersion);
   });
 
-  it("gives the keyboard to the explanation the recovery actions are in", async () => {
+  it("keeps the keyboard on the choice and puts the recovery beside the failure", async () => {
     mount({ failWith: { problem: "notWritten", retryable: true } });
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
-    choose(dialog, en.simplifiedChinese);
-    // Pressing Apply disables it, which is what blurs it. Modelled, because
-    // jsdom keeps a disabled control focused.
-    const apply = within(dialog).getByRole("button", { name: zh.apply });
-    apply.focus();
-    fireEvent.click(apply);
-    // jsdom keeps a disabled control focused and then refuses to blur it, so
-    // the browser's own blur-on-disable is modelled the way the rest of this
-    // suite models it.
-    blurAsABrowserWould(apply);
+    // Nothing is disabled by a save (D4, B4), so the keyboard stays where the
+    // reader put it; the alert announces itself and holds the retry.
+    const chinese = within(dialog).getByRole("radio", { name: en.simplifiedChinese });
+    chinese.focus();
+    fireEvent.click(chinese);
     const failure = await within(dialog).findByRole("alert");
-    // The alert, rather than one of its buttons: the explanation comes before
-    // the decision, and which action to take stays the reader's.
-    await waitFor(() => expect(failure).toHaveFocus());
+    expect(chinese).toHaveFocus();
     expect(within(failure).getByRole("button", { name: zh.saveRetry })).toBeEnabled();
   });
 });
@@ -171,10 +160,10 @@ describe("an apply that had nowhere to write", () => {
 
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
+    await waitFor(() => expect(preferenceRegion()).toHaveTextContent(zh.sessionOnlyApplied));
+    press(dialog, zh.close);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.documentElement.lang).toBe("zh-CN");
-    expect(preferenceRegion()).toHaveTextContent(zh.sessionOnlyApplied);
     expect(sent).toHaveLength(1);
     // Reopening shows the applied value, not a draft that was never applied.
     expect(within(openSettings()).getByRole("radio", { name: zh.simplifiedChinese })).toBeChecked();
@@ -185,19 +174,19 @@ describe("a session fact a Cancel used to erase", () => {
   beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it("keeps saying what a restart will use after the dialog is cancelled", async () => {
+  it("keeps saying what a restart will use after the dialog is closed", async () => {
     mount({ failWith: { problem: "notWritten", retryable: true } });
     await screen.findByText(en.backendMissing);
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     await within(dialog).findByRole("alert");
     press(dialog, zh.saveSessionOnly);
+    press(dialog, zh.close);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     dialog = openSettings();
     expect(footer()).toHaveTextContent(zh.sessionOnlyNote);
-    press(dialog, zh.cancel);
+    press(dialog, zh.close);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // The session is still running on preferences that were never written, and
     // the only surface that said so used to be cleared by this Cancel.
@@ -224,7 +213,7 @@ describe("a retry that could not have worked", () => {
 
     preferences.recover();
     press(dialog, en.saveRetry);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(preferences.stored()).not.toBeNull());
     // The confirmation travelled with the retry, so the record this build
     // refused was actually replaced. Without it Rust refuses the retry and the
     // button can never work.
@@ -249,10 +238,8 @@ describe("a read that never arrived", () => {
     // The store may be perfectly healthy: a dropped call is not a missing root,
     // and a save is still attempted rather than suppressed for the session.
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(preferences.stored()?.appearance.locale).toBe("zh-CN"));
     expect(preferences.requests).toHaveLength(1);
-    expect(preferences.stored()?.appearance.locale).toBe("zh-CN");
   });
 
   it("stops gating the controls once the wait has gone on too long", async () => {
@@ -272,8 +259,8 @@ describe("a read that never arrived", () => {
     expect(rosterToggle()).not.toHaveAttribute("aria-disabled");
     const dialog = openSettings();
     expect(within(dialog).getByText(en.storageReadTimedOut)).toBeVisible();
-    expect(within(dialog).getByRole("radio", { name: en.english })).toBeEnabled();
-    press(dialog, en.cancel);
+    expect(within(dialog).getByRole("radio", { name: en.english })).not.toHaveAttribute("aria-disabled");
+    press(dialog, en.close);
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     // And the read is still allowed to answer: a slow answer is still the truth
@@ -347,7 +334,8 @@ describe("a stale answer from the other lane", () => {
 
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
+    await waitFor(() => expect(preferenceRegion()).toHaveTextContent(zh.applied));
+    press(dialog, zh.close);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.documentElement.lang).toBe("zh-CN");
 

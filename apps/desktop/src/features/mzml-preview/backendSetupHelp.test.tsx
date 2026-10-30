@@ -139,17 +139,9 @@ describe("offline setup help", () => {
     const settings = document.querySelector<HTMLButtonElement>("[data-settings-entry]")!;
     fireEvent.click(settings);
     const dialog = screen.getByRole("dialog");
+    // Applied at once (D4); closing keeps it.
     fireEvent.click(within(dialog).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(dialog).getByRole("button", { name: zh.cancel }));
-    // Cancelled, so the applied locale is still English: the preview is what
-    // was being checked, and it is not the state this assertion needs.
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-
-    const reopened = document.querySelector<HTMLButtonElement>("[data-settings-entry]")!;
-    fireEvent.click(reopened);
-    const again = screen.getByRole("dialog");
-    fireEvent.click(within(again).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(again).getByRole("button", { name: zh.apply }));
+    fireEvent.click(within(dialog).getByRole("button", { name: zh.close }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     const disclosure = help()!;

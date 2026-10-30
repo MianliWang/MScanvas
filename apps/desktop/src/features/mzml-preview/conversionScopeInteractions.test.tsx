@@ -67,7 +67,7 @@ describe("M6.7 through the production conversion surface", () => {
     fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
     fireEvent.click(screen.getByRole("button", { name: "Settings…" }));
     fireEvent.click(screen.getByRole("radio", { name: "Compact" }));
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     expect(button()).not.toHaveAttribute("aria-disabled");
@@ -175,7 +175,7 @@ describe("M6.7 through the production conversion surface", () => {
     fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
     fireEvent.click(screen.getByRole("button", { name: "Settings…" }));
     fireEvent.click(screen.getByRole("radio", { name: "Compact" }));
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nothing" } });

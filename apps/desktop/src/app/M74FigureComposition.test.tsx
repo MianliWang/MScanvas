@@ -79,7 +79,7 @@ describe("M7.4 through the delivered figure owner", () => {
       fireEvent.click(await screen.findByRole("button", { name: UI_RESOURCES.en.settingsEntry }));
       const settings = screen.getByRole("dialog");
       fireEvent.click(within(settings).getByRole("radio", { name: UI_RESOURCES.en.simplifiedChinese }));
-      fireEvent.click(within(settings).getByRole("button", { name: messages.apply }));
+      fireEvent.click(within(settings).getByRole("button", { name: messages.close }));
     }
     fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
     const grid = await screen.findByRole("grid");
@@ -182,7 +182,7 @@ describe("M7.4 through the delivered figure owner", () => {
       fireEvent.click(screen.getByRole("button", { name: UI_RESOURCES.en.settingsEntry }));
       const settings = screen.getByRole("dialog");
       fireEvent.click(within(settings).getByRole("radio", { name: UI_RESOURCES.en.simplifiedChinese }));
-      fireEvent.click(within(settings).getByRole("button", { name: messages.apply }));
+      fireEvent.click(within(settings).getByRole("button", { name: messages.close }));
     }
     fireEvent.click(within(panel).getByRole("button", { name: messages.figureExportTitle }));
     const dialog = screen.getByRole("dialog");

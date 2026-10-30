@@ -108,47 +108,39 @@ describe("Settings, by keyboard and by screen reader", () => {
     expect(liveRegion()).toHaveTextContent("");
 
     fireEvent.click(within(dialog).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(dialog).getByRole("button", { name: zh.apply }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // In the language that was just applied, which is the language the reader
     // is now being read.
-    expect(liveRegion()).toHaveTextContent(zh.applied);
+    await waitFor(() => expect(liveRegion()).toHaveTextContent(zh.applied));
     expect(preferences.stored()?.appearance.locale).toBe("zh-CN");
+    fireEvent.click(within(dialog).getByRole("button", { name: zh.close }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     dialog = openSettings();
     fireEvent.click(within(dialog).getByRole("button", { name: zh.reset }));
-    // Reset previews the defaults, and English is one of them -- so the
+    // Reset applies the defaults, and English is one of them -- so the
     // announcement is in the language now on screen rather than in the one
-    // being replaced. Announcing a preview in the old language would describe
-    // the preview in words the preview itself has stopped using.
-    expect(liveRegion()).toHaveTextContent(en.resetPreview);
-    fireEvent.click(within(dialog).getByRole("button", { name: en.cancel }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(liveRegion()).toHaveTextContent(zh.cancelled);
+    // being replaced.
+    await waitFor(() => expect(liveRegion()).toHaveTextContent(en.applied));
   });
 
-  it("really refuses the controls it freezes while a publish is in flight", async () => {
+  it("keeps every control live while a write is in flight, and one press is one write", async () => {
     const { preferences } = mount(createFakePreferencesApi({ deferred: true }));
     await preferences.release();
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     fireEvent.click(within(dialog).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(dialog).getByRole("button", { name: zh.apply }));
 
-    // `aria-busy` on the control that is working, and `disabled` on the native
-    // elements rather than a style that only looks refused.
-    const pending = within(dialog).getByRole("button", { name: zh.savePending });
-    expect(pending).toHaveAttribute("aria-busy", "true");
+    // Nothing native-disabled under the keyboard (B4); the footer says it is saving.
     for (const control of within(dialog).getAllByRole("radio")) {
-      expect(control).toBeDisabled();
+      expect(control).toBeEnabled();
     }
-    // A keyboard activation of a frozen control changes nothing.
-    fireEvent.keyDown(pending, { key: "Enter" });
-    fireEvent.click(within(dialog).getAllByRole("radio")[0]!);
+    expect(dialog.querySelector("[data-storage-note]")).toHaveTextContent(zh.savePending);
+    // Choosing the value already chosen asks for nothing.
+    fireEvent.click(within(dialog).getByRole("radio", { name: zh.simplifiedChinese }));
     expect(preferences.requests).toHaveLength(1);
 
     await preferences.release();
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(dialog.querySelector("[data-storage-note]")).toBeEmptyDOMElement());
   });
 
   it("gives a storage problem an alert and a storage fact a status", async () => {
@@ -295,7 +287,7 @@ describe("the backend banner, by screen reader", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     fireEvent.click(within(dialog).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(dialog).getByRole("button", { name: zh.apply }));
+    fireEvent.click(within(dialog).getByRole("button", { name: zh.close }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     // Every action still has its own name, and no name is empty or elided --

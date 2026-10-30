@@ -44,7 +44,7 @@ async function preferences(language: "en" | "zh-CN", density: "comfortable" | "c
   await browser.$("[data-settings-entry]").click();
   await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="' + language + '"])').click();
   await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="' + density + '"])').click();
-  await browser.$("[data-settings-dialog]").$(language === "en" ? "button=Apply" : "button=应用").click();
+  await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
 function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" = "complete") {

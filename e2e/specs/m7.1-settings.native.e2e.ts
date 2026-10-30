@@ -239,12 +239,12 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
     await choose("zh-CN");
     await choose("compact");
     await capture("01-native-chinese-preview");
-    await press(zh.apply);
+    await press(zh.close);
     await returned();
     await openSettings();
     await press(zh.reset);
     expect(await browser.execute(() => document.documentElement.lang)).toBe("en");
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
     await openSettings();
@@ -254,7 +254,7 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
     expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
     await openSettings();
     await press(zh.reset);
-    await press(en.apply);
+    await press(en.close);
     await returned();
   });
 
@@ -295,7 +295,7 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
     await observeWindow("figure draft: after density choice");
     const compact = await capture("03-native-real-compact-preview");
     expect(compact.rows[0].height).toBeLessThan(before.rows[0].height);
-    await press(zh.apply);
+    await press(zh.close);
     await returned();
     for (const field of ["widthPx", "heightPx", "pngDpi"] as const) await activateLabel(field, "zh-CN");
     const figure = join(output, "m71-shared-fields-640x480-144dpi.png");
@@ -347,7 +347,7 @@ describe("M7.1 focused real Windows Settings, figure and picker integration", fu
     await capture("05-native-cancelled-picker-natural-return");
     await openSettings();
     await press(zh.reset);
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     expect(await browser.$(CONVERT).isEnabled()).toBe(true);
     expect(await browser.$(CONVERT).getAttribute("aria-disabled")).not.toBe("true");

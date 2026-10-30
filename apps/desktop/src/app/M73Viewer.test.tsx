@@ -224,7 +224,7 @@ describe("M7.3 through the delivered application", () => {
     fireEvent.keyDown(plot, { key: "Enter" });
     fireEvent.click(within(dialog).getByRole("radio", { name: UI_RESOURCES.en.simplifiedChinese }));
     fireEvent.click(within(dialog).getByRole("radio", { name: UI_RESOURCES["zh-CN"].compact }));
-    fireEvent.click(within(dialog).getByRole("button", { name: UI_RESOURCES["zh-CN"].apply }));
+    fireEvent.click(within(dialog).getByRole("button", { name: UI_RESOURCES["zh-CN"].close }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByRole("textbox", { name: "起点" })).toBe(from);
     expect(from.value).toBe("2e"); expect(from.selectionStart).toBe(1);

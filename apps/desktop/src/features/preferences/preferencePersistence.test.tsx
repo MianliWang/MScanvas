@@ -167,9 +167,12 @@ describe("durable UI preferences", () => {
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
-    await applyAndClose(dialog, zh.apply);
+    await waitFor(() => expect(preferences.stored()?.appearance.density).toBe("compact"));
+    await applyAndClose(dialog, zh.close);
 
+    // One write per choice (D4), each of the appearance group alone.
     expect(preferences.requests).toEqual([
+      { appearance: { locale: "zh-CN", density: "comfortable" } },
       { appearance: { locale: "zh-CN", density: "compact" } },
     ]);
     // The whole stored document, named exactly. Anything else that ever reaches
@@ -181,71 +184,49 @@ describe("durable UI preferences", () => {
     });
   });
 
-  it("does not persist a cancelled preview, or a reset that was then cancelled", async () => {
+  it("persists each choice as it is made, and Reset defaults as one more write (D4)", async () => {
     const { preferences } = mount();
     await screen.findByText("No ProteoWizard installation was found");
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    choose(dialog, zh.compact);
-    press(dialog, zh.cancel);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(preferences.requests).toEqual([]);
-    expect(preferences.stored()).toBeNull();
+    await waitFor(() => expect(preferences.stored()?.appearance.locale).toBe("zh-CN"));
+    await applyAndClose(dialog, zh.close);
+    expect(preferences.requests).toHaveLength(1);
 
-    // A record on disk, then Reset followed by Cancel: the draft went to the
-    // defaults and the file did not.
-    dialog = openSettings();
-    choose(dialog, en.simplifiedChinese);
-    await applyAndClose(dialog, zh.apply);
-    const afterApply = preferences.stored();
     dialog = openSettings();
     press(dialog, zh.reset);
     expect(document.documentElement.lang).toBe("en");
-    press(dialog, en.cancel);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(document.documentElement.lang).toBe("zh-CN");
-    expect(preferences.stored()).toEqual(afterApply);
-    expect(preferences.requests).toHaveLength(1);
+    await waitFor(() => expect(preferences.stored()?.appearance).toEqual({ locale: "en", density: "comfortable" }));
+    expect(preferences.requests).toHaveLength(2);
+    // Nothing differs any more, so Reset defaults says so.
+    expect(within(dialog).getByRole("button", { name: en.reset })).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("persists a reset that was applied", async () => {
+  it("persists a reset of a saved record", async () => {
     const { preferences } = mount({
       preferences: { stored: storedRecord({ appearance: { locale: "zh-CN", density: "compact" } }) },
     });
     await waitFor(() => expect(document.documentElement.lang).toBe("zh-CN"));
     const dialog = openSettings();
     press(dialog, zh.reset);
-    await applyAndClose(dialog, en.apply);
-    expect(preferences.stored()?.appearance).toEqual({ locale: "en", density: "comfortable" });
+    await waitFor(() => expect(preferences.stored()?.appearance).toEqual({ locale: "en", density: "comfortable" }));
+    await applyAndClose(dialog, en.close);
   });
 
-  it("freezes the dialog while a publish is in flight and dispatches exactly one write", async () => {
+  it("keeps every control live while a write is in flight and says it is saving", async () => {
     const { preferences } = mount({ preferences: { deferred: true } });
     await preferences.release();
     await screen.findByText("No ProteoWizard installation was found");
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-
-    const apply = within(dialog).getByRole("button", { name: zh.apply });
-    fireEvent.click(apply);
-    // Named as busy, inert, and every action that would change what is being
-    // published is frozen. Cancel too: the bytes are already on their way.
-    const pending = within(dialog).getByRole("button", { name: zh.savePending });
-    expect(pending).toBeDisabled();
-    expect(pending).toHaveAttribute("aria-busy", "true");
-    expect(within(dialog).getByRole("button", { name: zh.cancel })).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: zh.reset })).toBeDisabled();
-    expect(within(dialog).getByRole("radio", { name: zh.english })).toBeDisabled();
-
-    // A second activation of the same press, and an Escape, while it is in
-    // flight. Neither may dispatch a second write or imply the first is undone.
-    fireEvent.click(pending);
-    fireEvent.keyDown(pending, { key: "Escape" });
-    expect(screen.getByRole("dialog")).toBe(dialog);
     expect(preferences.requests).toHaveLength(1);
+    // Said in the footer; nothing is native-disabled under the keyboard.
+    expect(dialog.querySelector("[data-storage-note]")).toHaveTextContent(zh.savePending);
+    expect(within(dialog).getByRole("radio", { name: zh.english })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: zh.close })).toBeEnabled();
 
     await preferences.release();
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(dialog.querySelector("[data-storage-note]")).toBeEmptyDOMElement());
     expect(preferences.requests).toHaveLength(1);
     expect(document.documentElement.lang).toBe("zh-CN");
   });
@@ -258,7 +239,6 @@ describe("durable UI preferences", () => {
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
-    press(dialog, zh.apply);
 
     const failure = await within(dialog).findByRole("alert");
     expect(failure).toHaveTextContent(zh.saveFailedTitle);
@@ -272,8 +252,8 @@ describe("durable UI preferences", () => {
 
     preferences.recover();
     press(dialog, zh.saveRetry);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    // The retry published the snapshot the failed apply captured.
+    await waitFor(() => expect(within(dialog).queryByRole("alert")).toBeNull());
+    // The retry published the snapshot the failed write captured.
     expect(preferences.stored()?.appearance).toEqual({ locale: "zh-CN", density: "compact" });
   });
 
@@ -284,7 +264,6 @@ describe("durable UI preferences", () => {
     await screen.findByText("No ProteoWizard installation was found");
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(zh.saveTemporaryLeftBehind);
     withResidue.view.unmount();
 
@@ -292,7 +271,6 @@ describe("durable UI preferences", () => {
     await screen.findByText("No ProteoWizard installation was found");
     dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     const refusal = await within(dialog).findByRole("alert");
     expect(refusal).toHaveTextContent(zh.writeUnsafeTarget);
     expect(within(dialog).queryByRole("button", { name: zh.saveRetry })).toBeNull();
@@ -308,10 +286,9 @@ describe("durable UI preferences", () => {
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     choose(dialog, zh.compact);
-    press(dialog, zh.apply);
     await within(dialog).findByRole("alert");
     press(dialog, zh.saveSessionOnly);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await applyAndClose(dialog, zh.close);
 
     expect(document.documentElement.lang).toBe("zh-CN");
     expect(density()).toBe("compact");
@@ -332,9 +309,8 @@ describe("durable UI preferences", () => {
     expect(problem).toHaveTextContent(en.storedUnusableTitle);
     expect(problem).toHaveTextContent(en.storedUnsupportedVersion);
 
-    // An ordinary apply does not overwrite it.
+    // An ordinary change does not overwrite it.
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     await waitFor(() => expect(preferences.requests).toHaveLength(1));
     expect(preferences.requests[0]).toEqual({ appearance: { locale: "zh-CN", density: "comfortable" } });
     expect(preferences.stored()).toBeNull();
@@ -352,7 +328,8 @@ describe("durable UI preferences", () => {
 
     // The confirmed replacement is the only thing that does.
     press(dialog, zh.storedReplace);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(preferences.requests).toHaveLength(2));
+    await waitFor(() => expect(within(dialog).queryByRole("alert")).toBeNull());
     expect(preferences.requests[1]).toEqual({
       appearance: { locale: "zh-CN", density: "comfortable" },
       layout: { roster: "automatic", details: "automatic" },
@@ -378,7 +355,7 @@ describe("durable UI preferences", () => {
     expect(within(dialog).getByText(en.storageSessionOnly)).toBeVisible();
 
     choose(dialog, en.simplifiedChinese);
-    await applyAndClose(dialog, zh.apply);
+    await applyAndClose(dialog, zh.close);
     // Applied for the session, nothing dispatched, nothing claimed.
     expect(document.documentElement.lang).toBe("zh-CN");
     expect(preferences.requests).toEqual([]);
@@ -423,15 +400,16 @@ describe("durable UI preferences", () => {
     expect(rosterToggle()).toHaveAccessibleDescription(en.panelsLoading);
     const loading = openSettings();
     expect(within(loading).getByText(en.storageLoading)).toBeVisible();
-    expect(within(loading).getByRole("radio", { name: en.english })).toBeDisabled();
-    // Refused, not disabled: it stays reachable and points at the note.
-    expect(within(loading).getByRole("button", { name: en.apply })).toHaveAttribute("aria-disabled", "true");
-    expect(within(loading).getByRole("button", { name: en.apply })).toHaveAccessibleDescription(en.storageLoading);
+    // Refused, not disabled: each stays reachable and points at the note.
+    expect(within(loading).getByRole("radio", { name: en.english })).toHaveAttribute("aria-disabled", "true");
+    expect(within(loading).getByRole("radio", { name: en.english })).toBeEnabled();
+    expect(within(loading).getByRole("button", { name: en.reset })).toHaveAttribute("aria-disabled", "true");
+    expect(within(loading).getByRole("button", { name: en.reset })).toHaveAccessibleDescription(en.storageLoading);
 
     await preferences.release();
     await waitFor(() => expect(document.documentElement.lang).toBe("zh-CN"));
     expect(density()).toBe("compact");
-    press(loading, zh.cancel);
+    press(loading, zh.close);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(screen.getByRole("button", { name: zh.rosterToggle })).toBeEnabled());
   });
@@ -471,21 +449,15 @@ describe("durable UI preferences", () => {
     expect(document.querySelector(".workbench-shell")).toBeNull();
   });
 
-  it("commits a panel toggle as its own group and leaves the Settings draft alone", async () => {
+  it("commits a panel toggle as its own group", async () => {
     const { preferences } = mount();
     await screen.findByText("No ProteoWizard installation was found");
-    // An unapplied Settings draft, open at the same time.
-    const dialog = openSettings();
-    choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.cancel);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     fireEvent.click(rosterToggle());
     await waitFor(() => expect(preferences.requests).toHaveLength(1));
     expect(preferences.requests[0]).toEqual({ layout: { roster: "hidden", details: "automatic" } });
     expect(preferences.stored()).toEqual({
       schemaVersion: 1,
-      // The cancelled draft is nowhere in it.
       appearance: { locale: "en", density: "comfortable" },
       layout: { roster: "hidden", details: "automatic" },
     });
@@ -500,7 +472,8 @@ describe("durable UI preferences", () => {
 
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    await applyAndClose(dialog, zh.apply);
+    await waitFor(() => expect(preferences.stored()?.appearance.locale).toBe("zh-CN"));
+    await applyAndClose(dialog, zh.close);
     // Both groups, each from the surface that owns it.
     expect(preferences.stored()).toEqual({
       schemaVersion: 1,
@@ -589,7 +562,8 @@ describe("durable UI preferences", () => {
     await waitFor(() => expect(reset).toHaveAttribute("aria-disabled", "true"));
     expect(reset.isConnected).toBe(true);
     expect(reset).toHaveAccessibleDescription(en.layoutNothingToReset);
-    expect(within(dialog).getByText(en.layoutNothingToReset)).toBeVisible();
+    // In en the layout reset and Reset defaults give the same words.
+    expect(within(dialog).getAllByText(en.layoutNothingToReset)[0]).toBeVisible();
     expect(reset).toHaveFocus();
     // Said inside the dialog: the shell's region is aria-hidden behind it.
     expect(dialog).toHaveTextContent(en.layoutResetDone);
@@ -604,7 +578,7 @@ describe("durable UI preferences", () => {
 
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    await applyAndClose(dialog, zh.apply);
+    await applyAndClose(dialog, zh.close);
     fireEvent.click(screen.getByRole("button", { name: zh.rosterToggle }));
     await waitFor(() => expect(preferences.requests).toHaveLength(2));
     expect(api.calls()).toEqual(calls);

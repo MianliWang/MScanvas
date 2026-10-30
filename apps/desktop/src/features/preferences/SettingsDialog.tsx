@@ -1,8 +1,9 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { SettingField } from "../../components/fields/SettingField";
-import { Button, Icon, IconButton, SegmentedControl } from "../../components/ui";
+import { Button, Icon, SegmentedControl } from "../../components/ui";
+import { SESSION_DEFAULTS } from "./sessionPreferences";
 import { useSessionPreferences, useUiMessages } from "./SessionPreferencesProvider";
 import {
   explainStoredProblem,
@@ -10,7 +11,13 @@ import {
   explainWriteProblem,
 } from "./storageMessages";
 
-/** The only Settings entry and modal; Radix stays behind this owned surface. */
+/**
+ * The only Settings entry and modal; Radix stays behind this owned surface.
+ *
+ * Settings apply immediately (GOALS D4, direction A 2.6): each choice is shown
+ * and saved as it is made, so the dialog has one Close and no Apply or Cancel.
+ * A failed save says so in place, with Try again beside it.
+ */
 export function SettingsDialog() {
   const preferences = useSessionPreferences();
   const message = useUiMessages();
@@ -19,48 +26,28 @@ export function SettingsDialog() {
   const layoutId = useId();
   const problemId = useId();
   const noteId = useId();
+  const resetId = useId();
   const opener = useRef<HTMLButtonElement>(null);
   const content = useRef<HTMLDivElement | null>(null);
   const composing = useRef(false);
   const returnPending = useRef(false);
   const returnSuperseded = useRef(false);
   const mounted = useRef(true);
-  /**
-   * The block a failed or refused apply renders, so the keyboard can be given
-   * to it.
-   *
-   * Pressing Apply disables it, which is what blurs it, and on failure the
-   * dialog stays open with focus on the body -- so the two controls the alert
-   * has just told the reader about are a full tab traversal away. Focusing the
-   * block rather than one of its buttons puts the explanation in front of the
-   * decision, and leaves which action to take to the reader.
-   */
+  /** The block a failed or refused save renders, so the keyboard can be given to it. */
   const failureRef = useRef<HTMLDivElement | null>(null);
-  const open = preferences.state.draft !== null;
-  const { storage, save, panels } = preferences;
-  /**
-   * Whether one apply is in flight.
-   *
-   * While it is, every action that would change what is being published is
-   * frozen and Apply itself is inert, so a second activation cannot dispatch a
-   * second write of a snapshot the first is already publishing. Cancel is
-   * frozen too, deliberately: once the bytes are on their way, a button that
-   * looked like it could call them back would be a lie about disk.
-   */
+  const [open, setOpen] = useState(false);
+  const { storage, save, panels, effective } = preferences;
   const saving = save.status === "saving";
   const hydrating = storage.status === "loading";
-  const frozen = saving || hydrating;
   /**
-   * Why Apply is refused, as the id of the visible block that says so: a
-   * resource problem, or the footer note while the stored record is read.
-   * Only a publish in flight makes it inert (`disabled`).
+   * Why a choice cannot be made right now, as the id of the visible block that
+   * says so: a resource problem, or the footer note while the stored record is
+   * read. The choices stay focusable (B4).
    */
-  const applyReason = preferences.problem !== null ? problemId : hydrating ? noteId : undefined;
-  /**
-   * Reset layout acts at once, outside the Apply/Cancel transaction: Cancel
-   * does not undo it. Refused, and saying why, while the stored record is
-   * read or when the arrangement is already the default.
-   */
+  const choiceReason = preferences.problem !== null ? problemId : hydrating ? noteId : undefined;
+  const atDefaults = effective.locale === SESSION_DEFAULTS.locale && effective.density === SESSION_DEFAULTS.density;
+  const resetRefusal = hydrating ? message("storageLoading") : atDefaults ? message("settingsAlreadyDefault") : null;
+  /** Reset layout acts on the panels, refused while the record is read or already the default. */
   const layoutResettable = panels.requested.roster !== "automatic" || panels.requested.details !== "automatic";
   const layoutRefusal = panels.busy ? message("panelsLoading")
     : layoutResettable ? undefined : message("layoutNothingToReset");
@@ -77,34 +64,34 @@ export function SettingsDialog() {
   }, []);
 
   useEffect(() => {
-    // An apply that did not close the dialog has nothing pending. Cleared here
-    // rather than left set, so a later real close still returns the keyboard.
-    if (save.status === "failed" || save.status === "storedRecordUnusable" || save.status === "unavailable") {
-      returnPending.current = false;
-      returnSuperseded.current = false;
-    }
-    // And the keyboard goes to the explanation, which is where the recovery
+    // The keyboard goes to the explanation, which is where the recovery
     // actions are. Only from the body: a reader who has since moved keeps
     // their place.
     if (save.status === "failed" || save.status === "storedRecordUnusable") {
       const active = document.activeElement;
-      if (active === null || active === document.body) {
-        failureRef.current?.focus({ preventScroll: true });
-      }
+      if (active === null || active === document.body) failureRef.current?.focus({ preventScroll: true });
     }
   }, [save.status]);
 
-  function closeWith(action: () => void) {
+  const close = () => {
+    // A write in flight settles on its own; its reply is still adopted.
+    // A change whose write failed stays this session's, and is said to be.
+    if (save.status === "failed") preferences.useForThisSession();
+    else if (preferences.state.draft !== null && !saving) preferences.discard();
     returnPending.current = true;
     returnSuperseded.current = false;
-    action();
-  }
+    setOpen(false);
+  };
+  const choose = (next: typeof effective) => {
+    if (choiceReason !== undefined) return;
+    preferences.change(next);
+  };
+  const refusedOption = choiceReason !== undefined;
 
   return <Dialog.Root open={open} onOpenChange={(next) => {
-    if (next) { preferences.open(); return; }
-    // Escape, the close control and the overlay all route here. A publish in
-    // flight is not cancellable, so the dialog stays until it settles.
-    if (!saving) closeWith(preferences.discard);
+    if (next) { preferences.open(); setOpen(true); return; }
+    // Escape and the Close button both route here.
+    close();
   }}>
     <Dialog.Trigger asChild>
       <Button variant="quiet" size="sm" icon={<Icon name="settings" />} className="settings-entry" ref={opener} data-settings-entry="">
@@ -123,13 +110,9 @@ export function SettingsDialog() {
           composing.current = false;
           returnPending.current = false;
           // The current value, so the keyboard starts where the reader's
-          // attention is. While the stored record is still being read every
-          // radio is disabled, and `focus()` on a disabled control does
-          // nothing -- so the dialog itself takes the keyboard rather than
-          // leaving it on a trigger that is now inside an `aria-hidden`
-          // subtree, with the title never announced.
+          // attention is.
           const checked = content.current?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]');
-          if (checked !== null && checked !== undefined && !checked.disabled) checked.focus();
+          if (checked !== null && checked !== undefined) checked.focus();
           else content.current?.focus({ preventScroll: true });
         }}
         onCloseAutoFocus={(event) => {
@@ -159,37 +142,28 @@ export function SettingsDialog() {
           // React's field handlers. The dialog owns Escape, including IME.
           event.stopImmediatePropagation();
           if (composing.current || event.isComposing || event.keyCode === 229) event.preventDefault();
-          // A publish in flight cannot be recalled, so Escape does not pretend
-          // to. The dialog reports the outcome instead.
-          if (saving) event.preventDefault();
         }}>
         <header className="settings-dialog-header">
           <Dialog.Title>{message("settings")}</Dialog.Title>
-          <Dialog.Close asChild>
-            <IconButton icon={<Icon name="close" />} label={message("close")} disabled={saving} />
-          </Dialog.Close>
         </header>
         <div className="settings-dialog-body">
           <div className="settings-fields">
             <h3 className="settings-section-title">{message("appearance")}</h3>
             {/* `data-setting-value` names each option for the e2e drivers, which
-                cannot select a segment by a localized label. */}
+                cannot select a segment by a localized label. Refused, not
+                disabled, while the stored record is read (B4). */}
             <SettingField labelId={languageId} label={message("language")}>
-              <SegmentedControl labelledBy={languageId} value={preferences.effective.locale}
-                disabled={frozen}
-                options={[{ value: "en", label: <span data-setting-value="en">{message("english")}</span> },
-                  { value: "zh-CN", label: <span data-setting-value="zh-CN">{message("simplifiedChinese")}</span> }]}
-                onChange={(locale) => preferences.preview({ ...preferences.effective, locale })} />
+              <SegmentedControl labelledBy={languageId} value={effective.locale} reasonId={choiceReason}
+                options={[{ value: "en", refused: refusedOption, label: <span data-setting-value="en">{message("english")}</span> },
+                  { value: "zh-CN", refused: refusedOption, label: <span data-setting-value="zh-CN">{message("simplifiedChinese")}</span> }]}
+                onChange={(locale) => choose({ ...effective, locale })} />
             </SettingField>
             <SettingField labelId={densityId} label={message("density")}>
-              <SegmentedControl labelledBy={densityId} value={preferences.effective.density}
-                disabled={frozen}
-                options={[{ value: "comfortable", label: <span data-setting-value="comfortable">{message("comfortable")}</span> },
-                  { value: "compact", label: <span data-setting-value="compact">{message("compact")}</span> }]}
-                onChange={(density) => preferences.preview({ ...preferences.effective, density })} />
+              <SegmentedControl labelledBy={densityId} value={effective.density} reasonId={choiceReason}
+                options={[{ value: "comfortable", refused: refusedOption, label: <span data-setting-value="comfortable">{message("comfortable")}</span> },
+                  { value: "compact", refused: refusedOption, label: <span data-setting-value="compact">{message("compact")}</span> }]}
+                onChange={(density) => choose({ ...effective, density })} />
             </SettingField>
-            {/* Its own section below a divider, so it does not read as a
-                preference: it acts now, and Cancel does not undo it. */}
             <h3 className="settings-section-title">{message("layoutSection")}</h3>
             <SettingField labelId={layoutId} label={message("layoutPanels")} help={layoutRefusal}>
               <Button size="sm" data-layout-reset="" refused={layoutRefusal !== undefined} reasonId={`${layoutId}-help`}
@@ -207,34 +181,25 @@ export function SettingsDialog() {
             </div>}
             {/* The stored record is not this build's and has been left exactly
                 as found. Replacing it is the user's to confirm, and it is the
-                only thing that overwrites it -- nothing about reading,
-                cancelling or resizing does. */}
+                only thing that overwrites it. */}
             {storage.status === "unusable" ? <div className="settings-storage-problem" role="alert" data-stored-record="unusable">
               <p><strong>{message("storedUnusableTitle")}</strong></p>
               <p>{explainStoredProblem(storage.problem, message)}</p>
               <p>{message("storedUnusableBody")}</p>
-              <Button size="sm" data-stored-replace="" disabled={saving} onClick={preferences.replaceStoredRecord}>
+              <Button size="sm" data-stored-replace="" refused={saving} reasonId={noteId} onClick={() => { if (!saving) preferences.replaceStoredRecord(); }}>
                 {message("storedReplace")}
               </Button>
             </div> : null}
-            {/* Nothing is wrong with the workspace, and nothing is claimed about
-                disk. Reported as a status rather than an alert for that reason. */}
             {storage.status === "unavailable" ? <div className="settings-storage-note" role="status" data-storage="unavailable">
               <p>{message("storageUnavailable")}</p>
               <p>{explainUnavailableProblem(storage.problem, message)}</p>
             </div> : null}
-            {/* A read that never arrived, or a call that failed on the way.
-                That is not a store that does not exist, so it says what
-                happened and that applying a change still tries to save it. */}
             {storage.status === "readFailed" ? <div className="settings-storage-note" role="status" data-storage="read-failed">
               <p>{explainUnavailableProblem(storage.problem, message)}</p>
               <p>{message("storageReadFailedNote")}</p>
             </div> : null}
-            {/* Every outcome an apply can have, each said once.
-                `notConfirmed` is separated out deliberately: the bytes were
-                published and only the read-back failed, so telling the reader
-                that a restart keeps the old record would be the one statement
-                MSCanvas cannot make. */}
+            {/* Every outcome a save can have, each said once, in place, with
+                its retry beside it. */}
             {save.status === "failed" ? <div className="settings-storage-problem" role="alert" data-save="failed" ref={failureRef} tabIndex={-1}>
               <p><strong>{message(save.problem === "notConfirmed" ? "saveUncertainTitle" : "saveFailedTitle")}</strong></p>
               <p>{explainWriteProblem(save.problem, message)}</p>
@@ -244,17 +209,11 @@ export function SettingsDialog() {
                 {save.retryable ? <Button size="sm" data-save-retry="" onClick={preferences.retrySave}>
                   {message("saveRetry")}
                 </Button> : null}
-                {/* Named, not a silent fallback, and it claims no write: what it
-                    says is that a restart still uses the last saved record. */}
                 <Button size="sm" data-save-session-only="" onClick={preferences.useForThisSession}>
                   {message("saveSessionOnly")}
                 </Button>
               </div>
             </div> : null}
-            {/* Refused because the stored record is not this build's. The
-                recovery is the confirmed replacement above; what this adds is
-                that *this press* was refused, which the pre-existing alert
-                does not say. */}
             {save.status === "storedRecordUnusable" ? <div className="settings-storage-problem" role="alert" data-save="refused" ref={failureRef} tabIndex={-1}>
               <p><strong>{message("saveRefusedTitle")}</strong></p>
               <p>{explainStoredProblem(save.problem, message)}</p>
@@ -263,29 +222,21 @@ export function SettingsDialog() {
           </div>
         </div>
         <footer className="settings-dialog-footer">
-          {/* The durability note, which has to agree with the block above it.
-              Consulting only `storage.status` put "these preferences are saved
-              on this computer" directly under an alert saying the write had
-              failed, and under the alert saying the stored record cannot be
-              read at all. */}
+          {/* The durability note, which has to agree with the blocks above it. */}
           <p id={noteId} data-storage-note="">{
-            save.sessionOnly ? message("sessionOnlyNote")
-              : hydrating ? message("storageLoading")
-                : save.status === "failed" || save.status === "storedRecordUnusable" ? message("storageNotSaving")
-                  : storage.status === "unavailable" || save.status === "unavailable" ? message("storageSessionOnly")
-                    : storage.status === "unusable" || storage.status === "readFailed" ? message("storageNotSaving")
-                      : ""
+            saving ? message("savePending")
+              : save.sessionOnly ? message("sessionOnlyNote")
+                : hydrating ? message("storageLoading")
+                  : save.status === "failed" || save.status === "storedRecordUnusable" ? message("storageNotSaving")
+                    : storage.status === "unavailable" || save.status === "unavailable" ? message("storageSessionOnly")
+                      : storage.status === "unusable" || storage.status === "readFailed" ? message("storageNotSaving")
+                        : ""
           }</p>
           <div className="settings-dialog-actions">
-            <Button variant="quiet" refused={hydrating} reasonId={noteId} disabled={saving} onClick={preferences.reset}>{message("reset")}</Button>
-            <Dialog.Close asChild><Button disabled={saving}>{message("cancel")}</Button></Dialog.Close>
-            {/* Inert while a publish is in flight, so a second activation --
-                pointer, keyboard or both -- cannot dispatch a second write. */}
-            <Button variant="primary" aria-busy={saving || undefined}
-              refused={applyReason !== undefined} reasonId={applyReason} disabled={saving}
-              onClick={() => closeWith(preferences.apply)}>
-              {saving ? message("savePending") : message("apply")}
-            </Button>
+            <Button variant="secondary" data-settings-reset="" refused={resetRefusal !== null} reasonId={hydrating ? noteId : resetId}
+              onClick={() => { if (resetRefusal === null) choose({ ...SESSION_DEFAULTS }); }}>{message("reset")}</Button>
+            {resetRefusal === null || hydrating ? null : <span className="settings-reset-reason" id={resetId}>{resetRefusal}</span>}
+            <Dialog.Close asChild><Button data-settings-close="">{message("close")}</Button></Dialog.Close>
           </div>
         </footer>
       </Dialog.Content>
