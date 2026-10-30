@@ -14,6 +14,8 @@
   `dataset_not_previewable` rather than reaching a backend that has nothing to
   open. See [ADR 0012](0012-first-visible-thermo-conversion.md); everything
   this ADR says about reading mzML is unchanged.
+- Amended: 2026-10-29 ([ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md))
+  — the one-backend-process rule, by a note at that rule below.
 
 ## Context
 
@@ -178,6 +180,16 @@ is rather than removed in a slice that is about something else.
   the row already being read, that bounds what fast navigation costs. What
   remains is that a read already under way runs to completion; stopping it
   needs real backend cancellation, which ADR 0003 still lists as an open gate.
+
+  > **Amended 2026-10-29 by [ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md).**
+  > The rule stands for ProteoWizard processes: one at a time, conversion
+  > included. A native mzML read (ADR 0056) is not a backend process. Once
+  > ADR 0056's native path ships, a selected spectrum of an already-open
+  > preview is read natively while a conversion holds the gate, serialized by
+  > a native-read lane of its own. Opening a preview during a conversion stays
+  > refused, because the open still runs `msaccess`. Parallel conversion would
+  > be the first exception to this rule; it waits for ADR 0057's throughput
+  > measurement and its own amendment of this paragraph.
 - The three operations of one open action read the file separately, and
   combining results from two generations of it would describe an acquisition
   that never existed. The file's length and modification time are therefore
