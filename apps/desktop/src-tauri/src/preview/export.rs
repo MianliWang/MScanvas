@@ -1867,28 +1867,55 @@ pub(super) fn figure_spec(
 
 /// What a spectrum figure says about itself.
 ///
-/// The full-source sentence is **unchanged**, down to its wording, because the
-/// document it describes is unchanged. A current-range figure needs its own,
-/// and what it has to establish is what a reader would otherwise get wrong:
-/// that the series is still the complete spectrum, that the window is what is
-/// drawn, and how many of the source's observations fall inside it. A figure
-/// that said only "current range" would leave a reader unable to tell this from
-/// a picture of a screen.
+/// A spectrum that declares nothing keeps the full-source sentence it always
+/// had, down to its wording. A declared representation or unit is stated as
+/// the file declares it (ADR 0056, decision 5), because the panel and its axes
+/// carry it too, and a caption that called them unreported would contradict
+/// the drawing in the same document. A current-range figure needs its own
+/// sentence, and what it has to establish is what a reader would otherwise get
+/// wrong: that the series is still the complete spectrum, that the window is
+/// what is drawn, how many of the source's observations fall inside it, and
+/// whether anything at its edges is interpolated -- which only a joined
+/// profile trace is.
 fn spectrum_caption(spectrum: &SelectedSpectrumResult, range: ResolvedSpectrumRange) -> String {
     let source_points = spectrum.mz_values().len();
-    match range.domain() {
-        None => format!(
-            "Complete selected spectrum, {source_points} points. Representation {UNREPORTED}; m/z \
-             and intensity units {UNREPORTED}."
+    let representation = match spectrum.representation() {
+        SpectrumRepresentationState::Centroid => "centroid, as the file declares",
+        SpectrumRepresentationState::Profile => "profile, as the file declares",
+        SpectrumRepresentationState::NotEmitted | SpectrumRepresentationState::NotDeclared => {
+            UNREPORTED
+        }
+    };
+    let units = match (
+        declared_accession(spectrum.mz_unit()),
+        declared_accession(spectrum.intensity_unit()),
+    ) {
+        (None, None) => format!("m/z and intensity units {UNREPORTED}"),
+        (mz, intensity) => format!(
+            "units as the file declares them: m/z {}, intensity {}",
+            mz.unwrap_or(UNREPORTED),
+            intensity.unwrap_or(UNREPORTED),
         ),
+    };
+    let terms = format!("Representation {representation}; {units}.");
+    match range.domain() {
+        None => format!("Complete selected spectrum, {source_points} points. {terms}"),
         Some(window) => format!(
             "Selected spectrum over m/z {} to {}, {} of {source_points} measured points in that \
              range. The complete spectrum is the figure's source series and the range is the \
-             window drawn over it; nothing is interpolated at either edge. Representation \
-             {UNREPORTED}; m/z and intensity units {UNREPORTED}.",
+             window drawn over it; {} {terms}",
             window.low(),
             window.high(),
             within(spectrum, window).0.len(),
+            if matches!(
+                spectrum.representation(),
+                SpectrumRepresentationState::Profile
+            ) {
+                "the profile trace is cut at each edge, at a height interpolated between the two \
+                 measured samples either side of it."
+            } else {
+                "nothing is interpolated at either edge."
+            },
         ),
     }
 }
@@ -1947,7 +1974,10 @@ fn ranged_spectrum_panel(
     if window.low() <= panel.full_domain().low() && window.high() >= panel.full_domain().high() {
         return Ok(panel);
     }
-    let (low, high) = visible_value_extent(spectrum, window);
+    // Asked of the panel, through the predicate the renderer asks, so the scale
+    // and the drawing cannot disagree about whether the edges are geometry.
+    let joined = panel.series().iter().any(|series| panel.joins(series));
+    let (low, high) = visible_value_extent(spectrum, window, joined);
     panel
         .with_visible_domain(window)?
         .with_visible_value_domain(Domain::new(low, high)?)
@@ -1968,15 +1998,50 @@ fn ranged_spectrum_panel(
 /// not deleted to obtain the scale; the axis is told which part of it is being
 /// shown, and the renderer says so in words.
 ///
-/// **No boundary value is interpolated.** For the representation this product
-/// is actually in, a value between two measured m/z is a value nobody measured,
-/// so a window holding no reported peak scales to zero-to-zero -- an honest
-/// empty window rather than a fabricated one.
-fn visible_value_extent(spectrum: &SelectedSpectrumResult, window: Domain) -> (f64, f64) {
+/// **Discrete marks: no boundary value is interpolated.** For a centroid or
+/// unreported spectrum a value between two measured m/z is a value nobody
+/// measured, so a window holding no reported peak scales to zero-to-zero -- an
+/// honest empty window rather than a fabricated one.
+///
+/// **A joined profile trace: the edge heights count**, by the chromatogram's
+/// rule. The renderer cuts the trace where it crosses each edge, at the height
+/// interpolated along that segment, and that height is on the page; an axis
+/// that left it out would draw the cut above the frame, or flat across a
+/// zero-to-zero axis for a window between two samples. The heights set the
+/// scale only; no data document records them.
+fn visible_value_extent(
+    spectrum: &SelectedSpectrumResult,
+    window: Domain,
+    joined: bool,
+) -> (f64, f64) {
     let (mut low, mut high) = (0.0_f64, 0.0_f64);
+    let mut consider = |value: f64| {
+        low = low.min(value);
+        high = high.max(value);
+    };
     for value in within(spectrum, window).1 {
-        low = low.min(*value);
-        high = high.max(*value);
+        consider(*value);
+    }
+    if joined {
+        // The m/z array is non-decreasing (an admitted viewport domain says so),
+        // so the one segment straddling an edge sits at that edge's partition
+        // point, and the renderer's own formula gives its height there.
+        let (mz, intensity) = (spectrum.mz_values(), spectrum.intensity_values());
+        for edge in [window.low(), window.high()] {
+            let after = mz.partition_point(|value| *value <= edge);
+            if after == 0 || after == mz.len() {
+                continue;
+            }
+            let (x0, y0, x1, y1) = (
+                mz[after - 1],
+                intensity[after - 1],
+                mz[after],
+                intensity[after],
+            );
+            if x0 < edge && edge < x1 {
+                consider(y0 + (y1 - y0) * ((edge - x0) / (x1 - x0)));
+            }
+        }
     }
     (low, high)
 }
@@ -6025,6 +6090,133 @@ mod tests {
             !lowered.contains("screen") && !lowered.contains("reduc"),
             "a scientific figure is never labelled as a drawing of a screen: {caption}",
         );
+    }
+
+    /// One spectrum read by the production reader from an in-memory document
+    /// that declares this representation and these array units.
+    fn native_spectrum(
+        representation: &'static str,
+        units: (Option<&'static str>, Option<&'static str>),
+        points: &[(f64, f64)],
+    ) -> SelectedSpectrumResult {
+        use super::super::mzml_fixture::{FixtureSpectrum, document};
+        use mscanvas_proteowizard::{
+            MzmlScanLimits, read_selected_spectrum_from, read_spectrum_table_from,
+        };
+        use std::io::Cursor;
+
+        let mut fixture = FixtureSpectrum::new("scan=1", 1, 0.5, points[1], 1_010.0, points);
+        fixture.representation = Some(representation);
+        (fixture.mz_unit, fixture.intensity_unit) = units;
+        let text = document(&[fixture]);
+        let table =
+            read_spectrum_table_from(Cursor::new(text.as_bytes()), MzmlScanLimits::default())
+                .expect("the document opens");
+        SelectedSpectrumResult::from_native(
+            read_selected_spectrum_from(Cursor::new(text.as_bytes()), &table, 0)
+                .expect("the spectrum decodes"),
+        )
+    }
+
+    /// A profile peak whose flanks fall between samples.
+    const PEAK: [(f64, f64); 4] = [(100.0, 0.0), (101.0, 1_000.0), (102.0, 10.0), (103.0, 0.0)];
+    const PROFILE: &str = "MS:1000128";
+    const CENTROID: &str = "MS:1000127";
+    const DECLARED: (Option<&str>, Option<&str>) = (Some("MS:1000040"), Some("MS:1000131"));
+
+    /// A declared spectrum's caption states what its axes and description
+    /// state, and a profile range does not claim its edges are uninterpolated.
+    #[test]
+    fn a_declared_spectrum_s_caption_agrees_with_its_axes_and_description() {
+        let source = native_spectrum(PROFILE, DECLARED, &PEAK);
+        let snapshot = retained(source.clone());
+        let full = svg_document(&source, defaults(), ResolvedSpectrumRange::Full).expect("an SVG");
+        let caption = "Complete selected spectrum, 4 points. Representation profile, as the file \
+                       declares; units as the file declares them: m/z MS:1000040, intensity \
+                       MS:1000131.";
+        assert!(
+            full.contains(&format!("<desc>{caption} Profile samples")),
+            "{full}"
+        );
+        assert!(full.contains("m/z (MS:1000040)") && full.contains("Intensity (MS:1000131)"));
+        assert!(
+            !full.contains(UNREPORTED) && !full.contains("reports no unit"),
+            "{full}"
+        );
+
+        let ranged = figure_spec(
+            &source,
+            defaults(),
+            resolve_current(&snapshot, 101.5, 102.5),
+        )
+        .expect("specifiable");
+        let caption = ranged.caption().expect("a caption").as_str();
+        assert!(
+            caption.contains("cut at each edge, at a height interpolated"),
+            "{caption}"
+        );
+        assert!(!caption.contains("nothing is interpolated"), "{caption}");
+
+        // A centroid spectrum with one declared unit: sticks, so nothing is
+        // interpolated, and the undeclared unit stays unreported by name.
+        let centroid = native_spectrum(CENTROID, (Some("MS:1000040"), None), &PEAK);
+        let snapshot = retained(centroid.clone());
+        assert_eq!(
+            figure_spec(&centroid, defaults(), ResolvedSpectrumRange::Full)
+                .expect("specifiable")
+                .caption()
+                .expect("a caption")
+                .as_str(),
+            "Complete selected spectrum, 4 points. Representation centroid, as the file declares; \
+             units as the file declares them: m/z MS:1000040, intensity unreported.",
+        );
+        let ranged = figure_spec(
+            &centroid,
+            defaults(),
+            resolve_current(&snapshot, 101.5, 102.5),
+        )
+        .expect("specifiable");
+        assert!(
+            ranged
+                .caption()
+                .expect("a caption")
+                .as_str()
+                .contains("nothing is interpolated at either edge."),
+        );
+    }
+
+    /// A joined profile trace's window is scaled to the heights drawn at its
+    /// edges; discrete marks keep the in-window rule.
+    #[test]
+    fn a_profile_window_scales_to_the_interpolated_edges_it_draws() {
+        let profile = native_spectrum(PROFILE, DECLARED, &PEAK);
+        let centroid = native_spectrum(CENTROID, DECLARED, &PEAK);
+        // (window, profile extent, centroid extent). The first cuts the peak's
+        // flank, so the edge at 101.5 is drawn at 505, above every sample in
+        // the window; the second holds no sample at all, and the trace crosses
+        // it from 802 down to 604.
+        let at = |x: f64| 1_000.0 + (10.0 - 1_000.0) * ((x - 101.0) / (102.0 - 101.0));
+        for (window, joined, discrete) in [
+            ((101.5, 102.5), (0.0, at(101.5)), (0.0, 10.0)),
+            ((101.2, 101.4), (0.0, at(101.2)), (0.0, 0.0)),
+        ] {
+            for (source, expected) in [(&profile, joined), (&centroid, discrete)] {
+                let snapshot = retained(source.clone());
+                let figure = figure_spec(
+                    source,
+                    defaults(),
+                    resolve_current(&snapshot, window.0, window.1),
+                )
+                .expect("specifiable");
+                assert_eq!(
+                    figure.panels()[0].visible_value_domain(),
+                    Some(Domain::new(expected.0, expected.1).expect("an interval")),
+                    "{window:?} {:?}",
+                    source.representation(),
+                );
+            }
+        }
+        assert_eq!(at(101.5), 505.0);
     }
 
     /// The full figure's caption is exactly the sentence it always was.
