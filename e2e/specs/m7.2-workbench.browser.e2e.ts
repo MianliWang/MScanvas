@@ -84,6 +84,20 @@ async function newGroup(name: string) {
   await browser.$("button=Save group").click();
   await browser.$(".group-name-dialog").waitForExist({ reverse: true });
 }
+/**
+ * The highlight and its hidden part, which head the list menu since the
+ * footer became one row (direction A 2.1): read from the open menu, which is
+ * then closed. With `backToRow`, the keyboard goes back to the row that holds
+ * the list's tab stop, as it was before the menu took it.
+ */
+async function highlightContext(backToRow = false): Promise<string> {
+  await browser.$("[data-roster-list-menu]").click();
+  const text = await browser.$(".roster-menu-context").getText();
+  await browser.keys("Escape");
+  await browser.$(".roster-menu-context").waitForExist({ reverse: true });
+  if (backToRow) await browser.execute(() => document.querySelector<HTMLElement>('.grouped-roster [data-handle][tabindex="0"]')?.focus());
+  return text;
+}
 async function locale(value: "en" | "zh-CN") {
   // The shared table confirms every save as English, and the shell adopts what
   // a save confirms (PM9 baseline §11).
@@ -395,13 +409,13 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await search.setValue("Tail_"); await browser.$(row("menu-80")).click();
     await browser.performActions([{ type: "key", id: "menu-tail-select", actions: [{ type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" }] }]);
     await browser.releaseActions();
-    expect(await browser.$(".roster-selection-context").getText()).toContain("150 highlighted");
+    expect(await highlightContext(true)).toContain("150 highlighted");
     await browser.$(`${row("menu-80")} .row-menu-trigger`).click();
     await browser.$('[role="menuitem"]=Tail').click();
     await search.setValue("Move_"); await browser.$(row("menu-0")).click();
     await browser.performActions([{ type: "key", id: "menu-source-select", actions: [{ type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" }] }]);
     await browser.releaseActions();
-    expect(await browser.$(".roster-selection-context").getText()).toContain("80 highlighted");
+    expect(await highlightContext(true)).toContain("80 highlighted");
     await browser.keys("End"); await browser.$(row("menu-79")).waitForDisplayed();
     await browser.$(CLEAR_SEARCH).click();
     await browser.$('[data-group-id="group-1"] .group-disclosure').click();
@@ -426,7 +440,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.waitUntil(() => browser.execute(() => !(Reflect.get(window, "__m72MenuTargetBefore") as Element).isConnected));
     await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true));
     expect(await ipcCalls()).toEqual(before);
-    expect(await browser.$(".roster-selection-context").getText()).toContain("80 highlighted · 80 hidden");
+    expect(await highlightContext()).toContain("80 highlighted · 80 hidden");
     await capture("review-menu-unmounted-target-fallback");
     expect(await consoleEntries()).toEqual([]);
   });
@@ -553,10 +567,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.releaseActions();
     // The footer counts the checked rows; the highlight heads the list menu.
     expect(await browser.$(".roster-selection-context").getText()).toBe("0 checked");
-    await browser.$("[data-roster-list-menu]").click();
-    expect(await browser.$(".roster-menu-context").getText()).toBe("200 highlighted");
-    await browser.keys("Escape");
-    await browser.$(".roster-menu-context").waitForExist({ reverse: true });
+    expect(await highlightContext()).toBe("200 highlighted");
     expect(await browser.$$(".grouped-roster [data-handle]").length).toBeLessThan(80);
     const before = await ipcCalls();
     await startDrag(`${row("wide-0")} .row-drag-handle`);

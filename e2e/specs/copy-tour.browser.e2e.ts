@@ -95,6 +95,18 @@ const FINISHED = {
   ]),
 };
 
+/** A queue at its full size (ADR 0057): 1,024 items, 300 converted, the 301st converting. */
+const LONG_RUN = {
+  status: "running",
+  operationId: OPERATION,
+  queue: queueOf(Array.from({ length: 1_024 }, (_, index) => {
+    const name = `Plasma_S${String(index + 1).padStart(4, "0")}.raw`;
+    return queueItem(`long-${String(index)}`, name, index < 300
+      ? { state: "finalized", attempts: 1, finalizedOutputs: [{ outputId: `long-output-${String(index)}`, fileName: name.replace(/\.raw$/u, ".mzML") }], ...finalizedAttemptFacts() }
+      : index === 300 ? { state: "running", attempts: 1 } : {});
+  })),
+};
+
 function slot(sequence: number, state: unknown) {
   return {
     sequence,
@@ -340,6 +352,49 @@ const STOPS: readonly Stop[] = [
     table: (locale) => conversionWorld(locale, FINISHED),
     drive: () => go(2),
     anchor: 'li[data-item-state="finalized"]',
+  },
+  {
+    // The plan scrolled to its end: in a short window the page scrolls as one
+    // and Convert stays pinned to the window's foot (review issue 11).
+    name: "conversion-ready-end",
+    table: (locale) => conversionWorld(locale, { status: "idle" }),
+    drive: async () => {
+      await answerPlans();
+      await checkMembers([FIRST.handle, SECOND.handle]);
+      await go(2);
+      await waitUntilOffered(CONVERT);
+      await browser.execute(() => {
+        for (const node of document.querySelectorAll<HTMLElement>("#workbench-conversion, .conversion-main, .conversion-side")) node.scrollTop = node.scrollHeight;
+      });
+    },
+    anchor: CONVERT,
+  },
+  {
+    // A running queue at its full size: the list is windowed (ADR 0057).
+    name: "conversion-running-long",
+    table: (locale) => conversionWorld(locale, LONG_RUN),
+    drive: () => go(2),
+    anchor: '.conversion-run-list[data-windowed="true"] li[data-item-state="finalized"]',
+  },
+  {
+    // The roster's footer at its fullest (direction A 2.1): two rows checked,
+    // one highlighted, and a group made so Undo shows beside the list menu
+    // and Convert….
+    name: "workbench-roster-footer",
+    table: (locale) => conversionWorld(locale, { status: "idle" }),
+    drive: async () => {
+      await checkMembers([FIRST.handle, SECOND.handle]);
+      await browser.$(`.grouped-roster [data-handle="${FIRST.handle}"] .dataset-row-name`).click();
+      await revealRosterRow(FIRST.handle);
+      await browser.$("[data-roster-list-menu]").click();
+      await browser.$("[data-roster-new-group]").waitForDisplayed({ timeout: 30_000 });
+      await browser.$("[data-roster-new-group]").click();
+      await browser.$("#organization-group-name").setValue("QC");
+      await browser.$(".group-name-dialog button[type='submit']").click();
+      await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+      await revealRosterRow(FIRST.handle);
+    },
+    anchor: ".roster-foot .ui-icon-button:not([data-roster-list-menu])",
   },
   {
     // The header's Project menu, open over the Workbench (rebuild spec 1.1).

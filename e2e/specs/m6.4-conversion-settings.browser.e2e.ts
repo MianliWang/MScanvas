@@ -280,7 +280,8 @@ async function axisStates(axis: string): Promise<Record<string, string>> {
   return browser.execute((dimension: string) => {
     const group = document.querySelector(`[data-axis="${dimension}"]`);
     const states: Record<string, string> = {};
-    for (const choice of group?.querySelectorAll(".conversion-setting-choice") ?? []) {
+    // A tile or a segment, whichever the axis is drawn as (direction A 2.2).
+    for (const choice of group?.querySelectorAll(".conversion-setting-choice, .conversion-segment") ?? []) {
       const input = choice.querySelector("input");
       states[input?.getAttribute("value") ?? ""] =
         choice.getAttribute("data-choice-state") ?? "";
@@ -289,12 +290,20 @@ async function axisStates(axis: string): Promise<Record<string, string>> {
   }, axis) as Promise<Record<string, string>>;
 }
 
-/** Chooses one value of one axis, the way a reader does. */
+/**
+ * Chooses one value of one axis, the way a reader does: once it is offered
+ * (a refused value is `aria-disabled`, never native disabled), by its label,
+ * which is the target whether the axis is a tile or a segmented track.
+ */
 async function chooseAxisValue(axis: string, value: string): Promise<void> {
   await advanced();
-  const control = await browser.$(`[data-axis="${axis}"] input[value="${value}"]`);
-  await control.waitForEnabled({ timeout: 30_000 });
-  await control.click();
+  const input = `[data-axis="${axis}"] input[value="${value}"]`;
+  await browser.$(input).waitForExist({ timeout: 30_000 });
+  await browser.waitUntil(async () => !(await isRefused(input)), {
+    timeout: 30_000,
+    timeoutMsg: `${axis} ${value} was never offered`,
+  });
+  await browser.$(`[data-axis="${axis}"] label:has(> input[value="${value}"])`).click();
 }
 
 /** What the plan summary says about one of its named facts. */
@@ -1210,7 +1219,7 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
     expect(await axisStates("processing")).toMatchObject({
       unscoped_default_centroiding: "unavailable",
     });
-    expect(await browser.$(REFUSED).isEnabled()).toBe(false);
+    expect(await isRefused(REFUSED)).toBe(true);
 
     // The sentence is about the combination, and it is not the grammar one. A
     // reader told the installed build does not offer this would go looking for
@@ -1236,25 +1245,37 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
     expect(await browser.$(".conversion-settings-recovery").isExisting()).toBe(false);
     expect(await isRefused(CONVERT)).toBe(false);
 
-    // Keyboard: the refused value is out of the tab order rather than focusable
-    // and inert, the way out takes focus, and the sentence is associated with
-    // the control it is about rather than only placed near it.
+    // Keyboard: the refused value is refused rather than disabled (B4) -- it
+    // takes focus and carries its reason, and pressing it changes nothing --
+    // the way out takes focus, and the sentence is associated with the control
+    // it is about rather than only placed near it.
     const keyboard = await browser.execute(() => {
       const group = document.querySelector('[data-axis="processing"]');
       const inputs = [...(group?.querySelectorAll("input") ?? [])] as HTMLInputElement[];
       const refused = inputs.find((input) => input.value === "unscoped_default_centroiding");
       const wayOut = inputs.find((input) => input.value === "no_additional_centroiding");
+      refused?.focus();
+      const refusedFocused = document.activeElement === refused;
+      refused?.click();
+      const refusedChecked = refused?.checked ?? null;
       wayOut?.focus();
       return {
         refusedDisabled: refused?.disabled ?? null,
+        refusedAriaDisabled: refused?.getAttribute("aria-disabled") ?? null,
+        refusedFocused,
+        refusedChecked,
         refusedDescribedBy: refused?.getAttribute("aria-describedby") ?? null,
         wayOutDisabled: wayOut?.disabled ?? null,
         wayOutFocused: document.activeElement === wayOut,
       };
     });
-    expect(keyboard.refusedDisabled).toBe(true);
+    expect(keyboard.refusedDisabled).toBe(false);
+    expect(keyboard.refusedAriaDisabled).toBe("true");
+    expect(keyboard.refusedFocused).toBe(true);
+    expect(keyboard.refusedChecked).toBe(false);
     expect(keyboard.wayOutDisabled).toBe(false);
     expect(keyboard.wayOutFocused).toBe(true);
+    expect(await axisStates("processing")).toMatchObject({ unscoped_default_centroiding: "unavailable" });
     // Described by the note whose sentence refusalNote() read above.
     const NOTE_ID = await noteId();
     expect(keyboard.refusedDescribedBy?.split(" ")[0]).toBe(NOTE_ID);

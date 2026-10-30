@@ -524,7 +524,6 @@ button:disabled,
 .conversion-section-head > h3 { margin-right: auto; }
 
 .conversion-form {
-  --conversion-label-width: 152px;
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -538,7 +537,7 @@ button:disabled,
 .conversion-form-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: var(--conversion-label-width) minmax(0, 1fr);
+  grid-template-columns: 152px minmax(0, 1fr);
   align-items: start;
   row-gap: 4px;
   margin: 0;
