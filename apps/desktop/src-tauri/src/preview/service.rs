@@ -15,6 +15,7 @@ mod figure_preview;
 mod output_opening;
 mod staging_recovery;
 mod workspace_clear;
+pub(crate) mod workspace_rows;
 
 use mscanvas_proteowizard::{
     ConversionSourceKind, LocalFileWriteError, LocalFileWriteFailure, MetadataEntry,

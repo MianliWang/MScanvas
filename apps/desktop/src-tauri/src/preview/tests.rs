@@ -4313,8 +4313,23 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // takes the same token, shares the same one figure-operation lane,
             // and answers whether the clipboard was written.
             "copy_selected_spectrum_plot",
+            // The ADR 0061 workspace restore store, on its own boundary like
+            // the preference store. Registered ahead of its interface: see
+            // `AHEAD_OF_THEIR_INTERFACE` below.
+            "read_workspace_restore",
+            "save_workspace_restore",
+            "clear_workspace_restore",
+            "set_workspace_restore_enabled",
         ]
     );
+    // Commands whose Rust side has landed before the webview calls them. Each
+    // entry leaves this list in the slice that gives it a caller.
+    const AHEAD_OF_THEIR_INTERFACE: [&str; 4] = [
+        "read_workspace_restore",
+        "save_workspace_restore",
+        "clear_workspace_restore",
+        "set_workspace_restore_enabled",
+    ];
     // The picker command is named for the workspace it fills rather than for
     // one format, because it now admits two families and `choose_mzml_files`
     // had become a name that said something false about what it does.
@@ -4334,7 +4349,10 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // Every command the product uses is a command the host registers, spelled
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
     // caller here and is deliberately not in this list.
-    for name in &registered[1..] {
+    for name in registered[1..]
+        .iter()
+        .filter(|name| !AHEAD_OF_THEIR_INTERFACE.contains(name))
+    {
         assert!(
             api.contains(&format!("\"{name}\""))
                 || drop_transport.contains(&format!("\"{name}\""))
