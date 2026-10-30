@@ -11,6 +11,15 @@ const RT = "svg.chromatogram-svg";
 const MZ = "svg.spectrum-plot";
 const SCANS = ".spectrum-table-panel";
 const row = (index: number) => SCANS + ' [data-source-index="' + index + '"]';
+/**
+ * Brings the scan table to the top of its scroller with the DOM's own
+ * scrollIntoView. WebdriverIO 9.32's element scrollIntoView is a wheel action
+ * whose origin is the element, so over the table it scrolls the table's own
+ * viewport instead, and the first rows are windowed away (CI, 2026-10-30).
+ */
+async function revealScans() {
+  await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "start" }), SCANS);
+}
 let output = "";
 const evidence: unknown[] = [];
 
@@ -183,7 +192,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     expect(await consoleEntries()).toEqual([]);
   });
   it("uses real full header and row targets, raw search, source identity and loaded-only navigation", async () => {
-    await open(); await browser.$(SCANS).scrollIntoView({ block: "start" });
+    await open(); await revealScans();
     const header = browser.$(SCANS + ' [role="columnheader"]:nth-child(2) button');
     const before = await scientificCalls(); await header.click(); await header.click();
     // The header shows "RT"; its full name is its tooltip and the rest of its name.
@@ -252,7 +261,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
   });
   it("windows the 100000 loaded rows, reaches End without a read and keeps the compact headers over their values", async () => {
     await open("complete", { width: 1200, height: 800, dpr: 1.25 }, 100000);
-    await browser.$(SCANS).scrollIntoView({ block: "start" });
+    await revealScans();
     await browser.$(row(0) + ' [role="gridcell"]:nth-child(4)').click();
     await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum"));
     const before = await scientificCalls();
@@ -270,7 +279,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
       const toggle = browser.$('[aria-controls="' + id + '"]');
       if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
     }
-    await browser.$(SCANS).scrollIntoView({ block: "start" });
+    await revealScans();
     await browser.execute(() => { document.querySelector(".spectrum-table-viewport")!.scrollLeft = 220; });
     const columns = await browser.execute(() => {
       const box = (node: Element) => { const r = node.getBoundingClientRect(); return { x: r.x, width: r.width }; };
