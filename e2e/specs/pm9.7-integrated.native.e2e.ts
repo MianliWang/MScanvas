@@ -114,10 +114,8 @@ async function navigate(label: string): Promise<void> {
   if (await tab.isExisting()) {
     await tab.click();
   } else {
-    // Project is the header menu's first item, not a tab (rebuild spec 1.1).
-    await browser.$("[data-project-menu]").click();
-    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
-    await browser.$('[data-project-menu-item="surface"]').click();
+    // Project is the header's third tab (direction A).
+    await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
   }
   await frames();
 }

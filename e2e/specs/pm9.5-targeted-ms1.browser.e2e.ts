@@ -114,11 +114,9 @@ async function navigate(name: string) {
     target?.click();
     return target !== undefined;
   }, name);
-  // Project is the header menu's first item, not a tab (rebuild spec 1.1).
+  // Project is the header's third tab (direction A).
   if (!found) {
-    await browser.$("[data-project-menu]").click();
-    await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
-    await browser.$('[data-project-menu-item="surface"]').click();
+    await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
   }
   await frames();
 }
