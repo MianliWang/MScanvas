@@ -1429,6 +1429,9 @@ fn a_unit_that_is_not_an_accession_is_refused_rather_than_carried() {
         "MS:",
         ":1000040",
         "m/z",
+        "MS:1:2",
+        format!("{}:1000040", "M".repeat(33)).as_str(),
+        format!("MS:{}", "1".repeat(33)).as_str(),
     ] {
         let spectrum = ms1_default(0).replace(
             "unitAccession=\"MS:1000040\"",
@@ -1440,4 +1443,18 @@ fn a_unit_that_is_not_an_accession_is_refused_rather_than_carried() {
             "{unit:?}"
         );
     }
+}
+
+#[test]
+fn a_unit_with_32_characters_on_each_side_is_an_accession() {
+    use crate::preview::{SelectedSpectrumResult, ValueUnitState};
+
+    let unit = format!("{}:{}", "M".repeat(32), "1".repeat(32));
+    let spectrum = ms1_default(0).replace(
+        "unitAccession=\"MS:1000040\"",
+        &format!("unitAccession=\"{unit}\""),
+    );
+    let spectrum =
+        SelectedSpectrumResult::from_native(selected(&document(&[spectrum]), 0).expect("decodes"));
+    assert_eq!(spectrum.mz_unit(), &ValueUnitState::Declared(unit));
 }

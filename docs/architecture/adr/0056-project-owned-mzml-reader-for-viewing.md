@@ -174,9 +174,9 @@ for:
 > it:
 >
 > - a declared array unit that is not an accession: the m/z or intensity
->   term's `unitAccession` must be `PREFIX:ID`, ASCII letters and digits on
->   each side of one colon (`unit_not_an_accession`). A unit reaches the
->   CSV/TSV preamble and the figure's labels, which admit no quoting. An
+>   term's `unitAccession` must be `PREFIX:ID`, 1 to 32 ASCII letters and
+>   digits on each side of one colon (`unit_not_an_accession`). A unit reaches
+>   the CSV/TSV preamble and the figure's labels, which admit no quoting. An
 >   undeclared unit stays undeclared.
 >
 > The desktop answers it with slice 2's `spectrum_refused` kind, detail
@@ -716,11 +716,15 @@ Slice 1 therefore meets this decision's merge condition.
 >   "not declared"; both reach the webview as not reported.
 > - **One reader refusal added, ratified by the owner on 2026-10-30** as an
 >   amendment of decision 1's closed list (the note there). A declared array
->   unit that is not an accession (`PREFIX:ID`, ASCII letters and digits)
->   refuses the spectrum (`unit_not_an_accession`): a unit reaches the CSV/TSV
->   preamble and figure labels, which admit no quoting.
-> - **Figures.** The export maps a declared profile spectrum to a joined trace
->   (decision 5), so its SVG, PNG, `Copy plot` and figure preview draw a line.
+>   unit that is not an accession (`PREFIX:ID`, each part 1 to 32 ASCII
+>   letters and digits) refuses the spectrum (`unit_not_an_accession`): a unit
+>   reaches the CSV/TSV preamble and figure labels, which admit no quoting.
+> - **Figures: slice 3's export half, delivered early.** Decision 9 gives
+>   profile lines on screen and in export to slice 3; slice 2 delivers the
+>   export half. That reorder is a third deviation from the delivery order. The
+>   owner ratified the other two, and this one is put to the owner with the
+>   pull request. The export maps a declared profile spectrum to a joined
+>   trace, so its SVG, PNG, `Copy plot` and figure preview draw a line.
 >   Where the line crosses a current range's edge between two samples, it is
 >   cut there at the interpolated height, and that height also sets the
 >   window's value scale, as the chromatogram's does. The caption states the
@@ -1009,23 +1013,8 @@ keeps today's row-capped state (decision 5). Two other ways:
   with the roster.
 - **[ADR 0028](0028-figure-renderer-and-semantic-specification.md).** A
   profile-spectrum mark joins the shared specification under its existing
-  rules (the export from slice 2, the screen from slice 3), and no rule
-  changes. If the mark changes the saved specification's schema, slice 3 owns
-  that step.
-- **[ADR 0029](0029-first-visible-spectrum-figure-and-data-export.md).**
-  "Representation and units stay unreported" holds for a spectrum that
-  declares neither. A native spectrum's figure and data document carry the
-  representation and array units the file declares. The full-source data
-  document is version 3 (a dated note there).
-- **[ADR 0034](0034-chromatogram-export-and-range-scope.md).** The
-  document's `#retention_time_unit` is `second` or `minute` where every row
-  declares that unit, and stays `unreported` where none does. The document is
-  version 2 (a dated note there).
-- **[ADR 0040](0040-spectrum-range-export.md).** The product is no longer
-  only in the discrete branch. A spectrum the file declares profile takes the
-  established-profile branch, clipped with an interpolated boundary value.
-  Centroid and undeclared spectra stay discrete. The range data document is
-  version 4 (a dated note there).
+  rules (decision 9, slice 3), and no rule changes. If the mark changes the
+  saved specification's schema, slice 3 owns that step.
 - **[ADR 0044](0044-conversion-configuration-authority.md).** Not amended.
   `backendUsable` still gates every mzML read, native or not. The follow-up
   that admits native reads without a usable backend or during a conversion
@@ -1050,3 +1039,24 @@ keeps today's row-capped state (decision 5). Two other ways:
 - **[The after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md#9-open-owner-decisions),
   section 9.** On acceptance, the open decision on a project-owned reader is
   answered here.
+
+> **2026-10-30, slice 2.** The list above stays as written. Slice 2's Rust
+> side (the slice-2 note under decision 9) adds these:
+>
+> - **[ADR 0028](0028-figure-renderer-and-semantic-specification.md).** The
+>   export draws the profile line from slice 2, the screen from slice 3. That
+>   reorder is put to the owner (the slice-2 note).
+> - **[ADR 0029](0029-first-visible-spectrum-figure-and-data-export.md).**
+>   "Representation and units stay unreported" holds for a spectrum that
+>   declares neither. A native spectrum's figure and data document carry the
+>   representation and array units the file declares. The full-source data
+>   document is version 3 (a dated note there).
+> - **[ADR 0034](0034-chromatogram-export-and-range-scope.md).** The
+>   document's `#retention_time_unit` is `second` or `minute` where every row
+>   declares that unit, and stays `unreported` where none does. The document
+>   is version 2 (a dated note there).
+> - **[ADR 0040](0040-spectrum-range-export.md).** The product is no longer
+>   only in the discrete branch. A spectrum the file declares profile takes
+>   the established-profile branch, clipped with an interpolated boundary
+>   value. Centroid and undeclared spectra stay discrete. The range data
+>   document is version 4 (a dated note there).
