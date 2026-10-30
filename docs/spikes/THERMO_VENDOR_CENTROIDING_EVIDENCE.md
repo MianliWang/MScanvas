@@ -356,6 +356,30 @@ They lower, after the source, to:
 
 Each `--filter` value is one argv element.
 
+**The source domain is coarser than the evidence, and that is a decision this
+record does not settle.** `MeasuredOn(&[ThermoRawFile])` covers every Thermo RAW
+file, including every instrument listed under "What it does not support". The
+evidence covers two instrument models.
+
+- **The argument for the family domain** is CNV-D2's own reasoning. Peak picking
+  is decided by the reader, and the same bundled RawFileReader decides it for
+  every Thermo instrument.
+- **The argument against it is sharpest for MS2+.** Its only profile-MS2 evidence
+  is 14 ion-trap spectra. Orbitrap (FTMS) profile MS2 is common on Q
+  Exactive-class methods, and it was not measured.
+
+The owner or the integration branch chooses one of two options:
+
+- verify both rows now on the family argument;
+- verify MS1+ now and keep MS2+ in the advanced tier, labelled, until a public
+  FTMS profile-MS2 file is measured.
+
+**Citing these cases needs a validator change.**
+`validate_the_admitted_intent_table_cites_measurements_that_support_it` resolves
+a row's evidence against the M6.2 ledger in `scripts/msconvert_evidence.py`. It
+does not know the case ids `TV1`, `TE1`, `TV2` and `TE2`, so the change that adds
+the rows must extend it.
+
 **The MS1+ row is CNV-005's "MS1+MS2" preset, and the MS2+ row is its "MS2"
 preset.** Both also act on MS3 and above, so the preset labels should say "MS1
 and above" and "MS2 and above".
