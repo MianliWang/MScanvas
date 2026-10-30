@@ -122,6 +122,35 @@ pub struct BackendReadingDto {
     pub authority: BackendAuthorityProjectionDto,
     #[serde(flatten)]
     pub availability: BackendAvailabilityDto,
+    /// The folder of the installation this reading describes, as display text
+    /// for the status indicator's tooltip, beside `release`.
+    ///
+    /// Present only on a usable reading, so a folder that does not work never
+    /// has its path sent anywhere. Never written to a diagnostics export or a
+    /// project document, and absent from a quarantined session's echo.
+    pub location: Option<String>,
+    /// What MSCanvas remembers about a ProteoWizard folder across launches.
+    pub remembered: RememberedFolderDto,
+}
+
+/// What MSCanvas remembers about a ProteoWizard folder across launches, as of
+/// one reading. Facts about the session and the preference store, not about
+/// the installation: none of it carries a path.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RememberedFolderDto {
+    /// Whether a folder is remembered, so the next launch starts discovery on
+    /// it. The forget action has something to forget exactly when this is set.
+    pub stored: bool,
+    /// Why the remembered folder was not used when this session started, so
+    /// discovery searched automatically instead. Kept on every later reading
+    /// until the user chooses, goes automatic or forgets. It stays remembered:
+    /// a drive that is unplugged today may be back tomorrow.
+    pub refused_at_startup: Option<BackendFailureDto>,
+    /// Why the usable folder chosen this session could not be remembered, as
+    /// the preference store's own problem code. It is still used for the
+    /// session; the next launch starts where the store says.
+    pub not_remembered: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

@@ -344,14 +344,14 @@ enum BoundTool {
 /// The production provider: a user-installed ProteoWizard `msaccess`.
 #[derive(Debug, Default)]
 pub struct ProteoWizardProvider {
-    /// The folder the user chose, for this session only.
+    /// The folder discovery is pointed at: one the user chose this session, or
+    /// the one a previous session remembered.
     ///
-    /// Never written to disk. A stored path would go on applying after the
-    /// session that chose it, to a folder whose contents MSCanvas has no way to
-    /// vouch for: automatic discovery searches `PATH` and the locations an
-    /// installer writes, and this deliberately looks wherever it is told.
-    /// Making the user say so again next time is what keeps it narrower than
-    /// either, and is the cost of that.
+    /// Not written to disk from here. The host remembers a chosen folder in
+    /// the preference store once it has read as usable, and a remembered one
+    /// is vouched for the same way every time: by the discovery this provider
+    /// runs on it, never by having been stored. A remembered folder that no
+    /// longer holds usable tools is reported and searched past at startup.
     chosen: RwLock<Option<PathBuf>>,
     /// Whether any discovery this provider has run left a process it started
     /// unaccounted for.

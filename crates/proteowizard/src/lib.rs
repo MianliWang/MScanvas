@@ -33,6 +33,7 @@ mod finalized_output;
 mod fs_guard;
 mod intent;
 mod mzml;
+mod mzml_reader;
 mod output_inspect;
 mod preview;
 mod process;
@@ -117,6 +118,14 @@ pub use mzml::{
     MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord, NumericPrecisionMarker,
     NumericPrecisionSet, PickerScopeRecord, ProcessingAlgorithm, ProcessingHistory,
     RepresentationMarker, RetentionTimeUnitMarker, UnsafeXmlKind, inspect_file, inspect_reader,
+};
+pub use mzml_reader::{
+    ArrayProblem, ArrayRole, ArrayUnit, BinaryDataType, MAX_DECODED_ARRAY_BYTES,
+    MAX_DECODED_ARRAY_POINTS, MAX_DECODED_SPECTRUM_BYTES, MzmlArray, MzmlOpenError, MzmlPrecursor,
+    MzmlRepresentation, MzmlRetentionTime, MzmlSelectedSpectrum, MzmlSpectrumError,
+    MzmlSpectrumRow, MzmlSpectrumTable, ReaderLimitKind, RequiredValue, RetentionTimeUnit,
+    read_selected_spectrum, read_selected_spectrum_from, read_spectrum_table,
+    read_spectrum_table_from,
 };
 pub use output_inspect::{
     FinalOutputVerdict, IntermediateFacts, MzxmlEncoding, MzxmlPrecision, NonMzmlFormat,

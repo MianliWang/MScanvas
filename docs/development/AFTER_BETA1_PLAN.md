@@ -153,7 +153,9 @@ accepted):
   ProteoWizard hold release. *R0 ran on 2026-10-29 on public files
   ([PR #157](https://github.com/MianliWang/MScanvas/pull/157)) and did not
   pass: the reader refused the `PXD081190` file, whose `<mzML>` has no
-  `version` attribute. Decision 2 below amends ADR 0056, and R0 runs again;*
+  `version` attribute. Decision 2 below amends ADR 0056. R0 ran again on
+  2026-10-30 and passed: the reader reads both files exactly
+  ([record](../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md));*
 - whether product pull requests may be merged without the owner. *Answered
   2026-10-29: they may (the merging bullet above);*
 - which demo direction the interface follows.
@@ -189,7 +191,10 @@ there is capacity, no decompilation, and every other point as recommended):
 5. **One-click view RAW** is accepted. Selecting a Thermo RAW row to view
    converts it with the verified defaults into an MSCanvas-owned cache, never
    the user's destination and never overwriting, then opens the result. It is
-   designed and implemented later.
+   designed and implemented later. *2026-10-30: designed in
+   [ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+   whose details follow the recommendations as the owner asked; it lists the
+   questions still open.*
 6. **Thermo vendor centroiding.** "MS1 and up" (`peakPicking vendor
    msLevel=1-`) becomes a verified row on the evidenced build. "MS2 and up"
    stays in the advanced tier, labelled not verified, until a public Orbitrap
@@ -220,7 +225,7 @@ there is capacity, no decompilation, and every other point as recommended):
   metadata, 0054 spreadsheet CSV. 0055 is msconvert parity (option C), 0056
   the mzML reader for viewing, 0057 conversion capacity and viewing during
   conversion, 0058 user-saved conversion presets, 0059 the vendor format
-  strategy.
+  strategy, 0060 one-click view of a Thermo RAW file.
 
 ## 4. Pace and estimating basis
 
@@ -405,6 +410,12 @@ writer and Rust's ownership of files.
 
 ### 7.1 Near-term engineering
 
+- One-click view of a Thermo RAW file
+  ([ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+  VIEW-009): four slices after ADR 0056's slices 2 and 3 (the cache library;
+  the operation and its commands; the interface; export provenance). The
+  interface slice waits on the owner's choice of interface direction. Native QA
+  needs a bounded ProteoWizard hold release.
 - CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
@@ -543,6 +554,7 @@ None can be delivered by engineering alone; each waits for one input.
 
 - The frontend's target: what "meets requirements" means in execution and
   scope, before any redesign, and which demo direction the interface follows.
+  *ADR 0060's interface slice waits on the direction (its open question 8).*
 - *Answered 2026-10-29:* the owner accepted
   [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)
   (option C) and
@@ -552,7 +564,8 @@ None can be delivered by engineering alone; each waits for one input.
 - ADR 0056's re-measurement (R0): the PRIDE `PXD081190` download, an MS1
   profile-mode file the owner authorizes, and a ProteoWizard hold release.
   *R0 ran on 2026-10-29 and did not pass; the owner amended ADR 0056's
-  decision 1 on 2026-10-30, and R0 runs again before slice 1 merges.*
+  decision 1 on 2026-10-30, and the rerun that day passed
+  ([record](../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md)).*
 - *Answered 2026-10-29:* product pull requests may be merged without the
   owner, once every required check passes and no review thread is open.
 - *Answered 2026-10-30* (section 2): the vendor format strategy (ADR 0059),

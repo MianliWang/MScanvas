@@ -17,6 +17,8 @@ repository.workspace = true
 test-support = []
 
 [dependencies]
+base64.workspace = true
+flate2.workspace = true
 quick-xml.workspace = true
 # ADR 0055 decision 1 (owner, 2026-10-29): the structured conversion intent
 # deserializes into this crate's own types. Already a workspace dependency and

@@ -20,17 +20,21 @@
 //! export renders through `svg::render`, so the wording, the geometry and the
 //! refusals below are now what somebody sees in a file they saved.
 
+mod metrics;
 pub mod spec;
 pub mod svg;
+mod ticks;
 
 #[cfg(test)]
 mod tests;
 
 pub use spec::{
-    AxisSpec, Caption, DataScope, DecodeError, Domain, FigureSize, FigureSpec, FigureTheme,
-    IntervalRole, IntervalSpec, Label, MAX_CAPTION_CHARS, MAX_FIGURE_EDGE, MAX_LABEL_CHARS,
-    MAX_PANELS, MIN_FIGURE_CHROME_HEIGHT, MIN_FIGURE_WIDTH, MIN_PANEL_HEIGHT, Marker, PanelSpec,
-    PlotKind, ReductionRule, SCHEMA_VERSION, SeriesSpec, SpecError, SpectrumRepresentation,
-    StyleRole, UnitState,
+    AxisSpec, BASE_TEXT_UNITS, Caption, DEFAULT_LINE_PT, DEFAULT_TEXT_PT, DOUBLE_COLUMN_WIDTH_MM,
+    DataScope, DecodeError, Domain, FigureSize, FigureSpec, FigureTheme, IntervalRole,
+    IntervalSpec, Label, MAX_CAPTION_CHARS, MAX_FIGURE_EDGE, MAX_LABEL_CHARS, MAX_LINE_PT,
+    MAX_PANELS, MAX_PRINT_EDGE_MM, MAX_TEXT_PT, MIN_FIGURE_CHROME_HEIGHT, MIN_FIGURE_WIDTH,
+    MIN_LINE_PT, MIN_PANEL_HEIGHT, MIN_PRINT_EDGE_MM, MIN_TEXT_PT, Marker, PanelSpec, PlotKind,
+    PrintSize, ReductionRule, SCHEMA_VERSION, SINGLE_COLUMN_WIDTH_MM, SeriesSpec, SpecError,
+    SpectrumRepresentation, StyleRole, UnitState,
 };
 pub use svg::render;

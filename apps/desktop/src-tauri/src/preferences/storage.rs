@@ -74,7 +74,7 @@ impl PreferenceRoot {
 }
 
 /// What reading the stored record found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoredRecord {
     /// Nothing is stored. An ordinary first run.
     Absent,

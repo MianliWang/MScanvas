@@ -134,9 +134,9 @@ PNG, `Copy plot`, and the figure settings all three figure outputs share.
 | Raster pipeline | `FigureSpec` → the same deterministic SVG → `resvg` → RGBA8 → `png` |
 | Second renderer | **none** — PNG is the vector figure on a pixel grid, and `Copy plot` is that path stopped one step earlier |
 | Width and height | the final dimensions: an SVG is authored at them, a PNG contains exactly that many pixels |
-| DPI | metadata only, written to `pHYs` as `round(dpi / 0.0254)` pixels a metre; it reaches neither the SVG nor the data documents |
+| DPI | for a figure sized in pixels, metadata only, written to `pHYs` as `round(dpi / 0.0254)` pixels a metre; it reaches neither the SVG nor the data documents. A printed figure (schema 4, below) is the other reading: its DPI decides its pixel count |
 | Raster bound | 32 megapixels, checked before allocation — a vector document can describe a figure a raster one cannot hold |
-| Typography | the machine's own fonts; no font is vendored or fetched, and a machine that resolves none refuses the raster formats and keeps SVG |
+| Typography | the machine's own fonts; no font is vendored or fetched, and a machine that resolves none refuses the raster formats and keeps SVG. Since schema 4 the family is named (below) and text is measured rather than stretched |
 | Clipboard | write-only, from Rust; the interface never receives an image and has no capability to read one |
 | Determinism | same bytes for the same figure **within one environment**; no cross-machine claim, because installed fonts decide glyphs |
 
@@ -188,6 +188,39 @@ only). A figure that uses neither draws exactly what it drew at schema 2; the
 three golden documents are byte-identical. The page shows this SVG as an inert
 image at the settings the export will use, so the screen and the file are one
 drawing. See [ADR 0048](adr/0048-stored-targeted-result-reuse-and-export.md).
+
+## The publication figure — schema 4
+
+What a journal figure needs that the screen-sized export did not have: axes
+that read like a scientific plot, a size on paper, and the user's own words.
+The science is unchanged -- the same panels, series, domains and disclosures --
+and the axis changes are the renderer's alone.
+
+| | |
+| --- | --- |
+| Ticks | 1-2-5 steps, aiming for five and taking four to six where the span allows; fewer where labels would collide or leave the page, never overlapping ones. Every tick is `k × m × 10^e` parsed from its decimal string, so `0.3` is the `f64` nearest three tenths and no label prints a binary artefact or a negative zero |
+| Tick labels | the step's own decimals (`0.0, 0.5, 1.0`); exponents (`2e6`, `1e-20`) from 10^6 up, below 10^-3, or past twelve characters. Where no exact tick exists -- a zero span, or a span narrow beside its magnitude -- the axis falls back to the end labels it always had |
+| Value axis | labels outside the plotting area, right-aligned against outward ticks; light gridlines at the ticks, in the axis colour at 18% opacity; 5% headroom past the data, never across zero. A range that excludes zero labels its floor, so it cannot read as zero-based |
+| Domain axis | labels centred under outward ticks; the data's own ends are not labelled |
+| Axis titles | `label (unit)` for a reported unit, `label (unit not reported)` for an unreported one, the bare label for a dimensionless one. No unit is ever inferred |
+| Edited titles | `FigureSpec::x_axis_title` / `y_axis_title`, `None` meaning the default; an edited title replaces the label and never the unit state. One title for panels whose axes differ (the linked figure's retention time and m/z) is refused as `AxisTitleAmbiguous`. The figure title is the existing `title`. At the DTO layer an empty field means the default (`export::edited_text`) |
+| Printed size | `FigureSize::printed(PrintSize { width_mm, height_mm, text_pt, line_pt })`; presets `SINGLE_COLUMN_WIDTH_MM` = 85 and `DOUBLE_COLUMN_WIDTH_MM` = 175; edges 20–600 mm, text 4–24 pt (default 7), lines 0.1–4 pt (default 0.75) |
+| Figure units of a printed figure | the length that makes 11 units (`BASE_TEXT_UNITS`) the chosen text size: `mm × 72 / 25.4 × 11 / text_pt`. Every existing floor therefore keeps meaning "room for the words", and text too large for its paper is refused by the same rule a pixel figure is |
+| SVG | `width="85.000mm" height="60.000mm"` over a `viewBox` in figure units, so a layout program places it at its millimetres and its text comes out at its points; lines are drawn at `line_pt` |
+| Raster | `RasterPlan::new(size, dpi)` is the one place a pixel count is made, and it asks the raster budget: a pixel figure keeps its pixels (M4.2), a printed one is `round(mm / 25.4 × dpi)` each way. `png_at` and `tiff_at` render through it |
+| TIFF | `tiff` 0.11.3, already in the lock through `image`, added as a direct dependency with only `lzw`; the lock gains no package. RGB8 (the figure is opaque), LZW, `XResolution`/`YResolution` in pixels per inch |
+| Text | `font-family="Arial, 'Liberation Sans', Helvetica, sans-serif"`, measured with Arial 7.060's `hmtx` advances, which Liberation Sans and Helvetica share by design. Text is drawn at its natural width with no `textLength`; only text that cannot fit its room at the floor size is condensed with `spacingAndGlyphs`, so no glyph is stretched |
+| Margins | the left gutter is as wide as the widest value label needs (40 units to 40% of the width), shared by every panel so stacked plots align; 40 units above the first panel when there is a heading and 12 when there is not; 8 below the last |
+| Schema | 4: `size.print`, `x_axis_title` and `y_axis_title`, each defaulting when absent, so a schema 3 shape still decodes as a pixel figure. A decoded printed size whose units disagree with its paper is refused |
+
+Known ceilings: no kerning and no shaping, so a viewer that falls through to a
+wider generic sans-serif draws text a few percent wider than laid out; per-panel
+axis titles for a multi-panel figure are not representable; tick labels use
+`2e6` rather than a shared multiplier.
+
+The three golden documents were regenerated for this change: they are the old
+figures with the new axes, titles and text, and their descriptions are
+byte-identical.
 
 ## Still open
 

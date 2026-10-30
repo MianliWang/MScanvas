@@ -27,7 +27,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use quick_xml::errors::Error as XmlError;
-use quick_xml::events::attributes::AttrError;
+use quick_xml::events::attributes::{AttrError, Attribute};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
 use thiserror::Error;
@@ -1167,7 +1167,7 @@ pub(crate) struct BoundedReader<R> {
     consumed: u64,
     event_start: u64,
     max_document_bytes: u64,
-    max_text_run_bytes: u64,
+    pub(crate) max_text_run_bytes: u64,
     pub(crate) tripped: Option<MzmlLimitKind>,
 }
 
@@ -1183,7 +1183,7 @@ impl<R> BoundedReader<R> {
         }
     }
 
-    const fn consumed(&self) -> u64 {
+    pub(crate) const fn consumed(&self) -> u64 {
         self.consumed
     }
 
@@ -1963,20 +1963,24 @@ pub(crate) fn is_predefined_reference(name: &str) -> bool {
 }
 
 #[derive(Debug, Default)]
-struct CapturedAttributes<'a> {
-    index: Option<Cow<'a, str>>,
-    id: Option<Cow<'a, str>>,
-    default_array_length: Option<Cow<'a, str>>,
-    count: Option<Cow<'a, str>>,
-    accession: Option<Cow<'a, str>>,
-    name: Option<Cow<'a, str>>,
+pub(crate) struct CapturedAttributes<'a> {
+    pub(crate) index: Option<Cow<'a, str>>,
+    pub(crate) id: Option<Cow<'a, str>>,
+    pub(crate) default_array_length: Option<Cow<'a, str>>,
+    pub(crate) count: Option<Cow<'a, str>>,
+    pub(crate) accession: Option<Cow<'a, str>>,
+    pub(crate) name: Option<Cow<'a, str>>,
     default_data_processing_ref: Option<Cow<'a, str>>,
     data_processing_ref: Option<Cow<'a, str>>,
-    value: Option<Cow<'a, str>>,
-    unit_accession: Option<Cow<'a, str>>,
+    pub(crate) value: Option<Cow<'a, str>>,
+    pub(crate) unit_accession: Option<Cow<'a, str>>,
+    // Read only by the viewing reader (`mzml_reader.rs`).
+    pub(crate) version: Option<Cow<'a, str>>,
+    pub(crate) reference: Option<Cow<'a, str>>,
+    pub(crate) array_length: Option<Cow<'a, str>>,
 }
 
-fn capture_attributes<'a>(
+pub(crate) fn capture_attributes<'a>(
     start: &'a BytesStart<'_>,
     limits: MzmlScanLimits,
 ) -> Result<CapturedAttributes<'a>, MzmlScanError> {
@@ -2018,20 +2022,28 @@ fn capture_attributes<'a>(
             b"dataProcessingRef" => &mut captured.data_processing_ref,
             b"value" => &mut captured.value,
             b"unitAccession" => &mut captured.unit_accession,
+            b"version" => &mut captured.version,
+            b"ref" => &mut captured.reference,
+            b"arrayLength" => &mut captured.array_length,
             _ => continue,
         };
-        // Normalization resolves only the five predefined entities, so any other
-        // general reference in an attribute value fails closed here.
-        let value = attribute
-            .normalized_value(XmlVersion::Implicit1_0)
-            .map_err(|error| match error {
-                XmlError::Escape(_) => MzmlScanError::Unsafe(UnsafeXmlKind::UndeclaredEntity),
-                XmlError::Encoding(_) => MzmlScanError::Malformed(MzmlMalformedKind::InvalidUtf8),
-                _ => MzmlScanError::Malformed(MzmlMalformedKind::NotWellFormed),
-            })?;
-        *slot = Some(value);
+        *slot = Some(attribute_value(&attribute)?);
     }
     Ok(captured)
+}
+
+/// Normalization resolves only the five predefined entities, so any other
+/// general reference in an attribute value fails closed here.
+pub(crate) fn attribute_value<'a>(
+    attribute: &Attribute<'a>,
+) -> Result<Cow<'a, str>, MzmlScanError> {
+    attribute
+        .normalized_value(XmlVersion::Implicit1_0)
+        .map_err(|error| match error {
+            XmlError::Escape(_) => MzmlScanError::Unsafe(UnsafeXmlKind::UndeclaredEntity),
+            XmlError::Encoding(_) => MzmlScanError::Malformed(MzmlMalformedKind::InvalidUtf8),
+            _ => MzmlScanError::Malformed(MzmlMalformedKind::NotWellFormed),
+        })
 }
 
 fn optional_u64(value: Option<&str>) -> Result<Option<u64>, MzmlScanError> {
