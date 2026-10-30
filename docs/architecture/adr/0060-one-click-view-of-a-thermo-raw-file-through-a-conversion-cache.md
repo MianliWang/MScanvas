@@ -523,6 +523,10 @@ writer can also reset `LastWriteTime` and `ChangeTime`.
 5. Room is made under the cap (decision 9).
 6. `entry` is renamed to `entries\<key>` with no replacement (`MoveFileExW`
    without `MOVEFILE_REPLACE_EXISTING`). The attempt directory is then removed.
+   (Dated note, 2026-10-30, slice 1: the attempt directory itself, `entry`'s
+   parent, is held without delete sharing from its creation until its
+   removal, so its name cannot be swapped for a link while paths through it
+   are used. That handle is outside `entry` and does not stop this rename.)
 
 Step 4 closes Checking output. Steps 5 and 6 are the Storing phase, and they
 cannot be cancelled (decision 10). The new entry's verification after step 6
