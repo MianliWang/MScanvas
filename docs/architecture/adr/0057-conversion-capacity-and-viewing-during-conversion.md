@@ -4,6 +4,12 @@ Status: **Accepted** by the owner on 2026-10-29. Nothing here is implemented
 yet. Until the slices below land, `MAX_CONVERSION_QUEUE_ITEMS` stays 16,
 conversion stays serial, and every preview read stays refused with
 `conversion_busy` while a conversion runs.
+
+*Note, 2026-10-29:* decision 3's Rust half is on `be/integrate` (draft PR
+#161): the constant is `MAX_WORKSPACE_DATASETS` (1,024), the diagnostics
+export bound is 128 KiB per diagnosed item, and the retained state is stated
+on the constant. The windowed lists and their rendered QA are not done, so
+that PR does not merge before them.
 Related: [0005](0005-mzml-preview-boundary.md),
 [0006](0006-multi-dataset-workspace-boundary.md),
 [0012](0012-first-visible-thermo-conversion.md),

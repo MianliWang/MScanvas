@@ -1088,35 +1088,32 @@ pub enum ConversionConflictPolicyDto {
     Skip,
 }
 
-/// The most items one queue may hold.
+/// The most items one queue may hold: the roster's own capacity, so one
+/// checked roster converts as one queue (ADR 0057, decision 3; owner,
+/// 2026-10-29).
 ///
-/// Far below the workspace's own capacity, and deliberately so.
+/// **The bound is structural.** A queue is built from roster rows, and the
+/// roster holds at most `MAX_WORKSPACE_DATASETS`. The sixteen this replaced
+/// made a user split one batch into several queues by hand, each with its own
+/// destination prompt and Run, and protected nothing the stop controls do not:
+/// a queue can be stopped whole, by the item converting, or by a waiting item,
+/// at any point (ADR 0015).
 ///
-/// **Re-decided after cancellation was understood, and the number is
-/// unchanged.** The premise it used to be defended on is not: it said the queue
-/// had "no cancellation", and a queue-level stop has existed since ADR 0015.
-/// A user can now also end the file being converted and leave the rest running,
-/// or settle a waiting item without running it.
-///
-/// What that changes is the cost of getting the size wrong, not the size. Items
-/// run serially, so a queue is still something a user commits to: at a
-/// realistic minute or three per acquisition, sixteen is something like half an
-/// hour, and a queue sized to the roster would be an afternoon. What is no
-/// longer true is that a wrong decision has to be waited out -- it can be ended
-/// at any point, in whichever of the three scopes fits.
-///
-/// **It remains a judgement about how long a person should be asked to commit
-/// to, and not a fact about the machine.** Nothing in this repository measures
-/// memory, throughput or scaling against the number of queue items, and this
-/// number must not be described as though something did. Deriving one from the
-/// largest fixture that happened to pass would be the same invention wearing a
-/// measurement's clothes.
+/// **It is a judgement, not a machine fact.** Items stay serial: at one to
+/// three minutes per acquisition, a full queue is roughly 17 to 51 hours.
+/// Nothing in this repository measures memory, throughput or scaling against
+/// the number of queue items, and this number must not be described as though
+/// something did. What a full queue retains is stated from the constants:
+/// at most one diagnostic per item (two 32 KiB excerpts each), one adoption
+/// ticket per finalized item holding one handle per output, and at most
+/// `MAX_CONVERSION_QUEUE_ITEMS × MAX_CONVERSION_OUTPUTS_PER_SOURCE` = 24,576
+/// claimed names and retained handles (`ConversionQueue::max_output_names`).
 ///
 /// Bounded is the part that is not a judgement. Rust is the only authority for
 /// it: the limit is enforced before a queue is committed, delivered to the
 /// interface through `ConversionQueuePlanDto.capacity`, and never restated as a
-/// frontend constant.
-pub const MAX_CONVERSION_QUEUE_ITEMS: usize = 16;
+/// frontend constant. Every interface list of queue items must be windowed.
+pub const MAX_CONVERSION_QUEUE_ITEMS: usize = MAX_WORKSPACE_DATASETS;
 
 /// One bounded, path-free read of the session's conversion slot.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

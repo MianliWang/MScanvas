@@ -190,6 +190,14 @@ MAX_DIAGNOSTIC_ITEMS                = MAX_CONVERSION_QUEUE_ITEMS (16)
 MAX_DIAGNOSTIC_EXPORT_BYTES         = 2 MiB    (the whole document)
 ```
 
+> **Amended 2026-10-29 by [ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md),
+> decision 3, on `be/integrate` (draft PR #161).** The item bound follows the queue capacity to
+> 1,024. The document bound is now stated per item:
+> `max_diagnostic_export_bytes(n)` = 128 KiB × the diagnosed item count
+> (counting at least one). At sixteen items that is the 2 MiB above; a full
+> queue is 128 MiB. A document over it is still refused whole, never
+> truncated.
+
 The stream bound applies after decoding and redaction, to the text as it will be
 written: what a bound on a file has to promise is about the file, and redaction
 changes the length of everything it touches. It is far below the process

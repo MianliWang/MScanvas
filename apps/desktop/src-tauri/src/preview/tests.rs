@@ -10280,7 +10280,7 @@ fn the_plan_summary_describes_the_fixed_plan_for_a_vendor_and_an_mzml_row() {
     assert_eq!(summary.items.len(), 1);
     assert_eq!(summary.items[0].dataset_handle, handle);
     assert_eq!(plan_output_name(&summary.items[0]), "acquisition.mzML");
-    assert_eq!(summary.capacity, 16);
+    assert_eq!(summary.capacity, MAX_CONVERSION_QUEUE_ITEMS);
     assert_eq!(summary.output_format, ConversionOutputFormatDto::MzMl);
     assert_eq!(summary.compression, "zlib");
     assert_eq!(summary.validation_mode, ValidationModeDto::OutputOnly);
@@ -11293,20 +11293,22 @@ fn a_queue_is_bounded_deduplicated_and_convertible_or_it_is_refused() {
             .kind,
         "queue_is_empty"
     );
-    // The number itself, not only the refusal above it. M6.8 re-decided this
-    // bound and kept it; a test that only refused "one more than the constant"
-    // would pass for any value the constant took, including one nobody chose.
+    // The number itself, not only the refusal above it. ADR 0057 raised it to
+    // the roster's capacity; a test that only refused "one more than the
+    // constant" would pass for any value the constant took, including one
+    // nobody chose.
     assert_eq!(
-        MAX_CONVERSION_QUEUE_ITEMS, 16,
-        "the queue bound is sixteen, decided under ADR 0043's CNV-D6"
+        MAX_CONVERSION_QUEUE_ITEMS, 1_024,
+        "the queue bound is the roster's, decided under ADR 0057 decision 3"
     );
+    assert_eq!(MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS);
     let too_many: Vec<String> = (0..MAX_CONVERSION_QUEUE_ITEMS + 1)
         .map(|_| handle.clone())
         .collect();
     assert_eq!(
         service
             .conversion_queue_plan_now(&too_many)
-            .expect_err("seventeen is more than a session runs")
+            .expect_err("one more than the roster is more than a session runs")
             .kind,
         "queue_too_large"
     );
@@ -16634,13 +16636,21 @@ fn m67_capacity_is_authoritative_before_queue_destination_or_provider_work() {
     let provider = ConvertingProvider::offering_every_admitted_row();
     let launches = provider.runner.launches();
     let service = PreviewService::new(Box::new(provider));
-    let handles: Vec<_> = (0..=MAX_CONVERSION_QUEUE_ITEMS)
+    let handles: Vec<_> = (0..MAX_CONVERSION_QUEUE_ITEMS)
         .map(|index| {
             add_one_acquisition(
                 &service,
                 &fixture.thermo_raw(&format!("source-{index}.raw")),
             )
         })
+        .collect();
+    // The bound is the roster's, so one more than it is reachable only by
+    // naming a row twice. Capacity is answered before any row is resolved or
+    // compared, so it still answers first.
+    let over: Vec<_> = handles
+        .iter()
+        .chain(std::iter::once(&handles[0]))
+        .cloned()
         .collect();
     let receipt = current_receipt(&service);
     let document = current_document(&service);
@@ -16651,7 +16661,7 @@ fn m67_capacity_is_authoritative_before_queue_destination_or_provider_work() {
         MAX_CONVERSION_QUEUE_ITEMS + 1,
     ] {
         let mut request = plan_request(
-            &handles[..count],
+            &over[..count],
             a_chosen_intent(),
             ConversionConflictPolicyDto::Fail,
             receipt,
@@ -16683,7 +16693,7 @@ fn m67_capacity_is_authoritative_before_queue_destination_or_provider_work() {
             );
             let refused = service.begin_conversion_queue(
                 &begin_request(
-                    &handles,
+                    &over,
                     a_chosen_intent(),
                     ConversionConflictPolicyDto::Fail,
                     receipt,
@@ -18497,13 +18507,31 @@ impl ProcessRunner for VerboseFailingRunner {
 /// hiding the fact that the bound was reached.
 #[test]
 fn a_diagnostics_document_over_the_bound_is_refused_and_writes_nothing() {
+    use super::diagnostics::max_diagnostic_export_bytes;
+    assert_eq!(
+        max_diagnostic_export_bytes(16),
+        2 * 1024 * 1024,
+        "sixteen items keep the 2 MiB they had"
+    );
+    assert_eq!(
+        max_diagnostic_export_bytes(MAX_CONVERSION_QUEUE_ITEMS),
+        128 * 1024 * 1024
+    );
+    assert_eq!(
+        max_diagnostic_export_bytes(0),
+        max_diagnostic_export_bytes(1)
+    );
     let fixture = TestFile::new("diagnostics-bound");
     let destination = destination_root(&fixture, "out");
     let service = PreviewService::new(Box::new(ConvertingProvider::new(
         evidenced_capabilities(),
         VerboseFailingRunner,
     )));
-    let handles: Vec<String> = (0..MAX_CONVERSION_QUEUE_ITEMS)
+    // The bound is per diagnosed item (ADR 0057, decision 3), so two items
+    // whose excerpts double under escaping exceed it as sixteen did, without
+    // running a full queue of 1,024.
+    let count = 2;
+    let handles: Vec<String> = (0..count)
         .map(|index| {
             add_one_acquisition(&service, &fixture.thermo_raw(&format!("item-{index}.raw")))
         })
@@ -18511,11 +18539,8 @@ fn a_diagnostics_document_over_the_bound_is_refused_and_writes_nothing() {
 
     let update = queue_and_run(&service, &handles, &destination);
     let queue = terminal_queue(&update);
-    assert_eq!(queue.failed_count, MAX_CONVERSION_QUEUE_ITEMS);
-    assert_eq!(
-        update.diagnostics.eligible_item_count, MAX_CONVERSION_QUEUE_ITEMS,
-        "the queue's own capacity is what bounds the item count"
-    );
+    assert_eq!(queue.failed_count, count);
+    assert_eq!(update.diagnostics.eligible_item_count, count);
 
     let saved = destination.join("diagnostics.json");
     let refusal = export_diagnostics(&service, &terminal_operation(&update), &saved)
@@ -21980,9 +22005,9 @@ fn the_queue_output_name_authority_is_bounded() {
     assert_eq!(
         bound,
         MAX_CONVERSION_QUEUE_ITEMS * MAX_CONVERSION_OUTPUTS_PER_SOURCE,
-        "sixteen acquisitions of at most twenty-four documents each"
+        "1,024 acquisitions of at most twenty-four documents each"
     );
-    assert_eq!(bound, 384, "the bound is 384 with today's constants");
+    assert_eq!(bound, 24_576, "the bound is 24,576 with today's constants");
     assert!(
         claimed.is_empty(),
         "a set claims nothing before it has published"

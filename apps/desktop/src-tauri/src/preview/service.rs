@@ -71,7 +71,7 @@ use super::diagnostics::OutputSetDiagnosticFacts;
 use super::diagnostics::payload;
 use super::diagnostics::{
     DIAGNOSTICS_FILE_NAME, DiagnosticsExportRequest, DiagnosticsExportSlot,
-    MAX_DIAGNOSTIC_EXPORT_BYTES,
+    max_diagnostic_export_bytes,
 };
 use super::dialog::{DIAGNOSTICS_SAVE_DIALOG, SaveDialogFacts};
 use super::discovery::{
@@ -4322,6 +4322,7 @@ impl PreviewService {
             return Err(diagnostics_export_superseded());
         }
 
+        let bound = max_diagnostic_export_bytes(tickets.len());
         let rendered = payload::render(&DiagnosticsExportRequest {
             queue,
             provider,
@@ -4330,7 +4331,7 @@ impl PreviewService {
         // Before anything is opened or created. A document over the bound is a
         // refusal and never a truncation: half a JSON document is not a smaller
         // diagnostics file, it is one no reader can open.
-        if rendered.bytes.len() > MAX_DIAGNOSTIC_EXPORT_BYTES {
+        if rendered.bytes.len() > bound {
             return Err(diagnostics_too_large());
         }
 

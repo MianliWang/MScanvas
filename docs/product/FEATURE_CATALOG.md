@@ -323,7 +323,8 @@ kept: the file is the user's, and replacing the queue drops this session's memor
 of having written one. See
 [ADR 0017](../architecture/adr/0017-redacted-conversion-diagnostics-export.md).
 
-The named limits: at most **16** items per queue, three named vendor families,
+The named limits: at most **16** items per queue (1,024, the roster's capacity,
+under ADR 0057 decision 3 on `be/integrate` (draft PR #161)), three named vendor families,
 regular files only, one folder, no overwrite, three stop scopes — the whole
 queue, the file being converted, and a row still waiting — but no way to take a
 row out of a running queue, no percentage, no

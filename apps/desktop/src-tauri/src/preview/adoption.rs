@@ -105,8 +105,8 @@ impl AdoptionRefusal {
 /// afterwards from a filename and a report: the whole value of this is that it
 /// holds the object rather than a description of it.
 ///
-/// Bounded by the queue that owns it — sixteen items at most, one ticket each —
-/// and dropped with it.
+/// Bounded by the queue that owns it — `MAX_CONVERSION_QUEUE_ITEMS` items at
+/// most, one ticket each — and dropped with it.
 static NEXT_OUTPUT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub(super) struct FinalizedOutputAdoptionTicket {

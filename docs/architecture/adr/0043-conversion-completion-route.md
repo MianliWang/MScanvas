@@ -2281,6 +2281,12 @@ The locked semantics:
 
 ### CNV-D6 — queue capacity
 
+> **Re-decided 2026-10-29 by [ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md),
+> decision 3, on `be/integrate` (draft PR #161): the value is 1,024, the roster's capacity.**
+> Bounded-ness stays `LOCKED`: Rust enforces it, reports it as the plan's
+> `capacity` and refuses with `queue_too_large`, and no frontend constant
+> restates it.
+
 **Status: `DECIDED` by M6.8, 2026-09-08 — the value is `16`, unchanged, on a
 stated basis. Bounded-ness remains `LOCKED`.** M6.7 surfaced the bound; M6.8
 re-decided it after cancellation was understood and kept it, replacing the stale

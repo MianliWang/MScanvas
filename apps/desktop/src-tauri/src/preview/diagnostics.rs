@@ -52,7 +52,8 @@ const DIAGNOSTICS_RESERVATION_PREFIX: &str = "diagnostics-reservation-";
 /// The default name the native save dialog offers.
 pub(super) const DIAGNOSTICS_FILE_NAME: &str = "mscanvas-conversion-diagnostics.json";
 
-/// The largest diagnostics document MSCanvas will write.
+/// The largest diagnostics document MSCanvas will write for a document that
+/// diagnoses `items` queue items.
 ///
 /// Checked against the serialized UTF-8 bytes plus their trailing newline,
 /// before anything is created. A payload over it is a refusal and not a
@@ -60,10 +61,16 @@ pub(super) const DIAGNOSTICS_FILE_NAME: &str = "mscanvas-conversion-diagnostics.
 /// would hand the user something no reader can open in exchange for hiding the
 /// fact that the bound was reached.
 ///
-/// Sixteen items, each with two 32 KiB excerpts, is a little over one mebibyte
-/// of text before structure. Two is that with room for the structure and the
-/// facts, and far below what a person or a text editor finds awkward.
-pub(super) const MAX_DIAGNOSTIC_EXPORT_BYTES: usize = 2 * 1024 * 1024;
+/// **The rule (ADR 0057, decision 3): 128 KiB per diagnosed item, counting at
+/// least one.** One item may retain two 32 KiB excerpts; 128 KiB is those
+/// with room for the structure and the facts. At sixteen items it is the 2 MiB
+/// this bound used to be, and a full queue of 1,024 is 128 MiB. Excerpts that
+/// need heavy escaping can still exceed it, and the document is then refused
+/// whole.
+pub(super) const fn max_diagnostic_export_bytes(items: usize) -> usize {
+    const PER_ITEM: usize = 128 * 1024;
+    PER_ITEM * if items == 0 { 1 } else { items }
+}
 
 /// The one sentence this feature must never be shipped without.
 ///
@@ -116,7 +123,8 @@ impl fmt::Debug for DiagnosticsReservationId {
 ///
 /// One per queue item at most, replaced whole when a later attempt settles, and
 /// dropped when the queue is replaced or the process exits. Bounded by the
-/// queue's existing sixteen items and by the excerpt bound inside each.
+/// queue's capacity (`MAX_CONVERSION_QUEUE_ITEMS`) and by the excerpt bound
+/// inside each: up to about 64 MiB of excerpts across a full queue.
 pub(super) struct ConversionFailureDiagnosticTicket {
     identity: DiagnosticItemIdentity,
     /// The state this was built for. Compared against the item's current state

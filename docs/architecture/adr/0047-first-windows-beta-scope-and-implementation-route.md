@@ -82,7 +82,7 @@ Rust owns filesystem identity, discovery, backend receipts, queue/capacity,
 processes and scientific data. React consumes typed operations and projections,
 never shell strings, unrestricted paths or a second capability registry. Keep
 source-qualified intents, bound order, authoritative capacity (currently sixteen
-serial items), destination revalidation/cleanup, Fail/Skip and
+serial items; 1,024 under ADR 0057, decision 3, 2026-10-29), destination revalidation/cleanup, Fail/Skip and
 `OVERWRITE_REFUSED`, confirmed cancellation versus quarantine, and independent
 process/staged/finalized/integrity/adoption facts. Output-only validation does
 not establish vendor fidelity. Adoption stays explicit and identity-checked;

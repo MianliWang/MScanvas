@@ -112,7 +112,8 @@ admitted destination identity, and the retained object with its validated length
 and digest.
 
 Private, unserialized, opaque in `Debug`, with no raw-handle accessor and no path
-in routine formatting. Bounded by the queue's existing sixteen items. Created
+in routine formatting. Bounded by the queue's existing sixteen items (1,024
+since ADR 0057, decision 3, 2026-10-29). Created
 only from a finalization that happened, and never reconstructed later from a name
 and a report — reconstructing one would be exactly the path-trusting this exists
 to avoid. Dropped when the queue is replaced or the process exits, and dropping

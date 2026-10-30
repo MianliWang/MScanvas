@@ -963,7 +963,8 @@ impl ConversionQueue {
         if items.len() > MAX_CONVERSION_QUEUE_ITEMS {
             return Err(queue_too_large());
         }
-        // Quadratic over at most sixteen items, and deliberately so: a set
+        // Quadratic over at most `MAX_CONVERSION_QUEUE_ITEMS` items, about half
+        // a million integer comparisons at 1,024, and deliberately so: a set
         // would need one more thing to keep in step with the order, and the
         // order is the part that matters here.
         for (index, item) in items.iter().enumerate() {
