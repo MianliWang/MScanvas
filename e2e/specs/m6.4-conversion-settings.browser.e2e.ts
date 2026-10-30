@@ -220,8 +220,9 @@ async function advanced(): Promise<void> {
   const ready = `${SETTINGS}[data-settings-state="ready"]`;
   await browser.$(ready).waitForExist({ timeout: 30_000 });
   if ((await browser.$(ready).getAttribute("data-settings-view")) === "advanced") return;
+  // Advanced is a disclosure under Basic (direction A 2.2).
   await browser.execute((css: string) => {
-    [...document.querySelectorAll<HTMLButtonElement>(`${css} .conversion-section-head [role="radio"]`)][1]?.click();
+    document.querySelector<HTMLButtonElement>(`${css} .conversion-advanced > .ui-button`)?.click();
   }, ready);
   await browser.waitUntil(async () => (await browser.$(ready).getAttribute("data-settings-view")) === "advanced", {
     timeout: 15_000,
@@ -275,10 +276,18 @@ async function requestsTo(command: string): Promise<Record<string, unknown>[]> {
 }
 
 /** The state each choice of one axis is in, by value. */
+/**
+ * One axis's group. The paired precisions are Advanced's (a disclosure under
+ * Basic, direction A 2.2); Basic's two width pairs carry the same axis name.
+ */
+function axisGroup(axis: string): string {
+  return axis === "precision" ? '.conversion-advanced [data-axis="precision"]' : `[data-axis="${axis}"]`;
+}
+
 async function axisStates(axis: string): Promise<Record<string, string>> {
   await advanced();
-  return browser.execute((dimension: string) => {
-    const group = document.querySelector(`[data-axis="${dimension}"]`);
+  return browser.execute((css: string) => {
+    const group = document.querySelector(css);
     const states: Record<string, string> = {};
     // A tile or a segment, whichever the axis is drawn as (direction A 2.2).
     for (const choice of group?.querySelectorAll(".conversion-setting-choice, .conversion-segment") ?? []) {
@@ -287,7 +296,7 @@ async function axisStates(axis: string): Promise<Record<string, string>> {
         choice.getAttribute("data-choice-state") ?? "";
     }
     return states;
-  }, axis) as Promise<Record<string, string>>;
+  }, axisGroup(axis)) as Promise<Record<string, string>>;
 }
 
 /**
@@ -297,13 +306,13 @@ async function axisStates(axis: string): Promise<Record<string, string>> {
  */
 async function chooseAxisValue(axis: string, value: string): Promise<void> {
   await advanced();
-  const input = `[data-axis="${axis}"] input[value="${value}"]`;
+  const input = `${axisGroup(axis)} input[value="${value}"]`;
   await browser.$(input).waitForExist({ timeout: 30_000 });
   await browser.waitUntil(async () => !(await isRefused(input)), {
     timeout: 30_000,
     timeoutMsg: `${axis} ${value} was never offered`,
   });
-  await browser.$(`[data-axis="${axis}"] label:has(> input[value="${value}"])`).click();
+  await browser.$(`${axisGroup(axis)} label:has(> input[value="${value}"])`).click();
 }
 
 /** What the plan summary says about one of its named facts. */
@@ -443,9 +452,11 @@ describe("M6.4 — E1: a healthy configuration and a plan bound to it", () => {
     expect(await axisStates("processing")).toMatchObject({
       no_additional_centroiding: "selected",
     });
-    expect(await planFact("Peaks")).toBe("No additional centroiding");
-    expect(await planFact("Stored precision")).toBe("m/z 64-bit · intensity 32-bit");
-    expect(await planFact("Output")).toBe("mzML");
+    // The rail lists only what differs from the shipped settings (C11): the
+    // shipped combination repeats nothing from the form beside it.
+    expect(await planFact("Peaks")).toBe(null);
+    expect(await planFact("Stored precision")).toBe(null);
+    expect(await planFact("Output")).toBe(null);
 
     expect(await isRefused(CONVERT)).toBe(false);
     expect(await reasons()).toEqual([]);
@@ -478,8 +489,9 @@ describe("M6.4 — E2: one axis moves, and only that axis", () => {
     expect(await axisStates("processing")).toMatchObject({
       no_additional_centroiding: "selected",
     });
-    expect(await planFact("Peaks")).toBe("No additional centroiding");
-    expect(await planFact("Spectra")).toBe("All spectra");
+    // Untouched axes are the shipped ones, so the rail does not list them (C11).
+    expect(await planFact("Peaks")).toBe(null);
+    expect(await planFact("Spectra")).toBe(null);
   });
 
   it("refuses an unmeasured combination by naming the combination, not the value", async () => {
@@ -771,7 +783,8 @@ describe("M6.4 — E7: a recheck that resolves the same build changes nothing", 
     });
 
     expect(await settingsState()).toBe("ready");
-    expect(await planFact("Peaks")).toBe("No additional centroiding");
+    // The plan is still there: its destination is still said.
+    expect(await planFact("Requested destination")).not.toBe(null);
     expect(await callsTo("read_conversion_configuration")).toBe(readsBefore);
     expect(await callsTo("describe_workspace_conversion_queue")).toBe(plansBefore);
   });

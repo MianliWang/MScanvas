@@ -30,7 +30,9 @@ async function openSettings() {
 }
 async function choose(value: string) { await browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click(); }
 async function press(name: string) {
-  await browser.$(DIALOG).$(name === en.close || name === zh.close ? `button[aria-label="${name}"]` : `button=${name}`).click();
+  // Close is the footer's one button since Settings apply immediately (D4);
+  // found by its role in the dialog, whichever language is showing.
+  await browser.$(DIALOG).$(name === en.close || name === zh.close ? "[data-settings-close]" : `button=${name}`).click();
 }
 async function returned() {
   await browser.$(DIALOG).waitForExist({ reverse: true });

@@ -334,10 +334,10 @@ describe("the selected spectrum's range chooser", () => {
     });
     await openTheChooser();
 
-    // Not choosable, and said. The group stays, frozen on the full source,
-    // with the line under it saying why -- an inert option a reader cannot
-    // explain would be worse than one whose reason is beside it.
-    expect(await browser.$(CURRENT_OPTION).isEnabled()).toBe(false);
+    // Not choosable, and said. The option is refused, not disabled (B4): it
+    // stays reachable, the group stays on the full source, and the line under
+    // it says why.
+    expect(await browser.$(CURRENT_OPTION).getAttribute("aria-disabled")).toBe("true");
     expect(await browser.$(FULL_OPTION).getAttribute("aria-checked")).toBe("true");
     expect(await textOf(RANGE_NOTE)).toContain("No m/z range");
 

@@ -422,12 +422,13 @@ describe("M8.4 layer identity and provenance, rendered", () => {
       disabled: "true",
       hardDisabled: false,
       unavailable: "notInWorkbench",
-      title: "Add this reference to the Workbench first.",
+      // The reason is the visible line under the row's actions (B4), not a tooltip.
+      title: null,
       describedBy: `project-layer-reason-${INPUT}`,
       reason: "Add this reference to the Workbench first.",
     });
     expect(start.layersEmpty).toBe(
-      "No layers yet. Create one from a reference in the Workbench.",
+      "No layers yet.",
     );
     expect(start.layerRows).toEqual([]);
     const idle = await ipcCalls();
@@ -644,7 +645,7 @@ describe("M8.4 layer identity and provenance, rendered", () => {
     const removed = await capture("m84-10-layer-removed");
     expect(removed.layerRows).toEqual([]);
     expect(removed.layersEmpty).toBe(
-      "No layers yet. Create one from a reference in the Workbench.",
+      "No layers yet.",
     );
     expect(removed.layerControls.map((control) => control.input)).toEqual([INPUT]);
     // The reopened project remembers no row, so the offer is back with its

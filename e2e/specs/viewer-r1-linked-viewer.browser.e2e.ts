@@ -358,12 +358,15 @@ describe("the linked viewer, rendered", () => {
       });
 
       const panel = await boxOf(CHROMATOGRAM);
-      for (const caption of [AXIS_CAPTION, READOUT, RANGE]) {
-        const text = (await browser.$(caption).getText()).trim();
+      for (const caption of [AXIS_CAPTION, RANGE]) {
+        const text = String(await browser.$(caption).getProperty("textContent")).trim();
         expect(text.length).toBeGreaterThan(0);
         const box = await boxOf(caption);
         expect(box.bottom).toBeLessThanOrEqual(panel.bottom + 0.5);
       }
+      // The readout is the plot's description, on screen only while the
+      // pointer or the keyboard is on the plot (P9).
+      expect(String(await browser.$(READOUT).getProperty("textContent")).length).toBeGreaterThan(0);
       for (const group of [".chromatogram-panel .plot-traces", ".chromatogram-panel .plot-tools"]) {
         const box = await boxOf(group);
         expect(box.top).toBeGreaterThanOrEqual(panel.top - 0.5);
@@ -454,16 +457,16 @@ describe("the linked viewer, rendered", () => {
       expect(reads).toHaveLength(1);
       expect(reads[0]?.args["index"]).toBe(60);
 
-      // The marker is a rule and a glyph rather than a colour.
+      // The marker is a labelled full-height rule rather than a colour (P7).
       const marker = await browser.execute(() => {
         const group = document.querySelector("g.chromatogram-selected");
         return {
           present: group !== null,
           lines: group?.querySelectorAll("line").length ?? 0,
-          glyphs: group?.querySelectorAll("rect").length ?? 0,
+          labelled: (document.querySelector(".chromatogram-cursor-label")?.textContent ?? "").startsWith("Scan "),
         };
       });
-      expect(marker).toEqual({ present: true, lines: 1, glyphs: 1 });
+      expect(marker).toEqual({ present: true, lines: 1, labelled: true });
       expect(await unexpectedConsole()).toEqual([]);
     });
 

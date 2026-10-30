@@ -311,14 +311,21 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     let calls = await ipcCalls();
     expect(calls.filter(call => call.command === "save_ui_preferences")).toEqual([]);
 
+    // Each choice applies and saves at once (GOALS D4); the store confirms
+    // each record it was sent.
     await setInvokeResult("save_ui_preferences", {
       outcome: "saved",
       revision: 1,
-      preferences: record({ locale: "zh-CN", density: "compact" }),
+      preferences: record({ locale: "zh-CN", density: "comfortable" }),
     });
     await openSettings();
-    // Each choice applies and saves at once (GOALS D4).
     await choose("zh-CN");
+    await browser.waitUntil(async () => (await ipcCalls()).filter(call => call.command === "save_ui_preferences").length === 1);
+    await setInvokeResult("save_ui_preferences", {
+      outcome: "saved",
+      revision: 2,
+      preferences: record({ locale: "zh-CN", density: "compact" }),
+    });
     await choose("compact");
     await capture("03-settings-applied-zh-compact");
     await press(zh.close);
@@ -414,13 +421,16 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await returned();
     const toggles = await browser.execute(() => [...document.querySelectorAll(".workbench-global-actions button")]
       .map(control => ({ text: (control.textContent ?? "").trim(), disabled: (control as HTMLButtonElement).disabled,
-        refused: control.getAttribute("aria-disabled") === "true", title: control.getAttribute("title") })));
+        refused: control.getAttribute("aria-disabled") === "true",
+        // The reason the button points at, shown beside it on hover and focus.
+        reason: (control.getAttribute("aria-describedby") ?? "").split(" ")
+          .map(id => document.getElementById(id)?.textContent ?? "").join(" ").trim() })));
     evidence.push({ kind: "startup gating", toggles });
     // Every refused control says why, and can be reached to be told: a
     // `disabled` button is not in the tab order, so a tooltip on one is a
     // reason only a pointer user can read.
     expect(toggles.filter(control => control.refused).length).toBeGreaterThan(0);
-    expect(toggles.filter(control => control.refused).every(control => control.title === en.panelsLoading && !control.disabled)).toBe(true);
+    expect(toggles.filter(control => control.refused).every(control => control.reason === en.panelsLoading && !control.disabled)).toBe(true);
     expect((await ipcCalls()).filter(call => call.command === "save_ui_preferences")).toEqual([]);
 
     await releaseInvokeHold("load_ui_preferences");
@@ -508,9 +518,14 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       expect(state.backendStatus).toBe(expected);
       // Every state a check could change offers a way to ask again. A
       // quarantined session offers none: only a restart fixes it, and no
-      // control here restarts (rendered review, issue 3). The help is in all.
-      if (expected === "quarantined") expect(state.backendActions).toEqual({});
-      else expect(Object.keys(state.backendActions)).toContain("recheck");
+      // control here restarts (rendered review, issue 3), and no setup help
+      // either: setting up does not end a quarantine (S7).
+      if (expected === "quarantined") {
+        expect(state.backendActions).toEqual({});
+        expect(await browser.$("[data-backend-help]").isDisplayed()).toBe(false);
+        continue;
+      }
+      expect(Object.keys(state.backendActions)).toContain("recheck");
       expect(state.help).not.toBeNull();
       expect(state.helpOpen).toBe(false);
 
@@ -536,6 +551,8 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await browser.url("/");
     await browser.$("[data-backend-status]").waitForDisplayed();
     await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
+    // The help is in the details the status bar's item opens (S7).
+    await showBackendBanner();
     await browser.$("[data-backend-help]").click();
     await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "true"));
     const chinese = await capture("18-backend-missing-help-zh");
@@ -617,7 +634,8 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     // The help, at the shortest viewport this milestone supports. A 640px
     // window cannot show eight paragraphs at once whatever the bound is, so
     // the requirement here is that the end of what the reader opened can be
-    // reached -- not that it all fits.
+    // reached -- not that it all fits. It is in the status bar's details (S7).
+    await showBackendBanner();
     await browser.$("[data-backend-help]").click();
     await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "true"));
     const narrowHelp = await capture("20b-narrow-help-open");

@@ -253,7 +253,8 @@ describe("M6.6 destination and conflict review", () => {
     } });
     await browser.$('.conversion-running [aria-label="Queue destination"]').waitForExist();
     await openBoundDetails();
-    expect(await browser.$(".conversion-panel").getText()).toContain("No destination bound");
+    // Unbound, the queue's destination says it is chosen after Convert.
+    expect(await browser.$('.conversion-running [aria-label="Queue destination"]').getText()).toContain("One local folder, chosen after Convert");
     const cancelled = { ...IDLE, sequence: 2 };
     await setInvokeResult("get_workspace_conversion_state", cancelled);
     await setInvokeResult(RESOLVE, cancelled);

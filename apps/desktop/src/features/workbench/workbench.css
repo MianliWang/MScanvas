@@ -308,7 +308,7 @@
 .plot-foot .chromatogram-readout:not([data-hover]) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .chromatogram-panel:has(.chromatogram-svg:focus-visible) .plot-foot .chromatogram-readout { position: static; width: auto; height: auto; overflow: hidden; clip-path: none; }
 /* The range on screen, in the plot head beside Fit all (P4). */
-.plot-head .plot-range { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.plot-head .plot-range { flex: 0 1 auto; min-width: 7em; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 /* The selected scan's label at the top of its accent rule (P7). */
 .chromatogram-cursor-label { position: absolute; grid-column: 2; grid-row: 2; top: 2px; margin-left: 4px; padding: 0 4px; border-radius: 3px; background: rgb(255 255 255 / 0.88); color: var(--color-accent-hover); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 16px; white-space: nowrap; pointer-events: none; }
 .chromatogram-cursor-label[data-side="left"] { margin-left: -4px; transform: translateX(-100%); }

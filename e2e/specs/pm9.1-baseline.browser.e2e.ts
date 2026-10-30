@@ -1104,8 +1104,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
 
     it("PM9.2 L20: the Details entry at 1366x768 while there is nothing to show", async () => {
       // Both G states have something to show. This is the state L20 is about:
-      // closed by default at this width, refused, and still a stop that shows
-      // where focus is.
+      // closed by default at this width and still a stop that shows where
+      // focus is. Since the v5.11 rebuild it is never refused (GOALS S3, B4):
+      // with nothing to describe, Details opens and says so in one line.
       await metrics(1366, 768);
       await open("populated", "en");
       // A usable reading leaves nothing in the track; observe() expects that.
@@ -1116,7 +1117,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       const stops = await keyboardSample(label);
       const details = stops.find((candidate) => candidate.name === en.inspectorToggle);
       expect(details).toBeDefined();
-      expect(details?.refused).toBe(true);
+      expect(details?.refused).toBe(false);
       expect(details?.treatment.visible).toBe(true);
       expect(await unexpectedConsole()).toEqual([]);
     });
@@ -1975,7 +1976,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           evidence.push({ label: `ui-rework-edges-${locale}-${String(width)}`, ...edges });
           expect(edges.notice).not.toBe(null);
           expect(Math.abs((edges.notice ?? 0) - edges.header)).toBeLessThanOrEqual(1);
-          expect(Math.abs((edges.content ?? 0) - edges.header)).toBeLessThanOrEqual(1);
+          // Flat since direction A (2.7): the regions run edge to edge, divided
+          // by hairlines, with no outer card inset from the header's edge.
+          expect(edges.content ?? -1).toBeGreaterThanOrEqual(0);
+          expect(edges.content ?? 99).toBeLessThanOrEqual(1);
         }
         expect(await unexpectedConsole()).toEqual([]);
       });
@@ -2132,7 +2136,12 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           swaps.push({ label, panel, offered: true, surfaceInert });
           expect(surfaceInert).toBe(true);
           expect(await enter(`#${panel}`)).toBe(true);
-          await focusWalk(`ui-rework-walk-${label}-${panel}-960x640`, 20, `#${panel}`);
+          // Details with nothing to describe holds one line and its × alone
+          // (GOALS S3): entering lands on the ×, and there is nothing to walk.
+          const controls = await browser.execute((css: string) =>
+            [...document.querySelectorAll<HTMLElement>(`${css} button, ${css} input, ${css} [href]`)]
+              .filter((node) => node.getClientRects().length > 0).length, `#${panel}`);
+          if (controls > 1) await focusWalk(`ui-rework-walk-${label}-${panel}-960x640`, 20, `#${panel}`);
           await toggle.click();
           await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === "false");
         }

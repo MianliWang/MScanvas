@@ -268,9 +268,9 @@ describe("M5.7 — selection availability, rendered", () => {
       const before = await boxOf(VIEWER_COLUMN);
       await blockSelection();
 
-      // The sentence is on screen and inside the column it belongs to.
-      const notice = await boxOf(NOTICE);
-      expect(notice.height).toBeGreaterThan(0);
+      // The sentence is the controls' description and the live region (S4: the
+      // empty spectrum says it on screen in a few words, once).
+      expect(await browser.$(NOTICE).getProperty("textContent")).not.toBe("");
       const column = await boxOf(VIEWER_COLUMN);
       expect(Math.abs(column.width - before.width)).toBeLessThan(1);
 
@@ -284,12 +284,10 @@ describe("M5.7 — selection availability, rendered", () => {
       // a band of nothing under three views that have bunched at the top.
       const stack = await boxOf(VIEWER_STACK);
       expect(Math.abs(stack.bottom - column.bottom)).toBeLessThan(2);
-      // The sentence sits in the file row (the file's name and its tabs,
-      // direction A) and stays inside it: the chromatogram below is not covered.
+      // The file row (the file's name and its tabs, direction A) carries no
+      // sentence, and the chromatogram below it is not covered.
       const identity = await boxOf(IDENTITY);
       expect(identity.top).toBeGreaterThanOrEqual(stack.top - 1);
-      expect(notice.top).toBeGreaterThanOrEqual(identity.top - 1);
-      expect(notice.bottom).toBeLessThanOrEqual(identity.bottom + 1);
       expect((await boxOf(CHROMATOGRAM)).top).toBeGreaterThanOrEqual(identity.bottom - 1);
       const overflow = await horizontalOverflow();
       expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);

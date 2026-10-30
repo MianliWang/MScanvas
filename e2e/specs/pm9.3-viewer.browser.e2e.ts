@@ -1294,7 +1294,8 @@ describe("PM9.3 viewer contracts, rendered", () => {
       // full spectrum and the line under it says why -- and the data export stays.
       await openFigureDialog(MZ_PANEL);
       expect(await dialogScope()).toBe("full");
-      expect(await browser.$(`${FIGURE_DIALOG} .figure-export-range [role="radio"]:nth-child(1)`).isEnabled()).toBe(false);
+      // Refused, not disabled (B4): reachable, and pointing at the note.
+      expect(await browser.$(`${FIGURE_DIALOG} .figure-export-range [role="radio"]:nth-child(1)`).getAttribute("aria-disabled")).toBe("true");
       expect(await textOf(`${FIGURE_DIALOG} .figure-export-note`)).toBe(en.viewerExportNoViewport);
       const before = countOf(await ipcCalls(), "begin_selected_spectrum_export");
       await figureDialogButton(fill(en.viewerExportFormat, { name: "CSV" })).click();

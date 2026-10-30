@@ -464,10 +464,19 @@ function ChromatogramPlot({
       if (point !== undefined) {
         const x = scaleNow.x(point.retentionTime);
         group?.querySelector("line")?.setAttribute("x1", String(x)); group?.querySelector("line")?.setAttribute("x2", String(x));
-        group?.querySelector("rect")?.setAttribute("x", String(x - 4.5));
+        if (kind === "selected") {
+          // The rule's label follows it through a gesture, like the rule.
+          const label = frame?.querySelector<HTMLElement>(".chromatogram-cursor-label");
+          const at = (x / PLOT_WIDTH) * 100;
+          if (label) {
+            label.style.left = `${at.toFixed(3)}%`; label.dataset.side = at > 60 ? "left" : "right";
+            label.hidden = x < PADDING_LEFT || x > PLOT_WIDTH - PADDING_RIGHT;
+          }
+        }
       }
     }
-    const line = frame?.querySelector(".chromatogram-range");
+    // The range line is in the plot head, outside the plot's own frame.
+    const line = node.closest(".chromatogram-panel")?.querySelector(".chromatogram-range");
     if (line) line.textContent = t("viewerShowing", { low: shown.low.toFixed(4), high: shown.high.toFixed(4) }) +
       (state.committedDomain === null && state.gesture === null ? t("viewerFullRange") : "");
   }, [readInteraction, activeTraces, points, byIndex, t, domain, extent, scale, marks]);
@@ -582,8 +591,11 @@ function ChromatogramPlot({
         {/* The selected scan's own label at the top of its rule (P7), HTML
             placed by percentage like the ticks, so the stretch never distorts it. */}
         {selectedPoint === null ? null : (() => {
-          const at = (scale.x(selectedPoint.retentionTime) / PLOT_WIDTH) * 100;
+          const x = scale.x(selectedPoint.retentionTime);
+          const at = (x / PLOT_WIDTH) * 100;
+          // Off the range on screen, the rule is clipped and so is its label.
           return <span aria-hidden="true" className="chromatogram-cursor-label" data-side={at > 60 ? "left" : "right"}
+            hidden={x < PADDING_LEFT || x > PLOT_WIDTH - PADDING_RIGHT}
             style={{ left: `${at.toFixed(3)}%` }}>
             {t("viewerCursorLabel", { scan: selectedPoint.scanNumber === null ? formatCount(selectedPoint.spectrumIndex) : formatCount(selectedPoint.scanNumber),
               rt: selectedPoint.retentionTime.toFixed(4) })}

@@ -803,8 +803,9 @@ describe("Beta 1 UX changes, rendered", () => {
           other: other === null ? null : { fontSize: getComputedStyle(other).fontSize, color: getComputedStyle(other).color },
         };
       }, setup);
-      // A section title on the type scale's one section size (16px, V2).
-      expect(styles).toMatchObject({ tag: "H3", fontSize: "16px" });
+      // A section title at the project's one section size, below the 17px
+      // page title (rendered review).
+      expect(styles).toMatchObject({ tag: "H3", fontSize: "14px" });
       expect(styles.color).toBe(styles.primaryText);
       expect(styles.shadow).toContain("inset");
       expect(styles.shadow).toContain(styles.accent);

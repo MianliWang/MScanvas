@@ -355,7 +355,9 @@ export async function readout(): Promise<string> {
 }
 
 export async function rangeCaption(): Promise<string> {
-  return (await browser.$(RANGE).getText()).trim();
+  // The text, not what is drawn of it: in the plot head it may end in an
+  // ellipsis at a narrow width, with the whole of it in its title.
+  return String(await browser.$(RANGE).getProperty("textContent")).trim();
 }
 
 /** What the range caption says is on screen, as numbers. */
