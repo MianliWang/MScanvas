@@ -405,10 +405,18 @@ writer and Rust's ownership of files.
   the operation and its commands; the interface; export provenance). The
   interface slice waits on the owner's choice of interface direction. Native QA
   needs a bounded ProteoWizard hold release.
-  - Slice 1, the cache library, is on `be/view-cache` (2026-10-30): the root
+  - Slice 1, the cache library, is in [PR #172](https://github.com/MianliWang/MScanvas/pull/172) (2026-10-30): the root
     and its marker, the key, the manifest, verification, publishing, the pins,
     eviction, Clear and the staging sweep, with Rust tests. No command, UI or
     conversion yet; slice 2 is next.
+  - Left to slice 2: a chunked, cancellable hash of the RAW for Checking file
+    and Checking output; reading the volume's free space for `make_space`; the
+    1.5 GiB refusal before any work; the summary and Clear DTOs over `usage`
+    and `clear`; and codes for a check that could not be made
+    (`Lookup::Unreadable`) and for a damaged entry that could not be removed,
+    which decision 10's table does not list. An attempt that a sharing refusal
+    keeps from being removed after `view_cache_not_stored` stays until a later
+    session's sweep, because decision 6 leaves this process's attempts alone.
 - CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
