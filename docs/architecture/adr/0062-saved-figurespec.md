@@ -97,19 +97,30 @@ In order, and nothing is written anywhere:
 3. The locator is resolved against the document's folder.
 4. The source is opened for a stable read (the project's `hold_member`: write
    and delete sharing withheld), measured, and **held** while the figure is
-   regenerated, so the bytes measured are the bytes read.
+   regenerated. The reader is handed that held handle, rewound to its first
+   byte for each read, and nothing else (decision 7), so the bytes measured
+   are the bytes read.
 5. Its length and SHA-256 must equal the baseline.
 6. The figure is regenerated through the export's own builders and nothing
    else: `export::figure_spec`, `chromatogram::figure_spec` or
    `linked_figure_spec`, then `publication_figure` for the size and the words.
-   The chromatogram range goes through the export's own resolver, and the
-   linked scan is bound by identity (`row_for_spectrum`) and refused outside
-   its range, as the linked export does.
+   The m/z window goes through the export's own spectrum resolver
+   (`resolve_spectrum_range`, the rule `SpectrumSnapshot::resolve` applies)
+   and the chromatogram range through the export's own resolver, so a window
+   the source does not hold is refused rather than clamped or drawn as the
+   full source. The linked scan is bound by identity (`row_for_spectrum`) and
+   refused outside its range by the linked export's own rule
+   (`scan_outside_range`, edges inside).
 7. The digest of the regenerated data must equal `dataSha256`.
 
 A changed or missing source is refused with its reason. It is never
 re-rendered from whatever is at the location now, never relinked, and never
 replaced with a copy.
+
+Reopened settings belong to the reopened figure. They do not become the
+session's export settings: ADR 0030 keeps figure settings as session state, and
+a saved figure is a file the user chose, not a restored session. When the
+interface lands, ADR 0030 gets a dated note saying so.
 
 | Refusal | Stable identifier |
 | --- | --- |
@@ -127,6 +138,7 @@ replaced with a copy.
 | The source's bytes are not the recorded ones | `saved_figure_source_changed` |
 | The reader or a builder refused | `saved_figure_not_regenerated` (with the reason; a reader's own error is carried unchanged) |
 | The same bytes regenerate different data | `saved_figure_figure_changed` |
+| SHA-256 itself was unavailable, reading the document or the figure | `saved_figure_digest_unavailable` |
 
 These are typed refusals in Rust, not boundary error codes yet. The interface
 slice maps them to `PreviewErrorDto` codes and gives each its localized words.
@@ -163,8 +175,15 @@ that is the intended trade.
    source under the folder is relative to it; any other is absolute. A locator
    that does not validate — a network path, or a component that is not an
    ordinary name — is refused (`saved_figure_source_not_referencable`),
-   because a document naming one could never be reopened.
-4. The figure is regenerated from it and must equal the figure on screen
+   because a document naming one could never be reopened. A source under the
+   view cache's root (ADR 0060), which the caller injects, is refused
+   (`saved_figure_source_in_view_cache`): it is a converted copy under this
+   machine's application data that the cache may remove, and a document naming
+   it would carry a user's local folder and lose the RAW file it came from.
+   The root is compared by whole components after both are canonicalized, and
+   a root that does not exist holds nothing.
+4. The figure is regenerated from it, through the held handle, and must equal
+   the figure on screen
    (`saved_figure_not_the_shown_figure` otherwise). The retained preview was
    read when it was opened; if the file changed since, the document would
    reopen as a different figure, so it is not written.
@@ -201,10 +220,16 @@ as that even in a document whose digest agrees with it.
 ### 7. The source is read through an injected reader
 
 `FigureSourceReader` has two methods: the source's complete spectrum table, and
-one spectrum by index. The interface slice implements it over the preview's own
-reader, so a reopened figure is read exactly as a previewed one. That reader is
-being replaced by the project-owned mzML reader (ADR 0056, PR #175), so the
-production implementation waits for that merge rather than being written twice.
+one spectrum by index. Each is handed the held handle (`&std::fs::File`), at
+its first byte, and not a path: a reader cannot open another object by the
+name, and nothing between the hold and the read can redirect it. An
+implementation reads the figure from that handle and from nothing else — never
+from data the session retained, a cache, or the file opened again by its name.
+The interface slice implements it over the project-owned mzML reader (ADR 0056,
+PR #175), whose `read_spectrum_table_from` and `read_selected_spectrum_from`
+take a reader and can be given the handle, so a reopened figure is read exactly
+as a previewed one. The production implementation waits for that merge rather
+than being written twice.
 
 This slice adds no Tauri command, no DTO, no boundary error code, no interface
 and no dependency. The module is `preview/saved_figure.rs`, beside the builders
@@ -265,8 +290,8 @@ artifact and a target; that belongs with decision 8.
   identity is measured for real; the preview's reader is wired with the
   interface.
 - **Thermo RAW viewed through the conversion cache (ADR 0060).** The locator
-  names an mzML file. What a saved figure of a cached RAW view should name is
-  an open question.
+  names an mzML file, and a source in the view cache is refused on saving.
+  What a saved figure of a cached RAW view should name is an open question.
 
 ## Consequences
 
@@ -290,17 +315,23 @@ source file and a real document in its own temporary folder:
 - save then reopen returns the export's `FigureSpec` and the pinned SVG of
   every kind (`fixtures/plot-golden`: spectrum, chromatogram full and current,
   linked); a printed, dark, edited spectrum over an m/z window and a printed
-  linked figure reopen byte-identical;
+  linked figure reopen byte-identical; a linked figure over a current
+  retention-time range reopens with its scan inside the range and on each
+  edge;
 - a changed source (same length and longer) and a missing source are refused;
 - the same bytes read as other data are refused; a reader's refusal is carried;
+  the reader is handed the held handle at its first byte for each of a linked
+  figure's two reads, and reads the measured bytes;
 - a relative locator survives moving the folder; an outside source is named
   absolutely; a canonical, verbatim source path is recorded in the typed form,
-  relative where it can be; a held source can still be opened and read;
+  relative where it can be; a source in the view cache is not saved, and one in
+  a folder whose name only begins like the cache's is;
 - edits to the theme, the spectrum index, the traces or the digest are refused;
   a newer, older, foreign or non-JSON document is refused as what it is; an
   unknown field at five depths and a missing field are refused; eighteen
-  out-of-bounds values are refused even when resealed; an oversized document is
-  refused unread;
+  out-of-bounds values are refused even when resealed; a resealed m/z window
+  wider than the spectrum or reaching past either end is refused through the
+  export's resolver; an oversized document is refused unread;
 - a second save to the same name replaces nothing; a misnamed destination is
   refused before the source is read; a figure the source no longer regenerates
   is not saved; the linked export's range and identity rules hold;
@@ -324,5 +355,9 @@ Each was implemented as recommended; the owner decides.
    folder, absolute outside it, stated in the save dialog's help.
 6. **Project documents and stored targeted results.** Recommended: not in this
    slice (decisions 8 and 9).
-7. **RAW viewed through the cache.** Recommended: the interface refuses to save
-   a figure whose source is a cache entry until a locator for one is decided.
+7. **RAW viewed through the cache.** Recommended, and implemented in Rust:
+   `save` refuses a source under the injected view-cache root
+   (`saved_figure_source_in_view_cache`) until a locator for a cached RAW view
+   is decided; the interface only shows the refusal. Alternatives: name the
+   cache entry anyway, or name the original RAW file and regenerate through
+   the cache.

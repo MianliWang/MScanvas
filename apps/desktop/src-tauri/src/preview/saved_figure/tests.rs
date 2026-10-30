@@ -130,9 +130,9 @@ struct Reader {
     rows: Arc<Vec<TableRowFacts>>,
     spectra: Vec<SelectedSpectrumResult>,
     refuses: bool,
-    /// Whether each read opens the source and reads it whole, as a real
-    /// reader does, while the save or the reopen still holds it.
-    opens_source: bool,
+    /// Whether each read reads the handle it is given to its end, as a real
+    /// reader does, and checks it holds the bytes that were measured.
+    reads_source: bool,
 }
 
 impl Reader {
@@ -141,27 +141,25 @@ impl Reader {
             rows: golden_rows(),
             spectra: vec![golden_spectrum(), selected_scan()],
             refuses: false,
-            opens_source: false,
+            reads_source: false,
         }
     }
 
-    fn read(&self, source: &Path) -> Result<(), PreviewErrorDto> {
+    fn read(&self, mut source: &File) -> Result<(), PreviewErrorDto> {
         if self.refuses {
             return Err(dataset_not_previewable());
         }
-        if self.opens_source {
-            // `std::fs::read` opens with `File::open`, as the mzML reader does.
-            assert_eq!(
-                std::fs::read(source).expect("a held source can still be read"),
-                SOURCE,
-            );
+        if self.reads_source {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut source, &mut bytes).expect("the held source reads");
+            assert_eq!(bytes, SOURCE);
         }
         Ok(())
     }
 }
 
 impl FigureSourceReader for Reader {
-    fn spectrum_table(&self, source: &Path) -> Result<SourceTable, PreviewErrorDto> {
+    fn spectrum_table(&self, source: &File) -> Result<SourceTable, PreviewErrorDto> {
         self.read(source)?;
         Ok(SourceTable {
             rows: Arc::clone(&self.rows),
@@ -171,7 +169,7 @@ impl FigureSourceReader for Reader {
 
     fn spectrum(
         &self,
-        source: &Path,
+        source: &File,
         index: u64,
     ) -> Result<SelectedSpectrumResult, PreviewErrorDto> {
         self.read(source)?;
@@ -305,6 +303,7 @@ fn save_case(
         &case.shown,
         reader,
         &destination,
+        None,
     )
     .map(|_| destination)
 }
@@ -326,6 +325,11 @@ fn spectrum_case() -> Case {
 /// A saved document's wire shape, for a test that alters it.
 fn wire_of(path: &Path) -> WireDocument {
     serde_json::from_slice(&std::fs::read(path).expect("the document")).expect("a document")
+}
+
+/// One canonical decimal, as a document spells it.
+fn decimal(text: &str) -> DecimalValue {
+    serde_json::from_value(serde_json::json!(text)).expect("a decimal")
 }
 
 // ------------------------------------------------------------------ round trip
@@ -394,6 +398,7 @@ fn a_printed_figure_with_edited_words_reopens_byte_identical() {
         &shown,
         &reader,
         &destination,
+        None,
     )
     .expect("saved");
     let reopened = reopen(&destination, &reader).expect("reopened");
@@ -467,6 +472,7 @@ fn a_printed_linked_figure_reopens_and_an_ambiguous_axis_title_is_refused() {
         &shown,
         &reader,
         &destination,
+        None,
     )
     .expect("saved");
     assert_eq!(
@@ -491,7 +497,8 @@ fn a_printed_linked_figure_reopens_and_an_ambiguous_axis_title_is_refused() {
             &folder.source(),
             &shown,
             &reader,
-            &refused
+            &refused,
+            None,
         ),
         Err(SaveRefusal::Regeneration(RegenerationRefusal::Spec(
             SpecError::AxisTitleAmbiguous
@@ -652,6 +659,7 @@ fn a_source_elsewhere_is_named_absolutely() {
         &case.shown,
         &reader,
         &destination,
+        None,
     )
     .expect("saved");
     let reopened = reopen(&destination, &reader).expect("reopened");
@@ -683,6 +691,7 @@ fn a_verbatim_source_path_is_recorded_as_a_person_writes_it() {
         &case.shown,
         &reader,
         &destination,
+        None,
     )
     .expect("saved");
     let reopened = reopen(&destination, &reader).expect("reopened");
@@ -717,12 +726,12 @@ fn a_verbatim_drive_path_is_written_without_its_prefix() {
     }
 }
 
-/// A real reader opens the source while a save or a reopen holds it: the hold
-/// withholds writing and deleting, not reading.
+/// The reader is handed the held handle, at its first byte for every call: a
+/// linked figure reads it twice, and both reads are the measured bytes.
 #[test]
-fn a_held_source_can_still_be_read() {
+fn the_reader_reads_the_held_bytes_from_the_start() {
     let reader = Reader {
-        opens_source: true,
+        reads_source: true,
         ..Reader::golden()
     };
     let folder = Folder::with_source("held");
@@ -894,13 +903,11 @@ fn a_value_outside_its_bounds_is_refused_even_when_resealed() {
         &shown,
         &reader,
         &printed_document,
+        None,
     )
     .expect("saved");
     let (linked, printed) = (linked_document.as_path(), printed_document.as_path());
 
-    fn decimal(text: &str) -> DecimalValue {
-        serde_json::from_value(serde_json::json!(text)).expect("a decimal")
-    }
     fn retention_time_range(wire: &mut WireDocument, low: &str, high: &str) {
         if let WireFigure::Linked {
             retention_time_range,
@@ -1079,6 +1086,7 @@ fn a_misnamed_destination_is_refused_first() {
             &case.shown,
             &reader,
             &folder.path(name),
+            None,
         )
         .expect_err("refused");
         assert_eq!(
@@ -1120,7 +1128,8 @@ fn a_figure_the_source_does_not_regenerate_is_not_saved() {
             &folder.source(),
             &case.shown,
             &reader,
-            &destination
+            &destination,
+            None,
         ),
         Err(SaveRefusal::NotTheShownFigure),
     );
@@ -1148,6 +1157,7 @@ fn a_linked_figure_keeps_the_linked_export_s_rules() {
             &case.shown,
             &reader,
             &folder.path("outside.msfigure"),
+            None,
         ),
         Err(SaveRefusal::Regeneration(
             RegenerationRefusal::SelectedScanOutsideRange
@@ -1174,11 +1184,129 @@ fn a_linked_figure_keeps_the_linked_export_s_rules() {
             &case.shown,
             &stranger,
             &folder.path("unknown.msfigure"),
+            None,
         ),
         Err(SaveRefusal::Regeneration(
             RegenerationRefusal::SelectedScanNotInTable
         )),
     );
+}
+
+/// A linked figure over a committed retention-time range saves and reopens as
+/// the figure the linked export draws, with its scan inside the range or on
+/// either edge of it -- the export's rule, asked through the export's function.
+#[test]
+fn a_linked_figure_over_a_current_range_reopens_with_its_scan_on_an_edge() {
+    let reader = Reader::golden();
+    let source = chromatogram();
+    let scan = selected_scan();
+    let row = source.row_for_spectrum(&scan).expect("a scan of the run");
+    // The scan's retention time is 11.0.
+    for (low, high) in [(10.0, 13.0), (11.0, 13.0), (9.0, 11.0)] {
+        let range = SavedRetentionTimeRange::Current(window(low, high));
+        let shown = linked_figure_spec(
+            &source,
+            &scan,
+            row,
+            resolved(&source, range),
+            both(),
+            FigureRenderSettings::default(),
+        )
+        .expect("a linked figure");
+        let kind = SavedFigureKind::Linked {
+            index: 2,
+            range,
+            traces: both(),
+        };
+        let folder = Folder::with_source("linked-current");
+        let document = folder.path("figure.msfigure");
+        save(
+            kind,
+            pixels(),
+            &folder.source(),
+            &shown,
+            &reader,
+            &document,
+            None,
+        )
+        .unwrap_or_else(|refusal| panic!("{low}..{high} was not saved: {refusal:?}"));
+        let reopened = reopen(&document, &reader)
+            .unwrap_or_else(|refusal| panic!("{low}..{high} was not reopened: {refusal:?}"));
+        assert_eq!(reopened.figure(), &shown, "{low}..{high}");
+    }
+}
+
+/// An m/z window the spectrum does not hold is refused on reopening, through
+/// the export's own resolver, even in a resealed document. A window wider than
+/// the spectrum would otherwise draw the full spectrum under a caption naming
+/// the window, which no export draws.
+#[test]
+fn a_resealed_m_z_window_the_spectrum_does_not_hold_is_refused() {
+    let reader = Reader::golden();
+    let folder = Folder::with_source("mz-window");
+    let document = save_case(&folder, "figure.msfigure", &spectrum_case(), &reader).expect("saved");
+    // The spectrum runs from m/z 100.5 to 500.
+    for (low, high) in [("0", "10000"), ("50", "300"), ("150", "600")] {
+        let mut wire = wire_of(&document);
+        if let WireFigure::Spectrum { mz_range, .. } = &mut wire.figure {
+            *mz_range = WireRange::Current {
+                low: decimal(low),
+                high: decimal(high),
+            };
+        }
+        let path = folder.write("edited.msfigure", &seal(wire).expect("sealed"));
+        assert_eq!(
+            reopen(&path, &reader).map(|_| ()),
+            Err(ReopenRefusal::Regeneration(
+                RegenerationRefusal::RangeOutsideSource
+            )),
+            "{low}..{high}",
+        );
+    }
+}
+
+/// A source in the view cache is refused before anything is written: it is a
+/// converted copy under this machine's application data, which the cache may
+/// remove. A folder whose name only begins like the cache's is not in it.
+#[test]
+fn a_source_in_the_view_cache_is_not_saved() {
+    let reader = Reader::golden();
+    let folder = Folder::new("view-cache");
+    let cache = folder.path("view-cache");
+    let entry = cache.join("entries").join("0a1b");
+    let outside = folder.path("view-cache-old");
+    for directory in [&entry, &outside] {
+        std::fs::create_dir_all(directory).expect("a folder");
+    }
+    let cached = entry.join("view.mzML");
+    let beside = outside.join(SOURCE_NAME);
+    for path in [&cached, &beside] {
+        std::fs::write(path, SOURCE).expect("a source");
+    }
+    let case = spectrum_case();
+    let destination = folder.path("figure.msfigure");
+    let save_from = |source: &Path| {
+        save(
+            case.kind,
+            pixels(),
+            source,
+            &case.shown,
+            &reader,
+            &destination,
+            Some(&cache),
+        )
+    };
+
+    let refusal = save_from(&cached).expect_err("refused");
+    assert_eq!(refusal, SaveRefusal::SourceInViewCache);
+    assert_eq!(refusal.stable_id(), "saved_figure_source_in_view_cache");
+    assert!(
+        !destination.exists(),
+        "nothing is written for a refused save"
+    );
+
+    save_from(&beside).expect("a folder beside the cache is not the cache");
+    assert!(destination.exists());
 }
 
 /// A preset is a name for a width, and settings whose preset names another
@@ -1216,9 +1344,14 @@ fn a_preset_must_agree_with_its_width() {
 }
 
 /// Every refusal has a stable identifier the interface can map, and no two
-/// different refusals share one.
+/// refusals that mean different things share one. The one shared identifier
+/// is SHA-256 being unavailable, which means the same wherever it is met.
 #[test]
 fn every_refusal_has_its_own_stable_identifier() {
+    assert_eq!(
+        DocumentRefusal::DigestUnavailable.stable_id(),
+        ReopenRefusal::DigestUnavailable.stable_id(),
+    );
     let documents = [
         DocumentRefusal::TooLarge,
         DocumentRefusal::Malformed,
@@ -1267,4 +1400,5 @@ fn every_refusal_has_its_own_stable_identifier() {
         SaveRefusal::SourceNotReferencable.stable_id(),
         "saved_figure_source_not_referencable"
     );
+    assert!(!sorted.contains(&SaveRefusal::SourceInViewCache.stable_id()));
 }

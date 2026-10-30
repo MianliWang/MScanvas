@@ -25,16 +25,19 @@
 //! ## No interface yet
 //!
 //! Nothing outside the tests reaches this module. The source is read through
-//! [`FigureSourceReader`], which the interface slice implements over the
-//! preview's own reader; the tests implement it with fixed data. What this
-//! module owns is the document, its checks, the source identity and the
-//! regeneration, so the interface adds a dialog and a command and nothing that
-//! decides what a figure is.
+//! [`FigureSourceReader`], handed the handle this module holds, which the
+//! interface slice implements over the project-owned mzML reader; the tests
+//! implement it with fixed data. What this module owns is the document, its
+//! checks, the source identity, the view-cache refusal and the regeneration,
+//! so the interface adds a dialog and a command and nothing that decides what a
+//! figure is.
 #![cfg_attr(
     not(test),
     expect(dead_code, reason = "wired by the saved-figure interface slice")
 )]
 
+use std::fs::File;
+use std::io::Seek as _;
 use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
@@ -58,10 +61,11 @@ use super::chromatogram::{
 use super::dialog::SaveDialogFacts;
 use super::dto::{PreviewErrorDto, spectrum_destination_unusable};
 use super::export::{
-    ResolvedSpectrumRange, figure_spec as spectrum_figure, publication_figure,
-    two_panel_minimum_height,
+    ResolvedSpectrumRange, SpectrumRangeRequest, figure_spec as spectrum_figure,
+    publication_figure, resolve_spectrum_range, scan_outside_range, two_panel_minimum_height,
 };
 use super::figure::{DEFAULT_FIGURE_HEIGHT, DEFAULT_FIGURE_WIDTH, FigureRenderSettings, PngDpi};
+use super::projection::settle_viewport_domain;
 use super::scientific_output::write_named;
 use super::service::{PreviewService, TableRowFacts};
 
@@ -785,17 +789,21 @@ pub(super) struct SourceTable {
 
 /// What regenerating a figure reads from its source, and nothing else.
 ///
-/// Implemented by the interface slice over the preview's own reader, so a
-/// reopened figure is read exactly as a previewed one is. Each call names the
-/// file and is self-contained. A refusal is the preview's own error, carried
-/// through unchanged.
+/// `source` is the handle the save or the reopen measured the source through
+/// and still holds, positioned at its first byte. A call reads the figure from
+/// it and from nothing else -- never from data the session retained, a cache,
+/// or the file opened again by its name -- so the bytes measured are the bytes
+/// read. The interface slice implements it over the project-owned mzML
+/// reader's reader-taking entry points, so a reopened figure is read exactly as
+/// a previewed one is. A refusal is the reader's own error, carried through
+/// unchanged.
 pub(super) trait FigureSourceReader {
     /// Every row of the source's spectrum table.
     ///
     /// # Errors
     ///
     /// The reader's own refusal.
-    fn spectrum_table(&self, source: &Path) -> Result<SourceTable, PreviewErrorDto>;
+    fn spectrum_table(&self, source: &File) -> Result<SourceTable, PreviewErrorDto>;
 
     /// One complete spectrum, by its zero-based index.
     ///
@@ -804,7 +812,7 @@ pub(super) trait FigureSourceReader {
     /// The reader's own refusal.
     fn spectrum(
         &self,
-        source: &Path,
+        source: &File,
         index: u64,
     ) -> Result<SelectedSpectrumResult, PreviewErrorDto>;
 }
@@ -812,6 +820,8 @@ pub(super) trait FigureSourceReader {
 /// Why a figure could not be regenerated from a source whose bytes are right.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum RegenerationRefusal {
+    /// The held source could not be returned to its first byte for a read.
+    SourceNotRewound,
     /// The reader refused, and said why.
     SourceNotRead(PreviewErrorDto),
     /// The reader answered with a spectrum other than the one asked for.
@@ -837,7 +847,7 @@ pub(super) enum RegenerationRefusal {
 fn regenerate(
     kind: SavedFigureKind,
     settings: &SavedFigureSettings,
-    source: &Path,
+    source: &File,
     reader: &dyn FigureSourceReader,
 ) -> Result<FigureSpec, RegenerationRefusal> {
     // Constructed settings always have one; asked again rather than assumed.
@@ -847,6 +857,7 @@ fn regenerate(
     let built = match kind {
         SavedFigureKind::Spectrum { index, range } => {
             let spectrum = read_spectrum(reader, source, index)?;
+            let range = resolve_mz_range(&spectrum, range)?;
             spectrum_figure(&spectrum, base, range).map_err(RegenerationRefusal::Spec)?
         }
         SavedFigureKind::Chromatogram { range, traces } => {
@@ -868,8 +879,7 @@ fn regenerate(
                 .row_for_spectrum(&spectrum)
                 .ok_or(RegenerationRefusal::SelectedScanNotInTable)?;
             let resolved = resolve_range(&chromatogram, range)?;
-            let at = row.retention_time();
-            if at < resolved.domain().low() || at > resolved.domain().high() {
+            if scan_outside_range(resolved, row.retention_time()) {
                 return Err(RegenerationRefusal::SelectedScanOutsideRange);
             }
             linked_figure_spec(&chromatogram, &spectrum, row, resolved, traces, base)
@@ -888,13 +898,24 @@ fn regenerate(
     .map_err(RegenerationRefusal::Spec)
 }
 
+/// The held source at its first byte, for one reader call. A handle shares one
+/// position with every clone of it, so the second read of a linked figure would
+/// otherwise start where the first one ended.
+fn from_start(source: &File) -> Result<&File, RegenerationRefusal> {
+    let mut handle = source;
+    handle
+        .rewind()
+        .map_err(|_| RegenerationRefusal::SourceNotRewound)?;
+    Ok(source)
+}
+
 fn read_spectrum(
     reader: &dyn FigureSourceReader,
-    source: &Path,
+    source: &File,
     index: u64,
 ) -> Result<SelectedSpectrumResult, RegenerationRefusal> {
     let spectrum = reader
-        .spectrum(source, index)
+        .spectrum(from_start(source)?, index)
         .map_err(RegenerationRefusal::SourceNotRead)?;
     if spectrum.identity().index() != index {
         return Err(RegenerationRefusal::WrongSpectrum);
@@ -904,20 +925,41 @@ fn read_spectrum(
 
 fn read_chromatogram(
     reader: &dyn FigureSourceReader,
-    source: &Path,
+    source: &File,
 ) -> Result<ChromatogramSource, RegenerationRefusal> {
     let table = reader
-        .spectrum_table(source)
+        .spectrum_table(from_start(source)?)
         .map_err(RegenerationRefusal::SourceNotRead)?;
     // The eligibility the viewer and the export apply, through their own
     // constructor.
     //
     // Read through `into_iter` so this line reads the same whether the
-    // constructor answers an `Option` or a `Result` with its reason.
+    // constructor answers an `Option` or a `Result` with its reason. When it
+    // answers a reason (PR #175), `NoChromatogram` should carry it.
     ChromatogramSource::from_rows(&table.rows, table.truncated)
         .into_iter()
         .next()
         .ok_or(RegenerationRefusal::NoChromatogram)
+}
+
+/// Resolves a saved m/z window against the regenerated spectrum, through the
+/// export's own resolver: a window the spectrum does not hold is refused, as
+/// the export refuses it, rather than drawn as the full spectrum under a
+/// caption that names the window.
+fn resolve_mz_range(
+    spectrum: &SelectedSpectrumResult,
+    range: ResolvedSpectrumRange,
+) -> Result<ResolvedSpectrumRange, RegenerationRefusal> {
+    let window = range.domain();
+    let request = SpectrumRangeRequest::from_wire(
+        range.scope().stable_id(),
+        window.map(|window| window.low()),
+        window.map(|window| window.high()),
+    )
+    .ok_or(RegenerationRefusal::RangeOutsideSource)?;
+    // A spectrum with no viewport domain has no window for one to be inside.
+    resolve_spectrum_range(settle_viewport_domain(spectrum), request)
+        .map_err(|_| RegenerationRefusal::RangeOutsideSource)
 }
 
 /// Resolves a saved range against the regenerated run, through the export's
@@ -1028,6 +1070,10 @@ pub(super) enum SaveRefusal {
     /// read back -- a network or device path, or a component that is not an
     /// ordinary name.
     SourceNotReferencable,
+    /// The source is a file in the view cache (ADR 0060): a converted copy
+    /// under this machine's application data that the cache may remove, not
+    /// the acquisition the figure is of.
+    SourceInViewCache,
     SourceMissing,
     SourceUnavailable(UnavailableReason),
     Regeneration(RegenerationRefusal),
@@ -1052,6 +1098,7 @@ impl SaveRefusal {
     pub(super) fn stable_id(&self) -> &str {
         match self {
             Self::SourceNotReferencable => "saved_figure_source_not_referencable",
+            Self::SourceInViewCache => "saved_figure_source_in_view_cache",
             Self::SourceMissing => "saved_figure_source_missing",
             Self::SourceUnavailable(_) => "saved_figure_source_unavailable",
             Self::Regeneration(_) => "saved_figure_not_regenerated",
@@ -1068,7 +1115,9 @@ impl SaveRefusal {
 /// held, the figure is regenerated from it, and the document is written only
 /// if what was regenerated is exactly `shown`: a document is never written
 /// that would reopen as a figure other than the one it was saved from.
-/// Answers the file name the document was given.
+/// `view_cache` is the view cache's root (ADR 0060), where this application
+/// has one; a source under it is refused. Answers the file name the document
+/// was given.
 ///
 /// # Errors
 ///
@@ -1082,6 +1131,7 @@ pub(super) fn save(
     shown: &FigureSpec,
     reader: &dyn FigureSourceReader,
     destination: &Path,
+    view_cache: Option<&Path>,
 ) -> Result<String, SaveRefusal> {
     PreviewService::require_named_document(destination, SAVED_FIGURE_DIALOG)
         .map_err(SaveRefusal::Write)?;
@@ -1089,8 +1139,9 @@ pub(super) fn save(
         .parent()
         .ok_or_else(|| SaveRefusal::Write(spectrum_destination_unusable()))?;
 
-    // Held while the figure is regenerated, so the bytes measured are the
-    // bytes read: nothing can write, rename or delete the source meanwhile.
+    // Held while the figure is regenerated, and the figure is read through
+    // this handle, so the bytes measured are the bytes read: nothing can
+    // write, rename or delete the source meanwhile.
     let held = hold_member(source, &Cancellation::default()).map_err(SaveRefusal::of_source)?;
 
     // Both sides in one spelling before one is made relative to the other: the
@@ -1102,7 +1153,16 @@ pub(super) fn save(
     let named = canonical_user_form(source).ok_or(SaveRefusal::SourceNotReferencable)?;
     let locator = locator_for(&named, &folder);
     validate_locator(&locator).map_err(|_| SaveRefusal::SourceNotReferencable)?;
-    let figure = regenerate(kind, &settings, source, reader).map_err(SaveRefusal::Regeneration)?;
+    // A cache that cannot be resolved does not exist yet, and nothing is in it.
+    // Compared by whole components, so `view-cache-old` is not inside it.
+    if view_cache
+        .and_then(canonical_user_form)
+        .is_some_and(|cache| named.starts_with(cache))
+    {
+        return Err(SaveRefusal::SourceInViewCache);
+    }
+    let figure =
+        regenerate(kind, &settings, &held.file, reader).map_err(SaveRefusal::Regeneration)?;
     let baseline = ContentBaseline::observed(held.byte_length, held.digest);
     drop(held);
 
@@ -1200,7 +1260,7 @@ pub(super) fn reopen(
     if !saved.baseline.matches(held.byte_length, held.digest) {
         return Err(ReopenRefusal::SourceChanged);
     }
-    let figure = regenerate(saved.kind, &saved.settings, &source, reader)
+    let figure = regenerate(saved.kind, &saved.settings, &held.file, reader)
         .map_err(ReopenRefusal::Regeneration)?;
     drop(held);
 
