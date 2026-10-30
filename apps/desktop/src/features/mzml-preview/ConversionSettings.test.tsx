@@ -2,8 +2,9 @@ import { cleanup, fireEvent, render as renderTree, screen, within } from "@testi
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConversionSettings } from "./ConversionSettings";
+import { ConversionSettings, conversionIntentDisclosures } from "./ConversionSettings";
 import type { ConversionCatalogRow, ConversionConfiguration } from "./contracts";
+import type { UiMessage } from "../preferences/i18n";
 import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import { admittedIntents, shippedIntent } from "../../test/previewFixtures";
 import { SessionPreferencesProvider, useSessionPreferences } from "../preferences/SessionPreferencesProvider";
@@ -30,6 +31,7 @@ const id = (
 const CENTROIDED_64 = id("unscoped_default_centroiding", "all", "mz64_intensity64", "zlib");
 const CENTROIDED_32 = id("unscoped_default_centroiding", "all", "mz32_intensity32", "zlib");
 const FLAT_32 = id("no_additional_centroiding", "all", "mz32_intensity32", "zlib");
+const VENDOR = id("vendor_centroiding_from_ms1", "all", "mz64_intensity32", "zlib");
 
 function withoutRunning(...ids: readonly string[]): readonly ConversionCatalogRow[] {
   // The discriminator moves with the boolean; the pair is one decision in Rust.
@@ -280,6 +282,29 @@ describe("the four control groups", () => {
     expect(note?.textContent).toContain("replaces the recorded profile points");
     expect(note?.textContent).not.toContain("local-maximum");
     expect(note?.textContent).not.toContain("vendor");
+  });
+
+  it("mark Thermo vendor centroiding lossy beside the choice, and select its row", () => {
+    // The vendor-picker row shares the shipped precision and compression, so it
+    // is one processing edit from the shipped settings, and its loss is stated
+    // before it is chosen.
+    const onChoose = vi.fn();
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={onChoose}
+        refusalNoticeId={null}
+      />);
+    const control = within(groupFor("processing")).getByLabelText("Thermo vendor centroiding, MS1 and above");
+    expect(control).toBeEnabled();
+    const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
+    expect(note?.textContent).toContain("Lossy.");
+    expect(note?.textContent).toContain("Thermo RAW only.");
+    fireEvent.click(control);
+    expect(onChoose).toHaveBeenCalledExactlyOnceWith(VENDOR);
+    // And the reviewed settings carry the same loss.
+    const vendor = admittedIntents.find((intent) => intent.id === VENDOR)!;
+    const keys = ((key: string) => key) as UiMessage;
+    expect(conversionIntentDisclosures(vendor, keys)).toContain("cnvVendorCentroidingNote");
   });
 
   it("never call the chooser for a value that cannot be chosen", () => {

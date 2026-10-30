@@ -757,7 +757,7 @@ impl ConversionIntent {
     /// [`Self::admitted`] answers from, and deliberately not by parsing.** A
     /// parser would have to split the identity into five values and look each
     /// one up in its own dimension, which is a second way to arrive at a
-    /// combination -- and a caller could then name one of the thirty-nine the
+    /// combination -- and a caller could then name one of the sixty-two the
     /// evidence never measured by supplying five individually valid parts. A
     /// scan over the admitted rows can only ever answer with a row.
     ///
@@ -1248,7 +1248,7 @@ mod tests {
                 CompressionIntent::Zlib,
             )
             .is_none(),
-            "the fixture must name one of the thirty-nine"
+            "the fixture must name one of the sixty-two"
         );
         let unmeasured = format!(
             "{}+{}+{}+{}+{}",

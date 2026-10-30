@@ -17,7 +17,7 @@ import type { ConversionCatalogRow } from "./contracts";
 /**
  * A build that runs every admitted row.
  *
- * The catalog is always all nine, whatever the build declares: "this build
+ * The catalog is always every row, whatever the build declares: "this build
  * cannot" and "the product never measured it" are different sentences, and only
  * a complete table lets a reader be told which one applies.
  */
@@ -27,7 +27,7 @@ const COMPLETE: readonly ConversionCatalogRow[] = admittedIntents.map((intent) =
   availability: "available",
 }));
 
-/** The same nine rows, with the named ones unavailable on this installation. */
+/** The same rows, with the named ones unavailable on this installation. */
 function withoutRunning(...ids: readonly string[]): readonly ConversionCatalogRow[] {
   return COMPLETE.map((row) => ({
     ...row,
@@ -37,7 +37,7 @@ function withoutRunning(...ids: readonly string[]): readonly ConversionCatalogRo
 }
 
 /**
- * The same nine rows, with the named ones unavailable for absent source
+ * The same rows, with the named ones unavailable for absent source
  * evidence.
  *
  * The shape the vendor workflow actually produces: the combination is one
@@ -66,15 +66,16 @@ const CENTROIDED_64 = id("unscoped_default_centroiding", "all", "mz64_intensity6
 const CENTROIDED_32 = id("unscoped_default_centroiding", "all", "mz32_intensity32", "zlib");
 const FLAT_64 = id("no_additional_centroiding", "all", "mz64_intensity64", "zlib");
 const FLAT_32 = id("no_additional_centroiding", "all", "mz32_intensity32", "zlib");
+const VENDOR = id("vendor_centroiding_from_ms1", "all", "mz64_intensity32", "zlib");
 
 /**
  * A build declaring everything except the peak-picking grammar.
  *
- * The case the whole surface is shaped around: exactly the two rows that
- * compose processing are unavailable, and every value they use appears in rows
- * that run.
+ * The case the whole surface is shaped around: exactly the three rows that
+ * compose processing are unavailable, and every value the default-picker rows
+ * use appears in rows that run.
  */
-const NO_PEAK_PICKING = withoutRunning(CENTROIDED_64, CENTROIDED_32);
+const NO_PEAK_PICKING = withoutRunning(CENTROIDED_64, CENTROIDED_32, VENDOR);
 
 function intentOf(catalog: readonly ConversionCatalogRow[], intentId: string) {
   const row = catalogRow(catalog, intentId);
@@ -96,7 +97,7 @@ describe("one axis moves, and only that axis", () => {
   });
 
   it("refuses a combination the evidence never admitted", () => {
-    // MS1 at 32/32 is one of the thirty-nine that were never measured. No
+    // MS1 at 32/32 is one of the sixty-two that were never measured. No
     // build changes that, and the refusal says so rather than blaming the one
     // installed.
     const state = choiceState(COMPLETE, intentOf(COMPLETE, FLAT_32), "population", "ms1_only");
@@ -237,6 +238,7 @@ describe("the axis vocabularies", () => {
     expect(axisChoices(COMPLETE, current, "processing").map((c) => c.value)).toEqual([
       "no_additional_centroiding",
       "unscoped_default_centroiding",
+      "vendor_centroiding_from_ms1",
     ]);
     expect(axisChoices(COMPLETE, current, "population").map((c) => c.value)).toEqual([
       "all",

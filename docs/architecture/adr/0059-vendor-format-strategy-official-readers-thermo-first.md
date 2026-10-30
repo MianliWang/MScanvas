@@ -130,9 +130,15 @@ The Thermo work the owner selected on 2026-10-30
   >     that release, under ADR 0055's relaxed gate. A build that reports no
   >     release converts no Thermo RAW.
   >   - Its source domain is the Thermo RAW family, not the two measured
-  >     instrument models. The evidence left that choice open. This change
-  >     takes CNV-D2's argument that one bundled reader picks for every Thermo
-  >     instrument, for MS1 and up only.
+  >     instrument models. The owner chose this in decision 6 above, the
+  >     evidence's second option, on CNV-D2's argument that one bundled reader
+  >     picks for every Thermo instrument.
+  >   - Its verified claim on profile MS2 rests on ion-trap data only (`3a`,
+  >     14 spectra). "MS1 and up" also centroids MS2, and Orbitrap (FTMS)
+  >     profile MS2, common on Q Exactive-class methods, was not measured. This
+  >     is the gap that keeps "MS2 and up" advanced, and the row stays verified
+  >     across the family with it until a public Orbitrap profile-MS2 file is
+  >     measured.
   > - **MS2 and up, and every other vendor scope, is advanced on Thermo RAW,
   >   labelled not verified.** Before this change the code refused any vendor
   >   picker as not checkable. Its output check knew only the default picker's
@@ -140,12 +146,18 @@ The Thermo work the owner selected on 2026-10-30
   >   spectrum centroid, so a correct `msLevel=2-` output would have failed.
   >   The check now judges a vendor picker on Thermo RAW at its requested scope:
   >   - the run adds exactly one method naming `Thermo/Xcalibur peak picking`,
-  >     and no other picker;
+  >     and no other picker. A second vendor method fails as a second,
+  >     contradicting scope record; none leaves the processing unverified;
   >   - that method's `ms levels` record is what this build writes for the
   >     scope: none for `1-`, the interval otherwise. It is the only witness
   >     of a scope the build discarded;
   >   - every in-scope spectrum declares centroid. Out-of-scope spectra are not
   >     judged, and the filter string's `p`/`c` is never read.
+  >   - Known limit: under `1-` a spectrum with no MS level is judged in
+  >     scope, although msconvert's `msLevel=1-` probably leaves it unpicked
+  >     (not checked). A file whose spectrum list carried such spectra (a UV
+  >     or PDA controller, not measured) would fail closed as
+  >     `CentroidRepresentationMissing`, never pass wrongly.
   > - **Unchanged:**
   >   - the vendor picker stays blocked on mzML sources and anywhere but first;
   >   - bare `peakPicking` on Thermo RAW stays blocked;

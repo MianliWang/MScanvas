@@ -68,8 +68,8 @@ export interface BackendAuthorityProjection {
  * fails there rather than arriving as an unlabelled control.
  *
  * Listing the *members* of a dimension is not listing the *combinations* of
- * them. A free cross-product of these is forty-eight; nine were measured, and
- * which nine is a question only the catalog answers.
+ * them. A free cross-product of these is seventy-two; ten were measured, and
+ * which ten is a question only the catalog answers.
  */
 /**
  * The one format the admitted table names, as an intent spells it.

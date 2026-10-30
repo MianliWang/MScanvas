@@ -1250,8 +1250,8 @@ impl ConversionPlan {
         )
     }
 
-    /// Plans one advanced conversion (ADR 0055): an intent outside the nine
-    /// rows, judged by the checks its integrity route names.
+    /// Plans one advanced conversion (ADR 0055): an intent outside the
+    /// admitted rows, judged by the checks its integrity route names.
     ///
     /// Refused first where a step is blocked for this source (decision 7) and
     /// where no output checks exist for it (ground rule 1), before anything is

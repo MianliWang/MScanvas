@@ -127,7 +127,7 @@ pub(crate) enum RowAdmission {
 /// Every admitted combination, judged against this product's source evidence
 /// and then against one installation's grammar.
 ///
-/// Always all nine rows, in the order `ConversionIntent::ADMITTED` states them.
+/// Always every row, in the order `ConversionIntent::ADMITTED` states them.
 /// A catalog that omitted its unavailable rows could not answer the question
 /// Decision 7's one-axis edit asks -- *does a row for this combination exist at
 /// all, and if so is it available here?* -- and the answers are different

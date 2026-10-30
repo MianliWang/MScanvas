@@ -7706,7 +7706,7 @@ impl ConvertingProvider<FakeConversionRunner> {
         )
     }
 
-    /// The same, on a build whose grammar admits every one of the nine rows.
+    /// The same, on a build whose grammar admits every admitted row.
     ///
     /// For the tests where a reader *chooses*: on the narrow build there is one
     /// available row, so a selection could not be wrong in a way anything could
@@ -16727,7 +16727,7 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
     let receipt = current_receipt(&service);
     let document = current_document(&service);
     // Every part of it is a real identity token -- this is one of the
-    // thirty-nine combinations the evidence never measured, composed out of
+    // sixty-two combinations the evidence never measured, composed out of
     // five values that are each perfectly valid on their own. A fixture with a
     // mistyped token would be refused for being unparseable and would prove
     // nothing about the table.
@@ -28856,7 +28856,7 @@ fn the_shipped_custom_folder_workflow_runs_through_the_new_authority() {
 fn a_non_shipped_intent_survives_source_relative_resolution() {
     let here = TestFile::new("m65-intent");
     let acquisition = here.thermo_raw("one.raw");
-    // A build whose grammar admits every one of the nine rows, because this
+    // A build whose grammar admits every admitted row, because this
     // test is about a *chosen* combination surviving resolution -- on the
     // narrow build there is one available row and the choice could not be seen.
     let service = PreviewService::new(Box::new(ConvertingProvider::offering_every_admitted_row()));

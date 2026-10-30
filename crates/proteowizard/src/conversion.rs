@@ -3384,12 +3384,14 @@ fn source_history_for(before: Option<&MzmlFacts>, position: usize) -> Option<Pro
 /// Per spectrum, through its effective processing reference, as for the
 /// default picker:
 /// - any other picker this run added fails as `ProcessingAlgorithmMismatch`;
-/// - the run added exactly one vendor method, or the property is left
-///   unverified, as the default picker's absence leaves it;
-/// - that method's `ms levels` record is what the verified build writes for
-///   this scope, or the output fails as `PickerScopeRecordMismatch`. The
-///   record is the only witness of a scope the build discarded, because an
-///   out-of-scope spectrum may be profile or centroid.
+/// - a run that added no vendor method leaves the property unverified, as the
+///   default picker's absence leaves it;
+/// - otherwise the run added exactly one vendor method, and its `ms levels`
+///   record is what the verified build writes for this scope, or the output
+///   fails as `PickerScopeRecordMismatch`: a second vendor method is a second
+///   record, which contradicts the first. The record is the only witness of a
+///   scope the build discarded, because an out-of-scope spectrum may be
+///   profile or centroid.
 ///
 /// Then representation. An in-scope spectrum with arrays must say centroid
 /// (`CentroidRepresentationMissing` otherwise). An out-of-scope one is not
@@ -3443,14 +3445,17 @@ fn check_vendor_centroiding(
                 spectrum_index: position as u64,
             });
         }
-        if added.count(ProcessingAlgorithm::VendorPeakPicking) != 1 {
-            established = false;
-            continue;
-        }
-        if added.vendor_scope() != levels.expected_record() {
-            return Some(ConversionIntegrityOutcome::PickerScopeRecordMismatch {
-                spectrum_index: position as u64,
-            });
+        match added.count(ProcessingAlgorithm::VendorPeakPicking) {
+            0 => {
+                established = false;
+                continue;
+            }
+            1 if added.vendor_scope() == levels.expected_record() => {}
+            _ => {
+                return Some(ConversionIntegrityOutcome::PickerScopeRecordMismatch {
+                    spectrum_index: position as u64,
+                });
+            }
         }
     }
 
@@ -6163,7 +6168,7 @@ mod tests {
             );
         }
 
-        /// The regression guard for the nine verified rows: built from a row's
+        /// The regression guard for the verified rows: built from a row's
         /// precision and compression, the per-array judgement agrees with the
         /// record-level checks the rows use, outcome for outcome.
         #[test]
@@ -6605,15 +6610,33 @@ mod tests {
                     "{scope:?}"
                 );
             }
-            // No picker named, or the vendor one twice: not established, and
-            // not refused, as the default picker's absence is not.
-            for methods in [String::new(), vendor_method(None).repeat(2)] {
-                let (outcome, report) = judge_processing(&centroided, &methods, None);
-                assert_eq!(outcome, None);
-                assert!(
-                    report
-                        .unverified
-                        .contains(&IntegrityProperty::RequestedProcessing)
+            // No picker named: not established, and not refused, as the default
+            // picker's absence is not.
+            let (outcome, report) = judge_processing(&centroided, "", None);
+            assert_eq!(outcome, None);
+            assert!(
+                report
+                    .unverified
+                    .contains(&IntegrityProperty::RequestedProcessing)
+            );
+            // The vendor picker twice, in two methods or in one, agreeing or
+            // not: two scope records, and the output fails.
+            let named_twice = vendor_method(None).replacen(
+                "</processingMethod>",
+                &format!(r#"<userParam name="{THERMO_VENDOR}"/></processingMethod>"#),
+                1,
+            );
+            for methods in [
+                vendor_method(None).repeat(2),
+                vendor_method(None) + &vendor_method(Some("2-")),
+                named_twice,
+            ] {
+                assert_eq!(
+                    judge_processing(&centroided, &methods, None).0,
+                    Some(ConversionIntegrityOutcome::PickerScopeRecordMismatch {
+                        spectrum_index: 0
+                    }),
+                    "{methods}"
                 );
             }
         }

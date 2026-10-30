@@ -1849,6 +1849,13 @@ M63_INTENT = "crates/proteowizard/src/intent.rs"
 M63_CROSS_PRODUCT = 72
 M63_ADMITTED_ROWS = 10
 
+#: The frontend's hand transcription of the admitted table, one `intent(...)`
+#: call per row.
+M63_FRONTEND_FIXTURE = "apps/desktop/src/test/previewFixtures.ts"
+M63_FRONTEND_FIXTURE_ROW = re.compile(
+    r'^\s*intent\("(\w+)", "(\w+)", "(\w+)", "(\w+)"\),$', re.MULTILINE
+)
+
 #: The one shape a default-picker filter may take in an admitted row's evidence.
 #:
 #: M6.2 measured that `peakPicking msLevel=<set>` with no picker token silently
@@ -2684,6 +2691,7 @@ def validate_the_admitted_intent_table_cites_measurements_that_support_it(
             "error rather than a quieter table",
             errors,
         )
+    _validate_the_frontend_fixture_transcribes_the_rows(rows, errors)
 
     ledger = _msconvert_ledger(errors)
     if ledger is None:
@@ -2751,6 +2759,34 @@ def validate_the_admitted_intent_table_cites_measurements_that_support_it(
         _validate_one_admitted_rows_source_domain(row, combination, errors)
 
 
+def _validate_the_frontend_fixture_transcribes_the_rows(
+    rows: list[dict[str, str]], errors: list[str]
+) -> None:
+    """The frontend's `admittedIntents` is Rust's table, row for row, in order.
+
+    The fixture is transcribed by hand, and every frontend suite and browser spec
+    renders its catalog from it, so a stale transcription passes them all while
+    the product offers a row no test has rendered.
+    """
+    path = ROOT / M63_FRONTEND_FIXTURE
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    def stable_id(variant: str) -> str:
+        if variant == "NoCompression":
+            return "none"
+        return re.sub(r"(?<!^)(?=[A-Z])", "_", variant).lower()
+
+    axes = ("processing", "population", "precision", "compression")
+    expected = [tuple(stable_id(row[axis]) for axis in axes) for row in rows]
+    transcribed = M63_FRONTEND_FIXTURE_ROW.findall(text)
+    if transcribed != expected:
+        fail(
+            f"{M63_FRONTEND_FIXTURE}'s `admittedIntents` is {transcribed}, not {M63_INTENT}'s "
+            f"rows in order, {expected}. Transcribe the table again",
+            errors,
+        )
+
+
 def _thermo_vendor_cases(errors: list[str]) -> dict[str, object]:
     """The Thermo vendor centroiding cases a row may cite, as ledger-shaped cases.
 
@@ -2767,6 +2803,23 @@ def _thermo_vendor_cases(errors: list[str]) -> dict[str, object]:
         )
         return {}
     text = path.read_text(encoding="utf-8")
+    # The record states one full argv, for one case, and says every case holds
+    # the encoding fixed: the flags between the source and `--outdir` are the
+    # pinned ones, and every pinned case shares them up to its filter value.
+    example = re.search(
+        r"^Full argv, for example `(\w+)`:\n\n```text\n(.*?)\n```", text, re.MULTILINE | re.DOTALL
+    )
+    tokens = re.findall(r'"([^"]*)"', example.group(2)) if example else []
+    stated = tuple(tokens[2 : tokens.index("--outdir")]) if "--outdir" in tokens else ()
+    if not example or THERMO_VENDOR_CASES.get(example.group(1)) != stated or any(
+        arguments[:-1] != stated[:-1] for arguments in THERMO_VENDOR_CASES.values()
+    ):
+        fail(
+            f"{THERMO_VENDOR_EVIDENCE}'s full argv {list(stated)} is not the argv pinned for "
+            "its cases. A row is judged against the argv the record states",
+            errors,
+        )
+        return {}
     found: dict[str, object] = {}
     for name, arguments in THERMO_VENDOR_CASES.items():
         method = re.search(

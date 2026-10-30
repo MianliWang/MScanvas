@@ -3241,6 +3241,56 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             .join(relative)
     }
 
+    /// A spectrum-filter declaration with an unclosed `[` takes the lines after
+    /// it: three in all at most, never past a blank line, and flushed at the
+    /// end of the text.
+    #[test]
+    fn a_wrapped_spectrum_filter_declaration_joins_at_most_three_lines() {
+        let mut parser = HelpParser::new(BackendTool::MsConvert);
+        parser
+            .parse_stream(concat!(
+                "Spectrum List Filters\n",
+                "\n",
+                "twoLines [a=<x>\n",
+                "    [b=<y>]]\n",
+                "\n",
+                "threeLines [a=<x>\n",
+                "    [b=<y>\n",
+                "    [c=<z>]]]\n",
+                "\n",
+                "neverCloses [a=<x>\n",
+                "    [b=<y>\n",
+                "    [c=<z>\n",
+                "    d=<w>\n",
+                "\n",
+                "blankEnds [a=<x>\n",
+                "\n",
+                "    b=<y>]\n",
+                "\n",
+                "atTheEnd [a=<x>\n",
+                "    b=<y>",
+            ))
+            .expect("parse the synthetic help");
+        let signatures: Vec<(&str, &str)> = parser
+            .spectrum_filters
+            .iter()
+            .map(|(name, declaration)| (name.as_str(), declaration.normalized_signature()))
+            .collect();
+        assert_eq!(
+            signatures,
+            [
+                ("atTheEnd", "[a=<x> b=<y>"),
+                ("blankEnds", "[a=<x>"),
+                ("neverCloses", "[a=<x> [b=<y> [c=<z>"),
+                ("threeLines", "[a=<x> [b=<y> [c=<z>]]]"),
+                ("twoLines", "[a=<x> [b=<y>]]"),
+            ]
+        );
+        let three = &parser.spectrum_filters["threeLines"];
+        assert!(three.accepts_invocation(0, &["a", "b", "c"]));
+        assert!(!three.accepts_invocation(0, &["d"]));
+    }
+
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
     struct TestDirectory(PathBuf);

@@ -5,8 +5,8 @@
 //! switches. [`StructuredIntent::new`] enforces decision 4's rules, so an intent
 //! that exists can be lowered, and its lowering is deterministic.
 //!
-//! **The admitted rows stay the verified subset.** [`ConversionIntent::ADMITTED`]
-//! is unchanged, and "is this verified?" is one lookup in it: an intent is
+//! **The admitted rows stay the verified subset.** "Is this verified?" is one
+//! lookup in [`ConversionIntent::ADMITTED`]: an intent is
 //! verified only where it equals a row's structured form and decision 1's other
 //! three conditions hold ([`StructuredIntent::tier`]). Every other buildable
 //! intent is advanced, labelled "not verified by MSCanvas".
@@ -743,10 +743,11 @@ impl StructuredIntent {
     /// emits. Evidence of spelling only (M6.2's rule).
     ///
     /// By name, because the probe cannot yet read a full filter grammar: it
-    /// reads a declaration's first line only, drops one whose signature holds a
-    /// `.`, and skips the chromatogram section. ponytail: until it reads that
-    /// section, no chromatogram step is confirmed, so every intent with one is
-    /// refused here; read the section in the probe to lift it.
+    /// joins a wrapped declaration over three lines at most, drops one whose
+    /// signature holds a `.`, and skips the chromatogram section. ponytail:
+    /// until it reads that section, no chromatogram step is confirmed, so every
+    /// intent with one is refused here; read the section in the probe to lift
+    /// it.
     pub fn confirm_provider_requirements(
         &self,
         capabilities: &InstalledHelpCapabilities,
