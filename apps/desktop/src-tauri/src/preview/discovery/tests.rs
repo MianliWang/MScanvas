@@ -237,10 +237,28 @@ fn discovery_offers_every_spelling_of_the_extension() {
     ));
 
     assert_eq!(result.candidates().len(), 3);
-    for name in ["upper.MZML", "mixed.MzMl", "lower.mzml"] {
-        assert!(has_mzml_extension(Path::new(name)), "{name}");
+    // ADR 0051: the two single-object vendor families are proposed in every
+    // spelling too, and neither half of a two-object acquisition ever is.
+    for name in [
+        "upper.MZML",
+        "mixed.MzMl",
+        "lower.mzml",
+        "run.raw",
+        "RUN.RAW",
+        "run.lcd",
+        "Run.Lcd",
+    ] {
+        assert!(has_proposable_extension(Path::new(name)), "{name}");
     }
-    assert!(!has_mzml_extension(Path::new("run.mzXML")));
+    for name in [
+        "run.mzXML",
+        "run.wiff",
+        "run.wiff.scan",
+        "run.wiff2",
+        "notes.txt",
+    ] {
+        assert!(!has_proposable_extension(Path::new(name)), "{name}");
+    }
 }
 
 #[test]
@@ -957,7 +975,7 @@ fn the_production_budget_is_the_one_the_decision_record_states() {
 #[cfg(not(windows))]
 #[test]
 fn discovery_is_unavailable_off_windows() {
-    let error = discover_mzml_candidates(Path::new("/tmp"), DiscoveryBudget::default())
+    let error = discover_candidates(Path::new("/tmp"), DiscoveryBudget::default())
         .expect_err("no guarantee is made off Windows");
 
     assert_eq!(error.kind(), DiscoveryErrorKind::PlatformUnavailable);

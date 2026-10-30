@@ -1,4 +1,5 @@
-//! Bounded discovery of mzML candidates under one folder the user chose.
+//! Bounded discovery of acquisition candidates under one folder the user chose:
+//! mzML, Thermo RAW and Shimadzu LCD files (ADR 0051).
 //!
 //! A folder is an authority boundary, not a list of filenames. The user pointed
 //! at one root; they did not point at every place a junction inside it happens
@@ -17,15 +18,16 @@
 //! What this module does *not* do is as deliberate. It accepts nothing, leases
 //! nothing, registers nothing, and asks no backend anything: it answers "which
 //! paths under here are worth offering to acceptance", and acceptance
-//! (`selection::accept_mzml_file`) re-decides every one of them. Nothing here is
-//! serialisable and nothing here is reachable from a command; see ADR 0007.
+//! (`selection::accept_proposed_file`) re-decides every one of them. Nothing
+//! here is serialisable and nothing here is reachable from a command; see ADR
+//! 0007.
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use super::selection::{FileIdentity, has_mzml_extension};
+use super::selection::{FileIdentity, has_proposable_extension};
 
 /// How deep the walk may go, counting the chosen root as zero.
 pub(super) const MAX_DISCOVERY_DEPTH: u32 = 32;
@@ -90,6 +92,7 @@ pub(super) struct DiscoveredCandidate {
 
 impl DiscoveredCandidate {
     /// The path acceptance will be given. Never leaves the preview module.
+    #[cfg(test)]
     pub(super) fn path(&self) -> &Path {
         &self.path
     }
@@ -101,6 +104,7 @@ impl DiscoveredCandidate {
     /// path and compares: between the walk seeing the name and acceptance
     /// resolving it, the name can be made to mean a different file, and a
     /// candidate is only ever a proposal about the object that was found.
+    #[cfg(test)]
     pub(super) fn identity(&self) -> FileIdentity {
         self.identity
     }
@@ -110,6 +114,7 @@ impl DiscoveredCandidate {
     /// Never absolute, never containing `.` or `..`, and never naming the root
     /// itself: it is only what would have to be said to tell two identically
     /// named files apart.
+    #[cfg(test)]
     pub(super) fn relative_components(&self) -> &[OsString] {
         &self.relative
     }
@@ -188,15 +193,18 @@ pub(super) struct DiscoveryResult {
 }
 
 impl DiscoveryResult {
+    #[cfg(test)]
     pub(super) fn candidates(&self) -> &[DiscoveredCandidate] {
         &self.candidates
     }
 
+    #[cfg(test)]
     pub(super) fn summary(&self) -> DiscoverySummary {
         self.summary
     }
 
     /// Which limits were reached, sorted and without repeats.
+    #[cfg(test)]
     pub(super) fn limits(&self) -> &[DiscoveryLimit] {
         &self.limits
     }
@@ -474,7 +482,7 @@ impl Limits {
     }
 }
 
-/// Walks one chosen root and returns the mzML candidates under it.
+/// Walks one chosen root and returns the proposable candidates under it.
 ///
 /// The traversal is an explicit stack rather than recursion: how much stack the
 /// application uses is not a decision a directory tree gets to make, and a
@@ -557,7 +565,7 @@ pub(super) fn discover<S: DirectorySource>(
             let key = ordinal_key(&entry.name);
             if entry.is_directory {
                 level_directories.push((key, entry));
-            } else if has_mzml_extension(Path::new(&entry.name)) {
+            } else if has_proposable_extension(Path::new(&entry.name)) {
                 level_files.push((key, entry));
             }
         }
@@ -670,7 +678,7 @@ pub(super) const fn inspect_drop_root(_root: &Path) -> DropRootInspection {
     DropRootInspection::PlatformUnavailable
 }
 
-/// Discovers mzML candidates under a folder the user chose.
+/// Discovers proposable candidates under a folder the user chose.
 ///
 /// The one entry point. On Windows it walks the real filesystem through a live
 /// directory handle; elsewhere it refuses, because the guarantees this module
@@ -678,7 +686,7 @@ pub(super) const fn inspect_drop_root(_root: &Path) -> DropRootInspection {
 /// way to make on another platform. ADR 0006 made the same call for identity
 /// leases and for the same reason.
 #[cfg(windows)]
-pub(super) fn discover_mzml_candidates(
+pub(super) fn discover_candidates(
     root: &Path,
     budget: DiscoveryBudget,
 ) -> Result<DiscoveryResult, DiscoveryError> {
@@ -686,7 +694,7 @@ pub(super) fn discover_mzml_candidates(
 }
 
 #[cfg(not(windows))]
-pub(super) fn discover_mzml_candidates(
+pub(super) fn discover_candidates(
     _root: &Path,
     _budget: DiscoveryBudget,
 ) -> Result<DiscoveryResult, DiscoveryError> {

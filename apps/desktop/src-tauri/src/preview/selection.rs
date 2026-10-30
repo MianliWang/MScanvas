@@ -257,20 +257,15 @@ pub(super) enum DatasetSourceKind {
     /// Accepted as a Thermo Scientific RAW acquisition, by the reviewed
     /// signature admission in `mscanvas-proteowizard`.
     ///
-    /// Reachable from the file picker and from nowhere else. Folder discovery
-    /// and the Explorer drop remain regular-mzML-only: both walk a tree the
-    /// user did not enumerate, and admitting a vendor family from a walk is a
-    /// wider claim than admitting one the user named.
+    /// Reachable from the file picker (ADR 0012) and, since ADR 0051, from
+    /// folder discovery and the Explorer drop, which admit a proposed `.raw`
+    /// under this same rule after checking it is still the object they found.
     ThermoRaw,
     /// Accepted as a Shimadzu LabSolutions LCD acquisition, by the reviewed
     /// compound-file admission in `mscanvas-proteowizard`.
     ///
-    /// Reachable from nothing at all. ADR 0018 measured the family and ADR 0019
-    /// records this decision: the workspace can hold one, carry it whole into a
-    /// conversion and describe what came back, and no picker, folder walk,
-    /// drop, queue or command puts one here. That is not an oversight to be
-    /// tidied up later -- ingestion is a product claim with its own evidence,
-    /// and this slice deliberately does not make it.
+    /// Reachable from the file picker (ADR 0020) and, since ADR 0051, from
+    /// folder discovery and the Explorer drop, exactly as `ThermoRaw` is.
     ShimadzuLcd,
     /// Accepted as a SCIEX WIFF acquisition: a `<name>.wiff` **and** the
     /// `<name>.wiff.scan` beside it, admitted together by the reviewed bundle
@@ -411,13 +406,11 @@ const SCIEX_WIFF_COMPANION_SUFFIX: &str = ".wiff.scan";
 /// second guess. Renaming an acquisition does not change what it is, and this
 /// boundary's answer to a renamed one is no.
 ///
-/// Folder discovery and the Explorer drop do not call this. Both walk or
-/// classify a filesystem surface the user did not enumerate file by file, and
-/// they stay regular-mzML-only on purpose -- admitting a vendor family from a
-/// walk is a wider claim than admitting one the user named, and for a bundle it
-/// is wider again, because pairing an object with a neighbour it was not
-/// selected with is a decision no traversal has the evidence to make. ADR 0020
-/// records the distinction and ADR 0027 keeps it for this family.
+/// Folder discovery and the Explorer drop do not call this; they call
+/// [`accept_proposed_file`]. Since ADR 0051 they admit the two single-object
+/// vendor families too, but never a bundle: pairing an object with a neighbour
+/// it was not selected with is a decision no traversal has the evidence to
+/// make, so SCIEX stays the picker's (ADR 0027).
 ///
 /// No backend process is launched here, for any family. Admission is filesystem
 /// work and stays filesystem work.
@@ -453,6 +446,115 @@ fn sciex_companion_selected_alone() -> PreviewErrorDto {
     )
 }
 
+/// Whether a name proposes a family a folder walk or an Explorer drop may add:
+/// mzML, Thermo RAW or Shimadzu LCD.
+///
+/// The union of the mzML check and two of the picker's routing predicates, and
+/// deliberately not the third: a SCIEX acquisition is two objects, and a walk
+/// has no evidence to pair them (ADR 0027), so it stays picker-only (ADR
+/// 0051). A proposal, like every routing question here: admission decides.
+pub(super) fn has_proposable_extension(path: &Path) -> bool {
+    has_mzml_extension(path) || proposes_vendor_family(path)
+}
+
+/// Whether a proposal's admission reads the whole file -- a Thermo RAW or a
+/// Shimadzu LCD, hashed through a handle that refuses writers while it reads.
+pub(super) fn proposes_vendor_family(path: &Path) -> bool {
+    has_thermo_raw_extension(path) || has_shimadzu_lcd_extension(path)
+}
+
+/// Why a walked or dropped proposal was not admitted.
+pub(super) enum ProposalRefusal {
+    /// The name no longer resolves to the object the walk or drop observed.
+    /// Decided before any byte of the file is read.
+    IdentityChanged,
+    Refused(PreviewErrorDto),
+}
+
+/// Admits one file a folder walk or an Explorer drop proposed, as the object
+/// the walk or drop observed.
+///
+/// The order is the point. The file is inspected and leased first, its
+/// identity compared against `observed`, and only then is a vendor file read
+/// and hashed: a name re-pointed since the walk is refused without reading a
+/// byte of whatever it now names. A vendor file another program holds open for
+/// writing -- an instrument still acquiring it -- is refused as `source_in_use`
+/// before the read rather than as an unreadable file after it.
+///
+/// A SCIEX name is refused before anything is opened, so no companion is ever
+/// looked at, and with the answer any unsupported name gets. Every other name
+/// is put to mzML admission and refused by it, as it always was.
+pub(super) fn accept_proposed_file(
+    path: &Path,
+    observed: FileIdentity,
+) -> Result<AcceptedFile, ProposalRefusal> {
+    if has_sciex_wiff_extension(path) || is_sciex_wiff_companion_name(path) {
+        return Err(ProposalRefusal::Refused(unsupported_extension()));
+    }
+    let kind = if has_thermo_raw_extension(path) {
+        DatasetSourceKind::ThermoRaw
+    } else if has_shimadzu_lcd_extension(path) {
+        DatasetSourceKind::ShimadzuLcd
+    } else {
+        DatasetSourceKind::Mzml
+    };
+    let inspected = inspect_selected_file(path).map_err(ProposalRefusal::Refused)?;
+    if inspected.identity != observed {
+        return Err(ProposalRefusal::IdentityChanged);
+    }
+    if kind != DatasetSourceKind::Mzml {
+        drop(lock_against_replacement(path).map_err(ProposalRefusal::Refused)?);
+    }
+    admit_inspected(path, kind, inspected).map_err(ProposalRefusal::Refused)
+}
+
+fn unsupported_extension() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "unsupported_extension",
+        "MSCanvas opens .mzML files in this version.",
+        false,
+    )
+}
+
+/// Everything a single-object admission does after its inspection.
+///
+/// One body for the three single-object families, so the picker and the
+/// walking surfaces cannot admit one under different rules. A vendor family is
+/// admitted by the crate's own rule against the inspected identity; mzML by its
+/// extension on the canonical path.
+fn admit_inspected(
+    path: &Path,
+    kind: DatasetSourceKind,
+    inspected: InspectedFile,
+) -> Result<AcceptedFile, PreviewErrorDto> {
+    let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
+    if kind == DatasetSourceKind::Mzml && !has_mzml_extension(&canonical) {
+        return Err(unsupported_extension());
+    }
+    let file_name = canonical
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| {
+            PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
+        })?;
+    // The admission that decides, for a vendor family. Its result is dropped:
+    // what this returns is a registry row, and the source a run needs is opened
+    // again at the moment of the run, against this same held object.
+    if kind != DatasetSourceKind::Mzml {
+        drop(bound_source(kind, &canonical, inspected.identity)?);
+    }
+    Ok(AcceptedFile {
+        path: canonical,
+        file_name,
+        kind,
+        byte_length: inspected.byte_length,
+        identity: inspected.identity,
+        lease: inspected.lease,
+        companions: Vec::new(),
+        primary_sha256: None,
+    })
+}
+
 /// Validates a caller-supplied path and describes it without leaking it.
 ///
 /// Extension and regular-file posture are checked here rather than in the
@@ -462,43 +564,16 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
     // file's own all come from one inspection, so they describe the same file.
     // Establishing them separately would let a replacement land in between and
     // be accepted as what the user chose.
-    let inspected = inspect_selected_file(path)?;
-
-    let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
-    if !has_mzml_extension(&canonical) {
-        return Err(PreviewErrorDto::new(
-            "unsupported_extension",
-            "MSCanvas opens .mzML files in this version.",
-            false,
-        ));
-    }
-
-    let file_name = canonical
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .ok_or_else(|| {
-            PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
-        })?;
-
-    Ok(AcceptedFile {
-        path: canonical,
-        file_name,
-        kind: DatasetSourceKind::Mzml,
-        byte_length: inspected.byte_length,
-        identity: inspected.identity,
-        lease: inspected.lease,
-        companions: Vec::new(),
-        primary_sha256: None,
-    })
+    admit_inspected(path, DatasetSourceKind::Mzml, inspect_selected_file(path)?)
 }
 
 /// Accepts a Thermo Scientific RAW acquisition, for conversion only.
 ///
-/// Deliberately not reachable from any ingestion surface: nothing the user can
-/// click reaches this, and normal product ingestion stays mzML-only. It exists
-/// so a dataset that is going to be *converted* can be admitted under the rule
-/// its family actually needs, rather than under the extension test that decides
-/// mzML.
+/// Reached from the picker through [`accept_workspace_file`]'s routing; the
+/// walking surfaces reach the same body through [`accept_proposed_file`]. It
+/// exists so a dataset that is going to be *converted* can be admitted under
+/// the rule its family actually needs, rather than under the extension test
+/// that decides mzML.
 ///
 /// The recognition itself is not reimplemented here. `mscanvas-proteowizard`
 /// already owns a reviewed admission for this family -- posture, extension
@@ -512,42 +587,18 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
 /// object cannot be replaced between the two, and the identities are compared
 /// afterwards so that promise is checked rather than assumed.
 pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
-    let inspected = inspect_selected_file(path)?;
-    let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
-    let file_name = canonical
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .ok_or_else(|| {
-            PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
-        })?;
-
-    // The admission that decides. Its result is dropped here: what this function
-    // returns is a registry row, and the source a run needs is opened again at
-    // the moment of the run, against this same held object.
-    drop(bound_source(
+    admit_inspected(
+        path,
         DatasetSourceKind::ThermoRaw,
-        &canonical,
-        inspected.identity,
-    )?);
-
-    Ok(AcceptedFile {
-        path: canonical,
-        file_name,
-        kind: DatasetSourceKind::ThermoRaw,
-        byte_length: inspected.byte_length,
-        identity: inspected.identity,
-        lease: inspected.lease,
-        companions: Vec::new(),
-        primary_sha256: None,
-    })
+        inspect_selected_file(path)?,
+    )
 }
 
 /// Accepts a Shimadzu LabSolutions LCD acquisition.
 ///
-/// Reachable from the file picker through [`accept_workspace_file`]'s routing,
-/// and from nowhere else: folder discovery and the Explorer drop remain
-/// regular-mzML-only. ADR 0019 landed this privately; ADR 0020 gives it the
-/// picker.
+/// Reachable from the file picker through [`accept_workspace_file`]'s routing
+/// (ADR 0020) and from the walking surfaces through [`accept_proposed_file`]
+/// (ADR 0051). ADR 0019 landed this privately.
 ///
 /// **No recognition is reimplemented here, and for this family that matters
 /// more than it did for the last one.** A LabSolutions `.lcd` and a SCIEX
@@ -571,44 +622,20 @@ pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, Previe
 /// between the two admissions, and the identities are compared afterwards so
 /// that promise is checked rather than assumed.
 pub(super) fn accept_shimadzu_lcd_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
-    let inspected = inspect_selected_file(path)?;
-    let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
-    let file_name = canonical
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .ok_or_else(|| {
-            PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
-        })?;
-
-    // The admission that decides, and the only thing that does. Its result is
-    // dropped for the same reason the Thermo one is: what this returns is a
-    // registry row, and the source a run needs is opened again at the moment of
-    // the run, against this same held object.
-    drop(bound_source(
+    admit_inspected(
+        path,
         DatasetSourceKind::ShimadzuLcd,
-        &canonical,
-        inspected.identity,
-    )?);
-
-    Ok(AcceptedFile {
-        path: canonical,
-        file_name,
-        kind: DatasetSourceKind::ShimadzuLcd,
-        byte_length: inspected.byte_length,
-        identity: inspected.identity,
-        lease: inspected.lease,
-        companions: Vec::new(),
-        primary_sha256: None,
-    })
+        inspect_selected_file(path)?,
+    )
 }
 
 /// Accepts a SCIEX WIFF acquisition -- the `.wiff` and its `.wiff.scan` -- as
 /// one dataset.
 ///
 /// Reachable from the file picker through [`accept_workspace_file`]'s routing,
-/// and from nowhere else: folder discovery and the Explorer drop remain
-/// regular-mzML-only. ADR 0023 landed this privately; ADR 0027 gives it the
-/// picker.
+/// and from nowhere else: folder discovery and the Explorer drop never propose
+/// this family (ADR 0051). ADR 0023 landed this privately; ADR 0027 gives it
+/// the picker.
 ///
 /// **One selected primary is one dataset.** The companion is admitted with it
 /// and never becomes a second row -- it is not a dataset, it is half of this
@@ -1884,6 +1911,19 @@ impl DatasetRegistry {
 
     pub(super) fn contains(&self, id: DatasetId) -> bool {
         self.datasets.contains_key(&id)
+    }
+
+    /// The row a single-object acquisition with this identity already is.
+    ///
+    /// The same key `add` decides duplicates by, asked without an accepted file,
+    /// so a walk can answer "already here" without reading the file again.
+    pub(super) fn single_object_row(&self, identity: FileIdentity) -> Option<DatasetId> {
+        self.by_identity
+            .get(&DatasetIdentity {
+                primary: identity,
+                companions: Vec::new(),
+            })
+            .copied()
     }
 
     pub(super) fn len(&self) -> usize {

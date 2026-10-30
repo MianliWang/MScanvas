@@ -5,6 +5,9 @@
   vendor preview, every other family and every queue-semantics concern
   separately gated
 - Date: 2026-08-10
+- Amended: 2026-10-29 — folder ingestion and the Explorer drop now propose
+  `.lcd` files and admit them under this family's rule. See
+  [ADR 0051](0051-folder-and-drop-propose-admitted-vendor-files.md).
 
 ## Context
 
