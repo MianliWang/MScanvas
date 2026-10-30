@@ -19,6 +19,8 @@ const PLOT_PADDING_LEFT = 8;
 const PLOT_PADDING_RIGHT = 8;
 /** Deep enough that the value title in the corner clears the headroom's top. */
 const PLOT_PADDING_TOP = 12;
+/** Room past each edge of the drawn band for a stick's stroke, in viewBox units (about 2 px). */
+const STICK_BLEED = 4;
 
 /**
  * The drawn band, exported so an interaction adapter resolves a pointer against
@@ -643,11 +645,14 @@ export function StickSpectrum({
           viewBox={`0 0 ${PLOT_WIDTH} ${PLOT_HEIGHT}`}
         >
           <defs>
+            {/* A stick on either edge of the drawn band keeps its whole
+                width: clipped at its centre it drew half as wide, and read as
+                a lighter mark than its neighbours (P6). */}
             <clipPath id={STICKS_CLIP}>
               <rect
                 height={BASELINE_Y}
-                width={PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT}
-                x={PLOT_PADDING_LEFT}
+                width={PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT + 2 * STICK_BLEED}
+                x={PLOT_PADDING_LEFT - STICK_BLEED}
                 y={0}
               />
             </clipPath>

@@ -112,8 +112,7 @@ export function LinkedFigureResult({ state, onDismiss }: { readonly state: Linke
       theme: t(state.figure.theme), index: formatCount(state.selectedIndex), count: state.sourceScanCount }) :
     t("viewerLinkedSaved", { name: state.fileName, index: formatCount(state.selectedIndex),
       rt: String(state.selectedRetentionTime), count: state.sourceScanCount });
-  return <p className="spectrum-export-message">{message}{" "}
-    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{ownedErrorDetail(state.error, t)}</span> : null}
+  return <p className="spectrum-export-message"><ResultText message={message} detail={state.status === "failed" ? ownedErrorDetail(state.error, t) : null} />
     <DismissButton label={t("viewerLinkedDismiss")} onDismiss={onDismiss} />
   </p>;
 }
@@ -127,10 +126,15 @@ export function ChromatogramExportResult({ state, onDismiss }: { readonly state:
       theme: t(state.figure.theme), count: state.sourceScanCount }) :
     t("viewerChromSaved", { name: state.fileName, details: state.rowCount === null ?
       t("viewerChromSource", { count: state.sourceScanCount }) : t("viewerChromRows", { count: state.rowCount, total: state.sourceScanCount }) });
-  return <p className="spectrum-export-message">{message}{" "}
-    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{ownedErrorDetail(state.error, t)}</span> : null}
+  return <p className="spectrum-export-message"><ResultText message={message} detail={state.status === "failed" ? ownedErrorDetail(state.error, t) : null} />
     <DismissButton onDismiss={onDismiss} />
   </p>;
+}
+
+/** A result on the plot head's line: cut with an ellipsis, whole on hover, its dismiss never cut. */
+function ResultText({ message, detail }: { readonly message: string; readonly detail: string | null }) {
+  return <span className="spectrum-export-text" title={detail === null ? message : `${message} ${detail}`}>{message}
+    {detail === null ? null : <>{" "}<span className="notice-detail">{detail}</span></>}</span>;
 }
 
 /**

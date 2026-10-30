@@ -339,6 +339,10 @@
 .plot-status > * { pointer-events: auto; }
 .plot-status .spectrum-export-status, .plot-status .spectrum-export-message { margin: 0; font-size: 12px; }
 .plot-status .spectrum-export-message { display: flex; flex-wrap: nowrap; align-items: center; gap: 0 6px; }
+/* The words give way, never the dismiss beside them. */
+.plot-status > .spectrum-export-status { display: flex; }
+.spectrum-export-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plot-status .spectrum-export-message > .ui-icon-button { flex: none; }
 .plot-status-line { display: flex; align-items: center; gap: 4px; }
 .plot-status > .spectrum-export-status:not(:empty),
 .plot-status-line:has(> .spectrum-export-status:not(:empty)) { padding: 4px 4px 4px 10px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); }

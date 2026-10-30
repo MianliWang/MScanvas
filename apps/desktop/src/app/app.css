@@ -1782,9 +1782,10 @@ button:disabled,
 .spectrum-table-row {
   display: grid;
   align-items: center;
-  /* v5.11's compact four: scan, RT, MS level, precursor m/z. Every column can
-     give ground, so a narrow pane shrinks the table instead of overflowing. */
-  grid-template-columns: minmax(44px, 0.9fr) minmax(60px, 1.1fr) minmax(40px, 0.7fr) minmax(64px, 1.1fr);
+  /* v5.11's compact four: scan, RT, MS level, precursor m/z. Each floor holds
+     its header whole, RT's with "(unit not reported)" under it (P11), and the
+     four floors fit the 300 px column Details leaves (292 px with gaps). */
+  grid-template-columns: minmax(46px, 0.8fr) minmax(106px, 1.4fr) minmax(36px, 0.5fr) minmax(72px, 1fr);
   gap: 6px;
   /* SpectrumTable's ROW_HEIGHT. */
   height: 28px;

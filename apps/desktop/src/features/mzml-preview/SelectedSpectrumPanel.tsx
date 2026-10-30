@@ -89,7 +89,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
           the plot's data. Mounted always, so its status is heard. */}
       <div className="plot-status">
         <div className="plot-status-line">
-          <p className="spectrum-export-status" role="status">
+          <p className="spectrum-export-status" role="status" title={describeSpectrumExport(exportState, t) || undefined}>
             {describeSpectrumExport(exportState, t)}
             {exportState.status === "failed" && exportState.error.detail !== null ?
               <span className="notice-detail">{ownedErrorDetail(exportState.error, t)}</span> : null}
