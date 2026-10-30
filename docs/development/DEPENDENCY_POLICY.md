@@ -77,3 +77,8 @@ Left open for the owner:
   `9dda0788a9932776a75d8bcc020076edc308ce2508b51f6739a45e3158b3fc42` (PyPI),
   uploaded 2026-10-16. Proposed dismissal until that re-provisioning:
   `not_used`.
+
+Owner decision, 2026-10-30, after PR #167 merged: none of these 44 alerts is
+dismissed. They stay open and are fixed later: Pillow at the next runtime
+re-provisioning, extract-zip with the WebdriverIO 10 migration, glib when Tauri's
+gtk-rs stack reaches 0.20. The proposed reasons above are kept as evidence only.
