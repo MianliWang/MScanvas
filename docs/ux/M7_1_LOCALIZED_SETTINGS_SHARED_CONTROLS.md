@@ -22,7 +22,9 @@ passing local acceptance alone does not establish those publication facts.
 
 The existing topbar opens one Settings dialog without a dataset or backend.
 Opening copies applied locale/density into a draft; one effective projection
-previews edits. Apply commits and closes; Cancel, Close and Escape discard.
+shows edits. Since the v5.11 rebuild (GOALS D4) each choice applies and is saved
+at once; the dialog has one Close and no Apply or Cancel, so the Apply and
+Cancel steps below describe the M7.1 behaviour that D4 replaced.
 Reset edits only the draft to `en` / `comfortable`. Backdrop interaction does
 not dismiss. One notice explains the session lifetime. A new app session starts
 at the defaults; no browser, Rust or configuration persistence is used.
