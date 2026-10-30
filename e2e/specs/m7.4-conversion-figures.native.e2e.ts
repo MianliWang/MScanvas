@@ -469,7 +469,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(await previewCalls()).toHaveLength(0);
       await reveal('.spectrum-table-panel [data-source-index="1"]');
       await browser.$('.spectrum-table-panel [data-source-index="1"]').click();
-      await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 1,"));
+      await browser.waitUntil(async () => String(await browser.$("#selected-spectrum-summary").getProperty("textContent")).startsWith("Spectrum 1,"));
       await entry.waitForEnabled(); await reveal(entrySelector); await entry.click();
       const first = await preview(), firstRequest = JSON.parse(first.request.requestJson) as FigurePreviewRequest;
       expect(firstRequest.source).toMatchObject({ kind: "linked", traces: { tic: true, bpc: false } });
@@ -494,7 +494,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
       await reveal('.spectrum-table-panel [data-source-index="2"]');
       await browser.$('.spectrum-table-panel [data-source-index="2"]').click();
-      await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 2,"));
+      await browser.waitUntil(async () => String(await browser.$("#selected-spectrum-summary").getProperty("textContent")).startsWith("Spectrum 2,"));
       await entry.waitForEnabled(); await reveal(entrySelector); await entry.click();
       const next = await preview(), nextRequest = JSON.parse(next.request.requestJson) as FigurePreviewRequest;
       expect(nextRequest.source).toMatchObject({ kind: "linked", chromatogramToken: firstRequest.source.chromatogramToken, traces: { tic: false, bpc: true } });
@@ -534,7 +534,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       await clearIdle(); const path = source("M74-synthetic-12-scans.mzML", join(input!, "synthetic-12-scans.mzML")); await add(path);
       await browser.$(ROWS).click(); await browser.$(".spectrum-table-panel").waitForDisplayed(); await workbench();
       await browser.$('.spectrum-table-panel [data-source-index="1"]').click();
-      await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 1,"));
+      await browser.waitUntil(async () => String(await browser.$("#selected-spectrum-summary").getProperty("textContent")).startsWith("Spectrum 1,"));
       await edit("mz", "200", "550"); await pendingSpectrumBand(); await browser.$('.spectrum-panel').$('button=Export figure').click();
       await scope(FIGURE, "Current range"); await preview();
       await browser.$(FIGURE + ' input[id$="-widthPx"]').setValue("900"); await browser.$(FIGURE + ' input[id$="-heightPx"]').setValue("600");

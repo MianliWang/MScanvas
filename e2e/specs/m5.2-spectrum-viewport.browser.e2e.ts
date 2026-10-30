@@ -72,7 +72,7 @@ const VIEWPORTS = [
 ] as const;
 
 /** The three controls the panel draws, by the words a person reads on them. */
-const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Reset m/z range"] as const;
+const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Fit all, m/z"] as const;
 
 const RETRY = "Redraw";
 
@@ -273,10 +273,11 @@ async function keyTheSpectrum(key: string): Promise<boolean> {
  * browser does with it, which is the actual claim: that a keyboard user moving
  * through this panel is never parked on a picture nothing can be done to.
  *
- * Start at the panel head's toolbar (one Tab stop) and stop at the foot's Set
- * range…, the panel's last control. A fixed walk from body can end in the
- * roster before reaching the viewer; the retained M7.3 failure records that
- * false-negative precondition.
+ * Start at the panel head's toolbar (one Tab stop) and stop once focus leaves
+ * the panel: after the toolbar, the drawing is the panel's only other stop
+ * (direction A puts Set range… in the ⋯ menu). A fixed walk from body can end
+ * in the roster before reaching the viewer; the retained M7.3 failure records
+ * that false-negative precondition.
  */
 async function tabTrail(): Promise<string[]> {
   expect(await browser.execute(() => {
@@ -286,6 +287,10 @@ async function tabTrail(): Promise<string[]> {
   const trail: string[] = [];
   for (let step = 0; step < 20; step += 1) {
     await browser.keys(["Tab"]);
+    if (await browser.execute(() => document.activeElement?.closest(".spectrum-panel") === null)) {
+      console.log("M5.2 real Tab trail inside the spectrum panel: " + JSON.stringify(trail));
+      return trail;
+    }
     trail.push(
       await browser.execute(() => {
         const active = document.activeElement;
@@ -296,12 +301,8 @@ async function tabTrail(): Promise<string[]> {
         return classes === "" ? active.tagName.toLowerCase() : `${active.tagName.toLowerCase()}.${classes}`;
       }),
     );
-    if (await browser.execute(() => document.activeElement?.matches(".spectrum-panel .plot-range-toggle"))) {
-      console.log("M7.3 refreshed M5.2 real Tab trail: " + JSON.stringify(trail));
-      return trail;
-    }
   }
-  throw Error("Real Tab did not reach the panel's Set range….");
+  throw Error("Real Tab never left the spectrum panel.");
 }
 
 /** Which of the three controls would do something: named icon buttons, refused rather than disabled. */
@@ -503,7 +504,7 @@ describe("the visible m/z viewport", () => {
       expect(await controlStates()).toEqual({
         "Zoom in m/z": true,
         "Zoom out m/z": false,
-        "Reset m/z range": false,
+        "Fit all, m/z": false,
       });
       expect(await browser.$(`button=${RETRY}`).isExisting()).toBe(false);
       expect(await unexpectedConsole()).toEqual([]);
@@ -525,7 +526,7 @@ describe("the visible m/z viewport", () => {
       expect(await controlStates()).toEqual({
         "Zoom in m/z": true,
         "Zoom out m/z": true,
-        "Reset m/z range": true,
+        "Fit all, m/z": true,
       });
       // The axis the drawing is under is the window that was committed, and not
       // the range the answer happened to describe.
@@ -556,7 +557,7 @@ describe("the visible m/z viewport", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it("returns the whole spectrum on Reset m/z range", async () => {
+    it("returns the whole spectrum on Fit all, m/z", async () => {
       await openTheSpectrum();
       await waitForTheDrawing();
       await press("Zoom in m/z");
@@ -566,13 +567,13 @@ describe("the visible m/z viewport", () => {
         timeoutMsg: "two zooms did not narrow the range",
       });
 
-      await press("Reset m/z range");
+      await press("Fit all, m/z");
 
       await browser.waitUntil(async () => (await spectrumRangeCaption()).includes("full range"), {
         timeout: 15_000,
-        timeoutMsg: "Reset m/z range did not return the whole spectrum",
+        timeoutMsg: "Fit all, m/z did not return the whole spectrum",
       });
-      expect((await controlStates())["Reset m/z range"]).toBe(false);
+      expect((await controlStates())["Fit all, m/z"]).toBe(false);
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -591,7 +592,7 @@ describe("the visible m/z viewport", () => {
       expect(states["Zoom in m/z"]).toBe(false);
       // And the two ways back out are still open.
       expect(states["Zoom out m/z"]).toBe(true);
-      expect(states["Reset m/z range"]).toBe(true);
+      expect(states["Fit all, m/z"]).toBe(true);
       expect(await unexpectedConsole()).toEqual([]);
     });
   });
@@ -1066,7 +1067,7 @@ describe("the visible m/z viewport", () => {
       await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: IN }).perform();
       await press("Zoom in m/z");
       await press("Zoom out m/z");
-      await press("Reset m/z range");
+      await press("Fit all, m/z");
       await keyTheSpectrum("+");
       await keyTheSpectrum("ArrowRight");
       await keyTheSpectrum("Home");
@@ -1165,7 +1166,7 @@ describe("the visible m/z viewport", () => {
       expect(await controlStates()).toEqual({
         "Zoom in m/z": false,
         "Zoom out m/z": false,
-        "Reset m/z range": false,
+        "Fit all, m/z": false,
       });
       // Not a tab stop either: a keyboard user's time is not spent reaching a
       // picture nothing can be done to.
@@ -1213,14 +1214,14 @@ describe("the visible m/z viewport", () => {
         expect(await controlStates()).toEqual({
           "Zoom in m/z": false,
           "Zoom out m/z": false,
-          "Reset m/z range": false,
+          "Fit all, m/z": false,
         });
 
-        // Real traversal through this panel skips only its inert plot.
+        // Real traversal through this panel skips its inert plot: from the
+        // head's toolbar the next Tab leaves the panel.
         const trail = await tabTrail();
         expect(trail.some((stop) => stop.includes("spectrum-plot"))).toBe(false);
-        // The foot's Set range… is reached, so the traversal is not inert.
-        expect(trail.some((stop) => stop.includes("plot-range-toggle"))).toBe(true);
+        expect(trail).toEqual([]);
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
@@ -1364,15 +1365,16 @@ describe("the visible m/z viewport", () => {
         expect(plot.right).toBeLessThanOrEqual(panel.right + 0.5);
 
         // Stacked, not overlapping: controls above the drawing, the range line
-        // below it. Two of them sharing pixels would put a control over the
-        // spectrum, which is the failure a screenshot would show and a unit test
-        // could not.
+        // below it (on the line under the ticks, direction A). Two of them
+        // sharing pixels would put a control over the spectrum, which is the
+        // failure a screenshot would show and a unit test could not.
         const actions = await boxOf(SPECTRUM_ACTIONS);
         const surface = await boxOf(SPECTRUM_SURFACE);
         const range = await boxOf(SPECTRUM_RANGE);
         expect(actions.height).toBeGreaterThan(0);
         expect(actions.bottom).toBeLessThanOrEqual(surface.top + 0.5);
-        expect(surface.bottom).toBeLessThanOrEqual(range.top + 0.5);
+        expect(plot.bottom).toBeLessThanOrEqual(range.top + 0.5);
+        expect(range.bottom).toBeLessThanOrEqual(surface.bottom + 0.5);
         expect(range.left).toBeGreaterThanOrEqual(panel.left - 0.5);
         expect(range.right).toBeLessThanOrEqual(panel.right + 0.5);
 
@@ -1462,7 +1464,7 @@ describe("the visible m/z viewport", () => {
       await keyTheSpectrum("ArrowLeft");
       await keyTheSpectrum("ArrowRight");
       await wheelStream(middle.x, -1, 40);
-      await press("Reset m/z range");
+      await press("Fit all, m/z");
       await waitForTheDrawing();
 
       expect(await unexpectedConsole()).toEqual([]);

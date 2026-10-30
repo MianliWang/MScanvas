@@ -371,7 +371,7 @@ function shellPanels() {
   });
 }
 
-/** The empty evidence column's guidance: a help line in the message under "Inspect an acquisition". */
+/** The empty evidence column's guidance: a help line in the message under the first run's heading. */
 function guidance(heading: string) {
   return browser.execute((title: string) => {
     const state = [...document.querySelectorAll(".ui-empty-state")].find(
@@ -487,7 +487,7 @@ describe("Beta 1 UX changes, rendered", () => {
     it(`PM9.7-F3 the empty Workbench offers Add files… itself while the roster is folded, and once when it is open, ${locale}`, async () => {
       await open(emptyTable(locale), locale, 960, 640);
       await toggleOperable();
-      /** The visible buttons of the empty state under `emptyEvidence`, in order. */
+      /** The visible buttons of the empty state under `evidenceFirstRun`, in order. */
       const offered = () => browser.execute((title: string) => {
         const state = [...document.querySelectorAll(".ui-empty-state")].find(
           (node) => (node.querySelector("strong")?.textContent ?? "").trim() === title && node.getClientRects().length > 0,
@@ -495,7 +495,7 @@ describe("Beta 1 UX changes, rendered", () => {
         return state === undefined ? null : [...state.querySelectorAll("button")]
           .filter((button) => button.getClientRects().length > 0)
           .map((button) => (button.textContent ?? "").trim());
-      }, words.emptyEvidence);
+      }, words.evidenceFirstRun);
       /** How many Add files… buttons a person can see anywhere in the shell. */
       const addsOnScreen = () => browser.execute((label: string) =>
         [...document.querySelectorAll<HTMLButtonElement>(".workbench-shell button")]
@@ -510,7 +510,7 @@ describe("Beta 1 UX changes, rendered", () => {
       });
       expect(await shellPanels()).toMatchObject({ roster: "false", toggle: "false" });
       expect(await offered()).toEqual([words.addFiles, words.addFolder, words.projectOpen]);
-      expect(await guidance(words.emptyEvidence)).toBeNull();
+      expect(await guidance(words.evidenceFirstRun)).toBeNull();
       expect(await addsOnScreen()).toBe(1);
       const add = await mark("#workbench-evidence", words.addFiles, "data-beta1-add");
       expect(add).not.toBeNull();

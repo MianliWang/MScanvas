@@ -208,7 +208,7 @@ describe("M7.3 real native viewer and committed exports", function () {
     await browser.$(SCANS + " input[type=search]").setValue("0.1.8");
     expect(await reads()).toEqual([]);
     await browser.$(row(7) + ' [role="gridcell"]:nth-child(5)').click();
-    await browser.waitUntil(async () => await browser.$("#selected-spectrum-summary").getText() === "Spectrum 7, MS2, 12 points.");
+    await browser.waitUntil(async () => await browser.$("#selected-spectrum-summary").getProperty("textContent") === "Spectrum 7, MS2, 12 points.");
     await browser.$("#spectrum-viewport-status").waitForExist();
     await browser.waitUntil(async () => (await reads()).some(call => call.command === "project_selected_spectrum"));
     // A protocol clear with no following text left this controlled search unchanged
@@ -218,14 +218,14 @@ describe("M7.3 real native viewer and committed exports", function () {
     await browser.waitUntil(async () => await browser.$(SCANS + " input[type=search]").getValue() === "" &&
       (await browser.$(SCANS).getText()).includes("12 spectra"));
     await browser.$(row(7) + ' [role="gridcell"]:nth-child(6)').click();
-    await browser.waitUntil(async () => await browser.$("#selected-spectrum-summary").getText() === "Spectrum 7, MS2, 12 points.");
+    await browser.waitUntil(async () => await browser.$("#selected-spectrum-summary").getProperty("textContent") === "Spectrum 7, MS2, 12 points.");
     const before = (await reads()).filter(call => call.command === "load_selected_spectrum").length;
     await browser.keys("End"); expect(await browser.execute(() => document.activeElement?.getAttribute("data-source-index"))).toBe("0");
     expect((await reads()).filter(call => call.command === "load_selected_spectrum")).toHaveLength(before);
     await browser.keys("Enter"); await browser.waitUntil(async () => (await reads()).filter(call => call.command === "load_selected_spectrum").length === before + 1);
-    await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 0,"));
+    await browser.waitUntil(async () => String(await browser.$("#selected-spectrum-summary").getProperty("textContent")).startsWith("Spectrum 0,"));
     await browser.$(row(7) + ' [role="gridcell"]:nth-child(8)').click();
-    await browser.waitUntil(async () => (await browser.$("#selected-spectrum-summary").getText()).startsWith("Spectrum 7,"));
+    await browser.waitUntil(async () => String(await browser.$("#selected-spectrum-summary").getProperty("textContent")).startsWith("Spectrum 7,"));
     await scrollPlot(MZ); await capture("02-native-source-index-seven");
   });
   it("keeps bands pending until a fresh confirmation and preserves committed ranges on Escape and cancellation", async () => {

@@ -778,8 +778,10 @@ async function observeViewer(label: string) {
       toolbars: {
         chromatogramHeader: rows(".chromatogram-panel > .plot-head"),
         spectrumHeader: rows(".spectrum-panel > .plot-head"),
-        scansHeader: rows(".spectrum-table-panel > .plot-head"),
-        scanViewControls: rows(".scan-view-controls"),
+        // The scan head holds the title, the search and the filter on one
+        // line since direction A, so both measures read it.
+        scansHeader: rows(".spectrum-table-panel > .scan-head"),
+        scanViewControls: rows(".spectrum-table-panel > .scan-head"),
       },
       rangeRows: {
         chromatogram: rows(".chromatogram-panel .plot-range-actions"),
@@ -787,8 +789,8 @@ async function observeViewer(label: string) {
       },
       reach: {
         spectrumHeader: reach(".spectrum-panel > .plot-head"),
-        // Previous and Next, in the scan list's head (spec 3.5).
-        scanSteps: reach(".spectrum-table-panel > .plot-head .plot-tools"),
+        // Previous and Next, around the scan in the spectrum's head (direction A).
+        scanSteps: reach(".spectrum-panel .spectrum-stepper"),
         tableHeader: reach(".spectrum-table-head"),
         firstRow: reach('.spectrum-table-panel [data-row-position="0"]'),
       },
@@ -837,13 +839,13 @@ async function observeViewer(label: string) {
         const room = head.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
         return at(title) + 2 * (parseFloat(style.columnGap) || 0) + at(tools) <= room + 0.5;
       })(),
-      // The sentence about the selected spectrum, the head's subtitle, and
-      // whether the head's controls cover it (UI-28). Since the rebuild the
-      // head is one 36 px line whose subtitle ellipsizes first (spec 3.4), so
-      // `cut` is recorded, not a failure.
+      // What the head says about the selected spectrum, its subtitle, and
+      // whether the head's controls cover it (UI-28). The head is one line
+      // whose subtitle (MS level and size; the sentence is the plot's name)
+      // ellipsizes first (direction A), so `cut` is recorded, not a failure.
       spectrumHeading: (() => {
         const head = document.querySelector<HTMLElement>(".spectrum-panel > .plot-head");
-        const summary = head?.querySelector<HTMLElement>("#selected-spectrum-summary");
+        const summary = head?.querySelector<HTMLElement>(".spectrum-head-facts");
         if (!head || !summary || summary.getClientRects().length === 0) return null;
         const text = summary.getBoundingClientRect();
         const covered = [...head.querySelectorAll<HTMLElement>("button")]
@@ -855,7 +857,7 @@ async function observeViewer(label: string) {
       // Which acquisition the evidence belongs to, where the shell names it
       // (ADR 0006's Run identity; the Workbench's identity row, spec 3.2).
       identity: (() => {
-        const item = document.querySelector<HTMLElement>(".viewer-identity-name");
+        const item = document.querySelector<HTMLElement>(".viewer-file-name");
         return item === null ? null : { text: item.textContent, truncated: item.scrollWidth > item.clientWidth };
       })(),
       panels: {
@@ -1329,11 +1331,13 @@ describe("PM9.3 viewer contracts, rendered", () => {
       const spectrumMenu = await plotMenuItems(MZ_PANEL);
       const chromatogramMenu = await plotMenuItems(RT_PANEL);
       evidence.push({ label: "pm93-v8-labels", spectrumDialog, chromatogramDialog, spectrumMenu, chromatogramMenu });
-      // A spectrum's figure and its data are separate groups.
+      // A spectrum's figure and its data are separate groups. Each ⋯ menu
+      // (direction A) holds the plot's own Set range…, then the quick figure
+      // actions, then the data.
       expect(spectrumDialog).toEqual({ figure: [en.viewerCopy, svg, png], data: [csv, tsv] });
-      expect(spectrumMenu).toEqual([csv, tsv]);
+      expect(spectrumMenu).toEqual([en.rangeSet, en.figureQuickPng, en.viewerCopy, csv, tsv]);
       expect(chromatogramDialog.data).toEqual([csv, tsv]);
-      expect(chromatogramMenu).toEqual([csv, tsv, en.figurePreviewLinked]);
+      expect(chromatogramMenu).toEqual([en.rangeSet, en.figureQuickPng, en.viewerCopy, csv, tsv, en.figurePreviewLinked]);
 
       // Each action sends its own command and its own format.
       const chromatogram = countOf(await ipcCalls(), "begin_chromatogram_export");
@@ -1341,9 +1345,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
       expect((await lastRequest("begin_chromatogram_export", chromatogram))["format"]).toBe("tsv");
       await laneFree();
 
-      // The spectrum head's PNG repeats the dialog's settings without it.
+      // The spectrum's Quick PNG repeats the dialog's settings without it.
       const spectrum = countOf(await ipcCalls(), "begin_selected_spectrum_export");
-      await press(figureActions(MZ_PANEL), "PNG");
+      await choosePlotMenuItem(MZ_PANEL, en.figureQuickPng);
       expect((await lastRequest("begin_selected_spectrum_export", spectrum))["format"]).toBe("png");
       await laneFree();
 

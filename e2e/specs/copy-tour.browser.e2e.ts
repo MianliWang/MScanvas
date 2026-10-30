@@ -216,6 +216,13 @@ async function openSpectrum() {
   await selectTheSpectrum(0);
 }
 
+/** A spectrum open, then the file's tab at `position` (1 Chromatogram and spectrum, 2 Scans, 3 Metadata). */
+async function openViewerTab(position: 2 | 3) {
+  await openSpectrum();
+  await browser.$(`.viewer-tabs [role="tab"]:nth-child(${String(position)})`).click();
+  await frames();
+}
+
 interface Stop {
   readonly name: string;
   readonly table: (locale: Locale) => Record<string, unknown>;
@@ -261,6 +268,37 @@ const STOPS: readonly Stop[] = [
       await revealTheSpectrum();
     },
     anchor: "svg.spectrum-plot",
+  },
+  // Rows listed and none opened: the evidence says where to pick, and where
+  // the list is a folded drawer it offers the button that opens it.
+  { name: "workbench-select", table: populated, anchor: '#workbench-evidence[data-evidence="idle"]' },
+  // The file's Scans and Metadata tabs (direction A), by position in the tab list.
+  { name: "viewer-scans", table: populated, drive: () => openViewerTab(2), anchor: '.spectrum-table-panel[data-layout="full"]' },
+  { name: "viewer-metadata", table: populated, drive: () => openViewerTab(3), anchor: ".preview-metadata" },
+  {
+    // Details beside the plots: a column at 1366, a drawer at 960.
+    name: "workbench-details",
+    table: populated,
+    drive: async () => {
+      await openSpectrum();
+      await browser.$('.workbench-header [aria-controls="workbench-inspector"]').click();
+      await frames();
+    },
+    anchor: "#workbench-inspector .inspector-panel",
+  },
+  {
+    // A chromatogram export's result, over the plot's corner: the plot keeps
+    // its height (compare the layout facts with workbench-spectrum's).
+    name: "chromatogram-export-result",
+    table: populated,
+    drive: async () => {
+      await openSpectrum();
+      await browser.$(".chromatogram-panel .figure-quick-actions button[aria-haspopup=\"menu\"]").click();
+      await browser.$('[role="menuitem"]').waitForDisplayed({ timeout: 30_000 });
+      // The ⋯ order: Set range…, Quick PNG, Copy plot, then CSV.
+      await (await browser.$$('[role="menuitem"]'))[3]!.click();
+    },
+    anchor: ".chromatogram-panel .plot-status .spectrum-export-message",
   },
   {
     name: "scan-table",

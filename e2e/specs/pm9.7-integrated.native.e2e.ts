@@ -368,7 +368,7 @@ describe("PM9.7 integrated native rendering, controlled IPC, 144 DPI (prepared U
         await browser.$(".roster-empty").waitForExist({ timeout: 30_000 });
         const workbench = await sample(`i1-workbench-${at}`);
         expect(workbench.surface).toBe("workbench");
-        expect(workbench.text).toContain(words.emptyEvidence);
+        expect(workbench.text).toContain(words.evidenceFirstRun);
         let add = await mark(".workbench-shell", words.addFiles, "data-pm97-native-add");
         if (add === null) { await unfoldRoster(at); add = await mark(".workbench-shell", words.addFiles, "data-pm97-native-add"); }
         expect(add).not.toBeNull();
