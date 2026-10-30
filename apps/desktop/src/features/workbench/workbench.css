@@ -189,12 +189,12 @@
    full table is above the spectrum. */
 /* The chromatogram row is its content, never less: a short window scrolls the
    view rather than sliding the lower row over the chromatogram's foot. */
-.viewer-view { display: grid; flex: 1 1 auto; grid-template-rows: max-content minmax(min-content, 1fr); min-width: 0; min-height: 0; }
-.viewer-view[data-view="scans"] { grid-template-rows: minmax(min-content, 1fr); }
+.viewer-view { display: grid; flex: 1 1 auto; grid-template-rows: max-content minmax(240px, 1fr); min-width: 0; min-height: 0; }
+.viewer-view[data-view="scans"] { grid-template-rows: minmax(360px, 1fr); }
 .viewer-lower { display: grid; grid-template-columns: 380px minmax(0, 1fr); min-width: 0; min-height: 0; }
 .viewer-view[data-view="spectra"] > .viewer-lower { border-top: 1px solid var(--color-border); }
 .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
-.workbench-shell .viewer-view[data-view="scans"] > .viewer-lower { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) minmax(min-content, 1.2fr); }
+.workbench-shell .viewer-view[data-view="scans"] > .viewer-lower { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) minmax(240px, 1.2fr); }
 .viewer-lower > section { min-width: 0; min-height: 0; }
 .viewer-lower > .spectrum-table-panel { border-right: 1px solid var(--color-border); }
 .viewer-view[data-view="scans"] .spectrum-table-panel { border-right: 0; border-bottom: 1px solid var(--color-border); }
@@ -219,6 +219,8 @@
 .spectrum-stepper { display: flex; flex: none; align-items: center; gap: 4px; }
 .spectrum-scan { min-width: 4ch; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
 .spectrum-head-facts { display: flex; flex: 1 1 0; gap: 8px; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spectrum-head-facts > span { flex: none; }
+.spectrum-head-facts > span:last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .plot-tools { flex: none; flex-wrap: nowrap; gap: 4px; margin-left: auto; }
 .plot-tools-divider { flex: none; width: 1px; height: 18px; margin: 0 2px; background: var(--color-border); }
 .figure-quick-actions { display: flex; align-items: center; gap: 4px; }
@@ -268,9 +270,10 @@
 .workbench-shell .chromatogram-svg { height: clamp(140px, calc(46.875vh - 160px), 360px); min-height: 0; }
 .workbench-shell .chromatogram-frame { flex: none; }
 .workbench-shell .spectrum-plot { min-height: 160px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
-/* The spectrum's floor, explicit so the view's grid row can hold it: the
-   drawing's 160 px, its title and tick rows, the head and the line under it.
-   A window too short for it scrolls the view instead of squeezing the plot. */
+/* The spectrum's floor, explicit so the view's grid rows (240 px) can hold
+   it: the drawing's 160 px, its title and tick rows, the head and the line
+   under it. A window too short for it scrolls the view instead of squeezing
+   the plot. */
 .workbench-shell .spectrum-frame { min-height: 188px; }
 .workbench-shell .viewer-lower > .spectrum-panel { min-height: 240px; }
 /* The plot bodies clip, so a focused plot, and a control along a body's
