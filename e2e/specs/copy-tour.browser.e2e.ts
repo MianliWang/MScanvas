@@ -340,6 +340,15 @@ const STOPS: readonly Stop[] = [
     anchor: '.workbench-navigation > [data-surface-tab="conversion"]:focus-visible',
   },
   {
+    // Acquisitions by keyboard: its icon alone where the roster is a column,
+    // labelled where it is a drawer.
+    name: "header-roster-focus",
+    table: populated,
+    keepFocus: true,
+    drive: () => tabFrom(".workbench-home", 4),
+    anchor: '.workbench-header [aria-controls="workbench-roster"]:focus-visible',
+  },
+  {
     // Every status-bar item at once, in a window that has to cut something.
     name: "status-crowded",
     table: crowdedTable,

@@ -179,6 +179,15 @@ describe("the status bar in the application shell", () => {
       fireEvent.pointerDown(document.getElementById("workbench-evidence")!);
     });
     expect(item).toHaveAttribute("aria-expanded", "false");
+
+    // And when the keyboard moves on to something outside them, so they never
+    // float over a dialog or a drawer opened after them.
+    await press(item);
+    expect(item).toHaveAttribute("aria-expanded", "true");
+    await act(async () => {
+      screen.getByRole("button", { name: en.home }).focus();
+    });
+    expect(item).toHaveAttribute("aria-expanded", "false");
   });
 });
 

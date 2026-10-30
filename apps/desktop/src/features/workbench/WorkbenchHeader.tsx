@@ -11,9 +11,9 @@ const SURFACES = ["workbench", "conversion", "project"] as const;
 
 /**
  * The one header row (direction A, 2.1): the brand, three destinations in one
- * tab style, then Acquisitions, Details and Settings…. What the session is
- * doing is the status bar's; nothing here changes width when work starts or
- * stops.
+ * tab style, then Acquisitions (its icon alone where the roster is a column),
+ * Details and Settings…. What the session is doing is the status bar's;
+ * nothing here changes width when work starts or stops.
  */
 export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, conversionBusy, conversionRetained, projectBusy }: {
   readonly surface: WorkbenchSurface;
@@ -41,6 +41,13 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, convers
    */
   const detailsReason = loading ?? (detailsAvailable ? null : t(surface === "project" ? "provenanceNothingSelected" : "inspectorUnavailable"));
   const conversionWorkText = conversionBusy ? t("workActive") : conversionRetained ? t("workRetained") : null;
+  /**
+   * A wide window keeps the roster as a column (direction A), so there
+   * Acquisitions is only its icon, still named and still the way to fold the
+   * column the stored layout remembers. Where the roster is a drawer it is the
+   * labelled button direction A shows at 960.
+   */
+  const rosterLabelled = panels.fit.constrained;
 
   return <header className="topbar workbench-header">
     <button type="button" className="workbench-home" aria-label={t("home")} onClick={() => go("workbench")}>
@@ -69,11 +76,12 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, convers
     </nav>
     {conversionWorkText === null ? null : <span id={CONVERSION_WORK_ID} className="visually-hidden">{conversionWorkText}</span>}
     <div className="workbench-global-actions">
-      {/* At every width: below 1050 px it opens the roster's drawer, and above
-          it folds a column the stored layout remembers (Settings resets it). */}
       <Button variant="quiet" size="sm" icon={<Icon name="panelLeft" />} aria-expanded={rosterOpen} aria-controls="workbench-roster"
-        refused={panels.busy} reasonId={ROSTER_REASON_ID} title={loading ?? undefined}
-        onClick={() => panels.toggle("roster")}>{t("rosterToggle")}</Button>
+        className={rosterLabelled ? undefined : "ui-icon-button"}
+        refused={panels.busy} reasonId={ROSTER_REASON_ID} title={loading ?? (rosterLabelled ? undefined : t("rosterToggle"))}
+        onClick={() => panels.toggle("roster")}>
+        <span className={rosterLabelled ? undefined : "visually-hidden"}>{t("rosterToggle")}</span>
+      </Button>
       {loading === null ? null : <span id={ROSTER_REASON_ID} className="visually-hidden">{loading}</span>}
       <Button variant="quiet" size="sm" icon={<Icon name="panelRight" />} aria-expanded={detailsOpen} aria-controls="workbench-inspector"
         refused={detailsReason !== null} reasonId={DETAILS_REASON_ID} title={detailsReason ?? undefined}

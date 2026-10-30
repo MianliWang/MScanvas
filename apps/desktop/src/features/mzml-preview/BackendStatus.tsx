@@ -119,17 +119,23 @@ export function BackendStatus({
   useLayoutEffect(() => {
     if (mode === "hidden" && root.current?.contains(document.activeElement)) backToItem();
   }, [mode]);
-  // A press outside closes it. Never a blur: the native folder picker takes
-  // the window's focus while its request is still this popover's.
+  // A press outside, or the keyboard moving on to something else, closes it,
+  // so it never floats over a drawer or a dialog opened after it. Never a
+  // blur: the native folder picker takes the window's focus while its request
+  // is still this popover's, and leaving the window moves focus nowhere inside.
   useEffect(() => {
     if (!open || onClose === undefined) return;
-    const outside = (event: PointerEvent) => {
+    const outside = (event: Event) => {
       const target = event.target as Node;
       if (root.current?.contains(target) || document.getElementById(STATUS_BACKEND_ID)?.contains(target)) return;
       onClose();
     };
     document.addEventListener("pointerdown", outside);
-    return () => { document.removeEventListener("pointerdown", outside); };
+    document.addEventListener("focusin", outside);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("focusin", outside);
+    };
   }, [open, onClose]);
 
   const named = banner.names;
