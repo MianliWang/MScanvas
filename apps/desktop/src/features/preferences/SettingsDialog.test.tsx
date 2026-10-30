@@ -59,7 +59,7 @@ const density = () => document.querySelector(".dataset-roster-panel")?.getAttrib
 async function loadedApp(api = createFakePreviewApi({ availability: availableBackend })) {
   mount(api);
   const add = await screen.findByRole("button", { name: "Add files…" });
-  await waitFor(() => expect(add).toBeEnabled());
+  await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
   fireEvent.click(add);
   const grid = await screen.findByRole("grid", { name: "Scans" });
   fireEvent.click(grid.querySelector('[data-source-index="0"]')!);
@@ -277,7 +277,7 @@ describe("session Settings in the real application composition", () => {
     const api = createFakePreviewApi({ availability: availableBackend, spectrum: () => result.promise });
     mount(api, runtime);
     const add = await screen.findByRole("button", { name: "Add files…" });
-    await waitFor(() => expect(add).toBeEnabled());
+    await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
     fireEvent.click(add);
     const grid = await screen.findByRole("grid", { name: "Scans" });
     fireEvent.click(grid.querySelector('[data-source-index="0"]')!);

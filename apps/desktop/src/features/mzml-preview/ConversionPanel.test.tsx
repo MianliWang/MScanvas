@@ -888,7 +888,7 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     // The retry has not answered, and the interface has stopped offering work.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     });
     expect(within(panel).queryByRole("button", { name: "Retry 1 failed" })).toBeNull();
     expect(await rosterActionRefused("clearList")).toBe(false);
@@ -910,7 +910,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     await waitFor(() => {
       expect(within(panel).getByText(/1 converted, 0 skipped, 0 failed of 1\./)).toBeVisible();
     });
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("does not offer a retry the backend cannot serve", async () => {
@@ -985,9 +985,9 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     });
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     expect(await rosterActionRefused("clearList")).toBe(false);
     // Reading the list is not a mutation.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();

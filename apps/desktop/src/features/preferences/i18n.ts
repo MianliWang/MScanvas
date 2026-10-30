@@ -233,7 +233,6 @@ export interface MessageParameters {
   readonly rosterCheckedCount: { readonly checked: number };
   readonly rosterHighlightedCount: { readonly total: number };
   readonly rosterHiddenCount: { readonly hidden: number };
-  readonly rosterConvertChecked: { readonly checked: number };
   readonly rosterContext: { readonly total: number; readonly visible: number; readonly capacity: number };
   readonly groupActions: { readonly name: string };
   readonly rowActions: { readonly name: string };

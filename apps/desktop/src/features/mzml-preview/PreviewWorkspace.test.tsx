@@ -35,12 +35,12 @@ describe("folder reservation startup barrier", () => {
 
     const addFolder = await screen.findByRole("button", { name: "Add mzML folder…" });
     await waitFor(() => {
-      expect(addFolder).toBeEnabled();
+      expect(addFolder).not.toHaveAttribute("aria-disabled");
     });
     fireEvent.click(addFolder);
 
     const clear = await screen.findByRole("button", { name: "Clear list" });
-    expect(clear).toBeDisabled();
+    expect(clear).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(clear);
     expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(0);
 
@@ -49,13 +49,13 @@ describe("folder reservation startup barrier", () => {
       acknowledgeReservation?.();
     });
     await waitFor(() => {
-      expect(clear).toBeEnabled();
+      expect(clear).not.toHaveAttribute("aria-disabled");
     });
 
     fireEvent.click(clear);
     await waitFor(() => {
       expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
-      expect(clear).toBeEnabled();
+      expect(clear).not.toHaveAttribute("aria-disabled");
     });
     expect(screen.getByText("Folder import in progress…")).toBeVisible();
 

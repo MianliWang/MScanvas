@@ -1468,46 +1468,47 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await browser.$(".roster-selection-context").waitForDisplayed();
         const shapes: unknown[] = [];
         // The organizing row is the roster's footer since the rebuild: the
-        // count, Undo, the list menu (New group is its item) and Convert N…
-        // (spec 3.3).
+        // checked count, Undo, the list menu (New group is its item) and
+        // Convert… (direction A 2.1).
         // Collected and asserted once, so every frame is reached and named.
         const problems: string[] = [];
-        // The count wraps inside its own space and the controls never do
-        // (workbench.css, the one-row footer the owner approved): whole means
-        // never clipped and never split inside a pair, with the controls on
-        // one row -- under the count when it cannot fit beside them. Its
-        // line count and the band's height are recorded.
-        const record = async (label: string) => {
+        // One 48 px row at every width and in both languages: the count and
+        // every control share one centre line, nothing wraps, and at real
+        // counts the count is whole -- never clipped, never split inside a
+        // pair. Its line count and the band's height are recorded.
+        const record = async (label: string, countWhole = true) => {
           await frames();
           const count = await textShape(".roster-selection-context");
           const foot = await browser.execute(() => {
             const node = document.querySelector<HTMLElement>(".roster-selection-context");
-            const middles = [...document.querySelectorAll<HTMLElement>(".roster-foot .ui-button")].map((button) => {
-              const box = button.getBoundingClientRect();
+            const middle = (element: Element) => {
+              const box = element.getBoundingClientRect();
               return box.top + box.height / 2;
-            });
-            return { clipped: node === null || node.scrollWidth > node.clientWidth + 1, controlSpread: Math.max(...middles) - Math.min(...middles) };
+            };
+            const middles = [...document.querySelectorAll<HTMLElement>(".roster-foot .ui-button")].map(middle);
+            if (node !== null) middles.push(middle(node));
+            return { clipped: node === null || node.scrollWidth > node.clientWidth + 1, spread: Math.max(...middles) - Math.min(...middles), title: node?.title ?? null };
           });
           const band = await browser.$(".roster-foot").getSize("height");
           shapes.push({ label, count, foot, band });
-          if (count === null || foot.clipped) problems.push(`${label}: "${String(count?.text)}" clipped`);
-          if (!(foot.controlSpread <= 2)) problems.push(`${label}: the controls off one row by ${String(foot.controlSpread)} px`);
+          if (countWhole && (count === null || foot.clipped)) problems.push(`${label}: "${String(count?.text)}" clipped`);
+          if (foot.title !== count?.text) problems.push(`${label}: the count's title is not its whole text`);
+          if (!(foot.spread <= 2)) problems.push(`${label}: the footer off one row by ${String(foot.spread)} px`);
+          if (band > 48.5) problems.push(`${label}: the footer is ${String(band)} px tall`);
+          if ((count?.lines ?? 0) > 1) problems.push(`${label}: the count wrapped`);
           if ((count?.split ?? []).length > 0) problems.push(`${label}: split inside ${JSON.stringify(count?.split)}`);
         };
         await record(`ui-rework-organizing-${locale}-1366x768`);
-        // UI-16: made narrower than the count, as long counts make it, the
-        // count breaks only between its parts, never inside one.
+        // UI-16 under direction A: made narrower than the count, as four-digit
+        // counts beside Undo make it, the row still does not wrap -- the count
+        // gives way by an ellipsis and keeps its whole text as its title.
         const narrowCount = (width: string) =>
           browser.execute((value: string) => {
             document.querySelector<HTMLElement>(".roster-selection-context")!.style.maxWidth = value;
           }, width);
-        await narrowCount("7em");
-        await frames();
-        const narrow = await textShape(".roster-selection-context");
+        await narrowCount("2em");
+        await record(`ui-rework-organizing-${locale}-forced-narrow`, false);
         await narrowCount("");
-        shapes.push({ label: `ui-rework-organizing-${locale}-forced-narrow`, narrow });
-        expect(narrow?.lines).toBeGreaterThan(1);
-        expect(narrow?.split).toEqual([]);
         await browser.$("[data-roster-list-menu]").click();
         await browser.$("[data-roster-new-group]").waitForDisplayed();
         await browser.$("[data-roster-new-group]").click();
@@ -1549,7 +1550,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         expect(evidencePrimaries).toEqual([expect.stringMatching(new RegExp(`^${prefix(words(locale).previewRetained)}`, "u"))]);
         // Add files stays offered, only quieter: always secondary since the rebuild (spec 3.3).
         const addFiles = browser.$(".roster-head [data-add-files]");
-        expect(await addFiles.isEnabled()).toBe(true);
+        expect(await addFiles.getAttribute("aria-disabled")).toBe(null);
         expect(await addFiles.getAttribute("class")).not.toContain("ui-button--primary");
         // Retired: "at 960x640 the roster takes the evidence pane's place and
         // Add files is the one filled action again". The roster is a drawer
@@ -1558,7 +1559,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await metrics(960, 640);
         await revealRosterRow(MZML_ROW.handle);
         evidence.push({ label: `ui-rework-retained-${locale}-960x640`, shell: await primaries(".workbench-shell") });
-        expect(await addFiles.isEnabled()).toBe(true);
+        expect(await addFiles.getAttribute("aria-disabled")).toBe(null);
         expect(await addFiles.getAttribute("class")).not.toContain("ui-button--primary");
         expect(await unexpectedConsole()).toEqual([]);
       });

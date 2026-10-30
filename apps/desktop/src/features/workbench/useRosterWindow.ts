@@ -1,9 +1,12 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 export interface RosterWindowItem { readonly key: string; readonly estimate: number }
-/** Height-aware windowing of presentation IDs. The focused/drag source stays mounted; payloads need no nodes. */
-export function useRosterWindow<T extends RosterWindowItem>(items: readonly T[], retained: ReadonlySet<string>, dragging: boolean, focusedHandle: string | null) {
-  const root = useRef<HTMLDivElement | null>(null);
+/**
+ * Height-aware windowing of presentation IDs. The focused/drag source stays mounted; payloads need no nodes.
+ * Lists longer than `threshold` render a window; shorter ones render whole.
+ */
+export function useRosterWindow<T extends RosterWindowItem>(items: readonly T[], retained: ReadonlySet<string>, dragging: boolean, focusedHandle: string | null, threshold = 80) {
+  const root = useRef<HTMLElement | null>(null);
   const sizes = useRef(new Map<string, number>());
   const nodes = useRef(new Map<Element, string>());
   const observer = useRef<ResizeObserver | null>(null);
@@ -73,7 +76,7 @@ export function useRosterWindow<T extends RosterWindowItem>(items: readonly T[],
     return items.map(item => { const height = sizes.current.get(item.key) ?? item.estimate; const placed = { item, top, height }; top += height; return placed; });
   }, [items, version]);
   const total = layout.length ? layout.at(-1)!.top + layout.at(-1)!.height : 0;
-  const windowed = items.length > 80;
+  const windowed = items.length > threshold;
   const rendered = layout.filter(({ item, top, height }) => !windowed || retained.has(item.key) || (top + height >= viewport.top - 320 && top <= viewport.top + viewport.height + 320));
   useLayoutEffect(() => {
     // A newly mounted focused row can grow beyond its estimated height. Reveal

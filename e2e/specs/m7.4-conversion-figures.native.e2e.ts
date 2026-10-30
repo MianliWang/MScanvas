@@ -134,7 +134,7 @@ async function conversion() { await browser.$("button=Conversion").click(); awai
 async function add(path: string) {
   const before = (await roster()).datasets.length;
   await workbench(); await showRoster();
-  await browser.$("button=Add files…").waitForEnabled();
+  await browser.waitUntil(async () => (await browser.$("button=Add files…").getAttribute("aria-disabled")) === null, { timeoutMsg: "Add files… was never offered" });
   const [result] = await Promise.all([helper("choose-workspace-files", ["-Action", "choose", "-Path", path, "-TimeoutSeconds", "35"]), browser.$("button=Add files…").click()]);
   expect(result.invoked).toBe(true);
   await browser.waitUntil(async () => (await roster()).datasets.length === before + 1);
@@ -403,7 +403,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     await browser.waitUntil(async () => (await roster()).datasets.length === 0, { timeout: 60_000 });
     const update = await read<WorkspaceConversionUpdate>("get_workspace_conversion_state"); expect(update.backendQuarantined).toBe(false);
     expect(update.state.status).not.toBe("running"); record({ kind: "cancel-and-clear authoritative outcome", update });
-    await browser.$("button=Add files…").waitForEnabled(); await expect(browser.$("button=Add files…")).toBeFocused();
+    await browser.waitUntil(async () => (await browser.$("button=Add files…").getAttribute("aria-disabled")) === null, { timeoutMsg: "Add files… was never offered" }); await expect(browser.$("button=Add files…")).toBeFocused();
     expect((await calls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(before + 2);
     await capture("02-native-active-clear-focus-return");
   });

@@ -39,7 +39,7 @@ import {
   unavailableBackend,
 } from "../test/previewFixtures";
 import { App } from "./App";
-import { chooseRosterAction, rosterActionRefused, rosterListMenu } from "../test/rosterActions";
+import { chooseRosterAction, rosterAction, rosterActionRefused, rosterListMenu } from "../test/rosterActions";
 
 function renderApp(
   api: PreviewApi,
@@ -126,7 +126,7 @@ describe("mzML preview workspace", () => {
     ).toBeVisible();
     // Curating the workspace is not backend work, so it stays available: the
     // user can build the list they want and read it once ProteoWizard is there.
-    expect(await screen.findByRole("button", { name: "Add files…" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("adds files with no backend installed, and reads none of them", async () => {
@@ -155,7 +155,7 @@ describe("mzML preview workspace", () => {
     renderApp(createFakePreviewApi());
 
     expect(bannerOf(await screen.findByText(/ProteoWizard is available/))).toHaveTextContent("3.0.25000");
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("reports the installation the user chose, never the one it replaced", async () => {
@@ -170,7 +170,7 @@ describe("mzML preview workspace", () => {
 
     expect(bannerOf(await screen.findByText(/ProteoWizard is available/))).toHaveTextContent("3.0.26013");
     expect(screen.getByText(/from the folder you chose/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("drops what the previous installation read when the installation changes", async () => {
@@ -418,7 +418,7 @@ describe("mzML preview workspace", () => {
 
     // Curating is not reading, so it is not closed by a backend nobody can
     // describe: the user can still build the list this session is about.
-    await waitFor(() => expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled"));
     // The recovery actions stay live -- they are the way out. The notice offers
     // the one that fixes a failed check; the details offer the rest.
     expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
@@ -453,7 +453,7 @@ describe("mzML preview workspace", () => {
     for (const action of ["recheck", "choose", "automatic"]) {
       expect(document.querySelector(`[data-backend-action="${action}"]`)).toHaveAttribute("aria-disabled", "true");
     }
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
 
     recheck.resolve(availableBackend);
 
@@ -629,7 +629,7 @@ describe("mzML preview workspace", () => {
     // The row is still in the workspace and still removable, and adding more
     // files is still available: neither is a repeat of what just failed.
     expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("keeps what is on screen when the picker itself fails", async () => {
@@ -1074,10 +1074,10 @@ describe("native Explorer drop presentation", () => {
     });
 
     publishDrop(drop, 1, { status: "importing", operationId: "801", itemCount: 2 });
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     const clear = screen.getByRole("button", { name: "Clear list" });
-    expect(clear).toBeEnabled();
+    expect(clear).not.toHaveAttribute("aria-disabled");
     expect(screen.getByRole("region", { name: "Acquisitions" })).toHaveAttribute(
       "aria-busy",
       "true",
@@ -1144,7 +1144,7 @@ describe("native Explorer drop presentation", () => {
     addFiles.focus();
 
     publishDrop(drop, 1, { status: "importing", operationId: "901-focus", itemCount: 1 });
-    expect(addFiles).toBeDisabled();
+    expect(addFiles).toHaveAttribute("aria-disabled", "true");
     blurAsABrowserWould(addFiles);
     expect(document.body).toHaveFocus();
     publishDrop(drop, 2, {
@@ -1154,7 +1154,7 @@ describe("native Explorer drop presentation", () => {
     });
 
     await waitFor(() => {
-      expect(addFiles).toBeEnabled();
+      expect(addFiles).not.toHaveAttribute("aria-disabled");
       expect(addFiles).toHaveFocus();
     });
   });
@@ -1264,8 +1264,8 @@ describe("native Explorer drop presentation", () => {
     );
     expect(screen.queryByText("The dropped items could not be added")).toBeNull();
     const addFiles = screen.getByRole("button", { name: "Add files…" });
-    expect(addFiles).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    expect(addFiles).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     expect(api.rosterReads()).toBe(1);
 
     const retry = screen.getByRole("button", { name: "Try connecting again" });
@@ -1963,14 +1963,14 @@ describe("the session workspace roster", () => {
     await chooseRosterAction("clearList");
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     });
     expect(await rosterActionRefused("removeHighlighted")).toBe(true);
 
     clearing.resolve({ datasets: [], capacity: 1_024 });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
     });
   });
 
@@ -2070,7 +2070,7 @@ describe("the session workspace roster", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     });
     expect(await rosterActionRefused("removeHighlighted")).toBe(true);
     expect(await rosterActionRefused("clearList")).toBe(true);
@@ -2078,7 +2078,7 @@ describe("the session workspace roster", () => {
     picking.resolve(null);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
     });
     expect(await rosterActionRefused("removeHighlighted")).toBe(false);
     expect(await rosterActionRefused("clearList")).toBe(false);
@@ -2212,12 +2212,20 @@ describe("the session workspace roster", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
     // The arrival does not match, and is on screen because it was selected.
-    await screen.findByText("1 checked · 1 highlighted · 1 hidden");
+    // The footer counts the checked rows; the list menu names the highlight
+    // and the part of it the search hides.
+    await waitFor(() => {
+      expect(document.getElementById("roster-selection-count")).toHaveTextContent(/^1\s+checked$/);
+    });
     expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
     expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC_pool_01");
     expect(executionOrder()).toHaveValue("name-desc");
 
-    await chooseRosterAction("removeHighlighted");
+    const remove = await rosterAction("removeHighlighted");
+    expect(document.querySelector(".roster-menu-context")).toHaveTextContent(/^1\s+highlighted · 1\s+hidden$/);
+    await act(async () => {
+      fireEvent.click(remove);
+    });
 
     await waitFor(() => {
       expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
@@ -2601,8 +2609,8 @@ describe("adding a folder of mzML files", () => {
 
     // Acquiring more waits: a second batch in flight would answer with a roster
     // from before this one's rows existed.
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     // Workspace curation does not wait. `Clear list` is the reliable final-empty
     // escape; `Remove selected` remains available to manage rows already shown,
     // though imported rows can remain if the import committed first. Rust
@@ -2619,9 +2627,9 @@ describe("adding a folder of mzML files", () => {
     scan.resolve({ files: [] });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("removes rows during an unresolved import, and the late reply cannot put them back", async () => {
@@ -2666,7 +2674,7 @@ describe("adding a folder of mzML files", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     // The removed row stays removed, while the discovered row already present
     // in removal's authoritative roster stays present.
@@ -2706,7 +2714,7 @@ describe("adding a folder of mzML files", () => {
         name: "Add mzML folder…",
       });
       await waitFor(() => {
-        expect(addFolder).toBeEnabled();
+        expect(addFolder).not.toHaveAttribute("aria-disabled");
       });
 
       // Pointer-start the folder import, so it owns no keyboard restoration.
@@ -2715,7 +2723,7 @@ describe("adding a folder of mzML files", () => {
       clear.focus();
       fireEvent.click(clear);
       await waitFor(() => {
-        expect(clear).toBeDisabled();
+        expect(clear).toHaveAttribute("aria-disabled", "true");
       });
       blurAsABrowserWould(clear);
 
@@ -2728,7 +2736,7 @@ describe("adding a folder of mzML files", () => {
       if (order === "clear failure first") {
         clearing.reject(clearFailure);
         await waitFor(() => {
-          expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+          expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveAttribute("aria-disabled");
         });
         expect(document.body).toHaveFocus();
         folder.resolve(folderResult);
@@ -2780,13 +2788,13 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     // Started with the pointer, so nothing is owed to the folder button.
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
     const escape = screen.getByRole("button", { name: "Clear list" });
-    expect(escape).toBeEnabled();
+    expect(escape).not.toHaveAttribute("aria-disabled");
     escape.focus();
     expect(escape).toHaveFocus();
 
@@ -2815,7 +2823,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
@@ -2843,7 +2851,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
@@ -2886,13 +2894,13 @@ describe("adding a folder of mzML files", () => {
     // The keyboard is owed to `Add files…`, which is still disabled because the
     // import has not settled. Focusing a disabled control does nothing, so the
     // debt is held rather than paid into nowhere.
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
 
     scan.resolve({ files: [{ file: thirdFile, parents: [] }] });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     expect(rosterRows()).toHaveLength(0);
     expect(screen.getByText("No acquisitions yet")).toBeVisible();
@@ -2918,10 +2926,10 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
 
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     const clear = screen.getByRole("button", { name: "Clear list" });
-    expect(clear).toBeEnabled();
+    expect(clear).not.toHaveAttribute("aria-disabled");
     expect(clear).toHaveAccessibleDescription(
       "Clear also prevents the pending import from adding files.",
     );
@@ -3061,7 +3069,7 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
 
     const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
-    expect(folder).toBeDisabled();
+    expect(folder).toHaveAttribute("aria-disabled", "true");
     // Pressed anyway -- a disabled button is a rendering, and the guard that
     // matters is the one inside the operation.
     fireEvent.click(folder);
@@ -3070,7 +3078,7 @@ describe("adding a folder of mzML files", () => {
     initial.resolve({ datasets: [], capacity: 1_024 });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
     expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
@@ -3094,12 +3102,12 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
 
     await screen.findByText("The workspace list could not be read");
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
 
     fireEvent.click(screen.getByRole("button", { name: "Try reading it again" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
     expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
@@ -3123,7 +3131,7 @@ describe("adding a folder of mzML files", () => {
     expect(await screen.findByRole("grid", { name: "Scans" })).toBeVisible();
     scan.resolve({ files: [] });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
   });
 
@@ -3138,7 +3146,7 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     expect(rosterRows()).toHaveLength(1);
     // A dismissed picker is not a folder that held nothing, and it is not a
@@ -3230,7 +3238,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     expect(rosterRows()).toHaveLength(0);
 
@@ -3531,7 +3539,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
     fireEvent.click(folder);
     // The name does not move while the operation runs, which is the point of
     // it: this is the same control, found the same way.
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     // Disabling the focused control is what blurs it, and the browser does not
     // put focus back when it is enabled again. jsdom does neither, so the blur
     // is done here rather than assumed -- without it the test would pass with
@@ -3596,7 +3604,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
     // browser leaves focus on the body; jsdom needs that behaviour reproduced.
     blurAsABrowserWould(retryButton);
     expect(screen.queryByRole("button", { name: "Choose another folder" })).toBeNull();
-    expect(durable).toBeDisabled();
+    expect(durable).toHaveAttribute("aria-disabled", "true");
     expect(document.body).toHaveFocus();
     expect(focusing).not.toHaveBeenCalled();
 
@@ -3605,7 +3613,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
     await waitFor(() => {
       expect(durable).toHaveFocus();
     });
-    expect(durable).toBeEnabled();
+    expect(durable).not.toHaveAttribute("aria-disabled");
     expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
     expect(requests).toBe(2);
   });
@@ -3707,7 +3715,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
     retry.resolve(null);
 
     await waitFor(() => {
-      expect(durable).toBeEnabled();
+      expect(durable).not.toHaveAttribute("aria-disabled");
     });
     expect(document.body).toHaveFocus();
     expect(focusing).not.toHaveBeenCalled();
@@ -3747,7 +3755,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
     retry.resolve(null);
 
     await waitFor(() => {
-      expect(durable).toBeEnabled();
+      expect(durable).not.toHaveAttribute("aria-disabled");
     });
     expect(search).toHaveFocus();
     expect(focusing).not.toHaveBeenCalled();
@@ -3805,7 +3813,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
     scan.resolve({ files: [] });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     expect(search).toHaveFocus();
   });
@@ -3825,7 +3833,7 @@ describe("giving the keyboard back after an acquisition picker", () => {
     scan.resolve({ files: [] });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     expect(document.body).toHaveFocus();
   });
@@ -3850,7 +3858,7 @@ describe("saying what a folder import is doing", () => {
     });
     renderApp(api);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
@@ -3883,14 +3891,14 @@ describe("saying what a folder import is doing", () => {
       });
       renderApp(api);
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
       });
 
       fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
       expect(spoken()).toBe(STATUS);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
       });
       expect(spoken()).toBe("");
       expect(screen.queryByText("Folder import in progress…")).toBeNull();
@@ -3909,7 +3917,7 @@ describe("saying what a folder import is doing", () => {
     });
     renderApp(api);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     const region = () => document.querySelectorAll("[data-live-region='folder']");
     expect(region()).toHaveLength(1);
@@ -3934,7 +3942,7 @@ describe("saying what a folder import is doing", () => {
     });
     renderApp(api);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
@@ -3946,7 +3954,7 @@ describe("saying what a folder import is doing", () => {
     );
     scan.resolve({ files: [] });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
     expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute(
@@ -3968,15 +3976,15 @@ describe("saying what a folder import is doing", () => {
     renderApp(api);
 
     const add = await screen.findByRole("button", { name: "Add files…" });
-    expect(add).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(add).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     // And the window says it is still reading rather than claiming the session
     // is empty.
     expect(screen.getByText("Reading the workspace list…")).toBeVisible();
 
     initial.resolve({ datasets: [], capacity: 1_024 });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     });
   });
 });

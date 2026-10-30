@@ -204,8 +204,9 @@ describe("narrow desktop layout markup", () => {
     const app = mountStyles(appStyles);
     const panel = requireStyleRule(app, ".conversion-panel").style;
 
-    // The form and a 300 px summary that ends in the action it describes.
-    expect(panel.getPropertyValue("grid-template-columns")).toBe("minmax(0, 1fr) 300px");
+    // The form and a 300-360 px plan rail that ends in the action it describes
+    // (direction A 2.2; 600 and 360 px at the 960 px window).
+    expect(panel.getPropertyValue("grid-template-columns")).toBe("minmax(0, 1fr) clamp(300px, 34%, 360px)");
     expect(panel.getPropertyValue("min-width")).toBe("0px");
     // Each column is its own scroll owner: a long failure sentence or a long
     // output name scrolls there rather than pushing the other column away.
@@ -213,6 +214,12 @@ describe("narrow desktop layout markup", () => {
     expect(columns.getPropertyValue("overflow")).toBe("auto");
     expect(columns.getPropertyValue("min-width")).toBe("0px");
     expect(columns.getPropertyValue("min-height")).toBe("0px");
+    // The rail's foot -- what refuses the start, then the start -- is pinned
+    // to the bottom of whatever scrolls, and at the rail's end otherwise.
+    const foot = requireStyleRule(app, ".conversion-rail-foot").style;
+    expect(foot.getPropertyValue("position")).toBe("sticky");
+    expect(foot.getPropertyValue("bottom")).toBe("0px");
+    expect(foot.getPropertyValue("margin-top")).toBe("auto");
 
     // The actions wrap rather than being clipped at any width.
     expect(requireStyleRule(app, ".conversion-actions").style.getPropertyValue("flex-wrap")).toBe(

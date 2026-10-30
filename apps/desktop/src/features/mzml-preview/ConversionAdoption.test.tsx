@@ -440,7 +440,7 @@ describe("adding converted outputs to the workspace", () => {
     // And the actions that would fight with it are gone or refused.
     expect(within(panel).queryByRole("button", { name: /^Retry/ })).toBeNull();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     });
     expect(await rosterActionRefused("clearList")).toBe(true);
     // The roster stays readable throughout.

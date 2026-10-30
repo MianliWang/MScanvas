@@ -421,8 +421,8 @@ describe("M7.4 conversion, recovery and export composition", () => {
       await releaseInvokeHold("execute_workspace_clear");
       await browser.$('[role="dialog"]').waitForExist({ reverse: true });
       const add = browser.$("#workbench-roster").$("button=" + UI_RESOURCES.en.addFiles);
-      if (timing === "after") { await expect(add).toBeDisabled(); await settle(); }
-      await expect(add).toBeEnabled(); await expect(add).toBeFocused();
+      if (timing === "after") { await expect(add).toHaveAttribute("aria-disabled", "true"); await settle(); }
+      await expect(add).not.toHaveAttribute("aria-disabled"); await expect(add).toBeFocused();
       await expect(clear).not.toExist();
       // Nor does Clear stand alone over the emptied list.
       await expect(browser.$("#workbench-roster").$("[data-roster-clear]")).not.toExist();

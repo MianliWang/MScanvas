@@ -12,6 +12,7 @@ import type { RosterLoadState } from "./usePreviewWorkspace";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 import { ownedErrorMessage } from "./ownedErrorMessages";
 import { STATUS_BUSY_ID } from "../workbench/StatusBar";
+import { UNGROUPED } from "../workbench/organization";
 
 export interface DatasetRosterProps {
   readonly activeClearFocusReturn?: ActiveClearFocusReturn | null;
@@ -126,6 +127,14 @@ export interface DatasetRosterProps {
    */
   readonly restoreAddFolderFocusToken: number;
 }
+
+/**
+ * Whether a control cannot act right now. The acquisition actions and `Clear
+ * list` are refused (`aria-disabled`) rather than natively disabled, so they
+ * keep the keyboard while they wait; every focus debt below waits on this.
+ */
+const unusable = (control: HTMLButtonElement) =>
+  control.disabled || control.getAttribute("aria-disabled") === "true";
 
 // The family labels live in the wire vocabulary module now: the queue plan
 // names families too, and one record is what keeps the surfaces from calling
@@ -413,9 +422,9 @@ export const DatasetRoster = memo(function DatasetRoster({
       return;
     }
     const control = addFilesRef.current;
-    if (control === null || control.disabled) {
-      // Still owed. Focusing a disabled control does nothing, so the debt is
-      // held rather than paid into nowhere.
+    if (control === null || unusable(control)) {
+      // Still owed until the control can act again, so the keyboard lands on
+      // an action it can take rather than on one that waits.
       return;
     }
     // Never over a control the user has since chosen for themselves. The row
@@ -431,7 +440,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   useEffect(() => {
     if (activeClearFocusReturn === null || !activeClearFocusReturn.isCurrent()) return;
     const control = addFilesRef.current;
-    if (control === null || control.disabled) return;
+    if (control === null || unusable(control)) return;
     activeClearFocusReturn.release();
     if (document.activeElement === document.body) control.focus({ preventScroll: true });
   }, [activeClearFocusReturn, canAddFiles]);
@@ -447,7 +456,7 @@ export const DatasetRoster = memo(function DatasetRoster({
         return;
       }
       const control = addFilesRef.current;
-      if (control === null || control.disabled) {
+      if (control === null || unusable(control)) {
         // Keep both the debt and its ownership token until the destination can
         // actually receive focus. A newer destination can still cancel it.
         return;
@@ -546,7 +555,7 @@ export const DatasetRoster = memo(function DatasetRoster({
       return;
     }
     const control = clearListRef.current;
-    if (control !== null && control.isConnected && !control.disabled) {
+    if (control !== null && control.isConnected && !unusable(control)) {
       control.focus({ preventScroll: true });
       return;
     }
@@ -658,7 +667,7 @@ export const DatasetRoster = memo(function DatasetRoster({
     if (control === null) {
       return;
     }
-    if (control.disabled) {
+    if (unusable(control)) {
       // Outstanding, so nothing is restored yet -- and having seen it is what
       // tells the end of this request from an effect queued before it began.
       pickerRestoreOutstanding.current = true;
@@ -767,10 +776,10 @@ export const DatasetRoster = memo(function DatasetRoster({
   // where it is the fact that decides whether the next addition fits.
   const countTag = state.capacity === 0 ? null : rowCount >= state.capacity * 0.9
     ? `${formatCount(rowCount)} / ${formatCount(state.capacity)}` : formatCount(rowCount);
-  // "N checked" always, because it is the reason Convert is refused at zero;
-  // the highlight and its hidden part only while they exist.
-  const selectionCount = [
-    t("rosterCheckedCount", { checked: checkedCount }),
+  // The footer says "N checked" always, because it is the reason Convert is
+  // refused at zero. The highlight and its hidden part head the list menu,
+  // whose actions they are about, only while they exist.
+  const highlightContext = [
     state.selected.size === 0 ? null : t("rosterHighlightedCount", { total: state.selected.size }),
     hiddenCount === 0 ? null : t("rosterHiddenCount", { hidden: hiddenCount }),
   ].filter((part): part is string => part !== null).join(" · ");
@@ -809,7 +818,8 @@ export const DatasetRoster = memo(function DatasetRoster({
   const clearButton = clearListOffered ? (
     <Button
       aria-describedby={clearDescriptions}
-      disabled={!canMutate}
+      refused={!canMutate}
+      reasonId={STATUS_BUSY_ID}
       {...clearKeyboard}
       onClick={(event) => {
         startClear(null, document.activeElement === event.currentTarget);
@@ -836,17 +846,25 @@ export const DatasetRoster = memo(function DatasetRoster({
     </>
   );
   const removeRefused = !canRemove || state.selected.size === 0;
+  // Moving needs a highlighted row to move; the focused one leads when it is
+  // among them, so the payload is what the reader is looking at.
+  const moveSource = state.focused !== null && state.selected.has(state.focused)
+    ? state.focused : state.selected.values().next().value ?? null;
   /**
-   * One footer row (owner review): the count, the list menu, then Convert.
-   * The menu's refused items stay reachable and say why (spec 1.4).
+   * One footer row at every width and in both languages (direction A 2.1):
+   * the checked count, Undo, the list menu, then Convert. The highlight and
+   * its hidden part are the menu's business, said at its top. The menu's
+   * refused items stay reachable and say why (spec 1.4).
    */
-  const footer = (newGroup: (returnTo: HTMLElement | null) => void) => rowCount === 0 ? (
+  const footer = (
+    newGroup: (returnTo: HTMLElement | null) => void,
+    moveTo: (source: string, groupId: string) => void,
+  ) => rowCount === 0 ? (
     clearListOffered ? <div className="roster-foot">{clearButton}{importDescriptions}</div> : null
   ) : (
     <div className="roster-foot">
-      <p aria-live="polite" className="roster-selection-context" id="roster-selection-count">{selectionCount}</p>
-      {/* The controls stay together on one row. When the count cannot fit
-          beside them even at its narrowest, they take the row under it. */}
+      <p aria-live="polite" className="roster-selection-context" id="roster-selection-count"
+        title={t("rosterCheckedCount", { checked: checkedCount })}>{t("rosterCheckedCount", { checked: checkedCount })}</p>
       <div className="roster-foot-actions">
         {state.organization.history.length ? (
           <IconButton
@@ -883,6 +901,7 @@ export const DatasetRoster = memo(function DatasetRoster({
               side="top"
               sideOffset={4}
             >
+              {highlightContext === "" ? null : <Menu.Label className="roster-menu-context">{highlightContext}</Menu.Label>}
               <Menu.Item
                 aria-describedby={removeRefused ? "roster-remove-reason" : undefined}
                 aria-disabled={removeRefused || undefined}
@@ -897,6 +916,29 @@ export const DatasetRoster = memo(function DatasetRoster({
                   {t(state.selected.size === 0 ? "rosterNothingHighlighted" : "rosterActionWaits")}
                 </span> : null}
               </Menu.Item>
+              {/* The menu route for a drag (I4): the highlighted rows, into a
+                  group picked from the submenu. Refused, not hidden, while
+                  nothing is highlighted. */}
+              {moveSource === null ? (
+                <Menu.Item aria-describedby="roster-move-reason" aria-disabled data-roster-move=""
+                  onSelect={(event) => { event.preventDefault(); }}>
+                  {t("moveToGroupMenu")}
+                  <span aria-hidden="true" className="plot-menu-reason" id="roster-move-reason">{t("rosterNothingHighlighted")}</span>
+                </Menu.Item>
+              ) : (
+                <Menu.Sub>
+                  <Menu.SubTrigger data-roster-move="">{t("moveToGroupMenu")}</Menu.SubTrigger>
+                  <Menu.Portal>
+                    <Menu.SubContent className="roster-menu" sideOffset={4}>
+                      {state.organization.groups.map((group) => (
+                        <Menu.Item key={group.id} onSelect={() => moveTo(moveSource, group.id)}>
+                          {group.id === UNGROUPED ? t("ungrouped") : group.name}
+                        </Menu.Item>
+                      ))}
+                    </Menu.SubContent>
+                  </Menu.Portal>
+                </Menu.Sub>
+              )}
               <Menu.Item
                 aria-describedby={[canMutate ? null : "roster-clear-reason", clearDescriptions].filter(Boolean).join(" ") || undefined}
                 aria-disabled={!canMutate || undefined}
@@ -924,7 +966,7 @@ export const DatasetRoster = memo(function DatasetRoster({
             size="sm"
             variant="primary"
           >
-            {t("rosterConvertChecked", { checked: checkedCount })}
+            {t("rosterConvert")}
           </Button>
         )}
       </div>
@@ -956,15 +998,18 @@ export const DatasetRoster = memo(function DatasetRoster({
             The folder action says what it takes -- mzML files -- because a
             folder of a vendor acquisition is not something this version can
             read. */}
+        {/* Refused rather than disabled while something else holds the
+            workspace: each keeps the keyboard and points at the status bar's
+            reason, the one the shell gives every waiting workspace action. */}
         <div className="roster-acquire">
           <Button
             data-add-files=""
-            disabled={!canAddFiles}
-            icon={<Icon name="plus" />}
             onClick={(event) => {
               startPicking(event, onAddFiles);
             }}
+            reasonId={STATUS_BUSY_ID}
             ref={addFilesRef}
+            refused={!canAddFiles}
             size="sm"
             variant={addFilesPrimary ? "primary" : "secondary"}
           >
@@ -972,12 +1017,12 @@ export const DatasetRoster = memo(function DatasetRoster({
           </Button>
           <Button
             aria-busy={folderBusy}
-            disabled={!canAddFolder}
-            icon={<Icon name="folder" />}
             onClick={(event) => {
               startPicking(event, onAddFolder);
             }}
+            reasonId={STATUS_BUSY_ID}
             ref={addFolderRef}
+            refused={!canAddFolder}
             size="sm"
           >
             {t("addFolder")}

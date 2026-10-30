@@ -152,7 +152,7 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
   async function add(path: string): Promise<void> {
     await showRoster();
     const before = await browser.$$(ROWS).length;
-    await browser.$("button=Add files…").waitForEnabled({ timeout: 60_000 });
+    await browser.waitUntil(async () => (await browser.$("button=Add files…").getAttribute("aria-disabled")) === null, { timeout: 60_000, timeoutMsg: "Add files… was never offered" });
     await reveal("#workbench-roster [data-add-files]");
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);
     const [handled] = await Promise.all([handler, browser.$("button=Add files…").click()]);

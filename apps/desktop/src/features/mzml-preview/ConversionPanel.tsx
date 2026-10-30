@@ -1,7 +1,8 @@
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { ownedErrorDetail } from "./ownedErrorMessages";
 import { conversionCountParts, conversionErrorMessage, conversionJudgedOutputOnly, conversionNoticeMessage } from "./conversionMessages";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactElement, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
+import { useListWindow, type ListWindowRow } from "./conversionListWindow";
 
 import type {
   ConversionConflictPolicy,
@@ -398,16 +399,16 @@ export function ConversionPanel({
       plan={plan}
       resolvedScope={resolvedScope}
       onScopeChange={onScopeChange}
-      onSortChange={onSortChange}
       startAvailability={startAvailability}
-      convertButton={convertButton}
-      onCustomStart={() => { restoreAfterPicker.current = true; }}
     />
   );
-  // Two columns, each its own scroll owner (rebuild spec 5): the form -- or the
-  // queue's rows -- on the left, and on the right what that adds up to with the
-  // action that starts or settles it. Both are always mounted, so the live
-  // availability notice in the second is watched before its text arrives.
+  // Direction A 2.2-2.4, flat: the form -- or the queue's rows -- on the left,
+  // and a plan rail on the right with what that adds up to. The rail's foot
+  // holds the action that starts it, pinned in view at every scroll position,
+  // with the availability notice that says why it is refused directly above
+  // it. The notice is mounted for the panel's life, so it is watched before
+  // its text arrives. No page head and no subtitle (D1, review issue 11): the
+  // selected tab says where this is, and each column names its own state.
   return (
     <section
       ref={panel}
@@ -416,15 +417,6 @@ export function ConversionPanel({
       className="conversion-panel"
       data-phase={conversion.busy ? "running" : terminal ? "finished" : "plan"}
     >
-      {/* The page head (rebuild review 10). The surface's h1 says the title to
-          assistive technology already, so the visible copy here is hidden from
-          it rather than heard twice; the purpose line is read. */}
-      <div className="page-head conversion-page-head">
-        <div className="page-head-copy">
-          <p className="page-head-title" aria-hidden="true">{t("conversionTask")}</p>
-          <p className="page-head-subtitle">{t("m74CnvPageSubtitle")}</p>
-        </div>
-      </div>
       <div className="conversion-main">
         {conversion.failure === null ? null : (
           <div className="notice notice-danger conversion-notice" role="status">
@@ -478,6 +470,8 @@ export function ConversionPanel({
               settingsView={settingsView}
               onSettingsViewChange={setSettingsView}
               plan={plan}
+              sort={resolvedScope.sort}
+              onSortChange={onSortChange}
             />
           </div>
         )}
@@ -508,7 +502,6 @@ export function ConversionPanel({
             ) : null}
           />
         ) : null}
-        <AvailabilityNotice refusals={refusals} />
         {!planShown ? null : terminal ? (
           // The next conversion's half of the summary column, set apart from
           // the finished queue's and named like the settings it describes.
@@ -517,6 +510,22 @@ export function ConversionPanel({
             {planSummary}
           </div>
         ) : planSummary}
+        {/* The rail's last child, pinned to the bottom of whatever scrolls
+            (the rail, or the whole page in a short window). */}
+        <div className="conversion-rail-foot" data-start-offered={planShown || undefined}>
+          <AvailabilityNotice refusals={refusals} />
+          {!planShown ? null : (
+            <PlanStart
+              conversion={conversion}
+              configuration={configuration}
+              plan={plan}
+              resolvedScope={resolvedScope}
+              startAvailability={startAvailability}
+              convertButton={convertButton}
+              onCustomStart={() => { restoreAfterPicker.current = true; }}
+            />
+          )}
+        </div>
       </div>
     </section>
   );
@@ -802,6 +811,8 @@ function PlanForm({
   settingsView,
   onSettingsViewChange,
   plan,
+  sort,
+  onSortChange,
 }: {
   readonly conversion: ConversionOperation;
   readonly configuration: ConversionConfigurationView;
@@ -810,6 +821,9 @@ function PlanForm({
   readonly settingsView: "basic" | "advanced";
   readonly onSettingsViewChange: (view: "basic" | "advanced") => void;
   readonly plan: ConversionPlanView;
+  /** The execution order the queue takes, kept by the roster. */
+  readonly sort: SortMode;
+  readonly onSortChange: (sort: SortMode) => void;
 }): ReactElement {
   const t = useUiMessages();
   return (
@@ -822,11 +836,14 @@ function PlanForm({
         onViewChange={onSettingsViewChange}
       />
 
-      <fieldset className="conversion-destination">
-        <legend>{t("m74CnvSaveFiles")}</legend>
-        <div className="conversion-options">
+      {/* Where, what on a taken name, and in which order: compact radio rows in
+          the same label and control grid as the settings (direction A 2.2). */}
+      <div className="conversion-form conversion-output-form">
+      <fieldset className="conversion-destination conversion-form-row">
+        <legend className="conversion-form-label">{t("m74CnvSaveFiles")}</legend>
+        <div className="conversion-radio-row">
           {DESTINATIONS.map((kind) => (
-            <label className="conversion-option" key={kind}>
+            <label key={kind}>
               <input
                 checked={conversion.destinationPolicy.kind === kind}
                 name="conversion-destination-policy"
@@ -861,11 +878,11 @@ function PlanForm({
         ) : null}
       </fieldset>
 
-      <fieldset className="conversion-conflict" aria-describedby="conversion-conflict-scope">
-        <legend>{t("m74CnvConflict")}</legend>
-        <div className="conversion-options">
+      <fieldset className="conversion-conflict conversion-form-row" aria-describedby="conversion-conflict-scope">
+        <legend className="conversion-form-label">{t("m74CnvConflict")}</legend>
+        <div className="conversion-radio-row">
           {CONFLICT_POLICIES.map((policy) => (
-            <label className="conversion-option" key={policy}>
+            <label key={policy}>
               <input
                 checked={conversion.conflictPolicy === policy}
                 name="conversion-conflict-policy"
@@ -881,6 +898,20 @@ function PlanForm({
         </div>
         <p className="visually-hidden" id="conversion-conflict-scope">{t("m74CnvConflictScope")}</p>
       </fieldset>
+      {/* The order the queue runs in. The roster's arrangement and groups do
+          not change it; this does. */}
+      <div className="conversion-order conversion-form-row">
+        <label className="conversion-form-label" htmlFor="conversion-order">{t("executionSort")}</label>
+        <select id="conversion-order" aria-describedby="conversion-order-help" value={sort}
+          onChange={(event) => {
+            const chosen = event.currentTarget.value;
+            if (isSortMode(chosen)) onSortChange(chosen);
+          }}>
+          {SORT_MODES.map((mode) => <option key={mode} value={mode}>{t(SORT_MESSAGE[mode])}</option>)}
+        </select>
+        <p className="visually-hidden" id="conversion-order-help">{t("executionOrderHelp")}</p>
+      </div>
+      </div>
     </>
   );
 }
@@ -901,33 +932,23 @@ function PlanForm({
  * the answer to the inputs before it, so nothing it depends on sits between it
  * and the action.
  */
-function PlanSummary({
-  conversion,
-  configuration,
-  plan,
-  resolvedScope,
-  onScopeChange,
-  onSortChange,
-  startAvailability,
-  convertButton,
-  onCustomStart,
-}: {
+interface PlanProps {
   readonly conversion: ConversionOperation;
   readonly configuration: ConversionConfigurationView;
   readonly plan: ConversionPlanView;
-  readonly convertButton: RefObject<HTMLButtonElement | null>;
-  readonly onCustomStart: () => void;
   /** The rows this panel would queue, for the control that names them. */
   readonly resolvedScope: ResolvedConversionScope;
-  readonly onScopeChange: (scope: ConversionScope) => void;
-  readonly onSortChange: (sort: SortMode) => void;
   /** Whether a conversion of these rows may start, and what to say when not. */
   readonly startAvailability: ConversionAvailability;
-}): ReactElement {
-  const t = useUiMessages();
+}
+
+/**
+ * What the plan's summary and the control that starts it both read, decided
+ * once so the rail and its foot cannot describe two different plans.
+ */
+function planFacts({ configuration, plan, resolvedScope, startAvailability }: PlanProps) {
   const current = plan.current;
   const summary = current?.plan ?? null;
-  const rounding = summary === null ? null : precisionNote(summary.intent.precision, t);
   // The rows the control names, which is what the reader selected rather than
   // what MSCanvas has finished describing. The plan is rendered in every state
   // now, so reading this off the summary made the label say "Convert 0
@@ -941,7 +962,6 @@ function PlanSummary({
     configuration.configuration?.configuration === "unavailableForBinding" ||
     (startAvailability.status === "unavailable" &&
       (startAvailability.reason === "backend-unavailable" || startAvailability.reason === "backend-quarantined"));
-  const refused = startAvailability.status !== "available";
   // The pending sentence only where it says something the notices do not
   // (PM9.4 O3). With no rows to convert the notice says why and what to do,
   // and over capacity the counts above say why; repeating either here put one
@@ -957,9 +977,82 @@ function PlanSummary({
         startAvailability.reason === "plan-selection-unavailable" ||
         startAvailability.reason === "plan-selection-not-evidenced" ||
         (startAvailability.reason === "plan-settings-unknown" && !noBackend)));
+  return { current, summary, count, noBackend, pendingSaid };
+}
+
+/**
+ * The control that starts the plan, pinned at the rail's foot (direction A
+ * 2.2): the end of the plan, in view at every scroll position. Its
+ * description is the summary above it, or what stands in for one.
+ */
+function PlanStart(props: PlanProps & {
+  readonly convertButton: RefObject<HTMLButtonElement | null>;
+  readonly onCustomStart: () => void;
+}): ReactElement {
+  const { conversion, plan, resolvedScope, startAvailability, convertButton, onCustomStart } = props;
+  const t = useUiMessages();
+  const { current, summary, count, pendingSaid } = planFacts(props);
+  const refused = startAvailability.status !== "available";
   // The ellipsis promises a further step before anything starts, and only the
   // custom folder has one: its picker (PM9.4 O5).
   const picks = conversion.destinationPolicy.kind === "customFolder";
+  return (
+    <div className="conversion-actions conversion-start-actions">
+      <Button
+        ref={convertButton}
+        aria-describedby={describedBy(
+          summary !== null
+            ? summary.validationMode === "output_only" ? `conversion-plan-summary ${VALIDATION_DISCLOSURE_ID}` : "conversion-plan-summary"
+            : pendingSaid ? PLAN_PENDING_ID
+            : plan.capacityRefusal !== null ? CAPACITY_REFUSAL_ID : "",
+          startAvailability,
+        )}
+        // One filled primary per state (R7). On screen under a finished queue
+        // only once the reader opened the next conversion, and Add then
+        // steps down to secondary.
+        variant="primary"
+        className="conversion-start conversion-wide-action"
+        // The one rule, and the whole of it. The empty-row case and the plan
+        // are inside it rather than beside it: a second clause here is
+        // exactly how this control came to answer a different question from
+        // the operation it starts. Refused rather than disabled so the
+        // control stays a Tab stop whose reason can be reached (PM9 UI-24,
+        // PM9.4 R6); a refused press does nothing.
+        refused={refused}
+        onClick={() => {
+          // The question the summary above answered, whole, and taken from
+          // the very value that summary was rendered from. Passing the rows
+          // alone would let a start mean something the reader never read;
+          // reaching for the question separately would be a second answer to
+          // which conversion this is.
+          if (current !== null) {
+            if (current.identity.destinationPolicy.kind === "customFolder") onCustomStart();
+            conversion.convert(current.identity);
+          }
+        }}
+      >
+        {resolvedScope.scope === "selected"
+          ? t(picks ? "m74CnvConvertSelected" : "m74CnvConvertSelectedDirect", { count })
+          : t(picks ? "m74CnvConvertAll" : "m74CnvConvertAllDirect", { count })}
+      </Button>
+      {/* An explicit re-ask of the same question, and nothing automatic. A
+          plan can fail for a reason the reader cannot act on, and a machine
+          whose only exit were a new question would pin `Convert` as refused
+          for the session over one lost reply. */}
+      {plan.retryOffered ? (
+        <Button variant="secondary" size="sm" icon={<Icon name="refresh" />} onClick={plan.retry}>{t("m74CnvDescribeAgain")}</Button>
+      ) : null}
+    </div>
+  );
+}
+
+function PlanSummary(props: PlanProps & {
+  readonly onScopeChange: (scope: ConversionScope) => void;
+}): ReactElement {
+  const { plan, resolvedScope, onScopeChange } = props;
+  const t = useUiMessages();
+  const { summary, count, noBackend, pendingSaid } = planFacts(props);
+  const rounding = summary === null ? null : precisionNote(summary.intent.precision, t);
   return (
     <div className="conversion-plan-summary">
       {/* Native radios drawn as a segmented pair, so the group keeps the
@@ -1001,19 +1094,6 @@ function PlanSummary({
           </Disclosure>
         </div>
       )}
-      {/* The order the queue runs in. The roster's arrangement and groups do
-          not change it; this does. */}
-      <div className="conversion-order">
-        <label htmlFor="conversion-order">{t("executionSort")}</label>
-        <select id="conversion-order" aria-describedby="conversion-order-help" value={resolvedScope.sort}
-          onChange={(event) => {
-            const chosen = event.currentTarget.value;
-            if (isSortMode(chosen)) onSortChange(chosen);
-          }}>
-          {SORT_MODES.map((mode) => <option key={mode} value={mode}>{t(SORT_MESSAGE[mode])}</option>)}
-        </select>
-        <p className="visually-hidden" id="conversion-order-help">{t("executionOrderHelp")}</p>
-      </div>
       {plan.capacityRefusal === null ? null : <p className="notice notice-warning" data-testid="conversion-capacity" id={CAPACITY_REFUSAL_ID}>
         {t("m74CnvCapacityExceeded", { count: plan.capacityRefusal.requestedCount, capacity: plan.capacityRefusal.capacity })}
       </p>}
@@ -1021,12 +1101,7 @@ function PlanSummary({
       {summary === null ? (
         <>
           {pendingSaid ? <PlanPending plan={plan} noBackend={noBackend} /> : null}
-          {count === 0 ? null : <ol aria-label={t("m74CnvRequestedOrder")} className="conversion-requested-list">
-            {resolvedScope.members.map((row, index) => <li key={row.handle}>
-              <span className="conversion-queue-order">{index + 1}</span>
-              <span className="conversion-queue-name" title={row.fileName}>{row.fileName}</span>
-            </li>)}
-          </ol>}
+          {count === 0 ? null : <RequestedList members={resolvedScope.members} />}
         </>
       ) : (
         <>
@@ -1034,38 +1109,7 @@ function PlanSummary({
             {describeQueueFamilies(summary.items, t)}
           </p>
 
-          <ol aria-label={t("m74CnvReviewedOrder")} className="conversion-queue-list conversion-plan-list">
-            {summary.items.map((item, index) => (
-              <li key={item.datasetHandle}>
-                <span className="conversion-queue-order">{index + 1}</span>
-                <span className="conversion-queue-name" title={item.fileName}>
-                  {item.fileName}
-                </span>
-                {/* Which family this row is, said on the row. In a mixed queue
-                    the summary's counts cannot say which item is which, and
-                    colour is not a channel this information may live in. */}
-                <span className="conversion-queue-kind">{SOURCE_KIND_LABEL[item.sourceKind]}</span>
-                <span aria-hidden="true">→</span>
-                <span className="visually-hidden">{t("m74CnvConvertsTo")}</span>
-                {item.output.kind === "knownSingle" ? (
-                  <span className="conversion-queue-output" title={item.output.fileName}>
-                    {item.output.fileName}
-                  </span>
-                ) : (
-                  <span
-                    className="conversion-queue-output conversion-queue-output-set"
-                    data-output-topology="backendNamedSet"
-                  >
-                    {outputSetSummary(item.output.maxMembers, t)}
-                    <span className="visually-hidden">. </span>
-                    <span className="conversion-queue-output-naming">
-                      {t("m74CnvSetNaming")}
-                    </span>
-                  </span>
-                )}
-              </li>
-            ))}
-          </ol>
+          <PlanList items={summary.items} />
 
           {/* Every one of these is read off the plan, never off the controls
               beside it. The plan is the answer to a question that named a
@@ -1125,54 +1169,74 @@ function PlanSummary({
           )}
         </>
       )}
-
-      <div className="conversion-actions conversion-start-actions">
-        <Button
-          ref={convertButton}
-          aria-describedby={describedBy(
-            summary !== null
-              ? summary.validationMode === "output_only" ? `conversion-plan-summary ${VALIDATION_DISCLOSURE_ID}` : "conversion-plan-summary"
-              : pendingSaid ? PLAN_PENDING_ID
-              : plan.capacityRefusal !== null ? CAPACITY_REFUSAL_ID : "",
-            startAvailability,
-          )}
-          // One filled primary per state (R7). On screen under a finished queue
-          // only once the reader opened the next conversion, and Add then
-          // steps down to secondary.
-          variant="primary"
-          className="conversion-start conversion-wide-action"
-          // The one rule, and the whole of it. The empty-row case and the plan
-          // are inside it rather than beside it: a second clause here is
-          // exactly how this control came to answer a different question from
-          // the operation it starts. Refused rather than disabled so the
-          // control stays a Tab stop whose reason can be reached (PM9 UI-24,
-          // PM9.4 R6); a refused press does nothing.
-          refused={refused}
-          onClick={() => {
-            // The question the summary above answered, whole, and taken from
-            // the very value that summary was rendered from. Passing the rows
-            // alone would let a start mean something the reader never read;
-            // reaching for the question separately would be a second answer to
-            // which conversion this is.
-            if (current !== null) {
-              if (current.identity.destinationPolicy.kind === "customFolder") onCustomStart();
-              conversion.convert(current.identity);
-            }
-          }}
-        >
-          {resolvedScope.scope === "selected"
-            ? t(picks ? "m74CnvConvertSelected" : "m74CnvConvertSelectedDirect", { count })
-            : t(picks ? "m74CnvConvertAll" : "m74CnvConvertAllDirect", { count })}
-        </Button>
-        {/* An explicit re-ask of the same question, and nothing automatic. A
-            plan can fail for a reason the reader cannot act on, and a machine
-            whose only exit were a new question would pin `Convert` as refused
-            for the session over one lost reply. */}
-        {plan.retryOffered ? (
-          <Button variant="secondary" size="sm" icon={<Icon name="refresh" />} onClick={plan.retry}>{t("m74CnvDescribeAgain")}</Button>
-        ) : null}
-      </div>
     </div>
+  );
+}
+
+/**
+ * The rows a plan is being worked out for, in the order they would run.
+ * Windowed past `LIST_WINDOW_THRESHOLD` rows, like every conversion list.
+ */
+function RequestedList({ members }: { readonly members: ResolvedConversionScope["members"] }): ReactElement {
+  const t = useUiMessages();
+  const keys = useMemo(() => members.map((row) => row.handle), [members]);
+  const { listProps, rows } = useListWindow(keys, 24);
+  return (
+    <ol aria-label={t("m74CnvRequestedOrder")} className="conversion-requested-list" {...listProps}>
+      {rows.map(({ key, index, style, ref }) => {
+        const row = members[index];
+        return row === undefined ? null : (
+          <li key={key} ref={ref} style={style} data-window-key={key} aria-setsize={members.length} aria-posinset={index + 1}>
+            <span className="conversion-queue-order">{index + 1}</span>
+            <span className="conversion-queue-name" title={row.fileName}>{row.fileName}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** The reviewed plan, file by file, read off Rust's answer. Windowed like the rest. */
+function PlanList({ items }: { readonly items: readonly ConversionQueuePlanItem[] }): ReactElement {
+  const t = useUiMessages();
+  const keys = useMemo(() => items.map((item) => item.datasetHandle), [items]);
+  const { listProps, rows } = useListWindow(keys, 44);
+  return (
+    <ol aria-label={t("m74CnvReviewedOrder")} className="conversion-queue-list conversion-plan-list" {...listProps}>
+      {rows.map(({ key, index, style, ref }) => {
+        const item = items[index];
+        return item === undefined ? null : (
+          <li key={key} ref={ref} style={style} data-window-key={key} aria-setsize={items.length} aria-posinset={index + 1}>
+            <span className="conversion-queue-order">{index + 1}</span>
+            <span className="conversion-queue-name" title={item.fileName}>
+              {item.fileName}
+            </span>
+            {/* Which family this row is, said on the row. In a mixed queue
+                the summary's counts cannot say which item is which, and
+                colour is not a channel this information may live in. */}
+            <span className="conversion-queue-kind">{SOURCE_KIND_LABEL[item.sourceKind]}</span>
+            <span aria-hidden="true">→</span>
+            <span className="visually-hidden">{t("m74CnvConvertsTo")}</span>
+            {item.output.kind === "knownSingle" ? (
+              <span className="conversion-queue-output" title={item.output.fileName}>
+                {item.output.fileName}
+              </span>
+            ) : (
+              <span
+                className="conversion-queue-output conversion-queue-output-set"
+                data-output-topology="backendNamedSet"
+              >
+                {outputSetSummary(item.output.maxMembers, t)}
+                <span className="visually-hidden">. </span>
+                <span className="conversion-queue-output-naming">
+                  {t("m74CnvSetNaming")}
+                </span>
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -1312,7 +1376,12 @@ function QueueState({
   if (part === "rows") {
     return (
       <div className="conversion-running conversion-run-rows">
-        <h3>{t(state.status === "terminal" ? "m74CnvResultsTitle" : "m74CnvQueueTitle")}</h3>
+        {/* The column names its state (direction A 2.3, 2.4) and how many
+            items it holds; the rail says how far along they are. */}
+        <div className="conversion-column-head">
+          <h3>{t(state.status === "terminal" ? "m74CnvResultsTitle" : "m74CnvQueueTitle")}</h3>
+          <span className="conversion-count-tag">{formatCount(queue.itemCount)}</span>
+        </div>
         {state.status === "terminal" && state.reason === "stopFailed" ? (
           <p className="notice notice-danger" role="alert">
             <span aria-hidden="true">⚠ </span>
@@ -1329,8 +1398,7 @@ function QueueState({
           </p>
         )}
 
-        <ol className="conversion-queue-list conversion-run-list">
-          {queue.items.map((item, index) => {
+        <RunList items={queue.items} renderRow={(item, index, row) => {
             // Read once per item. Which of the two an item has is the whole of
             // what tells these branches apart, and asking the same question at
             // every use would invite one of them to be answered differently.
@@ -1338,7 +1406,8 @@ function QueueState({
             const set = setReportOf(item);
             const skipping = conversion.skippingItem(index);
             return (
-              <li key={item.datasetHandle} data-item-state={item.state}>
+              <li key={row.key} ref={row.ref} style={row.style} data-window-key={row.key}
+                aria-setsize={queue.items.length} aria-posinset={index + 1} data-item-state={item.state}>
                 {/* The state as a glyph as well as a word: the word beside it
                     is what carries it, so colour is never the only channel. */}
                 <span className="conversion-run-symbol" aria-hidden="true">{ITEM_STATE_SYMBOL[item.state]}</span>
@@ -1521,8 +1590,7 @@ function QueueState({
                 </div>
               </li>
             );
-          })}
-        </ol>
+          }} />
         {/* What to do about the rows that did not convert, directly above the
             next conversion it points to. Not a rerun: a stop or a skip was the
             reader's decision, and converting those rows again is a new queue
@@ -1576,19 +1644,20 @@ function QueueState({
   return (
     <div className="conversion-running conversion-run-summary">
       <p className="conversion-run-status" id={QUEUE_STATUS_ID} tabIndex={-1}>{status}</p>
-      {/* The same numbers the sentence above says, large, for a glance. Hidden
-          from assistive technology because the sentence already says them. */}
+      {/* Filled by the items already settled, never by the one running:
+          nothing measures a fraction of a run (C13). The item in progress is
+          its own indeterminate segment at the fill's edge, so a queue with
+          nothing done yet reads as a bar at work, never as a rule (review
+          issue 11). Hidden from assistive technology: the sentence above
+          says the same numbers. */}
       {state.status === "running" && !stopping ? (
-        <>
-          <p className="conversion-progress-num" aria-hidden="true">
-            {`${String(runningItem ? runningPosition(queue) : queue.finalizedCount)} / ${String(queue.itemCount)}`}
-          </p>
-          {/* Filled by the items already settled, never by the one running:
-              nothing measures a fraction of a run (rebuild review 13). */}
-          <div className="conversion-progress-bar" aria-hidden="true">
-            <span style={{ width: `${String(settledShare(queue))}%` }} />
-          </div>
-        </>
+        <div className="conversion-progress-bar" aria-hidden="true">
+          <span style={{ width: `${String(settledShare(queue))}%` }} />
+          {runningItem ? (
+            <span className="conversion-progress-current"
+              style={{ left: `${String(settledShare(queue))}%`, width: `${String(queue.itemCount === 0 ? 0 : 100 / queue.itemCount)}%` }} />
+          ) : null}
+        </div>
       ) : null}
       {/* No stop controls until the state read dispatched beside a retry
           reports the rerun running. */}
@@ -1740,6 +1809,27 @@ function QueueState({
         </div>
       </dl>
     </div>
+  );
+}
+
+/**
+ * The queue's rows, running or finished, windowed past
+ * `LIST_WINDOW_THRESHOLD` items. Each row's content is the caller's; the
+ * window decides only which rows are mounted and where.
+ */
+function RunList({ items, renderRow }: {
+  readonly items: readonly ConversionQueueItem[];
+  readonly renderRow: (item: ConversionQueueItem, index: number, row: ListWindowRow) => ReactElement;
+}): ReactElement {
+  const keys = useMemo(() => items.map((item) => item.datasetHandle), [items]);
+  const { listProps, rows } = useListWindow(keys, 64);
+  return (
+    <ol className="conversion-queue-list conversion-run-list" {...listProps}>
+      {rows.map((row) => {
+        const item = items[row.index];
+        return item === undefined ? null : renderRow(item, row.index, row);
+      })}
+    </ol>
   );
 }
 

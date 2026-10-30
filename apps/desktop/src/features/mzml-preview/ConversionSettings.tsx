@@ -110,19 +110,22 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
     : axisChoices(held.catalog, selected.intent, axis).map(choice => choice.state));
   const refusalNotes = refusals(refusalPrefix, shownStates, t);
   return <div className="conversion-settings" data-settings-state="ready" data-settings-view={advanced ? "advanced" : "basic"}>
-    {head(<>
-      {/* One format exists, so it is stated rather than offered as a choice. */}
-      <span className="conversion-format">{t("cnvFormat")} <strong>mzML</strong></span>
-      <SegmentedControl label={t("cnvSettingsView")} value={advanced ? "advanced" : "basic"}
-        options={[{ value: "basic", label: t("cnvBasic") }, { value: "advanced", label: t("cnvAdvanced") }]}
-        onChange={next => setAdvanced(next === "advanced")} />
-    </>)}
+    {head(<SegmentedControl label={t("cnvSettingsView")} value={advanced ? "advanced" : "basic"}
+      options={[{ value: "basic", label: t("cnvBasic") }, { value: "advanced", label: t("cnvAdvanced") }]}
+      onChange={next => setAdvanced(next === "advanced")} />)}
     {refusal === null ? null : <p className="conversion-settings-unavailable" data-selection-refusal={refusal} id={unavailableId} role="note">{t(SELECTION_REFUSAL[refusal])}</p>}
     {recovery === null ? null : <div className="conversion-settings-recovery">
       <Button variant="secondary" size="sm" aria-describedby={refusal === null ? undefined : unavailableId}
         onClick={() => onChoose(recovery.intent.id)}>{t("cnvRecoveryShipped")}</Button>
     </div>}
-    <div className="conversion-settings-grid">
+    {/* Label and control rows (direction A 2.2). Peaks stay tiles, because
+        centroiding carries its loss; every other choice is a segmented row. */}
+    <div className="conversion-settings-grid conversion-form">
+      {/* One format exists, so it is stated rather than offered as a choice. */}
+      <div className="conversion-form-row conversion-format">
+        <span className="conversion-form-label">{t("cnvFormat")}</span>
+        <strong>mzML</strong>
+      </div>
       {CONVERSION_AXES.map(axis => axis === "precision" && !advanced
         ? <PrecisionFields key={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} />
         : <AxisFieldset key={axis} axis={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} advanced={advanced} />)}
@@ -148,23 +151,57 @@ function AxisFieldset({ axis, catalog, current, onChoose, refusalPrefix, advance
   const t = useUiMessages();
   const prefix = useId();
   const choices = axisChoices(catalog, current, axis);
-  return <fieldset className="conversion-setting" data-axis={axis}>
-    <legend>{t(AXIS_LABEL[axis])}</legend>
-    {choices.map(({ value, state }) => {
-      const noteId = `${prefix}-${value}`;
-      // Possible information loss stays beside the choice in either view.
-      // Secondary explanation is disclosed without changing the intent.
-      const lossWarning = value === "unscoped_default_centroiding" || (state.status === "selected" && (value === "ms1_only" || value === "ms2_only"));
-      const disclosure = advanced || lossWarning ? note(axis, value, t) : null;
-      const describedBy = [refusalId(refusalPrefix, state), disclosure === null ? undefined : noteId].filter(Boolean).join(" ") || undefined;
-      return <div className="conversion-setting-choice" data-choice-state={state.status} key={value}>
-        <label><input type="radio" name={`${prefix}-${axis}`} value={value} checked={state.status === "selected"}
-          disabled={state.status === "unavailable"} aria-describedby={describedBy}
-          onChange={() => { if (state.status === "selectable") onChoose(state.intentId); }} />{label(axis, value, t)}</label>
-        {disclosure === null ? null : <p className="conversion-setting-note" id={noteId}>{disclosure}</p>}
-      </div>;
-    })}
+  // Tiles where a choice carries its loss on the choice itself (centroiding,
+  // and the four paired precisions of the advanced view); a segmented row for
+  // the rest (B7), with any loss said under the row.
+  const tiles = axis === "processing" || axis === "precision";
+  const rows = choices.map(({ value, state }) => {
+    const noteId = `${prefix}-${value}`;
+    // Possible information loss stays beside the choice in either view.
+    // Secondary explanation is disclosed without changing the intent.
+    const lossWarning = value === "unscoped_default_centroiding" || (state.status === "selected" && (value === "ms1_only" || value === "ms2_only"));
+    const disclosure = advanced || lossWarning ? note(axis, value, t) : null;
+    const describedBy = [refusalId(refusalPrefix, state), disclosure === null ? undefined : noteId].filter(Boolean).join(" ") || undefined;
+    return { value, state, noteId, disclosure, text: label(axis, value, t), input: <ChoiceRadio className={tiles ? undefined : "visually-hidden"} name={`${prefix}-${axis}`} value={value} state={state} describedBy={describedBy} onChoose={onChoose} /> };
+  });
+  return <fieldset className="conversion-setting conversion-form-row" data-axis={axis}>
+    <legend className="conversion-form-label">{t(AXIS_LABEL[axis])}</legend>
+    {tiles ? <div className="conversion-tiles">
+      {rows.map(({ value, state, noteId, disclosure, text, input }) => {
+        // Centroiding says "Lossy" on its tile; the whole sentence is its
+        // description, and on screen only in the advanced view.
+        const tagged = value === "unscoped_default_centroiding";
+        return <div className="conversion-setting-choice" data-choice-state={state.status} key={value}>
+          {/* The tag sits beside the label, not in it, so the choice keeps its
+              name; its description says the loss in full. */}
+          <label>{input}{text}</label>
+          {tagged ? <span className="conversion-lossy" aria-hidden="true">{t("cnvLossy")}</span> : null}
+          {disclosure === null ? null : <p className={tagged && !advanced ? "conversion-setting-note visually-hidden" : "conversion-setting-note"} id={noteId}>{disclosure}</p>}
+        </div>;
+      })}
+    </div> : <>
+      <div className="conversion-segments-track">
+        {rows.map(({ value, state, text, input }) => <label className="conversion-segment" data-choice-state={state.status} key={value}>{input}{text}</label>)}
+      </div>
+      {rows.map(({ value, noteId, disclosure }) => disclosure === null ? null : <p className="conversion-setting-note" id={noteId} key={value}>{disclosure}</p>)}
+    </>}
   </fieldset>;
+}
+
+/**
+ * One choice's native radio. A value that cannot be chosen stays on screen
+ * and focusable, refused (`aria-disabled`) with its reason, never natively
+ * disabled (B4): a press or an arrow key that lands on it changes nothing,
+ * because only a selectable value calls the chooser and the checked value is
+ * controlled.
+ */
+function ChoiceRadio({ name, value, state, describedBy, onChoose, className }: {
+  readonly name: string; readonly value: string; readonly state: ConversionChoiceState;
+  readonly describedBy: string | undefined; readonly onChoose: (intentId: string) => void; readonly className?: string;
+}) {
+  return <input type="radio" className={className} name={name} value={value} checked={state.status === "selected"}
+    aria-disabled={state.status === "unavailable" || undefined} aria-describedby={describedBy}
+    onChange={() => { if (state.status === "selectable") onChoose(state.intentId); }} />;
 }
 
 /** The group's note a refused value points at, or `undefined` for a value that is not refused. */
@@ -195,18 +232,18 @@ function PrecisionFields({ catalog, current, onChoose, refusalPrefix }: AxisProp
   const selectedNote = note("precision", current.precision, t);
   const selectedId = selectedNote === null ? undefined : `${prefix}-selected`;
   const grid = precisionGrid(catalog, current);
-  return <fieldset className="conversion-setting" data-axis="precision">
-    <legend>{t("cnvPrecision")}</legend>
+  return <fieldset className="conversion-setting conversion-form-row" data-axis="precision">
+    <legend className="conversion-form-label">{t("cnvPrecision")}</legend>
     <div className="conversion-precision-fields">
       {/* Native radios drawn as a segmented pair: an unavailable width stays on
-          screen, natively disabled, and points at the form's reason for it. */}
+          screen, refused rather than disabled, and points at the form's
+          reason for it. */}
       {grid.map((widths, index) => <fieldset className="conversion-segments" key={index}>
         <legend>{t(index === 0 ? "cnvMz" : "cnvIntensity")}</legend>
         <div className="conversion-segments-track">
           {widths.map(({ width, state }) => <label className="conversion-segment" data-choice-state={state.status} key={width}>
-            <input className="visually-hidden" type="radio" name={`${prefix}-${index}`} checked={state.status === "selected"}
-              disabled={state.status === "unavailable"} aria-describedby={refusalId(refusalPrefix, state) ?? selectedId}
-              onChange={() => { if (state.status === "selectable") onChoose(state.intentId); }} />{t(width === 32 ? "cnv32Bit" : "cnv64Bit")}</label>)}
+            <ChoiceRadio className="visually-hidden" name={`${prefix}-${index}`} value={String(width)} state={state}
+              describedBy={refusalId(refusalPrefix, state) ?? selectedId} onChoose={onChoose} />{t(width === 32 ? "cnv32Bit" : "cnv64Bit")}</label>)}
         </div>
       </fieldset>)}
     </div>
