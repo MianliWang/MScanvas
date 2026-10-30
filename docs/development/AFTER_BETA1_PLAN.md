@@ -400,6 +400,12 @@ writer and Rust's ownership of files.
   The interface name is "spreadsheet CSV" / "电子表格 CSV", CSV only.
 - **Slices:** decisions and an as-stored golden guard; Rust; boundary and UI;
   rendered QA and records. **Size M** (raised from S–M by the critique).
+- **Status, 2026-10-30:**
+  [ADR 0054](../architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)
+  accepted; the as-stored golden guard and the Rust side (the closed word
+  `spreadsheetCsv`) are implemented on `be/spreadsheet-csv`. The webview
+  control follows after PR #164. The Excel, LibreOffice and WPS check is the
+  owner's and pending, so no help or release text claims formula protection.
 
 ## 7. Backlog
 

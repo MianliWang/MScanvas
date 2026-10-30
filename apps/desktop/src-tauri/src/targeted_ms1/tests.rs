@@ -4654,7 +4654,11 @@ fn a_real_result_is_read_after_reopen_and_save_as_with_neither_the_runtime_nor_t
     }
     assert!(drawn > 0, "at least one real target reached extraction");
     let stored = copied.stored_targeted_result(artifact).expect("stored");
-    for format in [TableFormat::Csv, TableFormat::Tsv] {
+    for format in [
+        TableFormat::Csv,
+        TableFormat::Tsv,
+        TableFormat::SpreadsheetCsv,
+    ] {
         let (table, count) = result_table(&stored, format).expect("a table");
         assert_eq!(count, plan.targets.len());
         assert_eq!(result_table(&stored, format).expect("again").0, table);
@@ -4663,6 +4667,7 @@ fn a_real_result_is_read_after_reopen_and_save_as_with_neither_the_runtime_nor_t
         let name = match format {
             TableFormat::Csv => "results.csv",
             TableFormat::Tsv => "results.tsv",
+            TableFormat::SpreadsheetCsv => "results-spreadsheet.csv",
         };
         fs::write(evidence_dir.join(name), &table).expect("table");
     }
@@ -5567,4 +5572,418 @@ fn a_chosen_destination_is_written_new_named_as_its_format_and_never_over_a_file
     let misnamed = write_named(&scratch.join("results.txt"), facts, b"x\n").unwrap_err();
     assert_eq!(misnamed.kind, "spectrum_destination_misnamed");
     assert!(!scratch.join("results.txt").exists());
+}
+
+// ---------------------------------------------------------------------------
+// The tables' bytes, pinned (ADR 0054)
+//
+// A stored result built from literals alone: no store, no random identifier
+// and no digest of this build's recipe, so what a table holds depends on the
+// table writer and on nothing else. Its text carries every character a
+// spreadsheet reads as the start of a formula that a TSV can also carry, so
+// the CSV and TSV fixtures show those values written exactly as stored.
+// ---------------------------------------------------------------------------
+
+use crate::project::record::{
+    DecimalValue, EngineReport, ObservedMember, PayloadReference, RecipeBinding, RecipeId, RunId,
+    TargetDefinition, TargetedMs1Execution, TargetedMs1Parameters,
+};
+
+fn fixed<T: std::str::FromStr>(value: &str) -> T
+where
+    T::Err: std::fmt::Debug,
+{
+    value.parse().expect("a fixed identifier")
+}
+
+fn golden_target(index: u8) -> TargetId {
+    fixed(&format!("00000000-0000-4000-8000-0000000000{index:02}"))
+}
+
+/// The result every golden table is written from.
+fn golden_stored() -> StoredResult {
+    let digest = |character: char| character.to_string().repeat(64);
+    let decimal = |value: f64| DecimalValue::of(value).expect("finite");
+    let definition =
+        |index: u8, label: &str, formula: &str, mass: Option<f64>, rt: f64| TargetDefinition {
+            target_id: golden_target(index),
+            label: label.to_owned(),
+            formula: formula.to_owned(),
+            neutral_mass: mass.map(decimal),
+            rt_s: decimal(rt),
+            rt_half_width_s: decimal(10.0),
+        };
+    let targets = vec![
+        definition(1, "Caffeine, the \"one\"", "C8H10N4O2", None, 60.0),
+        definition(2, "=SUM(1,2)", "C5H5N5", Some(135.054_495), 40.5),
+        definition(3, "咖啡因 · 标准品", "C9H11NO3", None, 80.0),
+        definition(4, "+x;-y;@z;=w", "C8H10N4O2", None, 120.0),
+        definition(5, "@home", "C5H5N5", None, 125.0),
+        definition(6, "#hash first", "C9H11NO3", Some(0.5), 300.0),
+    ];
+    let member = ObservedMember {
+        role: MemberRole::Primary,
+        relative_name: "sample.mzML".to_owned(),
+        byte_length: 7,
+        sha256: digest('1'),
+    };
+
+    let mut ambiguous = extracted_row(golden_target(1), RowOutcome::DetectedAmbiguous);
+    ambiguous.feature = Some(feature(114.0, 126.0, IntensitySource::ModelArea));
+    ambiguous.candidates = vec![candidate(114.0, 126.0), candidate(95.0, 99.0)];
+    let mut absent = extracted_row(golden_target(2), RowOutcome::Failed);
+    absent.failure_reason = Some(payload::RowFailure::TargetAbsentFromEngineLibrary);
+    absent.ion = None;
+    absent.windows = None;
+    absent.signal = None;
+    let mut negative = feature(114.0, 126.0, IntensitySource::ImputedFromRunRegression);
+    negative.raw_area = -12.5;
+    negative.model_status = "-1 (did not converge)".to_owned();
+    negative.model_area = Some(-3.25);
+    negative.model_fwhm_s = Some(4.5);
+    let mut shared_low = extracted_row(golden_target(3), RowOutcome::Shared);
+    shared_low.feature = Some(negative.clone());
+    shared_low.candidates = vec![candidate(114.0, 126.0)];
+    shared_low.relations.shared_with = vec![golden_target(4)];
+    let mut shared_high = extracted_row(golden_target(4), RowOutcome::Shared);
+    shared_high.feature = Some(negative);
+    shared_high.candidates = vec![candidate(114.0, 126.0)];
+    shared_high.relations.shared_with = vec![golden_target(3)];
+    shared_high.relations.overlap_removed = vec![golden_target(5), golden_target(6)];
+    shared_high.overlap_winner = true;
+    let mut suppressed = extracted_row(golden_target(5), RowOutcome::SuppressedByOverlap);
+    suppressed.relations.suppressed_by = Some(golden_target(4));
+    let mut not_detected = extracted_row(golden_target(6), RowOutcome::NotDetected);
+    not_detected.recovered_from_empty_selection = true;
+
+    StoredResult {
+        artifact: fixed("00000000-0000-4000-8000-0000000000a1"),
+        run: fixed::<RunId>("00000000-0000-4000-8000-0000000000b1"),
+        plan: TargetedMs1Plan {
+            plan_sha256: digest('A'),
+            recipe: RecipeBinding {
+                recipe: RecipeId::TargetedMs1,
+                recipe_version: 1,
+                adapter_sha256: digest('C'),
+                engine_profile_sha256: digest('D'),
+                runtime_manifest_sha256: digest('E'),
+            },
+            layer_id: fixed::<LayerId>("00000000-0000-4000-8000-0000000000c1"),
+            input_id: fixed::<InputId>("00000000-0000-4000-8000-0000000000d1"),
+            expected_content: vec![member.clone()],
+            parameters: TargetedMs1Parameters {
+                mz_half_width_ppm: decimal(5.0),
+                expected_peak_width_s: decimal(6.0),
+            },
+            target_list_sha256: digest('B'),
+            targets,
+        },
+        execution: TargetedMs1Execution {
+            plan_sha256: digest('A'),
+            consumed_content: vec![member],
+            attempt: Some(AttemptFacts {
+                adapter_sha256: digest('C'),
+                runtime_manifest_sha256: digest('E'),
+                interpreter_sha256: digest('9'),
+                source_view: SourceView::HardLinkInWorkArea,
+                engine_report: Some(EngineReport {
+                    python: "3.13.1".to_owned(),
+                    pyopenms: "3.4.0".to_owned(),
+                    openms: "@3.4.0".to_owned(),
+                    openms_revision: "-dirty".to_owned(),
+                    openms_build_time: "2025-01-01".to_owned(),
+                }),
+                loaded_modules: Vec::new(),
+            }),
+            failure: None,
+            stop: None,
+        },
+        result: TargetedMs1ResultV1 {
+            summary: OutcomeSummary {
+                targets: 6,
+                detected: 0,
+                detected_ambiguous: 1,
+                shared: 2,
+                suppressed_by_overlap: 1,
+                not_detected: 1,
+                failed: 1,
+            },
+            no_candidate_recovery: true,
+            payload: PayloadReference {
+                manifest_sha256: digest('F'),
+                files: Vec::new(),
+            },
+        },
+        rows: vec![
+            ambiguous,
+            absent,
+            shared_low,
+            shared_high,
+            suppressed,
+            not_detected,
+        ],
+    }
+}
+
+/// CSV and TSV are byte for byte what they were before ADR 0054: the
+/// spreadsheet variant is a third document beside them, not a change to them.
+#[test]
+fn the_csv_and_tsv_tables_are_byte_for_byte_what_they_were() {
+    let stored = golden_stored();
+    for (format, golden) in [
+        (
+            TableFormat::Csv,
+            include_str!("../../../../../fixtures/targeted-table-golden/results.csv"),
+        ),
+        (
+            TableFormat::Tsv,
+            include_str!("../../../../../fixtures/targeted-table-golden/results.tsv"),
+        ),
+    ] {
+        let (table, count) = result_table(&stored, format).expect("a table");
+        assert_eq!(count, 6);
+        assert_eq!(table, golden, "{format:?}");
+        assert!(!table.starts_with('\u{FEFF}'), "no byte-order mark");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0054: the spreadsheet CSV
+// ---------------------------------------------------------------------------
+
+const TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+
+/// The spreadsheet CSV, its byte-order mark checked and removed.
+fn spreadsheet(stored: &StoredResult) -> String {
+    let (table, count) = result_table(stored, TableFormat::SpreadsheetCsv).expect("a table");
+    assert_eq!(count, stored.rows.len());
+    assert!(
+        table.as_bytes().starts_with(b"\xEF\xBB\xBF"),
+        "a UTF-8 mark"
+    );
+    assert_eq!(table.matches('\u{FEFF}').count(), 1, "one mark, first");
+    table['\u{FEFF}'.len_utf8()..].to_owned()
+}
+
+#[test]
+fn the_spreadsheet_csv_is_its_golden_document_after_one_byte_order_mark() {
+    let table = spreadsheet(&golden_stored());
+    let golden =
+        include_str!("../../../../../fixtures/targeted-table-golden/results-spreadsheet.csv");
+    assert!(
+        !golden.starts_with('\u{FEFF}'),
+        "the fixture holds the text after the mark"
+    );
+    assert_eq!(table, golden);
+    assert!(
+        table.starts_with("#format,mscanvas_targeted_ms1_results_spreadsheet\n#schema_version,1\n")
+    );
+    // The labels that start a formula, before and after a `;`, and engine text.
+    for cell in [
+        "\"'=SUM(1,2)\"",
+        ",'+x;'-y;'@z;'=w,",
+        ",'@home,",
+        ",'-1 (did not converge),",
+        "#engine_openms,'@3.4.0\n",
+        "#engine_openms_revision,'-dirty\n",
+        ",咖啡因 · 标准品,",
+        ",#hash first,",
+    ] {
+        assert!(table.contains(cell), "{cell:?}");
+    }
+}
+
+#[test]
+fn the_wire_has_one_more_closed_word_and_no_other() {
+    assert_eq!(
+        TableFormat::from_wire("spreadsheetCsv"),
+        Some(TableFormat::SpreadsheetCsv)
+    );
+    for format in [
+        TableFormat::Csv,
+        TableFormat::Tsv,
+        TableFormat::SpreadsheetCsv,
+    ] {
+        assert_eq!(TableFormat::from_wire(format.stable_id()), Some(format));
+    }
+    for word in [
+        "spreadsheet",
+        "SpreadsheetCsv",
+        "spreadsheet_csv",
+        "xlsx",
+        "",
+    ] {
+        assert_eq!(TableFormat::from_wire(word), None, "{word}");
+    }
+}
+
+#[test]
+fn the_declared_fields_are_named_and_formula_is_not_one_of_them() {
+    assert_eq!(
+        output::SPREADSHEET_TEXT_COLUMNS,
+        ["label", "adduct", "model_status"]
+    );
+    assert_eq!(
+        output::SPREADSHEET_TEXT_PREAMBLE_KEYS,
+        ["engine_pyopenms", "engine_openms", "engine_openms_revision"]
+    );
+    assert!(!output::SPREADSHEET_TEXT_COLUMNS.contains(&"formula"));
+    // The reason: a stored formula never starts a trigger.
+    for trigger in TRIGGERS {
+        assert!(!record::plain_formula(&format!("{trigger}C8H10N4O2")));
+    }
+}
+
+#[test]
+fn every_trigger_is_marked_at_the_start_of_a_declared_field_and_after_each_semicolon() {
+    let mut stored = golden_stored();
+    for t in TRIGGERS {
+        stored.plan.targets[5].label = format!("{t}a;{t}b;c{t};;{t}");
+        stored.rows[0]
+            .feature
+            .as_mut()
+            .expect("a feature")
+            .model_status = format!("{t}1 (x)");
+        stored.rows[0].ion.as_mut().expect("an ion").adduct = format!("{t}[M+H]+");
+        if let Some(report) = stored
+            .execution
+            .attempt
+            .as_mut()
+            .and_then(|attempt| attempt.engine_report.as_mut())
+        {
+            report.pyopenms = format!("{t}3");
+        }
+        // CSV quotes a field holding a carriage return, and quoting comes after
+        // the mark: `"'\r…"`, never `'"\r…"`.
+        let cell = |value: String| {
+            if t == '\r' {
+                format!("\"{value}\"")
+            } else {
+                value
+            }
+        };
+        let table = spreadsheet(&stored);
+        for expected in [
+            format!(",{},", cell(format!("'{t}a;'{t}b;c{t};;'{t}"))),
+            format!(",{},", cell(format!("'{t}1 (x)"))),
+            format!(",{},", cell(format!("'{t}[M+H]+"))),
+            format!("#engine_pyopenms,{}\n", cell(format!("'{t}3"))),
+        ] {
+            assert!(table.contains(&expected), "{t:?}: {expected:?}");
+        }
+        // The plain CSV writes every one of them as stored.
+        let (csv, _) = result_table(&stored, TableFormat::Csv).expect("a table");
+        assert!(!csv.contains('\''), "{t:?}");
+        assert!(csv.contains(&format!(",{},", cell(format!("{t}a;{t}b;c{t};;{t}")))));
+    }
+}
+
+#[test]
+fn non_ascii_text_is_kept_and_marked_only_where_a_trigger_starts_a_cell() {
+    let mut stored = golden_stored();
+    stored.plan.targets[0].label = "=咖啡因;-标准品;Ünïcode".to_owned();
+    stored.plan.targets[5].label = "咖啡因;标准品".to_owned();
+    let table = spreadsheet(&stored);
+    assert!(table.contains(",'=咖啡因;'-标准品;Ünïcode,"));
+    assert!(table.contains(",咖啡因;标准品,"));
+    assert!(
+        table.contains(",咖啡因 · 标准品,"),
+        "the golden label, unchanged"
+    );
+}
+
+#[test]
+fn a_quote_or_a_line_break_before_a_trigger_does_not_hide_it() {
+    let mut stored = golden_stored();
+    // A reader that splits on `;` may take a `"` at a cell start for a quote.
+    for (label, written) in [
+        ("a;\"=1+1;b", "\"a;\"\"'=1+1;b\""),
+        ("a;\"\"@2", "\"a;\"\"\"\"'@2\""),
+        ("\"=1", "\"\"\"'=1\""),
+        ("a\"=1", "\"a\"\"=1\""),
+    ] {
+        stored.plan.targets[5].label = label.to_owned();
+        let table = spreadsheet(&stored);
+        assert!(table.contains(&format!(",{written},")), "{label:?}");
+    }
+    // To that reader a line break inside the quoted CSV field ends the record,
+    // and the text after it starts the next one.
+    for (status, written) in [
+        ("ok\n=1", "\"ok\n'=1\""),
+        ("ok\r=1", "\"ok\r'=1\""),
+        ("ok\r\n+1", "\"ok\r\n'+1\""),
+    ] {
+        stored.rows[0]
+            .feature
+            .as_mut()
+            .expect("a feature")
+            .model_status = status.to_owned();
+        let table = spreadsheet(&stored);
+        assert!(table.contains(&format!(",{written},")), "{status:?}");
+    }
+}
+
+#[test]
+fn the_mark_cannot_be_undone_so_a_stored_apostrophe_can_print_as_another_label() {
+    let mut stored = golden_stored();
+    stored.plan.targets[0].label = "'=x".to_owned();
+    stored.plan.targets[1].label = "=x".to_owned();
+    // Two stored labels, one written value: only the CSV or `target_id` tells
+    // them apart (ADR 0054, Consequences).
+    assert_eq!(spreadsheet(&stored).matches(",'=x,").count(), 2);
+    let (csv, _) = result_table(&stored, TableFormat::Csv).expect("a table");
+    assert!(csv.contains(",'=x,") && csv.contains(",=x,"));
+}
+
+#[test]
+fn numbers_formula_and_code_owned_fields_are_never_altered() {
+    let mut stored = golden_stored();
+    // Labels a plain split on `,` can read: no quoted field anywhere.
+    stored.plan.targets[0].label = "-caffeine".to_owned();
+    stored.plan.targets[1].label = "=SUM(1)".to_owned();
+    let marked = spreadsheet(&stored);
+    let (csv, _) = result_table(&stored, TableFormat::Csv).expect("a table");
+    assert!(
+        !csv.contains('"') && !marked.contains('"'),
+        "nothing quoted"
+    );
+    assert!(!csv.contains('\''), "so every apostrophe below is a mark");
+    let (marked_lines, csv_lines): (Vec<&str>, Vec<&str>) =
+        (marked.lines().collect(), csv.lines().collect());
+    assert_eq!(marked_lines.len(), csv_lines.len());
+
+    let declared = |name: &str| output::SPREADSHEET_TEXT_COLUMNS.contains(&name);
+    for (marked_line, csv_line) in marked_lines.iter().zip(&csv_lines) {
+        if let Some(rest) = csv_line.strip_prefix('#') {
+            let (key, value) = rest.split_once(',').expect("a preamble line");
+            let marked_value = marked_line
+                .strip_prefix(&format!("#{key},"))
+                .expect("the same key, in the same place");
+            match key {
+                "format" => assert_eq!(marked_value, "mscanvas_targeted_ms1_results_spreadsheet"),
+                _ if output::SPREADSHEET_TEXT_PREAMBLE_KEYS.contains(&key) => {
+                    assert_eq!(marked_value.replace('\'', ""), value, "{key}");
+                }
+                _ => assert_eq!(marked_value, value, "{key}"),
+            }
+            continue;
+        }
+        let marked_cells: Vec<&str> = marked_line.split(',').collect();
+        let csv_cells: Vec<&str> = csv_line.split(',').collect();
+        assert_eq!(marked_cells.len(), TABLE_COLUMNS.len());
+        for ((name, marked_cell), csv_cell) in
+            TABLE_COLUMNS.iter().zip(&marked_cells).zip(&csv_cells)
+        {
+            if declared(name) {
+                assert_eq!(marked_cell.replace('\'', ""), *csv_cell, "{name}");
+            } else {
+                assert_eq!(marked_cell, csv_cell, "{name} is never altered");
+            }
+        }
+    }
+    // The negative numbers, and the label and engine text beside them.
+    assert!(marked.contains(",'-1 (did not converge),-3.25,4.5,20500.25,"));
+    assert!(marked.contains(",114,126,-12.5,"));
+    assert!(marked.contains(",'-caffeine,C8H10N4O2,"));
+    assert!(marked.contains(",'=SUM(1),C5H5N5,135.054495,40.5,10,FAILED,"));
 }

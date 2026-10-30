@@ -862,6 +862,13 @@ const TARGETED_TABLE_TSV: preview::dialog::SaveDialogFacts = preview::dialog::Sa
     filter_pattern: "*.tsv",
     default_extension: "tsv",
 };
+const TARGETED_TABLE_SPREADSHEET_CSV: preview::dialog::SaveDialogFacts =
+    preview::dialog::SaveDialogFacts {
+        title: "Export targeted MS1 results",
+        filter_label: "Spreadsheet CSV (*.csv)",
+        filter_pattern: "*.csv",
+        default_extension: "csv",
+    };
 
 fn targeted_evidence_absent() -> PreviewErrorDto {
     PreviewErrorDto::new(
@@ -1060,7 +1067,7 @@ async fn export_targeted_ms1_figure(
     .await?
 }
 
-/// Exports every target's stored row as one CSV or TSV table.
+/// Exports every target's stored row as one CSV, TSV or spreadsheet CSV table.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn export_targeted_ms1_table(
@@ -1077,9 +1084,10 @@ async fn export_targeted_ms1_table(
     let artifact = parsed_artifact_id(&artifact_id)?;
     let table_format =
         TableFormat::from_wire(&format).ok_or_else(targeted_export_format_unknown)?;
-    let facts = match table_format {
-        TableFormat::Csv => TARGETED_TABLE_CSV,
-        TableFormat::Tsv => TARGETED_TABLE_TSV,
+    let (facts, variant) = match table_format {
+        TableFormat::Csv => (TARGETED_TABLE_CSV, ""),
+        TableFormat::Tsv => (TARGETED_TABLE_TSV, ""),
+        TableFormat::SpreadsheetCsv => (TARGETED_TABLE_SPREADSHEET_CSV, "-spreadsheet"),
     };
     let lane = projects.begin_output().map_err(project_error)?;
     let projects = Arc::clone(&projects);
@@ -1093,7 +1101,7 @@ async fn export_targeted_ms1_table(
     })
     .await??;
     let suggested = format!(
-        "mscanvas-targeted-ms1-{}-results.{}",
+        "mscanvas-targeted-ms1-{}-results{variant}.{}",
         short_id(artifact),
         facts.default_extension
     );
