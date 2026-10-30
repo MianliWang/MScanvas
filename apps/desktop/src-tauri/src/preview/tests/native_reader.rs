@@ -3,6 +3,7 @@
 //! transfer objects, and nothing the file does not state is invented.
 
 use super::*;
+use serde_json::json;
 
 /// Opens `file` and loads spectrum `index`, answering the panel's transfer
 /// object.
@@ -217,6 +218,85 @@ fn the_file_s_own_terms_reach_the_transfer_objects_and_the_exports() {
     let text = fs::read_to_string(&destination).expect("the export");
     assert_eq!(preamble(&text, "representation", '\t'), "centroid");
     assert_eq!(preamble(&text, "mz_unit", '\t'), "unreported");
+
+    // On the wire, as the webview reads it: an unstated value is `null`.
+    fn wire(value: &impl serde::Serialize) -> serde_json::Value {
+        serde_json::to_value(value).expect("serializes")
+    }
+    let preview = wire(&preview);
+    assert_eq!(
+        preview["spectrumTable"]["rows"][0]["retentionTime"],
+        json!({ "value": 0.1, "unit": "minute" })
+    );
+    assert_eq!(
+        preview["runSummary"]["retentionTimeRange"],
+        json!({ "state": "reported", "minimum": 0.1, "maximum": 0.3, "unit": "minute" })
+    );
+    let profile = wire(&profile);
+    assert_eq!(profile["representation"], json!("profile"));
+    assert_eq!(
+        profile["intensityUnit"],
+        json!({ "state": "declared", "accession": "MS:1000131" })
+    );
+    assert_eq!(
+        (&profile["mzLow"], &profile["mzHigh"]),
+        (&json!(100.5), &json!(200.25))
+    );
+    let centroid = wire(&centroid);
+    assert_eq!(centroid["representation"], json!("centroid"));
+    assert_eq!(centroid["mzUnit"], json!({ "state": "notReported" }));
+    assert_eq!(
+        (&centroid["mzLow"], &centroid["mzHigh"]),
+        (&json!(null), &json!(null))
+    );
+    assert_eq!(
+        centroid["precursors"][0],
+        json!({ "index": 0, "mz": null, "intensity": 880.0 })
+    );
+}
+
+#[test]
+fn the_remaining_wire_spellings_are_pinned() {
+    // The variants the declared-terms file above does not reach. Serde renames
+    // these and the webview mirrors them by hand, so a misspelling would fail
+    // neither side's compiler.
+    for (value, expected) in [
+        (
+            serde_json::to_value(RetentionTimeRangeDto::MixedUnits),
+            json!({ "state": "mixedUnits" }),
+        ),
+        (
+            serde_json::to_value(RetentionTimeRangeDto::NoRows),
+            json!({ "state": "noRows" }),
+        ),
+        (
+            serde_json::to_value(RetentionTimeUnitDto::Second),
+            json!("second"),
+        ),
+        (
+            serde_json::to_value(RetentionTimeUnitDto::NotReported),
+            json!("notReported"),
+        ),
+        (
+            serde_json::to_value(SpectrumRepresentationDto::NotReported),
+            json!("notReported"),
+        ),
+    ] {
+        assert_eq!(value.expect("serializes"), expected);
+    }
+}
+
+#[test]
+fn two_disagreeing_spectrum_counts_are_both_shown() {
+    // ADR 0056, decision 3: the run summary counts three, the file's table
+    // holds two, and neither is chosen.
+    let file = TestFile::new("counts-differ");
+    let mut spectra = sample_spectra();
+    spectra.truncate(2);
+    file.write(&document(&spectra));
+    let (_, preview, _) = open_and_load(&file, 0);
+    assert_eq!(preview.run_summary.total_spectrum_count, 3);
+    assert_eq!(preview.spectrum_table.total_row_count, 2);
 }
 
 #[test]

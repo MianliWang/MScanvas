@@ -7728,6 +7728,84 @@ mod native_projection_tests {
         // The same number in another unit is another time.
         assert!(row(12.0, RetentionTimeUnitState::Minute).contradicts(&spectrum));
     }
+
+    /// Every native refusal kind, with whether it may be retried and the
+    /// detail the webview's copy and recovery are keyed on.
+    #[test]
+    fn each_native_refusal_maps_to_its_kind_retryability_and_detail() {
+        use mscanvas_proteowizard::{
+            ArrayProblem, ArrayRole, MzmlOpenError, MzmlScanError, MzmlSpectrumError,
+        };
+        use std::io::ErrorKind;
+
+        use super::{preview_not_open, spectrum_refused, spectrum_table_refused};
+
+        let io = MzmlScanError::Io {
+            kind: ErrorKind::NotFound,
+        };
+        let array = |role, problem| MzmlSpectrumError::Array { role, problem };
+        for (refusal, kind, retryable, detail) in [
+            (preview_not_open(), "preview_not_open", false, None),
+            (
+                spectrum_table_refused(MzmlOpenError::Scan(io)),
+                "spectrum_table_unreadable",
+                true,
+                Some(io.stable_id()),
+            ),
+            (
+                spectrum_table_refused(MzmlOpenError::MultipleScans),
+                "spectrum_table_refused",
+                false,
+                Some(MzmlOpenError::MultipleScans.stable_id()),
+            ),
+            (
+                spectrum_refused(MzmlSpectrumError::Document(io)),
+                "spectrum_unreadable",
+                true,
+                Some(io.stable_id()),
+            ),
+            (
+                spectrum_refused(MzmlSpectrumError::NotAsRecorded),
+                "spectrum_not_as_recorded",
+                false,
+                Some("not_as_recorded"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Intensity, ArrayProblem::IntegerNotExact)),
+                "spectrum_value_not_exact",
+                false,
+                Some("intensity:integer_not_exact"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Mz, ArrayProblem::Numpress)),
+                "spectrum_encoding_unsupported",
+                false,
+                Some("mz:numpress"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Mz, ArrayProblem::TruncationOrPrediction)),
+                "spectrum_encoding_unsupported",
+                false,
+                Some("mz:truncation_or_prediction"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Mz, ArrayProblem::UnitNotAnAccession)),
+                "spectrum_refused",
+                false,
+                Some("mz:unit_not_an_accession"),
+            ),
+            (
+                spectrum_refused(MzmlSpectrumError::ArrayLengthsDiffer),
+                "spectrum_refused",
+                false,
+                Some(MzmlSpectrumError::ArrayLengthsDiffer.stable_id()),
+            ),
+        ] {
+            assert_eq!(refusal.kind, kind);
+            assert_eq!(refusal.retryable, retryable, "{kind}");
+            assert_eq!(refusal.detail.as_deref(), detail, "{kind}");
+        }
+    }
 }
 
 /// A spectrum identifier is backend text like every other line the boundary
@@ -8030,7 +8108,7 @@ fn preview_not_open() -> PreviewErrorDto {
 /// The open's native table pass refused the file (ADR 0056, decision 1).
 //
 // Shown as it is and never reread with `msaccess`: the operation fixes the
-/// reader. The reader's stable identifier travels as the detail.
+// reader. The reader's stable identifier travels as the detail.
 fn spectrum_table_refused(error: MzmlOpenError) -> PreviewErrorDto {
     let refusal = match error {
         MzmlOpenError::Scan(MzmlScanError::Io { .. } | MzmlScanError::Source(_)) => {
