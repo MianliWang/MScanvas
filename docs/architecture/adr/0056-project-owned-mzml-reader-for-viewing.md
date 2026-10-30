@@ -3,6 +3,8 @@
 Status: **Accepted** by the owner on 2026-10-29, including the dependency
 request: `base64 0.22.1` and `flate2 1.1.10` become direct dependencies of the
 product crate (both already in `Cargo.lock`, so the lock gains no package).
+Decision 1 amended by the owner on 2026-10-30: an `<mzML>` element without a
+`version` attribute takes its version from `xsi:schemaLocation`.
 Proposed 2026-10-28.
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
@@ -97,8 +99,15 @@ has a scope.
 
 The open, meaning the whole spectrum table, is refused for:
 
-- a document that is not mzML 1.1 (the `mzML` `version` attribute missing or
-  not `1.1.x`), or not UTF-8;
+- a document that is not mzML 1.1, or not UTF-8. The `<mzML>` element's
+  `version` attribute decides when it is present, even if empty, and it must be
+  `1.1.x`. When `version` is absent, the schema that `xsi:schemaLocation` pairs
+  with the mzML namespace decides: its file name must be exactly
+  `mzML1.1.<n>.xsd`. The location may be any URL or path, and the
+  `xsi:schemaLocation` attribute is matched by its resolved namespace, not by
+  its prefix. The index wrapper's `mzML1.1.<n>_idx.xsd` is not the `<mzML>`
+  element's schema, so it does not count. A document that states neither is
+  refused (amended by the owner on 2026-10-30, after R0, decision 8);
 - a `DOCTYPE` or a custom entity;
 - a `referenceableParamGroupRef` to an undefined group;
 - a spectrum with more than one `scan`;
@@ -564,12 +573,26 @@ owner's bounded hold release of that day.
   - mzdata and the reference read all 36,319 spectra, and `msaccess` opens the
     file.
   - With `version="1.1.0"` added to a copy, the product reads it exactly.
-  - Slice 1 therefore does not merge. Whether to read the version from
-    `xsi:schemaLocation`, as ProteoWizard does, is a decision-1 amendment for
-    the owner.
+  - Slice 1 therefore did not merge.
 - **`msaccess run_summary` prints seconds.** On both minute-declared files,
   `MinRT` and `MaxRT` are the range in whole seconds, which settles decision 3's
   "probably".
+
+**Rerun, 2026-10-30: passed.** On 2026-10-30 the owner amended decision 1: when
+`version` is absent, the reader reads the version from `xsi:schemaLocation`.
+ProteoWizard reads `xsi:schemaLocation` first. The amendment keeps a stated
+`version` first, so a stated non-1.1 version is still refused. The reader at
+`f327055` implements the amendment, and the
+[same record](../../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md) holds the rerun.
+All three readers ran again on both original files.
+
+- **Both files are now exact.** The product reads the unmodified `PXD081190`
+  file: all 36,319 spectra and 72,638 arrays agree bit for bit with the
+  reference and mzdata, on every compared field.
+- **The MS1 profile file is unchanged.** It is still exact, and its dumps are
+  byte-identical to the first run's.
+
+Slice 1 therefore meets this decision's merge condition.
 
 ### 9. Delivery order
 
