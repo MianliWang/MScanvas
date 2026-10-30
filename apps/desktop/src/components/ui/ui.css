@@ -176,14 +176,17 @@
   white-space: nowrap;
 }
 
+/* Each part holds its own line, whatever a container's wrapping says. */
 .ui-middle-ellipsis__head {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ui-middle-ellipsis__tail {
   flex: none;
+  white-space: nowrap;
 }
 
 .ui-segmented {

@@ -1813,18 +1813,30 @@ function RunList({ items, renderRow, follow = null }: {
   }, [root]);
   const placeOf = useRef(offsetOf);
   placeOf.current = offsetOf;
-  // Once per running item, when it changes.
+  // Once per running item, when it changes, or when the list is first shown:
+  // a queue that started while Conversion was another tab's is followed the
+  // moment the tab shows it.
   useLayoutEffect(() => {
     if (follow === null || readerScrolled.current) return;
     const element = root.current;
     if (element === null) return;
-    if (windowed) {
-      const top = placeOf.current(follow);
-      if (top !== null && (top < element.scrollTop || top > element.scrollTop + element.clientHeight - 64)) element.scrollTop = Math.max(0, top - 64);
-    } else {
-      [...element.querySelectorAll<HTMLElement>("[data-window-key]")].find(row => row.dataset.windowKey === follow)
-        ?.scrollIntoView?.({ block: "nearest" });
-    }
+    const reveal = () => {
+      if (windowed) {
+        const top = placeOf.current(follow);
+        if (top !== null && (top < element.scrollTop || top > element.scrollTop + element.clientHeight - 64)) element.scrollTop = Math.max(0, top - 64);
+      } else {
+        [...element.querySelectorAll<HTMLElement>("[data-window-key]")].find(row => row.dataset.windowKey === follow)
+          ?.scrollIntoView?.({ block: "nearest" });
+      }
+    };
+    if (element.clientHeight > 0 || typeof ResizeObserver === "undefined") { reveal(); return; }
+    const shown = new ResizeObserver(() => {
+      if (element.clientHeight === 0) return;
+      shown.disconnect();
+      if (!readerScrolled.current) reveal();
+    });
+    shown.observe(element);
+    return () => shown.disconnect();
   }, [follow, windowed, root]);
   return (
     <ol className="conversion-queue-list conversion-run-list" {...listProps}>
