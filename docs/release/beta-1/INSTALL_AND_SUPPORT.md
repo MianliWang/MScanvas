@@ -166,6 +166,15 @@ beta and run the earlier installer you kept, after checking its SHA-256 again.
 Beta 1 is the first release, so there is no earlier one to return to, and no
 compatibility between betas is promised.
 
+> **Corrected 2026-10-30.** The last sentence above is withdrawn for projects.
+> Publishing beta 1 began a compatibility promise for its project documents
+> (schema 4), as the [M9 closure](../../product/M9_CLOSURE.md#4-schema-4--the-canonical-disposition)
+> says, and the owner kept that promise on 2026-10-30. The next version opens
+> beta-1 projects. Once a project is saved in the next version, beta 1 can no
+> longer open it, and reinstalling beta 1 does not undo that. To be able to go
+> back, keep a copy of the `.mscanvas` file before saving it in the next
+> version.
+
 ## Report a problem
 
 Open an issue at <https://github.com/MianliWang/MScanvas/issues/new/choose> and

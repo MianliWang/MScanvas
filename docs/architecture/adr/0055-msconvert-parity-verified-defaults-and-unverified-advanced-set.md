@@ -631,6 +631,15 @@ Each later in its own slice:
   > left as beta 1 wrote it. Where the size is history that cannot be
   > removed, the project stays read-only here. No data is lost.
 
+  > **Decided by the owner, 2026-10-30.** This read-and-upgrade disposition
+  > ships, and the M9 closure's position stands: beta 1's publication began
+  > schema 4's compatibility promise. Beta 1's `INSTALL_AND_SUPPORT.md` keeps
+  > its words and gains a dated correction under Roll back. The next release
+  > notes state the upgrade on the first Save after a change, the advice to
+  > keep a copy of a project before saving it in the new version, and the
+  > size limitation above (`CHANGELOG.md`, Unreleased). The prompt before the
+  > first schema-5 write is still interface work.
+
   > **Implemented on `be/integrate` (draft PR #161), 2026-10-29.**
   >
   > - **Session.** An adoption ticket carries the item report's label
@@ -650,7 +659,7 @@ Each later in its own slice:
   >   other version, and nothing migrates. Beta 1's projects therefore do not
   >   open in this build.~~ Replaced the same day by the read-and-upgrade
   >   disposition in the note above. Either one is a release decision for the
-  >   owner before merge.
+  >   owner before merge. *The owner chose read and upgrade on 2026-10-30.*
 - **A larger settings surface.** It cuts against the owner's direction to
   remove secondary explanations. It is collapsed by default, with one label
   and no prose.

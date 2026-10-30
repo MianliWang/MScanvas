@@ -205,7 +205,9 @@ and holds it as schema 5 with a `null` label on every input
 opening writes nothing, nor does a Save with nothing unsaved, and the first
 Save after a change writes schema 5, which beta 1 can no longer open. That
 disposition is a release decision for the owner before merge (ADR 0055, the
-note of 2026-10-29 on a schema-4 document). Schema 4 is now frozen at beta 1's
+note of 2026-10-29 on a schema-4 document). *The owner decided on 2026-10-30:
+it ships, and this record's position, that publication began schema 4's
+promise, stands.* Schema 4 is now frozen at beta 1's
 words and fields: a word or field added to a shared type later belongs to
 schema 5 or later and must be refused on the schema-4 read path.
 `project::tests::schema_four_shares_only_beta_one_words_and_fields` makes an

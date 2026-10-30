@@ -147,7 +147,9 @@ accepted):
   project (ADR 0055, risks, the note of 2026-10-29 on a schema-4 document). A
   beta-1 document near the 4 MiB bound opens but cannot be saved here. Beta 1's `INSTALL_AND_SUPPORT.md` says no compatibility
   between betas is promised, while the M9 closure says publishing begins
-  schema 4's promise; the owner decides which one stands;
+  schema 4's promise; the owner decides which one stands. *Decided by the
+  owner on 2026-10-30: read and upgrade, as implemented, and the M9 closure's
+  position stands (the later decisions of 2026-10-30 below);*
 - the R0 real-file comparison for the reader (ADR 0056, decision 8): the PRIDE
   `PXD081190` download, an MS1 profile-mode file from the owner, and a
   ProteoWizard hold release. *R0 ran on 2026-10-29 on public files
@@ -204,7 +206,30 @@ there is capacity, no decompilation, and every other point as recommended):
    [PR #162](https://github.com/MianliWang/MScanvas/pull/162)). *Implemented
    2026-10-30 on `be/thermo-ms1`;
    [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)
-   records how.*
+   records how. Later on 2026-10-30 "MS2 and up" became verified too (the
+   later decisions below).*
+
+**Owner decisions, later on 2026-10-30** (every recommendation accepted):
+
+1. **Beta 1's schema-4 projects are read and upgraded.** The schema-5 build
+   keeps the disposition implemented on `be/integrate` (draft PR #161).
+   Opening writes nothing, and a Save with nothing unsaved writes nothing. The
+   first Save after a change writes schema 5, which beta 1 cannot open. A
+   beta-1 document near the 4 MiB bound opens but cannot be saved. The M9
+   closure's position stands: publishing beta 1 began schema 4's compatibility
+   promise. Beta 1's `INSTALL_AND_SUPPORT.md` carries a dated correction, and
+   the next release notes say to keep a copy of a project before saving it in
+   the new version. A warning before the first schema-5 Save is still
+   interface work ([ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+   risks).
+2. **"MS2 and up" vendor centroiding is verified.** `peakPicking vendor
+   msLevel=2-` becomes the eleventh verified row, for Thermo RAW on the
+   evidenced build, with the same family domain and output check as "MS1 and
+   up". The measurement decision 6 above waited for is source 3c of the
+   [evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md) (PR #173): all
+   23,676 Orbitrap profile MS2 spectra of a Q Exactive data-independent run
+   centroided, and its 474 profile MS1 spectra left bit-identical. The default
+   conversion stays profile ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).
 
 ## 3. Parallel execution rules
 
