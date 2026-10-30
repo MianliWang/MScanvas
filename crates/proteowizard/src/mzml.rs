@@ -27,7 +27,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use quick_xml::errors::Error as XmlError;
-use quick_xml::events::attributes::AttrError;
+use quick_xml::events::attributes::{AttrError, Attribute};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
 use thiserror::Error;
@@ -1823,18 +1823,23 @@ pub(crate) fn capture_attributes<'a>(
             b"arrayLength" => &mut captured.array_length,
             _ => continue,
         };
-        // Normalization resolves only the five predefined entities, so any other
-        // general reference in an attribute value fails closed here.
-        let value = attribute
-            .normalized_value(XmlVersion::Implicit1_0)
-            .map_err(|error| match error {
-                XmlError::Escape(_) => MzmlScanError::Unsafe(UnsafeXmlKind::UndeclaredEntity),
-                XmlError::Encoding(_) => MzmlScanError::Malformed(MzmlMalformedKind::InvalidUtf8),
-                _ => MzmlScanError::Malformed(MzmlMalformedKind::NotWellFormed),
-            })?;
-        *slot = Some(value);
+        *slot = Some(attribute_value(&attribute)?);
     }
     Ok(captured)
+}
+
+/// Normalization resolves only the five predefined entities, so any other
+/// general reference in an attribute value fails closed here.
+pub(crate) fn attribute_value<'a>(
+    attribute: &Attribute<'a>,
+) -> Result<Cow<'a, str>, MzmlScanError> {
+    attribute
+        .normalized_value(XmlVersion::Implicit1_0)
+        .map_err(|error| match error {
+            XmlError::Escape(_) => MzmlScanError::Unsafe(UnsafeXmlKind::UndeclaredEntity),
+            XmlError::Encoding(_) => MzmlScanError::Malformed(MzmlMalformedKind::InvalidUtf8),
+            _ => MzmlScanError::Malformed(MzmlMalformedKind::NotWellFormed),
+        })
 }
 
 fn optional_u64(value: Option<&str>) -> Result<Option<u64>, MzmlScanError> {

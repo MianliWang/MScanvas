@@ -36,8 +36,8 @@ use thiserror::Error;
 use crate::fs_guard;
 use crate::mzml::{
     BoundedReader, CapturedAttributes, MzmlLimitKind, MzmlMalformedKind, MzmlScanError,
-    MzmlScanLimits, UnsafeXmlKind, capture_attributes, is_predefined_reference, map_xml_error,
-    parse_u64_decimal,
+    MzmlScanLimits, UnsafeXmlKind, attribute_value, capture_attributes, is_predefined_reference,
+    map_xml_error, parse_u64_decimal,
 };
 use crate::preview::SpectrumIdentity;
 
@@ -49,6 +49,7 @@ pub const MAX_DECODED_ARRAY_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_DECODED_SPECTRUM_BYTES: u64 = 128 * 1024 * 1024;
 
 const MZML_NAMESPACE: &[u8] = b"http://psi.hupo.org/ms/mzml";
+const XSI_NAMESPACE: &[u8] = b"http://www.w3.org/2001/XMLSchema-instance";
 
 // Retained by identity for the whole table, so bounded rather than streamed.
 // Real documents declare a handful of groups with a few terms each.
@@ -843,6 +844,78 @@ fn element(in_mzml: bool, local: &[u8]) -> El {
     }
 }
 
+/// ADR 0056 decision 1: a stated `version` alone decides, and must be 1.1.x.
+/// Without one, the mzML schema that `xsi:schemaLocation` names decides, read
+/// from its file name as ProteoWizard reads it (`mzML1.1.0.xsd` is 1.1.0).
+fn check_version(
+    start: &BytesStart<'_>,
+    attributes: &CapturedAttributes<'_>,
+    resolver: &NamespaceResolver,
+) -> Result<(), Fail> {
+    let supported = match attributes.version.as_deref() {
+        Some(version) => is_mzml_1_1(version),
+        None => schema_location(start, resolver)?.is_some_and(|value| names_mzml_1_1(&value)),
+    };
+    if supported {
+        Ok(())
+    } else {
+        Err(MzmlOpenError::NotMzml11.into())
+    }
+}
+
+fn is_mzml_1_1(version: &str) -> bool {
+    version
+        .strip_prefix("1.1.")
+        .is_some_and(|patch| !patch.is_empty() && patch.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The `schemaLocation` attribute in the XML Schema instance namespace, found
+/// by its resolved namespace rather than its prefix.
+fn schema_location<'a>(
+    start: &'a BytesStart<'_>,
+    resolver: &NamespaceResolver,
+) -> Result<Option<Cow<'a, str>>, Fail> {
+    let mut found = None;
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(|_| malformed(MzmlMalformedKind::NotWellFormed))?;
+        let (namespace, local) = resolver.resolve_attribute(attribute.key);
+        let xsi = matches!(namespace, ResolveResult::Bound(Namespace(ns)) if ns == XSI_NAMESPACE);
+        if !xsi || local.as_ref() != b"schemaLocation" {
+            continue;
+        }
+        // Two prefixes bound to one namespace state the same attribute twice.
+        if found.is_some() {
+            return Err(malformed(MzmlMalformedKind::DuplicateAttribute));
+        }
+        found = Some(attribute_value(&attribute)?);
+    }
+    Ok(found)
+}
+
+/// Whether a schema location pairs the mzML namespace with exactly one schema,
+/// and that schema's file name is `mzML1.1.<n>.xsd`. The index wrapper's
+/// `mzML1.1.<n>_idx.xsd` is not the `<mzML>` element's schema, so it does not
+/// count.
+fn names_mzml_1_1(value: &str) -> bool {
+    let tokens: Vec<&str> = value.split_ascii_whitespace().collect();
+    if !tokens.len().is_multiple_of(2) {
+        return false;
+    }
+    let mut locations = tokens
+        .chunks(2)
+        .filter(|pair| pair[0].as_bytes() == MZML_NAMESPACE)
+        .map(|pair| pair[1]);
+    let (Some(location), None) = (locations.next(), locations.next()) else {
+        return false;
+    };
+    location
+        .rsplit(['/', '\\'])
+        .next()
+        .and_then(|file| file.strip_prefix("mzML"))
+        .and_then(|rest| rest.strip_suffix(".xsd"))
+        .is_some_and(is_mzml_1_1)
+}
+
 const SPECTRUM_SCAN: &[El] = &[El::Spectrum, El::ScanList, El::Scan];
 const SPECTRUM_SELECTED_ION: &[El] = &[
     El::Spectrum,
@@ -1096,7 +1169,7 @@ impl<'t> Pass<'t> {
         }
         let attributes = capture_attributes(start, self.limits)?;
         let el = element(in_mzml, start.local_name().as_ref());
-        let el = self.begin(el, &attributes, offset, resolver)?;
+        let el = self.begin(el, start, &attributes, offset, resolver)?;
         self.stack.push(el);
         if empty {
             self.end()?;
@@ -1107,17 +1180,21 @@ impl<'t> Pass<'t> {
     fn begin(
         &mut self,
         el: El,
+        start: &BytesStart<'_>,
         attributes: &CapturedAttributes<'_>,
         offset: u64,
         resolver: &NamespaceResolver,
     ) -> Result<El, Fail> {
         if self.stack.is_empty() {
-            self.begin_root(el, attributes, offset)?;
+            self.begin_root(el, start, attributes, offset, resolver)?;
             return Ok(el);
         }
         let parent = self.stack.last().copied();
         match el {
-            El::Mzml if self.stack == [El::IndexedMzml] => self.check_version(attributes)?,
+            El::Mzml if self.stack == [El::IndexedMzml] => {
+                check_version(start, attributes, resolver)?;
+                self.version_seen = true;
+            }
             El::ParamGroup if parent == Some(El::ParamGroupList) => {
                 if self.groups.len() >= MAX_PARAM_GROUPS {
                     return Err(MzmlOpenError::ReaderLimit(ReaderLimitKind::ParamGroups).into());
@@ -1212,8 +1289,10 @@ impl<'t> Pass<'t> {
     fn begin_root(
         &mut self,
         el: El,
+        start: &BytesStart<'_>,
         attributes: &CapturedAttributes<'_>,
         offset: u64,
+        resolver: &NamespaceResolver,
     ) -> Result<(), Fail> {
         if self.root_seen {
             return Err(malformed(MzmlMalformedKind::NotWellFormed));
@@ -1243,22 +1322,13 @@ impl<'t> Pass<'t> {
         }
         match el {
             El::IndexedMzml => Ok(()),
-            El::Mzml => self.check_version(attributes),
+            El::Mzml => {
+                check_version(start, attributes, resolver)?;
+                self.version_seen = true;
+                Ok(())
+            }
             _ => Err(malformed(MzmlMalformedKind::UnexpectedRoot)),
         }
-    }
-
-    fn check_version(&mut self, attributes: &CapturedAttributes<'_>) -> Result<(), Fail> {
-        let supported = attributes
-            .version
-            .as_deref()
-            .and_then(|version| version.strip_prefix("1.1."))
-            .is_some_and(|patch| !patch.is_empty() && patch.bytes().all(|b| b.is_ascii_digit()));
-        if !supported {
-            return Err(MzmlOpenError::NotMzml11.into());
-        }
-        self.version_seen = true;
-        Ok(())
     }
 
     fn begin_spectrum(

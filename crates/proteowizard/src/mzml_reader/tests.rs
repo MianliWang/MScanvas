@@ -910,6 +910,158 @@ fn the_document_must_be_utf8_mzml_1_1() {
     assert_eq!(table(&utf16).expect_err("refused"), MzmlOpenError::NotUtf8);
 }
 
+const XSI: &str = "http://www.w3.org/2001/XMLSchema-instance";
+const MZML_XSD: &str = "http://psidev.info/files/ms/mzML/xsd/mzML1.1.0.xsd";
+
+/// `base()` with its `version` attribute replaced by `attributes`.
+fn unversioned(attributes: &str) -> String {
+    base().replace(" version=\"1.1.0\"", attributes)
+}
+
+/// `<mzML>` attributes naming `location` for the mzML namespace, declared the
+/// way MSFragger 4.1 writes them (the PXD081190 header in the R0 record).
+fn schema(location: &str) -> String {
+    format!(r#" xmlns:xsi="{XSI}" xsi:schemaLocation="http://psi.hupo.org/ms/mzml {location}""#)
+}
+
+#[test]
+fn without_a_version_the_mzml_schema_location_decides() {
+    let named = unversioned(&schema(MZML_XSD));
+    assert_eq!(
+        table(&named).expect("opens").rows(),
+        table(&base()).expect("opens").rows()
+    );
+    assert_eq!(
+        selected(&named, 1).expect("decodes"),
+        selected(&base(), 1).expect("decodes")
+    );
+
+    // Any prefix bound to the schema-instance namespace, any pair order, and a
+    // relative or local location.
+    for attributes in [
+        format!(r#" xmlns:s="{XSI}" s:schemaLocation="http://psi.hupo.org/ms/mzml {MZML_XSD}""#),
+        format!(
+            r#" xmlns:xsi="{XSI}" xsi:schemaLocation="urn:other other.xsd http://psi.hupo.org/ms/mzml mzML1.1.0.xsd""#
+        ),
+        schema(r"C:\schemas\mzML1.1.1.xsd"),
+        format!(
+            " xmlns:xsi=\"{XSI}\" xsi:schemaLocation=\"\n  http://psi.hupo.org/ms/mzml\t{MZML_XSD} \""
+        ),
+    ] {
+        assert!(table(&unversioned(&attributes)).is_ok(), "{attributes}");
+    }
+
+    // The declaration may come from the index wrapper, whose own schema is
+    // the `_idx` one.
+    let body = named
+        .strip_prefix("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
+        .expect("declaration")
+        .replace(
+            &format!(" xmlns=\"http://psi.hupo.org/ms/mzml\" xmlns:xsi=\"{XSI}\""),
+            "",
+        );
+    let indexed = format!(
+        "<indexedmzML xmlns=\"http://psi.hupo.org/ms/mzml\" xmlns:xsi=\"{XSI}\" xsi:schemaLocation=\"http://psi.hupo.org/ms/mzml http://psidev.info/files/ms/mzML/xsd/mzML1.1.2_idx.xsd\">\n{body}</indexedmzML>\n"
+    );
+    assert_eq!(
+        table(&indexed).expect("opens").rows(),
+        table(&base()).expect("opens").rows()
+    );
+    // The wrapper's schema is not the `<mzML>` element's.
+    let wrapper_only = indexed.replace(
+        &format!(" xsi:schemaLocation=\"http://psi.hupo.org/ms/mzml {MZML_XSD}\""),
+        "",
+    );
+    assert_ne!(wrapper_only, indexed);
+    assert_eq!(
+        table(&wrapper_only).expect_err("refused"),
+        MzmlOpenError::NotMzml11
+    );
+}
+
+#[test]
+fn a_stated_version_or_an_unclear_schema_location_is_refused() {
+    let refused = |attributes: &str| {
+        assert_eq!(
+            table(&unversioned(attributes)).expect_err(attributes),
+            MzmlOpenError::NotMzml11,
+            "{attributes}"
+        );
+    };
+    let named = schema(MZML_XSD);
+
+    // A stated version alone decides, even beside a 1.1.0 schema.
+    refused(&format!(" version=\"1.0.0\"{named}"));
+    refused(&format!(" version=\"\"{named}"));
+    let stated = unversioned(&format!(
+        " version=\"1.1.0\"{}",
+        schema("http://psi.hupo.org/schema_revision/mzML_1.0.0/mzML1.0.0.xsd")
+    ));
+    assert!(table(&stated).is_ok());
+
+    // Another schema version, or a file name that is not exactly mzML1.1.<n>.xsd.
+    for file in [
+        "mzML1.0.0.xsd",
+        "mzML1.0.xsd",
+        "mzML0.99.1.xsd",
+        "mzML1.1.xsd",
+        "mzML1.10.0.xsd",
+        "mzML1.1.0_idx.xsd",
+        "mzML1.1.x.xsd",
+        "MZML1.1.0.xsd",
+        "mzML1.1.0.XSD",
+        "mzML1.1.0.xsd.gz",
+        "http://psidev.info/files/ms/mzML/xsd/",
+    ] {
+        refused(&schema(file));
+    }
+
+    // The location must be paired with the mzML namespace, once.
+    refused(&format!(
+        r#" xmlns:xsi="{XSI}" xsi:schemaLocation="urn:other {MZML_XSD}""#
+    ));
+    refused(&format!(
+        r#" xmlns:xsi="{XSI}" xsi:schemaLocation="{MZML_XSD}""#
+    ));
+    refused(&format!(
+        r#" xmlns:xsi="{XSI}" xsi:schemaLocation="http://psi.hupo.org/ms/mzml {MZML_XSD} urn:other""#
+    ));
+    refused(&format!(
+        r#" xmlns:xsi="{XSI}" xsi:schemaLocation="http://psi.hupo.org/ms/mzml {MZML_XSD} http://psi.hupo.org/ms/mzml {MZML_XSD}""#
+    ));
+    refused(&format!(r#" xmlns:xsi="{XSI}" xsi:schemaLocation="""#));
+
+    // Only the schema-instance namespace counts, whatever the prefix says.
+    refused(&format!(
+        r#" xmlns:xsi="urn:not-xsi" xsi:schemaLocation="http://psi.hupo.org/ms/mzml {MZML_XSD}""#
+    ));
+    refused(&format!(
+        r#" xsi:schemaLocation="http://psi.hupo.org/ms/mzml {MZML_XSD}""#
+    ));
+    refused(&format!(
+        r#" xmlns:xsi="{XSI}" schemaLocation="http://psi.hupo.org/ms/mzml {MZML_XSD}""#
+    ));
+    refused(&format!(
+        r#" xmlns:xsi="{XSI}" xsi:noNamespaceSchemaLocation="{MZML_XSD}""#
+    ));
+
+    // Two prefixes for one namespace state one attribute twice.
+    let twice = unversioned(&format!(
+        r#" xmlns:a="{XSI}" xmlns:b="{XSI}" a:schemaLocation="http://psi.hupo.org/ms/mzml {MZML_XSD}" b:schemaLocation="http://psi.hupo.org/ms/mzml {MZML_XSD}""#
+    ));
+    assert_eq!(
+        table(&twice).expect_err("refused"),
+        MzmlOpenError::Scan(MzmlScanError::Malformed(
+            MzmlMalformedKind::DuplicateAttribute
+        ))
+    );
+    let entity = unversioned(&schema("&location;"));
+    assert_eq!(
+        table(&entity).expect_err("refused"),
+        MzmlOpenError::Scan(MzmlScanError::Unsafe(UnsafeXmlKind::UndeclaredEntity))
+    );
+}
+
 #[test]
 fn the_open_refuses_what_the_table_would_have_to_guess() {
     let ms1_with = |extra: &str| {
