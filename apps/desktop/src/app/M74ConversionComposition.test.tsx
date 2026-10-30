@@ -102,6 +102,8 @@ describe("M7.4 bilingual conversion composition", () => {
     remove.focus(); fireEvent.click(remove);
     await waitFor(() => expect(clear).toHaveFocus());
     expect(screen.getByRole("button", { name: en.addFiles })).toHaveAttribute("aria-disabled", "true");
+    // The reason beside it is words, never the status bar's "conversion" sentinel.
+    expect(screen.getByRole("button", { name: en.addFiles })).toHaveAccessibleDescription(en.shellConversionRunning);
     expect(execute).toHaveBeenCalledExactlyOnceWith("clear-outsider", "removeNonRunning");
   });
 

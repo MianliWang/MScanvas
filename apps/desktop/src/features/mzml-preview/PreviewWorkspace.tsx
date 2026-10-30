@@ -870,7 +870,8 @@ export function PreviewWorkspace() {
             // One filled primary per screen (B2): while the evidence offers its
             // own, the footer's Convert yields to secondary.
             convertPrimary={!evidenceHasPrimary}
-            acquireReason={busyReason}
+            // "conversion" is the status bar's sentinel for its own item, never words.
+            acquireReason={busyReason === "conversion" ? t("shellConversionRunning") : busyReason}
             onAddFolder={workspace.addFolder}
             // The Workbench's one route to batch conversion. Elsewhere the
             // surface has its own next step, and on Conversion its own Convert.
