@@ -6,6 +6,14 @@ Date 2026-10-30. This document consolidates every decision the owner still has
 to make before or during the roadmap in `ROADMAP_V511_AND_ANALYSIS.md`. Nothing in it is decided
 until the owner answers; each recommendation is the working default until then.
 
+Re-checked again at about 23:00 UTC. Since 15:45 UTC, #185 opened for
+`fix/backend-defects-1030` (ready, nine checks green), #187 for `be/run-history`
+(ADR 0065, draft, stacked on `be/integrate`) and #188 for
+`docs/runtime-release-adr` (ADR 0066, draft). DEF-1 now covers both of #185's
+proposed changes. RUN-1 carries ADR 0065's five questions and moves to section 3.
+B-1, B-2 and B-3 carry ADR 0066's nine: B-1 corrects its earlier claim that a
+runtime fix needs no app release, and B-2 sets its lean beside ADR 0066 decision 8.
+
 Re-checked against `origin` and the open PRs at about 15:45 UTC. Since the
 first version: #181 (`be/viewraw-op`), #182 (`be/reader-meta`), #183
 (`be/map2d`, ADR 0068) and #184 (`docs/study-model-adr`, ADR 0067) opened,
@@ -33,15 +41,17 @@ which opened at 14:38 UTC.
 - `design/v2/HANDOFF.md` (the redesign of direction A, demo A2, whose three themes the owner rejected), `design/GOALS.md`, and the owner's v5.11 demo (`mscanvas_unified_demo_v5_11.html`, its font stacks);
 - the owner's message of 2026-10-30, 14:09 UTC, and the maintainer agent's response in the session: the Cobalt and Almanac finish reviews stopped; #164's round 2 limited to functional findings; a Chinese feature brief for new design directions started in Claude Docs ("MSCanvas 功能清单：给新设计方向的输入");
 - on `origin/main` (`7ac5a219`): `AGENTS.md`, `PROJECT_PROPOSAL.md`, `docs/development/AFTER_BETA1_PLAN.md`, `docs/product/FEATURE_CATALOG.md`, and ADRs 0046–0060;
-- the bodies of open PRs #161, #164, #175, #176, #177, #178 and #179;
-- the proposed ADRs on `origin/be/restore-workspace` (0061), `origin/be/copy-diagnostics` (0063) and `origin/docs/m10-route` (0064);
+- the bodies of open PRs #161, #164, #175, #176, #177, #178, #179, #185, #187 and #188;
+- the proposed ADRs on `origin/be/restore-workspace` (0061), `origin/be/copy-diagnostics` (0063), `origin/docs/m10-route` (0064), `origin/be/run-history` (0065) and `origin/docs/runtime-release-adr` (0066);
 - the sibling non-runtime plan (`roadmap/non-runtime.md`, revised at 14:23 UTC after the owner's message), which has its own decision ids ND-01 to ND-21 (mapped in section 8);
-- the wave-3 lanes, as of about 15:45 UTC (they keep moving):
+- the wave-3 lanes, as of about 23:00 UTC (they keep moving):
   - `be/saved-figure`: ADR 0062, draft PR #180;
   - `be/viewraw-op`: ADR 0060 slice 2 and its notes, PR #181 (ready for review, head `5dc7d807`);
   - `docs/m10-route`: pushed at `7f91c05b`, three commits past `ab4ffe63`; ADR 0064 now asks eight questions;
   - `be/reader-meta`: draft PR #182, library only, stacked on #175;
-  - `fix/backend-defects-1030`: pushed at `5cfd8efb` (`f127692d` plus one commit), no PR yet;
+  - `fix/backend-defects-1030`: PR #185, ready, head `efd0294a` (`f127692d`, `5cfd8efb` and one more commit), nine checks green;
+  - `be/run-history`: ADR 0065 (Proposed), draft PR #187, Rust side, stacked on `be/integrate`, one failing Rust test;
+  - `docs/runtime-release-adr`: ADR 0066 (Proposed), draft PR #188, docs only;
   - `be/map2d`: ADR 0068 (Proposed) and the MS1 map library, draft PR #183, stacked on #175;
   - `docs/study-model-adr`: ADR 0067 (Proposed), draft PR #184 at `8870e36e`.
 
@@ -110,7 +120,7 @@ questions belonged to those options and are not put to the owner:
 
 ## 2. Summary
 
-Ordered: work blocked now first, then by the slice each decision gates. Counts: 20 now, 26 before-its-slice, 7 later (53).
+Ordered: work blocked now first, then by the slice each decision gates. Counts: 21 now, 25 before-its-slice, 7 later (53).
 
 | # | Id | Decision | Recommendation | Kind | Urgency |
 | --- | --- | --- | --- | --- | --- |
@@ -126,36 +136,36 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 | 10 | A0062 | ADR 0062's seven saved-figure questions | As implemented, except that Q5 drops its help sentence | confirm | now |
 | 11 | A0063 | ADR 0063's five diagnostics questions | As recommended | confirm | now |
 | 12 | A0064 | ADR 0064's eight M10 route questions; ADR 0058's "presets stay in the app" | As recommended; amend ADR 0058 so a method can leave the app as a file | confirm | now |
-| 13 | DEF-1 | Every Save As to a new name leaves a `.payloads` folder | Accept | confirm | now |
-| 14 | M161 | Does #161 still need the owner's own merge? | No. The 2026-10-29 rule covers it once blockers 1–6 close | confirm | now |
-| 15 | U7 | One written decision for computation over the reader's decoded arrays | Yes: one umbrella decision, then a record per algorithm | choice | now |
-| 16 | X-1 | XIC re-entry (option 2) and its evidence gates | Yes, with XIC §11 items 1, 6, 7, 11 and 12 as recommended | choice | now |
-| 17 | X-2 | XIC first-scope semantics: four departures, P1 polarity, profile point sum, MS1 only, narrower domain | Accept all | choice | now |
-| 18 | R-1 | The reader-metadata amendment: polarity, charge and run metadata; PRJ-006's BPI times; #154's terms; #182's five choices | Accept it and #182's five choices; BPI times stay with `msaccess` in #182, then are computed from declared values under a short record, matched to `msaccess` first; analyzer and filter string only with #154's columns | choice | now |
-| 19 | S-1 | `nalgebra` and `statrs` as production crates; scipy and statsmodels for fixtures only | Approve; `kodama` only with clustering | choice | now |
-| 20 | B-1 | How the Python analysis runtime is distributed; its install location; the confinement bar | A separate, verified runtime package in an ASCII-path location; confinement a release blocker only if A-06 shows it can be enforced | choice | now |
-| 21 | R-2 | A chromatogram above 100,000 spectra | Rust sends the chromatogram from its retained rows | choice | before-its-slice |
-| 22 | R-3 | Open a new preview during a conversion (ADR 0057 decision 2) | Yes, once the open runs no process | choice | before-its-slice |
-| 23 | V-1 | Show a spectrum on open (VW-33) | Select the TIC-apex MS1 scan | choice | before-its-slice |
-| 24 | S-6 | Sample metadata fields and schema version | Four fields. Hold schema 5 open until a release ships it, otherwise schema 6 | choice | before-its-slice |
-| 25 | S-2 | Statistics definitions | Use the stats lane's table. Missing values in PCA: complete features by default, 1/5-min opt-in. No clustering | choice | before-its-slice |
-| 26 | S-3 | Admit normalisation, with "none" as the default | Yes. An absolute overlay is the minimum for VW-48 | choice | before-its-slice |
-| 27 | S-5 | What ANA-002 (QC) contains | Track A metrics and class-C filters with a rejected list; blank reference = maximum | choice | before-its-slice |
-| 28 | S-7 | Select sorting, filtering, view-scoped export, review marks and notes | Select them | choice | before-its-slice |
-| 29 | MAP-1 | The 2D map's forms, and ADR 0068's six questions on the MS1 map | Both forms, each when ready; ADR 0068 as recommended (greatest intensity, log10, vector cells, own worker) | choice | before-its-slice |
-| 30 | V-2 | RT filter on the scan list (VW-26) | Link the list to the chromatogram's committed RT range | choice | before-its-slice |
-| 31 | V-3 | Relative intensity in percent (VW-22) | A shared FigureSpec option; base = the full spectrum's largest value | choice | before-its-slice |
-| 32 | V-4 | View history back and forward (VW-14) | Build it: per plot, 40 deep | choice | before-its-slice |
-| 33 | V-5 | Use a plot RT selection as the conversion RT window (VW-47) | Yes, after #161's interface, with a confirmation | choice | before-its-slice |
-| 34 | V-7 | Preference-level settings (SET-05, SET-12, VW-04) and the preference schema bump | One bump for every new preference; remembering stays on, with an off switch | choice | before-its-slice |
-| 35 | C-1 | gzip output (`-g`) and whether `.mzML.gz` is adoptable | Allow it with the existing `flate2`. Not adoptable in the first slice | choice | before-its-slice |
-| 36 | RUN-1 | Where conversion history lives (RUN-007; EXP-23, EXP-25) | App-local, bounded, redacted like RUN-009 | choice | before-its-slice |
+| 13 | RUN-1 | ADR 0065's five questions on conversion run history (RUN-007; EXP-23, EXP-25) | As recommended: on by default, Off forgets, 200 runs and 64 MiB, the advanced intent stored, Clear keeps runs in progress; app-local, never in the project | confirm | now |
+| 14 | DEF-1 | #185's two proposed changes: every new project's first save and every Save As to a new name leaves a `.payloads` folder; rows a refused queue never reached settle as Not run, and Retry leaves them | Accept both | confirm | now |
+| 15 | M161 | Does #161 still need the owner's own merge? | No. The 2026-10-29 rule covers it once blockers 1–6 close | confirm | now |
+| 16 | U7 | One written decision for computation over the reader's decoded arrays | Yes: one umbrella decision, then a record per algorithm | choice | now |
+| 17 | X-1 | XIC re-entry (option 2) and its evidence gates | Yes, with XIC §11 items 1, 6, 7, 11 and 12 as recommended | choice | now |
+| 18 | X-2 | XIC first-scope semantics: four departures, P1 polarity, profile point sum, MS1 only, narrower domain | Accept all | choice | now |
+| 19 | R-1 | The reader-metadata amendment: polarity, charge and run metadata; PRJ-006's BPI times; #154's terms; #182's five choices | Accept it and #182's five choices; BPI times stay with `msaccess` in #182, then are computed from declared values under a short record, matched to `msaccess` first; analyzer and filter string only with #154's columns | choice | now |
+| 20 | S-1 | `nalgebra` and `statrs` as production crates; scipy and statsmodels for fixtures only | Approve; `kodama` only with clustering | choice | now |
+| 21 | B-1 | How the Python analysis runtime is distributed: ADR 0066 questions 1–3, 6, 8 and 9 | A separate, verified runtime package (ADR 0066 decision 1), per machine under Program Files; every runtime fix is an app release; confinement a release blocker only if A-06 shows it can be enforced; approve the shipped wheels at the first runtime release | choice | now |
+| 22 | R-2 | A chromatogram above 100,000 spectra | Rust sends the chromatogram from its retained rows | choice | before-its-slice |
+| 23 | R-3 | Open a new preview during a conversion (ADR 0057 decision 2) | Yes, once the open runs no process | choice | before-its-slice |
+| 24 | V-1 | Show a spectrum on open (VW-33) | Select the TIC-apex MS1 scan | choice | before-its-slice |
+| 25 | S-6 | Sample metadata fields and schema version | Four fields. Hold schema 5 open until a release ships it, otherwise schema 6 | choice | before-its-slice |
+| 26 | S-2 | Statistics definitions | Use the stats lane's table. Missing values in PCA: complete features by default, 1/5-min opt-in. No clustering | choice | before-its-slice |
+| 27 | S-3 | Admit normalisation, with "none" as the default | Yes. An absolute overlay is the minimum for VW-48 | choice | before-its-slice |
+| 28 | S-5 | What ANA-002 (QC) contains | Track A metrics and class-C filters with a rejected list; blank reference = maximum | choice | before-its-slice |
+| 29 | S-7 | Select sorting, filtering, view-scoped export, review marks and notes | Select them | choice | before-its-slice |
+| 30 | MAP-1 | The 2D map's forms, and ADR 0068's six questions on the MS1 map | Both forms, each when ready; ADR 0068 as recommended (greatest intensity, log10, vector cells, own worker) | choice | before-its-slice |
+| 31 | V-2 | RT filter on the scan list (VW-26) | Link the list to the chromatogram's committed RT range | choice | before-its-slice |
+| 32 | V-3 | Relative intensity in percent (VW-22) | A shared FigureSpec option; base = the full spectrum's largest value | choice | before-its-slice |
+| 33 | V-4 | View history back and forward (VW-14) | Build it: per plot, 40 deep | choice | before-its-slice |
+| 34 | V-5 | Use a plot RT selection as the conversion RT window (VW-47) | Yes, after #161's interface, with a confirmation | choice | before-its-slice |
+| 35 | V-7 | Preference-level settings (SET-05, SET-12, VW-04) and the preference schema bump | One bump for every new preference; remembering stays on, with an off switch | choice | before-its-slice |
+| 36 | C-1 | gzip output (`-g`) and whether `.mzML.gz` is adoptable | Allow it with the existing `flate2`. Not adoptable in the first slice | choice | before-its-slice |
 | 37 | FE-3 | Bundled fonts for the new look | Decide with FE-2. v5.11 uses system faces, so its look bundles nothing; never a CJK face | choice | before-its-slice |
 | 38 | DEF-2 | Uninstall and the view cache | Always remove the cache folder; everything else stays opt-in | choice | before-its-slice |
 | 39 | HR-1 | ProteoWizard hold releases for the pending measurements | Grant each as a bounded window when its slice is ready | choice | before-its-slice |
 | 40 | X-3 | XIC exports and panel | Include exports; give the trace its own panel under the chromatogram | choice | before-its-slice |
-| 41 | B-2 | pyOpenMS version (and the Qt6 LGPL question) | Decide before A-02 is accepted, after A-03's probes. Lean to one bump to 3.6.0 | choice | before-its-slice |
-| 42 | B-3 | What the shipped runtime leaves out: HMDB files, matplotlib and Pillow | Strip HMDB; drop matplotlib and Pillow from the shipped lock if A-03 shows pyOpenMS runs without them | choice | before-its-slice |
+| 41 | B-2 | pyOpenMS version (and the Qt6 LGPL question); ADR 0066 questions 5 and 7 | Decide after A-03's probes, before ADR 0066 is accepted: 3.6.0 if the probes pass, which ends the Qt question; otherwise 3.5.0 as ADR 0066 decision 8 recommends, with the Qt reading before release | choice | before-its-slice |
+| 42 | B-3 | What the shipped runtime leaves out: HMDB files, matplotlib and Pillow; ADR 0066 question 4 | Strip HMDB (ADR 0066 measured no effect); drop matplotlib and Pillow from the shipped lock if A-03 shows the planned classes run without them | choice | before-its-slice |
 | 43 | B-4 | v5.11 fields with no OpenMS equivalent; smoothing; centroided input | Drop the fields with no effect; require centroided input | choice | before-its-slice |
 | 44 | B-5 | Negative mode in the first untargeted domain | Positive first; negative as the next slice | choice | before-its-slice |
 | 45 | B-6 | The study model for cross-sample work; ADR 0067's ten questions | Study-level runs as ADR 0067 writes them, with pruning; sample metadata on layers, copied into each study revision | choice | before-its-slice |
@@ -499,13 +509,33 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Urgency:** now. **Kind:** confirm.
 - **Sources:** ADR 0064 "Open questions for the owner" (:848 on `origin/docs/m10-route`, `7f91c05b`); PR #176 body; GAP EXP-18, EXP-19.
 
-### DEF-1. Save As reserves its result-store name
+### RUN-1. Conversion run history (RUN-007 for conversion; ADR 0065)
 
-- **Question.** The backend-defects lane makes Save As claim the result-store name before it publishes the document. Every Save As to a new name therefore leaves a `.payloads` folder, which is empty when there is no result. Accept?
-- **Recommendation:** accept. An empty folder is cheaper than a race in which another writer takes the store, and the leftovers row in M9_CLOSURE is updated with it.
-- **Blocks:** the defects PR (`fix/backend-defects-1030`, pushed at `5cfd8efb`, no PR yet).
+- **Question.** v5.11 keeps a run history: each run's method version, inputs, steps, results and frozen parameters (EXP-23). It also downloads one run's frozen snapshot as JSON (EXP-25). Conversion runs are session-only on `main`, and RUN-007 covers project operations only (FEATURE_CATALOG.md:436). ADR 0065 (Proposed; draft PR #187, Rust side, stacked on `be/integrate`) writes the history as the first version of this document recommended: app-local and per user, one bounded, versioned JSON document per run, no path in either direction, and failures by stable code only. It asks five questions:
+  1. Is history on by default, or off until the user turns it on?
+  2. Does Off also forget what is stored, or does it only stop recording?
+  3. Are the bounds 200 runs and 64 MiB in total (16 MiB per run), or other numbers?
+  4. Is the advanced intent stored, so that a re-run can reproduce it, or only the verified row's id?
+  5. Does Clear keep runs in progress, or forget them too?
+- **Recommendation:** as ADR 0065 recommends: on by default; Off forgets, as ADR 0061's Off does; 200 runs and 64 MiB; the advanced intent stored; Clear keeps runs in progress.
+  - App-local, not in the project: a conversion is not a project operation, and a project file should not grow with every batch.
+  - EXP-25's JSON is one run's record, redacted like RUN-009: structured intent, tool build, input identities and outcomes, and no absolute paths.
+  - The run log (C53) stays the five judgements plus the redacted diagnostics.
+- **Blocks:** #187; N-C9's interface (EXP-23, EXP-25); the Export/records page (N-A14).
+- **Urgency:** now, because #187 is open. **Kind:** confirm.
+- **Sources:** ADR 0065 on `origin/be/run-history` ("Open questions for the owner"); PR #187 body; GAP EXP-23, EXP-25, C53; FEATURE_CATALOG.md:436 (RUN-007); AFTER_BETA1_PLAN 7.4 and 7.6 ("Owned elsewhere"); the non-runtime draft's ND-17.
+
+### DEF-1. Save As reserves its result-store name; Retry leaves rows that never ran
+
+- **Question.** #185 (`fix/backend-defects-1030`) makes two changes that it marks "proposed, for the owner". Accept both?
+  1. **The store name is reserved.** Save As, and every new project's first save, claims the result-store name with a no-replace rename before the document is published. Each therefore leaves `<name>.mscanvas.payloads`, empty when there is no result. If the document publish then fails, the empty store stays, and a retry to the same name is refused `destinationStoreExists`.
+  2. **Refused queue rows settle as Not run.** After a recoverable queue-level refusal, the rows the run never reached settle as `NotRun`, as after a stop. On `main` they stayed `Pending` ("Waiting"), and Retry converted them. Retry now reruns only the retryable failures, as its label and the panel copy say, so those rows need a new queue.
+- **Recommendation:** accept both.
+  - An empty folder is cheaper than a race in which another writer takes the store. The leftovers row in M9_CLOSURE is updated with it.
+  - Retry then does what its label says. #185 changes no webview file, and nobody has rendered a retry queue that holds Not run rows. That check belongs to the queue interface after #164 (N-01) and #161 (N-03).
+- **Blocks:** #185 (ready, head `efd0294a`, nine checks green). Squash-merge it: the message of `f127692d` describes a Retry change that `5cfd8efb` reversed.
 - **Urgency:** now. **Kind:** confirm.
-- **Sources:** the AFTER_BETA1_PLAN and M9_CLOSURE diffs on `fix/backend-defects-1030` ("proposed, for the owner").
+- **Sources:** PR #185 body; the AFTER_BETA1_PLAN 7.2 and M9_CLOSURE diffs on `fix/backend-defects-1030` ("proposed, for the owner").
 
 ### M161. The merge of #161
 
@@ -633,26 +663,29 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### B-1. How the Python analysis runtime is distributed
 
-- **Question.** The runtime is 4,628 files and 348.7 MB, about 54 times the 6.47 MB installer. The NSIS install is per-user, so a Chinese user name puts it under a non-ASCII path, and a non-ASCII runtime path is a measured failure. How should the runtime reach users?
-- **Options:**
-  - (a) bundle it in the installer;
-  - (b) publish a separate runtime package beside each release. The user installs it, as with ProteoWizard, and MSCanvas checks its manifest digest before first use. The install location is checked to be ASCII. There is no in-app download.
-- **Recommendation: (b).**
+- **Question.** The runtime is 4,628 files and 348.7 MB, about 54 times the 6.47 MB installer. The NSIS install is per-user, so a Chinese user name puts it under a non-ASCII path, and a non-ASCII runtime path is a measured failure. How should the runtime reach users? ADR 0066 (Proposed, draft PR #188) now writes the options and asks nine questions. This decision carries its questions 1–3, 6, 8 and 9; B-2 carries 5 and 7, and B-3 carries 4.
+- **Options** (ADR 0066, "Distribution"):
+  - (a) inside the app installer: 36–55 MB more for every user (ADR 0066's estimate), and elevation;
+  - (b) a separate, verified runtime package beside each release, which the user downloads and installs, as with ProteoWizard. MSCanvas checks its manifest digest before first use;
+  - (b2) the same package, downloaded by the app;
+  - (c) a Python the user installs, rejected because it cannot be pinned.
+- **Recommendation: (b),** ADR 0066 decision 1.
   - Users of the MVP (convert, view, figures) keep a 6.5 MB installer.
-  - It matches the user-installed, verified ProteoWizard pattern.
-  - A runtime CVE fix (Pillow) does not need an app release.
-
-  The runtime-release ADR (A-02) then covers: notices (BSD-3, EPL, MPL, LGPL, MSVC, CPython and the others), confinement, the CVE update path, and pruning (`.cpp`, matplotlib), together with B-2 and B-3.
-- **Two more parts, from the analysis plan (A-02 items 2 and 7):**
-  - **Install location.** It must be ASCII. Measure `C:/ProgramData/MSCanvas/runtime/<version>` and a user-chosen folder (refused if not ASCII) as a standard user on Windows 11; 8.3 short names are unreliable. Recommended: choose after the measurement, in A-05.
-  - **The confinement bar.** Is worker confinement (A-06) a release blocker, or may a release ship with "not enforced" disclosed and the measured mitigations listed? Recommended: a blocker only if A-06's AppContainer spike shows it can be enforced without administrator rights; otherwise the disclosure.
+  - It matches the user-installed, verified ProteoWizard pattern, and the app downloads nothing.
+  - The runtime's manifest digest (`RUNTIME_MANIFEST_SHA256`) is compiled into the app. Every fix to a shipped runtime component is therefore an app release with a new runtime package, and old plans answer `PlanNotCurrent` (ADR 0066 decisions 3 and 5). The first version of this document said that a runtime fix needs no app release; that was wrong.
+- **Install location** (ADR 0066 questions 2 and 3; the analysis plan's A-02 item 2). ADR 0066 decision 2 puts the runtime per machine under `%ProgramFiles%\MSCanvas Analysis Runtime\<digest>\`, which is ASCII and writable only by administrators, through an elevated runtime installer. The worker's work area goes under `%ProgramData%\MSCanvas\work\<user SID>\`, with a protected DACL and an owner check.
+  - Recommended: accept decision 2.
+  - Question 3, a user without administrator rights, is the owner's call: offer a user-chosen ASCII folder with a protected DACL, or require elevation. Working default until answered: require elevation, and add the user-folder route when such a user needs it.
+- **The confinement bar** (ADR 0066 question 6; A-02 item 7). Is an AppContainer worker (A-06) a release requirement, or may a release ship with the firewall rule and a stated limit if the measurement fails? Recommended: a blocker only if A-06's AppContainer spike shows that it can be enforced without administrator rights; otherwise ship with the stated limit and the measured mitigations listed. ADR 0066 names the ADR 0049 hard link as the known obstacle.
+- **Dependencies** (ADR 0066 question 8). Shipping makes the hash-pinned wheels production dependencies, and building the package changes the release workflow. Both need the owner's approval under the dependency policy. Recommended: approve both with ADR 0066, effective at the first runtime release (A-05). Nothing ships before then.
+- **MSVC runtime copies** (ADR 0066 question 9). The OpenMS, numpy and pandas builds carry MSVC DLLs. Recommended: ask for a reading on redistributing them, together with B-2's Qt reading if that is still needed. It blocks A-05, not development.
 - **Blocks:**
-  - A-02, which starts now (Track B's gating path);
-  - A-05 (install location) and A-06 (confinement bar);
+  - A-02 (#188), which is drafted (Track B's gating path);
+  - A-05 (install location, dependencies, notices) and A-06 (confinement bar);
   - every pyOpenMS function;
   - ANA-004 (MOD-11) for users.
-- **Urgency:** now, because A-02 starts now. **Kind:** choice.
-- **Sources:** SYN §7 D3, §0 item 5, §6.1 P5, §1 (runtime size row); internal.md §2.6, §9 item 5.
+- **Urgency:** now, because #188 is open. **Kind:** choice.
+- **Sources:** ADR 0066 on `origin/docs/runtime-release-adr` (decisions 1–3, 5, 7 and 10; open questions 1–3, 6, 8 and 9); PR #188 body; SYN §7 D3, §0 item 5, §6.1 P5, §1 (runtime size row); internal.md §2.6, §9 item 5.
 
 ---
 
@@ -887,21 +920,6 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Urgency:** before-its-slice, with the advanced editor. **Kind:** choice.
 - **Sources:** ADR 0055:336–339, :513, :581; `Cargo.toml`:21 and `crates/proteowizard/Cargo.toml`:21 on `origin/main`; GAP C23.
 
-### RUN-1. Where conversion history lives (RUN-007 for conversion)
-
-- **Question.** v5.11 keeps a run history: each run's method version, inputs, steps, results and frozen parameters (EXP-23). It also downloads one run's frozen snapshot as JSON (EXP-25). Conversion runs are session-only today. RUN-007 covers project operations only (FEATURE_CATALOG.md:436). Three choices:
-  - where the history lives: app-local like the restore document, or inside the project;
-  - its bound;
-  - what one run's JSON holds.
-- **Recommendation:**
-  - App-local, beside the restore document. A conversion is not a project operation, and a project file should not grow with every batch.
-  - Bounded by count and size.
-  - Redacted like RUN-009: structured intent, tool build, input digests and outcomes, with no absolute paths.
-  - The run log (C53) stays the five judgements plus the redacted diagnostics.
-- **Blocks:** EXP-23, EXP-25 and the export-records page (G4).
-- **Urgency:** before-its-slice. **Kind:** choice.
-- **Sources:** GAP EXP-23, EXP-25, C53; FEATURE_CATALOG.md:436 (RUN-007); AFTER_BETA1_PLAN 7.4 and 7.6 ("Owned elsewhere"); the non-runtime draft's ND-17.
-
 ### FE-3. Bundled fonts for the new look
 
 - **Question.** May the app bundle font files as production assets (OFL faces, with their licence texts and a source pin)? The rejected themes would each have bundled 76–112 KiB of Latin faces. Should a CJK face ever ship?
@@ -925,7 +943,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Recommendation: (b).** The cache is reproducible and can be gigabytes nobody owns after uninstall. Presets are user-authored, so they stay opt-in. This is a release-path change (an NSIS hook).
 - **Blocks:** shipping the view cache (ADR 0060 slice 3).
 - **Urgency:** before-its-slice. **Kind:** choice.
-- **Sources:** the AFTER_BETA1_PLAN diff on `fix/backend-defects-1030`; ADR 0060 Q2 (10 GiB).
+- **Sources:** the AFTER_BETA1_PLAN 7.2 diff in #185 (`fix/backend-defects-1030`, "Uninstall paths"); ADR 0060 Q2 (10 GiB).
 
 ### HR-1. ProteoWizard hold releases
 
@@ -976,16 +994,16 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
     - a new, unpinned `nanobind-backend`;
     - curl, the AWS SDK and OpenSSL are linked in.
   - **C: 3.5.0 until 3.7.0**, which has no release date.
-- **Recommendation.** The synthesis suggests starting U1 on 3.5.0 and deciding before U2. This roadmap keeps that order for development (U1 starts on 3.5.0) but moves the decision earlier, to before B0 is accepted, and leans to B:
-  - U2 needs 3.6.0's KD-linker fix (#10157);
-  - U4 needs its ILP error reporting (3.5.0 can return silently empty results);
-  - B removes the Qt question;
-  - deciding before B0 qualifies ANA-004 and U1 once, on the shipped version.
-
-  If legal review clears Qt quickly, A stays possible.
+- **Recommendation.** Decide after A-03's 3.6.0 probes and before ADR 0066 is accepted, so that ANA-004 and U1 are qualified once, on the shipped version. U1's development starts on 3.5.0 either way, in the synthesis's order.
+  - **If the probes pass** (every planned class runs without the Thermo folder, and libiconv is either not linked or its terms are accepted): **B**, one bump to 3.6.0 before the first release.
+    - It ends the Qt question. ADR 0066 measured that the 3.5.0 engine path loads `Qt6Network.dll`, and that removing it breaks the import.
+    - U2 needs 3.6.0's KD-linker fix (#10157).
+    - U4 needs its ILP error reporting: 3.5.0 can return silently empty results.
+  - **If they fail:** **A** for the first release, as ADR 0066 decision 8 recommends. ADR 0066 question 5, a legal reading of the manifest refusal against LGPL-3 §4(d)(1), is then answered before release, and the bump is decided before U2.
+  - **ADR 0066 (#188) differs on timing only.** Its decision 8 ships 3.5.0 first, because ANA-004 is qualified on it and U1 needs no 3.6.0 fix, and it decides the bump before alignment. On that route the Qt reading blocks the release. Whichever the owner picks, decision 8 is amended to match before ADR 0066 is accepted.
 - **Blocks:** A-02, the qualification of U1 (A-20) and ANA-004, and U2 (A-21).
 - **Urgency:** before-its-slice (A-02). **Kind:** choice.
-- **Sources:** SYN §7 D4 and D6, §2 C2, §4 item 7, §5.2 (alignment and adduct risks); openms.md §8 Q1, Q2 and Q4.
+- **Sources:** SYN §7 D4 and D6, §2 C2, §4 item 7, §5.2 (alignment and adduct risks); openms.md §8 Q1, Q2 and Q4; ADR 0066 decision 8, "What the engine path loads" and open questions 5 and 7 (PR #188).
 
 ### B-3. What the shipped runtime leaves out: HMDB files, matplotlib and Pillow
 
@@ -998,9 +1016,15 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
   - #168 does not merge on its own: it changes the lock while `RUNTIME_MANIFEST_SHA256` (`recipe.rs`:35) stays pinned.
 
   Either change alters `RUNTIME_MANIFEST_SHA256`, which rebinds ANA-004 plans, and needs an import test.
+- **Measured since** (ADR 0066, #188, on a verified scratch copy of the pinned 3.5.0 runtime):
+  - the engine path never loads matplotlib, Pillow or fontTools;
+  - a tier-3 copy (1,793 files, 152,113,369 B) runs `adapter_v1.py` with the same rows, evidence and outcome as the full runtime;
+  - removing `HMDBMappingFile.tsv` changes nothing.
+
+  ADR 0066 decision 4 recommends tier 3 without the HMDB file; that is its question 4, which this decision carries. A-03 still runs the planned classes, not only ANA-004's path, before the lock drops matplotlib and Pillow.
 - **Blocks:** A-02, A-03, the release of ANA-004 (A-05), and A-25's database choice.
 - **Urgency:** before-its-slice (A-02). **Kind:** choice.
-- **Sources:** SYN §7 D5, §3 item 5, §4.5, §8 (HMDB row); openms.md §8 Q3; analysis.md section 2 (Pillow) and A-03.
+- **Sources:** SYN §7 D5, §3 item 5, §4.5, §8 (HMDB row); openms.md §8 Q3; analysis.md section 2 (Pillow) and A-03; ADR 0066 "Measurements", decision 4 and open question 4 (PR #188).
 
 ### B-4. v5.11 fields with no OpenMS equivalent
 
@@ -1240,7 +1264,7 @@ These are left out on purpose; each is still open in its own record:
 | ADR 0056 open question: a chromatogram above 100,000 spectra | R-2 |
 | ADR 0056 decision 7 | U7 |
 | ADR 0055 `-g`; HDF5 | C-1; C-2 |
-| `fix/backend-defects-1030` | DEF-1, DEF-2 |
+| `fix/backend-defects-1030` (#185): both "proposed, for the owner" changes; the uninstall paths in 7.2 | DEF-1; DEF-2 |
 | PR #181 (ADR 0060 slice 2 and its notes) | A0060 |
 | PR #182 ("For the owner") | R-1 |
 | ADR 0068 (`be/map2d`) open questions 1–6 | MAP-1; U7 |
@@ -1259,6 +1283,8 @@ These are left out on purpose; each is still open in its own record:
 | GAP SET-01, SET-03 to SET-07, SET-12, VW-04; ADR 0060 Q2 (preference schema) | V-7 |
 | GAP EXP-23, EXP-25, C53; RUN-007 | RUN-1 |
 | #164 "Copy and naming": Basic/Advanced naming | FE-1, item 2 |
+| PR #187 / ADR 0065 open questions 1–5 | RUN-1 |
+| PR #188 / ADR 0066 open questions 1–3, 6, 8 and 9; 4; 5 and 7 | B-1; B-3; B-2 |
 
 **The non-runtime plan draft's ids** (its `DECISIONS` list), for reconciliation:
 
@@ -1321,6 +1347,7 @@ Generated by the planning workspace's merge script from the same data as `ROADMA
 | A0062 | N-F3 |
 | A0063 | N-S5 |
 | A0064 | N-C10 |
+| RUN-1 | N-C9, N-A14 |
 | DEF-1 | N-07 |
 | M161 | N-03 |
 | U7 | N-13, N-14, N-X4 |
@@ -1344,7 +1371,6 @@ Generated by the planning workspace's merge script from the same data as `ROADMA
 | V-5 | N-C5 |
 | V-7 | N-V4, N-S7, N-S2 |
 | C-1 | N-C7 |
-| RUN-1 | N-C9, N-A14 |
 | FE-3 | N-02 |
 | DEF-2 | N-R2 |
 | HR-1 | N-05, N-B1, N-R3, A-13 |

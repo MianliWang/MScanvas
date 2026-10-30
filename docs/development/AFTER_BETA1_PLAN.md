@@ -631,7 +631,8 @@ None can be delivered by engineering alone; each waits for one input.
 - *2026-10-30:* the decisions the
   [v5.11 and analysis roadmap](ROADMAP_V511_AND_ANALYSIS.md) needs, 53 in
   all, are in [OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md). Its
-  section 3 lists the 20 that block work now, among them the governance
+  section 3 lists the 21 that block work now, among them the governance
   amendment (G1), what #164 still merges for (FE-1), the new look (FE-2,
-  which answers the frontend's target above), #161's merge (M161) and
-  M10's route (A0064).
+  which answers the frontend's target above), #161's merge (M161),
+  M10's route (A0064) and the analysis runtime's distribution (B-1, the
+  questions of ADR 0066).

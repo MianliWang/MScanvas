@@ -2,7 +2,7 @@
 
 Status: **Draft, awaiting the owner's decisions** ([OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md)). Nothing here authorizes a release, an upload, a dependency change or outbound contact; each keeps its own approval.
 
-Date 2026-10-30. Read on `origin/main` at `7ac5a219` and on the open PRs, and re-checked at about 15:45 UTC, when #181 to #184 were open. PR and branch states move; section 6 gives them as of then.
+Date 2026-10-30. Read on `origin/main` at `7ac5a219` and on the open PRs, re-checked at about 15:45 UTC, when #181 to #184 were open, and again at about 23:00 UTC, when #185, #187 and #188 had opened. PR and branch states move; section 6 gives them as of the second check.
 
 This file is the executable index: phases, lanes, file ownership, dependencies, merge order and gates. It merges two planning documents, which stay in the planning workspace with the research behind them (the v5.11 gap table, the analysis research synthesis and its lane reports, and the XIC evaluation):
 
@@ -37,14 +37,14 @@ Binding preferences, carried into every item:
 - The interface explains itself: no secondary explanation text. States and labels are values.
 - Fast, bold frontend work, with one review pass for UI. Multi-round review is kept for data safety.
 - Thermo first, Bruker later. No decompilation or reverse engineering of vendor software.
-- No new dependency without the owner's approval. This plan asks for `nalgebra` and `statrs` (S-1), `ms_entropy` in the runtime (B-8), and possibly `resvg`'s raster feature (MAP-1).
+- No new dependency without the owner's approval. This plan asks for `nalgebra` and `statrs` (S-1), `ms_entropy` in the runtime (B-8), possibly `resvg`'s raster feature (MAP-1), and, for the first runtime release, the shipped runtime's wheels as production dependencies (B-1, ADR 0066 question 8).
 - Outbound contact needs the owner's go-ahead for each message. This plan schedules none.
 - Heavy tests run on GitHub Actions. Local heavy runs pass the memory gate.
 - `main` requires all nine CI checks. A product PR merges after every check passes and every thread is resolved.
 
 **At a glance:**
 
-- 93 items in 24 lanes over five phases, 261-280 slices, plus 3 optional driver items (15-20 slices);
+- 93 items in 24 lanes over five phases, 258-276 slices, plus 3 optional driver items (15-20 slices);
 - critical path 39 slices, with each item's upper slice count;
 - 122 v5.11 rows: 109 closed by items, 13 refused, deferred or re-scoped (section 8).
 
@@ -138,11 +138,11 @@ New ADR files are new files, and any lane may add one. Amendments to existing AD
 
 **Exit:** #164, the advanced editor, #161 and #175 merged; the governance, schema-5, statistics, XIC, raster and reader records written; the runtime-release ADR accepted with its engine version.
 
-13 items, 26-28 slices, 3 parallel lanes: L-TRAIN, L-REC, L-RUNTIME.
+13 items, 25-26 slices, 3 parallel lanes: L-TRAIN, L-REC, L-RUNTIME.
 
 | Lane | ID | Title | Size (slices) | Depends on | After | Closes | Extends | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| L-TRAIN | N-07 | Push the backend defects branch (fix/backend-defects-1030) | S (1) | - | - | - | - | DEF-1 |
+| L-TRAIN | N-07 | Merge the backend defects PR (#185, fix/backend-defects-1030) | S (1) | - | - | - | - | DEF-1 |
 | L-TRAIN | N-01 | Land #164 as the functional baseline (its look is interim) | M (3) | - | - | SH-18, C51 | - | FE-1 |
 | L-TRAIN | N-04 | Mount the advanced conversion editor (ui/conversion-advanced) | M (3) | N-01 | - | C38, C26, C16, C24, C25, C22, C10 | - | FE-1 |
 | L-TRAIN | N-03 | Close #161's interface blockers and merge it | L (5) | N-04, N-07 | - | C14, C05, C04, C39 | - | M161 |
@@ -154,7 +154,7 @@ New ADR files are new files, and any lane may add one. Amendments to existing AD
 | L-REC | N-15 | Reader scope amendment for be/reader-meta | S (1) | - | - | - | - | R-1 |
 | L-REC | N-12 | Statistics ADR, with the normalisation admission | M (2) | - | - | - | - | S-1, S-2, S-3, S-4, S-5 |
 | L-RUNTIME | A-03 | Runtime slimming measurement and the two 3.6.0 probes, on both wheels | M (1-2) | N-10 | - | - | - | B-2, B-3 |
-| L-RUNTIME | A-02 | Runtime-release ADR with the engine version (SYNTHESIS step B0) | M (2-3) | N-10, A-03 | - | - | - | B-1, B-2, B-3 |
+| L-RUNTIME | A-02 | Runtime-release ADR with the engine version (SYNTHESIS step B0) | S (1) | N-10, A-03 | - | - | - | B-1, B-2, B-3 |
 
 ### Phase 1: Core jobs completed; foundations of both tracks
 
@@ -235,12 +235,12 @@ New ADR files are new files, and any lane may add one. Amendments to existing AD
 
 **Exit:** Normalisation, overlay, cross-page selection, conversion history and the Export/records page; U2, U3 and U4 on studies.
 
-16 items, 45-49 slices, 10 parallel lanes: L-CONV-A, L-CONV-B, L-SHELL, L-FIG, L-PROJECT, L-FEATURES, L-STATS-UI, L-ANALYSIS-X, L-WORKER, L-STUDY.
+16 items, 43-47 slices, 10 parallel lanes: L-CONV-A, L-CONV-B, L-SHELL, L-FIG, L-PROJECT, L-FEATURES, L-STATS-UI, L-ANALYSIS-X, L-WORKER, L-STUDY.
 
 | Lane | ID | Title | Size (slices) | Depends on | After | Closes | Extends | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | L-CONV-A | N-C10 | Method file export and import | M (3) | N-C1 | N-C6 | EXP-18, EXP-19 | - | A0064 |
-| L-CONV-B | N-C9 | Persistent conversion history (RUN-007 for conversion) | L (5) | N-03 | N-C8 | EXP-23, EXP-25 | - | RUN-1 |
+| L-CONV-B | N-C9 | Persistent conversion history (RUN-007 for conversion) | M (3) | N-03 | N-C8 | EXP-23, EXP-25 | - | RUN-1 |
 | L-CONV-B | N-C5 | Use this RT range in conversion | M (2) | N-04, N-V1 | N-C9 | VW-47 | - | V-5 |
 | L-SHELL | N-S1 | Acquisition list polish | M (3) | N-01 | N-A3, N-S2 | RO-08, RO-10, RO-11, RO-15, RO-16, RO-21, RO-25 | - | - |
 | L-SHELL | N-S6 | Sample data on first start | M (2) | N-01 | N-S1 | SH-16 | - | V-6 |
@@ -304,8 +304,8 @@ Computed over Depends-on and After with the upper slice counts:
 - The head is the non-runtime plan's: the merge train (11 slices), schema-5's record kinds, then sample metadata.
 - Track B then takes over. A-08-KINDS waits for N-A3, because both edit `record.rs`. U2, U4, U5, U6 and the review state follow.
 - Track A alone ends with N-A10 at slice 36.
-- **The runtime's gating path is not critical.** A-03, A-02, A-07, A-06 and A-05 give the first runtime release at slice 17. U1's engine (A-20) is done at slice 15, and U1 reaches users at slice 29, when A-20-UI lands on the Features page.
-- **B-2 does not move the end.** If B-2 keeps 3.5.0, A-07 drops: the path is 39 slices, the first runtime release is at slice 16, and A-20 is done at slice 14.
+- **The runtime's gating path is not critical.** A-03, A-02, A-07, A-06 and A-05 give the first runtime release at slice 15. U1's engine (A-20) is done at slice 13, and U1 reaches users at slice 29, when A-20-UI lands on the Features page.
+- **B-2 does not move the end.** If B-2 keeps 3.5.0, A-07 drops: the path is 39 slices, the first runtime release is at slice 14, and A-20 is done at slice 12.
 
 **Ways to shorten it:**
 
@@ -336,7 +336,7 @@ Latest-finishing items, if every lane starts as early as its dependencies allow:
 
 | # | PR or branch | Item | Waits for | Note |
 | --- | --- | --- | --- | --- |
-| 1 | `fix/backend-defects-1030` (pushed at `5cfd8efb`, no PR yet) | N-07 | DEF-1 | Open the PR now. Merge it before #161's last merge of `main`, to keep #161's conflict set small |
+| 1 | #185 `fix/backend-defects-1030` (ready, head `efd0294a`, nine checks green) | N-07 | DEF-1 (both of #185's proposed changes) | Squash-merge it: the message of `f127692d` describes a Retry change that `5cfd8efb` reversed. Merge it before #161's last merge of `main`, to keep #161's conflict set small |
 | 2 | #164 `ui/v511-rebuild` | N-01 | FE-1; round 2's functional fixes; the ported native specs green in one idle-desktop window; nine checks | Head `631a4a6e`, all nine checks green, still a draft. The checks went green because `3a416010` recoloured `main`'s two frozen figure documents. Revert the export half of `66a6067c` (`svg.rs`, its test and three plot goldens) and all of `3a416010` |
 | 3 | #180 `be/saved-figure` (Rust side, draft) | N-F3, slice 1 | A0062; its checks | Independent of #164. A draft until A0062 is answered. Its interface waits for #175 |
 | 4 | #176 `docs/m10-route` (head `7f91c05b`) | N-C10's schema | A0064 (eight questions) | Docs only |
@@ -344,15 +344,17 @@ Latest-finishing items, if every lane starts as early as its dependencies allow:
 | 6 | `ui/conversion-advanced` (`8e363e22`, `4e96a72a`, local) | N-04 | #164 merged | Rebase it (its base `66665a8b` is a #164 commit). It lands inside #161, or as the PR right before it |
 | 7 | #161 `be/integrate` | N-03 | N-04, N-07; M161 | Close #148, #149, #150, #151, #152 and #156 unmerged: their content merges through #161. #161 brings schema 5 |
 | 8 | #179 `be/adopt-output` | N-C4 | #161 merged | Retarget it from `be/integrate` to `main` |
-| 9 | #175 `be/reader-preview` | N-05 | #164 and #161 merged; P175; HR-1 | The webview commit draws the on-screen profile line. HR-1 covers its four native specs, unless the 2026-10-20 release already does |
-| 10 | #181 `be/viewraw-op` (ready for review, head `5dc7d807`) | N-R1 | #161 merged; A0060's notes | It does not compile against #161 as merged (`plan_conversion` takes `&BoundIntent` there), and it conflicts with #175 in seven `preview/service.rs` hunks. Whichever merges second carries the fix and reruns CI |
-| 11 | #155 `be/vendordrop` | N-S3 | #164 merged | Interface slices, then native evidence |
-| 12 | #182 `be/reader-meta` (draft, library only, stacked on #175) | N-B1 | N-15 accepted (R-1); #175 merged, then retarget to `main` | Nothing calls the new readings yet. `msaccess` leaves the open only after the BPI-time match, a later N-B1 slice |
-| 13 | #154 `be/scanctx` | N-B2 | N-B1 | Reworked, not rebased. The chromatogram document version is renumbered after #175's |
-| 14 | #183 `be/map2d` (draft, stacked on #175) | N-14 (ADR 0068), N-X4's library | MAP-1; #175 merged, then retarget to `main` | ADR 0068 and the MS1 map library, measured on the R0 file. No command or interface yet |
-| 15 | #184 `docs/study-model-adr` (draft, `8870e36e`) | A-08 (ADR 0067) | G1; B-6 with S-6 | Docs only. Its metadata scope (per study) differs from S-6's (per layer); B-6 recommends the reconciliation |
+| 9 | #187 `be/run-history` (draft, Rust side, stacked on `be/integrate`, head `eaef5051`) | N-C9, its record and store | #161 merged; RUN-1 (ADR 0065's five questions) | Retarget it to `main` after #161. Its Rust check is red: `run_history::a_finished_queue_is_recorded_with_its_sources_and_outputs_and_the_wire_names_no_path` fails. Its body lists additive conflicts with #177, #178, #179 and #181 in `lib.rs`, `tests.rs` and `service.rs` |
+| 10 | #175 `be/reader-preview` | N-05 | #164 and #161 merged; P175; HR-1 | The webview commit draws the on-screen profile line. HR-1 covers its four native specs, unless the 2026-10-20 release already does. Its Repository quality check is red until that commit gives the eight new error codes their resources (N-05's third slice); #182 and #183 inherit the red check from this base |
+| 11 | #181 `be/viewraw-op` (ready for review, head `5dc7d807`) | N-R1 | #161 merged; A0060's notes | It does not compile against #161 as merged (`plan_conversion` takes `&BoundIntent` there), and it conflicts with #175 in seven `preview/service.rs` hunks. Whichever merges second carries the fix and reruns CI |
+| 12 | #155 `be/vendordrop` | N-S3 | #164 merged | Interface slices, then native evidence |
+| 13 | #182 `be/reader-meta` (draft, library only, stacked on #175) | N-B1 | N-15 accepted (R-1); #175 merged, then retarget to `main` | Nothing calls the new readings yet. `msaccess` leaves the open only after the BPI-time match, a later N-B1 slice |
+| 14 | #154 `be/scanctx` | N-B2 | N-B1 | Reworked, not rebased. The chromatogram document version is renumbered after #175's |
+| 15 | #183 `be/map2d` (draft, stacked on #175, head `3c566256`) | N-14 (ADR 0068), N-X4's library | MAP-1; #175 merged, then retarget to `main` | ADR 0068 and the MS1 map library, measured on the R0 file. No command or interface yet |
+| 16 | #184 `docs/study-model-adr` (draft, `8870e36e`) | A-08 (ADR 0067) | G1; B-6 with S-6 | Docs only. Its metadata scope (per study) differs from S-6's (per layer); B-6 recommends the reconciliation |
+| 17 | #188 `docs/runtime-release-adr` (draft, docs only, head `7bfa2ce3`, nine checks green) | A-02 (ADR 0066) | A-03's 3.6.0 probes; B-1, B-2, B-3 | Its decision 8 (3.5.0 for the first release) differs from B-2's lean; whichever the owner picks, decision 8 is amended before the record is accepted. Its section-9 line in AFTER_BETA1_PLAN.md merges cleanly beside this roadmap's |
 
-**Started, with nothing committed yet** (worktrees at `origin/main` or at #161's head, about 15:45 UTC). By their names: `docs/runtime-release-adr` (A-02), `docs/u1-feature-detection-measurement` (A-13), `be/run-history` (N-C9) and `be/two-step` (N-C2). Each starts ahead of some of its roadmap dependencies, so its record stays Proposed until the gating decisions (G1, B-1, B-2, B-11, RUN-1, C-2) are answered.
+**Started, not yet a PR** (about 23:00 UTC). `be/two-step` (N-C2) has one local commit, `4e3b0ccd`, on #161's head, not pushed. `docs/u1-feature-detection-measurement` (A-13) has nothing committed. Each starts ahead of some of its roadmap dependencies, so its work stays a draft until the gating decisions (B-11, C-2) are answered. `docs/runtime-release-adr` and `be/run-history`, listed here at 15:45 UTC, are now #188 and #187.
 
 **Not merged as they stand:**
 
@@ -430,9 +432,9 @@ Latest-finishing items, if every lane starts as early as its dependencies allow:
 
 All 53 owner decisions are in [`OWNER_DECISIONS_V511.md`](OWNER_DECISIONS_V511.md), with options, recommendations and sources. Its section 9 lists the roadmap items each decision gates, generated from the same data as this file.
 
-- **Ask now:** the 20 decisions in its section 3. They gate phase 0, the merge train, the records and the runtime-release ADR.
+- **Ask now:** the 21 decisions in its section 3. They gate phase 0, the merge train, the records and the runtime-release ADR.
 - **FE-2 is the only open question about the look.** It gates N-02 and nothing else.
-- **New since the first version:** G1 carries the exact wording proposed for AGENTS.md and PROJECT_PROPOSAL.md; R-1, MAP-1, B-6 and A0064 carry the questions of #182, ADR 0068, ADR 0067 and ADR 0064's two new ones; FE-1 names `3a416010`.
+- **New since the first version:** G1 carries the exact wording proposed for AGENTS.md and PROJECT_PROPOSAL.md; R-1, MAP-1, B-6 and A0064 carry the questions of #182, ADR 0068, ADR 0067 and ADR 0064's two new ones; FE-1 names `3a416010`. After the second check: RUN-1 carries ADR 0065's five questions (#187) and moves to section 3; B-1, B-2 and B-3 carry ADR 0066's nine (#188); DEF-1 adds #185's Retry change.
 - **On the critical path:** FE-1, M161, S-6, G3, B-6, B-2, B-4, B-5, B-9, B-8, B-3, S-7.
 - **The research ids map as follows:**
   - the non-runtime plan's ND-xx: `OWNER_DECISIONS_V511.md` section 8;
@@ -460,6 +462,7 @@ All 53 owner decisions are in [`OWNER_DECISIONS_V511.md`](OWNER_DECISIONS_V511.m
   - G3's EXP-20 and S-7's reviewed mark now agree with the plans.
 - **Scale.** Sizes use one scale. The analysis plan's labels are re-derived from its slice counts.
 - **Critic pass, about 15:45 UTC.** PR and branch states were re-checked (section 6). N-14 becomes the acceptance of ADR 0068. N-X4 drops its dependency on N-X1, gains one on N-B1 (polarity) and shrinks to 4 slices, because its library and measurement are done. A-09 is gated by B-6, since ADR 0067 decision 6 is its format. N-B1 gains HR-1 for a recorded `msaccess` pair. N-01, N-07, N-R1 and N-B1 restate their first slice for the pushed branches and PRs. Appendices A and B are new.
+- **Critic pass 2, about 23:00 UTC.** #185, #187 and #188 opened (section 6). N-07 becomes #185's merge. N-C9 shrinks to 3 slices and A-02 to 1, because #187 and #188 hold their first slices. RUN-1 moves to section 3 of `OWNER_DECISIONS_V511.md`. B-1 drops its claim that a runtime fix needs no app release: the manifest digest is compiled into the app (ADR 0066 decisions 3 and 5). B-2 sets its lean beside ADR 0066 decision 8. Coverage was re-checked against the gap table's missing rows, its sweep additions and its corrections: no row is unmapped.
 
 ## Appendix A. Items: size basis and source
 
@@ -468,7 +471,7 @@ Sources name the planning documents (SYNTHESIS, the lane reports, XIC_EVALUATION
 | Item | Lane, phase | Size and basis | Source |
 | --- | --- | --- | --- |
 | N-01 | L-TRAIN, 0 | M (3): revert the export half of 66a6067c and all of 3a416010, which recoloured main's frozen goldens; keep the screen tokens (1); port the stale native specs and run them in one idle-desktop window (1); ready, review, threads, merge (1) | #164 body ('Round 2', 'Not done'); GAP_TABLE SH-18, C51, VW-16, VW-20; gh pr checks 164 (Rust fail, run 41039787422 on 8ef805db); git show 66a6067c; owner message 2026-10-30 ('这几个前端选项我都不满意'). git show 3a416010; gh pr checks 164 (all nine pass, run 41081577399 on 631a4a6e). |
-| N-07 | L-TRAIN, 0 | S (1): PR for the pushed branch (origin at 5cfd8efb: f127692d plus one commit), CI, merge (1) | git log origin/fix/backend-defects-1030 (f127692d, 5cfd8efb); AFTER_BETA1_PLAN.md 7.2 ('Defects and gaps'). |
+| N-07 | L-TRAIN, 0 | S (1): #185 (ready, efd0294a, nine checks green): DEF-1's two answers, threads, squash merge (1) | PR #185 body; git log origin/fix/backend-defects-1030 (f127692d, 5cfd8efb, efd0294a); AFTER_BETA1_PLAN.md 7.2 ('Defects and gaps'). |
 | N-04 | L-TRAIN, 0 | M (3): rebase 8e363e22/4e96a72a onto merged #164 (1); wire the structured plan requests and canonicalIntent (1); rendered QA of the chain editor (1) | GAP_TABLE C10, C16, C22, C24-C26, C38 and the correction on ui/conversion-advanced; #161 'Contract for the UI lane'; git diff --stat 4e96a72a~2 4e96a72a. |
 | N-03 | L-TRAIN, 0 | L (5): three labels (1); labelled-output adoption in Add (1); windowed lists at 1,024 items, QA at 960x640 (1); vendor-centroiding QA and new codes in en/zh-CN (1); schema-5 save warning, ready, review (1) | #161 'Merge blockers' 1-6, 'Stubbed', 'Contract for the UI lane'; GAP_TABLE C04, C05, C14, C39; ADR 0057 decision 3. |
 | N-05 | L-TRAIN, 0 | M (4): contracts.ts shapes (1); readers, axis unit, SelectedSpectrumPanel (1); eight codes, removals, rebase, green checks (1); the on-screen profile line per P175 (1) | #175 body ('Merge order', 'Webview checklist'); ADR 0056 decision 9.2; SYNTHESIS 5.1 (scan browsing, Track A); GAP_TABLE VW-21, VW-31, VW-37. |
@@ -478,8 +481,8 @@ Sources name the planning documents (SYNTHESIS, the lane reports, XIC_EVALUATION
 | N-13 | L-REC, 0 | S (1): XIC_EVALUATION section 10, X0 (1) | XIC_EVALUATION 1, 10 (X0), 11; ADR 0056 decision 7; AFTER_BETA1_PLAN 7.5 (XIC row). |
 | N-14 | L-REC, 0 | S (1): ADR 0068 is written (Proposed, draft PR #183, be/map2d): the owner's answers to its six questions and the ADR 0057 amendment its question 6 names (1) | SYNTHESIS 5.1, 5.2 (2D map), 6.2 A7; internal.md 4 (2D map row); PROJECT_PROPOSAL.md:234; GAP_TABLE VW-38. ADR 0068 on origin/be/map2d. |
 | N-15 | L-REC, 0 | S (1): one amendment to ADR 0056 decisions 1 and 3 (1) | be/reader-meta working tree (MzmlPolarity, charge, MzmlRunSummary 'not here' note); SYNTHESIS 5.2 'Open'; internal.md 4; ADR 0057 decision 2; PROJECT_PROPOSAL.md:246; FEATURE_CATALOG PRJ-006. PR #182 (draft, library only), which carries the dated ADR 0056 note. |
-| A-03 | L-RUNTIME, 0 | M (1-2): manifest-level pruning, 25-class import probe and ANA-004 fixtures on 3.5.0 and 3.6.0, with the Thermo-folder and libiconv probes (1-2) | SYNTHESIS 6.1 P5 (pruning) and 7 D4-D6; openms.md 8 Q1-Q4 (the 3.6.0 Thermo folder, libiconv). |
-| A-02 | L-RUNTIME, 0 | M (2-3): draft (1); notice inventory and options (1); the answers (0-1) | SYNTHESIS 6.2 step B0, 6.1 P5 and 7 D3-D6; internal.md 2.6 and 9 item 5. |
+| A-03 | L-RUNTIME, 0 | M (1-2): 3.5.0 tier 3 already measured in ADR 0066 (#188: adapter_v1.py runs identically, matplotlib and Pillow never load); the 25-class import probe and ANA-004 fixtures on 3.6.0 with the Thermo-folder and libiconv probes, and the planned classes on 3.5.0 without matplotlib and Pillow (1-2) | SYNTHESIS 6.1 P5 (pruning) and 7 D4-D6; openms.md 8 Q1-Q4 (the 3.6.0 Thermo folder, libiconv). ADR 0066 'Measurements' (PR #188). |
+| A-02 | L-RUNTIME, 0 | S (1): #188 (draft, docs only) holds ADR 0066: the options, the 3.5.0 slimming measurements and the notice table, the first estimate's draft and inventory slices (2, done); its amendment after A-03's 3.6.0 probes and the owner's answers to its nine questions (1) | SYNTHESIS 6.2 step B0, 6.1 P5 and 7 D3-D6; internal.md 2.6 and 9 item 5. ADR 0066 on origin/docs/runtime-release-adr (PR #188). |
 | N-B1 | L-READER, 1 | M (3): #182 (draft, library only, stacked on #175): the owner's five choices, review, retarget to main (1); the open takes metadata and run summary from the reader, DTOs gain polarity and charge (1); BPI times computed under a short record and matched to msaccess on a recorded pair, then msaccess leaves the open (1) | be/reader-meta; ADR 0056 decision 3; internal.md 4. PR #182 body ('For the owner'). |
 | N-B2 | L-READER, 1 | L (5): MS1 chromatogram half and level chooser (1); renumber the chromatogram document version, goldens (1); scan-context fields from the reader (1); webview columns and rows, ADR 0033/0034 notes (1); R-2 chromatogram from retained rows above 100,000 spectra (1) | #154 body ('Scope', 'Not done'); #175 body (chromatogram document 1 -> 2). |
 | N-B3 | L-READER, 1 | M (3): native-read lane beside the backend gate (1); load_spectrum admission and selection change (1); lock-order, supersession and generation tests (1) | ADR 0057 decision 1; GAP_TABLE C55. |
@@ -489,7 +492,7 @@ Sources name the planning documents (SYNTHESIS, the lane reports, XIC_EVALUATION
 | N-V2 | L-VIEW, 1 | M (2): nearest-stick hit test (1); keyboard equivalent and live readout (1) | GAP_TABLE VW-09; PROJECT_PROPOSAL.md:244 (P0 'transient hover'). |
 | N-V3 | L-VIEW, 1 | M (4): go to scan N (1); RT window linked to the chromatogram (1); per-sample memory and per-scan zoom (1); scan selected at entry (1) | GAP_TABLE VW-26, VW-28, VW-33, VW-35, VW-51; PROJECT_PROPOSAL.md:245. |
 | N-C1 | L-CONV-A, 1 | M (3): list, save, delete (1); apply as intent (1); copy and QA (1) | GAP_TABLE C42; ADR 0058; #161 'Presets (ADR 0058)'. |
-| N-C2 | L-CONV-A, 1 | L (6): run-2 builder (1); staging with recovery (1); finalized outcome and two-phase progress (1); mzXML precondition and signature checks (1); editor format choice and TitleMaker (1); tests and QA (1) | #161 'Stubbed (fail closed)'; ADR 0055 decision 6; GAP_TABLE C07, C08, C09, C27. |
+| N-C2 | L-CONV-A, 1 | L (6): run-2 builder (1); staging with recovery (1); finalized outcome and two-phase progress (1); mzXML precondition and signature checks (1); editor format choice and TitleMaker (1); tests and QA (1); slice 1 has a local commit on be/two-step (4e3b0ccd on #161's head, not pushed) | #161 'Stubbed (fail closed)'; ADR 0055 decision 6; GAP_TABLE C07, C08, C09, C27. |
 | N-C4 | L-CONV-B, 1 | M (3): contract and hook (1); UI and copy (1); rendered QA with a large SCIEX set at 960x640 (1); slice 1 is #179 | AFTER_BETA1_PLAN.md 6.2; #179 body (ADR 0052 accepted 2026-10-28; 'Still open'). |
 | N-C3 | L-CONV-B, 1 | M (2): one-item scope from the viewed row (1); copy, tests, QA (1) | GAP_TABLE C02 and its correction. |
 | N-R1 | L-VIEWRAW, 1 | M (3): #181 (ready, 5dc7d807): the owner's two slice-2 notes, review, threads (1); after #161, pass the shipped bound intent to plan_conversion's &BoundIntent and rerun CI (1); settle #175's seven preview/service.rs hunks on the pinned entry's path, whichever merges second (1) | ADR 0060 decision 16; AFTER_BETA1_PLAN.md 7.1; be/viewraw-op working tree. PR #181 body ('Merge notes'). |
@@ -538,7 +541,7 @@ Sources name the planning documents (SYNTHESIS, the lane reports, XIC_EVALUATION
 | A-20-UI | L-FEATURES, 2 | M (1-2): a run entry on the Features page with U1's typed parameters, results in N-A5's table and a detail panel with EIC and isotope evidence (1); rendered QA (0-1) | SYNTHESIS 6.2 step B1; GAP_TABLE MOD-01, MOD-02, MOD-04, MOD-05, FA-05. |
 | A-14 | L-MEASURE, 2 | M (2-3): 20-50 real runs (1); labelled synthetic replicas at 100/300/500 (1); budgets and the N=500 go/no-go (0-1) | SYNTHESIS 9 (alignment at hundreds of samples); openms.md 5. |
 | N-C10 | L-CONV-A, 3 | M (3): export the canonical intent as a JSON method file (1); bounded import (1); copy and QA (1) | GAP_TABLE EXP-18, EXP-19; #176; ADR 0058:61-65; AFTER_BETA1_PLAN.md 7.3. |
-| N-C9 | L-CONV-B, 3 | L (5): versioned record (1); bounded Rust store read at start-up (2); history list (1); redacted JSON snapshot (1) | GAP_TABLE EXP-23, EXP-25; AFTER_BETA1_PLAN.md 7.4; FEATURE_CATALOG RUN-007. |
+| N-C9 | L-CONV-B, 3 | M (3): #187 (draft, stacked on be/integrate) holds the versioned record and the bounded Rust store, 3 of the first estimate's 5 slices: RUN-1's answers, its one failing Rust test, retarget to main after #161 (1); history list (1); redacted JSON snapshot (1) | GAP_TABLE EXP-23, EXP-25; AFTER_BETA1_PLAN.md 7.4; FEATURE_CATALOG RUN-007. PR #187 body; ADR 0065 on origin/be/run-history. |
 | N-C5 | L-CONV-B, 3 | M (2): pending RT selection with 'Use in conversion...' confirmation (1); tests and QA (1) | GAP_TABLE VW-47, VW-12. |
 | N-S1 | L-SHELL, 3 | M (3): seven S changes in the roster files (3) | GAP_TABLE RO-08, RO-10, RO-11, RO-15, RO-16, RO-21, RO-25. |
 | N-S6 | L-SHELL, 3 | M (2): choose and record a lawful small file (1); 'Open sample data' with QA (1) | GAP_TABLE SH-16. |
