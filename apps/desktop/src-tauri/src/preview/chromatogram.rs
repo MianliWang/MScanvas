@@ -2182,4 +2182,17 @@ mod tests {
             "and so is the current-range one, window and all",
         );
     }
+
+    /// The linked figure's SVG is byte for byte what it was.
+    ///
+    /// Rendered on main before ADR 0053 gave the renderer its second accessor,
+    /// so a PNG's text could not be had by changing the document it came from.
+    #[test]
+    fn the_linked_figure_document_is_unchanged() {
+        let source = golden_chromatogram();
+        assert_eq!(
+            mscanvas_plot_spec::svg::render(&linked(&source, &selected(2), full(&source), both())),
+            include_str!("../../../../../fixtures/plot-golden/linked-full-run.svg"),
+        );
+    }
 }

@@ -4718,6 +4718,44 @@ fn size() -> FigureSize {
     FigureSize::new(1_200.0, 640.0).expect("a size")
 }
 
+/// One stored target's figure, with the two identifiers a run mints fixed so
+/// its bytes depend on this test alone.
+///
+/// Target 0's label carries quotation marks and target 1's is Chinese, and
+/// both titles end in an em dash and the outcome.
+fn pinned_figure(scratch: &Scratch, position: usize) -> mscanvas_plot_spec::FigureSpec {
+    let (_store, mut stored) = stored_three(scratch);
+    stored.artifact = "00000000-0000-4000-8000-000000000053"
+        .parse()
+        .expect("an artifact id");
+    stored.plan.plan_sha256 = "0".repeat(64);
+    let target = stored.plan.targets[position].target_id;
+    let mut row = extracted_row(target, RowOutcome::DetectedAmbiguous);
+    row.feature = Some(feature(114.0, 126.0, IntensitySource::ModelArea));
+    row.candidates = vec![candidate(114.0, 126.0), candidate(95.0, 99.0)];
+    stored.rows[position] = row;
+    evidence_figure(
+        &stored,
+        target,
+        &evidence_of(target),
+        size(),
+        FigureTheme::Light,
+    )
+    .expect("a figure")
+}
+
+/// A stored target's SVG is byte for byte what it was.
+///
+/// Rendered on main before ADR 0053 gave the renderer its second accessor.
+#[test]
+fn the_stored_target_figure_document_is_unchanged() {
+    let scratch = Scratch::new("m92-golden");
+    assert_eq!(
+        mscanvas_plot_spec::svg::render(&pinned_figure(&scratch, 0)),
+        include_str!("../../../../../fixtures/plot-golden/targeted-stored-result.svg"),
+    );
+}
+
 const RTS: [f64; 5] = [100.0, 110.0, 120.0, 130.0, 140.0];
 const M0: [f64; 5] = [0.0, 500.0, 2_000.0, 400.0, 0.0];
 
