@@ -133,6 +133,13 @@ impl PreviewService {
         self.raw_view_settings().phase_hook = Some(Arc::new(hook));
     }
 
+    #[cfg(test)]
+    pub(in crate::preview) fn raw_view_cancel_requested_for_test(&self) -> bool {
+        self.conversion_slot()
+            .view()
+            .is_some_and(RawView::cancel_requested)
+    }
+
     fn open_view_cache(&self) -> Result<ViewCache, RootRefusal> {
         let parent = self.raw_view_settings().parent.clone();
         ViewCache::open(parent.as_deref())

@@ -3,6 +3,7 @@
 //! Nothing here runs ProteoWizard or touches the real application data.
 
 use std::os::windows::fs::OpenOptionsExt as _;
+use std::time::Instant;
 
 use super::*;
 use crate::preview::dto::PreviewDto;
@@ -16,7 +17,11 @@ use crate::preview::raw_view::{
 struct Recording<R = FakeConversionRunner> {
     inner: ConvertingProvider<R>,
     sources: Arc<Mutex<Vec<PathBuf>>>,
+    /// When armed, the next preview read announces itself and waits.
+    park: Park,
 }
+
+type Park = Arc<Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>>;
 
 impl<R: ProcessRunner + Send + Sync> PreviewProvider for Recording<R> {
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
@@ -32,6 +37,13 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for Recording<R> {
             .lock()
             .expect("the recorded sources")
             .push(source.to_path_buf());
+        let parked = self.park.lock().expect("the park").take();
+        if let Some((started, release)) = parked {
+            started.send(()).expect("announce the parked read");
+            release
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the parked read is released");
+        }
         self.inner.run(source, operation)
     }
 
@@ -58,6 +70,7 @@ struct Viewing {
     launches: Arc<AtomicUsize>,
     arguments: Arc<Mutex<Vec<Vec<String>>>>,
     sources: Arc<Mutex<Vec<PathBuf>>>,
+    park: Park,
 }
 
 const RAW_NAME: &str = "QC pool 01.raw";
@@ -75,9 +88,11 @@ fn viewing_with<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
     let mut inner = ConvertingProvider::new(evidenced_capabilities(), runner);
     inner.inner = FakeProvider::available(responses);
     let sources = Arc::new(Mutex::new(Vec::new()));
+    let park = Park::default();
     let service = Arc::new(PreviewService::new(Box::new(Recording {
         inner,
         sources: Arc::clone(&sources),
+        park: Arc::clone(&park),
     })));
     service.bind_view_cache(Some(app_data.directory.clone()));
     service.set_view_cache_free_space(|_| Some(1 << 40));
@@ -91,6 +106,7 @@ fn viewing_with<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
         launches,
         arguments,
         sources,
+        park,
     }
 }
 
@@ -241,6 +257,16 @@ fn a_miss_converts_the_verified_default_publishes_once_and_opens_the_entry_not_t
         Vec::<String>::new(),
         "the attempt is removed"
     );
+    // Decision 7: the key's source digest is Checking file's chunked one, and
+    // it equals a one-shot hash of the RAW.
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(entry.join("entry.json")).expect("the manifest"))
+            .expect("the manifest parses");
+    let digest = Sha256Digest::calculate_file(&session.raw).expect("hash the RAW");
+    assert_eq!(
+        manifest["sourceSha256"].as_str(),
+        Some(digest.to_string().to_lowercase().as_str())
+    );
     assert_eq!(
         summary(&session.service),
         (1, 1),
@@ -302,9 +328,18 @@ fn a_hit_launches_nothing_and_a_second_session_finds_the_same_entry() {
     let entry = session.the_entry();
     let manifest = fs::read(entry.join("entry.json")).expect("the manifest");
 
-    let (second, cache_hit) = ready(&session.view());
+    // The next View ends a ready operation's pin as it begins, and that
+    // operation can no longer be opened (decision 8).
+    let second = session.begin().expect("View again");
+    assert_eq!(summary(&session.service), (1, 0));
+    session.service.run_raw_view(second);
+    let (_, cache_hit) = ready(&session.service.raw_view_state());
     assert_ne!(first, second);
     assert!(cache_hit);
+    assert_eq!(
+        session.open(first).expect_err("superseded").kind,
+        "raw_view_not_ready"
+    );
     assert_eq!(
         session.launches.load(Ordering::SeqCst),
         1,
@@ -432,6 +467,14 @@ fn a_cancel_while_msconvert_runs_ends_cancelled_and_every_slot_route_answers_raw
     );
     busy(service.clear_view_cache().expect_err("no Clear"));
     busy(service.clear_workspace().expect_err("no clear"));
+    busy(service.begin_folder_import().expect_err("no folder"));
+    // The drop callback reads the lock-free mirror; its transfer object is the
+    // queue's (ADR 0060 slice 2 notes, deferred).
+    let paths = vec![mzml.clone()];
+    assert!(matches!(
+        service.reserve_native_drop_signal(NativeDropSignal::Drop { paths: &paths }),
+        Some(NativeDropDispatch::ConversionBusy)
+    ));
     let refused = service.begin_conversion_queue(
         &begin_request(
             std::slice::from_ref(&mzml_handle),
@@ -562,6 +605,39 @@ fn a_failed_conversion_reports_its_own_code_and_publishes_nothing() {
     let (code, retryable) = failed(&state);
     assert_eq!(code, "backend_rejected");
     assert!(!retryable);
+    assert_eq!(session.entries(), Vec::<String>::new());
+    assert_eq!(session.staging(), Vec::<String>::new());
+    let RawViewStateDto::Failed { message, .. } = state else {
+        unreachable!()
+    };
+    assert!(!message.contains("GiB"), "{message}");
+}
+
+#[test]
+fn a_disk_that_fills_during_the_run_fails_as_the_conversion_and_states_the_free_space() {
+    // Room before the run; less than the reserve once it has failed. The
+    // reason never claims a full disk, because msconvert does not say why.
+    let runner = FakeConversionRunner::new(BackendAct::Fail);
+    let arguments = runner.arguments();
+    let session = viewing_with("raw-view-disk-full", runner, arguments, open_responses());
+    let probes = AtomicUsize::new(0);
+    session.service.set_view_cache_free_space(move |_| {
+        Some(if probes.fetch_add(1, Ordering::SeqCst) == 0 {
+            1 << 40
+        } else {
+            1 << 30
+        })
+    });
+    let state = session.view();
+    assert_eq!(failed(&state), ("backend_rejected", false));
+    let RawViewStateDto::Failed { message, .. } = state else {
+        unreachable!()
+    };
+    assert!(
+        message.ends_with(" 1.0 GiB are free on the drive that holds MSCanvas's application data."),
+        "{message}"
+    );
+    assert!(!message.to_lowercase().contains("full"), "{message}");
     assert_eq!(session.entries(), Vec::<String>::new());
     assert_eq!(session.staging(), Vec::<String>::new());
 }
@@ -786,6 +862,197 @@ fn the_begin_request_has_no_intent_field() {
     );
     assert!(refused.is_err(), "View carries no intent");
     assert!(serde_json::from_str::<RawViewBeginRequestDto>(r#"{"handle":"dataset-1"}"#).is_ok());
+}
+
+#[test]
+fn a_superseded_open_ends_the_view_and_leaves_its_entry_for_the_next_view() {
+    let session = viewing("raw-view-superseded");
+    let (operation, _) = ready(&session.view());
+
+    // The open's first read parks while it holds the backend gate.
+    let (started, observe) = std::sync::mpsc::channel();
+    let (release, parked) = std::sync::mpsc::channel();
+    *session.park.lock().expect("the park") = Some((started, parked));
+    let opening = {
+        let service = Arc::clone(&session.service);
+        std::thread::spawn(move || service.open_raw_view(RawViewOperationRequestDto { operation }))
+    };
+    observe
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the open reads");
+
+    // A newer request for the same row supersedes it (ADR 0056 decision 4).
+    let spectrum = {
+        let service = Arc::clone(&session.service);
+        let handle = session.handle.clone();
+        std::thread::spawn(move || service.load_spectrum(&handle, 0))
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.service.requests_made(&session.handle) < 2 {
+        assert!(
+            Instant::now() < deadline,
+            "the spectrum never claimed its turn"
+        );
+        std::thread::yield_now();
+    }
+    release.send(()).expect("release the open");
+
+    let superseded = opening
+        .join()
+        .expect("the open ends")
+        .expect_err("a newer request won");
+    assert_eq!(superseded.kind, "selection_superseded");
+    // With no view open, the RAW row is still never read directly.
+    let refused = spectrum
+        .join()
+        .expect("the spectrum ends")
+        .expect_err("no preview to read");
+    assert_eq!(refused.kind, "dataset_not_previewable");
+    assert_eq!(summary(&session.service), (1, 0), "the pin ended with it");
+    assert_eq!(
+        session.open(operation).expect_err("opened once").kind,
+        "raw_view_not_ready"
+    );
+
+    let (_, cache_hit) = ready(&session.view());
+    assert!(cache_hit, "the entry stayed, so the next View is a hit");
+    assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn cancel_and_clear_ends_a_running_view_and_deletes_nothing() {
+    use crate::preview::dto::{WorkspaceClearActionDto, WorkspaceClearOutcomeDto};
+
+    let (runner, started, release) = FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let arguments = runner.arguments();
+    let session = viewing_with("raw-view-clear", runner, arguments, open_responses());
+    let before = session.raw_facts();
+    let document = current_document(&session.service);
+    let operation = session.begin().expect("View begins");
+    let worker = Arc::clone(&session.service);
+    let thread = std::thread::spawn(move || worker.run_raw_view(operation));
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("msconvert starts");
+
+    let plan = session
+        .service
+        .plan_workspace_clear(document)
+        .expect("a plan");
+    assert_eq!(
+        (plan.total_count, plan.removable_count, plan.protected_count),
+        (1, 0, 1),
+        "the RAW row being prepared is active work"
+    );
+    let clearing = {
+        let service = Arc::clone(&session.service);
+        let id = plan.plan_id.clone();
+        std::thread::spawn(move || {
+            service.execute_workspace_clear(&id, WorkspaceClearActionDto::CancelAndClear, document)
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !session.service.raw_view_cancel_requested_for_test() {
+        assert!(
+            Instant::now() < deadline,
+            "the clear never cancelled the view"
+        );
+        std::thread::yield_now();
+    }
+    release.send(()).expect("release msconvert");
+    thread.join().expect("the worker ends");
+
+    let outcome = clearing.join().expect("the clear ends");
+    assert!(
+        matches!(outcome, WorkspaceClearOutcomeDto::Removed { .. }),
+        "{outcome:?}"
+    );
+    assert!(!cancelled_stored(&session.service.raw_view_state()));
+    assert!(session.service.roster().datasets.is_empty());
+    assert_eq!(session.entries(), Vec::<String>::new());
+    assert_eq!(session.staging(), Vec::<String>::new());
+    assert_eq!(session.raw_facts(), before, "the RAW is untouched");
+}
+
+#[test]
+fn an_entry_removed_before_its_check_fails_lost_and_converts_nothing_more() {
+    let session = viewing("raw-view-lost");
+    let entries = session.cache().join("entries");
+    let seen = AtomicUsize::new(0);
+    session.service.set_raw_view_phase_hook(move |_, phase| {
+        // The second check is of the entry just published; another process
+        // evicts it first.
+        if phase == RawViewPhaseDto::CheckingCachedCopy && seen.fetch_add(1, Ordering::SeqCst) == 1
+        {
+            for name in entry_names(&entries) {
+                fs::remove_dir_all(entries.join(name)).expect("evicted elsewhere");
+            }
+        }
+    });
+    assert_eq!(failed(&session.view()), ("view_cache_entry_lost", true));
+    assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+    assert_eq!(session.entries(), Vec::<String>::new());
+    assert_eq!(session.staging(), Vec::<String>::new());
+}
+
+#[test]
+fn something_else_in_the_entrys_place_fails_unrecognized_and_is_left_alone() {
+    let first = viewing("raw-view-unrecognized");
+    ready(&first.view());
+    let entry = first.the_entry();
+    let app_data = first.app_data.directory.clone();
+    drop(first.service);
+    fs::remove_dir_all(&entry).expect("the entry goes");
+    fs::write(&entry, b"not MSCanvas's").expect("a file in the entry's place");
+
+    let second = viewing("raw-view-unrecognized-again");
+    second.service.bind_view_cache(Some(app_data));
+    assert_eq!(
+        failed(&second.view()),
+        ("view_cache_entry_unrecognized", false)
+    );
+    assert_eq!(second.launches.load(Ordering::SeqCst), 0);
+    assert_eq!(fs::read(&entry).expect("left as found"), b"not MSCanvas's");
+}
+
+#[test]
+fn a_refused_publishing_rename_fails_not_stored_and_its_held_attempt_waits_for_a_later_sweep() {
+    const SHARE_READ_WRITE: u32 = 0x1 | 0x2;
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+    let session = viewing("raw-view-not-stored");
+    let staging = session.cache().join("staging");
+    let held = Arc::new(Mutex::new(None));
+    let holder = Arc::clone(&held);
+    session.service.set_raw_view_phase_hook(move |_, phase| {
+        if phase == RawViewPhaseDto::Storing {
+            // As a scanner reading the new copy would: no delete sharing, so
+            // the staged entry can be neither renamed nor removed.
+            let attempts = entry_names(&staging);
+            let entry = staging.join(&attempts[0]).join("entry");
+            *holder.lock().expect("held") = Some(
+                fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(SHARE_READ_WRITE)
+                    .custom_flags(BACKUP_SEMANTICS)
+                    .open(entry)
+                    .expect("hold the staged entry"),
+            );
+        }
+    });
+    assert_eq!(failed(&session.view()), ("view_cache_not_stored", true));
+    assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+    assert_eq!(session.entries(), Vec::<String>::new(), "nothing published");
+    assert_eq!(session.staging().len(), 1, "the held attempt stays");
+    drop(held.lock().expect("held").take());
+
+    // This process's own attempt is left by its sweep (decision 6; ADR 0060
+    // slice 2 notes): only a later session, once this owner is gone, removes
+    // it. Nothing is published from it.
+    session.service.set_raw_view_phase_hook(|_, _| {});
+    assert!(!ready(&session.view()).1);
+    assert_eq!(session.entries().len(), 1);
+    assert_eq!(session.staging().len(), 1, "left for a later session");
 }
 
 fn operation_of(state: &RawViewStateDto) -> u64 {

@@ -105,18 +105,6 @@ impl UiPreferenceStore {
         Self::over(binding)
     }
 
-    /// The folder this store is bound to, which is where the view cache lives
-    /// too (ADR 0060 decision 6): the same resolver, and under the `e2e`
-    /// feature the same task-owned QA root. `None` when nothing was bound,
-    /// which refuses View rather than trying another place.
-    #[must_use]
-    pub fn view_cache_parent(&self) -> Option<std::path::PathBuf> {
-        match &self.binding {
-            RootBinding::Bound(root) => Some(root.directory().to_path_buf()),
-            RootBinding::Unavailable(_) => None,
-        }
-    }
-
     /// One store over an already decided binding.
     fn over(binding: RootBinding) -> Self {
         Self {
@@ -149,6 +137,17 @@ impl UiPreferenceStore {
             // The resolver decides this, not this application, so there is
             // nothing here to retry or to point somewhere else.
             Err(_) => RootBinding::Unavailable("rootUnresolved"),
+        }
+    }
+
+    /// The directory this store is bound to, or why there is none, for the
+    /// conversion preset store that lives beside it: the same per-user
+    /// directory, the same QA root under `e2e`, the same reason. Never sent
+    /// anywhere.
+    pub(crate) fn sibling_directory(&self) -> Result<std::path::PathBuf, &'static str> {
+        match &self.binding {
+            RootBinding::Bound(root) => Ok(root.directory().to_path_buf()),
+            RootBinding::Unavailable(problem) => Err(problem),
         }
     }
 

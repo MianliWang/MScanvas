@@ -228,6 +228,11 @@ impl RawView {
         Arc::clone(&self.cancel)
     }
 
+    #[cfg(test)]
+    pub(super) fn cancel_requested(&self) -> bool {
+        self.cancel.load(Ordering::Acquire)
+    }
+
     /// Records Cancel. A running conversion is asked to end at once; the
     /// worker's own reads stop at the next chunk. Storing is not interrupted:
     /// the worker reads the flag again once it has finished (decision 10).

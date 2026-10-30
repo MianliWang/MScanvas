@@ -2646,10 +2646,6 @@ pub fn run() {
             app.manage(SharedPreferences::new(UiPreferenceStore::bind(
                 app.handle(),
             )));
-            // The view cache lives under the preference store's own binding
-            // (ADR 0060 decision 6). Nothing is created until a View.
-            app.state::<SharedService>()
-                .bind_view_cache(app.state::<SharedPreferences>().view_cache_parent());
             // A ProteoWizard folder an earlier session remembered is where this
             // one's discovery starts. Nothing is launched here: the first
             // backend reading probes it, and searches automatically instead,
@@ -2658,6 +2654,11 @@ pub fn run() {
                 app.state::<SharedService>()
                     .start_on_remembered_folder(folder);
             }
+            // The view cache lives beside the preferences, under the same
+            // binding (ADR 0060 decision 6), so the `e2e` QA root applies to it
+            // too. No binding refuses View; nothing is created until a View.
+            app.state::<SharedService>()
+                .bind_view_cache(app.state::<SharedPreferences>().sibling_directory().ok());
             // The project store starts with no project open and no path bound.
             // It resolves nothing, reads nothing and creates nothing until a
             // user acts, so binding it cannot fail and cannot touch the disk.

@@ -1170,7 +1170,9 @@ it says so; the decisions stand otherwise.
    through the handle it was checked with, so no published name comes from the
    user's file. A RAW whose name the plan cannot stage fails with
    `conversion_not_plannable`. Follow-up: a plan with a fixed output name, once
-   `be/integrate` (PR #161) has reshaped `ConversionPlan`.
+   `be/integrate` (PR #161) has reshaped `ConversionPlan`. That PR also makes
+   `plan_conversion` take a bound intent, so the view's call to it, with
+   `SHIPPED`, is adapted when the second of the two merges.
 4. **Hashing.** Checking file is the conversion crate's own admission
    (`ConversionSource::open_thermo_raw_file_reporting`), read in chunks with
    Cancel asked before each, so its digest is the key's and the run's baseline
@@ -1204,7 +1206,9 @@ it says so; the decisions stand otherwise.
    `open_mzml_preview` and `load_selected_spectrum` still refuse a vendor row
    with `dataset_not_previewable`. Only `open_raw_view` opens one, and every
    read of that preview, a spectrum's included, goes to the pinned entry. The
-   next open of any row ends that preview and its pin.
+   next open of any row ends that preview and its pin. Follow-up: when the
+   native reader of PR #175 replaces these reads, its table and spectrum reads
+   of a viewed row take the entry's path too, never the RAW's.
 
 ## Alternatives rejected
 

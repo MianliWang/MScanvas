@@ -59,7 +59,6 @@ use super::dto::{
     queue_is_empty, queue_too_large,
 };
 use super::installation::InstallationIdentity;
-use super::raw_view::{RawView, raw_view_busy};
 use super::selection::{DatasetId, DatasetSourceKind};
 
 const CONVERSION_RESERVATION_PREFIX: &str = "conversion-reservation-";
@@ -1533,7 +1532,7 @@ pub(super) struct ConversionSlot {
     /// The latest one-click view (ADR 0060 decision 5). While it runs it holds
     /// this slot, so every route the slot refuses is refused; the queue state
     /// above is left exactly as it was.
-    view: Option<RawView>,
+    view: Option<super::raw_view::RawView>,
     /// How many views this session has begun: the next one's operation, and a
     /// part of the incarnation a workspace clear is planned against.
     views_begun: u64,
@@ -1667,7 +1666,7 @@ impl ConversionSlot {
     /// holder is a view, so the reason names the work that is in the way.
     pub(super) fn busy_refusal(&self) -> PreviewErrorDto {
         if self.view_is_running() {
-            raw_view_busy()
+            super::raw_view::raw_view_busy()
         } else {
             conversion_busy()
         }
@@ -1686,17 +1685,21 @@ impl ConversionSlot {
             .views_begun
             .checked_add(1)
             .expect("a session begins fewer than u64::MAX views");
-        self.view = Some(RawView::new(self.views_begun, dataset, file_name));
+        self.view = Some(super::raw_view::RawView::new(
+            self.views_begun,
+            dataset,
+            file_name,
+        ));
         Ok(self.views_begun)
     }
 
     /// The latest view, whatever its state.
-    pub(super) const fn view(&self) -> Option<&RawView> {
+    pub(super) const fn view(&self) -> Option<&super::raw_view::RawView> {
         self.view.as_ref()
     }
 
     /// The view this operation names, whatever its state.
-    pub(super) fn view_mut(&mut self, operation: u64) -> Option<&mut RawView> {
+    pub(super) fn view_mut(&mut self, operation: u64) -> Option<&mut super::raw_view::RawView> {
         self.view
             .as_mut()
             .filter(|view| view.operation == operation)
