@@ -236,6 +236,13 @@ pub struct MsLevelCount {
 }
 
 impl MsLevelCount {
+    pub(crate) const fn new(bucket: MsLevelBucket, spectrum_count: u64) -> Self {
+        Self {
+            bucket,
+            spectrum_count,
+        }
+    }
+
     #[must_use]
     pub const fn bucket(self) -> MsLevelBucket {
         self.bucket
@@ -3424,5 +3431,93 @@ mod tests {
             assert!(!precursor_debug.contains(sensitive_value));
         }
         assert!(precursor_debug.contains("index: 0"));
+    }
+
+    /// The native run summary against `msaccess`'s, on a generated pair.
+    ///
+    /// No mzML file is in the repository together with a recorded
+    /// `run_summary` of it: the R0 record kept only each output's digest, and
+    /// `run_summary_fixture()` is synthetic text in the measured format. So the
+    /// pair is generated: a document stating the run the fixture describes,
+    /// with the retention times in whole seconds, because R0 recorded that
+    /// `msaccess` prints `MinRT` and `MaxRT` as whole seconds whatever unit the
+    /// file declares. Nothing converts between units, so the two ranges agree
+    /// only for such a file.
+    #[test]
+    fn the_native_run_summary_agrees_with_msaccess_s_on_a_generated_pair() {
+        use std::io::Cursor;
+
+        use crate::mzml::MzmlScanLimits;
+        use crate::mzml_reader::{
+            MzmlRetentionTimeRange, RetentionTimeUnit, read_spectrum_table_from,
+        };
+
+        let text =
+            run_summary_fixture().replace("\t0.1\t0.2\t0.3\t0.4\t0.5\n", "\t6\t7\t7\t8\t9\n");
+        let outcome = interpret_preview(
+            &PreviewOperation::RunSummary,
+            &completed_process(text.into_bytes()),
+            &PreviewOutputManifest::empty(),
+        )
+        .expect("the summary is interpreted");
+        let PreviewOutcome::Value(value) = outcome else {
+            panic!("a run summary");
+        };
+        let PreviewValue::RunSummary(printed) = *value else {
+            panic!("a run summary");
+        };
+
+        let spectrum = |index: u32, level: u32, seconds: u32| {
+            let cv = |accession: &str, value: &str| {
+                format!(r#"<cvParam cvRef="MS" accession="{accession}" value="{value}"/>"#)
+            };
+            format!(
+                r#"<spectrum index="{index}" id="scan={}" defaultArrayLength="0">{}{}{}{}<scanList count="1"><scan><cvParam cvRef="MS" accession="MS:1000016" value="{seconds}" unitAccession="UO:0000010"/></scan></scanList></spectrum>"#,
+                index + 1,
+                cv("MS:1000511", &level.to_string()),
+                cv("MS:1000504", "500"),
+                cv("MS:1000505", "50"),
+                cv("MS:1000285", "100"),
+            )
+        };
+        // The MS2 spectrum first, so the order of the two readings differs.
+        let document = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?><mzML xmlns="http://psi.hupo.org/ms/mzml" version="1.1.0"><run id="tiny"><spectrumList count="2">{}{}</spectrumList></run></mzML>"#,
+            spectrum(0, 2, 9),
+            spectrum(1, 1, 6),
+        );
+        let native =
+            read_spectrum_table_from(Cursor::new(document.as_bytes()), MzmlScanLimits::default())
+                .expect("the document opens")
+                .run_summary();
+
+        assert_eq!(native.spectrum_count(), printed.total_spectrum_count());
+        // Bucket order is each reader's own, so the buckets compare as a set.
+        let by_level = |counts: &[MsLevelCount]| {
+            let mut counts = counts.to_vec();
+            counts.sort_by_key(|count| match count.bucket() {
+                MsLevelBucket::Level(level) => level,
+                MsLevelBucket::Other => u32::MAX,
+            });
+            counts
+        };
+        assert_eq!(
+            by_level(native.counts_by_ms_level()),
+            by_level(printed.counts_by_ms_level())
+        );
+        let range = printed.retention_time_range().expect("printed");
+        assert_eq!(
+            native.retention_time_range(),
+            MzmlRetentionTimeRange::Reported {
+                minimum: range.minimum().value(),
+                maximum: range.maximum().value(),
+                unit: RetentionTimeUnit::Second,
+            }
+        );
+        // What only one side states: `msaccess` prints no unit and no
+        // chromatogram count.
+        assert_eq!(range.minimum().unit(), RetentionTimeUnitState::NotEmitted);
+        assert_eq!(printed.chromatogram_count(), None);
+        assert_eq!(native.chromatogram_count(), 0);
     }
 }

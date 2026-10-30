@@ -362,6 +362,51 @@ Both need a follow-up decision. It must:
 > instead of the backend gate. Opening a preview during a conversion stays
 > refused, and viewing without ProteoWizard stays open.
 
+> **2026-10-30: library extension toward the viewing-without-ProteoWizard
+> follow-up; routing and admission unchanged.** The reader now produces, from
+> the mzML alone and in the open's one table pass, what that follow-up would
+> move off `msaccess`. Nothing reads it yet:
+>
+> - the open still asks `msaccess` for the metadata and the run summary;
+> - the QC snapshot still records `msaccess`'s run summary;
+> - the shared `SpectrumTableRow` still leaves a native row's charge
+>   unreported (decision 5).
+>
+> It widens decision 1's out-of-scope list (polarity, instrument
+> configurations, the chromatogram count) for the library only. It is put to
+> the owner with the pull request.
+>
+> - **Per spectrum.** `MzmlSpectrumRow` carries polarity (MS:1000130,
+>   MS:1000129) from the spectrum's own terms and its param groups; a polarity
+>   inside the scan is not read. `MzmlPrecursor` carries the charge
+>   (MS:1000041) of its first selected ion, the rule its m/z already follows.
+> - **Run-level metadata** (`MzmlMetadata`). The file content, source files,
+>   contact, samples, software, instrument configurations with their
+>   components, data processing with its methods, and the `run` element. Each
+>   keeps its unprefixed attributes and its parameters, with a referenced param
+>   group's parameters in place of the reference. It is typed rather than
+>   `msaccess`'s text, so a view built on it is a new view (decision 3).
+> - **Run summary** (`MzmlRunSummary`). The spectra and `chromatogram`
+>   elements the pass counted, one bucket per declared MS level with the
+>   lowest first, and the lowest and highest retention time of the rows in
+>   their one unit, or no range for mixed units. It has no retention time at
+>   a share of cumulative base-peak intensity: that is decision 7's excluded
+>   computation, and stays `msaccess`'s.
+> - **No new refusal.** These facts stay out of decision 1's conflicting-term
+>   rule, which would refuse files that open today. Instead:
+>   - a polarity or charge stated two ways is conflicting, and a charge that is
+>     not an integer is unreadable; neither is reported;
+>   - a metadata attribute that does not normalize is not reported;
+>   - metadata above 4 MiB, counting the param groups, is not reported at all,
+>     never in part.
+>
+>   The table stands in each case.
+> - **Comparison with `msaccess`.** No mzML is committed together with a
+>   recorded `run_summary` of it, because R0 kept output digests only. A
+>   generated pair checks the spectrum count, the MS-level buckets and a
+>   whole-second range against the parser. A real-file comparison needs a
+>   ProteoWizard hold release.
+
 ### 4. Offsets are kept with the open preview
 
 Every open is a full pass, because no index is trusted (decision 2). In the
