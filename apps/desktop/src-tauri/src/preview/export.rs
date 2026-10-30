@@ -1054,18 +1054,6 @@ impl ScientificExportSlots {
         ticket
     }
 
-    /// Whether this ticket names the latest preview open.
-    ///
-    /// The one question this slot answers on its own, and only for a caller
-    /// that holds the workspace lock across the question and what it does with
-    /// the answer: an open's commit of its retained preview (ADR 0056, decision
-    /// 4). Every production ticket is taken under that lock too, so the answer
-    /// cannot go stale between the question and the write. Installing an export
-    /// still goes through the reconcilers below, which ask and act in one call.
-    pub(super) fn is_latest_preview_open(&self, ticket: PreviewOpenTicket) -> bool {
-        ticket == self.latest_preview_open
-    }
-
     /// Retains the run summary one *completed* open established, if that open
     /// is still the latest, and answers the name a QC capture may use for it.
     ///

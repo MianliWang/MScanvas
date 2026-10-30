@@ -663,6 +663,49 @@ Slice 1 therefore meets this decision's merge condition.
    - Copy for the new refusals.
    - Rendered QA.
 
+> **2026-10-30: slice 2's Rust side is implemented** (branch
+> `be/reader-preview`); its webview commit is pending, and until it lands the
+> Rust and webview contracts disagree, so the two merge together. What the
+> implementation records:
+>
+> - **The `msaccess` operations stay in the crate.** The provider's open asks
+>   only for metadata and the run summary, and the selected-spectrum operation,
+>   `SELECTED_SPECTRUM_PRECISION` and the installation staleness check are
+>   removed from the desktop. The crate keeps `SpectrumTable` and
+>   `SpectrumByIndex` and their parsers, as it keeps `Tic`: capability evidence,
+>   discovery and the M0 spike example use them. Availability is still judged
+>   against all four operations, because changing it is the admission change
+>   decision 3 leaves to its follow-up.
+> - **Shared types.** The `msaccess`-only fields stay, optional, and a native row
+>   or spectrum leaves them unreported. Printed-text precision becomes
+>   `SpectrumValueOrigin`, whose native variant carries the two arrays' stored
+>   widths. Each unit state keeps `msaccess`'s "not emitted" apart from a file's
+>   "not declared"; both reach the webview as not reported.
+> - **One reader refusal added.** A declared array unit that is not an accession
+>   (`PREFIX:ID`, ASCII letters and digits) refuses the spectrum
+>   (`unit_not_an_accession`): a unit reaches the CSV/TSV preamble and figure
+>   labels, which admit no quoting.
+> - **Reconciliation is exact** (`TableRowFacts::contradicts`), including the
+>   retention-time unit.
+> - **Decision 4.** An open takes its ticket and drops every other dataset's
+>   preview state in one hold of the workspace lock. Its commit holds the
+>   workspace lock with the export slot inside it: the epoch check, the slot's
+>   own compare-and-install of the run summary and the chromatogram, and the
+>   write of the preview state are one critical section, so the slot still
+>   answers no "is this ticket current" question on its own. An older open of
+>   another dataset that finishes after a newer one began answers
+>   `selection_superseded` and retains nothing.
+> - **Typed refusals**, with the reader's stable identifier as the detail:
+>   `spectrum_table_refused`, `spectrum_table_unreadable`, `preview_not_open`,
+>   `spectrum_not_as_recorded`, `spectrum_value_not_exact`,
+>   `spectrum_encoding_unsupported`, `spectrum_unreadable` and
+>   `spectrum_refused`. An index outside the open's table stays the existing
+>   unavailable outcome.
+> - **Exports.** CSV and TSV write the stored values exactly, tested with 32- and
+>   64-bit floats that do not survive eight decimals. The chromatogram's data
+>   document writes `second`, `minute` or `unreported`; the spectrum's writes the
+>   representation and each array's unit accession.
+
 ## Evidence
 
 The spike ran on `main` at `cd27279`, in a local scratch directory that is not

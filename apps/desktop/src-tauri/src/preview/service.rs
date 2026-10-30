@@ -149,10 +149,9 @@ use super::dto::{
 };
 use super::export::{
     BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
-    ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, RunSummaryToken,
-    ScientificExportSlots, SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest,
-    data_document, exported_point_count, figure_raster, png_document, png_of, raster_of,
-    svg_document,
+    ClaimedSpectrumExport, FigureFailure, LinkedTokens, ScientificExportSlots,
+    SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest, data_document,
+    exported_point_count, figure_raster, png_document, png_of, raster_of, svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -3706,44 +3705,6 @@ impl PreviewService {
 
     // ------------------------------------------------- chromatogram export
 
-    /// Retains, or revokes, the chromatogram one committed preview can export.
-    //
-    // The eligibility is the visible viewer's, deliberately and not
-    // approximately: Rust holds every row the backend reported while the
-    // webview receives a bounded prefix, so a run whose table could not be
-    // transferred whole has no chromatogram on screen -- and issuing a token
-    // for it would let an export reach science the product does not otherwise
-    // show. A truncated viewer has no chromatogram and no chromatogram export.
-    //
-    // Answers the opaque name the webview receives, or `None` where there is
-    // nothing to name. The previous chromatogram is already gone by this point:
-    // the ticket this open took at its beginning revoked it there, because a
-    // token naming a run the user is no longer looking at must fail as stale
-    // rather than quietly export whatever happens to be loaded now.
-    //
-    // `ticket` is what decides whether this completion may speak at all. The
-    // per-dataset request epoch checked before this cannot: two opens of two
-    // *different* datasets are each the newest request for their own dataset,
-    // so by that test both are current and whichever finishes last would own
-    // the one chromatogram the session has -- which is the older one whenever
-    /// the newer open is the faster read.
-    fn reconcile_chromatogram_export(
-        &self,
-        ticket: PreviewOpenTicket,
-        owner: DatasetId,
-        rows: &Arc<Vec<TableRowFacts>>,
-        truncated: bool,
-    ) -> Option<String> {
-        // Decided before the lock: whether a run is one the viewer would draw is
-        // a question about the science, and the answer does not depend on what
-        // any other open is doing. What must not be split is the ownership test
-        // and the installation, and those are one call below.
-        let source = ChromatogramSource::from_rows(rows, truncated).ok();
-        self.spectrum_export_slot()
-            .reconcile_preview_chromatogram(ticket, owner, source)
-            .map(|snapshot| snapshot.token().as_wire())
-    }
-
     /// Binds one chromatogram export and reserves the one scientific lane.
     //
     // The range is resolved here, against the run the token names, and what
@@ -7295,9 +7256,22 @@ impl PreviewService {
         let run_summary =
             run_summary_dto(&run_summary_facts, retention_time_range_dto(&table_rows));
 
+        // Decided before any lock: whether a run is one the viewer would draw
+        // is a question about the science, the answer does not depend on what
+        // any other open is doing, and ordering a run at the reader's limit is
+        // not work to do while the workspace waits.
+        let table_rows = Arc::new(table_rows);
+        let chromatogram =
+            ChromatogramSource::from_rows(&table_rows, spectrum_table.truncated).ok();
+        let qc_producer_identified = producer_installation
+            .as_ref()
+            .and_then(InstallationIdentity::producer_facts)
+            .is_some();
+
         // One commit, under one lock, of facts that are only true together: the
-        // generation this was read at, the table with its offsets, and the rows
-        // a later spectrum is reconciled against.
+        // generation this was read at, the table with its offsets, the rows a
+        // later spectrum is reconciled against, and the chromatogram and run
+        // summary the session may export or copy.
         let mut workspace = self.workspace();
         // The dataset can have been revoked while this ran, and a newer request
         // for it can have been made: the workspace stays answerable throughout,
@@ -7306,25 +7280,37 @@ impl PreviewService {
         // preview facts for a dataset that no longer exists, or the older of two
         // reads of one dataset deciding what a later spectrum is reconciled
         // against -- the commit order of two opens is not their request order.
-        //
-        // And only if this is still the latest open across every dataset (ADR
-        // 0056, decision 4). Asked with the workspace held and the export slot
-        // inside it, as the leaf it is: every production ticket is taken under
-        // this lock too, so no newer open can start between this check and the
-        // write below. Without it an older open of another dataset could commit
-        // after a newer one began, and two datasets would retain native tables.
-        if !workspace.request_is_current(id, epoch)
-            || !self
-                .spectrum_export_slot()
-                .is_latest_preview_open(preview_open)
-        {
+        if !workspace.request_is_current(id, epoch) {
             return Err(superseded());
         }
-        let table_rows = Arc::new(table_rows);
+        // And only if this is still the latest open across every dataset (ADR
+        // 0056, decision 4). The export slot is taken inside the workspace
+        // lock, as the leaf it is, and the ticket is compared by the slot's own
+        // compare-and-install: a stale one installs nothing, revokes nothing
+        // and answers as superseded, and the preview state below is not written
+        // either. Every production ticket is taken under the workspace lock
+        // too, so no newer open can begin between this and the write -- without
+        // it an older open of another dataset could commit after a newer one
+        // began, and two datasets would retain native tables.
+        let mut slots = self.spectrum_export_slot();
+        let Some(qc_snapshot_token) = slots.reconcile_preview_run_summary(
+            preview_open,
+            id,
+            run_summary_facts,
+            producer_installation,
+        ) else {
+            return Err(superseded());
+        };
+        // Install *or* revoke, never neither: this open is the one the session
+        // is on, so a run with no chromatogram leaves the session with none.
+        let chromatogram_export_token = slots
+            .reconcile_preview_chromatogram(preview_open, id, chromatogram)
+            .map(|snapshot| snapshot.token().as_wire());
+        drop(slots);
         workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
             source: before,
             table: Arc::new(table),
-            table_rows: Arc::clone(&table_rows),
+            table_rows,
         });
         // Described as the roster describes it, so a preview header and the row
         // it belongs to cannot disagree about which of two identically named
@@ -7339,35 +7325,6 @@ impl PreviewService {
         let described =
             dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None));
         drop(workspace);
-        // The export slots are a leaf: taken after the workspace lock or inside
-        // it, never the other way round, so there is no inversion to reason
-        // about.
-        //
-        // Install *or* revoke, never neither -- and only if this open is still
-        // the one the session is on. A completion that a newer open has passed
-        // installs nothing and revokes nothing: the answer it is carrying is one
-        // the webview has already decided not to look at.
-        let chromatogram_export_token = self.reconcile_chromatogram_export(
-            preview_open,
-            id,
-            &table_rows,
-            spectrum_table.truncated,
-        );
-        // By the same ordering rule and in the same slot: only the latest open
-        // may retain a summary a QC snapshot can copy.
-        let qc_producer_identified = producer_installation
-            .as_ref()
-            .and_then(InstallationIdentity::producer_facts)
-            .is_some();
-        let qc_snapshot_token = self
-            .spectrum_export_slot()
-            .reconcile_preview_run_summary(
-                preview_open,
-                id,
-                run_summary_facts,
-                producer_installation,
-            )
-            .map(RunSummaryToken::as_wire);
 
         Ok(PreviewDto {
             authority: projection.to_dto(),
@@ -7376,7 +7333,7 @@ impl PreviewService {
             metadata,
             run_summary,
             spectrum_table,
-            qc_snapshot_token,
+            qc_snapshot_token: Some(qc_snapshot_token.as_wire()),
             qc_producer_identified,
         })
     }

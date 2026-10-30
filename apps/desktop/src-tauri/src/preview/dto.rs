@@ -2810,9 +2810,10 @@ pub struct PreviewDto {
     /// Rust copies the whole summary it retained, not the bounded projection
     /// above.
     ///
-    /// `None` where this reply is not the latest open's, which the page is
-    /// discarding anyway. Stops naming anything the moment another preview
-    /// open begins.
+    /// Present on every successful open: since ADR 0056 (decision 4) a reply
+    /// that is no longer the latest open's is refused as superseded rather
+    /// than answered without one. Stops naming anything the moment another
+    /// preview open begins.
     pub qc_snapshot_token: Option<String>,
     /// Whether the build that produced this preview can be identified well
     /// enough for a snapshot to record it. Where it cannot, a capture is

@@ -427,6 +427,11 @@ writer and Rust's ownership of files.
   and base peak intensity, printed to two decimals, matched the stored values
   (installed check, item 5). Read at full precision or decode the arrays; the
   measurement needs a new bounded release of the ProteoWizard hold.
+  **Addressed by ADR 0056 slice 2 once merged** (Rust side on
+  `be/reader-preview`; its webview commit is pending): the table and the
+  selected spectrum are read natively, `SELECTED_SPECTRUM_PRECISION` is gone,
+  and CSV/TSV write the stored values exactly (tested in Rust). Rechecking the
+  installed item still needs the hold release above.
 - NQ-I's worker `beforeSession` guard throws at `e2e/wdio.pm9-native.conf.ts:201`
   on every attempt and WDIO only logs it, so the checks after it never run;
   `specs[0]` arriving as a `file:///` URL is the unconfirmed suspect.
