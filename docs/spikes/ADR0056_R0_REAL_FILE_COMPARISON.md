@@ -4,6 +4,9 @@ Status: **passed** on the rerun. Both files read exactly.
 Rerun: 2026-10-30 (UTC). Reader source: `be/reader` at `f327055`, which
 reads an unstated version from `xsi:schemaLocation` under the owner's
 amendment of decision 1 that day.
+Recheck: at `332cc0d`, which fixes two review findings (every precursor
+judged in the table, character references in a payload), the product's dumps
+of both files are byte-identical to the rerun's.
 First run: 2026-10-29, reader `4d45494`. It was **not passed**: the product
 refused the PXD081190 file at the open ([The first run's refusal](#the-first-runs-refusal)).
 Owner: [ADR 0056](../architecture/adr/0056-project-owned-mzml-reader-for-viewing.md),
@@ -295,6 +298,7 @@ free and 49–57% used, and the rerun had 28.29–31.31 GiB free and 51–56% us
 
 | Scratch file | SHA-256 |
 | --- | --- |
+| `r0-prod.exe`, recheck (466,944 bytes, reader `332cc0d`; outputs in `D:\tmp\public-data\r0c\`) | `e196487ffa848eb9a3765ea8aafa2e325f461c6c4f2725c032321d5dc7304690` |
 | `r0-prod.exe`, rerun (465,920 bytes, reader `f327055`) | `be9e002628f292d3a2418a2bfc8dae537e8821a6f72b37506488a98c8302f180` |
 | `r0-prod.exe`, first run (461,312 bytes, reader `4d45494`) | `82376bde00e1114a88009219da297d81ac149222f779eba74ed43b2211e68f2d` |
 | `r0-mzd.exe` (2,353,152 bytes) | `a2cdf7fa8fe1bcb28ffbd536dd8e82f21a22a3892d5feb0efdebab11c413a635` |
