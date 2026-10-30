@@ -270,6 +270,20 @@ impl Workspace {
         Some(state.request_epoch)
     }
 
+    /// Drops every row's preview that holds a view-cache entry, and its pin
+    /// with it: one preview at a time holds an entry (ADR 0060 decision 8).
+    fn end_viewed_previews(&mut self) {
+        for state in self.runtime.values_mut() {
+            if state
+                .preview
+                .as_ref()
+                .is_some_and(|preview| preview.view.is_some())
+            {
+                state.preview = None;
+            }
+        }
+    }
+
     /// Starts an open for one dataset: claims the epoch that names it, drops
     // what the previous open recorded, and hands back the file to read.
     //
@@ -291,20 +305,6 @@ impl Workspace {
         state.request_epoch += 1;
         state.preview = None;
         Some((state.request_epoch, file))
-    }
-
-    /// Drops every row's preview that holds a view-cache entry, and its pin
-    /// with it: one preview at a time holds an entry (ADR 0060 decision 8).
-    fn end_viewed_previews(&mut self) {
-        for state in self.runtime.values_mut() {
-            if state
-                .preview
-                .as_ref()
-                .is_some_and(|preview| preview.view.is_some())
-            {
-                state.preview = None;
-            }
-        }
     }
 
     /// Starts a request that reads one dataset and changes nothing about it:
