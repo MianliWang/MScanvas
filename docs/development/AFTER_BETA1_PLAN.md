@@ -421,8 +421,13 @@ writer and Rust's ownership of files.
     and before any release ships the runtime;
   - `glib` (Rust) is only in Tauri's Linux GTK backend, not in the Windows
     dependency tree; the fix needs gtk-rs 0.20 and the cargo batch keeps glib
-    0.18.5, so it is proposed to the owner for dismissal (see
+    0.18.5;
+  - owner decision, 2026-10-30: these 44 alerts (Pillow 41, extract-zip 2,
+    glib 1) are not dismissed; they stay open and are fixed later as above (see
     [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md)).
+- `PM9.7-I2 … zh-CN-1366x768` (`e2e/specs/pm9.7-integrated.browser.e2e.ts:397`,
+  the scrolled-to-end check) is flaky in CI: it failed on `main` at `7c2c774`
+  and on PR #167 at `9f7b1be` with no frontend change, and passed on rerun.
 - The real targeted-MS1 engine qualification and, before any release ships the
   runtime, its packaging, licence qualification and worker confinement.
 - Exported values are not the stored binary values: a spectrum is read through
