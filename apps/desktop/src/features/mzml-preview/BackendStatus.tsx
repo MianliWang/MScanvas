@@ -187,7 +187,8 @@ export function BackendStatus({
           <span className={detail} data-backend-code="">{t("backendProblemCode", { code: banner.code })}</span>
         ) : null}
       </div>
-      <div className="backend-status-actions" hidden={mode === "hidden" || offered?.every((at) => at < 0) === true}>
+      <div className="backend-status-actions"
+        hidden={mode === "hidden" || banner.actions.length === 0 || offered?.every((at) => at < 0) === true}>
         {banner.actions.map((entry, position) => (
           // Refused rather than disabled while a request runs (UI-24): the
           // keyboard stays on the action it pressed, through the native picker
