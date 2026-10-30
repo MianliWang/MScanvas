@@ -1935,6 +1935,59 @@ fn the_table_keeps_every_metadata_section_with_its_groups_resolved() {
 }
 
 #[test]
+fn conflicting_metadata_parameters_are_kept_as_stated_and_the_open_stands() {
+    // A model stated on the configuration that differs from its group's, and
+    // one term stated twice with different values: metadata parameters are
+    // carried as the document states them, in order, and never judged.
+    let document = described(&[ms1_default(0), ms2(1)])
+        .replacen(
+            "<referenceableParamGroupRef ref=\"CommonInstrumentParams\"/>",
+            &format!(
+                "<referenceableParamGroupRef ref=\"CommonInstrumentParams\"/>{}",
+                cv("MS:1001742", "LTQ Orbitrap Velos", "")
+            ),
+            1,
+        )
+        .replacen(
+            &cv("MS:1000615", "ProteoWizard software", ""),
+            &format!(
+                "{}{}",
+                cv("MS:1000615", "ProteoWizard software", "3.0.1"),
+                cv("MS:1000615", "ProteoWizard software", "3.0.2")
+            ),
+            1,
+        );
+    let table = table(&document).expect("opens");
+    assert_eq!(table.rows(), rows(&base()));
+    let MzmlMetadata::Read(elements) = table.metadata() else {
+        panic!("read");
+    };
+    let of = |kind| {
+        elements
+            .iter()
+            .find(|element| element.kind() == kind)
+            .expect("stated")
+    };
+    let configuration = of(MzmlMetadataKind::InstrumentConfiguration);
+    assert_eq!(
+        accessions(configuration),
+        [
+            Some("MS:1001911"),
+            Some("MS:1000529"),
+            None,
+            Some("MS:1001742")
+        ]
+    );
+    let software = of(MzmlMetadataKind::Software);
+    let versions: Vec<_> = software
+        .params()
+        .iter()
+        .map(MzmlParam::sensitive_value)
+        .collect();
+    assert_eq!(versions, [Some("3.0.1"), Some("3.0.2")]);
+}
+
+#[test]
 fn metadata_the_document_does_not_state_is_not_reported() {
     let elements = metadata(&base());
     let kinds: Vec<_> = elements.iter().map(MzmlMetadataElement::kind).collect();
