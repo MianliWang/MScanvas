@@ -17,5 +17,7 @@ repository.workspace = true
 test-support = []
 
 [dependencies]
+base64.workspace = true
+flate2.workspace = true
 quick-xml.workspace = true
 thiserror.workspace = true

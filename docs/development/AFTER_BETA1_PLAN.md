@@ -145,7 +145,9 @@ accepted):
   ProteoWizard hold release. *R0 ran on 2026-10-29 on public files
   ([PR #157](https://github.com/MianliWang/MScanvas/pull/157)) and did not
   pass: the reader refused the `PXD081190` file, whose `<mzML>` has no
-  `version` attribute. Decision 2 below amends ADR 0056, and R0 runs again;*
+  `version` attribute. Decision 2 below amends ADR 0056. R0 ran again on
+  2026-10-30 and passed: the reader reads both files exactly
+  ([record](../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md));*
 - whether product pull requests may be merged without the owner. *Answered
   2026-10-29: they may (the merging bullet above);*
 - which demo direction the interface follows.
@@ -541,7 +543,8 @@ None can be delivered by engineering alone; each waits for one input.
 - ADR 0056's re-measurement (R0): the PRIDE `PXD081190` download, an MS1
   profile-mode file the owner authorizes, and a ProteoWizard hold release.
   *R0 ran on 2026-10-29 and did not pass; the owner amended ADR 0056's
-  decision 1 on 2026-10-30, and R0 runs again before slice 1 merges.*
+  decision 1 on 2026-10-30, and the rerun that day passed
+  ([record](../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md)).*
 - *Answered 2026-10-29:* product pull requests may be merged without the
   owner, once every required check passes and no review thread is open.
 - *Answered 2026-10-30* (section 2): the vendor format strategy (ADR 0059),
