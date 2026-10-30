@@ -33,9 +33,9 @@
 //!
 //! Everything else is left exactly as found and counted: a link or other
 //! reparse point where a cache directory or an entry's file belongs, an unknown
-//! name, a directory not named by a key, an entry with anything else in it, and
-//! a root without its marker. Inside an attempt being removed, a link is
-//! removed as the link: `std::fs::remove_dir_all` never traverses one.
+//! name, a directory not named by a key -- spelled otherwise than in lowercase
+//! included --, an entry with anything else in it, an attempt with a link or
+//! other reparse point anywhere below it, and a root without its marker.
 //!
 //! ## Names are held while they are used
 //!
@@ -44,8 +44,9 @@
 //! them without delete sharing. None of those names can then be renamed away
 //! and replaced by a link while a path through them is in use. Every handle is
 //! opened on the name itself (`FILE_FLAG_OPEN_REPARSE_POINT`) and checked to be
-//! a plain directory, or a plain file, before anything below it is touched, and
-//! a file is removed through such a handle, never by resolving its name again.
+//! a plain directory spelled on disk exactly as the cache spells it, or a plain
+//! file, before anything below it is touched, and a file is removed through
+//! such a handle, never by resolving its name again.
 //!
 //! ponytail: the three lifetime handles must share write access, because
 //! creating and publishing into them needs it, so one of them could be turned
@@ -513,7 +514,7 @@ impl Removal {
             }
             Removed::Absent => {}
             Removed::InUse => self.kept_in_use += 1,
-            Removed::Unrecognized => self.unrecognized_left += 1,
+            Removed::Unrecognized | Removed::Linked => self.unrecognized_left += 1,
             Removed::Failed => self.failed += 1,
         }
     }
@@ -573,7 +574,7 @@ impl ViewCache {
         let mut removal = self.evict(u64::MAX);
         let sweep = self.sweep_staging();
         removal.failed += sweep.failed;
-        removal.unrecognized_left += sweep.unrecognized;
+        removal.unrecognized_left += sweep.unrecognized + sweep.linked;
         removal
     }
 
@@ -675,6 +676,9 @@ pub(crate) struct Sweep {
     pub(crate) uncertain: usize,
     /// Not provably an attempt: left exactly as found.
     pub(crate) unrecognized: usize,
+    /// A gone owner's attempt with a link or other reparse point below it:
+    /// left whole, because no link is ever a candidate (decision 9).
+    pub(crate) linked: usize,
     /// A gone owner's attempt whose removal did not finish. Its marker stays
     /// with the remainder for a later sweep.
     pub(crate) failed: usize,
@@ -732,7 +736,10 @@ impl ViewCache {
                     match remove_attempt(&path, Some(identity)) {
                         // Absent: another process swept it first.
                         Removed::Gone { .. } | Removed::Absent => sweep.removed += 1,
-                        _ => sweep.failed += 1,
+                        Removed::Linked => sweep.linked += 1,
+                        // No longer the object whose marker was read.
+                        Removed::Unrecognized => sweep.unrecognized += 1,
+                        Removed::InUse | Removed::Failed => sweep.failed += 1,
                     }
                 }
             }
@@ -903,6 +910,8 @@ enum Removed {
     InUse,
     /// Not something this module removes. Untouched.
     Unrecognized,
+    /// An attempt holding a link or other reparse point. Left whole.
+    Linked,
     Failed,
 }
 
@@ -957,8 +966,16 @@ fn remove_fixed(path: &Path, names: &[&str]) -> Removed {
 
 /// Removes an attempt directory and everything in it, its marker last, so a
 /// removal that stops part way leaves a remainder a later sweep still
-/// recognises. A link inside is removed as the link and never followed. With
-/// `identity`, the directory must still be that object.
+/// recognises. With `identity`, the directory must still be that object.
+///
+/// An attempt with a link or other reparse point anywhere below it, or that
+/// cannot be shown to have none, is left whole with its marker: no link is
+/// ever a candidate (decision 9), as `conversion_run/cleanup.rs` refuses one.
+///
+/// ponytail: the scan is by path, so a link planted after it is removed as
+/// the link by `std::fs::remove_dir_all`, which never traverses one; nothing
+/// it points at is touched. Handle-relative removal, as `cleanup.rs` does it,
+/// closes that if it ever matters.
 fn remove_attempt(path: &Path, identity: Option<(u64, [u8; 16])>) -> Removed {
     let directory = match open_directory(path, DELETE, SHARE_READ) {
         Ok(directory) => directory,
@@ -968,6 +985,9 @@ fn remove_attempt(path: &Path, identity: Option<(u64, [u8; 16])>) -> Removed {
         .is_some_and(|expected| local_document::object_identity_of(&directory) != Some(expected))
     {
         return Removed::Unrecognized;
+    }
+    if may_hold_a_reparse_point(path) {
+        return Removed::Linked;
     }
     let Ok(children) = fs::read_dir(path) else {
         return Removed::Failed;
@@ -993,6 +1013,23 @@ fn remove_attempt(path: &Path, identity: Option<(u64, [u8; 16])>) -> Removed {
         Ok(()) => Removed::Gone { bytes: 0 },
         Err(_) => Removed::Failed,
     }
+}
+
+/// Whether anything below `directory` is a link or other reparse point, or
+/// could not be listed. Never follows one: a listing's metadata is the
+/// name's own.
+fn may_hold_a_reparse_point(directory: &Path) -> bool {
+    let Ok(children) = fs::read_dir(directory) else {
+        return true;
+    };
+    children.into_iter().any(|child| {
+        child
+            .and_then(|child| Ok((child.metadata()?, child.path())))
+            .map_or(true, |(metadata, path)| {
+                local_document::is_reparse_point(&metadata)
+                    || (metadata.is_dir() && may_hold_a_reparse_point(&path))
+            })
+    })
 }
 
 fn removal_refusal(error: &io::Error) -> Removed {
@@ -1049,18 +1086,58 @@ fn plain_directory(metadata: &fs::Metadata) -> bool {
 }
 
 /// Opens a directory on its own name, never a link's target. A name that is
-/// not a plain directory answers `NotADirectory`.
+/// not a plain directory, or is spelled on disk otherwise than `path`'s last
+/// component, answers `NotADirectory`: NTFS opens a name ignoring case, so
+/// `entries\<key>` would otherwise open a `<KEY>` that is not a key's.
 fn open_directory(path: &Path, access: u32, share: u32) -> io::Result<File> {
     let directory = OpenOptions::new()
         .access_mode(access | LIST_DIRECTORY | READ_ATTRIBUTES | SYNCHRONIZE)
         .share_mode(share)
         .custom_flags(BACKUP_SEMANTICS | OPEN_REPARSE_POINT)
         .open(path)?;
-    if plain_directory(&directory.metadata()?) {
+    if plain_directory(&directory.metadata()?)
+        && path.file_name() == Some(on_disk_name(&directory)?.as_os_str())
+    {
         Ok(directory)
     } else {
         Err(io::ErrorKind::NotADirectory.into())
     }
+}
+
+/// The last component of the held object's normalized name: its spelling on
+/// disk, whatever spelling opened it.
+fn on_disk_name(object: &File) -> io::Result<std::ffi::OsString> {
+    use std::os::windows::ffi::OsStringExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        FILE_NAME_NORMALIZED, GETFINALPATHNAMEBYHANDLE_FLAGS, GetFinalPathNameByHandleW,
+        VOLUME_NAME_NONE,
+    };
+
+    let mut buffer = vec![0_u16; 512];
+    loop {
+        // SAFETY: the handle is live for the call, and the buffer is writable
+        // for the length its slice states.
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                HANDLE(object.as_raw_handle()),
+                &mut buffer,
+                GETFINALPATHNAMEBYHANDLE_FLAGS(FILE_NAME_NORMALIZED.0 | VOLUME_NAME_NONE.0),
+            )
+        } as usize;
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // A buffer too small is answered with the length it needs.
+        if length < buffer.len() {
+            buffer.truncate(length);
+            break;
+        }
+        buffer.resize(length, 0);
+    }
+    let name = buffer.rsplit(|unit| *unit == u16::from(b'\\')).next();
+    Ok(std::ffi::OsString::from_wide(name.unwrap_or_default()))
 }
 
 /// Holds a directory so its name cannot be renamed or deleted while held.

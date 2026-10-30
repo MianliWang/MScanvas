@@ -994,9 +994,8 @@ fn an_attempt_removal_that_cannot_finish_keeps_its_marker_for_the_next_sweep() {
 /// The deletion-safety proof: a junction, and a symbolic link where one can be
 /// made, planted wherever the cache looks, each pointing outside it at a
 /// directory that holds what a careless removal would take for cache content.
-/// Eviction, Clear and the sweep leave every target exactly as it was, leave
-/// every link that is not inside a gone owner's attempt, and remove that one
-/// as a link.
+/// Eviction, Clear and the sweep leave every target exactly as it was and every
+/// link where it is, a gone owner's attempt holding one included.
 #[test]
 fn links_planted_in_the_cache_are_never_followed_by_eviction_clear_or_the_sweep() {
     let scratch = Scratch::new("vc-links");
@@ -1042,9 +1041,10 @@ fn links_planted_in_the_cache_are_never_followed_by_eviction_clear_or_the_sweep(
         }
     }
     let gone = abandoned(&cache);
+    kept_links.push(gone.join("conversion").join("link"));
     junction(&gone.join("conversion").join("link"), &elsewhere);
     if symlink(&gone.join("symlink"), &symlinked) {
-        assert!(is_link(&gone.join("symlink")));
+        kept_links.push(gone.join("symlink"));
     }
 
     assert!(matches!(cache.verify(&key(3)), Lookup::Unrecognized));
@@ -1055,14 +1055,13 @@ fn links_planted_in_the_cache_are_never_followed_by_eviction_clear_or_the_sweep(
         "{evicted:?}"
     );
     let swept = cache.sweep_staging();
-    assert_eq!(swept.removed, 1, "{swept:?}");
-    assert!(
-        !gone.exists(),
-        "the gone owner's attempt went, its links as links"
-    );
+    // The gone owner's attempt holds links, so it is left whole.
+    assert_eq!((swept.removed, swept.linked), (0, 1), "{swept:?}");
+    assert!(gone.join(ATTEMPT_OWNER).is_file(), "its marker stays");
     let cleared = cache.clear();
-    // The planted links, and the entry holding a link.
-    assert_eq!(cleared.unrecognized_left, planted + 1, "{cleared:?}");
+    // The planted links, the entry holding a link, and the attempt holding
+    // links.
+    assert_eq!(cleared.unrecognized_left, planted + 2, "{cleared:?}");
     assert_eq!(cleared.kept_in_use, 1);
 
     for link in &kept_links {
@@ -1110,4 +1109,89 @@ fn foreign_names_are_left_where_they_are_and_counted() {
         names(&cache.root),
         [ROOT_MARKER, ENTRIES, "notes.txt", STAGING]
     );
+}
+
+/// NTFS opens `entries\<key>` ignoring case. A key spelled in capitals is not
+/// a key: it is neither verified, nor removed as damaged, nor published over.
+#[test]
+fn a_key_spelled_in_capitals_is_unrecognized_and_left_as_found() {
+    let scratch = Scratch::new("vc-case");
+    let cache = cache(&scratch);
+    // A real entry renamed to capitals: its files would pass every check.
+    let renamed = key(1);
+    published(&cache, &renamed, b"renamed");
+    fs::rename(
+        entry(&cache, &renamed),
+        cache.entries().join(renamed.name().to_uppercase()),
+    )
+    .expect("rename");
+    // An empty directory in capitals, which would read as damaged.
+    let empty = key(2);
+    fs::create_dir(cache.entries().join(empty.name().to_uppercase())).expect("dir");
+    let before = snapshot(&cache.root);
+
+    for key in [&renamed, &empty] {
+        assert!(
+            matches!(cache.verify(key), Lookup::Unrecognized),
+            "{}",
+            key.name()
+        );
+        assert_eq!(
+            store(&cache, key, b"bytes").err(),
+            Some(StoreFailure::EntryUnrecognized)
+        );
+    }
+    assert_eq!(cache.clear().unrecognized_left, 2);
+    assert_eq!(snapshot(&cache.root), before);
+}
+
+#[test]
+fn an_attempt_that_is_no_longer_the_object_checked_is_not_removed() {
+    let scratch = Scratch::new("vc-attempt-identity");
+    let cache = cache(&scratch);
+    let (checked, other) = (abandoned(&cache), abandoned(&cache));
+    let other_identity = open_directory(&other, 0, SHARE_READ | SHARE_WRITE | SHARE_DELETE)
+        .ok()
+        .and_then(|directory| local_document::object_identity_of(&directory));
+    assert!(other_identity.is_some());
+    let before = snapshot(&cache.staging());
+
+    assert_eq!(
+        remove_attempt(&checked, other_identity),
+        Removed::Unrecognized
+    );
+    assert_eq!(snapshot(&cache.staging()), before);
+}
+
+#[test]
+fn an_entry_removal_that_stops_part_way_leaves_a_remainder_the_next_pass_removes() {
+    let scratch = Scratch::new("vc-evict-part");
+    let cache = cache(&scratch);
+    let key = key(1);
+    published(&cache, &key, b"partly");
+    // Held without delete sharing: `view.mzML` goes first, then this refuses.
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(SHARE_READ)
+        .open(entry(&cache, &key).join(MANIFEST))
+        .expect("hold the manifest");
+
+    assert_eq!(
+        cache.evict(u64::MAX),
+        Removal {
+            failed: 1,
+            ..Removal::default()
+        }
+    );
+    assert_eq!(names(&entry(&cache, &key)), [MANIFEST]);
+
+    drop(held);
+    assert_eq!(
+        cache.evict(u64::MAX),
+        Removal {
+            removed: 1,
+            ..Removal::default()
+        }
+    );
+    assert!(!entry(&cache, &key).exists());
 }
