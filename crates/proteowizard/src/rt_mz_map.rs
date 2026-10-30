@@ -156,6 +156,8 @@ fn observed_mz(row: &MzmlSpectrumRow) -> Option<(f64, f64)> {
 #[derive(Clone, PartialEq)]
 pub struct RtMzMap {
     request: MapRequest,
+    retention_time_axis: Axis,
+    mz_axis: Axis,
     retention_time_unit: RetentionTimeUnit,
     mz_unit: ArrayUnit,
     intensity_unit: ArrayUnit,
@@ -204,6 +206,19 @@ impl RtMzMap {
             .get(at)
             .copied()
             .filter(|value| *value != f64::NEG_INFINITY)
+    }
+
+    /// The edges of one retention-time bin, `[lower, upper)`; the last bin
+    /// also holds its upper edge. These are the edges the pass binned with.
+    #[must_use]
+    pub fn retention_time_edges(&self, retention_time_bin: u32) -> Option<(f64, f64)> {
+        self.retention_time_axis.edges(retention_time_bin)
+    }
+
+    /// The edges of one m/z bin, as [`Self::retention_time_edges`].
+    #[must_use]
+    pub fn mz_edges(&self, mz_bin: u32) -> Option<(f64, f64)> {
+        self.mz_axis.edges(mz_bin)
     }
 
     /// How many binned spectra declared this representation.
@@ -267,7 +282,7 @@ pub fn bin_rt_mz_map(
 /// Bins the MS1 spectra from a seekable reader over the document the table was
 /// read from. `progress` hears `(done, total)` after each spectrum, where
 /// `total` counts the MS1 spectra inside the retention-time window; the token
-/// is checked before each spectrum is read.
+/// is checked before each spectrum is read and once after the last.
 pub fn bin_rt_mz_map_from<R: BufRead + Seek>(
     mut reader: R,
     table: &MzmlSpectrumTable,
@@ -323,8 +338,15 @@ pub fn bin_rt_mz_map_from<R: BufRead + Seek>(
         done += 1;
         progress(done, total);
     }
+    // A cancel during the last spectrum, or before an empty window, still
+    // leaves no raster.
+    if cancel.is_cancelled() {
+        return Err(MapError::Cancelled);
+    }
     Ok(RtMzMap {
         request,
+        retention_time_axis: time_axis,
+        mz_axis,
         retention_time_unit,
         mz_unit: mz_unit.unwrap_or(ArrayUnit::NotDeclared),
         intensity_unit: intensity_unit.unwrap_or(ArrayUnit::NotDeclared),
@@ -364,7 +386,7 @@ fn agree(seen: &mut Option<ArrayUnit>, unit: &ArrayUnit, role: ArrayRole) -> Res
 
 /// Equal-width bins over a closed range. Each bin is half-open, `[edge, next)`,
 /// except the last, which also holds the upper bound itself.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Axis {
     low: f64,
     high: f64,
@@ -389,13 +411,37 @@ impl Axis {
         })
     }
 
+    /// The lower edge of bin `k`, and the upper bound at `k == bins`. Edges
+    /// never decrease and never pass the upper bound.
+    fn edge(self, k: u32) -> f64 {
+        if k >= self.bins {
+            return self.high;
+        }
+        (self.low + self.width * f64::from(k) / f64::from(self.bins)).min(self.high)
+    }
+
+    fn edges(self, k: u32) -> Option<(f64, f64)> {
+        (k < self.bins).then(|| (self.edge(k), self.edge(k + 1)))
+    }
+
+    /// The bin `k` with `edge(k) <= value < edge(k + 1)`; the last bin also
+    /// holds the upper bound.
     fn bin(self, value: f64) -> Option<usize> {
         if !(self.low..=self.high).contains(&value) {
             return None;
         }
-        // The ratio is in [0, 1], so nothing overflows; `as` floors it.
-        let bin = ((value - self.low) / self.width * f64::from(self.bins)) as usize;
-        Some(bin.min(self.bins as usize - 1))
+        // A first guess from the ratio, which is in [0, 1], so nothing
+        // overflows and `as` floors it. Rounding can put the guess one bin off
+        // an edge, so the edges themselves decide.
+        let mut bin =
+            (((value - self.low) / self.width * f64::from(self.bins)) as u32).min(self.bins - 1);
+        while bin > 0 && value < self.edge(bin) {
+            bin -= 1;
+        }
+        while bin + 1 < self.bins && value >= self.edge(bin + 1) {
+            bin += 1;
+        }
+        Some(bin as usize)
     }
 }
 

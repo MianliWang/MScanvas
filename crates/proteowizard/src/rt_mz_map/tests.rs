@@ -16,6 +16,7 @@ const SECOND: &str = "UO:0000010";
 const NO_COMPRESSION: &str = "MS:1000576";
 const NUMPRESS: &str = "MS:1002312";
 const COUNTS: &str = "MS:1000131";
+const MZ: &str = "MS:1000040";
 
 /// A term; an empty unit is no unit.
 fn cv(accession: &str, value: &str, unit: &str) -> String {
@@ -38,16 +39,23 @@ fn array(role: &str, unit: &str, compression: &str, values: &[f64]) -> String {
     )
 }
 
-fn arrays_with(mz: &[f64], intensity: &[f64], unit: &str, compression: &str) -> String {
+/// The m/z and intensity arrays with their units; only the intensity array
+/// takes `compression`.
+fn arrays_with(
+    mz: &[f64],
+    intensity: &[f64],
+    (mz_unit, intensity_unit): (&str, &str),
+    compression: &str,
+) -> String {
     format!(
         "<binaryDataArrayList count=\"2\">{}{}</binaryDataArrayList>",
-        array("MS:1000514", "MS:1000040", NO_COMPRESSION, mz),
-        array("MS:1000515", unit, compression, intensity)
+        array("MS:1000514", mz_unit, NO_COMPRESSION, mz),
+        array("MS:1000515", intensity_unit, compression, intensity)
     )
 }
 
 fn arrays(mz: &[f64], intensity: &[f64]) -> String {
-    arrays_with(mz, intensity, COUNTS, NO_COMPRESSION)
+    arrays_with(mz, intensity, (MZ, COUNTS), NO_COMPRESSION)
 }
 
 /// One spectrum with the terms every table row requires. An empty
@@ -150,7 +158,7 @@ fn a_cell_keeps_the_greatest_intensity_and_empty_is_not_zero() {
     assert_eq!(map.points_outside_mz(), 0);
     assert_eq!(map.spectra(MzmlRepresentation::Profile), 2);
     assert_eq!(map.retention_time_unit(), RetentionTimeUnit::Minute);
-    assert_eq!(map.mz_unit(), &ArrayUnit::Declared("MS:1000040".into()));
+    assert_eq!(map.mz_unit(), &ArrayUnit::Declared(MZ.into()));
     assert_eq!(map.intensity_unit(), &ArrayUnit::Declared(COUNTS.into()));
 }
 
@@ -190,11 +198,36 @@ fn bins_are_half_open_and_the_upper_bound_falls_in_the_last_bin() {
         3,
         "8.5 min is outside the window"
     );
+    assert_eq!(map.mz_edges(3), Some((3.0, 4.0)));
+    assert_eq!(map.retention_time_edges(7), Some((7.0, 8.0)));
+    assert_eq!(map.mz_edges(8), None, "outside the raster");
+}
+
+#[test]
+fn every_bin_starts_at_its_own_edge() {
+    // Ranges whose edges are not exact in binary, two of them the measured
+    // files' first views.
+    for ((low, high), bins) in [
+        ((1303.2, 1350.2), 100),
+        ((0.1, 0.7), 3),
+        ((356.412150088193, 1313.128239995699), 2048),
+        ((0.002757293606, 33.003497392559), 1024),
+    ] {
+        let axis = Axis::new((low, high), bins).expect("a valid axis");
+        assert_eq!((axis.edge(0), axis.edge(bins)), (low, high));
+        for k in 1..bins {
+            let edge = axis.edge(k);
+            let at = format!("{low}..{high} in {bins} bins, edge {k} = {edge}");
+            assert_eq!(axis.bin(edge), Some(k as usize), "{at}");
+            assert_eq!(axis.bin(edge.next_down()), Some(k as usize - 1), "{at}");
+        }
+        assert_eq!(axis.bin(high), Some(bins as usize - 1));
+    }
 }
 
 #[test]
 fn only_ms1_spectra_inside_the_window_are_read() {
-    let numpress = arrays_with(&[100.0], &[1.0], COUNTS, NUMPRESS);
+    let numpress = arrays_with(&[100.0], &[1.0], (MZ, COUNTS), NUMPRESS);
     let document = document(&[
         ms1(0, "1", &[100.0], &[4.0]),
         spectrum(1, 1, PROFILE, ("5", MINUTE), 1, &numpress),
@@ -274,8 +307,30 @@ fn units_must_agree_and_nothing_converts() {
         Err(MapError::MixedRetentionTimeUnits)
     );
 
-    for other in ["MS:1000132", ""] {
-        let mixed_intensity = document(&[
+    // Only one of the two MS1 spectra declares its retention-time unit.
+    let partly_declared_time = document(&[
+        ms1(0, "1", &[100.0], &[1.0]),
+        spectrum(1, 1, PROFILE, ("2", ""), 1, &arrays(&[100.0], &[1.0])),
+    ]);
+    assert_eq!(
+        ms1_extent(&table(&partly_declared_time)),
+        Err(MapError::MixedRetentionTimeUnits)
+    );
+    assert_eq!(
+        map(
+            &partly_declared_time,
+            request((0.0, 4.0), 1, (99.0, 101.0), 1)
+        ),
+        Err(MapError::MixedRetentionTimeUnits)
+    );
+
+    for (units, role) in [
+        ((MZ, "MS:1000132"), ArrayRole::Intensity),
+        ((MZ, ""), ArrayRole::Intensity),
+        (("UO:0000221", COUNTS), ArrayRole::Mz),
+        (("", COUNTS), ArrayRole::Mz),
+    ] {
+        let mixed = document(&[
             ms1(0, "1", &[100.0], &[1.0]),
             spectrum(
                 1,
@@ -283,13 +338,13 @@ fn units_must_agree_and_nothing_converts() {
                 PROFILE,
                 ("2", MINUTE),
                 1,
-                &arrays_with(&[100.0], &[1.0], other, NO_COMPRESSION),
+                &arrays_with(&[100.0], &[1.0], units, NO_COMPRESSION),
             ),
         ]);
         assert_eq!(
-            map(&mixed_intensity, request((0.0, 4.0), 1, (99.0, 101.0), 1)),
-            Err(MapError::MixedArrayUnits(ArrayRole::Intensity)),
-            "{other:?}"
+            map(&mixed, request((0.0, 4.0), 1, (99.0, 101.0), 1)),
+            Err(MapError::MixedArrayUnits(role)),
+            "{units:?}"
         );
     }
 
@@ -374,11 +429,27 @@ fn progress_counts_the_window_and_cancellation_leaves_no_raster() {
     assert_eq!(result, Err(MapError::Cancelled));
     assert_eq!(heard, [(1, 3)]);
 
+    // Cancelled while the last spectrum is heard: every spectrum was binned,
+    // and still no raster.
+    let (result, heard) = run(&CancellationToken::new(), Some(3));
+    assert_eq!(result, Err(MapError::Cancelled));
+    assert_eq!(heard, [(1, 3), (2, 3), (3, 3)]);
+
     let cancelled = CancellationToken::new();
     cancelled.cancel();
     let (result, heard) = run(&cancelled, None);
     assert_eq!(result, Err(MapError::Cancelled));
     assert!(heard.is_empty());
+
+    // A window holding no MS1 spectrum reads nothing, and is still cancelled.
+    let empty_window = bin_rt_mz_map_from(
+        Cursor::new(&document),
+        &table,
+        request((5.0, 8.0), 1, (99.0, 101.0), 1),
+        &cancelled,
+        |_, _| {},
+    );
+    assert_eq!(empty_window, Err(MapError::Cancelled));
 }
 
 #[test]
