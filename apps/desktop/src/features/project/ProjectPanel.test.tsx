@@ -146,6 +146,38 @@ describe("the project surface", () => {
     }
   });
 
+  it("shows names and record titles as text, with one Details control per row", async () => {
+    const api = mount(capturedProject());
+    await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
+
+    // A name is something to read, not a second way to press the row.
+    const name = screen.getByText("QC_pool_01.mzML");
+    expect(name.closest("button")).toBeNull();
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-project-input], [data-project-run]")];
+    expect(rows.length).toBeGreaterThan(1);
+    for (const each of rows) {
+      const details = within(each).getAllByRole("button", { name: /^Details for / });
+      expect(details).toHaveLength(1);
+      expect(details[0].textContent).toBe(en.projectDetails);
+      expect(details[0].getAttribute("aria-controls")).toBe("workbench-inspector");
+    }
+    expect(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" })).toBeTruthy();
+
+    // The record is named by what it is, never by the action that makes one:
+    // "Capture file facts" is the section's button and nothing else.
+    const run = document.querySelector<HTMLElement>("[data-project-run]")!;
+    expect(within(run).getByText(en.projectArtifactFileFacts).closest("button")).toBeNull();
+    expect(screen.getAllByText(en.projectCapture)).toHaveLength(1);
+    expect(screen.getByText(en.projectCapture).closest("[data-project-capture]")).toBeTruthy();
+
+    // Its Details opens the record the run left, and says so on the control.
+    const details = within(run).getByRole("button", { name: /^Details for / });
+    await press(details);
+    expect(details.getAttribute("aria-current")).toBe("true");
+    expect(details.hasAttribute("data-project-inspect-artifact")).toBe(true);
+    expect(api.calls.filter((call) => call !== "getProjectState")).toEqual([]);
+  });
+
   it("does not relink until the proposal is explicitly confirmed", async () => {
     const input = projectInput({
       verification: "unavailable",
@@ -659,11 +691,15 @@ describe("the project surface", () => {
     await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
 
     // `aria-disabled` rather than `disabled`, so the sentence explaining it is
-    // reachable from the keyboard rather than only from a pointer.
+    // reachable from the keyboard rather than only from a pointer -- and that
+    // sentence is on screen beside the name, not a tooltip (PM9.7 F1).
     const save = screen.getByRole("button", { name: en.projectSave });
     expect(save.hasAttribute("disabled")).toBe(false);
     expect(save.getAttribute("aria-disabled")).toBe("true");
-    expect(save.getAttribute("title")).toBe(en.projectSaveNeedsLocation);
+    expect(save.getAttribute("title")).toBeNull();
+    const reason = document.getElementById(save.getAttribute("aria-describedby") ?? "");
+    expect(reason?.textContent).toBe(en.projectSaveNeedsLocation);
+    expect(reason?.closest(".project-header")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: en.projectSaveAs }).getAttribute("aria-disabled"),
     ).toBeNull();
@@ -830,17 +866,14 @@ describe("the project surface", () => {
     // Emphasis only: showing the empty surface creates nothing, opens no
     // picker and starts no work.
     expect(api.calls).toEqual(["getProjectState"]);
-    // Save, Save As and Close are refused but reachable, and each says why:
-    // its description is the visible no-project heading, with no tooltip
-    // repeating it (PM9.7 F1).
+    // Save, Save As and Close act on an open project, so with none they are
+    // not offered at all: the head holds exactly the two ways in.
     for (const name of [en.projectSave, en.projectSaveAs, en.projectClose]) {
-      const refused = screen.getByRole("button", { name });
-      expect(refused.getAttribute("aria-disabled")).toBe("true");
-      expect((refused as HTMLButtonElement).disabled).toBe(false);
-      expect(refused.getAttribute("title")).toBeNull();
-      const described = document.getElementById(refused.getAttribute("aria-describedby") ?? "");
-      expect(described?.textContent).toBe(en.projectNone);
+      expect(screen.queryByRole("button", { name })).toBeNull();
     }
+    expect(
+      [...document.querySelectorAll(".project-header button")].map((button) => button.textContent),
+    ).toEqual([en.projectNew, en.projectOpen]);
     // Nothing claims a project that is not there.
     expect(screen.queryByText(en.projectReferences)).toBeNull();
   });
@@ -879,21 +912,52 @@ describe("the project surface", () => {
     await waitFor(() => expect(document.querySelector("[data-project-busy]")).toBeNull());
   });
 
-  it("gives New project back a quiet place once a project is open", async () => {
+  it("makes Save As… the one filled primary while the project was never saved", async () => {
     mount(openProject({ inputs: [projectInput()], dirty: true }));
     await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
 
-    expect(screen.getByRole("button", { name: en.projectNew }).classList.contains("ui-button--quiet")).toBe(true);
+    // New project gives up its emphasis once a project is open, and is a
+    // bordered button like the rest of the head.
+    expect(screen.getByRole("button", { name: en.projectNew }).classList.contains("ui-button--secondary")).toBe(true);
     expect(screen.getByRole("button", { name: en.projectOpen }).classList.contains("ui-button--secondary")).toBe(true);
-    // Never saved: Save waits, says why in words beside the name, and the
-    // one filled primary is the panel's capture.
-    expect(document.querySelector(".project-header .ui-button--primary")).toBeNull();
+    expect(screen.getByRole("button", { name: en.projectClose }).classList.contains("ui-button--secondary")).toBe(true);
+    // Never saved: Save waits and says why in words beside the name; Save
+    // As… is the way through, so it is the one filled primary on the surface.
     const save = screen.getByRole("button", { name: en.projectSave });
+    expect(save.classList.contains("ui-button--primary")).toBe(false);
     expect(document.getElementById(save.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
       en.projectSaveNeedsLocation,
     );
+    const saveAs = screen.getByRole("button", { name: en.projectSaveAs });
+    const primaries = document.querySelectorAll("[data-project-surface] .ui-button--primary");
+    expect(primaries).toHaveLength(1);
+    expect(primaries[0]).toBe(saveAs);
+    expect(document.querySelector("[data-project-capture]")?.classList.contains("ui-button--primary")).toBe(false);
+  });
+
+  it("leaves the head without a primary once a saved project has nothing to save", async () => {
+    mount(openProject({ inputs: [projectInput()], dirty: false, published: true }));
+    await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+    expect(document.querySelector(".project-header .ui-button--primary")).toBeNull();
+    expect(screen.queryByText(en.projectSaveNeedsLocation)).toBeNull();
+    // The surface's one primary is then the panel's own job.
     expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
     expect(document.querySelector("[data-project-capture]")?.classList.contains("ui-button--primary")).toBe(true);
+  });
+
+  it("keeps the keyboard on the head when Close takes Save, Save As… and Close away", async () => {
+    const api = mount(openProject({ inputs: [projectInput()], published: true }));
+    await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+    api.set(NO_PROJECT);
+    const close = screen.getByRole("button", { name: en.projectClose });
+    close.focus();
+    await press(close);
+    await waitFor(() => expect(screen.getByText(en.projectNone)).toBeTruthy());
+
+    expect(screen.queryByRole("button", { name: en.projectClose })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: en.projectNew }));
   });
 
   it("makes Save the one filled primary while a saved project has changes", async () => {

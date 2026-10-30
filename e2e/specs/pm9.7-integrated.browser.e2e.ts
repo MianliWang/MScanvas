@@ -327,46 +327,15 @@ describe("PM9.7 integrated states, rendered", () => {
         const reopen = await mark(".project-header", words.projectOpen, "data-pm97-open");
         expect([create, reopen].every((selector) => selector !== null)).toBe(true);
         expect([await offered(create!), await offered(reopen!)]).toEqual([true, true]);
-        // Save, Save As… and Close are refused with nothing open: they read as
-        // refused, point at the no-project heading and say why (PM9.7 F1).
-        const refused = await browser.execute(
-          (labels: string[]) =>
-            labels.map((label) => {
-              const button = [...document.querySelectorAll<HTMLButtonElement>(".project-header button")].find(
-                (candidate) => (candidate.textContent ?? "").trim() === label,
-              );
-              return button === undefined
-                ? { label, found: false }
-                : {
-                    label,
-                    found: true,
-                    refused: button.getAttribute("aria-disabled"),
-                    disabled: button.disabled,
-                    opacity: getComputedStyle(button).opacity,
-                    title: button.title,
-                    describedBy: document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent?.trim() ?? null,
-                  };
-            }),
-          [words.projectSave, words.projectSaveAs, words.projectClose],
+        // Save, Save As… and Close act on an open project, so with nothing open
+        // they are not offered at all: the head holds exactly the two ways in.
+        const offeredInHead = await browser.execute(() =>
+          [...document.querySelectorAll<HTMLButtonElement>(".project-header button")].map(
+            (button) => (button.textContent ?? "").trim(),
+          ),
         );
-        evidence.push({ refusedActions: `i1-project-${at}`, refused });
-        for (const fact of refused) {
-          expect(fact).toMatchObject({
-            found: true,
-            refused: "true",
-            disabled: false,
-            opacity: "0.48",
-            // The visible no-project heading is the reason; no tooltip repeats it.
-            title: "",
-            describedBy: words.projectNone,
-          });
-        }
-        // Focused, a refused action keeps its full ring rather than fading with it.
-        const save = await mark(".project-header", words.projectSave, "data-pm97-save");
-        expect(await reach(save!, `i1-project-${at} save (refused)`)).not.toBeNull();
-        expect(await browser.execute(() => getComputedStyle(document.activeElement!).opacity)).toBe("1");
-        expect(await focusFacts()).toMatchObject({ onBody: false, inViewport: true, covered: false, ring: true, treatment: { outline: RING } });
-        await shot(`i1-project-${at}-save-refused-focused`);
+        evidence.push({ headActions: `i1-project-${at}`, offered: offeredInHead });
+        expect(offeredInHead).toEqual([words.projectNew, words.projectOpen]);
 
         expect(await reach(create!, `i1-project-${at} new project`)).not.toBeNull();
         expect(await focusFacts()).toMatchObject({ onBody: false, inViewport: true, covered: false, ring: true, treatment: { outline: RING } });

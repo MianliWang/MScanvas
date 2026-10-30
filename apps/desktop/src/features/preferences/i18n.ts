@@ -17,6 +17,9 @@ export interface MessageParameters {
   readonly projectSelectNamed: { readonly name: string };
   readonly projectAddToWorkbenchNamed: { readonly name: string };
   readonly projectShowInWorkbenchNamed: { readonly name: string };
+  readonly projectDetailsFor: { readonly name: string };
+  readonly projectLayerDetailsFor: { readonly name: string };
+  readonly projectRecordDetailsFor: { readonly name: string; readonly when: string };
   readonly provenanceInspectInput: { readonly name: string };
   readonly provenanceInspectRunAt: { readonly when: string };
   readonly provenanceInspectArtifactOf: { readonly when: string };
@@ -43,7 +46,6 @@ export interface MessageParameters {
   readonly targetedRunBatchAgain: { readonly count: number };
   readonly targetedPlanDigest: { readonly digest: string };
   readonly targetedRowsBounded: { readonly count: number; readonly total: number };
-  readonly targetedShowEvidenceNamed: { readonly name: string };
   readonly targetedPlotCaption: { readonly traces: string };
   readonly targetedFigureAlt: { readonly name: string; readonly outcome: string; readonly drawn: string };
   readonly m92ErrorDpi: { readonly min: number; readonly max: number };

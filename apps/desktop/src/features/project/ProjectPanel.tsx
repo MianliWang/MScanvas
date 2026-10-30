@@ -189,6 +189,21 @@ export function artifactKey(artifact: ProjectArtifact) {
 }
 
 /**
+ * What one row of recorded work is called: the record the run left, by its
+ * kind. A run that left none is named by what it would have left -- or, for
+ * a targeted run, by the recipe -- never by the action that starts one, so
+ * "Capture file facts" stays the name of the button alone.
+ */
+function recordTitleKey(run: ProjectRun, record: ProjectArtifact | null) {
+  if (record !== null) return artifactKey(record);
+  return run.operation === "captureAcquisitionQcSnapshotV1"
+    ? ("projectArtifactQcSummary" as const)
+    : run.operation === "targetedMs1V1"
+      ? ("projectOperationTargetedMs1" as const)
+      : ("projectArtifactFileFacts" as const);
+}
+
+/**
  * The accessible names of a run and of the record it produced, as controls
  * that inspect them.
  *
@@ -330,11 +345,6 @@ export interface ProjectPanelProps {
   readonly viewedPreview?: ViewedPreview | null;
 }
 
-/**
- * The no-project heading, which is also why Save, Save As and Close are
- * refused while nothing is open: they point at it rather than repeating it.
- */
-const NONE_HINT_ID = "project-none-heading";
 /** The busy line, which is why every control waits while something is out. */
 const BUSY_ID = "project-busy-line";
 /** Why Save waits for a project that has never been saved: Save As first. */
@@ -625,11 +635,60 @@ export function ProjectPanel({
                     : t("sentencePair", { first: t("targetedLastFailed"), second: t(FAILURE_KEYS[lastTargetedFailure.code]) })
                   : "";
 
-  // One filled primary per state: the open targeted setup's own Run; else
-  // Save while there are changes to keep; else Capture file facts.
+  // One filled primary per state: the open targeted setup's own Run; else the
+  // head's next step -- New project with nothing open, Save As… before the
+  // first save, Save while a saved project has changes; else Capture file
+  // facts.
   const taskOpen = targetedLayer !== null;
-  const savePrimary = state.open && state.dirty && state.published && !taskOpen;
-  const capturePrimary = !savePrimary && !taskOpen;
+  const headPrimary = taskOpen
+    ? null
+    : !state.open
+      ? "new"
+      : !state.published
+        ? "saveAs"
+        : state.dirty
+          ? "save"
+          : null;
+  const capturePrimary = state.open && headPrimary === null && !taskOpen;
+
+  /**
+   * Keeps the keyboard on the head across a Close.
+   *
+   * A Close that is answered takes Save, Save As… and Close away -- with
+   * nothing open they are not offered -- so the control that was pressed is
+   * gone and focus would drop to `<body>`. It goes to New project instead,
+   * the head's next step. Only focus the change actually dropped is moved.
+   */
+  const newRef = useRef<HTMLButtonElement | null>(null);
+  const wasOpen = useRef(state.open);
+  useLayoutEffect(() => {
+    const closed = wasOpen.current && !state.open;
+    wasOpen.current = state.open;
+    if (!closed) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) newRef.current?.focus();
+  }, [state.open]);
+
+  /**
+   * Opens Details on one object, and the region with it when it is closed.
+   *
+   * `detailsPresent` only says whether the region is on screen, and with
+   * nothing inspected it is never on screen -- even where the reader asked
+   * for it to be -- so before the first inspection it cannot say whether the
+   * shell's toggle would open the region or close it. The answer is then read
+   * in the commit the inspection lands in, before it is painted.
+   */
+  const revealOnInspect = useRef(false);
+  const showDetails = (selection: Parameters<ProjectSession["inspect"]>[0]) => {
+    if (inspecting === null) revealOnInspect.current = true;
+    else if (!detailsPresent) onRevealDetails?.();
+    session.inspect(selection);
+  };
+  useLayoutEffect(() => {
+    if (!revealOnInspect.current || inspecting === null) return;
+    revealOnInspect.current = false;
+    if (!detailsPresent) onRevealDetails?.();
+  }, [inspecting, detailsPresent, onRevealDetails]);
 
   return (
     <div
@@ -638,37 +697,30 @@ export function ProjectPanel({
       data-project-surface=""
       aria-busy={working || undefined}
     >
-      {/* The page head (rebuild review 10): the project's name, one line
-          under it, and the project actions on the right. */}
-      <header className="project-header page-head">
-        <div className="page-head-copy">
-          <div className="project-title">
-            <h2 id={state.open ? undefined : NONE_HINT_ID}>{state.open ? state.name : t("projectNone")}</h2>
-            {state.dirty && pending === null ? (
-              <span className="project-tag is-warning" data-project-unsaved="">
-                {t("projectUnsaved")}
-              </span>
-            ) : null}
-          </div>
+      {/* The page head: the project's name and its state on one line, and
+          the project's file actions beside it. Save, Save As… and Close only
+          exist while a project is open. */}
+      <header className="project-header">
+        <div className="project-title">
+          <h2>{state.open ? state.name : t("projectNone")}</h2>
+          {state.dirty && pending === null ? (
+            <span className="project-tag is-warning" data-project-unsaved="">
+              {t("projectUnsaved")}
+            </span>
+          ) : null}
           {/* Why Save waits, said rather than only hovered: never having been
-              saved is a passing refusal, and Save As is the way through it.
-              Once saved, the line says what the file holds. With nothing open
-              the disclosure below the head says it instead. */}
-          {!state.open ? null : state.published ? (
-            <p className="page-head-subtitle">{t("projectPageSubtitle")}</p>
-          ) : (
-            <p id={SAVE_LOCATION_ID} className="page-head-subtitle">
+              saved is a passing refusal, and Save As… is the way through it. */}
+          {state.open && !state.published ? (
+            <span id={SAVE_LOCATION_ID} className="project-head-state">
               {t("projectSaveNeedsLocation")}
-            </p>
-          )}
+            </span>
+          ) : null}
         </div>
         <div className="project-actions">
-          {/* With nothing open, New project is the one emphasised next action
-              (PM9.7 F2); Open project… stays offered beside it. Emphasis only:
-              nothing is pressed, focused or sent on its behalf. Refused
-              controls stay in the tab order and point at why. */}
+          {/* Refused controls stay in the tab order and point at why. */}
           <Button
-            variant={state.open ? "quiet" : "primary"}
+            ref={newRef}
+            variant={headPrimary === "new" ? "primary" : "secondary"}
             size="sm"
             refused={working}
             reasonId={BUSY_ID}
@@ -685,34 +737,37 @@ export function ProjectPanel({
           >
             {t("projectOpen")}
           </Button>
-          <Button
-            variant={savePrimary ? "primary" : "secondary"}
-            size="sm"
-            refused={working || !state.open || !state.published}
-            reasonId={working ? BUSY_ID : state.open ? SAVE_LOCATION_ID : NONE_HINT_ID}
-            title={state.open && !state.published ? t("projectSaveNeedsLocation") : undefined}
-            onClick={() => void session.saveProject()}
-          >
-            {t("projectSave")}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            refused={working || !state.open}
-            reasonId={working ? BUSY_ID : NONE_HINT_ID}
-            onClick={() => void session.saveProjectAs()}
-          >
-            {t("projectSaveAs")}
-          </Button>
-          <Button
-            variant="quiet"
-            size="sm"
-            refused={working || !state.open}
-            reasonId={working ? BUSY_ID : NONE_HINT_ID}
-            onClick={() => void session.closeProject()}
-          >
-            {t("projectClose")}
-          </Button>
+          {state.open ? (
+            <>
+              <Button
+                variant={headPrimary === "save" ? "primary" : "secondary"}
+                size="sm"
+                refused={working || !state.published}
+                reasonId={working ? BUSY_ID : SAVE_LOCATION_ID}
+                onClick={() => void session.saveProject()}
+              >
+                {t("projectSave")}
+              </Button>
+              <Button
+                variant={headPrimary === "saveAs" ? "primary" : "secondary"}
+                size="sm"
+                refused={working}
+                reasonId={BUSY_ID}
+                onClick={() => void session.saveProjectAs()}
+              >
+                {t("projectSaveAs")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                refused={working}
+                reasonId={BUSY_ID}
+                onClick={() => void session.closeProject()}
+              >
+                {t("projectClose")}
+              </Button>
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -902,15 +957,6 @@ export function ProjectPanel({
                 {state.inputs.length === 0 ? null : (
                   <span className="project-count">{formatCount(state.inputs.length)}</span>
                 )}
-                {/* Said, not only hovered: the refused capture is still a Tab
-                    stop, and its reason has to reach a reader who arrives
-                    there (PM9 UI-24). With no reference at all, the empty
-                    list says so. */}
-                {state.inputs.length > 0 && selected.length === 0 ? (
-                  <p className="project-action-reason" id="project-capture-reason">
-                    {t("projectCaptureNeedsSelection")}
-                  </p>
-                ) : null}
               </div>
               <div className="project-actions">
                 <Button
@@ -947,6 +993,15 @@ export function ProjectPanel({
                   {t("projectCapture")}
                 </Button>
               </div>
+              {/* Said, not only hovered, directly under the refused capture:
+                  it is still a Tab stop, and its reason has to reach a reader
+                  who arrives there (PM9 UI-24). With no reference at all, the
+                  empty list says so. */}
+              {state.inputs.length > 0 && selected.length === 0 ? (
+                <p className="project-action-reason project-head-reason" id="project-capture-reason">
+                  {t("projectCaptureNeedsSelection")}
+                </p>
+              ) : null}
             </div>
 
             {state.inputs.length === 0 ? (
@@ -966,55 +1021,43 @@ export function ProjectPanel({
                       data-verification={input.verification}
                       data-unavailable-reason={input.unavailableReason ?? undefined}
                     >
-                      <div className="project-row-select">
+                      <div className="project-row-main">
                         {/* Two independent choices on one row, as the roster
                             already distinguishes them: the box chooses what the
-                            next capture covers, the name chooses what Details
-                            describes. The box carries its own name, so nothing
-                            is lost by no longer wrapping the label in it. */}
-                        <input
-                          type="checkbox"
-                          checked={selected.includes(input.id)}
-                          aria-label={t("projectSelectNamed", { name: input.label })}
-                          onChange={() => session.toggleSelected(input.id)}
-                        />
-                        <Button
-                          variant="quiet"
-                          size="sm"
-                          className="project-row-label"
-                          aria-current={
-                            inspecting?.kind === "input" && inspecting.id === input.id
-                              ? "true"
-                              : undefined
-                          }
-                          aria-controls="workbench-inspector"
-                          aria-label={t("provenanceInspectInput", { name: input.label })}
-                          data-project-inspect={input.id}
-                          onClick={() => session.inspect({ kind: "input", id: input.id })}
-                        >
-                          {input.label}
-                        </Button>
-                      </div>
-                      <p className="project-row-facts">
-                        <span
-                          className={`project-tag project-verification ${verificationTone(input)}`}
-                          id={`project-state-${input.id}`}
-                        >
-                          {t(verificationKey(input))}
-                        </span>
-                        <span className="project-tag project-locator">
-                          {t(
-                            input.locatorKind === "insideProject"
-                              ? "projectLocatorInside"
-                              : "projectLocatorOutside",
-                          )}
-                        </span>
-                        {input.members.length > 1 ? (
-                          <span className="project-tag project-members">
-                            {t("projectMemberCount", { count: input.members.length })}
+                            next capture covers, Details chooses what the
+                            Details region describes. The name is text. */}
+                        <span className="project-row-label">
+                          <input
+                            type="checkbox"
+                            checked={selected.includes(input.id)}
+                            aria-label={t("projectSelectNamed", { name: input.label })}
+                            onChange={() => session.toggleSelected(input.id)}
+                          />
+                          <span className="project-row-name" title={input.label}>
+                            {input.label}
                           </span>
-                        ) : null}
-                      </p>
+                        </span>
+                        <p className="project-row-facts">
+                          <span
+                            className={`project-tag project-verification ${verificationTone(input)}`}
+                            id={`project-state-${input.id}`}
+                          >
+                            {t(verificationKey(input))}
+                          </span>
+                          <span className="project-tag project-locator">
+                            {t(
+                              input.locatorKind === "insideProject"
+                                ? "projectLocatorInside"
+                                : "projectLocatorOutside",
+                            )}
+                          </span>
+                          {input.members.length > 1 ? (
+                            <span className="project-tag project-members">
+                              {t("projectMemberCount", { count: input.members.length })}
+                            </span>
+                          ) : null}
+                        </p>
+                      </div>
                       <div className="project-row-actions">
                         {/* What can be done now first, in a fixed order so no
                             control moves under the keyboard: Locate… and
@@ -1153,14 +1196,30 @@ export function ProjectPanel({
                         >
                           {t(layer === null ? "projectCreateLayer" : "projectShowLayer")}
                         </Button>
-                        {/* Why Create layer waits, beside it: nothing else on
-                            the row says the reference is not in the Workbench. */}
-                        {layer === null && !attached ? (
-                          <span id={reasonId} className="project-action-reason">
-                            {t("projectLayerNeedsWorkbench")}
-                          </span>
-                        ) : null}
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          aria-current={
+                            inspecting?.kind === "input" && inspecting.id === input.id
+                              ? "true"
+                              : undefined
+                          }
+                          aria-controls="workbench-inspector"
+                          aria-label={t("projectDetailsFor", { name: input.label })}
+                          data-project-inspect={input.id}
+                          onClick={() => showDetails({ kind: "input", id: input.id })}
+                        >
+                          {t("projectDetails")}
+                        </Button>
                       </div>
+                      {/* Why Create layer waits, directly under it: nothing
+                          else on the row says the reference is not in the
+                          Workbench. */}
+                      {layer === null && !attached ? (
+                        <p id={reasonId} className="project-action-reason project-row-reason">
+                          {t("projectLayerNeedsWorkbench")}
+                        </p>
+                      ) : null}
                     </li>
                   );
                 })}
@@ -1208,39 +1267,26 @@ export function ProjectPanel({
                       data-layer-availability={availability}
                       data-layer-source={layer.sourceInputId}
                     >
-                      <div className="project-row-select">
-                        <Button
-                          variant="quiet"
-                          size="sm"
-                          className="project-row-label"
-                          aria-current={
-                            inspecting?.kind === "layer" && inspecting.id === layer.id
-                              ? "true"
-                              : undefined
-                          }
-                          aria-controls="workbench-inspector"
-                          aria-label={t("provenanceInspectLayer", { name })}
-                          data-project-inspect-layer={layer.id}
-                          onClick={() => session.inspect({ kind: "layer", id: layer.id })}
-                        >
+                      <div className="project-row-main">
+                        <span className="project-row-name" title={name}>
                           {name}
-                        </Button>
-                      </div>
-                      <p className="project-row-facts">
-                        <span className={`project-tag project-availability is-${availability}`}>
-                          {t(
-                            availability === "attached"
-                              ? "projectLayerAttached"
-                              : "projectLayerDetached",
-                          )}
                         </span>
-                        {source === undefined ? null : (
-                          <span className={`project-tag project-verification ${verificationTone(source)}`}>
-                            <span className="visually-hidden">{t("provenanceCurrentFile")}: </span>
-                            {t(verificationKey(source))}
+                        <p className="project-row-facts">
+                          <span className={`project-tag project-availability is-${availability}`}>
+                            {t(
+                              availability === "attached"
+                                ? "projectLayerAttached"
+                                : "projectLayerDetached",
+                            )}
                           </span>
-                        )}
-                      </p>
+                          {source === undefined ? null : (
+                            <span className={`project-tag project-verification ${verificationTone(source)}`}>
+                              <span className="visually-hidden">{t("provenanceCurrentFile")}: </span>
+                              {t(verificationKey(source))}
+                            </span>
+                          )}
+                        </p>
+                      </div>
                       <div className="project-row-actions">
                         {handle === null ? null : (
                           <Button
@@ -1309,6 +1355,21 @@ export function ProjectPanel({
                         >
                           {t("projectRemoveLayer")}
                         </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          aria-current={
+                            inspecting?.kind === "layer" && inspecting.id === layer.id
+                              ? "true"
+                              : undefined
+                          }
+                          aria-controls="workbench-inspector"
+                          aria-label={t("projectLayerDetailsFor", { name })}
+                          data-project-inspect-layer={layer.id}
+                          onClick={() => showDetails({ kind: "layer", id: layer.id })}
+                        >
+                          {t("projectDetails")}
+                        </Button>
                       </div>
                       {/* The reason is read out with the control, and shown
                           where the row does not already say it: a detached row
@@ -1350,49 +1411,69 @@ export function ProjectPanel({
                   const artifacts = state.artifacts.filter((artifact) =>
                     run.outputArtifactIds.includes(artifact.id),
                   );
+                  // The row is the record a run left, and Details opens on
+                  // it; the run itself is one step on, as "Produced by". A
+                  // run that left nothing opens on itself.
+                  const record = artifacts[0] ?? null;
+                  const title = t(recordTitleKey(run, record));
+                  const when = recordedAt(run.finishedAt, locale);
                   return (
                     <li
                       key={run.id}
-                      className="project-run"
+                      className="project-row project-run"
                       data-project-run={run.id}
                       data-outcome={run.outcome}
+                      data-operation={run.operation}
                     >
-                      <p className="project-run-head">
+                      <div className="project-row-main">
+                        <span className="project-row-name">{title}</span>
+                        <p className="project-row-facts">
+                          <span className={`project-tag project-run-outcome is-${run.outcome}`}>
+                            {t(
+                              run.outcome === "completed"
+                                ? "projectRunCompleted"
+                                : run.outcome === "failed"
+                                  ? "projectRunFailed"
+                                  : "projectRunCancelled",
+                            )}
+                          </span>
+                          {/* Formatted for the reader. The document stores
+                              RFC 3339 in UTC, which is what a record should
+                              hold and not what a person should be shown. */}
+                          <span className="project-run-when">
+                            <time dateTime={run.finishedAt}>{when}</time>
+                          </span>
+                        </p>
+                      </div>
+                      <div className="project-row-actions">
                         <Button
-                          variant="quiet"
+                          variant="secondary"
                           size="sm"
-                          className="project-run-operation"
                           aria-current={
-                            inspecting?.kind === "run" && inspecting.id === run.id
+                            (inspecting?.kind === "run" && inspecting.id === run.id) ||
+                            (inspecting?.kind === "artifact" &&
+                              artifacts.some((artifact) => artifact.id === inspecting.id))
                               ? "true"
                               : undefined
                           }
                           aria-controls="workbench-inspector"
-                          aria-label={t(inspectRunName(run), {
-                            when: recordedAt(run.finishedAt, locale),
-                          })}
-                          data-project-inspect-run={run.id}
-                          data-operation={run.operation}
-                          onClick={() => session.inspect({ kind: "run", id: run.id })}
+                          aria-label={t("projectRecordDetailsFor", { name: title, when })}
+                          data-project-inspect-artifact={record?.id}
+                          data-artifact-kind={record?.kind}
+                          data-project-inspect-run={record === null ? run.id : undefined}
+                          onClick={() => {
+                            if (record === null) showDetails({ kind: "run", id: run.id });
+                            // A report is shown in this region, above the
+                            // lists, and is the answer the press asked for:
+                            // the lineage beside it is not opened over it.
+                            else if (record.qcSnapshot !== null || record.kind === "targetedMs1ResultV1")
+                              session.inspect({ kind: "artifact", id: record.id });
+                            else showDetails({ kind: "artifact", id: record.id });
+                          }}
                         >
-                          {t(operationKey(run))}
+                          {t("projectDetails")}
                         </Button>
-                        <span className={`project-tag project-run-outcome is-${run.outcome}`}>
-                          {t(
-                            run.outcome === "completed"
-                              ? "projectRunCompleted"
-                              : run.outcome === "failed"
-                                ? "projectRunFailed"
-                                : "projectRunCancelled",
-                          )}
-                        </span>
-                        {/* Formatted for the reader. The document stores
-                            RFC 3339 in UTC, which is what a record should hold
-                            and not what a person should be shown. */}
-                        <span className="project-run-when">
-                          <time dateTime={run.finishedAt}>{recordedAt(run.finishedAt, locale)}</time>
-                        </span>
-                      </p>
+                      </div>
                       {/* Why a targeted run failed, where the failure is
                           listed: the run's own sentence, never an absence. */}
                       {run.outcome === "failed" && run.targetedMs1?.failure != null ? (
@@ -1420,7 +1501,7 @@ export function ProjectPanel({
                                 </span>
                               );
                             })
-                          : t("projectRunInputs", { count: run.inputIds.length })}
+                          : <span>{t("projectRunInputs", { count: run.inputIds.length })}</span>}
                         {artifacts.length === 0 ? (
                           <span data-project-no-artifact="">
                             {t(run.operation === "targetedMs1V1" ? "projectRunNoResult" : "projectRunNoArtifact")}
@@ -1429,76 +1510,47 @@ export function ProjectPanel({
                           // Described from the counts rather than from the
                           // label the document stores: that label is written in
                           // English by the backend, and echoing it would put
-                          // English into a Chinese session.
+                          // English into a Chinese session. Each count is an
+                          // item of its own, never a dot-joined string.
                           artifacts.map((artifact) => (
                             <span key={artifact.id} className="project-artifact" data-project-artifact={artifact.id}>
-                              {/* Bordered, not link-coloured: the record is
-                                  something to press, and it opens Details. */}
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                icon={<Icon name="note" />}
-                                className="project-record"
-                                aria-current={
-                                  inspecting?.kind === "artifact" && inspecting.id === artifact.id
-                                    ? "true"
-                                    : undefined
-                                }
-                                aria-controls="workbench-inspector"
-                                aria-label={t(inspectRecordName(artifact), {
-                                  when: recordedAt(run.finishedAt, locale),
-                                })}
-                                data-project-inspect-artifact={artifact.id}
-                                data-artifact-kind={artifact.kind}
-                                onClick={() => session.inspect({ kind: "artifact", id: artifact.id })}
-                              >
-                                {t(artifactKey(artifact))}
-                              </Button>
                               {artifact.kind === "fileFactsV1" ? (
-                                <>
-                                  {" — "}
-                                  {t("projectArtifactMembers", {
-                                    count: artifact.observedMemberCount,
-                                  })}
-                                </>
+                                <span>
+                                  {t("projectArtifactMembers", { count: artifact.observedMemberCount })}
+                                </span>
                               ) : artifact.targetedMs1 ? (
                                 <>
-                                  {" — "}
                                   {/* In the report's own outcome words, and
                                       only those that occurred: a count that
                                       left the rest unnamed would read a
                                       failure as an absence. */}
-                                  {outcomeCounts(artifact.targetedMs1.result.summary)
-                                    .map(([outcome, count]) =>
-                                      t("projectArtifactTargetedOutcome", {
-                                        count,
-                                        outcome: t(OUTCOME_KEYS[outcome]),
-                                      }),
-                                    )
-                                    .join(" · ")}
+                                  {outcomeCounts(artifact.targetedMs1.result.summary).map(
+                                    ([outcome, count]) => (
+                                      <span key={outcome}>
+                                        {t("projectArtifactTargetedOutcome", {
+                                          count,
+                                          outcome: t(OUTCOME_KEYS[outcome]),
+                                        })}
+                                      </span>
+                                    ),
+                                  )}
                                   {/* A stored result the project found missing
                                       or damaged says so before it is opened,
                                       in the report's own words. What the
                                       project last looked at, not a later read. */}
                                   {artifact.targetedMs1.availability === "available" ? null : (
-                                    <>
-                                      {" — "}
-                                      <span
-                                        className="project-artifact-unavailable"
-                                        data-project-artifact-availability={artifact.targetedMs1.availability}
-                                      >
-                                        {t(PAYLOAD_STATE_KEYS[artifact.targetedMs1.availability])}
-                                      </span>
-                                    </>
+                                    <span
+                                      className="project-artifact-unavailable"
+                                      data-project-artifact-availability={artifact.targetedMs1.availability}
+                                    >
+                                      {t(PAYLOAD_STATE_KEYS[artifact.targetedMs1.availability])}
+                                    </span>
                                   )}
                                 </>
                               ) : null}
                             </span>
                           ))
                         )}
-                      </p>
-                      <p className="project-run-version">
-                        {t("projectRunVersion", { version: run.applicationVersion })}
                       </p>
                     </li>
                   );

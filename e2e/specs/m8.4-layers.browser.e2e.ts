@@ -33,6 +33,7 @@ import {
   focusedTreatment,
   installIpcBoundary,
   ipcCalls,
+  revealInDetails,
   setInvokeResult,
 } from "../support/harness";
 import { showProjectSurface } from "../support/shell";
@@ -217,14 +218,15 @@ async function capture(label: string) {
       layersEmpty:
         document.querySelector('section[aria-label="Layers"] .project-empty')?.textContent ?? null,
       layerRows: [...document.querySelectorAll("[data-project-layer]")].map((row) => {
-        const labelControl = row.querySelector("[data-project-inspect-layer]");
+        // The name is the row's text; its one Details control inspects it.
+        const detailsControl = row.querySelector("[data-project-inspect-layer]");
         return {
           id: row.getAttribute("data-project-layer"),
           availability: row.getAttribute("data-layer-availability"),
           source: row.getAttribute("data-layer-source"),
-          label: labelControl?.textContent ?? null,
-          labelName: attribute(labelControl, "aria-label"),
-          current: attribute(labelControl, "aria-current"),
+          label: row.querySelector(".project-row-name")?.textContent ?? null,
+          labelName: attribute(detailsControl, "aria-label"),
+          current: attribute(detailsControl, "aria-current"),
           availabilityText: row.querySelector(".project-availability")?.textContent ?? null,
           currentFile: row.querySelector(".project-verification")?.textContent ?? null,
           showInWorkbench: row.querySelector("[data-project-layer-show-in-workbench]") !== null,
@@ -481,7 +483,7 @@ describe("M8.4 layer identity and provenance, rendered", () => {
       availability: "attached",
       source: INPUT,
       label: MZML_ROW.fileName,
-      labelName: `Show what the layer of ${MZML_ROW.fileName} is related to`,
+      labelName: `Details for the layer of ${MZML_ROW.fileName}`,
       current: "true",
       availabilityText: "In the Workbench",
       currentFile: "Current file: Matches the recorded content",
@@ -714,11 +716,10 @@ describe("M8.4 layer identity and provenance, rendered", () => {
       // holds, so its width is not evidence of wrapping.)
       expect(listed.projectOverflow).toBeLessThanOrEqual(1);
 
-      await browser.$(`[data-project-inspect-layer="${LAYER}"]`).click();
       // Below the roomy breakpoint the region waits to be asked for, and the
-      // surface says where the answer went.
-      await browser.$("[data-project-inspect-hint] button").click();
-      await browser.$('[data-provenance="layer"]').waitForDisplayed();
+      // row's Details is what asks for it.
+      await browser.$(`[data-project-inspect-layer="${LAYER}"]`).click();
+      await revealInDetails('[data-provenance="layer"]');
 
       const inspected = await capture(`${label}-details`);
       expect(inspected.details?.describing).toBe("layer");

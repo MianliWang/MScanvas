@@ -697,7 +697,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       // holds an eligible row.
       await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
       await navigate([en.projectSurface]);
-      await browser.$(`button[aria-label="${fill(en.provenanceInspectInput, { name: "QC_pool_01.mzML" })}"]`).click();
+      await browser.$(`button[aria-label="${fill(en.projectDetailsFor, { name: "QC_pool_01.mzML" })}"]`).click();
       await waitForInspected("QC_pool_01.mzML", "names the inspected reference");
 
       // Each fact reads its owner: the status bar the project session, the
@@ -979,7 +979,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await viewTheRow();
       const viewing = await viewedName();
       await navigate([en.projectSurface]);
-      await browser.$(`button[aria-label="${fill(en.provenanceInspectInput, { name: "QC_pool_01.mzML" })}"]`).click();
+      await browser.$(`button[aria-label="${fill(en.projectDetailsFor, { name: "QC_pool_01.mzML" })}"]`).click();
       const inspected = "QC_pool_01.mzML";
       await waitForInspected(inspected, "names the inspected reference");
 

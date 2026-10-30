@@ -399,21 +399,12 @@ describe("PM9.7 integrated native rendering, controlled IPC, 144 DPI (prepared U
         const reopen = await mark(".project-header", words.projectOpen, "data-pm97-native-open");
         expect([create, reopen].every(selector => selector !== null)).toBe(true);
         expect([await offered(create!), await offered(reopen!)]).toEqual([true, true]);
-        const refused = await browser.execute(labels => labels.map(label => {
-          const button = [...document.querySelectorAll<HTMLButtonElement>(".project-header button")].find(node => (node.textContent ?? "").trim() === label);
-          return button === undefined ? { label, found: false } : {
-            label, found: true, refused: button.getAttribute("aria-disabled"), disabled: button.disabled, opacity: getComputedStyle(button).opacity,
-            title: button.title, describedBy: document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent?.trim() ?? null,
-          };
-        }), [words.projectSave, words.projectSaveAs, words.projectClose]);
-        evidence.push({ kind: "F1 refused Project controls", label: at, refused });
-        for (const fact of refused) expect(fact).toMatchObject({ found: true, refused: "true", disabled: false, opacity: "0.48", title: "", describedBy: words.projectNone });
-        const save = await mark(".project-header", words.projectSave, "data-pm97-native-save");
-        expect(save).not.toBeNull();
-        await reach(save!, `${at} refused Save`);
-        expect(await browser.execute(() => getComputedStyle(document.activeElement!).opacity)).toBe("1");
-        await assertFocus(`${at} refused Save`);
-        await sample(`i1-save-refused-focused-${at}`);
+        // Save, Save As… and Close act on an open project, so with nothing open
+        // they are not offered at all: the head holds exactly the two ways in.
+        const offeredInHead = await browser.execute(() =>
+          [...document.querySelectorAll<HTMLButtonElement>(".project-header button")].map(node => (node.textContent ?? "").trim()));
+        evidence.push({ kind: "Project head actions with nothing open", label: at, offered: offeredInHead });
+        expect(offeredInHead).toEqual([words.projectNew, words.projectOpen]);
         await reach(create!, `${at} New project`);
         await assertFocus(`${at} New project`);
         await sample(`i1-new-focused-${at}`);
