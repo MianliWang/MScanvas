@@ -93,15 +93,10 @@
   background: var(--color-accent-hover);
 }
 
-/* Quiet is still a button: a resting frame and a soft fill, so no text action
-   reads as a link (owner review). An icon reads as a control by its glyph, so
-   an icon button keeps v5.11's bare rest and takes the frame on hover. */
-.ui-button--quiet {
-  border-color: var(--color-border);
-  background: var(--color-surface-subtle);
-  color: var(--color-text-secondary);
-}
-
+/* Quiet rests exactly as secondary does: white, framed, ink text, so no text
+   action reads as a link and none reads as refused (rendered review, issue 1).
+   It differs only on hover. An icon reads as a control by its glyph, so an
+   icon button keeps v5.11's bare rest and takes the frame on hover. */
 .ui-icon-button.ui-button--quiet {
   border-color: transparent;
   background: transparent;
@@ -141,6 +136,14 @@
   border-color: var(--color-border-strong);
   background: var(--color-surface-subtle);
   box-shadow: none;
+  color: var(--color-text-secondary);
+}
+
+/* A second channel that stays while the ring is on it: the grey well and the
+   muted text, so a focused refusal never looks like an enabled button. */
+.ui-button:not(.ui-button--primary)[aria-disabled="true"] {
+  border-color: var(--color-border);
+  background: var(--color-surface-subtle);
   color: var(--color-text-secondary);
 }
 
