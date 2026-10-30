@@ -329,13 +329,46 @@ const STOPS: readonly Stop[] = [
     anchor: ".chromatogram-panel .plot-status .spectrum-export-message",
   },
   {
-    name: "scan-table",
+    // Sorted by RT, descending: a state the spectrum stop does not show.
+    name: "scan-table-sorted",
     table: populated,
     drive: async () => {
       await openSpectrum();
+      const rt = browser.$(`${TABLE} [role="columnheader"]:nth-child(2) .scan-sort-button`);
+      await rt.click();
+      await rt.click();
       await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "start" }), TABLE);
     },
-    anchor: TABLE,
+    anchor: `${TABLE} [aria-sort="descending"]`,
+  },
+  {
+    // Zoomed in once: Fit all offered, and the head says which range shows.
+    name: "chromatogram-zoomed",
+    table: populated,
+    drive: async () => {
+      await openSpectrum();
+      await browser.$(".chromatogram-panel .plot-tools .ui-icon-button:nth-of-type(2)").click();
+    },
+    anchor: ".chromatogram-panel .plot-range",
+  },
+  {
+    // A read the backend refused: what broke, once, beside its retry (S4).
+    name: "workbench-read-failed",
+    table: (locale) => ({ ...scenario("populated", locale),
+      open_mzml_preview: { __reject: { kind: "backend_failed", summary: "Controlled provider refusal", detail: null, retryable: true } } }),
+    drive: async () => {
+      await revealRosterRow(MZML_ROW.handle);
+      await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+      await foldNarrowRoster();
+    },
+    anchor: '#workbench-evidence[data-evidence="failed"]',
+  },
+  {
+    // The workspace list could not be read: the roster says it with its retry.
+    name: "workbench-roster-failed",
+    table: (locale) => ({ ...scenario("populated", locale),
+      get_workspace_roster: { __reject: { kind: "backend_failed", summary: "Controlled roster failure", detail: null, retryable: true } } }),
+    anchor: '#workbench-evidence[data-evidence="roster-failed"]',
   },
   {
     name: "export-figure",
@@ -360,8 +393,10 @@ const STOPS: readonly Stop[] = [
     name: "backend-unavailable-help",
     table: withBackend(unavailableBackend),
     drive: async () => {
-      await browser.$('#backend-status[data-backend-mode="notice"] [data-backend-help]').waitForDisplayed({ timeout: 30_000 });
-      await browser.$('#backend-status[data-backend-mode="notice"] [data-backend-help]').click();
+      // The setup help lives in the details the status bar opens (S7).
+      await expandBackend();
+      await browser.$(`${POPOVER} [data-backend-help]`).waitForDisplayed({ timeout: 30_000 });
+      await browser.$(`${POPOVER} [data-backend-help]`).click();
     },
     anchor: '[data-backend-help][aria-expanded="true"]',
   },
@@ -434,6 +469,20 @@ const STOPS: readonly Stop[] = [
       await waitUntilOffered(CONVERT);
     },
     anchor: "#workbench-conversion",
+  },
+  {
+    // Advanced open under Basic, with its changed count in the head (C7).
+    name: "conversion-advanced",
+    table: (locale) => conversionWorld(locale, { status: "idle" }),
+    drive: async () => {
+      await answerPlans();
+      await checkMembers([FIRST.handle, SECOND.handle]);
+      await go(2);
+      await waitUntilOffered(CONVERT);
+      await browser.$(".conversion-advanced > .ui-button").click();
+      await browser.execute(() => document.querySelector(".conversion-advanced")?.scrollIntoView({ block: "center" }));
+    },
+    anchor: '.conversion-settings[data-settings-view="advanced"]',
   },
   {
     name: "conversion-ready-plan",
@@ -648,6 +697,23 @@ async function layoutFacts() {
       clippedButtons: [...document.querySelectorAll<HTMLElement>("button")]
         .filter((button) => button.offsetParent !== null && !button.closest(".visually-hidden") && button.scrollWidth > button.clientWidth + 1)
         .map((button) => (button.textContent ?? "").trim() || button.getAttribute("aria-label") || "?"),
+      // Beyond buttons: any visible text cut by an ellipsis or overflow
+      // (headers, heads, names), and any placeholder wider than its field.
+      // A middle ellipsis's head is listed too: it is a deliberate cut.
+      clippedText: [...document.querySelectorAll<HTMLElement>("h1, h2, h3, th, [role='columnheader'] span, .plot-head span, .plot-head p, .ui-middle-ellipsis__head, .viewer-file-name, .roster-selection-context")]
+        .filter((node) => node.offsetParent !== null && !node.closest(".visually-hidden") && node.scrollWidth > node.clientWidth + 1)
+        .map((node) => `${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0] ?? ""}: ${(node.textContent ?? "").trim().slice(0, 60)}`),
+      clippedPlaceholders: [...document.querySelectorAll<HTMLInputElement>("input[placeholder]")]
+        .filter((input) => {
+          if (input.offsetParent === null || input.value !== "") return false;
+          const style = getComputedStyle(input);
+          const context = document.createElement("canvas").getContext("2d");
+          if (context === null) return false;
+          context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+          const room = input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+          return context.measureText(input.placeholder).width > room + 1;
+        })
+        .map((input) => input.placeholder),
     };
   });
 }
