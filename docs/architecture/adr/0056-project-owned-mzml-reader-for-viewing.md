@@ -4,6 +4,7 @@ Status: **Accepted** by the owner on 2026-10-29, including the dependency
 request: `base64 0.22.1` and `flate2 1.1.10` become direct dependencies of the
 product crate (both already in `Cargo.lock`, so the lock gains no package).
 Proposed 2026-10-28.
+Amended 2026-10-30 by the owner: decision 1's version rule (a note there).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -97,8 +98,8 @@ has a scope.
 
 The open, meaning the whole spectrum table, is refused for:
 
-- a document that is not mzML 1.1 (the `mzML` `version` attribute missing or
-  not `1.1.x`), or not UTF-8;
+- a document that is not mzML 1.1 under the version rule in the amendment
+  note below, or not UTF-8;
 - a `DOCTYPE` or a custom entity;
 - a `referenceableParamGroupRef` to an undefined group;
 - a spectrum with more than one `scan`;
@@ -109,6 +110,40 @@ The open, meaning the whole spectrum table, is refused for:
 - a spectrum missing a value the table requires (decision 5): MS level, scan
   start time, base peak m/z and intensity, or total ion current;
 - a document beyond the limits of decision 2.
+
+> **Amended 2026-10-30 by the owner's decision**
+> ([plan section 2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28),
+> decision 2). The R0 comparison of 2026-10-29
+> ([PR #157](https://github.com/MianliWang/MScanvas/pull/157)) found that the
+> reader refused the `PXD081190` file at the open with `not_mzml_1_1`. That
+> file's `<mzML>`, written by MSFragger 4.1, has no `version` attribute, and
+> its `xsi:schemaLocation` names `mzML1.1.0.xsd`. `msaccess` opens it, so the
+> refusal was a regression from today's route. A copy with `version="1.1.0"`
+> added read exactly. The version rule is now:
+>
+> - a `version` attribute on `<mzML>` decides, and one that is not `1.1.x` is
+>   refused;
+> - without one, the version is read from the xsd file name in the `<mzML>`
+>   element's own `xsi:schemaLocation` (not the `indexedmzML` wrapper's), as
+>   ProteoWizard reads it (`pwiz@47b13cf`, `pwiz/data/msdata/IO.cpp`,
+>   `HandlerMSData`). `mzML1.1.<n>.xsd` is accepted; any other name is
+>   refused;
+> - a document with neither is refused.
+>
+> ProteoWizard prefers the schema location to the attribute; this reader
+> prefers the attribute.
+>
+> Slice 1 reads the rule strictly:
+>
+> - a `version` attribute decides even when it is empty;
+> - `xsi:schemaLocation` is matched by its resolved namespace, not by its
+>   prefix;
+> - only the location paired with the mzML namespace counts, and it must be
+>   paired once;
+> - the location may be any URL or path, but its file name must be exactly
+>   `mzML1.1.<n>.xsd`.
+>
+> Slice 1 has a fixture for each case, and R0 passed on the rerun (decision 8).
 
 A selected spectrum is refused, and the open and every other spectrum stand,
 for:
@@ -548,6 +583,42 @@ exactness, timing and memory:
 
 Before slice 1 merges, the product reader repeats that three-way comparison on
 the same files. The numbers are observations, not budgets (ADR 0005).
+
+**Result, 2026-10-29 (R0): not passed.** The
+[R0 record](../../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md) ran the product
+reader, mzdata 0.68.0 and the Python reference on public CC0 files, under the
+owner's bounded hold release of that day.
+
+- **The MS1 profile file is exact.** It is `msconvert`'s output for
+  `PXD081190`'s RAW: 546,327,287 bytes, 2,748 MS1 profile and 41,130 MS2
+  centroid spectra. All three readers agree bit for bit on all 87,756 arrays and
+  on every compared field. The largest array has 23,308 points, and every
+  spectrum states the values the table requires.
+- **The product refuses the `PXD081190` file at the open** (`not_mzml_1_1`).
+  Its `<mzML>` element has no `version` attribute, and decision 1 refuses that.
+  - mzdata and the reference read all 36,319 spectra, and `msaccess` opens the
+    file.
+  - With `version="1.1.0"` added to a copy, the product reads it exactly.
+  - Slice 1 therefore did not merge.
+- **`msaccess run_summary` prints seconds.** On both minute-declared files,
+  `MinRT` and `MaxRT` are the range in whole seconds, which settles decision 3's
+  "probably".
+
+**Rerun, 2026-10-30: passed.** On 2026-10-30 the owner amended decision 1: when
+`version` is absent, the reader reads the version from `xsi:schemaLocation`.
+ProteoWizard reads `xsi:schemaLocation` first. The amendment keeps a stated
+`version` first, so a stated non-1.1 version is still refused. The reader at
+`f327055` implements the amendment, and the
+[same record](../../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md) holds the rerun.
+All three readers ran again on both original files.
+
+- **Both files are now exact.** The product reads the unmodified `PXD081190`
+  file: all 36,319 spectra and 72,638 arrays agree bit for bit with the
+  reference and mzdata, on every compared field.
+- **The MS1 profile file is unchanged.** It is still exact, and its dumps are
+  byte-identical to the first run's.
+
+Slice 1 therefore meets this decision's merge condition.
 
 ### 9. Delivery order
 
