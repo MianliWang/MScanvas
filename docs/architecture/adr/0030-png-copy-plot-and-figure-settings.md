@@ -96,6 +96,14 @@ are the exact locked ones.
 | `png` | 0.18.1 | MIT OR Apache-2.0 | 1.73 | Records physical resolution in `pHYs` |
 | `tauri-plugin-clipboard-manager` | 2.3.2 | Apache-2.0 OR MIT | 1.77.2 | Writes an image to the clipboard, from Rust |
 
+> **2026-10-30: the owner approved `tiff` `=0.11.3`** (MIT, MSRV 1.85.0) as a
+> direct production dependency of the desktop crate, with only its `lzw`
+> feature, for TIFF figure export
+> ([PR #159](https://github.com/MianliWang/MScanvas/pull/159);
+> [plan section 2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28),
+> decision 4). It and `weezl` were already in `Cargo.lock` through `image`, so
+> the lock gains one dependency edge and no package.
+
 `resvg` is taken with `default-features = false` and only `text` and
 `system-fonts` enabled. The defaults also carry `raster-images` (which pulls
 `gif`, `image-webp` and `zune-jpeg`), `svgz` and `memmap-fonts`. None is
