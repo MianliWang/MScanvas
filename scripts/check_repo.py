@@ -160,6 +160,12 @@ def validate_project_contract(errors: list[str]) -> None:
             "pnpm install --frozen-lockfile",
             "pnpm lint",
         ],
+        ".github/workflows/browser-e2e.yml": [
+            "node-version-file: .node-version",
+            f"pnpm@{PINNED_PNPM}",
+            "pnpm install --frozen-lockfile",
+            "pnpm e2e:browser --shard",
+        ],
         ".github/workflows/windows-smoke.yml": [
             "node-version-file: .node-version",
             f"pnpm@{PINNED_PNPM}",
