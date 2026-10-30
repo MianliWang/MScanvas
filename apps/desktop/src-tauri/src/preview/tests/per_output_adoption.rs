@@ -73,13 +73,20 @@ fn files_under(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 }
 
 /// Refused with the queue-wide action's own refusal, and nothing claimed: the
-/// queue reads exactly as it did, the roster is unchanged and no adoption is
-/// left in flight.
+/// queue reads exactly as it did, the roster is unchanged, no adoption is left
+/// in flight and no workspace generation was reserved -- a reserved one would
+/// supersede an import the user started before this click.
 fn assert_refused_and_nothing_claimed(service: &PreviewService, operation: u64, output_id: &str) {
     let queue = serde_json::to_value(service.conversion_state()).expect("the queue serializes");
     let roster = service.roster();
+    let generation = service.reserve_folder_import().generation();
     let error = adopt_one(service, operation, output_id).expect_err("the output is not offered");
     assert_eq!(error.kind, "outputs_not_adoptable", "{output_id:?}");
+    assert_eq!(
+        service.reserve_folder_import().generation(),
+        generation + 1,
+        "a refusal reserved a workspace generation: {output_id:?}"
+    );
     assert_eq!(
         serde_json::to_value(service.conversion_state()).expect("the queue serializes"),
         queue,
@@ -382,6 +389,44 @@ fn a_complete_set_is_adopted_member_by_member() {
     assert_eq!(set_adoption_kinds(&result.outcomes), vec!["already"; 3]);
     assert_eq!(item_adoption(&service, 0), settled(0, 3));
     assert_eq!(files_under(&fixture.directory), files);
+}
+
+/// The item's record is the latest adoption's answer and nothing more (ADR
+/// 0052, decision 5): one member's answer replaces a queue-wide one, dropping
+/// the refusal of a member it did not check again.
+#[test]
+fn a_per_output_answer_replaces_the_items_earlier_answer() {
+    let (_fixture, service, handle, destination) = private_sciex_queue(
+        "per-output-replaces",
+        FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"]),
+    );
+    let update = run_visible_queue(
+        &service,
+        std::slice::from_ref(&handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    fs::write(destination.join("a-S2.mzML"), mzml_document(3, true))
+        .expect("rewrite the second member");
+
+    let result = adopt_visible(&service, operation).expect("the set is offered");
+    assert_eq!(
+        set_adoption_kinds(&result.outcomes),
+        vec!["added", "refused", "added"]
+    );
+    assert_eq!(
+        item_adoption(&service, 0),
+        ConversionItemAdoptionDto::Settled {
+            added: 2,
+            already_in_workspace: 0,
+            refused: 1,
+            refusals: vec![String::from("output_changed")],
+        }
+    );
+
+    adopt_one(&service, operation, &output_ids(&service, 0)[0]).expect("the member is offered");
+    assert_eq!(item_adoption(&service, 0), settled(0, 1));
 }
 
 /// An output of a build MSCanvas did not measure carries the same label when

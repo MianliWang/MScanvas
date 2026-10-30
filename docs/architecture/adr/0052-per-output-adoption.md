@@ -74,7 +74,16 @@ outputs an item carries for opening. So the command refuses, with the existing
 
 No new error code is added. The refusal says what the queue-wide one says for
 a stale document or an unknown queue, for the same reason: telling the cases
-apart would describe session state to a caller that is not holding it.
+apart would describe session state to a caller that is not holding it. The
+code's existing copy speaks of the whole queue, which is wrong for one output
+of a queue that still offers others, so the interface shows this refusal from
+the per-output command with the per-output "not added" sentence instead.
+
+The interface offers a per-output Add only where Rust says the item's outputs
+are adoptable: the item is `finalized` and its `adoption.kind` is not
+`nothingToAdopt` (for a set, `completeSetAdoptable` says the same). Every
+output of such an item is offered. `finalizedOutputs` alone never decides it,
+because it also lists the outputs refused above.
 
 ### 4. A complete SCIEX set is adopted member by member
 
@@ -89,7 +98,13 @@ The per-output answer is written onto the item that holds the output, through
 the queue-wide record, under the same queue and settling check. It replaces
 what that item held, because the record says what the latest adoption did with
 the item's outputs. Other items keep their answers. For a set member, the
-item's record then counts that one output.
+item's record then counts that one output, so its counts can sum to less than
+the item's adoptable outputs, and an earlier answer about the other members,
+a refusal included, is dropped without their being checked again. Nothing
+unsafe follows, since every adoption checks its outputs again, but after a
+re-read Rust carries no per-member "added" fact: which members are in the
+workspace is the roster's answer. Whether to keep the last answer per member
+instead is decided by the rendered QA of a large SCIEX set at 960x640.
 
 The interface's queue-level summary (the counts of the last queue-wide reply)
 is cleared by a per-output answer, so the summary and the per-output answer
@@ -99,8 +114,8 @@ contract-and-hook slice; Rust holds no queue-level summary.
 ### 6. Membership and the label are the queue-wide ones
 
 A per-output adoption joins conversion membership exactly as a queue-wide one
-does (PM9.4 F3), because the webview applies the same result type through the
-same roster path. The "not verified by MSCanvas" label, for advanced settings
+does (PM9.4 F3) once the contract-and-hook slice applies its reply through the
+existing `outputsAdopted` roster action, which that slice must do. The "not verified by MSCanvas" label, for advanced settings
 or an unverified build, travels with the adopted output exactly as with
 queue-wide adoption (ADR 0055), because the label is on the ticket and the
 commit is shared.
@@ -144,7 +159,9 @@ large SCIEX set judges whether the item's record reads well enough.
   fails once the frontend calls it.
 - The queue-wide command, its reply and its behaviour are unchanged.
 - The interface work is three slices: contract and hook (the call, clearing
-  the queue-level summary), UI and copy (one Add per output inside the existing
+  the queue-level summary, applying the reply through `outputsAdopted`, and
+  the record's "latest answer" meaning in the `ConversionItemAdoption`
+  comment), UI and copy (one Add per output inside the existing
   "Locate {{name}}" group label and its one status line, no second live region
   per group, the existing "not added" sentence and the named Show in Workbench
   label), and rendered QA of a large SCIEX set at 960x640.

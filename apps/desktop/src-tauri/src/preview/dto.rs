@@ -1403,6 +1403,9 @@ pub struct ConversionQueueItemDto {
     /// the queue is read again on every poll and every remount. A judgement
     /// that lived only in the reply would disappear from the row the moment the
     /// document was re-read, which is exactly when a user goes looking for it.
+    ///
+    /// The latest adoption's answer, not a running total (ADR 0052): a
+    /// per-output adoption replaces it with an answer about that one output.
     pub adoption: ConversionItemAdoptionDto,
 }
 
@@ -1431,6 +1434,12 @@ pub enum ConversionItemAdoptionDto {
     /// incomplete. It is the item's own state that explains which.
     NothingToAdopt,
     /// An adoption ran, and this is what it did to this item's outputs.
+    ///
+    /// Only the outputs that latest adoption touched are counted. After a
+    /// per-output adoption of one set member (ADR 0052) the counts sum to one,
+    /// less than `adoptableOutputCount`, and an earlier answer about the other
+    /// members -- a refusal included -- is gone without their being checked
+    /// again. Which members are in the workspace is the roster's answer.
     ///
     /// The three counts are different answers, not degrees of one. A duplicate
     /// is not a newly added output, and a refusal erases neither the

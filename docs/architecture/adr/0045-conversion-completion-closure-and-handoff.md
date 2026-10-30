@@ -409,7 +409,8 @@ surface. A declared type with no consumer is not enough.
 *Amended 2026-10-30 by [ADR 0052](0052-per-output-adoption.md).* The
 `AdoptionRelation` producer is a queue-wide adoption or a per-output one. A
 per-output adoption takes one output the queue-wide action would offer, runs
-the same identity check, and records its answer on that output's item.
+the same identity check, and records its answer on that output's item,
+replacing the answer the item held, about its other members too.
 
 **Lifetime, ownership and privacy.** All nine are session-scoped and owned by
 Rust. None is persisted, none is resolved across sessions, and no location, path
