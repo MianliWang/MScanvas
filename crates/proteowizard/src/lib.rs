@@ -35,6 +35,7 @@ mod mzml;
 mod mzml_reader;
 mod preview;
 mod process;
+mod rt_mz_map;
 mod sciex_completeness;
 mod sciex_wiff;
 mod sha256;
@@ -128,6 +129,10 @@ pub use preview::{
 pub use process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,
     SystemProcessRunner, Termination, TreeOwnership, execute, execute_cancellable,
+};
+pub use rt_mz_map::{
+    MAX_MAP_CELLS, MapError, MapRequest, Ms1Extent, RtMzMap, bin_rt_mz_map, bin_rt_mz_map_from,
+    ms1_extent,
 };
 pub use sciex_completeness::{
     EstablishedSampleCompleteness, SampleCompletenessRefusal, SciexSampleCompleteness,

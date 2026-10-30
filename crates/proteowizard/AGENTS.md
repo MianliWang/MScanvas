@@ -22,6 +22,11 @@ This crate translates typed MSCanvas intent into validated ProteoWizard executab
 - Never claim byte-for-byte equivalence, general losslessness or vendor fidelity, and never fail a conversion for a legal mzML serialization difference.
 - Keep every new error and outcome variant free of paths and raw backend text, give it a stable identifier, and keep raw scientific identifiers out of debug projections.
 
+## RT × m/z map (ADR 0068, proposed)
+
+- `rt_mz_map.rs` reads MS1 spectra only through the viewing reader's selected read, at the table's offsets, over one handle per pass, and decodes nothing itself. Its one computation over the arrays is ADR 0068's: the greatest stored intensity per cell. Add no other without a record.
+- An empty cell is not zero. Nothing is smoothed, centroided, interpolated or converted between units; mixed units refuse the map, a refused spectrum refuses the whole map, and a cancelled pass returns no raster.
+
 ## mzML viewing reader (ADR 0056)
 
 - `mzml_reader.rs` is the only module that base64-decodes or inflates an array, and only the m/z and intensity arrays of one selected spectrum. The inspector above stays decode-free.
