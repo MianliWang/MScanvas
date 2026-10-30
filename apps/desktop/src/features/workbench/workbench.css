@@ -70,9 +70,9 @@
 /* The notice gives way; its one recovery does not. */
 .workbench-status .drop-reconnect { flex: none; }
 
-/* One workspace card per surface (spec 1.2): white, one border, radius 9,
-   columns separated by rules rather than gaps. */
-.workbench-shell .workspace-layout { grid-area: content; position: relative; display: grid; gap: 0; margin: 12px 16px; padding: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); }
+/* Flat (direction A 2.7, GOALS V12): no outer card. The regions run edge to
+   edge between the header and the status bar and are divided by hairlines. */
+.workbench-shell .workspace-layout { grid-area: content; position: relative; display: grid; gap: 0; margin: 0; padding: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; background: var(--color-surface); }
 .workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 264px minmax(0, 1fr); grid-template-areas: "roster main"; }
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }
 .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 264px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
