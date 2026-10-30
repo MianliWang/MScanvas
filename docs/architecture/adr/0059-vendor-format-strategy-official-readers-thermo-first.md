@@ -322,8 +322,8 @@ Law:
 >   Orbitrap profile MS2 spectra;
 > - it left the 474 profile MS1 spectra bit-identical (cases `TQ0` to `TQ2`).
 >
-> This lifts the measurement gate on "MS2 and up". It also closes the Orbitrap
-> profile-MS2 gap in "MS1 and up"'s claim, for that model. Turning "MS2 and up"
+> This lifts the measurement gate on "MS2 and up". "MS1 and up" also centroids
+> MS2, so its claim on Orbitrap profile MS2 is now measured too, for that model. Turning "MS2 and up"
 > into a verified row is a follow-up code change, not part of this note. Other
 > Orbitrap models and data-dependent profile MS2 remain unmeasured. Whether
 > the row's source domain is the whole Thermo RAW family is settled with that

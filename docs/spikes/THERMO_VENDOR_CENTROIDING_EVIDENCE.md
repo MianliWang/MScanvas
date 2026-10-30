@@ -348,7 +348,7 @@ against `TQ0`, and they hold for Orbitrap MS2 as they do for MS1:
 | MS2 (23,676) | 22,984 of 23,676 | 1.000–1.112, median 1.018 |
 
 In the remaining spectra (11 MS1, 692 MS2), the most intense centroid lies more
-than one interval away, as in 3b. Its intensity is still within the range above.
+than one interval away, as in 3b. The intensity ranges above include them.
 `TQ2`'s MS2 arrays are bit-identical to `TQ1`'s, so the checks hold for both.
 
 ### Facts that shape the output checks
@@ -552,8 +552,8 @@ When the rows land, the change that adds them should also update:
 - **The 3b digest is a first observation.** PRIDE publishes no checksum, so it is
   corroborated, not proven. The same holds for 3c.
 - **3c came later, from a separate session under the same release.** Its runner
-  is a copy of `thermo_run.py` with new paths and case ids, so the recorded
-  `thermo_run.py` digest stays valid. 3c has no `peakPicking vendor` case without
+  `ms2_run.py` is derived from `thermo_run.py`, which was left unedited, so the
+  recorded `thermo_run.py` digest stays valid. 3c has no `peakPicking vendor` case without
   `msLevel=`, like 3b. It has no reference output either, so the 3b sanity checks
   stand in for one.
 - **3c's screening downloaded public text, never a RAW file.** That text was six
