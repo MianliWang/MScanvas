@@ -5,12 +5,17 @@
 //! probes ProteoWizard, writes a file or sends anything: the text goes back to
 //! the caller and no further.
 //!
-//! There is no free-text field. Every value is admitted by its own shape and
-//! then checked against the redactor, and a value that fails either is replaced
-//! whole by `<withheld>`. A file name, a path, a user name or an environment
-//! variable has no shape here to arrive in. The one path described, the
-//! ProteoWizard folder, is reduced to a placeholder for the known root it sits
-//! under and an installer-shaped remainder, or withheld.
+//! There is no free-text field. What keeps a file name, a path, a user name or
+//! an environment variable out is where each value comes from: a code is a
+//! stable id the repository defines (a backend failure kind, a preference
+//! problem, a boundary error kind), never text a person or a file supplied.
+//! Shape and redaction are the second line: every value must also match its
+//! own shape and come back unchanged from the redactor, or it is replaced whole
+//! by `<withheld>`. A code-shaped name, such as a file stem without its
+//! extension, would pass that second line, so a change that routes supplied
+//! text into a code field breaks the first. The ProteoWizard folder is never
+//! written: ADR 0005 keeps the installation path out of diagnostics, so only
+//! the known root it sits under is named.
 //!
 //! [ADR 0063]: ../../../../docs/architecture/adr/0063-copy-diagnostics.md
 
@@ -134,7 +139,8 @@ pub(crate) struct Backend {
     pub(crate) build_date: Option<String>,
     pub(crate) source_revision: Option<String>,
     pub(crate) msconvert_sha256: Option<String>,
-    /// The folder the usable reading names, as display text.
+    /// The folder the usable reading names. Only the known root it sits under
+    /// is written, never the folder.
     pub(crate) folder: Option<String>,
     pub(crate) failure: Option<String>,
 }
@@ -162,7 +168,7 @@ pub(crate) struct Facts {
     pub(crate) dropped_errors: u64,
 }
 
-/// The roots a folder may be described relative to. Each becomes a
+/// The roots a folder may be said to sit under. Each is named by a
 /// placeholder; none is ever written out.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct KnownRoots {
@@ -323,10 +329,10 @@ pub(crate) fn render(facts: &Facts, roots: &KnownRoots, redactor: &Redactor) -> 
     };
     let yes_no = |value: bool| if value { "yes" } else { "no" };
     let backend = &facts.backend;
-    let folder = match backend.folder.as_deref() {
-        None => UNKNOWN.to_owned(),
-        Some(folder) => folder_text(folder, roots, redactor),
-    };
+    let folder = backend
+        .folder
+        .as_deref()
+        .map_or(UNKNOWN, |folder| folder_root(folder, roots));
 
     let held = facts.recent_errors.len().min(RECENT_ERROR_CAPACITY);
     let mut lines = vec![
@@ -350,7 +356,8 @@ pub(crate) fn render(facts: &Facts, roots: &KnownRoots, redactor: &Redactor) -> 
         format!(
             "Saved UI language: {}",
             match facts.saved_ui_language.as_deref() {
-                None => NONE.to_owned(),
+                // Nothing saved. A record that could not be read is `unknown`.
+                None if facts.ui_preferences == "absent" => NONE.to_owned(),
                 value => shown(value, is_locale),
             }
         ),
@@ -403,7 +410,14 @@ pub(crate) fn render(facts: &Facts, roots: &KnownRoots, redactor: &Redactor) -> 
             shown(backend.msconvert_sha256.as_deref(), is_sha256)
         ),
         format!("Folder: {folder}"),
-        format!("Failure: {}", code_or_none(backend.failure.as_deref())),
+        format!(
+            "Failure: {}",
+            if backend.checked {
+                code_or_none(backend.failure.as_deref())
+            } else {
+                UNKNOWN.to_owned()
+            }
+        ),
         format!("Remembered folder: {}", yes_no(facts.remembered_folder)),
         format!(
             "Remembered folder refused at startup: {}",
@@ -445,35 +459,21 @@ fn rfc3339(seconds: u64) -> String {
     crate::project::format_rfc3339(seconds)
 }
 
-/// The ProteoWizard folder as a root placeholder and an installer-shaped
-/// remainder, or withheld. Never the root, and never a remainder that could be
-/// the user's own naming.
-fn folder_text(folder: &str, roots: &KnownRoots, redactor: &Redactor) -> String {
+/// Which known root the ProteoWizard folder sits under, as a placeholder, and
+/// nothing below it: ADR 0005 keeps the installation path out of diagnostics.
+fn folder_root(folder: &str, roots: &KnownRoots) -> &'static str {
     let folder = folder.strip_prefix(r"\\?\").unwrap_or(folder);
     // Most specific first: the local application data folder sits inside the
     // profile.
-    let candidates = [
-        (roots.program_files.as_deref(), "<program-files>", false),
-        (
-            roots.program_files_x86.as_deref(),
-            "<program-files-x86>",
-            false,
-        ),
-        (roots.local_app_data.as_deref(), "<local-app-data>", true),
-        (roots.user_profile.as_deref(), "<user-profile>", false),
-    ];
-    for (root, label, containers) in candidates {
-        let Some(tail) = root.and_then(|root| tail_under(folder, root)) else {
-            continue;
-        };
-        let tail_text = tail.join(r"\");
-        return if installer_shaped(&tail, containers) && redactor.redact(&tail_text) == tail_text {
-            format!(r"{label}\{tail_text}")
-        } else {
-            format!(r"{label}\{WITHHELD}")
-        };
-    }
-    format!(r"<other-folder>\{WITHHELD}")
+    [
+        (roots.program_files.as_deref(), "<program-files>"),
+        (roots.program_files_x86.as_deref(), "<program-files-x86>"),
+        (roots.local_app_data.as_deref(), "<local-app-data>"),
+        (roots.user_profile.as_deref(), "<user-profile>"),
+    ]
+    .into_iter()
+    .find(|(root, _)| root.is_some_and(|root| is_under(folder, root)))
+    .map_or("<other-folder>", |(_, label)| label)
 }
 
 fn components(path: &str) -> Vec<&str> {
@@ -482,67 +482,17 @@ fn components(path: &str) -> Vec<&str> {
         .collect()
 }
 
-/// The components of `folder` below `root`, compared without case as Windows
-/// does. `None` when it is not under it.
-fn tail_under<'a>(folder: &'a str, root: &str) -> Option<Vec<&'a str>> {
+/// Whether `folder` is `root` or below it, by component and without case, as
+/// Windows compares.
+fn is_under(folder: &str, root: &str) -> bool {
     let folder = components(folder);
     let root = components(root);
-    let under = !root.is_empty()
+    !root.is_empty()
         && folder.len() >= root.len()
         && root
             .iter()
             .zip(&folder)
-            .all(|(root, part)| root.to_lowercase() == part.to_lowercase());
-    under.then(|| folder.get(root.len()..).unwrap_or_default().to_vec())
-}
-
-/// Whether a remainder is what a ProteoWizard installer or its portable
-/// archive names, up to three deep, optionally inside `Apps` or `Programs`
-/// under the local application data.
-fn installer_shaped(tail: &[&str], containers: bool) -> bool {
-    !tail.is_empty()
-        && tail.len() <= 3
-        && tail.iter().enumerate().all(|(index, part)| {
-            (containers
-                && index == 0
-                && (part.eq_ignore_ascii_case("Apps") || part.eq_ignore_ascii_case("Programs")))
-                || installer_named(part)
-        })
-}
-
-/// `ProteoWizard`, `ProteoWizard 3.0.26013.47b13cf 64-bit` or
-/// `pwiz-bin-windows-x86_64-vc145-release-3_0_26013_47b13cf`, and nothing a
-/// person could have added to one: a version is digits, dots and lower-case
-/// hex, and the archive name carries no dot.
-fn installer_named(part: &str) -> bool {
-    if part.len() > 64 {
-        return false;
-    }
-    if let Some(rest) = part.strip_prefix("pwiz-bin-windows-") {
-        return rest
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'));
-    }
-    let Some(rest) = part.strip_prefix("ProteoWizard") else {
-        return false;
-    };
-    let version = |token: &str| {
-        token.starts_with(|c: char| c.is_ascii_digit())
-            && token
-                .chars()
-                .all(|c| c.is_ascii_digit() || matches!(c, 'a'..='f' | '.'))
-    };
-    match rest
-        .strip_prefix(' ')
-        .map(|rest| rest.split(' ').collect::<Vec<_>>())
-    {
-        None => rest.is_empty(),
-        Some(tokens) => match tokens.as_slice() {
-            [release] => version(release),
-            [release, bits] => version(release) && matches!(*bits, "32-bit" | "64-bit"),
-            _ => false,
-        },
-    }
+            .all(|(root, part)| root.to_lowercase() == part.to_lowercase())
 }
 
 /// An owned code: `available`, `chosen`, `rootUnresolved`,

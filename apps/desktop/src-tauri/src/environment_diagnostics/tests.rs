@@ -124,7 +124,7 @@ Release: 3.0.26013
 Build date: Jan 13 2026
 Source revision: 47b13cf
 msconvert SHA-256: A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1
-Folder: <program-files>\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit
+Folder: <program-files>
 Failure: none
 Remembered folder: yes
 Remembered folder refused at startup: none
@@ -149,6 +149,8 @@ fn the_session_summary_neither_probes_nor_launches_anything() {
     let text = summary(&service, &UiPreferenceStore::unavailable());
     for line in [
         "Checked this session: no",
+        "Failure: unknown",
+        "Saved UI language: unknown",
         "UI preferences: unavailable",
         "UI preferences problem: rootUnresolved",
         "Remembered folder: no",
@@ -176,9 +178,25 @@ fn an_unchecked_backend_says_so_rather_than_guessing() {
         "State: unknown",
         "Release: unknown",
         "Folder: unknown",
-        "Failure: none",
+        "Failure: unknown",
     ] {
         assert!(text.contains(&format!("{line}\n")), "{line} is missing");
+    }
+}
+
+#[test]
+fn a_saved_language_is_none_only_when_nothing_is_saved() {
+    for (outcome, expected) in [("absent", "none"), ("unusable", "unknown")] {
+        let facts = Facts {
+            saved_ui_language: None,
+            ui_preferences: outcome.to_owned(),
+            ..ordinary()
+        };
+        let text = render(&facts, &roots(), &redactor());
+        assert!(
+            text.contains(&format!("Saved UI language: {expected}\n")),
+            "{outcome} should read {expected}:\n{text}"
+        );
     }
 }
 
@@ -187,6 +205,12 @@ fn an_unchecked_backend_says_so_rather_than_guessing() {
 /// variable, alone and combined, and none of them reaches the text.
 #[test]
 fn planted_identifiers_never_appear_whatever_field_they_are_planted_in() {
+    // A value here that is code-shaped carries the user name, which the
+    // redactor knows. A code field would show a code-shaped name the redactor
+    // does not know, such as `PlantedSample042`: code fields rely on their
+    // source, a stable id the repository defines, and shape and redaction are
+    // only the second line. The folder is never written, so it also gets
+    // code-shaped and installer-looking names.
     let hostile = [
         PROFILE.to_owned(),
         USER.to_owned(),
@@ -211,6 +235,10 @@ fn planted_identifiers_never_appear_whatever_field_they_are_planted_in() {
         format!(r"C:\Program Files\ProteoWizard\ProteoWizard {DATA}"),
         format!(r"C:\Program Files\ProteoWizard 3.0 {DATA}"),
         format!(r"C:\Program Files\pwiz-bin-windows-{DATA}"),
+        r"C:\Program Files\PlantedSample042".to_owned(),
+        r"C:\Program Files\pwiz-bin-windows-plantedsample-copy".to_owned(),
+        r"C:\Program Files\ProteoWizard\ProteoWizard 3.0 64-bit\PlantedSample042".to_owned(),
+        format!(r"{PROFILE}\AppData\Local\Apps\pwiz-bin-windows-plantedsample"),
     ]);
 
     for value in &hostile {
@@ -261,52 +289,51 @@ fn planted_identifiers_never_appear_whatever_field_they_are_planted_in() {
     }
 }
 
+/// ADR 0005 keeps the installation path out of diagnostics, so nothing below
+/// the root is written, however much it looks like an installer's naming.
 #[test]
-fn a_folder_is_a_root_placeholder_and_an_installer_shaped_remainder_or_withheld() {
+fn a_folder_is_named_only_by_the_known_root_it_sits_under() {
     let cases = [
         (
             r"C:\Program Files\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit".to_owned(),
-            r"<program-files>\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit",
+            "<program-files>",
         ),
         // Windows compares without case, and a canonical path keeps its
         // verbatim prefix.
         (
             r"\\?\C:\PROGRAM FILES\ProteoWizard".to_owned(),
-            r"<program-files>\ProteoWizard",
+            "<program-files>",
         ),
         // Compared by component, not by prefix: this is not under the first.
         (
             r"C:\Program Files (x86)\ProteoWizard".to_owned(),
-            r"<program-files-x86>\ProteoWizard",
+            "<program-files-x86>",
         ),
         (
             format!(r"{PROFILE}\AppData\Local\Apps\ProteoWizard 3.0.26013 64-bit"),
-            r"<local-app-data>\Apps\ProteoWizard 3.0.26013 64-bit",
+            "<local-app-data>",
+        ),
+        (format!(r"{PROFILE}\Desktop\pwiz"), "<user-profile>"),
+        // Names a person chose that an installer could also have written.
+        (
+            r"C:\Program Files\pwiz-bin-windows-mouse-liver-cohort-2026".to_owned(),
+            "<program-files>",
         ),
         (
-            format!(r"{PROFILE}\AppData\Local\ProteoWizard\pwiz-bin-windows-x86_64-vc145-release"),
-            r"<local-app-data>\ProteoWizard\pwiz-bin-windows-x86_64-vc145-release",
+            r"C:\Program Files\pwiz-bin-windows-wang-lab-copy".to_owned(),
+            "<program-files>",
         ),
         (
-            format!(r"{PROFILE}\Desktop\pwiz"),
-            r"<user-profile>\<withheld>",
+            r"C:\Program Files\ProteoWizard 2026.10.30".to_owned(),
+            "<program-files>",
         ),
         (
-            r"C:\Program Files\Lab Tools\ProteoWizard".to_owned(),
-            r"<program-files>\<withheld>",
+            r"C:\Program Files\ProteoWizard 3.0.dead.beef".to_owned(),
+            "<program-files>",
         ),
-        (
-            r"C:\Program Files".to_owned(),
-            r"<program-files>\<withheld>",
-        ),
-        (
-            r"D:\Tools\ProteoWizard".to_owned(),
-            r"<other-folder>\<withheld>",
-        ),
-        (
-            r"\\server\share\ProteoWizard".to_owned(),
-            r"<other-folder>\<withheld>",
-        ),
+        (r"C:\Program Files".to_owned(), "<program-files>"),
+        (r"D:\Tools\ProteoWizard".to_owned(), "<other-folder>"),
+        (r"\\server\share\ProteoWizard".to_owned(), "<other-folder>"),
     ];
     for (folder, expected) in cases {
         let facts = Facts {
@@ -327,7 +354,6 @@ fn a_folder_is_a_root_placeholder_and_an_installer_shaped_remainder_or_withheld(
 #[test]
 fn the_largest_summary_every_shape_admits_stays_within_its_bound() {
     let code = |index: usize| format!("{}{index:02}", "c".repeat(62));
-    let longest_folder_part = format!("ProteoWizard {}", "9".repeat(51));
     let facts = Facts {
         created_at: u64::from(u32::MAX),
         app_version: "1".repeat(32),
@@ -349,9 +375,7 @@ fn the_largest_summary_every_shape_admits_stays_within_its_bound() {
             build_date: Some("Dec 31 9999".to_owned()),
             source_revision: Some("f".repeat(40)),
             msconvert_sha256: Some("F".repeat(64)),
-            folder: Some(format!(
-                r"C:\Program Files (x86)\{longest_folder_part}\{longest_folder_part}\{longest_folder_part}"
-            )),
+            folder: Some(r"C:\Program Files (x86)\ProteoWizard".to_owned()),
             failure: Some(code(5)),
         },
         remembered_folder: true,

@@ -5,7 +5,8 @@ item that can be done now to start; this record states the recommendations that
 lane implemented, and each choice the owner has not made is listed
 [at the end](#open-questions-for-the-owner). The Rust side is implemented on
 branch `be/copy-diagnostics`. No interface calls it yet.
-Related: [0017](0017-redacted-conversion-diagnostics-export.md),
+Related: [0005](0005-mzml-preview-boundary.md),
+[0017](0017-redacted-conversion-diagnostics-export.md),
 [0044](0044-conversion-configuration-authority.md),
 [0055](0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
 [0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md);
@@ -38,7 +39,7 @@ redacted ProteoWizard text; this summary holds no backend text at all.
 | Application | `Version` | the package version | starts with a digit; digits, letters, `.`, `-`, `+`; at most 32 |
 | Application | `Build profile` | `release` or `debug` | code |
 | Application | `Build commit` | `GITHUB_SHA` at compile time, which GitHub Actions sets for every CI and release build; a pull-request build records its merge commit | 40 hex digits, else `unknown` |
-| Application | `Saved UI language` | the preference record's locale, or `none` when nothing is saved | `en` or `zh-CN` |
+| Application | `Saved UI language` | the preference record's locale, `none` when nothing is saved, or `unknown` when the record could not be read or used | `en` or `zh-CN` |
 | Application | `UI preferences`, `UI preferences problem` | the preference store's read outcome and its owned problem code | code |
 | System | `Windows version`, `Windows build`, `Windows edition` | `DisplayVersion`, `CurrentBuildNumber`.`UBR` and `EditionID` under `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, what `winver` reads. `ProductName` is not read: it says "Windows 10" on Windows 11 | letters and digits, at most 8; digits and dots; letters and digits, at most 32 |
 | System | `WebView2 Runtime` | the runtime's own version string | digits and dots |
@@ -46,7 +47,7 @@ redacted ProteoWizard text; this summary holds no backend text at all.
 | ProteoWizard | `State`, `Origin`, `Failure` | the last reading's verdict, `automatic`/`chosen`, and its failure kind | code |
 | ProteoWizard | `Release`, `Build date`, `Source revision` | the reported build identity | digits and dots; `Jan 13 2026`; 6–40 hex digits |
 | ProteoWizard | `msconvert SHA-256` | the digest discovery bound to the executable | 64 hex digits |
-| ProteoWizard | `Folder` | the usable reading's folder, described as decision 4 says | decision 4 |
+| ProteoWizard | `Folder` | which known root the usable reading's folder sits under, never the folder (decision 4) | one of five placeholders |
 | ProteoWizard | `Remembered folder`, `… refused at startup`, `… not saved` | whether a folder is remembered, and the two owned codes beside it. Never the remembered path | `yes`/`no`; code |
 | View cache | `Usage` | `not in this build` until ADR 0060's slice 2 gives the session a cache; then the held cache's usage, never by opening one | fixed |
 | Recent errors | `Held`, then one line per code | the ring of decision 5 | code, RFC 3339 times |
@@ -57,8 +58,10 @@ The backend lines come from what the session already holds: the last reading
 and the identity it bound. Building the summary probes nothing and launches
 nothing, so it can be taken while a conversion runs or after the backend was
 quarantined, which is when it is most needed. Before the first reading the
-section says `Checked this session: no` and every other backend value is
-`unknown`.
+section says `Checked this session: no`, and every value a reading would give,
+`Failure` included, is `unknown`. `Quarantined` and the three
+`Remembered folder` lines are facts about the session and the preference
+record, known without a reading, and are stated as they are.
 
 ### 2. What never goes in
 
@@ -69,28 +72,37 @@ and no error summary or detail. Only those environment variables are read that
 locate the profile, the local application data and Program Files, or that name
 the account, and they are used only to recognise and redact.
 
-### 3. Every value is admitted by its shape, then by the redactor, or withheld whole
+### 3. Every value comes from an owned source, then passes its shape and the redactor, or is withheld whole
 
-There is no free-text field. Each value must match its own shape from the table,
-and must come back unchanged from a redactor that knows the profile path and the
-account name. A value that fails either is replaced whole by `<withheld>`;
-nothing is partly rewritten. Withholding is the safe failure: a user named `en`
-loses the language line, and nothing worse.
+There is no free-text field. The first line of defence is where each value
+comes from: a *code* is a stable id the repository defines — a backend failure
+kind, a preference problem, a boundary error kind — never text a person or a
+file supplied. As of 2026-10-30 every source of a code field and every
+`PreviewErrorDto::new` kind is such an id.
 
-### 4. The ProteoWizard folder is a placeholder and an installer-shaped remainder
+The second line is shape and redaction. Each value must match its own shape
+from the table, and must come back unchanged from a redactor that knows the
+profile path and the account name. A value that fails either is replaced whole
+by `<withheld>`; nothing is partly rewritten. Withholding is the safe failure: a
+user named `en` loses the language line, and nothing worse. The second line
+alone does not stop a code-shaped name the redactor does not know, such as a
+file stem without its extension, so a change that routes supplied text into a
+code field or an error kind breaks the first line, and must not be made.
 
-The folder is the one path described. It is written as the known root it sits
-under — `<program-files>`, `<program-files-x86>`, `<local-app-data>`,
-`<user-profile>`, most specific first — followed by the remainder only when
-every remaining component is a name a ProteoWizard installer or its portable
-archive writes: `ProteoWizard`, `ProteoWizard <version>` with an optional
-`32-bit`/`64-bit`, or `pwiz-bin-windows-…` with no dot, optionally inside `Apps`
-or `Programs` under the local application data, at most three deep. Anything
-else is `<root>\<withheld>`, and a folder under no known root is
-`<other-folder>\<withheld>`. Roots compare by component and without case, as
-Windows does. So `C:\Program Files\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit`
-reads `<program-files>\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit`,
-and a folder the user named, inside the profile or elsewhere, never appears.
+### 4. The ProteoWizard folder is named only by the known root it sits under
+
+ADR 0005's 2026-10-30 amendment says the usable reading's folder "never enters
+diagnostics or project documents", and this summary keeps to it. The folder is
+never written. The `Folder` line names only the known root it sits under —
+`<program-files>`, `<program-files-x86>`, `<local-app-data>` or
+`<user-profile>`, most specific first — or `<other-folder>` when it is under
+none of them, and `unknown` without a usable reading. Roots compare by
+component and without case, as Windows does. So
+`C:\Program Files\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit` reads
+`<program-files>`, and nothing a person named, inside the profile or elsewhere,
+can appear. The line tells a machine-wide installation from a per-user or
+portable copy; two side-by-side installations are told apart by the release,
+the source revision and the `msconvert` SHA-256.
 
 ### 5. A bounded, in-memory ring of boundary error codes
 
@@ -122,8 +134,8 @@ repeated.
 
 ### 7. Bounds
 
-Every value has a maximum length, the folder at most three components of at
-most 64 characters, and the ring 32 lines. The largest summary every shape
+Every value has a maximum length, the folder is one fixed placeholder, and the
+ring holds 32 lines. The largest summary every shape
 admits is held under 8 KiB by a test.
 
 ### 8. Nothing is written, sent or launched
@@ -159,9 +171,17 @@ capability and reads nothing. The release guide's
   that carries a failure would record it on every poll.
 - **The folder with only the profile part replaced.** What the task first
   suggested. It leaks a folder the user named under Program Files or on another
-  drive, and a planted data-file name in such a folder appears in the text.
-- **No folder, or only its category.** Safe, but loses which of two side-by-side
-  installations ran, which the installer-shaped remainder keeps.
+  drive, and a planted data-file name in such a folder appears in the text. It
+  would also amend ADR 0005.
+- **A root placeholder and an installer-shaped remainder**, such as
+  `<program-files>\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit`. Names
+  the installation directly, but writes a derived form of the path ADR 0005
+  keeps out of diagnostics, so it needs the owner to amend ADR 0005. Its
+  grammar must also be tight enough that a folder a person renamed cannot pass:
+  the first draft of this record admitted `pwiz-bin-windows-wang-lab-copy` and
+  `ProteoWizard 2026.10.30`.
+- **No folder line at all.** Equally safe, but loses whether a machine-wide
+  installation or a per-user copy ran, which the root alone says.
 - **A `Verified build: yes/no` line now.** The verified build is ADR 0055's
   `msconvert.exe` digest. Draft PR #161 adds that constant; this lane would have
   been a fourth copy of it. The digest itself is in the summary, so support can
@@ -192,8 +212,9 @@ capability and reads nothing. The release guide's
 
 ## Open questions for the owner
 
-1. **The folder rule (decision 4).** Recommended as written. The alternative is
-   no folder at all.
+1. **The folder (decision 4).** Recommended: the known root only, which keeps
+   ADR 0005's amendment as it stands. An installer-shaped remainder would need
+   ADR 0005 amended; no folder line at all is the other alternative.
 2. **The error ring's recording point (decision 5).** Recommended: at
    `PreviewErrorDto::new`, accepting that a built-and-discarded error counts.
 3. **The verified-build line.** Recommended: add `Verified build: yes/no` once
