@@ -179,18 +179,22 @@
 .viewer-tabs .ui-tab { height: 36px; min-height: 0; padding: 2px 10px 0; color: var(--color-text-secondary); font-size: 13px; }
 .viewer-tabs .ui-tab:hover { color: var(--color-text-primary); }
 .viewer-tabs .ui-tab[aria-selected="true"] { color: var(--color-text-primary); font-weight: 600; }
-.viewer-tabs > .ui-tabpanel { display: flex; grid-row: 2; grid-column: 1 / -1; flex-direction: column; min-height: 0; overflow: hidden; border-top: 1px solid var(--color-border); }
+/* The view scrolls inside its panel only when a window is too short for the
+   plots' floors (a notice open at 960x640); the tab row stays put. */
+.viewer-tabs > .ui-tabpanel { display: flex; grid-row: 2; grid-column: 1 / -1; flex-direction: column; min-height: 0; overflow: auto; border-top: 1px solid var(--color-border); }
 /* Why a scan cannot be selected: the row's right end, in amber. */
 .viewer-file > .viewer-selection-notice { grid-row: 1; grid-column: 3; align-self: center; justify-self: end; min-width: 0; max-width: 100%; margin: 0; padding: 0 12px; overflow: hidden; color: var(--color-warning); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 /* Chromatogram and spectrum: the chromatogram at its own height, then the
    scan list beside the spectrum, which takes the rest. On the Scans tab the
    full table is above the spectrum. */
-.viewer-view { display: grid; flex: 1 1 auto; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; }
-.viewer-view[data-view="scans"] { grid-template-rows: minmax(0, 1fr); }
+/* The chromatogram row is its content, never less: a short window scrolls the
+   view rather than sliding the lower row over the chromatogram's foot. */
+.viewer-view { display: grid; flex: 1 1 auto; grid-template-rows: max-content minmax(min-content, 1fr); min-width: 0; min-height: 0; }
+.viewer-view[data-view="scans"] { grid-template-rows: minmax(min-content, 1fr); }
 .viewer-lower { display: grid; grid-template-columns: 380px minmax(0, 1fr); min-width: 0; min-height: 0; }
 .viewer-view[data-view="spectra"] > .viewer-lower { border-top: 1px solid var(--color-border); }
 .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
-.workbench-shell .viewer-view[data-view="scans"] > .viewer-lower { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr); }
+.workbench-shell .viewer-view[data-view="scans"] > .viewer-lower { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) minmax(min-content, 1.2fr); }
 .viewer-lower > section { min-width: 0; min-height: 0; }
 .viewer-lower > .spectrum-table-panel { border-right: 1px solid var(--color-border); }
 .viewer-view[data-view="scans"] .spectrum-table-panel { border-right: 0; border-bottom: 1px solid var(--color-border); }
@@ -202,10 +206,14 @@
    height. */
 .plot-box { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .workbench-shell .plot-box { border: 0; border-radius: 0; box-shadow: none; background: var(--color-surface); }
-.plot-head { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 6px; height: 32px; min-width: 0; padding: 0 8px 0 12px; }
+/* 36 px, so a focus ring (offset 2, width 2) around a 30 px control stays
+   inside the region that holds it. */
+.plot-head { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 6px; height: 36px; min-width: 0; padding: 0 8px 0 12px; }
 .plot-head h2 { flex: none; margin: 0 4px 0 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
-.plot-head .ui-button { min-height: 28px; padding-block: 2px; }
-.plot-head .ui-icon-button.ui-button--sm { width: 28px; }
+.plot-head .ui-button { min-height: 30px; padding-block: 3px; }
+.plot-head .ui-icon-button.ui-button--sm { width: 30px; }
+/* A plot region never clips: its overlays and its controls' rings stay whole. */
+.workbench-shell .viewer-lower > .spectrum-panel { overflow: visible; }
 /* What the spectrum is: the scan between its steps, then its MS level and size,
    which give way first so the tools keep the head's one line. */
 .spectrum-stepper { display: flex; flex: none; align-items: center; gap: 4px; }
@@ -259,7 +267,12 @@
    meaningless. */
 .workbench-shell .chromatogram-svg { height: clamp(140px, calc(46.875vh - 160px), 360px); min-height: 0; }
 .workbench-shell .chromatogram-frame { flex: none; }
-.workbench-shell .spectrum-plot { min-height: 120px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
+.workbench-shell .spectrum-plot { min-height: 160px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
+/* The spectrum's floor, explicit so the view's grid row can hold it: the
+   drawing's 160 px, its title and tick rows, the head and the line under it.
+   A window too short for it scrolls the view instead of squeezing the plot. */
+.workbench-shell .spectrum-frame { min-height: 188px; }
+.workbench-shell .viewer-lower > .spectrum-panel { min-height: 240px; }
 /* The plot bodies clip, so a focused plot, and a control along a body's
    edge, draws its ring inside itself, as the status bar's do. */
 .workbench-shell :is(.chromatogram-svg, .spectrum-plot, .plot-range-actions .ui-button, .plot-status .ui-button):focus-visible { outline-offset: -2px; }
@@ -275,7 +288,8 @@
 .plot-foot .chromatogram-readout[data-idle] { display: none; }
 /* The range editor and a pending band's two actions, over the drawing's top
    right: opening them never moves the plot. */
-.plot-range-actions { position: absolute; z-index: 2; top: 16px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: calc(100% - 32px); pointer-events: none; }
+.plot-range-actions { position: absolute; z-index: 2; top: 16px; right: 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 6px; max-width: calc(100% - 32px); pointer-events: none; }
+.plot-range-actions > .plot-range-form { flex-basis: 100%; }
 .plot-range-actions > * { pointer-events: auto; }
 .plot-committed-range:not(.visually-hidden) { margin: 0; padding: 0 6px; border-radius: 4px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
 .plot-pending-actions { display: flex; gap: 6px; }
@@ -288,12 +302,13 @@
 .spectrum-viewport-status:not(:empty) { position: absolute; z-index: 1; top: 40%; left: 50%; max-width: 80%; margin: 0; padding: 4px 10px; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; text-align: center; transform: translate(-50%, -50%); }
 .spectrum-viewport-retry { position: absolute; z-index: 1; top: calc(40% + 28px); left: 50%; transform: translateX(-50%); }
 .spectrum-body > .notice, .spectrum-body > .empty-state { margin: 8px 10px; }
-/* What the last export did, over the plot's top right corner and under its
-   head: a result never takes height from the plot. Empty at rest. */
-.plot-status { position: absolute; z-index: 3; top: 36px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: min(70%, 460px); color: var(--color-text-primary); font-size: 12px; pointer-events: none; }
+/* What the last export did, over the drawing's bottom right corner (the range
+   actions have the top right): a result never takes height from the plot.
+   Empty at rest. */
+.plot-status { position: absolute; z-index: 3; bottom: 36px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: min(70%, 460px); color: var(--color-text-primary); font-size: 12px; pointer-events: none; }
 .plot-status > * { pointer-events: auto; }
 .plot-status .spectrum-export-status, .plot-status .spectrum-export-message { margin: 0; font-size: 12px; }
-.plot-status .spectrum-export-message { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
+.plot-status .spectrum-export-message { display: flex; flex-wrap: nowrap; align-items: center; gap: 0 6px; }
 .plot-status-line { display: flex; align-items: center; gap: 4px; }
 .plot-status > .spectrum-export-status:not(:empty),
 .plot-status-line:has(> .spectrum-export-status:not(:empty)) { padding: 4px 4px 4px 10px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); }
@@ -301,10 +316,11 @@
 /* The scan list (direction A): one head with the title, the count, the search
    and the MS-level filter, then the table. */
 .workbench-shell .spectrum-table-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.scan-head { display: flex; flex: none; align-items: center; gap: 8px; height: 40px; min-width: 0; padding: 0 8px 0 12px; }
+.scan-head { display: flex; flex: none; align-items: center; gap: 8px; height: 36px; min-width: 0; padding: 0 8px 0 12px; }
 .scan-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
-.scan-head .scan-result-count { flex: 0 1 auto; min-width: 0; margin: 0 auto 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.plot-search { position: relative; flex: 0 1 180px; min-width: 72px; }
+/* The count stays whole beside its title; the search gives way first. */
+.scan-head .scan-result-count { flex: none; max-width: 40%; margin: 0 auto 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.plot-search { position: relative; flex: 0 1 180px; min-width: 64px; }
 .plot-search > .ui-icon { position: absolute; top: 7px; left: 8px; color: var(--color-text-secondary); pointer-events: none; }
 .scan-head input, .scan-head select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: 5px; padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
 .scan-head select { flex: none; max-width: 40%; }
@@ -317,7 +333,7 @@
 /* Every sortable field across the evidence (the Scans tab); the identifier
    reads left to right like the text it is. */
 .spectrum-table-panel[data-layout="full"] .spectrum-table-row { grid-template-columns: minmax(48px, 0.5fr) minmax(48px, 0.5fr) minmax(160px, 2.4fr) minmax(64px, 0.6fr) minmax(88px, 0.9fr) minmax(96px, 1fr) minmax(112px, 1fr) minmax(112px, 1fr) minmax(96px, 1fr); }
-.spectrum-table-panel[data-layout="full"] .spectrum-table-cell:nth-child(3) { text-align: left; }
+.spectrum-table-panel[data-layout="full"] .spectrum-table-cell:nth-child(3) { padding-left: 16px; text-align: left; }
 .spectrum-table-panel[data-layout="full"] .spectrum-table-cell:nth-child(3) .scan-sort-button { justify-content: flex-start; }
 .scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 100%; min-width: 0; min-height: 28px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .scan-sort-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

@@ -1924,9 +1924,11 @@ button:disabled,
   stroke-width: 1;
 }
 
+/* One data colour across the viewer (P6): the sticks take the chromatogram
+   trace's, not an undeclared second hue. */
 .spectrum-sticks {
   fill: none;
-  stroke: var(--color-chart-secondary);
+  stroke: var(--color-chart-line);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
 }

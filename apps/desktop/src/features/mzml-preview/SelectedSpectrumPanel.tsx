@@ -40,6 +40,9 @@ export interface SelectedSpectrumPanelProps {
   readonly stepReasonId?: string;
 }
 
+/** The scan line between the steps. */
+const SCAN_ID = "selected-spectrum-scan";
+
 /**
  * The selected spectrum (direction A): a head with the title, the scan and its
  * steps, the scan's MS level and size, and one toolbar (m/z range, then the
@@ -53,16 +56,19 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
   const reason = figureRefusal(t, props.scientificExportBusy, props.figureSettingsValidation);
   const rangeEditor = usePlotRangeEditor();
   const spectrum = state.status === "loaded" ? state.spectrum : null;
+  // With no spectrum, the line between the steps ("No spectrum selected") is
+  // why neither can move; otherwise the table's own sentence, where it has one.
+  const stepReasonId = props.stepReasonId ?? (spectrum === null ? SCAN_ID : undefined);
   return <section aria-labelledby="selected-spectrum-heading" className="plot-box spectrum-panel">
     <div className="plot-head">
       <h2 id="selected-spectrum-heading">{t("viewerSpectrum")}</h2>
       <div className="spectrum-stepper" role="group" aria-label={t("scanNavigation")}>
         <IconButton icon={<Icon name="chevronUp" />} label={t("scanPrevious")} onClick={props.onSelectPrevious}
-          refused={props.canSelectPrevious !== true} reasonId={props.stepReasonId} size="sm" variant="secondary" />
-        <span className="spectrum-scan">{spectrum === null ? describe(state, t) : spectrum.scanNumber === null
-          ? t("viewerSpectrumIndex", { index: formatCount(spectrum.index) }) : `${t("scanNumber")} ${formatCount(spectrum.scanNumber)}`}</span>
+          refused={props.canSelectPrevious !== true} reasonId={stepReasonId} size="sm" variant="secondary" />
+        <span className="spectrum-scan" id={SCAN_ID}>{spectrum === null ? describe(state, t) : spectrum.scanNumber === null
+          ? t("viewerSpectrumIndex", { index: formatCount(spectrum.index) }) : `${t("scanColumnScan")} ${formatCount(spectrum.scanNumber)}`}</span>
         <IconButton icon={<Icon name="chevronDown" />} label={t("scanNext")} onClick={props.onSelectNext}
-          refused={props.canSelectNext !== true} reasonId={props.stepReasonId} size="sm" variant="secondary" />
+          refused={props.canSelectNext !== true} reasonId={stepReasonId} size="sm" variant="secondary" />
       </div>
       {spectrum === null ? null : <p className="spectrum-head-facts">
         <span>{`MS${spectrum.msLevel}`}</span>
