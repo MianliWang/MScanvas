@@ -1437,9 +1437,9 @@ pub enum ConversionItemAdoptionDto {
     ///
     /// Only the outputs that latest adoption touched are counted. After a
     /// per-output adoption of one set member (ADR 0052) the counts sum to one,
-    /// less than `adoptableOutputCount`, and an earlier answer about the other
-    /// members -- a refusal included -- is gone without their being checked
-    /// again. Which members are in the workspace is the roster's answer.
+    /// fewer than the item's adoptable outputs, and an earlier answer about the
+    /// other members -- a refusal included -- is gone without their being
+    /// checked again. Which members are in the workspace is the roster's answer.
     ///
     /// The three counts are different answers, not degrees of one. A duplicate
     /// is not a newly added output, and a refusal erases neither the
