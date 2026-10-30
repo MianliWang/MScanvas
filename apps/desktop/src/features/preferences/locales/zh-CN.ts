@@ -1304,7 +1304,7 @@ export const zhCN = {
   provenanceInspectTargetedResultOf: "查看 {{when}} 那次运行记录的靶向 MS1 结果",
   provenanceTargetedStored: "存放在项目文件旁边的结果文件夹中。",
   targetedSetupTitle: "靶向 MS1 查找（实验性）",
-  targetedSetupClose: "关闭",
+  targetedSetupClose: "关闭查找",
   targetedExperimental: "实验性的有边界靶向查找：这不是鉴定，也不是经过验证的定量方法。此处任何数值都不是浓度。",
   targetedDomain: "从单个 mzML 文件读取正离子模式、已质心化的 MS1 谱图，在给定的保留时间与 m/z 窗口内，按 M 与 M+1 两条迹线查找每个目标的 [M+H]+ 离子。未检出并不证明化合物不存在。每次运行超过 10 分钟即停止。来源文件不会被更改。",
   targetedFieldTargets: "目标",

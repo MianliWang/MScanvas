@@ -285,7 +285,16 @@
   gap: 4px 12px;
 }
 
-.project-row-main > input {
+/* A box and the name it ticks stay together, and a long name wraps beside
+   its box rather than leaving it alone on a line. */
+.project-row-label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.project-row-label > input {
   flex: none;
   margin: 0;
 }

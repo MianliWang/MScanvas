@@ -1026,14 +1026,16 @@ export function ProjectPanel({
                             already distinguishes them: the box chooses what the
                             next capture covers, Details chooses what the
                             Details region describes. The name is text. */}
-                        <input
-                          type="checkbox"
-                          checked={selected.includes(input.id)}
-                          aria-label={t("projectSelectNamed", { name: input.label })}
-                          onChange={() => session.toggleSelected(input.id)}
-                        />
-                        <span className="project-row-name" title={input.label}>
-                          {input.label}
+                        <span className="project-row-label">
+                          <input
+                            type="checkbox"
+                            checked={selected.includes(input.id)}
+                            aria-label={t("projectSelectNamed", { name: input.label })}
+                            onChange={() => session.toggleSelected(input.id)}
+                          />
+                          <span className="project-row-name" title={input.label}>
+                            {input.label}
+                          </span>
                         </span>
                         <p className="project-row-facts">
                           <span

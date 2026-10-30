@@ -1348,7 +1348,7 @@ export const en = {
   provenanceInspectTargetedResultOf: "Show the targeted MS1 result recorded by the run of {{when}}",
   provenanceTargetedStored: "Stored in the results folder beside the project file.",
   targetedSetupTitle: "Targeted MS1 lookup (experimental)",
-  targetedSetupClose: "Close",
+  targetedSetupClose: "Close lookup",
   targetedExperimental: "Experimental, bounded targeted lookup: not identification and not a validated quantitative method. No value here is a concentration.",
   targetedDomain: "Reads positive-mode, centroided MS1 spectra from one mzML file and looks for each target's [M+H]+ ion in its M and M+1 traces, within the given RT and m/z windows. Not detected is not proof of absence. Each run stops after 10 minutes. The source file is never changed.",
   targetedFieldTargets: "Targets",
