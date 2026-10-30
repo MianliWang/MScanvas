@@ -302,6 +302,12 @@ Both need a follow-up decision. It must:
 - change discovery, which requires `msaccess` beside `msconvert`, and the setup
   copy.
 
+> **2026-10-29: [ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md)
+> is that decision for the selected spectra of an already-open preview.** They
+> are read natively during a conversion, serialized by a native-read lane
+> instead of the backend gate. Opening a preview during a conversion stays
+> refused, and viewing without ProteoWizard stays open.
+
 ### 4. Offsets are kept with the open preview
 
 Every open is a full pass, because no index is trusted (decision 2). In the
@@ -809,6 +815,12 @@ ways forward:
 - add native decoding later, in its own decision;
 - offer an explicit, labelled "Read with ProteoWizard" action for a refused
   spectrum, which the user chooses. That is not a fallback.
+
+> **Decided by the owner, 2026-10-29: the viewer keeps the typed refusal.** An
+> adopted numpress output (ADR 0055) opens, because the table pass decodes no
+> array, and each of its spectra shows that refusal. Native decoding and a
+> "Read with ProteoWizard" action each remain possible later, in their own
+> decision.
 
 **Open question for the owner: a chromatogram above 100,000 spectra.** This ADR
 keeps today's row-capped state (decision 5). Two other ways:
