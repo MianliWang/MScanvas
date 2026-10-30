@@ -180,3 +180,16 @@ pub(super) fn install(service: &PreviewService) {
     // After the spectrum, so the tokens are the session's first and second.
     service.install_seeded_chromatogram(seeded_owner(), source);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::idle_provider::NoProcess;
+    use super::*;
+
+    /// The seed runs at the rendered build's startup, where a refusal is a
+    /// panic before any test can look: read it once here instead.
+    #[test]
+    fn the_seed_installs_one_reconciled_pair() {
+        install(&PreviewService::new(Box::new(NoProcess)));
+    }
+}
