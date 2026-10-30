@@ -5832,6 +5832,49 @@ fn non_ascii_text_is_kept_and_marked_only_where_a_trigger_starts_a_cell() {
 }
 
 #[test]
+fn a_quote_or_a_line_break_before_a_trigger_does_not_hide_it() {
+    let mut stored = golden_stored();
+    // A reader that splits on `;` may take a `"` at a cell start for a quote.
+    for (label, written) in [
+        ("a;\"=1+1;b", "\"a;\"\"'=1+1;b\""),
+        ("a;\"\"@2", "\"a;\"\"\"\"'@2\""),
+        ("\"=1", "\"\"\"'=1\""),
+        ("a\"=1", "\"a\"\"=1\""),
+    ] {
+        stored.plan.targets[5].label = label.to_owned();
+        let table = spreadsheet(&stored);
+        assert!(table.contains(&format!(",{written},")), "{label:?}");
+    }
+    // To that reader a line break inside the quoted CSV field ends the record,
+    // and the text after it starts the next one.
+    for (status, written) in [
+        ("ok\n=1", "\"ok\n'=1\""),
+        ("ok\r=1", "\"ok\r'=1\""),
+        ("ok\r\n+1", "\"ok\r\n'+1\""),
+    ] {
+        stored.rows[0]
+            .feature
+            .as_mut()
+            .expect("a feature")
+            .model_status = status.to_owned();
+        let table = spreadsheet(&stored);
+        assert!(table.contains(&format!(",{written},")), "{status:?}");
+    }
+}
+
+#[test]
+fn the_mark_cannot_be_undone_so_a_stored_apostrophe_can_print_as_another_label() {
+    let mut stored = golden_stored();
+    stored.plan.targets[0].label = "'=x".to_owned();
+    stored.plan.targets[1].label = "=x".to_owned();
+    // Two stored labels, one written value: only the CSV or `target_id` tells
+    // them apart (ADR 0054, Consequences).
+    assert_eq!(spreadsheet(&stored).matches(",'=x,").count(), 2);
+    let (csv, _) = result_table(&stored, TableFormat::Csv).expect("a table");
+    assert!(csv.contains(",'=x,") && csv.contains(",=x,"));
+}
+
+#[test]
 fn numbers_formula_and_code_owned_fields_are_never_altered() {
     let mut stored = golden_stored();
     // Labels a plain split on `,` can read: no quoted field anywhere.

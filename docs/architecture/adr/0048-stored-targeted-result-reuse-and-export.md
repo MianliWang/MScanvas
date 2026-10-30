@@ -101,6 +101,8 @@ figure or table itself. Suggested names carry the result's short identifier and
 the target's plan position, never a label:
 `mscanvas-targeted-ms1-<artifact8>-target-<n>.svg|png` and
 `mscanvas-targeted-ms1-<artifact8>-results.csv|tsv`.
+[ADR 0054](0054-spreadsheet-csv-for-the-targeted-results-table.md) adds
+`mscanvas-targeted-ms1-<artifact8>-results-spreadsheet.csv`.
 
 **No clipboard copy for a stored result.** The clipboard write could not be
 exercised natively for this command in M9.2 (the native harness has no project

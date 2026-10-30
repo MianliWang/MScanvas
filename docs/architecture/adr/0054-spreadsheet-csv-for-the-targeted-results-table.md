@@ -106,20 +106,27 @@ unnoticed.
 ### 4. The trigger rule
 
 In a declared field, one apostrophe (`'`, U+0027) is inserted before a
-**trigger character** that is either the first character of the value or the
-character immediately after a `;` in it. The trigger characters are:
+**trigger character** that starts a cell. A cell starts at the first character
+of the value and at the character immediately after a `;`, a line feed
+(U+000A) or a carriage return in it; any double quotes (`"`) right at a cell
+start are passed over, so the trigger after them is the one marked. The trigger
+characters are:
 
 `=`, `+`, `-`, `@`, tab (U+0009) and carriage return (U+000D).
 
 Nothing is removed and nothing else changes. The apostrophe is added before CSV
 quoting, so a quoted field reads `"'=SUM(1,2)"`, never `'"=SUM(1,2)"`. Examples:
 `=SUM(1,2)` becomes `'=SUM(1,2)`; `+x;-y;@z;=w` becomes `'+x;'-y;'@z;'=w`;
-`-1 (did not converge)` becomes `'-1 (did not converge)`; `a;b` and `#hash`
-are unchanged.
+`-1 (did not converge)` becomes `'-1 (did not converge)`; `a;"=1` becomes
+`a;"'=1`; `ok` + line feed + `=1` becomes `ok` + line feed + `'=1`; `a;b`,
+`a"=1` and `#hash` are unchanged.
 
 The six characters are the set commonly documented for CSV formula injection.
 The rule after `;` is the owner's: a spreadsheet that splits on `;` starts a
-new cell there.
+new cell there. To such a spreadsheet the CSV field's quotes are text, so a
+line break inside a quoted field ends its record and the text after it starts
+the next one, and a `"` at a cell start may be read as a quote around the
+trigger.
 
 These cases are **decided, not verified**. The owner's check covers them:
 
@@ -128,7 +135,14 @@ These cases are **decided, not verified**. The owner's check covers them:
 - a space after the semicolon (`a; =1`) is not neutralized;
 - full-width signs (`＝`, `＋`, `－`, `＠`) and other look-alikes are not
   triggers;
-- a leading line feed is not a trigger; CSV quotes it;
+- a line feed is not itself a trigger, but the character after one starts a
+  cell, so `=1` after a line feed is marked (a line feed reaches a declared
+  field only through engine text: labels and engine versions refuse control
+  characters);
+- double quotes between the cell start and the trigger (`a;"=1`, `a;""=1`) are
+  passed over and the trigger is marked; whether a spreadsheet would have
+  evaluated it is not known, and a `"` that does not follow a cell start
+  (`a"=1`) marks nothing;
 - when a spreadsheet opens the file as CSV, it may show the apostrophe as part
   of the text (`'=SUM(1,2)`), not hide it.
 
@@ -170,6 +184,10 @@ LibreOffice and WPS. That check is the owner's and is pending. Until it passes:
   spreadsheet CSV names its changes in its format identifier.
 - A label read back from the spreadsheet CSV can differ from the stored label
   by an apostrophe. A tool that compares labels reads the CSV.
+- The mark cannot be undone. A value that already starts a cell with an
+  apostrophe is written as it is, so the stored labels `'=x` and `=x` are both
+  written `'=x`: two different labels of one plan can print the same. Only the
+  CSV or `target_id` tells them apart.
 - Until the webview adds `spreadsheetCsv` to `TargetedTableFormat`
   (`projectApi.ts`) and offers a control, after PR #164, the variant is reached
   only through the command.

@@ -69,8 +69,11 @@ pub const SPREADSHEET_TEXT_PREAMBLE_KEYS: [&str; 3] =
 const FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
 
 /// One declared text value as the spreadsheet CSV writes it: an apostrophe
-/// before a trigger at the start or right after a `;`, since a spreadsheet
-/// that splits on `;` starts a cell there. Nothing is removed.
+/// before a trigger that starts a cell. A cell starts at the value's start and
+/// right after a `;`, a line feed or a carriage return: a spreadsheet that
+/// splits on `;` starts a cell at the first and a record at the others, since
+/// to it the CSV field's quotes are text. A `"` right at a cell start is passed
+/// over, as such a reader may take it for a quote. Nothing is removed.
 fn spreadsheet_text(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 1);
     let mut cell_start = true;
@@ -78,7 +81,7 @@ fn spreadsheet_text(value: &str) -> String {
         if cell_start && FORMULA_TRIGGERS.contains(&character) {
             out.push('\'');
         }
-        cell_start = character == ';';
+        cell_start = matches!(character, ';' | '\n' | '\r') || (cell_start && character == '"');
         out.push(character);
     }
     out
