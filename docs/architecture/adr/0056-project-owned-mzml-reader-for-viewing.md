@@ -4,6 +4,7 @@ Status: **Accepted** by the owner on 2026-10-29, including the dependency
 request: `base64 0.22.1` and `flate2 1.1.10` become direct dependencies of the
 product crate (both already in `Cargo.lock`, so the lock gains no package).
 Proposed 2026-10-28.
+Amended 2026-10-30 by the owner: decision 1's version rule (a note there).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -109,6 +110,29 @@ The open, meaning the whole spectrum table, is refused for:
 - a spectrum missing a value the table requires (decision 5): MS level, scan
   start time, base peak m/z and intensity, or total ion current;
 - a document beyond the limits of decision 2.
+
+> **Amended 2026-10-30 by the owner's decision**
+> ([plan section 2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28),
+> decision 2). The R0 comparison of 2026-10-29
+> ([PR #157](https://github.com/MianliWang/MScanvas/pull/157)) found that the
+> reader refused the `PXD081190` file at the open with `not_mzml_1_1`. That
+> file's `<mzML>`, written by MSFragger 4.1, has no `version` attribute, and
+> its `xsi:schemaLocation` names `mzML1.1.0.xsd`. `msaccess` opens it, so the
+> refusal was a regression from today's route. A copy with `version="1.1.0"`
+> added read exactly. The version rule is now:
+>
+> - a `version` attribute on `<mzML>` decides, and one that is not `1.1.x` is
+>   refused;
+> - without one, the version is read from the xsd file name in the `<mzML>`
+>   element's own `xsi:schemaLocation` (not the `indexedmzML` wrapper's), as
+>   ProteoWizard reads it (`pwiz@47b13cf`, `pwiz/data/msdata/IO.cpp`,
+>   `HandlerMSData`). `mzML1.1.<n>.xsd` is accepted; any other name is
+>   refused;
+> - a document with neither is refused.
+>
+> ProteoWizard prefers the schema location to the attribute; this reader
+> prefers the attribute. Slice 1 needs a fixture for each case and a rerun of
+> R0 before it merges.
 
 A selected spectrum is refused, and the open and every other spectrum stand,
 for:
