@@ -54,6 +54,11 @@ const DEV_SERVER_URL = `http://127.0.0.1:${String(DEV_SERVER_PORT)}`;
  * watched as it runs -- and drops only what hides the window and its
  * scrollbars. Everything else, the Vite server and the mocked IPC boundary
  * included, is the same composition.
+ *
+ * Motion is allowed unless a spec emulates `prefers-reduced-motion: reduce`
+ * itself. Without the flag the machine's own setting leaks in: a CI runner
+ * reports reduced motion, and the console warning that triggers fails every
+ * clean-console assertion.
  */
 export function chromeArgs(headed: boolean): string[] {
   return [
@@ -62,6 +67,7 @@ export function chromeArgs(headed: boolean): string[] {
     "--no-sandbox",
     "--window-size=1920,1080",
     "--force-device-scale-factor=1",
+    "--force-prefers-no-reduced-motion",
     ...(headed ? [] : ["--hide-scrollbars"]),
   ];
 }
