@@ -161,6 +161,7 @@ status matches and every number is within 1e-6 relative.
 | Tier 2 | tier 1 + `pyopenms/*.cpp` and `pyopenms/*.pyi` | 3,408 | 172,239,655 | — | `completed` | equal (7.96e-8) |
 | Tier 3 | tier 2 + every `tests/` folder in numpy and pandas | 1,793 | 152,113,369 | 35,819,244 | `completed` | equal (no difference in this run) |
 | Without HMDB | `pyopenms/share/OpenMS/CHEMISTRY/HMDBMappingFile.tsv` (2,217,569 B) | 4,627 | 346,481,262 | — | `completed` | equal (7.96e-8) |
+| Tier 3 without HMDB (decision 4) | tier 3 + `HMDBMappingFile.tsv` | 1,792 | 149,895,800 | 35,566,420 | `completed` | equal (8.84e-8) |
 | Without `Qt6Network.dll` | that DLL (1,755,784 B) | 4,627 | 346,943,047 | — | **`failed`**, `INTERNAL` | — |
 
 The `Qt6Network.dll` copy failed at import, with the Windows message in the
@@ -229,9 +230,9 @@ requirement". It stays useful to a developer only.
 - **The full runtime**, as provisioned.
 - **Tier 1**: no matplotlib stack. It removes Pillow, so the 41 alerts no longer
   apply to what ships.
-- **Tier 3**: tier 1 without generated source, stubs and test suites. It is
-  the smallest measured copy, and ANA-004's results in it equal the full
-  runtime's.
+- **Tier 3**: tier 1 without generated source, stubs and test suites.
+  ANA-004's results in it equal the full runtime's, with or without the HMDB
+  file.
 
 pyOpenMS 3.5.0 declares `matplotlib>=3.5` in `Requires-Dist`, so the slimmed
 runtime is a manifest-level exclusion, not something pip would produce. An
@@ -317,13 +318,18 @@ is never chosen silently (open question 3).
 ### 4. Contents: tier 3, without the HMDB file
 
 - Ship tier 3: no matplotlib stack, no generated `.cpp`, no `.pyi`, no numpy or
-  pandas test suites. Measured: the adapter's rows, evidence, outcome and
-  loaded modules equal the full runtime's; 1,793 files and 152,113,369 bytes.
-- Leave out `HMDBMappingFile.tsv`. ANA-004 does not read it (measured). Its
-  terms reportedly require the authors' permission for commercial
-  redistribution (the wording is still unverified at the source), and MSCanvas
-  is Apache-2.0, open to commercial users. A later accurate-mass search takes a
-  user-supplied database.
+  pandas test suites.
+- Leave out `HMDBMappingFile.tsv`, the only HMDB file in the 3.5.0 manifest
+  (3.6.0 adds `HMDB2StructMapping.tsv`, 49 MB). ANA-004 does not read it
+  (measured). The HMDB terms ([hmdb.ca/citing](https://hmdb.ca/citing)) say
+  that "use and re-distribution of the data, in whole or in part, for
+  commercial purposes requires explicit permission of the authors"; the site
+  refused direct fetches, so that wording came through a search result and is
+  still to be checked at the source. MSCanvas is Apache-2.0, open to commercial
+  users. A later accurate-mass search takes a user-supplied database.
+- Measured as one copy (tier 3 without HMDB): 1,792 files, 149,895,800 bytes,
+  about 35.6 MB compressed; the adapter's rows, evidence, outcome and loaded
+  modules equal the full runtime's.
 - Keep `Qt6Network.dll`: the engine does not load without it.
 - The release lock lists only the shipped wheels, installed without their
   declared dependencies, and the provisioning script records the exclusions
@@ -367,6 +373,9 @@ release that ships the package.
 | `zlib.dll` 1.3.1 | zlib | not in the wheel | notice |
 | numpy 2.5.3 with OpenBLAS, LAPACK and the GCC runtime library in `numpy.libs` | BSD-3-Clause, 0BSD, MIT, Zlib, CC0-1.0; OpenBLAS BSD-3-Clause; LAPACK BSD-3-Clause-Open-MPI; GCC runtime GPL-3.0-or-later WITH GCC-exception-3.1 | numpy's `dist-info/licenses/` | reproduce them; the GCC exception covers the statically linked runtime |
 | pandas 3.0.6, python-dateutil 2.9.0.post0, six 1.17.0, tzdata 2026.4 | BSD-3-Clause; Apache-2.0 and BSD-3-Clause (its `LICENSE`: "The above BSD License Applies to all code, even that also covered by Apache 2.0"); MIT; Apache-2.0 | each `dist-info` | reproduce them |
+
+Not shipped, so no notice: HMDB data (`HMDBMappingFile.tsv`, HMDB terms,
+decision 4) and the matplotlib stack removed in tier 1.
 
 **The LGPL-3 question.** LGPL-3 §4(d)(1) allows a shared-library mechanism
 that "will operate properly with a modified version of the Library that is

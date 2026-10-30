@@ -611,7 +611,7 @@ None can be delivered by engineering alone; each waits for one input.
 - Releasing the analysis runtime (CPython and pyOpenMS), which every pyOpenMS
   function waits on: [ADR 0066](../architecture/adr/0066-analysis-runtime-release.md),
   proposed 2026-10-30, recommends a separate per-machine runtime package, a
-  slimmed runtime (1,793 files, 152 MB, measured to run ANA-004 identically)
+  slimmed runtime (1,792 files, 150 MB, measured to run ANA-004 identically)
   and an AppContainer measurement; its nine open questions are the owner's.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
