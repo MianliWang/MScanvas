@@ -10,7 +10,7 @@ pub(super) struct ClearPlan {
     id: String,
     document: u64,
     generation: u64,
-    incarnation: (u64, u64),
+    incarnation: (u64, u64, u64),
     all: Vec<DatasetId>,
     removable: Vec<DatasetId>,
 }
@@ -237,7 +237,7 @@ impl PreviewService {
 
     fn wait_for_clear_quiescence(
         &self,
-        incarnation: (u64, u64),
+        incarnation: (u64, u64, u64),
     ) -> Result<(), WorkspaceClearRefusalDto> {
         // A missing worker may never notify. This is a refusal deadline, never
         // evidence that a process ended and never permission to release rows.

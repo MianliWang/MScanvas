@@ -59,11 +59,17 @@ impl PreferenceRoot {
 
     /// The published record's full path.
     ///
-    /// Private, and there is deliberately no accessor for the directory either:
-    /// nothing outside this module needs the location, and a getter is how an
-    /// absolute path ends up in a message, a log or a transfer object.
+    /// Private. The directory has one other reader, the view cache, which lives
+    /// under the same binding (ADR 0060 decision 6) and keeps the path in Rust;
+    /// a getter is otherwise how an absolute path ends up in a message, a log
+    /// or a transfer object.
     fn file(&self) -> PathBuf {
         self.directory.join(PREFERENCE_FILE_NAME)
+    }
+
+    /// The bound directory, for the view cache alone.
+    pub(super) fn directory(&self) -> &std::path::Path {
+        &self.directory
     }
 }
 

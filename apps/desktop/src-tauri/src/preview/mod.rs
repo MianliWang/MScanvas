@@ -69,6 +69,10 @@ mod output_opening;
 /// the complete spectrum Rust retained -- never the complete arrays, never a
 /// path -- and no scientific export is ever taken from one. See ADR 0037.
 mod projection;
+/// The one-click view of a Thermo RAW row through the view cache (ADR 0060):
+/// the operation's state in the conversion slot, its transfer objects and its
+/// refusals. The work is the service's.
+pub mod raw_view;
 pub(crate) mod scientific_output;
 /// The bytes a lawful SCIEX acquisition fixture is made of. Shared by this
 /// module's own suite and the project bridge's, so a compound-file header is

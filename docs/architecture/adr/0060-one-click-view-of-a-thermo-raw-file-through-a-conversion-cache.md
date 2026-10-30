@@ -7,7 +7,8 @@ decision 2, "One-click view RAW";
 decision 5 of 2026-10-30) and asked that its details follow the
 recommendations. This record states those recommendations. Slice 1, the cache
 library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/172),
-2026-10-30); nothing else here is. The questions still open for the owner are listed
+2026-10-30). Slice 2, the operation and its commands, is implemented on `be/viewraw-op`
+([slice 2 notes](#slice-2-notes-2026-10-30)); nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
 Related: [0005](0005-mzml-preview-boundary.md),
@@ -1132,6 +1133,78 @@ Shots at 1366x768 and 960x640, in `en` and `zh-CN`, of:
    and schema versions, with golden tests.
 
 Native QA follows slice 3 under its own hold release.
+
+## Slice 2 notes (2026-10-30)
+
+Dated notes of 2026-10-30, written with slice 2 (the operation and its
+commands, branch `be/viewraw-op`). Where a note departs from a decision above,
+it says so; the decisions stand otherwise.
+
+1. **What is implemented.** `begin_raw_view`, `get_raw_view_state`,
+   `cancel_raw_view`, `open_raw_view`, `describe_view_cache` and
+   `clear_view_cache` (decision 12); the phases of decision 3; the refusals of
+   decision 4 that need no process; the view as a holder of the conversion
+   slot (decision 5); the failures of decision 10; and Cancel in every phase.
+   Progress is read by polling `get_raw_view_state`, as decision 12 says; there
+   is no event channel. The commands are registered, and no webview calls them
+   until slice 3.
+2. **Two cases slice 1 left open. Recommended, pending owner confirmation.**
+   - A check that could not be made (`Lookup::Unreadable`), and a damaged
+     entry that could not be removed (`Lookup::Damaged { removed: false }`),
+     end the operation `failed` with `view_cache_entry_unavailable`, retryable,
+     before anything is converted. Neither is treated as a miss and neither as
+     damage: converting would publish into a place that is still held, and
+     removing what could not be checked could remove a sound entry another
+     process is reading. The same code answers when a place found occupied at
+     publishing is in either state.
+   - An attempt that a sharing refusal keeps from being removed after
+     `view_cache_not_stored`, for example while a scanner still reads the new
+     file, stays in `staging` until a later session's sweep removes it,
+     because decision 6's sweep leaves this process's attempts alone. Nothing
+     is published from it and nothing reads it.
+3. **The output's name inside the attempt departs from decision 6 while the
+   run lasts.** The view conversion uses the existing plan
+   (`ConversionPlan::to_mzml`), which names its output after the RAW, so
+   `msconvert` writes `<RAW stem>.mzML`, and its staging area, inside the
+   attempt directory. Checking output renames that file to `entry\view.mzML`
+   through the handle it was checked with, so no published name comes from the
+   user's file. A RAW whose name the plan cannot stage fails with
+   `conversion_not_plannable`. Follow-up: a plan with a fixed output name, once
+   `be/integrate` (PR #161) has reshaped `ConversionPlan`.
+4. **Hashing.** Checking file is the conversion crate's own admission
+   (`ConversionSource::open_thermo_raw_file_reporting`), read in chunks with
+   Cancel asked before each, so its digest is the key's and the run's baseline
+   and the bind does not hash the RAW again (decision 7). The run's own pin
+   still rehashes the RAW in one read before `msconvert` starts, inside
+   Converting, with no progress and with Cancel answered after it. That is a
+   known ceiling. Checking output reads the output
+   (`FinalizedOutput::still_matches_reporting`) and the RAW again under one
+   bar.
+5. **The key's intent line** is `ConversionIntent::SHIPPED.stable_id()`. Once
+   PR #161 merges, it becomes the structured intent's canonical serialization,
+   and the key's version line changes (decision 7).
+6. **Deferred, each with its reason.**
+   - `backend_not_found` and `provider_build_not_evidenced` need the help
+     probe, so they end the operation `failed` once its worker has bound the
+     build, before the RAW is read, instead of refusing the press.
+     `get_raw_view_state` takes no handle and answers no
+     `RawViewAvailabilityDto` yet; slice 3 adds both.
+   - `begin_raw_view_with` and `rawViewIntents` wait for PR #161's structured
+     intents.
+   - `PreviewDto.viewSource` and the typed `viewed_through_cache` refusal come
+     with slice 3. Until then a cached view retains no run-summary token, so a
+     QC capture from it fails closed.
+   - The same-session digest memo is not built: every View hashes the RAW in
+     full, which is the safer side of decision 7.
+   - A native drop while a view runs is refused through the busy mirror with
+     the queue's `conversion_busy` drop state, because that state is a
+     webview-visible transfer object. Every other route of decision 5 answers
+     `raw_view_busy`.
+7. **ADR 0056 decision 3 for a Thermo RAW row, as implemented.**
+   `open_mzml_preview` and `load_selected_spectrum` still refuse a vendor row
+   with `dataset_not_previewable`. Only `open_raw_view` opens one, and every
+   read of that preview, a spectrum's included, goes to the pinned entry. The
+   next open of any row ends that preview and its pin.
 
 ## Alternatives rejected
 

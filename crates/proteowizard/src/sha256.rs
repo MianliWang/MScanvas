@@ -24,6 +24,31 @@ pub enum Sha256Error {
     InvalidPropertyLength { property: &'static str, actual: u32 },
 }
 
+/// A reader that asks `keep_going(bytes_read, bytes_total)` before each read,
+/// so a digest over a large object reports its progress and can be stopped
+/// between chunks (ADR 0060 decision 3).
+///
+/// A `false` answer fails the read, which the digest reports as an I/O error:
+/// the caller that answered `false` knows it stopped the read and is the one
+/// that tells a stop from a failure.
+pub(crate) struct Reported<'a, R> {
+    pub(crate) inner: R,
+    pub(crate) read: u64,
+    pub(crate) total: u64,
+    pub(crate) keep_going: &'a mut dyn FnMut(u64, u64) -> bool,
+}
+
+impl<R: io::Read> io::Read for Reported<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if !(self.keep_going)(self.read, self.total) {
+            return Err(io::Error::other("the caller stopped the read"));
+        }
+        let count = self.inner.read(buffer)?;
+        self.read += count as u64;
+        Ok(count)
+    }
+}
+
 #[cfg(windows)]
 pub(crate) fn digest_bytes(bytes: &[u8]) -> Result<[u8; 32], Sha256Error> {
     let mut hasher = windows::WindowsSha256::new()?;

@@ -4260,6 +4260,16 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "open_finalized_output",
             "open_mzml_preview",
             "load_selected_spectrum",
+            // ADR 0060 slice 2: the one-click view of a Thermo RAW row. Begin
+            // names the row and no intent; the state is polled, not pushed;
+            // Cancel and Open name the exact operation; the cache's summary
+            // and Clear name nothing. None takes a path.
+            "begin_raw_view",
+            "get_raw_view_state",
+            "cancel_raw_view",
+            "open_raw_view",
+            "describe_view_cache",
+            "clear_view_cache",
             "describe_workspace_conversion_queue",
             "get_workspace_conversion_state",
             "begin_workspace_conversion_queue",
@@ -4334,7 +4344,21 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // Every command the product uses is a command the host registers, spelled
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
     // caller here and is deliberately not in this list.
-    for name in &registered[1..] {
+    // The view commands are registered by ADR 0060's slice 2 and called by its
+    // slice 3, the interface, which waits on the owner's choice of direction.
+    // Named here so the exemption cannot grow silently.
+    let awaiting_their_interface = [
+        "begin_raw_view",
+        "get_raw_view_state",
+        "cancel_raw_view",
+        "open_raw_view",
+        "describe_view_cache",
+        "clear_view_cache",
+    ];
+    for name in registered[1..]
+        .iter()
+        .filter(|name| !awaiting_their_interface.contains(name))
+    {
         assert!(
             api.contains(&format!("\"{name}\""))
                 || drop_transport.contains(&format!("\"{name}\""))
@@ -31028,4 +31052,5 @@ mod active_clear;
 #[cfg(windows)]
 mod figure_preview;
 mod output_opening;
+mod raw_view;
 mod staging_recovery;

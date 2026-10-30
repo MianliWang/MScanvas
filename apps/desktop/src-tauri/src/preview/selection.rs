@@ -844,6 +844,30 @@ fn bound_source(
     Ok(source)
 }
 
+/// [`open_conversion_source`] for a Thermo RAW row, with the digest read in
+/// chunks and `keep_going(bytes_read, bytes_total)` asked before each one: the
+/// view cache's Checking file (ADR 0060 decision 7), whose digest is the key's
+/// and the run's baseline. A stopped read is refused as an unhashed source; the
+/// caller that stopped it tells the two apart.
+pub(super) fn open_thermo_raw_source_reporting(
+    file: &AcceptedFile,
+    keep_going: &mut dyn FnMut(u64, u64) -> bool,
+) -> Result<ConversionSource, PreviewErrorDto> {
+    let source = ConversionSource::open_thermo_raw_file_reporting(
+        file.path(),
+        MzmlScanLimits::default(),
+        keep_going,
+    )
+    .map_err(source_not_admitted)?;
+    let Some((volume_serial, file_id)) = source.object_identity() else {
+        return Err(source_identity_unavailable());
+    };
+    if FileIdentity::new(volume_serial, file_id) != file.identity {
+        return Err(source_identity_changed());
+    }
+    Ok(source)
+}
+
 /// How a refused admission is reported.
 ///
 /// Every rejection is matched by name rather than through a catch-all, so a

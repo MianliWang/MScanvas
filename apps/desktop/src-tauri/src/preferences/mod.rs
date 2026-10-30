@@ -105,6 +105,18 @@ impl UiPreferenceStore {
         Self::over(binding)
     }
 
+    /// The folder this store is bound to, which is where the view cache lives
+    /// too (ADR 0060 decision 6): the same resolver, and under the `e2e`
+    /// feature the same task-owned QA root. `None` when nothing was bound,
+    /// which refuses View rather than trying another place.
+    #[must_use]
+    pub fn view_cache_parent(&self) -> Option<std::path::PathBuf> {
+        match &self.binding {
+            RootBinding::Bound(root) => Some(root.directory().to_path_buf()),
+            RootBinding::Unavailable(_) => None,
+        }
+    }
+
     /// One store over an already decided binding.
     fn over(binding: RootBinding) -> Self {
         Self {

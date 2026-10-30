@@ -421,7 +421,14 @@ writer and Rust's ownership of files.
     and its marker, the key, the manifest, verification, publishing, the pins,
     eviction, Clear and the staging sweep, with Rust tests. No command, UI or
     conversion yet; slice 2 is next.
-  - Left to slice 2: a chunked, cancellable hash of the RAW for Checking file
+  - Slice 2, the operation and its commands, is on `be/viewraw-op`
+    (2026-10-30): the phases, Cancel in each, the view as a holder of the
+    conversion slot, the failures of decision 10, and six commands with no UI
+    caller yet. Its departures and deferrals are ADR 0060's
+    [slice 2 notes](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-2-notes-2026-10-30),
+    including the two cases below (recommended, pending owner confirmation).
+    Slice 3, the interface, waits on the owner's direction.
+  - Left to slice 2, and done there: a chunked, cancellable hash of the RAW for Checking file
     and Checking output; reading the volume's free space for `make_space`; the
     1.5 GiB refusal before any work; the summary and Clear DTOs over `usage`
     and `clear`; and codes for a check that could not be made

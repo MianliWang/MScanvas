@@ -23,8 +23,8 @@ mod reattachment;
 /// started, behind the executor boundary the project store runs it through.
 mod targeted_ms1;
 /// The view cache of ADR 0060: where a Thermo RAW file's converted copy is
-/// kept for viewing. Slice 1 is the library alone; slice 2's operation and
-/// commands are its first callers, so until then only its tests use it.
+/// kept for viewing. Slice 2's operation and commands are its callers; what
+/// they do not call yet is reached by its tests alone.
 #[cfg(windows)]
 #[cfg_attr(not(test), allow(dead_code))]
 mod view_cache;
@@ -1297,6 +1297,10 @@ use preview::dto::{
     WorkspaceRosterDto, diagnostics_picker_unavailable, invalid_conversion_reservation,
     invalid_workspace_drop_subscription, spectrum_picker_unavailable,
 };
+use preview::raw_view::{
+    RawViewBeginRequestDto, RawViewOperationRequestDto, RawViewStateDto, ViewCacheClearOutcomeDto,
+    ViewCacheSummaryDto,
+};
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
 #[tauri::command]
@@ -2481,6 +2485,96 @@ async fn load_selected_spectrum(
     off_the_async_runtime(move || service.load_spectrum(&handle, index)).await?
 }
 
+/// Begins the one-click view of one Thermo RAW row (ADR 0060 decision 12).
+///
+/// The request names the row and nothing else: View converts with the verified
+/// default, which Rust chooses, so no request can carry a picker. The work runs
+/// on a blocking thread and the webview polls `get_raw_view_state`; there is no
+/// event channel.
+#[tauri::command]
+async fn begin_raw_view(
+    request: RawViewBeginRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<RawViewStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let worker = Arc::clone(&service);
+    let service = Arc::clone(&service);
+    let state = off_the_async_runtime(move || service.begin_raw_view(&request)).await??;
+    if let RawViewStateDto::Running { operation, .. } = &state {
+        let operation = *operation;
+        tauri::async_runtime::spawn(async move {
+            let runner = Arc::clone(&worker);
+            if spawn_blocking(move || runner.run_raw_view(operation))
+                .await
+                .is_err()
+            {
+                // A worker that never finished must not hold the slot.
+                worker.abandon_raw_view(operation);
+            }
+        });
+    }
+    Ok(state)
+}
+
+/// The latest view operation, or `idle`. Polled while one runs.
+#[tauri::command]
+async fn get_raw_view_state(
+    service: State<'_, SharedService>,
+) -> Result<RawViewStateDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.raw_view_state()).await
+}
+
+/// Cancels the exact view operation named. A late press answers the state.
+#[tauri::command]
+async fn cancel_raw_view(
+    request: RawViewOperationRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<RawViewStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.cancel_raw_view(request)).await
+}
+
+/// Opens a ready view operation's cached copy, once, as the RAW row's preview.
+#[tauri::command]
+async fn open_raw_view(
+    request: RawViewOperationRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<PreviewDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.open_raw_view(request)).await?
+}
+
+/// The view cache's summary for Settings: counts and bytes, never a path.
+#[tauri::command]
+async fn describe_view_cache(
+    service: State<'_, SharedService>,
+) -> Result<ViewCacheSummaryDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.describe_view_cache()).await
+}
+
+/// Clear view cache: removes MSCanvas's converted copies that nothing holds.
+/// RAW files and outputs are never candidates.
+#[tauri::command]
+async fn clear_view_cache(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<ViewCacheClearOutcomeDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.clear_view_cache()).await?
+}
+
 /// The preview service, shared so a command can take it onto a blocking thread.
 type SharedService = Arc<PreviewService>;
 
@@ -2552,6 +2646,10 @@ pub fn run() {
             app.manage(SharedPreferences::new(UiPreferenceStore::bind(
                 app.handle(),
             )));
+            // The view cache lives under the preference store's own binding
+            // (ADR 0060 decision 6). Nothing is created until a View.
+            app.state::<SharedService>()
+                .bind_view_cache(app.state::<SharedPreferences>().view_cache_parent());
             // A ProteoWizard folder an earlier session remembered is where this
             // one's discovery starts. Nothing is launched here: the first
             // backend reading probes it, and searches automatically instead,
@@ -2658,6 +2756,12 @@ pub fn run() {
             open_finalized_output,
             open_mzml_preview,
             load_selected_spectrum,
+            begin_raw_view,
+            get_raw_view_state,
+            cancel_raw_view,
+            open_raw_view,
+            describe_view_cache,
+            clear_view_cache,
             describe_workspace_conversion_queue,
             get_workspace_conversion_state,
             begin_workspace_conversion_queue,
