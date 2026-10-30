@@ -15,7 +15,7 @@ import type { MessageKey } from "../preferences/i18n";
 import { captureOrganizationPayload, UNGROUPED, type AcquisitionGroup, type OrganizationPayload, type OrganizationTarget, type OrganizationNotice } from "./organization";
 import { GroupNameDialog } from "./GroupNameDialog";
 import { useRosterWindow } from "./useRosterWindow";
-import { Icon } from "../../components/ui";
+import { Icon, MiddleEllipsis } from "../../components/ui";
 
 interface Props {
   readonly state: RosterState; readonly projection: RosterProjection;
@@ -230,6 +230,7 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
   const name = group.id === UNGROUPED ? t("ungrouped") : group.name;
   const checked = group.handles.filter(handle => state.conversionMembership.has(handle)).length;
   const index = state.organization.groups.findIndex(item => item.id === group.id);
+  const menuId = `group-menu-${index}`;
   return <div role="row" aria-level={1} aria-expanded={!group.collapsed} className={`roster-group-header${isDropTarget ? " is-drop-target" : ""}`} data-group-id={group.id} ref={setRef}>
     {/* v5.11 group label: the name leads, its count, checkbox and menu sit on the right. */}
     <div role="gridcell" className="group-disclosure-cell"><button type="button" className="group-disclosure" aria-expanded={!group.collapsed} aria-label={t("groupDisclosure", { name, count: group.handles.length })} onClick={() => dispatch({ type: "organization", action: { type: "disclose", groupId: group.id } })}>
@@ -248,11 +249,11 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
         <Menu.Item onSelect={() => { openingDialog.current = true; onRename({ id: group.id, name: group.name, returnTo: menuTrigger.current }); }}>{t("renameGroup")}</Menu.Item>
         {/* Refused, not disabled: each stays reachable and says why (spec 1.4). */}
         {([["moveGroupUp", index <= 1, -1, "moveGroupFirst"], ["moveGroupDown", index === state.organization.groups.length - 1, 1, "moveGroupLast"]] as const).map(([label, refused, step, reason]) =>
-          <Menu.Item key={label} aria-disabled={refused || undefined} onSelect={event => {
+          <Menu.Item key={label} aria-disabled={refused || undefined} aria-describedby={refused ? `${menuId}-${label}-reason` : undefined} onSelect={event => {
             if (refused) { event.preventDefault(); return; }
             const targetId = state.organization.groups[index + step]?.id;
             if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } });
-          }}>{t(label)}{refused ? <span className="plot-menu-reason">{t(reason)}</span> : null}</Menu.Item>)}
+          }}>{t(label)}{refused ? <span aria-hidden="true" className="plot-menu-reason" id={`${menuId}-${label}-reason`}>{t(reason)}</span> : null}</Menu.Item>)}
         <Menu.Separator /><Menu.Item onSelect={() => dispatch({ type: "organization", action: { type: "dissolve", groupId: group.id } })}>{t("dissolveGroup")}</Menu.Item>
       </Menu.Content></Menu.Portal></Menu.Root></div> : null}
   </div>;
@@ -276,7 +277,9 @@ const AcquisitionRow = memo(function AcquisitionRow({ row, group, state, project
   return <div role="row" aria-level={2} aria-selected={highlighted} aria-label={label} tabIndex={tabIndex} data-handle={row.handle} data-group={group.id} data-drag-source={isDragSource}
     className={`dataset-row${highlighted ? " is-selected" : ""}${viewed ? " is-active" : ""}${isDropTarget ? " is-drop-target" : ""}`} ref={setRef} onClick={event => onPress(event, row.handle)}>
     <div role="gridcell"><MembershipCheckbox tabIndex={tabIndex} label={t("checkAcquisition", { name: row.fileName })} checked={state.conversionMembership.has(row.handle)} onChange={checked => dispatch({ type: "membershipChanged", handles: [row.handle], checked })} /></div>
-    <div role="gridcell" className="dataset-row-label"><span className="dataset-row-name" title={row.fileName}>{row.fileName}</span>
+    {/* One line, losing its middle (the extension stays). "Viewed" stays a
+        word as well as the highlight: status is never colour alone (V7). */}
+    <div role="gridcell" className="dataset-row-label"><MiddleEllipsis className="dataset-row-name" text={row.fileName} />
       {row.relativeContext !== null ? <span className="dataset-row-context" title={row.relativeContext}>{row.relativeContext}</span> : null}
       <span className="dataset-row-facts"><span>{SOURCE_KIND_LABEL[row.sourceKind]}</span><span>{formatByteLength(row.byteLength, t)}</span>{viewed ? <span>{t("showingRow")}</span> : null}{status ? <span>{status}</span> : null}{pin ? <span>{t("outsideSearch")}</span> : null}</span></div>
     <div role="gridcell" className="roster-row-controls"><button ref={handleRef} tabIndex={tabIndex} type="button" data-drag-handle aria-describedby="roster-drag-instructions" aria-label={t("moveHandle", { name: row.fileName })} className="row-drag-handle">⠿</button>

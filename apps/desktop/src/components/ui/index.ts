@@ -3,6 +3,7 @@ export { Disclosure, type DisclosureProps } from "./Disclosure";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";
 export { Icon, type IconName } from "./Icon";
 export { IconButton, type IconButtonProps } from "./IconButton";
+export { MiddleEllipsis, middleSplit } from "./MiddleEllipsis";
 export { PanelHeader, type PanelHeaderProps } from "./PanelHeader";
 export { SegmentedControl, type SegmentOption, type SegmentedControlProps } from "./SegmentedControl";
 export { Splitter, type SplitterProps } from "./Splitter";

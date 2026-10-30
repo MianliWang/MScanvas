@@ -167,6 +167,25 @@
 
 /* SegmentedControl */
 
+/* MiddleEllipsis: the head gives way, the tail and extension never do. */
+
+.ui-middle-ellipsis {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.ui-middle-ellipsis__head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-middle-ellipsis__tail {
+  flex: none;
+}
+
 .ui-segmented {
   display: inline-flex;
   max-width: 100%;
