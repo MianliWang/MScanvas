@@ -608,6 +608,11 @@ None can be delivered by engineering alone; each waits for one input.
 - *Answered 2026-10-30* (section 2): the vendor format strategy (ADR 0059),
   the mzML version rule, the remembered ProteoWizard folder, the `tiff`
   dependency, one-click view RAW and Thermo vendor centroiding.
+- The study model for cross-sample analysis:
+  [ADR 0067](../architecture/adr/0067-study-model-for-cross-sample-analysis.md),
+  proposed 2026-10-30, with ten open questions. It would supersede ADR 0050 for
+  study recipes only, and its records join schema 5 if they merge before a
+  release writes it.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted.
