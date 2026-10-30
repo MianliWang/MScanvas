@@ -36,17 +36,21 @@ use uuid::Uuid;
 /// Schema 4 ([`PUBLISHED_SCHEMA_VERSION`]), the shape before an input could
 /// carry the "not verified by MSCanvas" label of a conversion
 /// ([`NotVerifiedByMscanvas`]), was published in beta 1 and is read: exactly,
-/// through its own types, and held in memory as this schema with no label on
-/// any input. Opening writes nothing; the next explicit Save writes this
-/// schema, which beta 1 refuses. A later schema belongs to the build that
+/// through its own types, and held in memory as this schema with a `null`
+/// label on every input. Opening writes nothing; the next explicit Save writes
+/// this schema, which beta 1 refuses. A later schema belongs to the build that
 /// wrote it.
 pub const SCHEMA_VERSION: u32 = 5;
 
 /// The schema beta 1 published, which this build reads and never writes.
 ///
-/// Frozen at beta 1's vocabulary. Its reader shares every closed vocabulary
-/// with schema 5, so a word added to one of them must also be refused on this
-/// path: a schema-4 document cannot hold a word beta 1 did not write.
+/// Frozen at beta 1's words and fields. Its reader shares every record type
+/// below the top level and the input with schema 5, so a word added to one of
+/// their closed vocabularies, or a field added to one of them, must also be
+/// refused on this path: a schema-4 document cannot hold what beta 1 did not
+/// write. `project::tests::schema_four_shares_only_beta_one_words_and_fields`
+/// lists every one of them without a wildcard, so such an addition does not
+/// compile until it is decided there.
 pub const PUBLISHED_SCHEMA_VERSION: u32 = 4;
 
 /// The largest project document this build will read.
@@ -307,10 +311,12 @@ pub struct InputRecord {
     pub members: Vec<MemberRecord>,
     /// The label of the conversion that produced this input's primary, when
     /// this session converted and adopted that object and the conversion was
-    /// not verified by MSCanvas. Absent means nothing is recorded, never that
-    /// the input was verified. History, like the baseline: written once, at
+    /// not verified by MSCanvas. `null` means nothing is recorded, never that
+    /// the input was verified. Explicit like every optional value here: the
+    /// field must be present, so an omitted one is refused rather than read as
+    /// nothing recorded. History, like the baseline: written once, at
     /// registration.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub not_verified_by_mscanvas: Option<NotVerifiedByMscanvas>,
 }
 
@@ -324,7 +330,9 @@ pub struct InputRecord {
 pub struct NotVerifiedByMscanvas {
     pub unverified_settings: bool,
     /// The release of the build without a measured row, as the conversion
-    /// reported it. `None` on a measured build.
+    /// reported it. Explicit `null` on a measured build: an omitted one is
+    /// refused rather than read as a measured build.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub unverified_build_release: Option<String>,
 }
 
@@ -1329,7 +1337,8 @@ impl DocumentProblem {
 ///
 /// A schema-4 document is read through `SchemaFourDocument`, which refuses
 /// every schema-5 field as unknown (`malformed`), and is answered as schema 5
-/// with no label on any input. Every rule below then applies to it unchanged.
+/// with a `null` label on every input. Every rule below then applies to it
+/// unchanged.
 ///
 /// Nothing in here touches the filesystem. Validation is entirely structural,
 /// which is what lets the caller replace live state only after the whole
@@ -1339,17 +1348,7 @@ impl DocumentProblem {
 ///
 /// A [`DocumentProblem`] naming the first rule the document broke.
 pub fn parse(bytes: &[u8]) -> Result<ProjectDocument, DocumentProblem> {
-    /// Tolerant on purpose: this exists only to find the version, so a document
-    /// full of fields from another build must still get past it.
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct VersionProbe {
-        schema_version: Option<u32>,
-    }
-
-    let probe: VersionProbe =
-        serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?;
-    let mut document: ProjectDocument = match probe.schema_version {
+    let mut document: ProjectDocument = match declared_schema(bytes) {
         Some(SCHEMA_VERSION) => {
             serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?
         }
@@ -1384,6 +1383,24 @@ pub fn parse(bytes: &[u8]) -> Result<ProjectDocument, DocumentProblem> {
     Ok(document)
 }
 
+/// The `schemaVersion` a document's bytes declare, or `None` where they are
+/// not a JSON object with a whole-number one.
+///
+/// Tolerant on purpose: this exists only to find the version, so a document
+/// full of fields from another build must still get past it. It says nothing
+/// about whether the rest of the document is readable; [`parse`] does.
+pub(crate) fn declared_schema(bytes: &[u8]) -> Option<u32> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct VersionProbe {
+        schema_version: Option<u32>,
+    }
+
+    serde_json::from_slice::<VersionProbe>(bytes)
+        .ok()?
+        .schema_version
+}
+
 /// A schema-4 document exactly as beta 1 wrote it: [`ProjectDocument`] whose
 /// inputs cannot carry a label. Read by [`parse`] alone, and never written.
 #[derive(Deserialize)]
@@ -1412,8 +1429,8 @@ struct SchemaFourInput {
 
 impl SchemaFourDocument {
     /// The same document as schema 5 holds it. No input gains a label: beta 1
-    /// recorded none, and an absent label means nothing is recorded, never
-    /// that a conversion was verified.
+    /// recorded none, and a `null` label means nothing is recorded, never that
+    /// a conversion was verified.
     fn upgraded(self) -> ProjectDocument {
         ProjectDocument {
             schema_version: SCHEMA_VERSION,

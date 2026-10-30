@@ -113,9 +113,7 @@ accepted):
 2. **The "not verified by MSCanvas" flag survives adoption.** It is carried
    into an adopted output's provenance, in the session and in the project
    document, not only into the queue outcome and diagnostics. A project schema
-   bump is accepted (ADR 0055, risks). The schema-5 build on `be/integrate`
-   reads beta 1's schema-4 projects and writes schema 5 on the next explicit
-   Save; once it saves a project, beta 1 can no longer open it.
+   bump is accepted (ADR 0055, risks).
 3. **Conversion capacity and viewing during conversion**
    ([ADR 0057](../architecture/adr/0057-conversion-capacity-and-viewing-during-conversion.md)):
    - an open preview's selected spectra may be read natively during a
@@ -140,6 +138,13 @@ accepted):
 
 **Still open** (not decided on 2026-10-29):
 
+- what the schema-5 build does with beta 1's schema-4 projects. Implemented on
+  `be/integrate` (draft PR #161), pending an owner decision before merge: it
+  reads them, writes schema 5 on the next explicit Save, and from then on beta
+  1 cannot open that project (ADR 0055, risks, the note of 2026-10-29 on a
+  schema-4 document). Beta 1's `INSTALL_AND_SUPPORT.md` says no compatibility
+  between betas is promised, while the M9 closure says publishing begins
+  schema 4's promise; the owner decides which one stands;
 - the R0 real-file comparison for the reader (ADR 0056, decision 8): the PRIDE
   `PXD081190` download, an MS1 profile-mode file from the owner, and a
   ProteoWizard hold release;

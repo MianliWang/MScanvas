@@ -107,13 +107,17 @@ still refused by this build.
 > **Note, 2026-10-29: beta 1 published schema 4, which removes that reason.**
 > No document is affected: beta 1 already carries both words, and no M9.1 or
 > M9.2 build was published. What it adds is an obligation from here on.
-> Schema 4 is frozen at beta 1's vocabulary, so a word is never again added to
-> a published schema in place; a new word goes into a new or still-unpublished
-> schema. The schema-5 build on `be/integrate` reads schema 4 through its own
-> types but shares every closed vocabulary with schema 5 (`record.rs`,
-> `PUBLISHED_SCHEMA_VERSION`). No word has been added since beta 1, so nothing
-> needs refusing yet; the first word added to a shared vocabulary must also be
-> refused on that schema-4 path
+> Schema 4 is frozen at beta 1's words and fields, so neither is ever again
+> added to a published schema in place; a new one goes into a new or
+> still-unpublished schema. The schema-5 build on `be/integrate` reads schema 4
+> through its own top-level and input types but shares every record type below
+> them, and every closed vocabulary, with schema 5 (`record.rs`,
+> `PUBLISHED_SCHEMA_VERSION`). Nothing has been added since beta 1, so nothing
+> needs refusing yet. The first word or field added to a shared type, a
+> `#[serde(default)]` field included, must also be refused on that schema-4
+> path, with a test. `project::tests::schema_four_shares_only_beta_one_words_and_fields`
+> lists every shared word and field without a wildcard, so such an addition
+> does not compile until it is decided there
 > ([ADR 0055](0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
 > the note of 2026-10-29 on a schema-4 document).
 

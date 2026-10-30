@@ -91,7 +91,8 @@ pub enum ProjectError {
     /// The chosen destination is not named as a project document.
     DestinationNotNamed,
     /// The chosen destination holds something that is not one of this build's
-    /// project documents. Nothing is replaced.
+    /// project documents, or a schema-4 document other than the one this
+    /// session is bound to. Nothing is replaced.
     DestinationNotAProject,
     /// The chosen destination is the same filesystem object as a file this
     /// project references. Nothing is replaced.
@@ -831,7 +832,9 @@ impl ProjectStore {
             destination,
             &resolved,
             project_id,
-            binding.as_ref().map(|binding| binding.revision),
+            binding
+                .as_ref()
+                .map(|binding| (binding.path.as_path(), binding.revision)),
         )?;
         let destination_existed = std::fs::symlink_metadata(destination).is_ok();
         // The document this session is bound to, chosen again: its store is the
@@ -3491,11 +3494,16 @@ fn names_a_project(destination: &Path) -> bool {
 /// project document -- which is the case the first rule cannot see, and the
 /// case a hard link creates. Identity is compared through open handles, so it
 /// is the objects being compared and not the names that reached them.
+///
+/// A schema-4 document is one this build reads but never wrote, and replacing
+/// it makes it unreadable to beta 1, which wrote it. Only the document this
+/// session is bound to is replaced, which is what Save does to it; any other
+/// copy, even of this project at this revision, is refused.
 fn refuse_unwritable_destination(
     destination: &Path,
     referenced: &[PathBuf],
     project_id: record::ProjectId,
-    binding_revision: Option<u64>,
+    binding: Option<(&Path, u64)>,
 ) -> Result<(), ProjectError> {
     if local_document::unsafe_published_name(destination) {
         return Err(ProjectError::Document(DocumentProblem::UnsafeTarget));
@@ -3518,6 +3526,11 @@ fn refuse_unwritable_destination(
             let Ok(published) = record::parse(&bytes) else {
                 return Err(ProjectError::DestinationNotAProject);
             };
+            if record::declared_schema(&bytes) == Some(record::PUBLISHED_SCHEMA_VERSION)
+                && !binding.is_some_and(|(bound, _)| same_published_document(bound, destination))
+            {
+                return Err(ProjectError::DestinationNotAProject);
+            }
             // Something is published there and it is one of this build\'s
             // projects. Two cases, and only one of them is a save.
             //
@@ -3534,7 +3547,7 @@ fn refuse_unwritable_destination(
             if published.project_id != project_id {
                 return Err(ProjectError::DestinationNotAProject);
             }
-            if binding_revision != Some(published.revision) {
+            if binding.map(|(_, revision)| revision) != Some(published.revision) {
                 return Err(ProjectError::StaleDocument);
             }
         }

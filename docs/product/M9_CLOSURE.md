@@ -198,23 +198,30 @@ which adds the "not verified by MSCanvas" label to an input (ADR 0055, owner
 decision 2). The canonical document is now `schema_5_canonical.json`, read and
 written back by
 `project::tests::the_canonical_schema_five_document_reads_and_writes_back_unchanged`.
-Beta 1 published schema 4, which began its promise below, so that build
-**reads** `schema_4_canonical.json` exactly as schema 4 and holds it as schema 5
-with no label on any input
+Beta 1 published schema 4, which began its promise below, so the schema-5
+build on `be/integrate` **reads** `schema_4_canonical.json` exactly as schema 4
+and holds it as schema 5 with a `null` label on every input
 (`the_canonical_schema_four_document_is_read_as_schema_five_with_no_label`);
 opening writes nothing, and the next explicit Save writes schema 5, which beta 1
-can no longer open (ADR 0055, the note of 2026-10-29 on a schema-4 document).
-Schema 4's vocabulary is now frozen at beta 1's: a word added to a shared
-vocabulary later is a schema-5-or-later word and must be refused on the
-schema-4 read path (ADR 0049, decision 4 note).
+can no longer open. That disposition is a release decision for the owner
+before merge (ADR 0055, the note of 2026-10-29 on a schema-4 document).
+Schema 4 is now frozen at beta 1's words and fields: a word or field added to a
+shared type later belongs to schema 5 or later and must be refused on the
+schema-4 read path, which
+`project::tests::schema_four_shares_only_beta_one_words_and_fields` enforces at
+compile time (ADR 0049, decision 4 note). Below, schema 4 as it stood at the M9
+closure; each statement marked "as of the M9 closure" is superseded by this
+note.
 
 **Schema 4 is the current unpublished development schema, and its
 compatibility promise begins only if and when this source line is published.**
+*(As of the M9 closure; see the note above.)*
 
 - The one current meaning is the canonical document
   [`schema_4_canonical.json`](../../apps/desktop/src-tauri/src/project/schema_4_canonical.json),
   read and written back to the same JSON value by
-  `project::tests::the_canonical_schema_four_document_reads_and_writes_back_unchanged`.
+  `project::tests::the_canonical_schema_four_document_reads_and_writes_back_unchanged`
+  (as of the M9 closure; see the note above).
   It holds every word listed below. Reading it recomputes both plan digests
   and the target-list digest, so a change to a plan's canonical form fails
   there, as does renaming or removing any stored word. A word *added* to a
@@ -234,7 +241,7 @@ compatibility promise begins only if and when this source line is published.**
   on open and before every write. Every object refuses unknown fields; every
   closed vocabulary refuses an unknown word (`malformed`); every optional
   value is an explicit `null`; a version other than 4 is `unsupportedVersion`
-  and nothing migrates.
+  and nothing migrates (as of the M9 closure; see the note above).
 - **Earlier M9 development builds are not compatible with each other.** M9.3
   added `verifiedSnapshotInWorkArea` and `insufficientWorkAreaSpace` to schema
   4 without advancing it, so an M9.1 or M9.2 build refuses a document that
