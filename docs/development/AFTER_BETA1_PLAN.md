@@ -528,6 +528,12 @@ Stable CLI and schemas, then repository/user skills, then a narrow local MCP
 adapter, reusing the desktop's domain contracts (AUT-001…003). Starts with the
 M10.0 route decision.
 
+*2026-10-30: the route is proposed in
+[ADR 0064](../architecture/adr/0064-m10-automation-route.md): a second binary,
+`mscanvas`, in the desktop package that drives the same application operations
+(inspect, intents, plan, run an approved plan, validate), then one skill, then
+an MCP adapter in the same binary; the plan and run slices wait for PR #161.*
+
 ### 7.4 Future capabilities
 
 - P1: WSP-010 restore workspace; FIG-007 saved FigureSpec; ENV-004 copy
@@ -610,4 +616,6 @@ None can be delivered by engineering alone; each waits for one input.
   dependency, one-click view RAW and Thermo vendor centroiding.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
-- M10.0's route, when drafted.
+- M10.0's route, when drafted. *Drafted 2026-10-30 as
+  [ADR 0064](../architecture/adr/0064-m10-automation-route.md), proposed; its
+  five open questions are the owner's.*
