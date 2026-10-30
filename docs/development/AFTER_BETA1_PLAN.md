@@ -405,6 +405,10 @@ writer and Rust's ownership of files.
   the operation and its commands; the interface; export provenance). The
   interface slice waits on the owner's choice of interface direction. Native QA
   needs a bounded ProteoWizard hold release.
+  - Slice 1, the cache library, is on `be/view-cache` (2026-10-30): the root
+    and its marker, the key, the manifest, verification, publishing, the pins,
+    eviction, Clear and the staging sweep, with Rust tests. No command, UI or
+    conversion yet; slice 2 is next.
 - CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
