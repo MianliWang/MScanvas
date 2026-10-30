@@ -203,9 +203,10 @@ describe("M7.3 real native viewer and committed exports", function () {
     await capture("01-native-source-entry");
     expect(await browser.$(SCANS).getText()).toContain("12 matches / 12 loaded rows / 12 reported spectra");
     const header = browser.$(SCANS + ' [role="columnheader"]:nth-child(8) button'); await header.click(); await header.click();
-    // Current msaccess emits this raw native identifier and RT in multiples of
-    // 60 from the fixture's minute CV values; the UI still reports units unknown.
-    await browser.$(SCANS + " input[type=search]").setValue("0.1.8");
+    // The native reader (ADR 0056) carries the file's own identifier, not
+    // msaccess's abbreviation, and the fixture's retention times in their
+    // declared minutes, never converted to seconds.
+    await browser.$(SCANS + " input[type=search]").setValue("scan=8");
     expect(await reads()).toEqual([]);
     await browser.$(row(7) + ' [role="gridcell"]:nth-child(5)').click();
     await browser.waitUntil(async () => await browser.$("#selected-spectrum-summary").getText() === "Spectrum 7, MS2, 12 points.");
@@ -255,13 +256,13 @@ describe("M7.3 real native viewer and committed exports", function () {
     await clickPlot(MZ, .5); const host = await reads(); await browser.keys(["Control", "+"]); await browser.keys(["Control", "0"]);
     expect(await reads()).toEqual(host); await browser.keys("Tab");
     expect(await browser.execute(css => document.activeElement?.matches(css), MZ)).not.toBe(true);
-    await edit("rt", "60", "600"); await drag(RT, .2, .7);
+    await edit("rt", "1", "10"); await drag(RT, .2, .7);
     await browser.$(".chromatogram-panel .plot-pending-actions").waitForDisplayed(); await browser.keys("Escape");
     expect(await browser.$(".chromatogram-panel .plot-pending-actions").isExisting()).toBe(false);
     await capture("05-native-input-ownership");
   });
   it("writes current and full retained CSV for both axes, including pending export and natural save cancellation", async () => {
-    await edit("mz", "200", "550"); await edit("rt", "60", "600");
+    await edit("mz", "200", "550"); await edit("rt", "1", "10");
     await drag(MZ, .25, .5);
     await browser.$(".spectrum-export-disclosure summary").click(); await browser.$('input[name="spectrum-range-scope"][value="current"]').click();
     const pendingMz = await csv("mz", "06-mz-current-while-pending");
@@ -288,18 +289,18 @@ describe("M7.3 real native viewer and committed exports", function () {
     expect(await reads()).toEqual(beforeRtGesture); await capture("09b-native-rt-pending");
     await browser.$("#chromatogram-export-toggle").click();
     await browser.$('input[name="chromatogram-range-scope"][value="current"]').click();
-    const pendingRt = await csv("rt", "10-rt-current-while-pending"); expect(pendingRt.request.args.range).toEqual({ scope: "current", low: 60, high: 600 });
+    const pendingRt = await csv("rt", "10-rt-current-while-pending"); expect(pendingRt.request.args.range).toEqual({ scope: "current", low: 1, high: 10 });
     expect(pendingRt.rows.map(row => row[0])).toEqual(Array.from({ length: 10 }, (_, index) => index + 1));
     await browser.$("#chromatogram-export-toggle").click(); await browser.$(".chromatogram-panel .plot-pending-actions button:first-child").click();
     expect(await browser.$(".chromatogram-panel .plot-pending-actions").isExisting()).toBe(false);
     await capture("10b-native-rt-confirmed");
     await browser.$("#chromatogram-export-toggle").click();
     const narrowedRt = await csv("rt", "11-rt-confirmed-current"), range = narrowedRt.request.args.range as { low: number; high: number };
-    expect(range.low).toBeGreaterThan(60); expect(range.high).toBeLessThan(600);
-    expect(narrowedRt.rows.map(row => row[0])).toEqual(Array.from({ length: M73_SCAN_COUNT }, (_, index) => index).filter(index => index * 60 >= range.low && index * 60 <= range.high));
+    expect(range.low).toBeGreaterThan(1); expect(range.high).toBeLessThan(10);
+    expect(narrowedRt.rows.map(row => row[0])).toEqual(Array.from({ length: M73_SCAN_COUNT }, (_, index) => index).filter(index => index >= range.low && index <= range.high));
     await browser.$('input[name="chromatogram-range-scope"][value="full"]').click();
     const fullRt = await csv("rt", "12-rt-full"); expect(fullRt.request.args.range).toEqual({ scope: "full", low: null, high: null });
-    expect(fullRt.rows.map(row => [row[0], row[3], row[4], row[5]])).toEqual(Array.from({ length: M73_SCAN_COUNT }, (_, index) => [index, index * 60, 452 * (index + 1), 100 * (index + 1)]));
+    expect(fullRt.rows.map(row => [row[0], row[3], row[4], row[5]])).toEqual(Array.from({ length: M73_SCAN_COUNT }, (_, index) => [index, index, 452 * (index + 1), 100 * (index + 1)]));
     expect(new Set([pendingRt.request.args.exportToken, narrowedRt.request.args.exportToken, fullRt.request.args.exportToken]).size).toBe(1);
     expect(digest(fixture)).toBe(sourceSha);
     await browser.$("#chromatogram-export-toggle").click(); await capture("13-native-final-current-source");
