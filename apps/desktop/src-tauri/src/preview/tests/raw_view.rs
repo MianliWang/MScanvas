@@ -762,17 +762,17 @@ fn a_cached_copy_that_cannot_be_checked_or_removed_ends_retryable_before_any_con
 
 #[test]
 fn pins_end_with_the_next_open_or_the_row_and_removing_the_row_deletes_nothing() {
-    let mut responses = open_responses();
-    responses.extend(open_responses());
+    // Responses for the RAW's open only, so the mzML's open below fails.
     let runner = FakeConversionRunner::new(BackendAct::Convert);
     let arguments = runner.arguments();
-    let session = viewing_with("raw-view-pins", runner, arguments, responses);
+    let session = viewing_with("raw-view-pins", runner, arguments, open_responses());
     let (operation, _) = ready(&session.view());
     assert_eq!(summary(&session.service), (1, 1));
     let kept = session.service.clear_view_cache().expect("Clear runs");
     assert_eq!((kept.removed, kept.kept_in_use), (0, 1));
 
-    // The open takes the pin over; opening another row ends it.
+    // The open takes the pin over; opening another row ends it, also when that
+    // open fails.
     session.open(operation).expect("open");
     assert_eq!(summary(&session.service), (1, 1));
     let mzml = session.raws.readable_mzml("other.mzML");
@@ -788,7 +788,7 @@ fn pins_end_with_the_next_open_or_the_row_and_removing_the_row_deletes_nothing()
     session
         .service
         .open_preview(&mzml_handle)
-        .expect("open mzML");
+        .expect_err("the mzML's open fails");
     assert_eq!(summary(&session.service), (1, 0));
 
     // A ready view never opened is released by removing its row, which
@@ -1178,6 +1178,38 @@ fn retry_of_a_terminal_queue_answers_raw_view_busy_while_a_view_runs() {
             .retry_conversion_queue(current_document(service))
             .is_ok()
     );
+}
+
+#[test]
+fn view_waits_for_an_accepted_native_drop_to_commit() {
+    let session = viewing("raw-view-after-drop");
+    let (started, release, worker) = spawn_blocked_drop(&session.service, &[]);
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the drop reaches its unlocked scan");
+    let (begun, answer) = mpsc::channel();
+    let service = Arc::clone(&session.service);
+    let handle = session.handle.clone();
+    let begin = std::thread::spawn(move || {
+        let state = service.begin_raw_view(&RawViewBeginRequestDto { handle });
+        begun.send(state).expect("return View's answer");
+    });
+    assert!(
+        answer.recv_timeout(Duration::from_millis(100)).is_err(),
+        "View waits for the drop"
+    );
+    release.send(()).expect("finish the drop");
+    assert!(
+        worker.join().expect("the drop's worker joins").is_some(),
+        "the drop commits rather than being refused as busy"
+    );
+    let state = answer
+        .recv_timeout(Duration::from_secs(2))
+        .expect("View resumes")
+        .expect("View begins");
+    begin.join().expect("View's thread joins");
+    session.service.run_raw_view(operation_of(&state));
+    ready(&session.service.raw_view_state());
 }
 
 impl HasLaunchCount for StopAwareRunner {

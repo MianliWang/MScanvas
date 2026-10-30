@@ -284,10 +284,27 @@ impl Workspace {
     /// `None` when the dataset is not registered.
     fn begin_open_request(&mut self, id: DatasetId) -> Option<(u64, AcceptedFile)> {
         let file = self.registry.get(id)?.file().clone();
+        // The next open of any row ends a cached view and its pin, also when
+        // that open then fails (ADR 0060 decision 8).
+        self.end_viewed_previews();
         let state = self.runtime.entry(id).or_default();
         state.request_epoch += 1;
         state.preview = None;
         Some((state.request_epoch, file))
+    }
+
+    /// Drops every row's preview that holds a view-cache entry, and its pin
+    /// with it: one preview at a time holds an entry (ADR 0060 decision 8).
+    fn end_viewed_previews(&mut self) {
+        for state in self.runtime.values_mut() {
+            if state
+                .preview
+                .as_ref()
+                .is_some_and(|preview| preview.view.is_some())
+            {
+                state.preview = None;
+            }
+        }
     }
 
     /// Starts a request that reads one dataset and changes nothing about it:
@@ -7329,17 +7346,9 @@ impl PreviewService {
             return Err(superseded());
         }
         let table_rows = Arc::new(table_rows);
-        // One preview at a time holds a cache entry: this open ends any other
-        // row's view, and its pin with it (ADR 0060 decision 8).
-        for state in workspace.runtime.values_mut() {
-            if state
-                .preview
-                .as_ref()
-                .is_some_and(|preview| preview.view.is_some())
-            {
-                state.preview = None;
-            }
-        }
+        // Again at the commit: a viewed open that was still reading when this
+        // one began has committed since.
+        workspace.end_viewed_previews();
         let viewed = view.is_some();
         workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
             opened: OpenedPreview {

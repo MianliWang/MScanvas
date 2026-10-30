@@ -1269,6 +1269,12 @@ it says so; the decisions stand otherwise.
    - **Clear view cache holds the workspace mutation gate (pending)** that
      `begin_raw_view` takes the slot under, so no View begins between Clear's
      check and its removal. A workspace mutation waits for a Clear meanwhile.
+   - **View begins after an accepted native drop,** as a queue does, so the
+     slot never turns that drop's commit into a refusal.
+   - **The next open of any row ends a cached view and its pin when that open
+     is accepted,** not when it commits, so an open that then fails does not
+     leave a preview off screen holding an entry. The commit ends them again,
+     for a viewed open that was still reading when the other began.
    - **Dated notes** are written in ADR 0005, ADR 0006, ADR 0012, ADR 0056
      decision 3 and ADR 0057 decision 2. ADR 0043 (CNV-D8) and ADR 0055 take
      theirs with slice 3, whose interface shows the progress and the reuse.

@@ -204,8 +204,10 @@ impl PreviewService {
         let id = DatasetId::parse(&request.handle).ok_or_else(unknown_dataset)?;
         self.require_usable_backend()?;
         // The gate a queue is admitted under, so a removal cannot see an idle
-        // slot and then revoke the row this view is about to read.
-        let _gate = self.enter_workspace_mutation();
+        // slot and then revoke the row this view is about to read. After an
+        // accepted native drop, as for a queue, so the slot never turns that
+        // drop's commit into a refusal.
+        let _gate = self.enter_workspace_mutation_after_drop();
         let (kind, file_name, byte_length) = {
             let workspace = self.workspace();
             let file = workspace
