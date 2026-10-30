@@ -27,7 +27,7 @@ use super::backend::{
     PreviewProvider, ResolvedInstallation, interpretation_error,
 };
 use super::conversion::{
-    ALL_DATASET_SOURCE_KINDS, conversion_source_kind, convertible_source_kinds,
+    ALL_DATASET_SOURCE_KINDS, BoundIntent, conversion_source_kind, convertible_source_kinds,
     dataset_source_kind_index, is_convertible,
 };
 #[cfg(windows)]
@@ -11814,6 +11814,8 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "stagingResidue",
             // ADR 0055's label, `null` on the measured build this ran on.
             "unverifiedBuildRelease",
+            // ADR 0055 decision 1's settings label.
+            "unverifiedSettings",
             "validation",
             // The scope of the check, stated beside the record rather than
             // inside it: a refused output keeps no record and still has one.
@@ -11821,6 +11823,10 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
         ]
     );
     assert!(report["unverifiedBuildRelease"].is_null());
+    assert_eq!(
+        report["unverifiedSettings"], false,
+        "the shipped row on its measured build"
+    );
     assert_eq!(
         sorted_keys(&report["backend"]),
         vec!["elapsedMilliseconds", "exitCode"]
@@ -13899,7 +13905,7 @@ fn running_two_item_slot(
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![
             test_queue_item_named(0, "first.raw"),
@@ -14246,7 +14252,7 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14287,7 +14293,7 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14328,7 +14334,7 @@ fn a_stop_arriving_before_the_handle_is_bound_still_reaches_that_attempt() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14378,7 +14384,7 @@ fn an_item_stop_before_its_handle_is_bound_reaches_the_attempt_and_is_readable()
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14445,7 +14451,7 @@ fn an_unbound_item_stop_is_not_carried_to_a_different_attempt() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14479,7 +14485,7 @@ fn an_unbound_item_stop_is_not_carried_to_a_different_attempt() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14901,7 +14907,7 @@ fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        bound,
+        BoundIntent::Row(bound),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14916,7 +14922,7 @@ fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
     );
     assert_eq!(
         slot.running(operation).expect("a running queue").intent(),
-        bound,
+        &BoundIntent::Row(bound),
         "the first attempt did not run under what was bound"
     );
 
@@ -14945,7 +14951,7 @@ fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
         slot.running(operation)
             .expect("the retry is running")
             .intent(),
-        bound,
+        &BoundIntent::Row(bound),
         "the retry converted under an intent nobody asked for"
     );
 }
@@ -14964,7 +14970,7 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
     )
@@ -15144,7 +15150,7 @@ fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -15966,7 +15972,7 @@ fn a_queue_reports_each_distinct_family_once_in_first_appearance_order() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![
             item(
@@ -16398,7 +16404,8 @@ fn plan_request(
 ) -> ConversionPlanRequestDto {
     ConversionPlanRequestDto {
         handles: handles.to_vec(),
-        intent_id: intent.stable_id(),
+        intent_id: Some(intent.stable_id()),
+        intent: None,
         conflict_policy: conflict,
         expected_receipt: receipt,
         destination_policy: None,
@@ -16414,7 +16421,8 @@ fn begin_request(
 ) -> ConversionBeginRequestDto {
     ConversionBeginRequestDto {
         handles: handles.to_vec(),
-        intent_id: intent.stable_id(),
+        intent_id: Some(intent.stable_id()),
+        intent: None,
         conflict_policy: conflict,
         expected_receipt: receipt,
         destination_policy: None,
@@ -16589,8 +16597,14 @@ fn a_plan_answers_the_intent_policy_and_binding_it_was_asked_under() {
             .expect("a build offering every row answers this one"),
     );
 
-    assert_eq!(plan.intent.id, chosen.stable_id());
-    assert_eq!(plan.intent.precision, "mz64_intensity64");
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").id,
+        chosen.stable_id()
+    );
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").precision,
+        "mz64_intensity64"
+    );
     assert_eq!(plan.conflict_policy, ConversionConflictPolicyDto::Skip);
     assert_eq!(plan.receipt, receipt);
     // And the summary fields are read off that intent rather than off the
@@ -16708,7 +16722,8 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
     let refusal = service
         .conversion_queue_plan(&ConversionPlanRequestDto {
             handles: handles.clone(),
-            intent_id: invented.clone(),
+            intent_id: Some(invented.clone()),
+            intent: None,
             conflict_policy: ConversionConflictPolicyDto::Fail,
             expected_receipt: receipt,
             destination_policy: None,
@@ -16725,7 +16740,8 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
     let answered = service.begin_conversion_queue(
         &ConversionBeginRequestDto {
             handles,
-            intent_id: invented,
+            intent_id: Some(invented),
+            intent: None,
             conflict_policy: ConversionConflictPolicyDto::Fail,
             expected_receipt: receipt,
             destination_policy: None,
@@ -16778,7 +16794,10 @@ fn a_row_this_build_cannot_run_produces_no_plan() {
             ))
             .expect("the shipped row runs here"),
     );
-    assert_eq!(plan.intent.id, ConversionIntent::SHIPPED.stable_id());
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").id,
+        ConversionIntent::SHIPPED.stable_id()
+    );
 }
 
 /// A binding whose settings have not been read produces no plan.
@@ -17279,7 +17298,10 @@ fn a_queue_runs_the_exact_admitted_intent_its_plan_described() {
             ))
             .expect("this build offers the chosen row"),
     );
-    assert_eq!(plan.intent.id, chosen.stable_id());
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").id,
+        chosen.stable_id()
+    );
 
     // And what they press.
     let answered = service.begin_conversion_queue(
@@ -17392,7 +17414,10 @@ fn settings_chosen_after_begin_change_only_the_next_conversion() {
             ))
             .expect("the settings the reader moved to are a plan of their own"),
     );
-    assert_eq!(plan.intent.id, ConversionIntent::SHIPPED.stable_id());
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").id,
+        ConversionIntent::SHIPPED.stable_id()
+    );
 
     service
         .retry_conversion_queue(document)
@@ -18280,7 +18305,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
     )
@@ -18402,7 +18427,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let replacement = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -28429,7 +28454,7 @@ fn the_bound_collision_key_is_the_destination_and_the_folded_name() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::SourceSibling,
         vec![
             test_queue_item_named(0, "sample.raw"),
@@ -28808,7 +28833,8 @@ fn a_non_shipped_intent_survives_source_relative_resolution() {
 
     let request = ConversionBeginRequestDto {
         handles: vec![handle],
-        intent_id: other.stable_id(),
+        intent_id: Some(other.stable_id()),
+        intent: None,
         conflict_policy: ConversionConflictPolicyDto::Fail,
         expected_receipt: service.readied_receipt(),
         destination_policy: None,
@@ -29243,7 +29269,8 @@ fn m66_describe_and_begin_validate_the_same_policy_without_creating_a_folder() {
         assert_eq!(plan.destination_policy, policy);
         let begin = ConversionBeginRequestDto {
             handles: request.handles.clone(),
-            intent_id: plan.intent.id.clone(),
+            intent_id: Some(plan.intent.as_ref().expect("a row plan").id.clone()),
+            intent: None,
             conflict_policy: plan.conflict_policy,
             expected_receipt: plan.receipt,
             destination_policy: Some(plan.destination_policy.clone()),
@@ -29302,6 +29329,7 @@ fn m66_describe_and_begin_validate_the_same_policy_without_creating_a_folder() {
         let begin = ConversionBeginRequestDto {
             handles: request.handles.clone(),
             intent_id: request.intent_id.clone(),
+            intent: request.intent.clone(),
             conflict_policy: request.conflict_policy,
             expected_receipt: request.expected_receipt,
             destination_policy: request.destination_policy.clone(),
@@ -29598,7 +29626,7 @@ fn a_cancelled_item_that_launched_nothing_says_so_rather_than_claiming_a_tree() 
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -30947,6 +30975,7 @@ fn the_catalog_wire_states_which_answer_each_row_got() {
     }
 }
 mod active_clear;
+mod conversion_intent_wire;
 #[cfg(windows)]
 mod figure_preview;
 mod output_opening;

@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+mod conversion_intent;
 mod figure_preview;
 mod output_opening;
 mod staging_recovery;
@@ -29,12 +30,12 @@ use super::chromatogram::{
     svg_document as chromatogram_svg,
 };
 use super::conversion::conversion_source_kind;
-#[cfg(test)]
-use mscanvas_proteowizard::ConflictPolicy;
 use mscanvas_proteowizard::{
-    AdmittedSetRun, ConversionIntent, MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed,
-    SetRunSeam, run_admitted_multi_output_conversion_seamed,
+    AdmittedSetRun, MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed, SetRunSeam,
+    run_admitted_multi_output_conversion_seamed,
 };
+#[cfg(test)]
+use mscanvas_proteowizard::{ConflictPolicy, ConversionIntent};
 #[allow(clippy::wildcard_imports)]
 use mscanvas_proteowizard::{ConversionAttempt, ConversionCancellation, OwnedTreeDisposition};
 
@@ -56,9 +57,9 @@ use super::conversion::WorkspaceMultiOutputConversionReport;
 #[cfg(test)]
 use super::conversion::run_planned_conversion;
 use super::conversion::{
-    ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression,
+    BoundIntent, ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression,
     fixed_output_format, plan_conversion, refusal_is_retryable, refuse_unevidenced_build,
-    run_planned_conversion_cancellable,
+    run_planned_conversion_cancellable, settings_unverified,
 };
 use super::destination::admit_destination_root;
 use super::destination_policy::{
@@ -104,7 +105,7 @@ use super::dto::{
     ConversionBeginRequestDto, ConversionConfigurationOutcomeDto,
     ConversionConfigurationRefusalDto, ConversionConfigurationSnapshotDto,
     ConversionPlanOutcomeDto, ConversionPlanRequestDto, conversion_backend_busy,
-    conversion_binding_replaced, conversion_configuration_unread, conversion_intent_not_admitted,
+    conversion_binding_replaced, conversion_configuration_unread, conversion_intent_not_checkable,
     conversion_intent_unavailable, conversion_without_an_installation,
 };
 use super::dto::{
@@ -170,6 +171,7 @@ use super::selection::{
     lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
     selected_file_dto, source_kind_dto, unknown_dataset,
 };
+use conversion_intent::resolve_requested_intent;
 use mscanvas_plot_spec::spec::{Domain, FigureTheme};
 
 /// The name the native save dialog offers for a diagnostics export.
@@ -1754,14 +1756,15 @@ impl PreviewService {
     ) -> Result<ConversionPlanOutcomeDto, PreviewErrorDto> {
         // The identity first, and from the admitted table rather than from
         // anything the caller sent beside it. A combination this product has
-        // never measured is not a plan with a problem; it is not a plan.
-        let Some(intent) = ConversionIntent::from_stable_id(&request.intent_id) else {
-            return Err(conversion_intent_not_admitted());
-        };
+        // never measured is not a plan with a problem; it is not a plan. A
+        // structured intent is rebuilt and validated here, and one equal to a
+        // row is that row (ADR 0055).
+        let intent =
+            resolve_requested_intent(request.intent_id.as_deref(), request.intent.as_ref())?;
         // The binding and its catalog in one critical section, so a check
         // installing a new binding between the two reads cannot produce an
         // answer that pairs one binding's receipt with another's availability.
-        let (admission, unverified_builds) = {
+        let (admission, unverified_builds, capabilities) = {
             let mut observed = self
                 .resolved
                 .lock()
@@ -1779,8 +1782,14 @@ impl PreviewService {
                 });
             };
             (
-                observed.configurations.admits(binding, &intent),
+                match &intent {
+                    BoundIntent::Row(row) => observed.configurations.admits(binding, row),
+                    // Asked of the catalog's own grammar below; with no
+                    // catalog there is no grammar to ask.
+                    BoundIntent::Advanced(_) => RowAdmission::Available,
+                },
                 observed.configurations.unverified_builds(binding),
+                observed.configurations.capabilities(binding),
             )
         };
         match admission {
@@ -1796,6 +1805,12 @@ impl PreviewService {
             }
             RowAdmission::NoCatalog => return Err(conversion_configuration_unread()),
         }
+        let Some(capabilities) = capabilities else {
+            return Err(conversion_configuration_unread());
+        };
+        // Every option and filter an advanced intent's lowering emits, against
+        // the grammar this catalog was read from. A row was asked above.
+        intent.require_on(&capabilities)?;
         // The same validated decision BEGIN consumes. Planning creates nothing
         // and acquires no destination object: source-relative anchors remain
         // conditional until BEGIN captures the logical acquisitions under its
@@ -1807,7 +1822,7 @@ impl PreviewService {
             });
         }
         let policy = DestinationPolicy::from_request(request.destination_policy.as_ref())?;
-        let items = self.plan_queue_items(&request.handles, intent, &policy)?;
+        let items = self.plan_queue_items(&request.handles, &intent, &policy)?;
         Ok(ConversionPlanOutcomeDto::Planned {
             plan: Box::new(ConversionQueuePlanDto {
                 items: items
@@ -1821,14 +1836,21 @@ impl PreviewService {
                             .iter()
                             .find(|(kind, _)| *kind == conversion_source_kind(item.kind()))
                             .map(|(_, release)| release.clone()),
+                        // Per row: decision 1's tier depends on the source.
+                        unverified_settings: settings_unverified(
+                            &intent,
+                            conversion_source_kind(item.kind()),
+                            &capabilities,
+                        ),
                     })
                     .collect(),
                 // All three read off the intent this queue would be bound to,
                 // so what the panel is told before the picker opens is the same
                 // fact the conversion is judged against afterwards.
-                output_format: fixed_output_format(intent),
-                compression: fixed_compression(intent).to_owned(),
-                intent: intent_dto(&intent),
+                output_format: fixed_output_format(&intent),
+                compression: fixed_compression(&intent).to_owned(),
+                intent: intent.row().as_ref().map(intent_dto),
+                canonical_intent: intent.canonical(),
                 // Stated before the run rather than after it, as the weakest
                 // claim any item holds. A vendor acquisition has no mzML
                 // reading, so nothing about its output can be compared to a
@@ -1859,7 +1881,7 @@ impl PreviewService {
     fn plan_queue_items(
         &self,
         handles: &[String],
-        intent: ConversionIntent,
+        intent: &BoundIntent,
         policy: &DestinationPolicy,
     ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
         self.plan_items(handles, intent, policy)
@@ -1882,7 +1904,7 @@ impl PreviewService {
     fn plan_items(
         &self,
         handles: &[String],
-        intent: ConversionIntent,
+        intent: &BoundIntent,
         policy: &DestinationPolicy,
     ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
         // Refused before the workspace is even read. A list longer than a
@@ -1913,8 +1935,8 @@ impl PreviewService {
             // not an exclusion: the row is convertible, and shortening the batch
             // to make this intent succeed would change what the user asked for
             // and make the stated exclusion count a fiction.
-            if !intent.evidence_covers_source(conversion_source_kind(kind)) {
-                return Err(conversion_settings_not_evidenced_for_source());
+            if let Some(refusal) = intent.refusal_for_source(conversion_source_kind(kind)) {
+                return Err(refusal);
             }
             let output = item_output_topology(kind, &dto.file_name, intent)?;
             items.push(QueueItem::new(
@@ -2089,15 +2111,14 @@ impl PreviewService {
         // The identity, from the admitted table and from nothing else. A
         // caller-supplied string that names no row never becomes an intent, so
         // there is no partially-valid semantic for anything downstream to run.
-        let Some(intent) = ConversionIntent::from_stable_id(&request.intent_id) else {
-            return Err(conversion_intent_not_admitted());
-        };
+        let intent =
+            resolve_requested_intent(request.intent_id.as_deref(), request.intent.as_ref())?;
         // Planned once here so the preflight below has a validated family set
         // to ask about -- and planned *again* under the mutation gate, which
         // is the plan the queue is actually bound from. This first pass also
         // keeps a batch of dead handles from costing a help probe.
         let preflight_families: Vec<ConversionSourceKind> = {
-            let items = self.plan_items(&request.handles, intent, &policy)?;
+            let items = self.plan_items(&request.handles, &intent, &policy)?;
             let mut families = Vec::new();
             for item in &items {
                 let kind = conversion_source_kind(item.kind());
@@ -2107,7 +2128,7 @@ impl PreviewService {
             }
             families
         };
-        self.prove_begin(request.expected_receipt, intent, &preflight_families)?;
+        self.prove_begin(request.expected_receipt, &intent, &preflight_families)?;
         // The same gate every workspace mutation takes, so a queue and a batch
         // cannot both be admitted by each reading the other's state before
         // either committed. `_after_drop` because a drop is accepted by a
@@ -2130,7 +2151,7 @@ impl PreviewService {
         // picker would open for a run guaranteed to end superseded. Planning
         // is lock-cheap and launches nothing, so it is simply done again where
         // it counts.
-        let items = self.plan_items(&request.handles, intent, &policy)?;
+        let items = self.plan_items(&request.handles, &intent, &policy)?;
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -2258,7 +2279,7 @@ impl PreviewService {
     fn prove_begin(
         &self,
         expected_receipt: BackendBindingReceiptDto,
-        intent: ConversionIntent,
+        intent: &BoundIntent,
         families: &[ConversionSourceKind],
     ) -> Result<(), PreviewErrorDto> {
         let Some(running) = self.try_enter_backend() else {
@@ -2325,13 +2346,7 @@ impl PreviewService {
         // exact combination the reader selected -- not of the shipped posture,
         // and not of "conversion in general" -- because a build can admit an
         // mzML conversion and lack the grammar one admitted row emits.
-        if backend
-            .capabilities
-            .require_conversion_intent(&intent)
-            .is_err()
-        {
-            return Err(conversion_intent_unavailable());
-        }
+        intent.require_on(&backend.capabilities)?;
         // The courtesy, out of the same one discovery. Execution re-asks
         // fail-closed per item and per family regardless; what this adds is
         // that a user is normally refused before choosing a folder rather than
@@ -5080,8 +5095,14 @@ impl PreviewService {
         } = run;
         // Read off the queue, once, before anything runs. A retry reaches this
         // same line and reads the same field.
-        let queue_intent = queue.intent();
+        // A set source has no advanced checks (`integrity_route`), so its queue
+        // is refused at the plan; this is the run refusing it too.
+        let queue_intent = queue
+            .intent()
+            .row()
+            .ok_or_else(conversion_intent_not_checkable);
         let settled = (|| -> Result<SciexConversion, PreviewErrorDto> {
+            let queue_intent = queue_intent.clone()?;
             let file = revalidate(&remembered)?;
             // Every member, held together for the whole run. A companion
             // released early is a companion the backend could be reading while
@@ -5383,7 +5404,8 @@ impl PreviewService {
     pub(super) fn shipped_plan_request(&self, handles: &[String]) -> ConversionPlanRequestDto {
         ConversionPlanRequestDto {
             handles: handles.to_vec(),
-            intent_id: ConversionIntent::SHIPPED.stable_id(),
+            intent_id: Some(ConversionIntent::SHIPPED.stable_id()),
+            intent: None,
             conflict_policy: ConversionConflictPolicyDto::Fail,
             expected_receipt: self.readied_receipt(),
             destination_policy: None,
@@ -5478,7 +5500,8 @@ impl PreviewService {
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         let request = ConversionBeginRequestDto {
             handles: handles.to_vec(),
-            intent_id: ConversionIntent::SHIPPED.stable_id(),
+            intent_id: Some(ConversionIntent::SHIPPED.stable_id()),
+            intent: None,
             conflict_policy: conflict,
             expected_receipt: self.readied_receipt(),
             destination_policy: None,
@@ -6866,7 +6889,7 @@ impl PreviewService {
             source,
             destination_root,
             conflict,
-            ConversionIntent::SHIPPED,
+            &BoundIntent::Row(ConversionIntent::SHIPPED),
         )?;
         let report = run_planned_conversion(&plan, &backend);
         drop(guard);

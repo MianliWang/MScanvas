@@ -22,11 +22,12 @@ use mscanvas_proteowizard::FinalizedOutput;
 use mscanvas_proteowizard::run_conversion;
 use mscanvas_proteowizard::{
     BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, CancellationFailure,
-    CancellationReport, ConflictPolicy, ConversionAttempt, ConversionCancellation,
-    ConversionIntent, ConversionPlan, ConversionPlanError, ConversionRunFailure,
-    ConversionRunOutcome, ConversionRunReport, ConversionSource, ConversionSourceKind,
-    InstalledHelpCapabilities, IntegrityProperty, OpenFormat, OperationRunIdentity, OutputFormat,
-    OwnedTreeDisposition, ProcessAttemptOutcome, StagedOutputEvidence, StagingResidue,
+    CancellationReport, CapabilityRequirementError, CompressionIntent, ConflictPolicy,
+    ConversionAttempt, ConversionCancellation, ConversionIntent, ConversionPlan,
+    ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
+    ConversionSource, ConversionSourceKind, InstalledHelpCapabilities, IntegrityProperty,
+    OpenFormat, OperationRunIdentity, OutputEncoding, OutputFormat, OwnedTreeDisposition,
+    ProcessAttemptOutcome, StagedOutputEvidence, StagingResidue, StructuredIntent, Tier,
     ValidationMode, conversion_output_file_name, provider_build_admission,
     run_conversion_cancellable,
 };
@@ -126,6 +127,114 @@ pub(super) struct WorkspaceConversionReport {
     /// The release the "unverified build" label names, bounded for the wire.
     /// Absent on a measured build (ADR 0055's relaxed gate).
     unverified_build_release: Option<String>,
+    /// Whether the settings this ran under are "not verified by MSCanvas"
+    /// (ADR 0055 decision 1).
+    unverified_settings: bool,
+}
+
+/// What a queue converts under: one verified row, or an advanced intent
+/// (ADR 0055). Bound once at `BEGIN` and read back by every item and retry.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum BoundIntent {
+    Row(ConversionIntent),
+    Advanced(Box<StructuredIntent>),
+}
+
+impl std::fmt::Debug for BoundIntent {
+    /// Opaque for an advanced intent: its text values are the user's own.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Row(row) => row.fmt(formatter),
+            Self::Advanced(_) => formatter.write_str("<advanced-intent>"),
+        }
+    }
+}
+
+impl BoundIntent {
+    /// The row, where this is one.
+    pub(super) const fn row(&self) -> Option<ConversionIntent> {
+        match self {
+            Self::Row(row) => Some(*row),
+            Self::Advanced(_) => None,
+        }
+    }
+
+    /// The structured form, canonical: what a plan echoes and a `BEGIN` is
+    /// bound to.
+    pub(super) fn canonical(&self) -> StructuredIntent {
+        match self {
+            Self::Row(row) => StructuredIntent::from(*row),
+            Self::Advanced(intent) => (**intent).clone(),
+        }
+    }
+
+    /// The format an output is written in. An advanced intent reaches a plan
+    /// only with mzML output, which is the only route with checks.
+    const fn format(&self) -> OpenFormat {
+        match self {
+            Self::Row(row) => OpenFormat::of_intent(row.format()),
+            Self::Advanced(_) => OpenFormat::MzMl,
+        }
+    }
+
+    /// Why this intent cannot convert this family, before anything is planned:
+    /// a row whose evidence does not cover it, a step the family refuses
+    /// (decision 7), or an intent with no output checks there (ground rule 1).
+    pub(super) fn refusal_for_source(&self, kind: ConversionSourceKind) -> Option<PreviewErrorDto> {
+        match self {
+            Self::Row(row) => (!row.evidence_covers_source(kind))
+                .then(super::dto::conversion_settings_not_evidenced_for_source),
+            Self::Advanced(intent) => {
+                if let Some(block) = intent.source_block(kind) {
+                    return Some(super::dto::conversion_step_blocked_for_source(
+                        block.stable_id(),
+                    ));
+                }
+                intent
+                    .integrity_route(kind)
+                    .is_none()
+                    .then(super::dto::conversion_intent_not_checkable)
+            }
+        }
+    }
+
+    /// Whether the installed build can express this intent: a row through its
+    /// grammar segments, an advanced intent through every option and filter its
+    /// lowering emits.
+    pub(super) fn require_on(
+        &self,
+        capabilities: &InstalledHelpCapabilities,
+    ) -> Result<(), PreviewErrorDto> {
+        match self {
+            Self::Row(row) => capabilities
+                .require_conversion_intent(row)
+                .map_err(|_| super::dto::conversion_intent_unavailable()),
+            Self::Advanced(intent) => {
+                intent
+                    .confirm_provider_requirements(capabilities)
+                    .map_err(|error| match error {
+                        CapabilityRequirementError::Missing(name) => {
+                            super::dto::conversion_intent_unsupported(name)
+                        }
+                        _ => super::dto::conversion_intent_unavailable(),
+                    })
+            }
+        }
+    }
+}
+
+/// Whether settings are "not verified by MSCanvas" for one family on one
+/// build: ADR 0055 decision 1's four conditions, asked through `tier()`. An
+/// advanced intent is never verified.
+pub(super) fn settings_unverified(
+    intent: &BoundIntent,
+    kind: ConversionSourceKind,
+    capabilities: &InstalledHelpCapabilities,
+) -> bool {
+    !matches!(
+        intent.canonical().tier(kind, capabilities),
+        Ok(Tier::Verified(_))
+    )
 }
 
 /// What was measured of a finalized output.
@@ -177,6 +286,9 @@ impl WorkspaceConversionReport {
         let finalized = run.finalized();
         Self {
             unverified_build_release: unverified_build_release(capabilities, plan.source().kind()),
+            unverified_settings: plan.intent().is_none_or(|row| {
+                settings_unverified(&BoundIntent::Row(row), plan.source().kind(), capabilities)
+            }),
             dataset,
             source_kind,
             outcome: run.outcome().stable_id(),
@@ -235,6 +347,11 @@ impl WorkspaceConversionReport {
     /// The release the "unverified build" label names, when the run had one.
     pub(super) fn unverified_build_release(&self) -> Option<&str> {
         self.unverified_build_release.as_deref()
+    }
+
+    /// Whether the settings this ran under are "not verified by MSCanvas".
+    pub(super) const fn unverified_settings(&self) -> bool {
+        self.unverified_settings
     }
 
     /// Whether another attempt could plausibly end differently.
@@ -1148,6 +1265,7 @@ impl WorkspaceConversionReport {
             staging_residue: self.residue.map(|residue| residue.stable_id().to_owned()),
             receipt: self.authority.receipt(),
             unverified_build_release: self.unverified_build_release.clone(),
+            unverified_settings: self.unverified_settings,
         }
     }
 }
@@ -1225,8 +1343,27 @@ pub(super) const fn conflict_policy(policy: ConversionConflictPolicyDto) -> Conf
 /// a conversion and the contract applied after it cannot describe different
 /// things. It holds no opinion of its own about which intent that is; the
 /// caller names one, and the queue that runs the conversion names the same one.
-pub(super) fn fixed_compression(intent: ConversionIntent) -> &'static str {
-    intent.compression().stable_id()
+pub(super) fn fixed_compression(intent: &BoundIntent) -> &'static str {
+    let zlib = match intent {
+        BoundIntent::Row(row) => return row.compression().stable_id(),
+        BoundIntent::Advanced(advanced) => match *advanced.output() {
+            OutputEncoding::MzMl(encoding) => encoding.zlib,
+            OutputEncoding::MzXml(encoding) => encoding.zlib,
+            OutputEncoding::MzMlb(encoding) => encoding.zlib,
+            OutputEncoding::Mz5(encoding) => encoding.zlib,
+            OutputEncoding::Mgf
+            | OutputEncoding::Text
+            | OutputEncoding::Ms1
+            | OutputEncoding::Cms1
+            | OutputEncoding::Ms2
+            | OutputEncoding::Cms2 => false,
+        },
+    };
+    if zlib {
+        CompressionIntent::Zlib.stable_id()
+    } else {
+        CompressionIntent::NoCompression.stable_id()
+    }
 }
 
 /// The same, for the format.
@@ -1235,9 +1372,13 @@ pub(super) fn fixed_compression(intent: ConversionIntent) -> &'static str {
 /// could not be added to [`ConversionIntent`] without this refusing to compile.
 /// That is the only reason it exists: today the intent names one format and the
 /// wire names one format, and nothing keeps those two lists equal by itself.
-pub(super) const fn fixed_output_format(intent: ConversionIntent) -> ConversionOutputFormatDto {
-    match intent.format() {
-        OutputFormat::MzMl => ConversionOutputFormatDto::MzMl,
+pub(super) const fn fixed_output_format(intent: &BoundIntent) -> ConversionOutputFormatDto {
+    match intent {
+        BoundIntent::Row(row) => match row.format() {
+            OutputFormat::MzMl => ConversionOutputFormatDto::MzMl,
+        },
+        // An advanced intent is planned only with mzML output (`refusal_for_source`).
+        BoundIntent::Advanced(_) => ConversionOutputFormatDto::MzMl,
     }
 }
 
@@ -1289,8 +1430,8 @@ pub(super) const fn is_convertible(kind: DatasetSourceKind) -> bool {
 /// source is called and by the format the intent asks for -- read off the intent
 /// rather than restated, because a name that disagreed with the plan's format
 /// would be a promise the conversion does not keep.
-pub(super) fn planned_output_name(file_name: &str, intent: ConversionIntent) -> Option<String> {
-    conversion_output_file_name(Path::new(file_name), OpenFormat::of_intent(intent.format()))
+pub(super) fn planned_output_name(file_name: &str, intent: &BoundIntent) -> Option<String> {
+    conversion_output_file_name(Path::new(file_name), intent.format())
         .map(|name| name.to_string_lossy().into_owned())
 }
 
@@ -1453,9 +1594,15 @@ pub(super) fn plan_conversion(
     source: ConversionSource,
     destination_root: &Path,
     conflict: ConflictPolicy,
-    intent: ConversionIntent,
+    intent: &BoundIntent,
 ) -> Result<ConversionPlan, PreviewErrorDto> {
-    ConversionPlan::to_mzml(source, destination_root, conflict, intent).map_err(not_plannable)
+    match intent {
+        BoundIntent::Row(row) => ConversionPlan::to_mzml(source, destination_root, conflict, *row),
+        BoundIntent::Advanced(advanced) => {
+            ConversionPlan::advanced(source, destination_root, conflict, (**advanced).clone())
+        }
+    }
+    .map_err(not_plannable)
 }
 
 /// How a refused plan is reported.
@@ -1487,6 +1634,12 @@ fn not_plannable(error: ConversionPlanError) -> PreviewErrorDto {
         // exactly one place this error is answered.
         ConversionPlanError::IntentNotEvidencedForSource => {
             return super::dto::conversion_settings_not_evidenced_for_source();
+        }
+        ConversionPlanError::IntentNotCheckable => {
+            return super::dto::conversion_intent_not_checkable();
+        }
+        ConversionPlanError::StepBlockedForSource => {
+            return super::dto::conversion_step_blocked_for_source("step_blocked_for_source");
         }
     };
     PreviewErrorDto::new("conversion_not_plannable", message, false)

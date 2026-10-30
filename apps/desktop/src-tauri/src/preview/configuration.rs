@@ -141,6 +141,10 @@ pub(crate) struct ConversionCatalog {
     /// the release its "unverified build" label names (ADR 0055's relaxed
     /// gate). Read with the grammar, because a plan runs no discovery.
     unverified_builds: Vec<(ConversionSourceKind, String)>,
+    /// The grammar the rows were judged against, kept so a plan -- which runs
+    /// no discovery -- can ask the same build about an advanced intent's
+    /// options and filters, and about decision 1's tier per family.
+    capabilities: Box<InstalledHelpCapabilities>,
 }
 
 impl ConversionCatalog {
@@ -171,6 +175,7 @@ impl ConversionCatalog {
                         .map(|release| (kind, release))
                 })
                 .collect(),
+            capabilities: Box::new(capabilities.clone()),
         }
     }
 
@@ -398,6 +403,14 @@ impl ConversionConfigurations {
     /// statement about the build the receipt names, so a lookup that fell back
     /// to the admitted table would report the *product's* evidence as though it
     /// were this installation's.
+    /// The grammar this binding's catalog was read from, where it has one.
+    pub(crate) fn capabilities(&mut self, binding: Binding) -> Option<InstalledHelpCapabilities> {
+        match self.for_binding(binding) {
+            ConversionConfiguration::Ready { catalog } => Some((*catalog.capabilities).clone()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn admits(&mut self, binding: Binding, intent: &ConversionIntent) -> RowAdmission {
         let ConversionConfiguration::Ready { catalog } = self.for_binding(binding) else {
             return RowAdmission::NoCatalog;

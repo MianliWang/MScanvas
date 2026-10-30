@@ -5,6 +5,7 @@
 //! actually emit. Unknown facts stay explicitly unknown rather than being
 //! defaulted into something that looks measured.
 
+use mscanvas_proteowizard::StructuredIntent;
 use serde::{Deserialize, Serialize};
 
 /// The largest spectrum-table payload one open operation may transfer.
@@ -1533,13 +1534,37 @@ pub struct ConversionPlanRequestDto {
     /// A caller-supplied string and never more than that: it is looked up in
     /// `ConversionIntent::ADMITTED`, and an identity that table does not hold
     /// never becomes an intent.
-    pub intent_id: String,
+    ///
+    /// Exactly one of this and [`Self::intent`] (ADR 0044 as amended by ADR
+    /// 0055); both or neither is refused as `conversion_intent_ambiguous`.
+    #[serde(default)]
+    pub intent_id: Option<String>,
+    /// The structured intent (ADR 0055 decision 4), which Rust rebuilds and
+    /// validates. One equal to a row is that row.
+    #[serde(default)]
+    pub intent: Option<ConversionIntentWireDto>,
     pub conflict_policy: ConversionConflictPolicyDto,
     /// The binding the caller is rendering, which Rust compares with its own.
     pub expected_receipt: BackendBindingReceiptDto,
     /// The same closed vocabulary BEGIN validates; omission preserves custom.
     #[serde(default)]
     pub destination_policy: Option<DestinationPolicyDto>,
+}
+
+/// A structured conversion intent as the webview sent it, not yet read.
+///
+/// Held as JSON and read by `resolve_requested_intent`, so a value of the
+/// wrong shape is a typed refusal (`conversion_intent_rejected`) rather than an
+/// invoke that fails before any authority answers. Opaque in `Debug`: its text
+/// fields are the user's own.
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct ConversionIntentWireDto(pub serde_json::Value);
+
+impl std::fmt::Debug for ConversionIntentWireDto {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("<conversion-intent>")
+    }
 }
 
 /// What the interface shows before a queue is started.
@@ -1560,7 +1585,15 @@ pub struct ConversionQueuePlanDto {
     /// Rust reconstructs it through the admitted table and returns what it
     /// resolved, so what the panel renders is the semantic the queue would be
     /// bound with rather than the identity the panel happened to send.
-    pub intent: ConversionIntentDto,
+    ///
+    /// `null` for an advanced intent, which no row describes.
+    pub intent: Option<ConversionIntentDto>,
+    /// The structured intent this plan is bound to, in Rust's canonical form:
+    /// a row's own structured form, or the advanced intent rebuilt and
+    /// canonicalized (integer sets merged, switches ordered). A plan whose
+    /// canonical intent differs from what the webview would send now is not
+    /// current (ADR 0044 decision 9, amended by ADR 0055).
+    pub canonical_intent: StructuredIntent,
     /// The conflict policy this plan was asked under, answered back for the
     /// same reason: the summary a reader acts on states the plan's own facts,
     /// not the controls' current values.
@@ -1624,7 +1657,11 @@ pub enum ConversionPlanOutcomeDto {
 #[serde(rename_all = "camelCase")]
 pub struct ConversionBeginRequestDto {
     pub handles: Vec<String>,
-    pub intent_id: String,
+    /// As in [`ConversionPlanRequestDto`]: exactly one of the two.
+    #[serde(default)]
+    pub intent_id: Option<String>,
+    #[serde(default)]
+    pub intent: Option<ConversionIntentWireDto>,
     pub conflict_policy: ConversionConflictPolicyDto,
     /// The binding the plan on screen was authored under.
     pub expected_receipt: BackendBindingReceiptDto,
@@ -1730,6 +1767,12 @@ pub struct ConversionQueuePlanItemDto {
     /// this release (ADR 0055's relaxed gate). `null` on a measured build, and
     /// on a row the build refuses, which `BEGIN` reports instead.
     pub unverified_build_release: Option<String>,
+    /// Whether this row's settings are "not verified by MSCanvas" (ADR 0055
+    /// decision 1): an advanced intent always, and a verified row wherever one
+    /// of decision 1's four conditions fails for this row's source -- on any
+    /// build but the measured one, for instance. The interface labels every
+    /// such row.
+    pub unverified_settings: bool,
 }
 
 /// What one conversion did, in facts that name no location.
@@ -1775,6 +1818,9 @@ pub struct ConversionReportDto {
     /// for its family: the interface shows the "unverified build" label with
     /// this release (ADR 0055's relaxed gate). `null` on a measured build.
     pub unverified_build_release: Option<String>,
+    /// Whether this result ran under settings "not verified by MSCanvas", as
+    /// the plan row stated (ADR 0055 decision 1).
+    pub unverified_settings: bool,
 }
 
 /// What one attempt established about its private staging area.
@@ -2253,6 +2299,67 @@ pub fn conversion_intent_not_admitted() -> PreviewErrorDto {
 ///
 /// A different sentence from the one above, because a reader can act on this
 /// one: the row exists, and another ProteoWizard build offers it.
+/// A plan or `BEGIN` request naming the intent twice or not at all: exactly
+/// one of `intentId` and `intent` is required.
+pub fn conversion_intent_ambiguous() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_ambiguous",
+        "The conversion request must name its settings exactly once.",
+        false,
+    )
+}
+
+/// A structured intent Rust could not build, with the rule that refused it as
+/// the context's `reason`: a decision 4 refusal's stable id, `malformed` for a
+/// value of the wrong shape, or `too_large`.
+pub fn conversion_intent_rejected(reason: &str) -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_rejected",
+        "MSCanvas could not use those conversion settings.",
+        false,
+    )
+    .with_context(PreviewErrorContextDto::ConversionIntent {
+        reason: reason.to_owned(),
+    })
+}
+
+/// ADR 0055 ground rule 1: no output checks exist for these settings on this
+/// kind of acquisition, so they are refused rather than run unchecked.
+pub fn conversion_intent_not_checkable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_not_checkable",
+        "MSCanvas cannot yet check the output of those conversion settings for this kind of \
+         acquisition.",
+        false,
+    )
+}
+
+/// ADR 0055 decision 7: a step the acquisition's family refuses, named by the
+/// context's `reason`.
+pub fn conversion_step_blocked_for_source(reason: &str) -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_step_blocked_for_source",
+        "One of those conversion steps is not allowed for this kind of acquisition.",
+        false,
+    )
+    .with_context(PreviewErrorContextDto::ConversionIntent {
+        reason: reason.to_owned(),
+    })
+}
+
+/// The installed build lacks an option or filter an advanced intent needs,
+/// named by the context's `reason`.
+pub fn conversion_intent_unsupported(missing: &str) -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_unsupported",
+        "The installed ProteoWizard does not offer one of those conversion settings.",
+        false,
+    )
+    .with_context(PreviewErrorContextDto::ConversionIntent {
+        reason: missing.to_owned(),
+    })
+}
+
 pub fn conversion_intent_unavailable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "conversion_intent_unavailable",
@@ -3342,6 +3449,10 @@ pub enum PreviewErrorContextDto {
     },
     TemporaryExportLeftBehind,
     ClipboardBusy,
+    /// Which rule refused a conversion intent, by stable id.
+    ConversionIntent {
+        reason: String,
+    },
 }
 
 impl PreviewErrorDto {

@@ -31,13 +31,13 @@ use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
     BackendDiagnosticText, CancellationFailure, CancellationReport, CancellationRequest,
-    ConversionIntent, FinalizedOutput, OperationRunIdentity, OwnedTreeDisposition,
-    ProcessAttemptOutcome, StagedOutputEvidence, StagingResidue, Termination,
+    FinalizedOutput, OperationRunIdentity, OwnedTreeDisposition, ProcessAttemptOutcome,
+    StagedOutputEvidence, StagingResidue, Termination,
 };
 
 use super::adoption::FinalizedOutputAdoptionTicket;
 use super::adoption::FinalizedOutputSetAdoptionTicket;
-use super::conversion::{process_dto, staged_output_dto};
+use super::conversion::{BoundIntent, process_dto, staged_output_dto};
 use super::destination::{
     DestinationHold, DestinationIdentity, DestinationLease, lease_destination,
 };
@@ -434,7 +434,7 @@ pub(super) const fn item_state_of(class: super::conversion::OutcomeClass) -> Ite
 pub(super) fn item_output_topology(
     kind: DatasetSourceKind,
     file_name: &str,
-    intent: ConversionIntent,
+    intent: &BoundIntent,
 ) -> Result<ItemOutputTopology, PreviewErrorDto> {
     // Convertibility first, and for both arms. Producing an output set is a
     // statement about cardinality rather than a licence to convert: a family the
@@ -897,7 +897,7 @@ pub(super) struct ConversionQueue {
     // keeping it here: a retry that re-derived an intent could convert the
     // second time under something the first attempt was never judged against,
     // and the user asked for one thing.
-    intent: ConversionIntent,
+    intent: BoundIntent,
     items: Vec<QueueItem>,
     /// Which item is running, or how many have finished when none is.
     current: usize,
@@ -953,7 +953,7 @@ impl ConversionQueue {
     pub(super) fn new(
         document_epoch: u64,
         conflict: ConversionConflictPolicyDto,
-        intent: ConversionIntent,
+        intent: BoundIntent,
         policy: DestinationPolicy,
         items: Vec<QueueItem>,
     ) -> Result<Self, PreviewErrorDto> {
@@ -998,8 +998,8 @@ impl ConversionQueue {
     }
 
     /// What this queue converts under, first attempt and every retry alike.
-    pub(super) const fn intent(&self) -> ConversionIntent {
-        self.intent
+    pub(super) const fn intent(&self) -> &BoundIntent {
+        &self.intent
     }
 
     /// The bound membership, in the order it will run.
@@ -2279,6 +2279,11 @@ impl ConversionSlot {
             .items
             .get(index)
             .and_then(|item| queue.destination_for(item.dataset).cloned());
+        // ADR 0055 decision 2 (owner, 2026-10-29) carries the "not verified by
+        // MSCanvas" flag into an adopted output's provenance. Until the project
+        // record carries it, an advanced output is finalized and reported with
+        // its label but is not offered for adoption, so the label is never lost.
+        let adoptable = queue.intent.row().is_some();
         let Some(item) = queue.items.get_mut(index) else {
             return false;
         };
@@ -2324,20 +2329,20 @@ impl ConversionSlot {
                     item.set_run = None;
                 }
                 let planned = item.output.planned_name().unwrap_or_default().to_owned();
-                item.adoption = finalized.zip(destination).map(|(finalized, destination)| {
-                    QueueAdoptionAuthority::Single(Arc::new(FinalizedOutputAdoptionTicket::new(
+                let ticket = finalized.zip(destination).map(|(finalized, destination)| {
+                    Arc::new(FinalizedOutputAdoptionTicket::new(
                         operation,
                         item.dataset,
                         item.dataset_dto.file_name.clone(),
                         planned,
                         destination,
                         *finalized,
-                    )))
+                    ))
                 });
-                item.finalized_outputs = match &item.adoption {
-                    Some(QueueAdoptionAuthority::Single(ticket)) => vec![Arc::clone(ticket)],
-                    _ => Vec::new(),
-                };
+                item.finalized_outputs = ticket.iter().cloned().collect();
+                item.adoption = ticket
+                    .filter(|_| adoptable)
+                    .map(QueueAdoptionAuthority::Single);
             }
             ItemOutcome::ReportedSet(settlement) => {
                 let settlement = *settlement;

@@ -404,7 +404,8 @@ export function installReply(
   if (reply.kind === "plan" && !sameQuestion(identity, {
     scope: identity.scope,
     handles: reply.plan.items.map((item) => item.datasetHandle),
-    intentId: reply.plan.intent.id,
+    // An advanced plan has no row; it never answers a row question.
+    intentId: reply.plan.intent?.id ?? "",
     conflictPolicy: reply.plan.conflictPolicy,
     destinationPolicy: reply.plan.destinationPolicy,
     receipt: reply.plan.receipt,

@@ -162,6 +162,10 @@ pub(super) struct ConversionFailureDiagnosticTicket {
     /// The release the "unverified build" label names, for a single-output
     /// attempt that ran on a build with no measured row (ADR 0055).
     unverified_build_release: Option<String>,
+    /// Whether a single-output attempt ran under settings "not verified by
+    /// MSCanvas" (ADR 0055 decision 1). `None` where no conversion report
+    /// exists to say.
+    unverified_settings: Option<bool>,
 }
 
 /// What an export says about one backend-named set's attempt.
@@ -297,6 +301,7 @@ impl ConversionFailureDiagnosticTicket {
             text: (state == ItemState::Failed).then_some(text).flatten(),
             output_set: None,
             unverified_build_release: report.unverified_build_release().map(str::to_owned),
+            unverified_settings: Some(report.unverified_settings()),
         })
     }
 
@@ -366,6 +371,7 @@ impl ConversionFailureDiagnosticTicket {
             text: (state == ItemState::Failed).then_some(text).flatten(),
             output_set: Some(facts),
             unverified_build_release: None,
+            unverified_settings: None,
         })
     }
 
@@ -406,6 +412,7 @@ impl ConversionFailureDiagnosticTicket {
             // rather than from the run it never made.
             output_set,
             unverified_build_release: None,
+            unverified_settings: None,
         }
     }
 
@@ -454,6 +461,7 @@ impl ConversionFailureDiagnosticTicket {
             // nothing else -- see `SetStopFacts::bound_source_objects`.
             output_set,
             unverified_build_release: None,
+            unverified_settings: None,
         })
     }
 

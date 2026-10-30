@@ -151,6 +151,10 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
         "unverifiedBuildRelease",
         ticket.unverified_build_release.as_deref(),
     );
+    match ticket.unverified_settings {
+        Some(unverified) => item.boolean("unverifiedSettings", unverified),
+        None => item.null("unverifiedSettings"),
+    }
     // Beside the record rather than inside it. A refused output keeps no
     // record, and a check reported without its scope says less than the
     // boundary established. `null` only where no conversion was reached.
@@ -679,6 +683,7 @@ mod tests {
             text: None,
             output_set: None,
             unverified_build_release: Some("3.0.26204".to_owned()),
+            unverified_settings: Some(true),
         };
 
         let mut out = String::new();
@@ -691,6 +696,7 @@ mod tests {
         // record at all -- still says what it was checked against.
         assert_eq!(document["item"]["validationMode"], "source_comparison");
         assert_eq!(document["item"]["unverifiedBuildRelease"], "3.0.26204");
+        assert_eq!(document["item"]["unverifiedSettings"], true);
         let validation = &document["item"]["validation"];
         let mut keys: Vec<&str> = validation
             .as_object()
@@ -767,6 +773,7 @@ mod tests {
             text: None,
             output_set: None,
             unverified_build_release: None,
+            unverified_settings: None,
         };
 
         let mut out = String::new();
@@ -776,6 +783,7 @@ mod tests {
 
         let document: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
         assert!(document["item"]["unverifiedBuildRelease"].is_null());
+        assert!(document["item"]["unverifiedSettings"].is_null());
         let staged = &document["item"]["stagedOutput"];
         assert_eq!(staged["kind"], "observed");
         assert_eq!(staged["entryCount"], 49);
