@@ -338,6 +338,7 @@ async function observe(label: string) {
     };
     const shell = document.querySelector(".workbench-shell");
     const header = document.querySelector(".workbench-header");
+    const statusBar = document.querySelector<HTMLElement>(".workbench-status");
     const main = ["#workbench-evidence", "#workbench-conversion", "#workbench-project"]
       .map((selector) => document.querySelector<HTMLElement>(selector))
       .find((element) => element !== null && !element.hidden) ?? null;
@@ -422,18 +423,26 @@ async function observe(label: string) {
       reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
       contextLine: items.length > 0,
       header: rect(header),
-      contextBar: rect(document.querySelector(".workbench-context-bar")),
-      shellContext: rect(document.querySelector(".shell-context")),
+      // The context line left the header for the status bar (rebuild spec 2.3).
+      statusBar: rect(statusBar),
       contextItems: items.map((item, index) => ({
         id: item.getAttribute("data-shell-context"),
-        priority: item.getAttribute("data-priority"),
         text: item.textContent,
         truncated: item.scrollWidth > item.clientWidth,
         ...shapes[index]!,
         ...rect(item),
       })),
       contextRows: new Set(items.map((item) => Math.round(item.getBoundingClientRect().top))).size,
-      dropHint: rect(document.querySelector(".workbench-header .workspace-drop-hint")),
+      // What the status bar shows that is not inside its one row.
+      statusOverflow: statusBar === null ? [] : [...statusBar.querySelectorAll<HTMLElement>("button, p, [data-status-busy]")]
+        .filter((node) => node.getClientRects().length > 0)
+        .filter((node) => {
+          const bar = statusBar.getBoundingClientRect();
+          const box = node.getBoundingClientRect();
+          return box.top < bar.top - 1 || box.bottom > bar.bottom + 1;
+        })
+        .map((node) => (node.textContent ?? "").trim()),
+      dropHint: rect(document.querySelector(".workbench-status .workspace-drop-hint")),
       backendToggle: rect(document.querySelector("[data-backend-toggle]")),
       regions: {
         roster: rect(document.querySelector("#workbench-roster")),
@@ -500,44 +509,34 @@ async function observe(label: string) {
     expect(control.x).toBeGreaterThanOrEqual(0);
     expect(control.x + control.width).toBeLessThanOrEqual(measured.css.width + 1);
   }
-  const line = measured.shellContext;
+  // The context line is the status bar since the rebuild (spec 2.3). Retired
+  // with the 32 px pill line it replaced: the compact-control height of each
+  // item (they are small buttons in the 28 px bar), and the rank order in
+  // which items gave way, with the viewing, inspecting and scope items that
+  // took part in it (the identity row, Details and the Conversion page say
+  // those now). What stays (L14–L16): only the project name gives way.
+  // Collected, so a failure names the item and the frame.
+  const bar = measured.statusBar;
+  expect(bar).not.toBe(null);
+  const statusProblems: string[] = [];
   for (const item of measured.contextItems) {
-    // The design system's compact control minimum, which the draft claims.
-    expect(item.height ?? 0).toBeGreaterThanOrEqual(31.5);
-    // An operation's status is never cut behind a long name (PM9.2 L14–L16):
-    // not ellipsized itself, and not pushed past the line, which clips.
-    if (item.priority === "1" && line !== null) {
-      expect(item.truncated).toBe(false);
-      expect(item.ellipsized).toBe(false);
-      expect(item.x ?? 0).toBeGreaterThanOrEqual(line.x - 1);
-      expect((item.x ?? 0) + (item.width ?? 0)).toBeLessThanOrEqual(line.x + line.width + 1);
+    if (item.id === "project" || bar === null) continue;
+    // An operation's status is never cut behind a long name: not ellipsized
+    // itself, and not pushed past the bar, which clips.
+    if (item.truncated || item.ellipsized) statusProblems.push(`${label}: ${String(item.id)} cut to "${item.visible}"`);
+    if ((item.x ?? 0) < bar.x - 1 || (item.x ?? 0) + (item.width ?? 0) > bar.x + bar.width + 1) {
+      statusProblems.push(`${label}: ${String(item.id)} outside the bar`);
     }
   }
-  // Rank decides who gives way first (L14–L16): an item shows an ellipsis
-  // only once every lower-ranked item is down to its floor. Reported as the
-  // pairs that break it, so a failure names them.
-  const outOfOrder = measured.contextItems.flatMap((higher) =>
-    higher.priority === "1" || !higher.ellipsized
-      ? []
-      : measured.contextItems
-          .filter((lower) => Number(lower.priority) > Number(higher.priority) && (lower.width ?? 0) > lower.floor + 1)
-          .map((lower) => `${label}: ${higher.id} ellipsized while ${lower.id} is ${String(lower.width)} px over a ${String(lower.floor)} px floor`),
-  );
-  expect(outOfOrder).toEqual([]);
-  // The drop hint gives way before the context does (L14–L16): no item shows
-  // an ellipsis while the hint still has width to give.
-  if (measured.contextItems.some((item) => item.priority !== "1" && item.ellipsized)) {
-    expect(measured.dropHint?.width ?? 0).toBeLessThanOrEqual(1);
+  // The drop hint gives way before the project name does: it is the first
+  // thing to drop on overflow (spec 2.3).
+  const cut = measured.contextItems.filter((item) => item.ellipsized).map((item) => item.id);
+  if (cut.length > 0 && (measured.dropHint?.width ?? 0) > 1) {
+    statusProblems.push(`${label}: drop hint ${String(measured.dropHint?.width)} px wide while ${cut.join(", ")} is ellipsized`);
   }
-  // The header's second line stays one row (L14–L16): the context, the folded
-  // backend reading and the drop hint all fit the bar's height, so nothing
-  // has wrapped below them.
-  if (measured.contextBar !== null) {
-    const tallest = Math.max(
-      ...[measured.dropHint, measured.backendToggle, ...measured.contextItems].map((box) => box?.height ?? 0),
-    );
-    expect(measured.contextBar.height).toBeLessThanOrEqual(tallest + 1);
-  }
+  // The bar stays one row: nothing it shows has wrapped above or below it.
+  statusProblems.push(...measured.statusOverflow.map((text) => `${label}: "${text}" off the bar's row`));
+  expect(statusProblems).toEqual([]);
   // The document keeps no height of its own that the body cannot scroll: every
   // region owns its content's overflow (L22).
   expect(measured.outerScroll.vertical).toBeLessThanOrEqual(1);
@@ -574,7 +573,8 @@ async function surfaceFrame(label: string) {
       title: title === null ? null : { text: title.textContent, ...box(title) },
       primaries: [...(main?.querySelectorAll<HTMLButtonElement>(".primary-button, .ui-button--primary") ?? [])]
         .filter((button) => button.getClientRects().length > 0)
-        .map((button) => ({ text: button.textContent, disabled: button.disabled, ...box(button) })),
+        // Refused is aria-disabled since the rebuild, never native disabled.
+        .map((button) => ({ text: button.textContent, disabled: button.disabled || button.getAttribute("aria-disabled") === "true", ...box(button) })),
       // The surface owns its own vertical overflow (L22).
       regionScroll:
         main === null
@@ -601,35 +601,50 @@ async function surfaceFrame(label: string) {
 }
 
 /**
- * Tabs through the header once, from Home, and records what each stop looked
- * like. Home itself was focused by script, so its treatment is not sampled.
+ * Tabs through one region from a control focused by script, and records what
+ * each stop inside it looked like. The starting control was focused by script,
+ * so its treatment is not sampled.
  */
-async function keyboardSample(label: string, limit = 40) {
-  await startAtHome();
+async function walkRegion(region: string, start: string, limit: number) {
+  await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), start);
   const stops: unknown[] = [];
   let entered = false;
   for (let step = 0; step < limit; step += 1) {
     await browser.keys("Tab");
-    const at = await browser.execute(() => {
+    const at = await browser.execute((css: string) => {
       const active = document.activeElement as HTMLElement | null;
       if (active === null || active === document.body) return null;
       const box = active.getBoundingClientRect();
       return {
-        inHeader: active.closest(".workbench-header") !== null,
+        inRegion: active.closest(css) !== null,
         context: active.getAttribute("data-shell-context"),
         name: active.getAttribute("aria-label") ?? (active.textContent ?? "").trim(),
         refused: active.getAttribute("aria-disabled") === "true",
         inViewport: box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight,
       };
-    });
+    }, region);
     if (at === null) continue;
-    if (!at.inHeader) {
+    if (!at.inRegion) {
       if (entered) break;
       continue;
     }
     entered = true;
     stops.push({ ...at, treatment: await focusedTreatment() });
   }
+  return stops;
+}
+
+/**
+ * Tabs through the header from Home, then through the status bar from its
+ * backend item, and records what each stop looked like. The status bar comes
+ * after the whole surface in Tab order (rebuild spec 2.1), so its walk starts
+ * at its first control, which is always rendered.
+ */
+async function keyboardSample(label: string, limit = 40) {
+  const stops = [
+    ...(await walkRegion(".workbench-header", ".workbench-home", limit)),
+    ...(await walkRegion(".workbench-status", "[data-backend-item]", limit)),
+  ];
   evidence.push({ label: `${label}-keyboard`, kind: "Observation only.", stops });
   return stops as { context: string | null; name: string; refused: boolean; treatment: { visible: boolean } }[];
 }
@@ -733,7 +748,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
       await selectTheSpectrum(0);
       await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
-      await browser.$(`button=${en.viewerMzZoomIn}`).click();
+      // An icon button since the rebuild: found by its accessible name (spec 3.4).
+      await browser.$(`button[aria-label="${en.viewerMzZoomIn}"]`).click();
       await browser.waitUntil(async () => !(await spectrumRangeCaption()).includes(en.viewerFullRange.trim()), {
         timeout: 15_000,
         timeoutMsg: "Zoom in m/z did not commit a narrower view",
@@ -1104,13 +1120,15 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     for (const locale of ["en", "zh-CN"] as const) {
       it(`PM9.2 L14–L16: the Workbench line with long names while a conversion runs, in ${locale}`, async () => {
         // PM9-G's busy state is observed on the Project surface. Here the same
-        // long names are on the Workbench, where the inspected result ranks
-        // last and gives way first.
+        // long names are on the Workbench. Since the rebuild the line is the
+        // status bar (spec 2.3): the running conversion and the long project
+        // name share it, and only the project name gives way. Retired with the
+        // items the bar dropped: the inspected result (Details says it) and
+        // the conversion scope (the Conversion page says it), with the check
+        // that the scope's leading word survived its ellipsis.
         await metrics(1920, 1080);
         await open("busyInspected", locale);
-        // The line names a scope only with an eligible row in it.
-        await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
-        await waitForContext("conversionScope", (text) => text !== null, "names a scope with an eligible row");
+        await waitForContext("conversionActivity", (text) => text !== null, "names the running conversion");
         await navigate([en.projectSurface, zh.projectSurface]);
         await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
         await browser.$("[data-targeted-row]").waitForDisplayed();
@@ -1123,13 +1141,14 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         ] as const) {
           await metrics(width, height);
           await frames();
+          // observe() holds the conversion whole and inside the bar.
           const measured = await observe(`pm9-2-workbench-long-${locale}-${String(width)}x${String(height)}`);
           expect(measured.surface).toBe("workbench");
-          expect(measured.contextItems.map((item) => item.id)).toContain("inspecting");
-          // Given way, the scope still says what it is (PM9.2 L14–L16 (e)):
-          // its distinctive word leads, so what survives the ellipsis is it.
-          const scope = measured.contextItems.find((item) => item.id === "conversionScope");
-          expect(scope?.visible.startsWith(locale === "en" ? "Conv" : "待转")).toBe(true);
+          expect(measured.contextItems.map((item) => item.id)).toEqual(["conversionActivity", "project"]);
+          // Given way, the project still says what it is: its own word leads,
+          // so what survives the ellipsis is it.
+          const project = measured.contextItems.find((item) => item.id === "project");
+          expect(project?.visible.startsWith(prefix((locale === "en" ? en : zh).shellContextProject))).toBe(true);
         }
         expect(await unexpectedConsole()).toEqual([]);
       });
@@ -1173,7 +1192,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await setInvokeResult("choose_backend_installation", chosenBackend);
         await showBackendBanner();
         await browser.$('[data-backend-action="choose"]').click();
-        const reopen = browser.$("#workbench-evidence .primary-button");
+        const reopen = browser.$("#workbench-evidence .ui-button--primary");
         await reopen.waitForDisplayed({ timeoutMsg: "no reopen action after the installation changed" });
         await frames();
         const seen = await surfaceFrame(`pm9-2-l1-retained-${locale}-1366x768`);
@@ -1276,24 +1295,63 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(overflow.y).toBeLessThanOrEqual(1);
     }
 
-    /** Puts focus on the first focusable control inside `css`. */
+    /**
+     * Puts focus on the first focusable control inside `css` that is rendered:
+     * one inside a closed disclosure region cannot take focus.
+     */
     function enter(css: string) {
       return browser.execute((selector: string) => {
-        const first = document
-          .querySelector(selector)
-          ?.querySelector<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select, summary, [tabindex]:not([tabindex="-1"])');
+        const first = [
+          ...(document
+            .querySelector(selector)
+            ?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select, [tabindex]:not([tabindex="-1"])') ?? []),
+        ].find((node) => node.getClientRects().length > 0);
         first?.focus();
-        return first !== null && first !== undefined;
+        return first !== undefined && document.activeElement === first;
       }, css);
     }
 
-    /** The drop hint as the line leaves it: shown whole, shown cut, or gone. */
+    /** What the evidence card's state says, without its buttons (rebuild spec 3.6). */
+    function emptyStateText() {
+      return browser.execute(
+        () => document.querySelector("#workbench-evidence .evidence-state .ui-empty-state__message")?.textContent ?? "",
+      ) as Promise<string>;
+    }
+
+    /** The drop hint as the status bar leaves it: shown whole, shown cut, or gone. */
     function dropHintState() {
       return browser.execute(() => {
-        const hint = document.querySelector<HTMLElement>(".workbench-header .workspace-drop-hint");
+        const hint = document.querySelector<HTMLElement>(".workbench-status .workspace-drop-hint");
         if (hint === null || hint.getClientRects().length === 0 || hint.getBoundingClientRect().width < 1) return "gone";
         return hint.scrollWidth > hint.clientWidth + 1 ? "cut" : "whole";
       }) as Promise<"gone" | "cut" | "whole">;
+    }
+
+    /** The project item's Unsaved tag: its words, and whether it is whole inside the item and the bar. */
+    function unsavedTag() {
+      return browser.execute(() => {
+        const tag = document.querySelector<HTMLElement>('.workbench-status [data-shell-context="project"] .status-tag');
+        if (tag === null || tag.getClientRects().length === 0) return null;
+        const box = tag.getBoundingClientRect();
+        const inside = (outer: Element | null) => {
+          const edge = outer?.getBoundingClientRect();
+          return edge !== undefined && box.left >= edge.left - 0.5 && box.right <= edge.right + 0.5;
+        };
+        return {
+          text: tag.textContent,
+          whole: box.width > 0 && tag.scrollWidth <= tag.clientWidth + 1 && inside(tag.closest("button")) && inside(tag.closest(".workbench-status")),
+        };
+      });
+    }
+
+    /** The identity row's file name: its text, its tooltip, and whether any of it is on screen. */
+    function identityName() {
+      return browser.execute(() => {
+        const name = document.querySelector<HTMLElement>("#workbench-evidence .viewer-identity-name");
+        return name === null
+          ? null
+          : { text: name.textContent, title: name.getAttribute("title"), shown: name.getBoundingClientRect().width > 0 };
+      });
     }
 
     /** Lines a text box takes, and any number-and-word pair split across two. */
@@ -1341,17 +1399,22 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await metrics(width, height);
           await frames();
           const label = `ui-rework-line-${locale}-${String(width)}x${String(height)}`;
+          // observe() holds the give-way order the status bar keeps (UI-48):
+          // only the project name shows an ellipsis, and the hint goes first.
           const measured = await observe(label);
           const hint = await dropHintState();
-          shapes.push({ label, hint, items: measured.contextItems.map((item) => ({ id: item.id, ellipsized: item.ellipsized, visible: item.visible })) });
+          const unsaved = await unsavedTag();
+          const viewed = await identityName();
+          shapes.push({ label, hint, unsaved, viewed, items: measured.contextItems.map((item) => ({ id: item.id, ellipsized: item.ellipsized, visible: item.visible })) });
           // UI-02: the hint is whole or gone, never a sliver.
           expect(hint).not.toBe("cut");
-          // UI-03: at any width the project item says it is unsaved.
-          const project = measured.contextItems.find((item) => item.id === "project");
-          expect(project?.visible ?? "").toMatch(locale === "en" ? /unsaved/iu : /未保存/u);
-          // UI-05: the viewed file, given way, still says what it is.
-          const viewing = measured.contextItems.find((item) => item.id === "viewing");
-          expect(viewing?.visible.startsWith(locale === "en" ? "View" : "正在查")).toBe(true);
+          // UI-03: at any width the project item says it is unsaved -- its tag,
+          // which the ellipsis on the name never reaches (spec 2.3).
+          expect(unsaved).toEqual({ text: words(locale).statusUnsaved, whole: true });
+          // UI-05: the viewed file, given way, still says what it is. It is
+          // the identity row's title since the rebuild (spec 3.2): the name in
+          // full, ellipsized on screen, with the whole name as its tooltip.
+          expect(viewed).toEqual({ text: LONG_FILE, title: LONG_FILE, shown: true });
         }
         evidence.push({ label: `ui-rework-line-${locale}`, shapes });
         expect(await unexpectedConsole()).toEqual([]);
@@ -1374,8 +1437,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await metrics(width, height);
           await frames();
           const measured = await observe(`ui-rework-two-statuses-${locale}-${String(width)}x${String(height)}`);
-          // observe() holds both statuses whole and inside the line; here both are there.
-          expect(measured.contextItems.filter((item) => item.priority === "1").map((item) => item.id)).toEqual([
+          // observe() holds both statuses whole and inside the status bar; here both are there.
+          expect(measured.contextItems.filter((item) => item.id !== "project").map((item) => item.id)).toEqual([
             "conversionActivity",
             "projectActivity",
           ]);
@@ -1394,14 +1457,19 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await viewTheRow();
         await browser.$(".roster-selection-context").waitForDisplayed();
         const shapes: unknown[] = [];
+        // The organizing row is the roster's footer since the rebuild: the
+        // count, Undo, the list menu (New group is its item) and Convert N…
+        // (spec 3.3).
+        // Collected and asserted once, so every frame is reached and named.
+        const problems: string[] = [];
         const record = async (label: string) => {
           await frames();
           const count = await textShape(".roster-selection-context");
-          const newGroup = await browser.$("[data-roster-new-group]").getLocation("y");
-          const band = await browser.$(".roster-foot-count").getSize("height");
-          shapes.push({ label, count, newGroupTop: newGroup, band });
-          expect(count?.lines).toBe(1);
-          expect(count?.split).toEqual([]);
+          const listMenu = await browser.$("[data-roster-list-menu]").getLocation("y");
+          const band = await browser.$(".roster-foot").getSize("height");
+          shapes.push({ label, count, listMenuTop: listMenu, band });
+          if (count?.lines !== 1) problems.push(`${label}: "${String(count?.text)}" on ${String(count?.lines)} lines`);
+          if ((count?.split ?? []).length > 0) problems.push(`${label}: split inside ${JSON.stringify(count?.split)}`);
         };
         await record(`ui-rework-organizing-${locale}-1366x768`);
         // UI-16: made narrower than the count, as long counts make it, the
@@ -1417,16 +1485,19 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         shapes.push({ label: `ui-rework-organizing-${locale}-forced-narrow`, narrow });
         expect(narrow?.lines).toBeGreaterThan(1);
         expect(narrow?.split).toEqual([]);
+        await browser.$("[data-roster-list-menu]").click();
+        await browser.$("[data-roster-new-group]").waitForDisplayed();
         await browser.$("[data-roster-new-group]").click();
         await browser.$("#organization-group-name").setValue("QC");
         await browser.$(".group-name-dialog button[type='submit']").click();
         await browser.$(".group-name-dialog").waitForExist({ reverse: true });
-        await browser.$(".roster-foot-count .ui-icon-button").waitForDisplayed();
+        await browser.$(`.roster-foot button[aria-label="${words(locale).undoOrganization}"]`).waitForDisplayed();
         await record(`ui-rework-organizing-undo-${locale}-1366x768`);
         await metrics(960, 640);
         await revealRosterRow(MZML_ROW.handle);
         await record(`ui-rework-organizing-undo-${locale}-960x640`);
-        evidence.push({ label: `ui-rework-organizing-${locale}`, shapes });
+        evidence.push({ label: `ui-rework-organizing-${locale}`, shapes, problems });
+        expect(problems).toEqual([]);
         expect(await unexpectedConsole()).toEqual([]);
       });
 
@@ -1437,28 +1508,35 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await setInvokeResult("choose_backend_installation", chosenBackend);
         await showBackendBanner();
         await browser.$('[data-backend-action="choose"]').click();
-        await browser.$("#workbench-evidence .primary-button").waitForDisplayed();
+        await browser.$("#workbench-evidence .ui-button--primary").waitForDisplayed();
         await frames();
-        const primaries = await browser.execute(() =>
-          [...document.querySelectorAll<HTMLElement>(".workbench-shell .primary-button")]
-            .filter((button) => button.getClientRects().length > 0)
-            .map((button) => (button.textContent ?? "").trim()),
-        );
-        evidence.push({ label: `ui-rework-retained-${locale}`, primaries });
-        expect(primaries).toEqual([expect.stringMatching(new RegExp(`^${prefix(words(locale).previewRetained)}`, "u"))]);
-        // Add files stays offered, only quieter.
-        expect(await browser.$(".roster-head [data-add-files]").isEnabled()).toBe(true);
-        // At 960x640 the roster takes the evidence pane's place, the reopen is
-        // off screen, and Add files is the one filled action again.
+        // Each region's filled actions. The roster's footer has its own
+        // primary since the rebuild, Convert N… (spec 3.3), so the one-primary
+        // rule is the evidence surface's.
+        const primaries = (css: string) =>
+          browser.execute(
+            (region: string) =>
+              [...document.querySelectorAll<HTMLElement>(`${region} .primary-button, ${region} .ui-button--primary`)]
+                .filter((button) => button.getClientRects().length > 0)
+                .map((button) => (button.textContent ?? "").trim()),
+            css,
+          );
+        const evidencePrimaries = await primaries("#workbench-evidence");
+        evidence.push({ label: `ui-rework-retained-${locale}`, evidence: evidencePrimaries, shell: await primaries(".workbench-shell") });
+        expect(evidencePrimaries).toEqual([expect.stringMatching(new RegExp(`^${prefix(words(locale).previewRetained)}`, "u"))]);
+        // Add files stays offered, only quieter: always secondary since the rebuild (spec 3.3).
+        const addFiles = browser.$(".roster-head [data-add-files]");
+        expect(await addFiles.isEnabled()).toBe(true);
+        expect(await addFiles.getAttribute("class")).not.toContain("ui-button--primary");
+        // Retired: "at 960x640 the roster takes the evidence pane's place and
+        // Add files is the one filled action again". The roster is a drawer
+        // over the evidence there (spec 3.1) and Add files never fills (spec
+        // 3.3). What stays: in the drawer it is offered, and still quiet.
         await metrics(960, 640);
         await revealRosterRow(MZML_ROW.handle);
-        const narrow = await browser.execute(() =>
-          [...document.querySelectorAll<HTMLElement>(".workbench-shell .primary-button")]
-            .filter((button) => button.getClientRects().length > 0)
-            .map((button) => (button.hasAttribute("data-add-files") ? "add-files" : (button.textContent ?? "").trim())),
-        );
-        evidence.push({ label: `ui-rework-retained-${locale}-960x640`, primaries: narrow });
-        expect(narrow).toEqual(["add-files"]);
+        evidence.push({ label: `ui-rework-retained-${locale}-960x640`, shell: await primaries(".workbench-shell") });
+        expect(await addFiles.isEnabled()).toBe(true);
+        expect(await addFiles.getAttribute("class")).not.toContain("ui-button--primary");
         expect(await unexpectedConsole()).toEqual([]);
       });
 
@@ -1513,12 +1591,15 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await metrics(width, height);
           await frames();
           const seen = await surfaceFrame(`ui-rework-empty-${locale}-${String(width)}x${String(height)}`);
-          const text = await browser.execute(
-            () => document.querySelector("#workbench-evidence .workspace-placeholder .empty-state")?.textContent ?? "",
-          );
+          const text = await emptyStateText();
           evidence.push({ label: `ui-rework-empty-copy-${locale}-${String(width)}`, text, primaries: seen.primaries });
+          expect(text).not.toBe("");
           expect(await restatesBanner(text)).toEqual([]);
-          expect(seen.primaries).toEqual([]);
+          // UI-10 said no primary here. The rebuild's first run offers one,
+          // Add files…, where the roster does not already (spec 3.6): at most
+          // that one, and nothing else is filled.
+          expect(seen.primaries.length).toBeLessThanOrEqual(1);
+          expect(seen.primaries.filter((primary) => (primary.text ?? "").trim() !== words(locale).addFiles)).toEqual([]);
         }
         expect(await unexpectedConsole()).toEqual([]);
       });
@@ -1535,9 +1616,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await browser.$(`[data-backend-status="${kind}"]`).waitForExist();
           await frames();
           await surfaceFrame(`ui-rework-${kind}-${locale}-1366x768`);
-          const text = await browser.execute(
-            () => document.querySelector("#workbench-evidence .workspace-placeholder .empty-state")?.textContent ?? "",
-          );
+          const text = await emptyStateText();
+          expect(text).not.toBe("");
           expect(await restatesBanner(text)).toEqual([]);
           expect(await unexpectedConsole()).toEqual([]);
         });
@@ -1655,14 +1735,17 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
+    // Clear list is an item of the roster footer's list menu since the rebuild
+    // (spec 3.3, owner review), so the control that shows the ring and answers
+    // hover is the menu's trigger; Clear list is then reached from it by keyboard.
     it("UI-20: Clear list shows its focus ring unclipped and answers hover", async () => {
       await metrics(1366, 768);
       await open("populated");
       await browser.execute(() => document.querySelector<HTMLElement>(".roster-head [data-add-files]")?.focus());
       let found = false;
-      for (let step = 0; step < 16 && !found; step += 1) {
+      for (let step = 0; step < 40 && !found; step += 1) {
         await browser.keys("Tab");
-        found = await browser.execute(() => document.activeElement?.hasAttribute("data-roster-clear") ?? false);
+        found = await browser.execute(() => document.activeElement?.hasAttribute("data-roster-list-menu") ?? false);
       }
       expect(found).toBe(true);
       const ring = await browser.execute(() => {
@@ -1675,10 +1758,17 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       });
       expect((await focusedTreatment()).visible).toBe(true);
       expect(ring.inside).toBe(true);
+      // Enter opens the menu, and Clear list is in it, offered.
+      await browser.keys("Enter");
+      const clear = browser.$('[role="menuitem"][data-roster-clear]');
+      await clear.waitForDisplayed();
+      expect(await clear.getAttribute("aria-disabled")).toBe(null);
+      await browser.keys("Escape");
+      await clear.waitForExist({ reverse: true });
       await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur());
-      const rest = await browser.execute(() => getComputedStyle(document.querySelector("[data-roster-clear]")!).backgroundColor);
-      await browser.$("[data-roster-clear]").moveTo();
-      const hover = await browser.execute(() => getComputedStyle(document.querySelector("[data-roster-clear]")!).backgroundColor);
+      const rest = await browser.execute(() => getComputedStyle(document.querySelector("[data-roster-list-menu]")!).backgroundColor);
+      await browser.$("[data-roster-list-menu]").moveTo();
+      const hover = await browser.execute(() => getComputedStyle(document.querySelector("[data-roster-list-menu]")!).backgroundColor);
       evidence.push({ label: "ui-rework-clear-list", ring, rest, hover });
       expect(hover).not.toBe(rest);
       expect(await unexpectedConsole()).toEqual([]);
@@ -1736,8 +1826,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await navigate([en.projectSurface, zh.projectSurface]);
         await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
         await browser.$("#workbench-inspector .provenance-digest").waitForDisplayed();
-        // The engine's modules, real paths, open so the frame shows them.
-        await browser.$("#workbench-inspector .targeted-modules > summary").click();
+        // The engine's modules, real paths, open so the frame shows them. A
+        // disclosure button since the rebuild (spec 1.5).
+        await browser.$("#workbench-inspector .targeted-disclosure > button[aria-expanded]").click();
         await frames();
         const seen = await browser.execute(() => {
           // Lines on screen: a line a clamp hides is laid out below the box.
@@ -1918,7 +2009,14 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await check(`ui-rework-conversion-ended-${locale}-${String(width)}x${String(height)}`);
         }
         // A reviewed plan: every eligible row, answered by the plan's describe.
-        await browser.$('input[name="conversion-scope"][value="all"]').click();
+        // A finished queue offers the next conversion's plan behind Start
+        // another conversion, and the scope radio is drawn as a segment whose
+        // label is what a reader presses (rebuild spec 5).
+        // Chosen at the widest size, where the label is clear of the column's
+        // Convert button; the walks below judge each size's controls.
+        await metrics(1920, 1080);
+        await browser.$("[data-conversion-start-another]").click();
+        await browser.$('label.conversion-segment:has(input[name="conversion-scope"][value="all"])').click();
         await browser.$("#conversion-plan-summary").waitForExist();
         for (const [width, height] of sizes) {
           await metrics(width, height);
@@ -1960,9 +2058,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await enter("#workbench-inspector")).toBe(true);
       await focusWalk("ui-rework-walk-details-1366x768", 20, "#workbench-inspector");
 
-      // At 960x640 each panel takes the surface's place (the swap), on
-      // Conversion and on Project. Details is offered where it has something
-      // to show and says why where it has not; either way it is recorded.
+      // At 960x640 each panel is a drawer over the surface, on Conversion and
+      // on Project; the surface behind it is inert, so the keyboard stays in
+      // the drawer (rebuild spec 3.1). Details is offered where it has
+      // something to show and says why where it has not; either way it is
+      // recorded.
       await metrics(960, 640);
       await frames();
       const swaps = [];
@@ -1974,17 +2074,21 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         for (const panel of ["workbench-roster", "workbench-inspector"] as const) {
           const toggle = browser.$(`[aria-controls="${panel}"]`);
           if ((await toggle.getAttribute("aria-disabled")) === "true") {
-            swaps.push({ label, panel, offered: false, reason: await toggle.getAttribute("title") });
+            const reason = await browser.execute(
+              (ids: string) => ids.split(/\s+/u).map((id) => document.getElementById(id)?.textContent ?? "").join(" "),
+              (await toggle.getAttribute("aria-describedby")) ?? "",
+            );
+            swaps.push({ label, panel, offered: false, reason });
             continue;
           }
           await toggle.click();
           await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === "true");
-          const surfaceHidden = await browser.execute((region: string) => {
+          const surfaceInert = await browser.execute((region: string) => {
             const node = document.querySelector<HTMLElement>(`#workbench-${region}`);
-            return node === null || node.getClientRects().length === 0;
+            return node !== null && node.closest("[inert]") !== null;
           }, label);
-          swaps.push({ label, panel, offered: true, surfaceHidden });
-          expect(surfaceHidden).toBe(true);
+          swaps.push({ label, panel, offered: true, surfaceInert });
+          expect(surfaceInert).toBe(true);
           expect(await enter(`#${panel}`)).toBe(true);
           await focusWalk(`ui-rework-walk-${label}-${panel}-960x640`, 20, `#${panel}`);
           await toggle.click();
@@ -2062,14 +2166,22 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             small[name] = (small[name] ?? 0) + 1;
           }
         }
-        // Control minimums, radii and row density, for the record (UI-45):
-        // the reference's 32 px compact control, 6/8 px radii, 44/32 px rows.
+        // Control minimums, radii and row density, for the record (UI-45).
+        // The reference is v5.11 since the rebuild: a 30 px small button
+        // (spec 1.4), 6/5 px radii, 44/32 px rows. Every control under 30 px
+        // is recorded; a small button under it outside the 28 px status bar
+        // (spec 2.1) is a failure. The TIC/BPC toggles are drawn as one
+        // segmented pair (spec 3.4), so the pair's track is the control measured.
         const shown = (node: Element) => node.getClientRects().length > 0;
         const name = (node: Element) => `${node.tagName.toLowerCase()}.${[...node.classList].join(".")}`;
         const shortControls: Record<string, number> = {};
-        for (const node of [...document.querySelectorAll<HTMLElement>('button, select, summary, input:not([type="checkbox"]):not([type="radio"])')].filter(shown)) {
-          const height = Math.round(node.getBoundingClientRect().height);
-          if (height < 32) shortControls[`${name(node)} ${String(height)}px`] = (shortControls[`${name(node)} ${String(height)}px`] ?? 0) + 1;
+        const shortButtons: Record<string, number> = {};
+        for (const node of [...document.querySelectorAll<HTMLElement>('button, select, input:not([type="checkbox"]):not([type="radio"])')].filter(shown)) {
+          const height = Math.round((node.closest(".plot-traces") ?? node).getBoundingClientRect().height);
+          if (height >= 30) continue;
+          const key = `${name(node)} ${String(height)}px`;
+          shortControls[key] = (shortControls[key] ?? 0) + 1;
+          if (node.matches(".ui-button") && node.closest(".workbench-status") === null) shortButtons[key] = (shortButtons[key] ?? 0) + 1;
         }
         const radii: Record<string, number> = {};
         for (const node of [...document.querySelectorAll<HTMLElement>(".panel, button, select, input, .notice")].filter(shown)) {
@@ -2077,13 +2189,14 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           radii[radius] = (radii[radius] ?? 0) + 1;
         }
         const rows = [...new Set([...document.querySelectorAll<HTMLElement>(".grouped-roster [data-handle]")].filter(shown).map((row) => Math.round(row.getBoundingClientRect().height)))];
-        return { undeclared: [...undeclared], fontSizes: sizes, small, shortControls, radii, rosterRowHeights: rows, focus: root.getPropertyValue("--color-focus").trim() };
+        return { undeclared: [...undeclared], fontSizes: sizes, small, shortControls, shortButtons, radii, rosterRowHeights: rows, focus: root.getPropertyValue("--color-focus").trim() };
       });
       evidence.push({ label: "ui-rework-measure", ...seen });
       expect(seen.undeclared).toEqual([]);
-      // No visible control below the reference's 32 px compact minimum.
-      expect(seen.shortControls).toEqual({});
-      expect(seen.focus).toBe("#1769d1");
+      // No small button below v5.11's 30 px (spec 1.4).
+      expect(seen.shortButtons).toEqual({});
+      // v5.11's blue, the rebuild's one focus colour (spec 1.3).
+      expect(seen.focus).toBe("#1769e0");
       // One focus colour: Settings no longer declares its own (UI-46).
       await browser.$(".settings-entry").click();
       await browser.$(".settings-dialog").waitForDisplayed();

@@ -44,6 +44,16 @@ import {
 } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import {
+  FIGURE_DIALOG,
+  answerFigurePreviews,
+  choosePlotMenuItem,
+  closeFigureDialog,
+  figureActions,
+  figureDialogButton,
+  openFigureDialog,
+  openPlotMenu,
+} from "../support/figure";
+import {
   CHROMATOGRAM,
   PLOT,
   SPECTRUM_PLOT,
@@ -86,7 +96,6 @@ function prefix(template: string): string {
 const SCANS = ".spectrum-table-panel";
 const RT_PANEL = ".chromatogram-panel";
 const MZ_PANEL = ".spectrum-panel";
-const EXPORT_PANEL = "#chromatogram-export-panel";
 
 const NO_PROJECT = {
   open: false,
@@ -302,6 +311,8 @@ async function open(options: Parameters<typeof answers>[0] = {}) {
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed();
   if (options.refusedViewport !== true) await answerBySource(options.long === true ? LONG_SPECTRUM : SPECTRUM);
+  // The figure dialog draws a preview before it offers SVG, PNG or Copy.
+  await answerFigurePreviews();
   await view(MZML_ROW.handle);
 }
 
@@ -325,10 +336,23 @@ function row(index: number) {
   return `${SCANS} [data-source-index="${String(index)}"]`;
 }
 
-/** A real click on one ordinary cell of a scan row, as M7.3 activates rows. */
+/**
+ * A real click on one ordinary cell of a scan row, as M7.3 activates rows: the
+ * MS level, the third of the compact list's four columns (rebuild spec 3.5).
+ */
 async function activateRow(index: number) {
   await browser.$(SCANS).scrollIntoView({ block: "start" });
-  await browser.$(`${row(index)} [role="gridcell"]:nth-child(5)`).click();
+  await browser.$(`${row(index)} [role="gridcell"]:nth-child(3)`).click();
+}
+
+/** A toolbar's icon button, by its accessible name: it has no text (rebuild spec 3.4, 3.5). */
+function iconButton(scope: string, label: string) {
+  return browser.$(scope).$(`button[aria-label="${label}"]`);
+}
+
+/** Whether a control is refused: still a Tab stop, aria-disabled with its reason. */
+async function refused(scope: string, label: string): Promise<boolean> {
+  return (await iconButton(scope, label).getAttribute("aria-disabled")) === "true";
 }
 
 /** Every source index the viewer has asked Rust to read a spectrum for, in order. */
@@ -456,8 +480,8 @@ async function rangeLine(panel: string) {
 
 /**
  * One plot's range row and caption, read in one script: the sentence a sighted
- * reader sees (outside .visually-hidden, the pending actions and the
- * disclosures), the sentence the line states whether printed or only
+ * reader sees (outside .visually-hidden, the pending actions and Set range…
+ * with its editor), the sentence the line states whether printed or only
  * announced (its committed claim, without the announced bounds), what the live
  * line says, the bounds it carries, the bounds the caption prints for the range
  * on screen, and how many announcers the row has.
@@ -473,7 +497,8 @@ function rangeFacts(panel: string) {
     const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
     let visible = "";
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-      const hidden = node.parentElement?.closest(".visually-hidden, .plot-pending-actions, details");
+      // Set range… and its editor took the old range disclosure's place (rebuild spec 3.4).
+      const hidden = node.parentElement?.closest(".visually-hidden, .plot-pending-actions, .plot-range-toggle, .plot-range-editor");
       if (hidden === null || hidden === undefined || !row.contains(hidden)) visible += node.textContent ?? "";
     }
     const line = row.querySelector(".plot-committed-range");
@@ -551,36 +576,39 @@ async function pressEscape() {
   await cdp("Input.dispatchKeyEvent", { type: "keyUp", ...key });
 }
 
-/** Chooses one scope radio by script: which scope is chosen is the subject, not how. */
-async function chooseScope(name: "chromatogram-range-scope" | "spectrum-range-scope", scope: "full" | "current") {
-  await browser.execute(
-    (group: string, value: string) =>
-      document.querySelector<HTMLInputElement>(`input[name="${group}"][value="${value}"]`)?.click(),
-    name,
-    scope,
-  );
+/** The figure dialog's width field: its id is generated, its class is not. */
+const DIALOG_WIDTH = `${FIGURE_DIALOG} .spectrum-figure-field-widthPx input`;
+
+/** The range the open figure dialog has checked: Current is its first segment, Full its second. */
+function dialogScope(): Promise<"current" | "full" | null> {
+  return browser.execute((dialog: string) => {
+    const segments = [...document.querySelectorAll(`${dialog} .figure-export-range [role="radio"]`)];
+    const at = segments.findIndex((segment) => segment.getAttribute("aria-checked") === "true");
+    return at === 0 ? "current" : at === 1 ? "full" : null;
+  }, FIGURE_DIALOG) as Promise<"current" | "full" | null>;
 }
 
-function checkedScope(name: string): Promise<string | null> {
-  return browser.execute(
-    (group: string) => document.querySelector<HTMLInputElement>(`input[name="${group}"]:checked`)?.value ?? null,
-    name,
-  ) as Promise<string | null>;
+/**
+ * Chooses a plot's export range, and optionally its figure width, in the figure
+ * dialog its head's Export… opens, then closes the dialog. The scope and the
+ * draft are the workspace's, so they hold for the head's PNG and the ⋯ menu's
+ * data exports as well (rebuild spec 3.4, 6). The dialog is modal: a gesture
+ * on the plot comes after it closes.
+ */
+async function chooseScope(panel: string, scope: "full" | "current", width?: string) {
+  await openFigureDialog(panel);
+  await browser.$(`${FIGURE_DIALOG} .figure-export-range [role="radio"]:nth-child(${scope === "current" ? "1" : "2"})`).click();
+  await browser.waitUntil(async () => (await dialogScope()) === scope, { timeoutMsg: `the dialog never checked ${scope}` });
+  if (width !== undefined) await browser.$(DIALOG_WIDTH).setValue(width);
+  await closeFigureDialog();
 }
 
-async function openChromatogramExport() {
-  if ((await browser.$("#chromatogram-export-toggle").getAttribute("aria-expanded")) !== "true") {
-    await browser.$("#chromatogram-export-toggle").click();
-  }
-  await browser.$(EXPORT_PANEL).waitForExist();
-}
-
-async function openSpectrumExport() {
-  const disclosure = `${MZ_PANEL} .spectrum-export-disclosure`;
-  if ((await browser.$(disclosure).getAttribute("open")) === null) {
-    await browser.$(`${disclosure} summary`).click();
-  }
-  await browser.$(`${MZ_PANEL} .spectrum-data-actions`).waitForExist();
+/** A plot's export range and figure width, read in its figure dialog, which is then closed. */
+async function figureChoice(panel: string) {
+  await openFigureDialog(panel);
+  const choice = { scope: await dialogScope(), width: await browser.$(DIALOG_WIDTH).getValue() };
+  await closeFigureDialog();
+  return choice;
 }
 
 /** Presses one export action by its visible label inside one surface. */
@@ -609,19 +637,40 @@ function countOf(calls: readonly IpcCall[], command: string): number {
   return calls.filter((call) => call.command === command).length;
 }
 
-/** Waits for the one scientific export lane to be free again. */
+/**
+ * Waits for the one scientific export lane to be free again: every plot head's
+ * PNG and Copy are refused while it is busy (rebuild spec 3.4).
+ */
 async function laneFree() {
   await browser.waitUntil(
     () =>
-      browser.execute(
-        () =>
-          [...document.querySelectorAll<HTMLButtonElement>(".spectrum-data-actions button, #chromatogram-export-panel button")].every(
-            (button) => button.getAttribute("aria-disabled") !== "true",
-          ),
-      ),
+      browser.execute(() => {
+        const actions = [...document.querySelectorAll<HTMLButtonElement>(".figure-quick-actions button")];
+        return actions.length > 0 && actions.every((button) => button.getAttribute("aria-disabled") !== "true");
+      }),
     { timeout: 15_000, timeoutMsg: "the export lane stayed busy" },
   );
   await frames();
+}
+
+/** The open figure dialog's buttons by group: its figure actions in the foot, and its data actions. */
+function dialogGroups() {
+  return browser.execute((dialog: string) => {
+    const names = (css: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>(`${dialog} ${css} button`)].map((button) => (button.textContent ?? "").trim());
+    return { figure: names(".figure-export-actions"), data: names(".figure-export-data-actions") };
+  }, FIGURE_DIALOG);
+}
+
+/** A plot's ⋯ menu items, by their words; the menu is closed again with Escape. */
+async function plotMenuItems(panel: string): Promise<string[]> {
+  await openPlotMenu(panel);
+  const items = await browser.execute(() =>
+    [...document.querySelectorAll('[role="menuitem"]')].map((item) => (item.textContent ?? "").trim()),
+  );
+  await browser.keys("Escape");
+  await browser.$('[role="menuitem"]').waitForExist({ reverse: true });
+  return items;
 }
 
 // ---------------------------------------------------------------- observation
@@ -664,14 +713,15 @@ async function observeViewer(label: string) {
     };
     // How many rows a toolbar's heading and controls take: an item that
     // begins below everything in the current row starts another. By overlap
-    // rather than by top edge, so a label over its input and a 32px summary
+    // rather than by top edge, so a label over its input and a 32px control
     // beside it are one row, and a heading counts, so actions that drop below
-    // it as a whole are a second row.
+    // it as a whole are a second row. What a sighted reader sees: a visually
+    // hidden label is not a row, and the search and MS-level fields are.
     const rows = (css: string) => {
       const node = document.querySelector(css);
       if (node === null || node.getClientRects().length === 0) return null;
       // A committed line hidden at rest takes no row (UI-34 as revised).
-      const boxes = [...node.querySelectorAll("h2, button, label, summary, .plot-committed-range:not(.visually-hidden)")]
+      const boxes = [...node.querySelectorAll("h2, button, label:not(.visually-hidden), input, select, .plot-committed-range:not(.visually-hidden)")]
         .filter((item) => item.getClientRects().length > 0)
         .map((item) => item.getBoundingClientRect())
         .sort((a, b) => a.top - b.top);
@@ -723,12 +773,12 @@ async function observeViewer(label: string) {
               width: evidenceBox!.width,
               scrollHeight: evidence.scrollHeight,
             },
+      // Each plot's range controls are in its head since the rebuild (spec
+      // 3.4), so the head is the chromatogram's and the spectrum's one toolbar.
       toolbars: {
-        chromatogramHeader: rows(".chromatogram-panel > .panel-header"),
-        chromatogramControls: rows(".chromatogram-body > .chromatogram-controls"),
-        spectrumHeader: rows(".spectrum-panel > .panel-header"),
-        spectrumViewport: rows(".spectrum-viewport-actions"),
-        scansHeader: rows(".spectrum-table-panel > .panel-header"),
+        chromatogramHeader: rows(".chromatogram-panel > .plot-head"),
+        spectrumHeader: rows(".spectrum-panel > .plot-head"),
+        scansHeader: rows(".spectrum-table-panel > .plot-head"),
         scanViewControls: rows(".scan-view-controls"),
       },
       rangeRows: {
@@ -736,35 +786,17 @@ async function observeViewer(label: string) {
         spectrum: rows(".spectrum-panel .plot-range-actions"),
       },
       reach: {
-        spectrumHeader: reach(".spectrum-panel > .panel-header"),
-        spectrumViewport: reach(".spectrum-viewport-actions"),
-        scanSteps: reach(".spectrum-scan-steps"),
+        spectrumHeader: reach(".spectrum-panel > .plot-head"),
+        // Previous and Next, in the scan list's head (spec 3.5).
+        scanSteps: reach(".spectrum-table-panel > .plot-head .plot-tools"),
         tableHeader: reach(".spectrum-table-head"),
         firstRow: reach('.spectrum-table-panel [data-row-position="0"]'),
       },
       documentOverflowY: document.documentElement.scrollHeight - innerHeight,
-      // The known UI rework (baseline §12). Each quick-action caption: on how
-      // many lines its figure size sits (UI-26).
-      captions: [...document.querySelectorAll(".figure-quick-context")]
-        .filter((node) => node.getClientRects().length > 0)
-        .map((node) => {
-          const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-          for (let text = walker.nextNode(); text !== null; text = walker.nextNode()) {
-            const match = /\d+\s×\s\d+\spx/u.exec(text.textContent ?? "");
-            if (match === null) continue;
-            const range = document.createRange();
-            range.setStart(text, match.index);
-            range.setEnd(text, match.index + match[0].length);
-            return { text: node.textContent, sizeLines: new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size };
-          }
-          return { text: node.textContent, sizeLines: null };
-        }),
-      // The m/z controls' pill against the column it sits in (UI-30).
-      mzPill: (() => {
-        const pill = document.querySelector(".spectrum-viewport-actions");
-        if (pill === null || pill.parentElement === null || pill.getClientRects().length === 0) return null;
-        return { width: pill.getBoundingClientRect().width, column: pill.parentElement.getBoundingClientRect().width };
-      })(),
+      // Not measured since the rebuild, by its spec: the quick-action caption
+      // with the figure size (UI-26) left the plot head for the figure dialog,
+      // and the m/z pill (UI-30) became icon buttons in the spectrum head
+      // (spec 3.4).
       // What the lines under the plots print (UI-31, UI-33).
       rangeTexts: [...document.querySelectorAll(".plot-committed-range")].map((node) => node.textContent ?? ""),
       // What those lines show, without the numbers kept for announcement.
@@ -784,35 +816,37 @@ async function observeViewer(label: string) {
           .map((id) => document.getElementById(id)?.textContent ?? "")
           .join(" ");
       })(),
-      // Whether the selected spectrum's heading block, whole, and its controls,
-      // in one line, fit its header side by side (UI-28: "one row where the
-      // controls fit"). Measured by laying each out at that size and back.
+      // Whether the spectrum head's title and its tools, in one line, fit the
+      // head side by side, the subtitle between them given no width: it
+      // ellipsizes first (UI-28; spec 3.4). Measured by laying each out at
+      // that size and back.
       spectrumControlsFit: (() => {
-        const header = document.querySelector<HTMLElement>(".spectrum-panel > .panel-header");
-        const heading = header?.querySelector<HTMLElement>(":scope > div");
-        const actions = header?.querySelector<HTMLElement>(":scope > .spectrum-export-header-actions");
-        if (!header || !heading || !actions) return null;
-        const at = (node: HTMLElement, width: string) => {
+        const head = document.querySelector<HTMLElement>(".spectrum-panel > .plot-head");
+        const title = head?.querySelector<HTMLElement>(":scope > h2");
+        const tools = head?.querySelector<HTMLElement>(":scope > .plot-tools");
+        if (!head || !title || !tools) return null;
+        const at = (node: HTMLElement) => {
           const saved = [node.style.flex, node.style.width];
           node.style.flex = "none";
-          node.style.width = width;
+          node.style.width = "max-content";
           const measured = node.getBoundingClientRect().width;
           [node.style.flex, node.style.width] = saved as [string, string];
           return measured;
         };
-        const style = getComputedStyle(header);
-        const room = header.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-        return at(heading, "max-content") + parseFloat(style.columnGap) + at(actions, "min-content") <= room + 0.5;
+        const style = getComputedStyle(head);
+        const room = head.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        return at(title) + 2 * (parseFloat(style.columnGap) || 0) + at(tools) <= room + 0.5;
       })(),
-      // The sentence about the selected spectrum, whole and uncovered by its
-      // header's controls (UI-28).
+      // The sentence about the selected spectrum, the head's subtitle, and
+      // whether the head's controls cover it (UI-28). Since the rebuild the
+      // head is one 36 px line whose subtitle ellipsizes first (spec 3.4), so
+      // `cut` is recorded, not a failure.
       spectrumHeading: (() => {
-        const heading = document.querySelector<HTMLElement>(".spectrum-panel > .panel-header > div:not(.spectrum-export-header-actions)");
-        const actions = document.querySelector<HTMLElement>(".spectrum-panel > .panel-header > .spectrum-export-header-actions");
-        const summary = heading?.querySelector<HTMLElement>("p");
-        if (!heading || !actions || !summary || summary.getClientRects().length === 0) return null;
-        const text = heading.getBoundingClientRect();
-        const covered = [...actions.querySelectorAll<HTMLElement>("button, summary, .figure-quick-context")]
+        const head = document.querySelector<HTMLElement>(".spectrum-panel > .plot-head");
+        const summary = head?.querySelector<HTMLElement>("#selected-spectrum-summary");
+        if (!head || !summary || summary.getClientRects().length === 0) return null;
+        const text = summary.getBoundingClientRect();
+        const covered = [...head.querySelectorAll<HTMLElement>("button")]
           .filter((node) => node.getClientRects().length > 0)
           .map((node) => node.getBoundingClientRect())
           .some((box) => box.left < text.right - 1 && box.right > text.left + 1 && box.top < text.bottom - 1 && box.bottom > text.top + 1);
@@ -836,8 +870,8 @@ async function observeViewer(label: string) {
       },
       pendingActions: [...document.querySelectorAll(".plot-pending-actions")].length,
       rangeLines: [...document.querySelectorAll(".plot-committed-range")].map((node) => node.textContent),
-      exportEntries: [...document.querySelectorAll(".figure-quick-actions button, #chromatogram-export-toggle, .spectrum-export-disclosure summary")].map(
-        (node) => (node.textContent ?? "").trim(),
+      exportEntries: [...document.querySelectorAll(".figure-quick-actions button")].map(
+        (node) => node.getAttribute("aria-label") ?? (node.textContent ?? "").trim(),
       ),
       horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
       external: performance
@@ -859,6 +893,17 @@ async function observeViewer(label: string) {
   expect(measured.horizontalOverflow).toBeLessThanOrEqual(1);
   expect(measured.external).toEqual([]);
   return { label, ...measured };
+}
+
+/**
+ * UI-32: a plot's range row stays one row in a box 690 px or wider. Since the
+ * rebuild the spectrum box sits beside the scan list rather than spanning the
+ * evidence column (spec 3.1), so each plot's own box is what is measured.
+ */
+function wrappedRangeRows(frame: Awaited<ReturnType<typeof observeViewer>>): string[] {
+  return (["chromatogram", "spectrum"] as const)
+    .filter((plot) => (frame.panels[plot]?.width ?? 0) >= 690 && (frame.rangeRows[plot]?.rows ?? 0) > 1)
+    .map((plot) => `${frame.label} ${plot} range row ${String(frame.rangeRows[plot]?.rows)} in ${String(frame.panels[plot]?.width)} px`);
 }
 
 /**
@@ -915,27 +960,6 @@ function rangeIntegrity(): Promise<string[]> {
       }
       return problems.map((problem) => `${plot} ${problem}`);
     });
-  });
-}
-
-/** How many rows the chromatogram's context line takes, by overlap, as `observeViewer` counts toolbars. */
-function contextRows(): Promise<number | null> {
-  return browser.execute(() => {
-    const context = document.querySelector(".chromatogram-context");
-    if (context === null || context.getClientRects().length === 0) return null;
-    const boxes = [...context.querySelectorAll("p, summary")]
-      .filter((node) => node.getClientRects().length > 0)
-      .map((node) => node.getBoundingClientRect())
-      .sort((a, b) => a.top - b.top);
-    let count = 0;
-    let bottom = -Infinity;
-    for (const box of boxes) {
-      if (box.top >= bottom - 1) {
-        count += 1;
-        bottom = box.bottom;
-      } else bottom = Math.max(bottom, box.bottom);
-    }
-    return count;
   });
 }
 
@@ -1018,11 +1042,11 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await waitForReads(1);
       await expectSelected(3);
 
-      await browser.$(SCANS).$(`button=${en.scanNext}`).click();
+      await iconButton(SCANS, en.scanNext).click();
       await waitForReads(2);
       await expectSelected(4);
 
-      await browser.$(SCANS).$(`button=${en.scanPrevious}`).click();
+      await iconButton(SCANS, en.scanPrevious).click();
       await waitForReads(3);
       await expectSelected(3);
 
@@ -1047,10 +1071,20 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await expectSelected(3);
       const reads = (await spectrumReads()).length;
 
-      // Sort by total ion current, descending.
-      await browser.$(SCANS).$(`button*=${en.scanTotalIonCurrent}`).click();
-      await browser.$(SCANS).$(`button*=${en.scanTotalIonCurrent}`).click();
-      expect(await browser.$(`${SCANS} [aria-sort="descending"]`).getText()).toContain(en.scanTotalIonCurrent);
+      // Sort by total ion current, descending. The compact list shows four
+      // columns, so a field without one is ordered from Sort scans, which
+      // names the order it applied (rebuild spec 3.5).
+      const sortScans = () => browser.$(`${SCANS} button[aria-label^="${en.scanSortBy}"]`);
+      for (const choice of [en.scanTotalIonCurrent, en.scanSortDescending]) {
+        await sortScans().click();
+        const item = browser.$(`//*[@role="menuitemradio"][normalize-space()="${choice}"]`);
+        await item.waitForDisplayed();
+        await item.click();
+        await item.waitForExist({ reverse: true });
+      }
+      expect(await sortScans().getAttribute("aria-label")).toBe(
+        fill(en.scanSortCurrent, { name: en.scanTotalIonCurrent, direction: en.scanSortDescending }),
+      );
 
       await browser.$(`${SCANS} input[type="search"]`).setValue("rare-");
       expect(
@@ -1063,8 +1097,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
       expect(await browser.$(`${SCANS} .scan-hidden-selection`).getText()).toContain(
         fill(en.scanSelectedOutside, { name: "3" }),
       );
-      expect(await browser.$(SCANS).$(`button=${en.scanNext}`).isEnabled()).toBe(false);
-      expect(await browser.$(SCANS).$(`button=${en.scanPrevious}`).isEnabled()).toBe(false);
+      // Refused, not disabled: still Tab stops, with the hidden selection as the reason.
+      expect(await refused(SCANS, en.scanNext)).toBe(true);
+      expect(await refused(SCANS, en.scanPrevious)).toBe(true);
       expect((await shownSelection()).summary).toMatch(/^Spectrum 3,/u);
       // Nothing else was chosen for the reader, and nothing was read.
       expect((await spectrumReads()).length).toBe(reads);
@@ -1072,7 +1107,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
       // The one recovery path: clear the filters, which keeps the sort.
       await browser.$(SCANS).$(`button=${en.scanReveal}`).click();
       await browser.$(`${row(3)}[aria-selected="true"]`).waitForDisplayed();
-      await browser.$(SCANS).$(`button=${en.scanNext}`).click();
+      await iconButton(SCANS, en.scanNext).click();
       await waitForReads(reads + 1);
       // Next in the displayed, still-sorted order: 3 is followed by 2.
       await expectSelected(2);
@@ -1082,8 +1117,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
     it("PM9.3-V3 exports the committed range, never a pending one, over Current range", async () => {
       await metrics(1920, 1080);
       await open();
-      await openChromatogramExport();
-      await chooseScope("chromatogram-range-scope", "current");
+      await chooseScope(RT_PANEL, "current");
       const before = countOf(await ipcCalls(), "begin_chromatogram_export");
 
       // A released drag is a proposal, not a decision.
@@ -1092,7 +1126,8 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForDisplayed();
       expect((await rangeLine(RT_PANEL)).pending).toBe(true);
 
-      await press(EXPORT_PANEL, fill(en.viewerExportFormat, { name: "CSV" }));
+      // The data export, from the plot's ⋯ menu (rebuild spec 3.4).
+      await choosePlotMenuItem(RT_PANEL, fill(en.viewerExportFormat, { name: "CSV" }));
       // Nothing is committed yet, so Current is the whole run -- sent as null
       // bounds for Rust to resolve, never the pending band's numbers.
       expect((await lastRequest("begin_chromatogram_export", before))["range"]).toEqual({
@@ -1106,9 +1141,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
 
     it("PM9.3-V4 sends the confirmed range on the existing Current-range path, and Full stays full", async () => {
       await metrics(1920, 1080);
+      const csv = fill(en.viewerExportFormat, { name: "CSV" });
       await open();
-      await openChromatogramExport();
-      await chooseScope("chromatogram-range-scope", "current");
+      await chooseScope(RT_PANEL, "current");
 
       await browser.$(CHROMATOGRAM).scrollIntoView({ block: "nearest" });
       await drag(PLOT, 0.2, 0.7);
@@ -1118,23 +1153,23 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForExist({ reverse: true });
       const line = await rangeLine(RT_PANEL);
       expect(line.committed).toBe(true);
-      // The exact bounds are the export note's: the line under the plot shows
-      // them at the plot's own four decimals (the known UI rework, UI-31).
-      const note = await textOf(`${EXPORT_PANEL} .chromatogram-export-range .chromatogram-export-note`);
-      const [, low, high] = /(-?[\d.]+(?:e[-+]?\d+)?) to (-?[\d.]+(?:e[-+]?\d+)?)/u.exec(note) ?? [];
-      const committed = { low: Number(low), high: Number(high) };
-      expect(committed.low).toBeLessThan(committed.high);
-      // The panel offers exactly what it will send, and the line says the same range.
-      expect(note).toBe(fill(en.viewerExportRtHelp, { low: String(committed.low), high: String(committed.high) }));
-      expect(line.low).toBeCloseTo(committed.low, 3);
-      expect(line.high).toBeCloseTo(committed.high, 3);
+      // The bounds the dialog offers are its Current range's window, at the
+      // plot's own four decimals, as the line under the plot says them (UI-31;
+      // rebuild spec 6). No surface prints them at full precision any more,
+      // so the request is compared at those four decimals.
+      await openFigureDialog(RT_PANEL);
+      const offered = await textOf(`${FIGURE_DIALOG} .figure-export-window`);
+      await closeFigureDialog();
+      const [, low, high] = /(-?[\d.]+)–(-?[\d.]+)$/u.exec(offered) ?? [];
+      expect(Number(low)).toBeLessThan(Number(high));
+      expect(offered).toBe(fill(en.viewerExportRtWindow, { low: line.low.toFixed(4), high: line.high.toFixed(4) }));
+      const sent = (range: Record<string, unknown>) => [Number(range["low"]).toFixed(4), Number(range["high"]).toFixed(4)];
 
       const before = countOf(await ipcCalls(), "begin_chromatogram_export");
-      await press(EXPORT_PANEL, fill(en.viewerExportFormat, { name: "CSV" }));
+      await choosePlotMenuItem(RT_PANEL, csv);
       const current = (await lastRequest("begin_chromatogram_export", before))["range"] as Record<string, unknown>;
       expect(current["scope"]).toBe("current");
-      expect(Number(current["low"])).toBeCloseTo(committed.low, 6);
-      expect(Number(current["high"])).toBeCloseTo(committed.high, 6);
+      expect(sent(current)).toEqual([low, high]);
       await laneFree();
 
       // The discriminating case: a new band drawn over a committed range. The
@@ -1146,18 +1181,18 @@ describe("PM9.3 viewer contracts, rendered", () => {
       expect(pending.pending).toBe(true);
       expect([pending.low, pending.high]).not.toEqual([line.low, line.high]);
       const overPending = countOf(await ipcCalls(), "begin_chromatogram_export");
-      await press(EXPORT_PANEL, fill(en.viewerExportFormat, { name: "CSV" }));
+      await choosePlotMenuItem(RT_PANEL, csv);
       const kept = (await lastRequest("begin_chromatogram_export", overPending))["range"] as Record<string, unknown>;
       expect(kept["scope"]).toBe("current");
-      expect(Number(kept["low"])).toBeCloseTo(committed.low, 6);
-      expect(Number(kept["high"])).toBeCloseTo(committed.high, 6);
+      expect(sent(kept)).toEqual([low, high]);
       await laneFree();
+      // The band the export did not take is still pending, and still the reader's to cancel.
       await browser.$(`${RT_PANEL} .plot-pending-actions button:nth-child(2)`).click();
       await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForExist({ reverse: true });
 
-      await chooseScope("chromatogram-range-scope", "full");
+      await chooseScope(RT_PANEL, "full");
       const full = countOf(await ipcCalls(), "begin_chromatogram_export");
-      await press(EXPORT_PANEL, fill(en.viewerExportFormat, { name: "CSV" }));
+      await choosePlotMenuItem(RT_PANEL, csv);
       expect((await lastRequest("begin_chromatogram_export", full))["range"]).toEqual({
         scope: "full",
         low: null,
@@ -1175,9 +1210,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await frames();
       const before = await ipcCalls();
 
-      await browser.$(RT_PANEL).$(`button=${en.viewerZoomIn}`).click();
-      await browser.$(RT_PANEL).$(`button=${en.viewerZoomOut}`).click();
-      await browser.$(RT_PANEL).$(`button=${en.viewerReset}`).click();
+      await iconButton(RT_PANEL, en.viewerZoomIn).click();
+      await iconButton(RT_PANEL, en.viewerZoomOut).click();
+      await iconButton(RT_PANEL, en.viewerReset).click();
       const at = await point(PLOT, 0.5);
       await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -300 }).perform();
       await drag(PLOT, 0.3, 0.6);
@@ -1185,12 +1220,12 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await browser.$(`${RT_PANEL} .plot-pending-actions button:nth-child(2)`).click();
 
       await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
-      await browser.$(MZ_PANEL).$(`button=${en.viewerMzZoomIn}`).click();
+      await iconButton(MZ_PANEL, en.viewerMzZoomIn).click();
       await browser.waitUntil(async () => !(await mzCaption()).includes(en.viewerFullRange.trim()), {
         timeout: 15_000,
         timeoutMsg: "Zoom in m/z never committed",
       });
-      await browser.$(MZ_PANEL).$(`button=${en.viewerMzReset}`).click();
+      await iconButton(MZ_PANEL, en.viewerMzReset).click();
       await frames();
 
       const delta = (await ipcCalls()).slice(before.length);
@@ -1210,13 +1245,12 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await waitForReads(1);
       await expectSelected(1);
       await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
-      await browser.$(MZ_PANEL).$(`button=${en.viewerMzZoomIn}`).click();
+      await iconButton(MZ_PANEL, en.viewerMzZoomIn).click();
       await browser.waitUntil(async () => !(await mzCaption()).includes(en.viewerFullRange.trim()), {
         timeout: 15_000,
         timeoutMsg: "Zoom in m/z never committed",
       });
-      await openSpectrumExport();
-      await chooseScope("spectrum-range-scope", "current");
+      await chooseScope(MZ_PANEL, "current");
       await frames();
       const zoomed = await mzCaption();
       const calls = await ipcCalls();
@@ -1226,21 +1260,21 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await navigate([en.projectSurface]);
       await navigate([en.workbench]);
       expect(await mzCaption()).toBe(zoomed);
-      expect(await checkedScope("spectrum-range-scope")).toBe("current");
       const trip = (await ipcCalls()).slice(calls.length);
       evidence.push({ label: "pm93-v6-trip-requests", commands: trip.map((call) => call.command) });
       expect(viewerReads(trip)).toBe(0);
+      expect((await figureChoice(MZ_PANEL)).scope).toBe("current");
 
       // Another spectrum is another viewport context (ADR 0038) and another
       // export context (ADR 0040): the view opens full and the scope at Full.
-      await browser.$(SCANS).$(`button=${en.scanNext}`).click();
+      await iconButton(SCANS, en.scanNext).click();
       await waitForReads(2);
       await expectSelected(2);
       await browser.waitUntil(async () => (await mzCaption()).includes(en.viewerFullRange.trim()), {
         timeout: 15_000,
         timeoutMsg: "the next spectrum kept the previous m/z window",
       });
-      expect(await checkedScope("spectrum-range-scope")).toBe("full");
+      expect((await figureChoice(MZ_PANEL)).scope).toBe("full");
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -1252,18 +1286,19 @@ describe("PM9.3 viewer contracts, rendered", () => {
       // The viewport says it cannot navigate, and why, and offers nothing that would.
       expect(await mzCaption()).toBe(en.viewerMzNoRange);
       expect((await textOf(SPECTRUM_STATUS)).startsWith(en.viewerMzRefused)).toBe(true);
+      // Refused, not disabled: each stays a Tab stop with the range line as its reason.
       for (const label of [en.viewerMzZoomIn, en.viewerMzZoomOut, en.viewerMzReset]) {
-        expect(await browser.$(MZ_PANEL).$(`button=${label}`).isEnabled()).toBe(false);
+        expect(await refused(MZ_PANEL, label)).toBe(true);
       }
 
-      // Export: no Current range to choose, and the data export stays.
-      await openSpectrumExport();
-      expect(await browser.$(`${MZ_PANEL} input[name="spectrum-range-scope"]`).isExisting()).toBe(false);
-      expect(await textOf(`${MZ_PANEL} .spectrum-export-range .chromatogram-export-note`)).toBe(
-        en.viewerExportNoViewport,
-      );
+      // Export: no Current range to choose -- the range stays frozen on the
+      // full spectrum and the line under it says why -- and the data export stays.
+      await openFigureDialog(MZ_PANEL);
+      expect(await dialogScope()).toBe("full");
+      expect(await browser.$(`${FIGURE_DIALOG} .figure-export-range [role="radio"]:nth-child(1)`).isEnabled()).toBe(false);
+      expect(await textOf(`${FIGURE_DIALOG} .figure-export-note`)).toBe(en.viewerExportNoViewport);
       const before = countOf(await ipcCalls(), "begin_selected_spectrum_export");
-      await press(`${MZ_PANEL} .spectrum-data-actions`, fill(en.viewerExportFormat, { name: "CSV" }));
+      await figureDialogButton(fill(en.viewerExportFormat, { name: "CSV" })).click();
       const request = await lastRequest("begin_selected_spectrum_export", before);
       expect(request["format"]).toBe("csv");
       expect(request["range"]).toEqual({ scope: "full", low: null, high: null });
@@ -1277,48 +1312,50 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await activateRow(2);
       await waitForReads(1);
       await expectSelected(2);
-      await openChromatogramExport();
-      await openSpectrumExport();
-
-      const labels = await browser.execute(() => {
-        const names = (css: string) =>
-          [...document.querySelectorAll<HTMLButtonElement>(`${css} button`)].map((button) => (button.textContent ?? "").trim());
-        return {
-          spectrumFigure: names(".spectrum-panel .spectrum-figure-actions"),
-          spectrumData: names(".spectrum-panel .spectrum-data-actions"),
-          chromatogram: names("#chromatogram-export-panel"),
-          linked: names("#chromatogram-linked-section"),
-        };
-      });
-      evidence.push({ label: "pm93-v8-labels", ...labels });
       const svg = fill(en.viewerExportFormat, { name: "SVG" });
       const png = fill(en.viewerExportFormat, { name: "PNG" });
       const csv = fill(en.viewerExportFormat, { name: "CSV" });
       const tsv = fill(en.viewerExportFormat, { name: "TSV" });
+
+      // Since the rebuild each plot's figure is its dialog's (Export…), and
+      // its data documents are in the dialog and the head's ⋯ menu; the
+      // linked figure opens the same dialog from the chromatogram's ⋯ (spec
+      // 3.4, 6).
+      await openFigureDialog(MZ_PANEL);
+      const spectrumDialog = await dialogGroups();
+      await closeFigureDialog();
+      await openFigureDialog(RT_PANEL);
+      const chromatogramDialog = await dialogGroups();
+      await closeFigureDialog();
+      const spectrumMenu = await plotMenuItems(MZ_PANEL);
+      const chromatogramMenu = await plotMenuItems(RT_PANEL);
+      evidence.push({ label: "pm93-v8-labels", spectrumDialog, chromatogramDialog, spectrumMenu, chromatogramMenu });
       // A spectrum's figure and its data are separate groups.
-      expect(labels.spectrumFigure).toEqual([svg, png, en.viewerCopy]);
-      expect(labels.spectrumData).toEqual([csv, tsv]);
-      // The linked figure is a figure only: it has no data export.
-      expect(labels.linked).not.toContain(csv);
-      expect(labels.linked).not.toContain(tsv);
+      expect(spectrumDialog).toEqual({ figure: [en.viewerCopy, svg, png], data: [csv, tsv] });
+      expect(spectrumMenu).toEqual([csv, tsv]);
+      expect(chromatogramDialog.data).toEqual([csv, tsv]);
+      expect(chromatogramMenu).toEqual([csv, tsv, en.figurePreviewLinked]);
 
       // Each action sends its own command and its own format.
       const chromatogram = countOf(await ipcCalls(), "begin_chromatogram_export");
-      await press(EXPORT_PANEL, tsv);
+      await choosePlotMenuItem(RT_PANEL, tsv);
       expect((await lastRequest("begin_chromatogram_export", chromatogram))["format"]).toBe("tsv");
       await laneFree();
 
+      // The spectrum head's PNG repeats the dialog's settings without it.
       const spectrum = countOf(await ipcCalls(), "begin_selected_spectrum_export");
-      await press(`${MZ_PANEL} .spectrum-figure-actions`, png);
+      await press(figureActions(MZ_PANEL), "PNG");
       expect((await lastRequest("begin_selected_spectrum_export", spectrum))["format"]).toBe("png");
       await laneFree();
 
       const linked = countOf(await ipcCalls(), "begin_linked_figure_export");
-      // The linked figure is offered from the chromatogram's ⋯ menu and saved
-      // from the export dialog it opens (rebuild spec 3.4, 6).
-      await browser.$(`.chromatogram-panel button[aria-label="${en.plotMoreExports}"]`).click();
-      await browser.$(`//*[@role="menuitem"][starts-with(normalize-space(), "${en.figurePreviewLinked}")]`).click();
-      const linkedSvg = browser.$(`[role="dialog"] button=${svg}`);
+      await choosePlotMenuItem(RT_PANEL, en.figurePreviewLinked);
+      await browser.$(FIGURE_DIALOG).waitForDisplayed();
+      // The linked figure is a figure only: it has no data export.
+      const linkedDialog = await dialogGroups();
+      evidence.push({ label: "pm93-v8-linked", ...linkedDialog });
+      expect(linkedDialog).toEqual({ figure: [en.viewerCopy, svg, png], data: [] });
+      const linkedSvg = figureDialogButton(svg);
       await browser.waitUntil(async () => (await linkedSvg.getAttribute("aria-disabled")) !== "true", {
         timeout: 15_000,
         timeoutMsg: "the linked figure dialog never offered SVG",
@@ -1343,9 +1380,8 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await browser.$(`${RT_PANEL} .plot-pending-actions button:nth-child(1)`).click();
       await browser.$(`${RT_PANEL} .plot-pending-actions`).waitForExist({ reverse: true });
       await browser.$(`${SCANS} input[type="search"]`).setValue("raw-");
-      await openChromatogramExport();
-      await chooseScope("chromatogram-range-scope", "current");
-      await browser.$("#chromatogram-widthPx").setValue("1000");
+      // The range and the figure draft are chosen in the chromatogram's figure dialog.
+      await chooseScope(RT_PANEL, "current", "1000");
       await frames();
 
       const held = async () => ({
@@ -1353,18 +1389,19 @@ describe("PM9.3 viewer contracts, rendered", () => {
         rt: await rangeLine(RT_PANEL),
         mz: await mzCaption(),
         search: await browser.$(`${SCANS} input[type="search"]`).getValue(),
-        scope: await checkedScope("chromatogram-range-scope"),
-        width: await browser.$("#chromatogram-widthPx").getValue(),
       });
-      const before = await held();
+      const before = { ...(await held()), ...(await figureChoice(RT_PANEL)) };
+      expect(before.scope).toBe("current");
+      expect(before.width).toBe("1000");
       const calls = await ipcCalls();
 
       await navigate([en.conversionTask]);
       await navigate([en.projectSurface]);
       await navigate([en.workbench]);
       // Surfaces stay mounted: the owners still hold what they held.
-      expect(await held()).toEqual(before);
+      const after = await held();
       const trip = (await ipcCalls()).slice(calls.length);
+      expect({ ...after, ...(await figureChoice(RT_PANEL)) }).toEqual(before);
       evidence.push({ label: "pm93-v9-trip-requests", commands: trip.map((call) => call.command) });
       expect(viewerReads(trip)).toBe(0);
 
@@ -1391,9 +1428,8 @@ describe("PM9.3 viewer contracts, rendered", () => {
       // the figure draft follow the new preview is not a documented contract.
       evidence.push({
         label: "pm93-v9-after-new-preview",
-        scope: await checkedScope("chromatogram-range-scope"),
+        ...(await figureChoice(RT_PANEL)),
         search: await browser.$(`${SCANS} input[type="search"]`).getValue(),
-        width: await browser.$("#chromatogram-widthPx").isExisting() ? await browser.$("#chromatogram-widthPx").getValue() : null,
       });
       expect(countOf(await ipcCalls(), "open_mzml_preview")).toBe(2);
       expect(await unexpectedConsole()).toEqual([]);
@@ -1422,7 +1458,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
         };
 
         // A committed range first, so a gesture has a commit to differ from.
-        await browser.$(RT_PANEL).$(`button=${words.viewerZoomIn}`).click();
+        await iconButton(RT_PANEL, words.viewerZoomIn).click();
         await browser.waitUntil(settledOn(null), { timeout: 15_000, timeoutMsg: "Zoom in never committed" });
         await frames();
         const zoomed = await rangeFacts(RT_PANEL);
@@ -1514,7 +1550,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
 
       // A committed range first, so a pan has somewhere to go and the line has
       // bounds to keep.
-      await browser.$(RT_PANEL).$(`button=${en.viewerZoomIn}`).click();
+      await iconButton(RT_PANEL, en.viewerZoomIn).click();
       await browser.waitUntil(
         async () => {
           const now = await rangeFacts(RT_PANEL);
@@ -1590,7 +1626,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await waitForReads(1);
       await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
       expect((await rangeFacts(MZ_PANEL)).sentence).toBe(fill(zh.rangeCommittedFull, { name: zh.rangeMzAxis }));
-      await browser.$(MZ_PANEL).$(`button=${zh.viewerMzZoomIn}`).click();
+      await iconButton(MZ_PANEL, zh.viewerMzZoomIn).click();
       await browser.waitUntil(
         async () => {
           const now = await rangeFacts(MZ_PANEL);
@@ -1647,9 +1683,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
       expect(facts.bounds).toBe(facts.displayed);
       expect(facts.spoken).toBe(`${facts.sentence}${fill(zh.rangeCommittedBounds, { low: low!, high: high! })}`);
       expect([facts.announcers, await browser.$(`${MZ_PANEL} .plot-committed-range`).getAttribute("aria-live")]).toEqual([1, "polite"]);
-      // Whole, and one row where UI-32 holds range rows (columns of 690 px and wider).
+      // Whole, and one row where UI-32 holds range rows (boxes of 690 px and wider).
       expect(integrity).toEqual([]);
-      expect((frame.evidence?.width ?? 0) < 690 || frame.rangeRows.spectrum?.rows === 1).toBe(true);
+      expect(wrappedRangeRows(frame)).toEqual([]);
       expect(await unexpectedConsole()).toEqual([]);
     });
   });
@@ -1709,9 +1745,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
         // L13: no viewer toolbar takes a second row in any default arrangement
         // (DESIGN_SYSTEM: "toolbars must not grow into wrapping ribbons").
         // Since the known UI rework (UI-32), the lines under the plots count too.
-        // The selected spectrum's header is held to one row where its controls
-        // fit beside the heading, and to heading plus one row of controls where
-        // they do not (UI-28).
+        // The selected spectrum's head is held to one row where its title and
+        // tools fit side by side -- its subtitle ellipsizes first (spec 3.4) --
+        // and to the title plus one row of tools where they do not (UI-28).
         const overOneRow = (frame: (typeof defaults)[number], withRangeRows: boolean) =>
           Object.entries({ ...frame.toolbars, ...(withRangeRows ? frame.rangeRows : {}) })
             .filter(([name, toolbar]) => toolbar !== null && toolbar.rows > (name === "spectrumHeader" && frame.spectrumControlsFit === false ? 2 : 1))
@@ -1720,14 +1756,12 @@ describe("PM9.3 viewer contracts, rendered", () => {
         expect(wrapped).toEqual([]);
 
         // The rest of the known UI rework on the default frames (baseline §12):
-        // the figure size never split (UI-26); the m/z pill as wide as its
-        // controls, not the column (UI-30); range lines at the plot's own
-        // precision (UI-31); the missing unit said once per axis, and still in
-        // the plot's description (UI-33); no committed-range numbers before a
-        // range is committed (UI-31).
+        // range lines at the plot's own precision (UI-31); the missing unit
+        // said once per axis, and still in the plot's description (UI-33); no
+        // committed-range numbers before a range is committed (UI-31). UI-26
+        // (the figure size caption) and UI-30 (the m/z pill) are retired: the
+        // rebuild removed both elements (spec 3.4).
         const rework = defaults.flatMap((frame) => [
-          ...frame.captions.filter((caption) => caption.sizeLines !== 1).map((caption) => `${frame.label} caption ${String(caption.text)}`),
-          ...(frame.mzPill !== null && frame.mzPill.width > frame.mzPill.column - 8 ? [`${frame.label} m/z pill spans its column`] : []),
           ...frame.rangeTexts.filter((text) => /\d\.\d{5,}/u.test(text)).map((text) => `${frame.label} raw digits: ${text}`),
           ...(frame.chromatogramUnits !== null && frame.chromatogramUnits !== 2 ? [`${frame.label} unit caveat ${String(frame.chromatogramUnits)} times`] : []),
           ...(/unit not reported|单位未报告/u.test(frame.plotDescription) ? [] : [`${frame.label} plot description without the unit caveat`]),
@@ -1749,12 +1783,10 @@ describe("PM9.3 viewer contracts, rendered", () => {
         await browser.execute(() => document.querySelector<HTMLElement>("#workbench-evidence")?.scrollTo({ top: 0 }));
 
         // Details opened by the reader where its width does not open it, and
-        // the one-column swap at the narrow anchor. Since the known UI rework
-        // (UI-27, UI-28, UI-29) the chromatogram header stays one row down to
-        // the 571 px column of 1152x720. The spectrum header does too wherever
-        // its heading and controls fit side by side; where they do not (en at
-        // 1152x720) it takes the heading plus one row of controls. The lines
-        // under the plots count from 699 px.
+        // the drawers at the narrow anchor. The chromatogram and scan heads
+        // stay one row down to the 1152x720 column (UI-27, UI-29); the
+        // spectrum head as overOneRow says (UI-28). The lines under the plots
+        // count in plot boxes from 690 px (UI-32).
         const detailsOpen = [];
         for (const [width, height] of [
           [1536, 864],
@@ -1769,12 +1801,14 @@ describe("PM9.3 viewer contracts, rendered", () => {
           await setPanel("details", false);
         }
         expect(
-          detailsOpen.flatMap((frame) => overOneRow(frame, (frame.evidence?.width ?? 0) >= 690)),
+          detailsOpen.flatMap((frame) => [...overOneRow(frame, false), ...wrappedRangeRows(frame)]),
         ).toEqual([]);
-        // And never by cutting or covering the sentence about the spectrum.
+        // And never by covering the sentence about the spectrum. Cutting it
+        // short is the rebuilt head's own rule (spec 3.4: the subtitle
+        // ellipsizes first), so it is recorded, not failed.
         expect(
           [...defaults, ...detailsOpen]
-            .filter((frame) => frame.spectrumHeading !== null && (frame.spectrumHeading.cut || frame.spectrumHeading.covered))
+            .filter((frame) => frame.spectrumHeading !== null && frame.spectrumHeading.covered)
             .map((frame) => `${frame.label} ${JSON.stringify(frame.spectrumHeading)}`),
         ).toEqual([]);
         await metrics(960, 640);
@@ -1845,10 +1879,12 @@ describe("PM9.3 viewer contracts, rendered", () => {
           task.push({ label: `pm93-t-${locale}-${String(width)}x${String(height)}`, ...measured });
           // The contracts the task rests on: the chromatogram whole at the
           // column's top and the selected spectrum beginning inside the window
-          // (M7.3). The distances are recorded, not asserted.
+          // (M7.3), never shrunk below its floor. The rebuild replaced the
+          // spectrum's fixed 220 px with a height that fills its box above a
+          // 160 px minimum (spec 3.1). The distances are recorded, not asserted.
           expect(measured.chromatogramWhole).toBe(true);
           expect(measured.atEntry.plotTop).toBeLessThan(height);
-          expect(measured.atEntry.plotHeight).toBeGreaterThanOrEqual(219);
+          expect(measured.atEntry.plotHeight).toBeGreaterThanOrEqual(160);
         }
         evidence.push({ label: `pm93-t-${locale}`, kind: "Observation only.", candidate: process.env["MSCANVAS_PM9_CANDIDATE"] ?? "unlabelled", task });
         expect(await unexpectedConsole()).toEqual([]);
@@ -1857,15 +1893,17 @@ describe("PM9.3 viewer contracts, rendered", () => {
 
     // Baseline §12's coverage gap: every rendered range came from short fixture
     // values. PM9.3-G's state with values of a real run's size at the
-    // intermediate evidence columns (785, 699, 828, 571 and 928 px), then with a
-    // pending retention-time band: a settled committed line keeps its numbers
-    // for announcement only, so a long retention time reaches a range row only
-    // while a band is pending. Held here: range rows from 690 px, pending bands,
-    // captions, long values and the lines' integrity. G's toolbar, heading and
-    // unit checks do not depend on the values and are not repeated.
+    // intermediate evidence columns, then with a pending retention-time band: a
+    // settled committed line keeps its numbers for announcement only, so a long
+    // retention time reaches a range row only while a band is pending. Held
+    // here: range rows in plot boxes from 690 px (UI-32), pending bands,
+    // long values and the lines' integrity. G's toolbar, heading and unit
+    // checks do not depend on the values and are not repeated. The captions
+    // (UI-26) and the chromatogram's context line left with the rebuild (spec
+    // 3.4).
     for (const locale of ["en", "zh-CN"] as const) {
       it(`PM9.3-L long range values at the intermediate widths in ${locale}`, async () => {
-        type Frame = Awaited<ReturnType<typeof observeViewer>> & { readonly integrity: string[]; readonly context: number | null };
+        type Frame = Awaited<ReturnType<typeof observeViewer>> & { readonly integrity: string[] };
         const LONG_RANGE = /\d{4}\.\d{4} (?:to|至) \d{4}\.\d{4}$/u;
         const sweep = async (phase: string): Promise<Frame[]> => {
           const measured: Frame[] = [];
@@ -1882,7 +1920,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
             const frame = await observeViewer(
               `pm93-l-${locale}-${phase}-${String(width)}x${String(height)}${details ? "-details-open" : ""}`,
             );
-            measured.push({ ...frame, integrity: await rangeIntegrity(), context: await contextRows() });
+            measured.push({ ...frame, integrity: await rangeIntegrity() });
             if (details) await setPanel("details", false);
           }
           evidence.push({
@@ -1893,7 +1931,6 @@ describe("PM9.3 viewer contracts, rendered", () => {
               rangeRows: frame.rangeRows,
               rangeTexts: frame.rangeTexts,
               integrity: frame.integrity,
-              contextRows: frame.context,
             })),
           });
           return measured;
@@ -1902,14 +1939,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
           list.flatMap((frame) => [
             ...(frame.lang === locale ? [] : [`${frame.label} lang ${frame.lang}`]),
             ...(frame.pendingActions === pending ? [] : [`${frame.label} ${String(frame.pendingActions)} pending bands`]),
-            ...((frame.evidence?.width ?? 0) >= 690
-              ? Object.entries(frame.rangeRows)
-                  .filter(([, row]) => row !== null && row.rows > 1)
-                  .map(([name, row]) => `${frame.label} ${name} range row ${String(row?.rows)}`)
-              : []),
-            ...frame.captions
-              .filter((caption) => caption.sizeLines !== 1)
-              .map((caption) => `${frame.label} caption ${String(caption.text)}`),
+            ...wrappedRangeRows(frame),
             ...frame.rangeTexts.filter((text) => !LONG_RANGE.test(text)).map((text) => `${frame.label} not long: ${text}`),
             ...frame.integrity.map((problem) => `${frame.label} ${problem}`),
           ]);
