@@ -2399,8 +2399,10 @@ async fn save_workspace_restore(
         .await
 }
 
-/// Forgets every row the document stored. Source acquisitions are not touched;
-/// a copy kept aside after a refusal is not removed.
+/// Forgets every row the document stored, and writes restore off if another
+/// MSCanvas process wrote the document since this one last saw it. Source
+/// acquisitions are not touched; a copy kept aside after a refusal is not
+/// removed.
 #[tauri::command]
 async fn clear_workspace_restore(
     ipc_request: tauri::ipc::Request<'_>,

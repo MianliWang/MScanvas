@@ -424,14 +424,16 @@ pub enum WorkspaceRestoreReadDto {
 )]
 pub enum WorkspaceRestoreWriteDto {
     /// The stored document now says what was asked. Turning restore on when
-    /// it is already on writes nothing and answers this.
+    /// it is already on, and no other process has written since, writes
+    /// nothing and answers this. A clear after another process's write also
+    /// answers this, having written off; a read then answers `off`.
     Saved,
     /// Restore is off; nothing was written.
     Off,
     /// Refused before anything was written. The stored document is unchanged.
     /// `changedElsewhere`: another MSCanvas process wrote it since this one
     /// last read or wrote it; this session records nothing more until it
-    /// restarts, and off and clear still work.
+    /// restarts. Off and clear still work, and both leave restore off.
     Refused {
         problem: &'static str,
     },
@@ -483,6 +485,12 @@ struct Lane {
     /// What the name held when this session last read or wrote it, by
     /// identity; `None` for nothing there.
     published: Option<(u64, [u8; 16])>,
+    /// Set once the name was found holding something else; never cleared, so
+    /// this session records nothing more until it restarts.
+    foreign: bool,
+    /// The refused start-up document is already kept aside, so a retried turn
+    /// on does not keep a second copy.
+    kept_aside: bool,
     /// The start-up rows not yet back in the Workbench, in their stored
     /// groups. The Nth row in order is `restored-N`.
     ///
@@ -516,6 +524,8 @@ impl WorkspaceRestoreStore {
                     startup: Startup::Unavailable(problem),
                     enabled: false,
                     published: None,
+                    foreign: false,
+                    kept_aside: false,
                     restored: Vec::new(),
                 },
             ),
@@ -595,14 +605,17 @@ impl WorkspaceRestoreStore {
             Ok(document) => document,
             Err(problem) => return refused(problem),
         };
-        if !unchanged_since_seen(directory, &lane) {
+        if !unchanged_since_seen(directory, &mut lane) {
             return refused("changedElsewhere");
         }
         publish(directory, &mut lane, &document)
     }
 
     /// Forgets every row the document stored, live and restored, and keeps
-    /// the switch. A copy kept aside after a refusal is not removed.
+    /// the switch, unless another MSCanvas process has written the document
+    /// since this one last saw it: which switch that process left is not known
+    /// here, so the clear writes off. A copy kept aside after a refusal is not
+    /// removed.
     #[must_use]
     pub fn clear(&self) -> WorkspaceRestoreWriteDto {
         let mut lane = self.locked();
@@ -610,9 +623,10 @@ impl WorkspaceRestoreStore {
             Ok(directory) => directory,
             Err(refusal) => return refusal,
         };
-        let document = RestoreDocument::empty(lane.enabled);
-        let outcome = publish(directory, &mut lane, &document);
+        let enabled = unchanged_since_seen(directory, &mut lane) && lane.enabled;
+        let outcome = publish(directory, &mut lane, &RestoreDocument::empty(enabled));
         if outcome == WorkspaceRestoreWriteDto::Saved {
+            lane.enabled = enabled;
             lane.restored.clear();
         }
         outcome
@@ -622,7 +636,8 @@ impl WorkspaceRestoreStore {
     /// restore is already off, so it also forgets a refused document's paths;
     /// a copy kept aside after a refusal is not removed. On starts from an
     /// empty document, after keeping a refused one aside; turning on what is
-    /// already on writes nothing.
+    /// already on writes nothing. On is refused (`changedElsewhere`) once
+    /// another process has written the document since this one last saw it.
     #[must_use]
     pub fn set_enabled(&self, enabled: bool) -> WorkspaceRestoreWriteDto {
         let mut lane = self.locked();
@@ -631,14 +646,17 @@ impl WorkspaceRestoreStore {
             Err(refusal) => return refusal,
         };
         if enabled {
+            if !unchanged_since_seen(directory, &mut lane) {
+                return refused("changedElsewhere");
+            }
             if lane.enabled {
                 return WorkspaceRestoreWriteDto::Saved;
             }
-            if !unchanged_since_seen(directory, &lane) {
-                return refused("changedElsewhere");
-            }
-            if matches!(lane.startup, Startup::Refused(_)) && !set_aside(directory) {
-                return refused("storedDocumentKept");
+            if matches!(lane.startup, Startup::Refused(_)) && !lane.kept_aside {
+                if !set_aside(directory) {
+                    return refused("storedDocumentKept");
+                }
+                lane.kept_aside = true;
             }
         }
         let outcome = publish(directory, &mut lane, &RestoreDocument::empty(enabled));
@@ -777,14 +795,19 @@ fn arrange(
     Ok(document)
 }
 
-/// Whether the name still holds what this session last read or wrote there.
+/// Whether the name still holds what this session last read or wrote there,
+/// and always has. Once it did not, the answer stays no for the session: a
+/// later write of this process's own does not make it a recorder again.
 ///
 /// ponytail: checked and then replaced, so another process's write landing
 /// between the two is still lost; a lock beside the document closes that if
 /// two windows are ever seen racing. A volume with no file ID answers `None`
 /// both times and is not guarded.
-fn unchanged_since_seen(directory: &Path, lane: &Lane) -> bool {
-    local_document::object_identity(&directory.join(FILE_NAME)) == lane.published
+fn unchanged_since_seen(directory: &Path, lane: &mut Lane) -> bool {
+    if local_document::object_identity(&directory.join(FILE_NAME)) != lane.published {
+        lane.foreign = true;
+    }
+    !lane.foreign
 }
 
 /// Replaces the document and remembers what the name now holds. Every failing
@@ -812,8 +835,9 @@ fn publish(
         Ok(()) => {
             // ponytail: read after the rename, so a write by another process
             // in between is taken for this one's; and an identity that cannot
-            // be read just now makes the next save answer `changedElsewhere`,
-            // which stops recording rather than writing over anything.
+            // be read just now makes the next guarded write answer
+            // `changedElsewhere`, which stops recording for the session rather
+            // than writing over anything.
             lane.published = local_document::object_identity(&target);
             lane.startup = Startup::Loaded;
             WorkspaceRestoreWriteDto::Saved
@@ -840,6 +864,8 @@ fn load(directory: &Path) -> Lane {
         startup,
         enabled,
         published,
+        foreign: false,
+        kept_aside: false,
         restored,
     };
     // Off: a refused document may be one the user had switched off.

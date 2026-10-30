@@ -547,12 +547,86 @@ fn a_second_process_never_writes_over_the_first_ones_record() {
         changed_elsewhere
     );
     assert_eq!(second.set_enabled(false), WorkspaceRestoreWriteDto::Saved);
-    // The second turned it off; the first does not record its paths again.
+    // The second turned it off; the first does not turn it back on or record
+    // its paths again, even though it never switched off itself.
+    assert_eq!(first.set_enabled(true), changed_elsewhere);
     assert_eq!(
         first.save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
         changed_elsewhere
     );
+    // Its own write since does not make the refused window a recorder again.
+    assert_eq!(second.set_enabled(true), changed_elsewhere);
+    // Nor does forgetting: a clear in a refused window leaves restore off.
+    assert_eq!(first.clear(), WorkspaceRestoreWriteDto::Saved);
+    assert_eq!(first.read(), WorkspaceRestoreReadDto::Off);
+    assert_eq!(
+        first.save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Off
+    );
+    assert_eq!(first.set_enabled(true), changed_elsewhere);
     assert_eq!(stored(&scratch), RestoreDocument::empty(false));
+}
+
+#[test]
+fn a_clear_never_undoes_another_windows_off() {
+    let scratch = Scratch::new("restore-two-clear");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let first = reopen(&scratch);
+    let second = reopen(&scratch);
+    assert_eq!(
+        first.save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(second.set_enabled(false), WorkspaceRestoreWriteDto::Saved);
+
+    // The first has not been refused yet and still holds "on": the switch the
+    // other window left is not known here, so the clear writes off.
+    assert_eq!(first.clear(), WorkspaceRestoreWriteDto::Saved);
+    assert_eq!(stored(&scratch), RestoreDocument::empty(false));
+    assert_eq!(
+        first.save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Off
+    );
+    assert_eq!(
+        first.set_enabled(true),
+        WorkspaceRestoreWriteDto::Refused {
+            problem: "changedElsewhere"
+        }
+    );
+    let path = serde_json::to_string(a.to_str().expect("Unicode")).expect("JSON");
+    let text = String::from_utf8(stored_bytes(&scratch)).expect("UTF-8");
+    assert!(!text.contains(&path), "no path is stored: {text}");
+}
+
+#[test]
+fn a_retry_after_a_failed_turn_on_keeps_one_copy_aside() {
+    let scratch = Scratch::new("restore-aside-once");
+    write_stored(&scratch, b"{ not a document");
+    let store = reopen(&scratch);
+    // Every private sibling name a publish of this process tries is taken.
+    let blockers: Vec<PathBuf> = (0..8)
+        .map(|attempt| {
+            let name = format!("{TEMPORARY_PREFIX}{}-{attempt}.tmp", std::process::id());
+            let path = profile(&scratch).join(name);
+            fs::write(&path, b"").expect("a blocking file");
+            path
+        })
+        .collect();
+    assert_eq!(
+        store.set_enabled(true),
+        WorkspaceRestoreWriteDto::Failed {
+            problem: "notWritten",
+            retryable: true,
+            temporary_left_behind: false
+        }
+    );
+    assert_eq!(stored_bytes(&scratch), b"{ not a document");
+    for path in blockers {
+        fs::remove_file(path).expect("unblock");
+    }
+    assert_eq!(store.set_enabled(true), WorkspaceRestoreWriteDto::Saved);
+    assert_eq!(kept_aside(&scratch), b"{ not a document");
+    assert_eq!(stored(&scratch), RestoreDocument::empty(true));
 }
 
 #[test]
@@ -743,6 +817,11 @@ fn a_write_that_fails_never_loses_the_previous_document() {
     assert_eq!(entries(&profile(&scratch)), vec![FILE_NAME.to_owned()]);
     drop(held);
     assert_eq!(store.clear(), WorkspaceRestoreWriteDto::Saved);
+    assert_eq!(
+        stored(&scratch),
+        RestoreDocument::empty(true),
+        "a failed write is not taken for another window's"
+    );
 }
 
 #[cfg(windows)]

@@ -581,8 +581,8 @@ None can be delivered by engineering alone; each waits for one input.
   - *2026-10-30:* WSP-010's Rust side is proposed in
     [ADR 0061](../architecture/adr/0061-restore-workspace.md). It keeps
     automatic adoption, preview, retry and relink refused: a restored row is
-    re-checked by identity and length only, and a changed or missing file stays
-    a marked row. No interface calls it yet.
+    re-checked by identity and length only (a match is not a content claim),
+    and a changed or missing file stays a marked row. No interface calls it yet.
 
 ## 8. Dates and external dependencies
 

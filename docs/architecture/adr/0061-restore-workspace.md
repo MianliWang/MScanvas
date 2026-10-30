@@ -101,12 +101,17 @@ live row.
 The application is not single-instance (ADR 0060). A save is refused
 (`changedElsewhere`) when the document's name no longer holds the object this
 process last read or wrote there, so a second window never writes over the
-first one's record. The refused process records nothing more until it
-restarts. Off and clear (decision 8) are not guarded: they are the user
-forgetting, and a window that is refused afterwards cannot record its paths
-again over another window's off. The check and the replacement are two steps,
-so a write landing between them is still lost; a lock beside the document can
-close that if it is ever observed. A volume that has no file ID is not guarded.
+first one's record. Turning restore on is refused the same way. Once refused,
+the process records nothing more until it restarts, and none of its own later
+writes lifts that. Off and clear (decision 8) are not refused: they are the
+user forgetting. Off writes off. Clear keeps the switch only while the name
+still holds what this process last saw; otherwise it cannot know which switch
+the other window left, so it writes off and this process is refused from then
+on. A clear therefore never undoes another window's off, and a refused window
+cannot record its paths again over it. The check and the replacement are two
+steps, so a write landing between them is still lost; a lock beside the
+document can close that if it is ever observed. A volume that has no file ID is
+not guarded.
 
 *Alternatives rejected:* Rust writing after each of its own roster mutations
 cannot see the groups or the checked state, which only the webview holds, and
@@ -214,8 +219,9 @@ From there the user decides:
 - *Turning restore on* first keeps the refused document aside under
   `workspace-restore.set-aside-<seconds>-<pid>.json` (a hard link, which never
   replaces an existing name), then publishes an empty, enabled document. If it
-  cannot be kept aside, nothing replaces it (`storedDocumentKept`). A newer
-  build's document therefore survives a downgrade.
+  cannot be kept aside, nothing replaces it (`storedDocumentKept`). A retry
+  after a failed publish reuses the copy already kept. A newer build's document
+  therefore survives a downgrade.
 - *Off or clear* is the user forgetting: it publishes an empty document over
   the refused one and keeps no copy.
 
@@ -233,10 +239,12 @@ display names (the final file name), family, checked state and row state. The
 stored member's `Debug` output omits its path. The redacted diagnostics export
 does not read this document.
 
-Two other files in the same directory can also hold paths: a document kept
-aside when restore was turned on over a refused one (decision 6), and a private
-sibling a failed write could not remove (reported as `temporaryLeftBehind`).
-Off and clear do not remove either.
+Other files in the same directory can also hold paths: a document kept aside
+when restore was turned on over a refused one (decision 6, at most one per
+session), a private sibling a failed write could not remove (reported as
+`temporaryLeftBehind`), and a private sibling
+(`.mscanvas-workspace-restore-<pid>-<n>.tmp`) left by a crash or a power loss
+during a write, which nothing reports. Off and clear remove none of them.
 
 ### 8. The off switch
 
@@ -246,7 +254,8 @@ forgets every row and path that document stored, and does so even when restore
 is already off, so it also forgets a refused document. While off, a save writes
 nothing (`off`). Turning it on starts from an empty document; turning on what is
 already on writes nothing. `clear_workspace_restore` forgets every stored row
-and keeps the switch. A refused document turns restore off (decision 6).
+and keeps the switch, except after another window's write, when it writes off
+(decision 3). A refused document turns restore off (decision 6).
 
 *Alternatives:* a field in the M7.5 preference record, rejected for now
 because that record is closed and its schema is shared with the webview's
@@ -266,8 +275,8 @@ commands, none taking or returning a path:
 | --- | --- |
 | `read_workspace_restore` | The start-up restore: restored rows in their groups, each re-checked now; or `off`, `refused` (restore is off until turned on), `unavailable`. |
 | `save_workspace_restore(arrangement)` | Records the session as arranged; refused unless every row is placed once, and refused `changedElsewhere` over another process's write. |
-| `clear_workspace_restore` | Forgets every stored row; keeps the switch. |
-| `set_workspace_restore_enabled(enabled)` | The off switch. |
+| `clear_workspace_restore` | Forgets every stored row; keeps the switch, or writes off after another process's write. |
+| `set_workspace_restore_enabled(enabled)` | The off switch; on is refused `changedElsewhere` over another process's write. |
 
 They are registered ahead of their interface; the command-surface test lists
 them in `AHEAD_OF_THEIR_INTERFACE` until a webview caller exists.
@@ -285,7 +294,8 @@ them in `AHEAD_OF_THEIR_INTERFACE` until a webview caller exists.
   added if that is ever observed.
 - With two windows open, the first to write keeps recording and the other is
   refused (`changedElsewhere`) until it restarts; its session is not recorded,
-  and it is told so rather than writing over the first.
+  and it is told so rather than writing over the first. A clear in either
+  window after the other one wrote turns restore off for both.
 - A document this build cannot use keeps restore off until the user turns it on.
   A user whose document was damaged has to turn restore on again.
 - The re-check is one open per member. A recorded path on an offline network
@@ -306,9 +316,9 @@ them in `AHEAD_OF_THEIR_INTERFACE` until a webview caller exists.
    unchecked as M8.1 and M7.5 do?
 4. Keep the off switch in the restore document (recommended), or add it to the
    M7.5 preference record?
-5. Should off and clear also remove kept-aside copies and leftover siblings?
-   Recommended: no, as implemented; the interface says a kept copy exists when
-   it offers off.
+5. Should off and clear also remove kept-aside copies and leftover siblings,
+   including one a crash left unreported? Recommended: no, as implemented; the
+   interface says a kept copy exists when it offers off.
 6. With two windows, refuse the later writer (recommended, as implemented), or
    make the application single-instance, or let the last writer win?
 7. For same-named restored rows, amend ADR 0006 to show the folders above the
