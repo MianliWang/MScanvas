@@ -257,7 +257,9 @@ The reader parses the schema file name as ProteoWizard does, but more strictly:
   the index wrapper's `mzML1.1.<n>_idx.xsd`, which ProteoWizard would read as
   1.1 only by accident.
 
-Slice 1's fixtures cover each case, in both the plain and the indexed form.
+Slice 1's fixtures cover each case on a plain `<mzML>` root. Two indexed
+fixtures add the wrapper's side: an `xsi` binding declared only on the wrapper
+is accepted, and a wrapper `_idx` schema with no `<mzML>` schema is refused.
 
 ## Commands
 
