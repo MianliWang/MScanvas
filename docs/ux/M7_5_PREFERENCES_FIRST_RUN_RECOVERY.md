@@ -271,7 +271,7 @@ was always shown.
 *Added after beta 1 (2026-10-29).* Before this, a folder chosen through
 **Choose folder…** lasted for the session only, as ADR 0005 decided, and every
 launch searched automatically. This reverses that rule; the owner accepted it
-on 2026-10-30, and ADR 0005 records the amendment.
+on 2026-10-30.
 
 **Remembering.** `choose_backend_installation` uses the chosen folder exactly as
 before. When that reading is `available` with origin `chosen`, the command then
