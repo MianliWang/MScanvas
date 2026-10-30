@@ -23,6 +23,9 @@ mod qc_snapshot;
 /// workspace. Separate from both, so the crossing is a named thing rather than
 /// a dependency either of them grew. See the module for what each side decides.
 mod reattachment;
+/// The conversion run history of ADR 0065 (RUN-007): one document per run in
+/// the per-user directory, fed by the queue. No interface calls it yet.
+mod run_history;
 /// The targeted MS1 supervisor: the only place the recipe's worker process is
 /// started, behind the executor boundary the project store runs it through.
 mod targeted_ms1;
@@ -1792,6 +1795,72 @@ async fn adopt_workspace_conversion_outputs(
         .await?
 }
 
+// ---------------------------------------------------------------------------
+// Conversion run history commands (ADR 0065, RUN-007).
+//
+// Bound to the calling document like the restore and preference commands. None
+// names a path in either direction: a run is addressed by the opaque identifier
+// a list gave, and what comes back is names, states, checks and times.
+// ---------------------------------------------------------------------------
+
+/// The session's conversion run history.
+type SharedRunHistory = Arc<run_history::ConversionHistory>;
+
+/// Every recorded conversion run, newest first, without items. Reads only.
+#[tauri::command]
+async fn list_conversion_runs(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    history: State<'_, SharedRunHistory>,
+) -> Result<run_history::RunHistoryListDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let history = Arc::clone(&history);
+    off_the_async_runtime(move || history.list()).await
+}
+
+/// One recorded run's items, by the identifier a list gave. Reads only.
+#[tauri::command]
+async fn read_conversion_run(
+    run_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    history: State<'_, SharedRunHistory>,
+) -> Result<run_history::RunHistoryReadDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let history = Arc::clone(&history);
+    off_the_async_runtime(move || history.read(&run_id)).await
+}
+
+/// Forgets every ended run; a run still being written is kept. No source
+/// acquisition and no output is touched.
+#[tauri::command]
+async fn clear_conversion_runs(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    history: State<'_, SharedRunHistory>,
+) -> Result<run_history::RunHistoryWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let history = Arc::clone(&history);
+    off_the_async_runtime(move || history.clear()).await
+}
+
+/// The off switch, shared by every instance. Off forgets every stored run.
+#[tauri::command]
+async fn set_conversion_run_history_enabled(
+    enabled: bool,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    history: State<'_, SharedRunHistory>,
+) -> Result<run_history::RunHistoryWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let history = Arc::clone(&history);
+    off_the_async_runtime(move || history.set_enabled(enabled)).await
+}
+
 /// Binds one diagnostics export and reserves the right to choose a file.
 ///
 /// Deliberately synchronous and deliberately separate from saving, for the
@@ -2626,6 +2695,14 @@ pub fn run() {
             app.manage(SharedPresets::new(presets::PresetStore::over(
                 preferences.sibling_directory(),
             )));
+            // And conversion runs (ADR 0065), under the same binding. Opening
+            // marks the runs of sessions that ended mid-run as interrupted.
+            let run_history = SharedRunHistory::new(run_history::ConversionHistory::open(
+                preferences.sibling_directory(),
+            ));
+            app.state::<SharedService>()
+                .attach_run_history(Arc::clone(&run_history));
+            app.manage(run_history);
             app.manage(SharedPreferences::new(preferences));
             // A ProteoWizard folder an earlier session remembered is where this
             // one's discovery starts. Nothing is launched here: the first
@@ -2748,6 +2825,10 @@ pub fn run() {
             adopt_workspace_conversion_outputs,
             begin_workspace_conversion_diagnostics_export,
             save_workspace_conversion_diagnostics,
+            list_conversion_runs,
+            read_conversion_run,
+            clear_conversion_runs,
+            set_conversion_run_history_enabled,
             begin_selected_spectrum_export,
             project_selected_spectrum,
             save_selected_spectrum_export,

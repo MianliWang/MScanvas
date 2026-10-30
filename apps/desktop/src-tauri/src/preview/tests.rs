@@ -4287,6 +4287,13 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // identifier can never open one.
             "begin_workspace_conversion_diagnostics_export",
             "save_workspace_conversion_diagnostics",
+            // The ADR 0065 conversion run history, on its own store beside the
+            // queue. Registered ahead of its interface: see
+            // `AHEAD_OF_THEIR_INTERFACE` below.
+            "list_conversion_runs",
+            "read_conversion_run",
+            "clear_conversion_runs",
+            "set_conversion_run_history_enabled",
             // The selected-spectrum export, in the same two-phase shape and for
             // the same reason. The first command binds which spectrum -- by the
             // opaque token that spectrum's panel received -- and the second is
@@ -4327,6 +4334,14 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "copy_selected_spectrum_plot",
         ]
     );
+    // Commands whose Rust side has landed before the webview calls them. Each
+    // entry leaves this list in the slice that gives it a caller.
+    const AHEAD_OF_THEIR_INTERFACE: [&str; 4] = [
+        "list_conversion_runs",
+        "read_conversion_run",
+        "clear_conversion_runs",
+        "set_conversion_run_history_enabled",
+    ];
     // The picker command is named for the workspace it fills rather than for
     // one format, because it now admits two families and `choose_mzml_files`
     // had become a name that said something false about what it does.
@@ -4346,7 +4361,10 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // Every command the product uses is a command the host registers, spelled
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
     // caller here and is deliberately not in this list.
-    for name in &registered[1..] {
+    for name in registered[1..]
+        .iter()
+        .filter(|name| !AHEAD_OF_THEIR_INTERFACE.contains(name))
+    {
         assert!(
             api.contains(&format!("\"{name}\""))
                 || drop_transport.contains(&format!("\"{name}\""))
@@ -31286,4 +31304,5 @@ mod conversion_intent_wire;
 #[cfg(windows)]
 mod figure_preview;
 mod output_opening;
+mod run_history;
 mod staging_recovery;
