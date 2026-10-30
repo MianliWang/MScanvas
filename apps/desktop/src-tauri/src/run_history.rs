@@ -990,12 +990,26 @@ fn prune(directory: &Path, own: Option<&str>) {
             break;
         }
         let path = directory.join(&name);
-        if let Ok(Some(record)) = read_record(&path)
-            && record.state == RunState::Running
-            && Some(record.owner.as_str()) != own
-            && !matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_))
-        {
-            continue;
+        match read_record(&path) {
+            Ok(Some(record))
+                if record.state == RunState::Running
+                    && Some(record.owner.as_str()) != own
+                    && !matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_)) =>
+            {
+                continue;
+            }
+            // Not this build's to judge, so not this build's to remove: a later
+            // build's run may be one its live instance is still writing. It
+            // still counts, so this build's own oldest runs make room.
+            Err(RecordProblem::NewerVersion | RecordProblem::Unreadable) => continue,
+            Err(RecordProblem::Malformed) => {
+                if set_aside(directory, &name) {
+                    count -= 1;
+                    bytes = bytes.saturating_sub(size);
+                }
+                continue;
+            }
+            Ok(_) => {}
         }
         if remove(&path).is_ok() {
             count -= 1;
@@ -1015,10 +1029,9 @@ fn remove(path: &Path) -> io::Result<()> {
 /// Keeps a corrupt run under a name nothing reads, and takes it off its own.
 ///
 /// A hard link refuses an existing name, so nothing is replaced; once it
-/// exists the bytes are kept whatever happens to the original name.
-fn set_aside(directory: &Path, name: &str) {
+/// exists the bytes are kept whatever happens to the original name. `true`
+/// when the run's own name is gone.
+fn set_aside(directory: &Path, name: &str) -> bool {
     let aside = directory.join(format!("{SET_ASIDE_PREFIX}{}-{name}", now_ms()));
-    if fs::hard_link(directory.join(name), aside).is_ok() {
-        let _ = fs::remove_file(directory.join(name));
-    }
+    fs::hard_link(directory.join(name), aside).is_ok() && remove(&directory.join(name)).is_ok()
 }

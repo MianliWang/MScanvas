@@ -39,8 +39,15 @@ fn a_finished_queue_is_recorded_with_its_sources_and_outputs_and_the_wire_names_
     assert!(output.sha256.is_some() && output.checks.is_some());
 
     // The locators stay in the file, for this machine; the wire names none.
+    // Spelled as admission canonicalized them: on a profile with an 8.3 short
+    // name the fixture's own spelling is a different string.
     let escaped = |path: &Path| {
-        serde_json::to_string(path.to_str().expect("a UTF-8 fixture path"))
+        let canonical = fs::canonicalize(path).expect("the fixture resolves");
+        let plain = canonical
+            .to_str()
+            .expect("a UTF-8 fixture path")
+            .trim_start_matches(r"\\?\");
+        serde_json::to_string(plain)
             .expect("serializes")
             .trim_matches('"')
             .to_owned()
@@ -60,4 +67,6 @@ fn a_finished_queue_is_recorded_with_its_sources_and_outputs_and_the_wire_names_
     );
     assert!(!wire.contains(&escaped(&source)));
     assert!(!wire.contains(&escaped(&destination)));
+    // Nor a drive path of any spelling.
+    assert!(!wire.contains(":\\\\"), "{wire}");
 }

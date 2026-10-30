@@ -332,6 +332,14 @@ fn the_oldest_ended_runs_are_pruned_and_a_run_in_progress_never_is() {
     let other = open(&scratch);
     other.begin(1, start(1), progress(RunState::Running, &["running"]));
     let in_progress = active_id(&other);
+    // A later build's run, oldest by name: this build cannot judge it, so it
+    // never removes it, and it still counts.
+    let newer = file_name_of(&format!("{:013}-{}", 1, "d".repeat(32)));
+    fs::write(
+        history_directory(&scratch).join(&newer),
+        br#"{"schemaVersion":99}"#,
+    )
+    .expect("write a later build's run");
     let mut ended = Vec::new();
     for key in 0..(MAX_RUNS as u64 + 3) {
         history.begin(key, start(1), progress(RunState::Running, &["running"]));
@@ -341,15 +349,16 @@ fn the_oldest_ended_runs_are_pruned_and_a_run_in_progress_never_is() {
     let kept = run_files(&scratch);
     assert_eq!(kept.len(), MAX_RUNS);
     assert!(kept.contains(&file_name_of(&in_progress)));
+    assert!(kept.contains(&newer));
     assert!(kept.contains(&file_name_of(ended.last().expect("the newest"))));
-    // 204 runs for 200 places. The one still being written is passed over,
-    // so four ended runs went.
+    // 205 runs for 200 places. The one still being written and the later
+    // build's are passed over, so five ended runs went.
     assert_eq!(
         ended
             .iter()
             .filter(|id| !kept.contains(&file_name_of(id)))
             .count(),
-        4
+        5
     );
 }
 

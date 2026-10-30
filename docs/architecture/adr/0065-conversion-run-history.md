@@ -179,7 +179,9 @@ A refusal that ends a running queue is terminal too, with its code.
   without them (`itemsOmitted`). Its run-level facts are kept, and the list
   says so. Nothing is truncated: 1,024 items with long paths and full SCIEX
   output sets normally stay well under the bound.
-- **Set-aside files** are not counted, and Clear removes them.
+- **Set-aside files** are not counted, and Clear is what reclaims them.
+- **Runs this build cannot judge** (a later schema, or unreadable) are counted
+  but never pruned; see section 6.
 
 *Alternatives:*
 
@@ -224,8 +226,11 @@ and of G16, cross-session staging ownership, unchanged.
   (`set-aside-<ms>-<name>`) and taken off its name. A hard link refuses an
   existing name, so nothing is replaced. The list counts it as `unreadable`.
 - **Newer schema:** left exactly where it is and never rewritten. The list
-  counts it as `newer`. Pruning by age may still remove it, like any other.
-- **Unreadable** (a sharing or permission refusal): skipped and counted.
+  counts it as `newer`. Pruning never removes it: a later build's run may be
+  one its live instance is still writing. It still counts toward the bounds,
+  so this build's own oldest ended runs make room.
+- **Unreadable** (a sharing or permission refusal): skipped, counted, and
+  never pruned, for the same reason.
 
 ### 7. Privacy
 
