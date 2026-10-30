@@ -830,7 +830,7 @@ describe("stopping a running conversion queue", () => {
     expect(await screen.findByText(/ProteoWizard is available/)).toBeVisible();
     fireEvent.click(await within(panel).findByRole("button", { name: "Stop queue" }));
 
-    const banner = (await screen.findByText("MSCanvas cannot use the backend until it restarts"))
+    const banner = (await screen.findByText("Restart MSCanvas to use ProteoWizard again"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
       "MSCanvas could not confirm that a ProteoWizard process it started has ended. Restart MSCanvas before starting another preview or conversion.",
@@ -1097,7 +1097,7 @@ describe("stopping a running conversion queue", () => {
     // The backend banner says the same thing, because a user who has scrolled
     // past the queue still needs to know why nothing will start. It is never a
     // stale "available" beside a session that refuses every backend action.
-    const banner = (await screen.findByText("MSCanvas cannot use the backend until it restarts"))
+    const banner = (await screen.findByText("Restart MSCanvas to use ProteoWizard again"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
       "MSCanvas could not confirm that a ProteoWizard process it started has ended. Restart MSCanvas before starting another preview or conversion.",

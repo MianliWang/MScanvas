@@ -146,6 +146,15 @@ async function waitForContext(id: string, expected: (text: string | null) => boo
   });
 }
 
+/** What the Conversion tab's description says about its work; its name stays the tab's own. */
+function conversionTabDescription() {
+  return browser.execute(() => {
+    const tab = document.querySelector('.workbench-navigation [data-surface-tab="conversion"]');
+    const id = tab?.getAttribute("aria-describedby") ?? null;
+    return id === null ? null : (document.getElementById(id)?.textContent ?? null);
+  }) as Promise<string | null>;
+}
+
 /** Activates one context item with a real pointer click. */
 async function activate(id: string) {
   await browser.$(`[data-shell-context="${id}"]`).click();
@@ -921,9 +930,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await open("converting");
       const running = fill(en.shellContextActivity, { activity: en.shellConversionRunning });
       await waitForContext("conversionActivity", (text) => text === running, "says the conversion runs");
-      expect(
-        await browser.$(".workbench-navigation .work-status-dot").getAttribute("aria-label"),
-      ).toBe(en.workActive);
+      expect(await browser.$(".workbench-navigation .work-status-dot").isExisting()).toBe(true);
+      expect(await conversionTabDescription()).toBe(en.workActive);
 
       // Away and back while it runs: the lane keeps polling its slot, and that
       // read is the only request.
@@ -950,7 +958,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await contextText("conversionActivity")).toBe(running);
       await releaseInvokeHold(poll);
       await waitForContext("conversionActivity", (text) => text === en.shellConversionRetained, "reports the settled queue");
-      expect(await browser.$(".workbench-navigation .work-status-dot").getAttribute("aria-label")).toBe(en.workRetained);
+      expect(await conversionTabDescription()).toBe(en.workRetained);
       expect(
         await browser.execute(
           (busy: string) =>

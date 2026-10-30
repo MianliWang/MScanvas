@@ -6,6 +6,7 @@ export type WorkbenchSurface = "workbench" | "conversion" | "project";
 
 const ROSTER_REASON_ID = "header-roster-reason";
 const DETAILS_REASON_ID = "header-details-reason";
+const CONVERSION_WORK_ID = "header-conversion-work";
 const SURFACES = ["workbench", "conversion", "project"] as const;
 
 /**
@@ -39,6 +40,7 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, convers
    * cannot open, in the terms of the surface it is on.
    */
   const detailsReason = loading ?? (detailsAvailable ? null : t(surface === "project" ? "provenanceNothingSelected" : "inspectorUnavailable"));
+  const conversionWorkText = conversionBusy ? t("workActive") : conversionRetained ? t("workRetained") : null;
 
   return <header className="topbar workbench-header">
     <button type="button" className="workbench-home" aria-label={t("home")} onClick={() => go("workbench")}>
@@ -48,21 +50,24 @@ export function WorkbenchHeader({ surface, onNavigate, detailsAvailable, convers
     <nav className="workbench-navigation" aria-label={t("navigation")}>
       {SURFACES.map(target => {
         const label = t(target === "workbench" ? "workbench" : target === "conversion" ? "conversionTask" : "projectSurface");
+        const conversionWork = target === "conversion" && conversionWorkText !== null;
         return <button type="button" key={target} data-surface-tab={target}
-        aria-current={surface === target ? "page" : undefined} onClick={() => go(target)}>
+        aria-current={surface === target ? "page" : undefined}
+        // The work is the tab's description, so its name stays "Conversion".
+        aria-describedby={conversionWork ? CONVERSION_WORK_ID : undefined} onClick={() => go(target)}>
         {/* The label reserves its bold width, so becoming current never moves
             the tabs after it. */}
         <span className="workbench-tab-label" data-label={label}>{label}</span>
         {/* In the tab's own padding, out of flow: a dot that comes and goes
             never moves the tabs after it (rendered review, issue 6). */}
-        {target === "conversion" && (conversionBusy || conversionRetained)
-          ? <span className="work-status-dot" aria-label={t(conversionBusy ? "workActive" : "workRetained")} /> : null}
+        {conversionWork ? <span className="work-status-dot" aria-hidden="true" /> : null}
         {/* Visual only: the status bar says what the project is doing. */}
         {target === "project" && projectBusy
           ? <span className="work-status-dot" aria-hidden="true" data-project-work-dot="" /> : null}
       </button>;
       })}
     </nav>
+    {conversionWorkText === null ? null : <span id={CONVERSION_WORK_ID} className="visually-hidden">{conversionWorkText}</span>}
     <div className="workbench-global-actions">
       {/* At every width: below 1050 px it opens the roster's drawer, and above
           it folds a column the stored layout remembers (Settings resets it). */}
