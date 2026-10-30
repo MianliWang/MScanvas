@@ -16,6 +16,10 @@
   this ADR says about reading mzML is unchanged.
 - Amended: 2026-10-29 ([ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md))
   — the one-backend-process rule, by a note at that rule below.
+- Amended: 2026-10-30 (owner decision, [plan section 2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28))
+  — a chosen installation is remembered across launches, and its folder may be
+  sent to the webview, by notes at the installation rule and in the
+  consequences below.
 
 ## Context
 
@@ -73,6 +77,18 @@ is rather than removed in a slice that is about something else.
   beside the new one, and every banner state offers the way back — including
   the state where the call itself failed, which is precisely the state that
   cannot say which installation was in use.
+
+  > **Amended 2026-10-30 by the owner's decision** (plan section 2, decision 3;
+  > implemented by draft [PR #158](https://github.com/MianliWang/MScanvas/pull/158),
+  > not yet merged). A chosen folder that reads as usable is remembered across
+  > launches. It is written to the preference record and checked again at
+  > startup by the existing discovery. If it no longer works there, the reason
+  > is reported and discovery goes back to the automatic search, which is
+  > discovery, not a backend fallback. **Forget** clears it. This reverses "for
+  > the session only" and "never written to disk" above. The webview still
+  > names no path, but a usable reading now carries the installation's folder
+  > as one bounded display field. It is the only installation path sent to the
+  > webview, and it never enters diagnostics or project documents.
 - **File acceptance is decided in Rust** — extension, canonical resolution, and
   regular-file posture including symlink and reparse-point rejection — so a
   frontend defect cannot widen what the backend will open. On Windows all of it
@@ -224,7 +240,8 @@ is rather than removed in a slice that is about something else.
   command or picker for, so a chosen folder's failure is reported from a cause
   established here instead — missing, not a directory, unreadable, missing
   either tool or both, a probe failure, or a mismatched pair — and never by
-  forwarding the crate's advice.
+  forwarding the crate's advice. *2026-10-30: a usable chosen folder now lasts
+  across launches (see the note at the installation rule above).*
 - Which installation is in use is decided by what actually resolved, not by
   what was requested. The two come apart in both directions: automatic
   discovery falls back to another release when the one in use is removed, and a
