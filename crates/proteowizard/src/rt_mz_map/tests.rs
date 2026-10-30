@@ -212,6 +212,11 @@ fn every_bin_starts_at_its_own_edge() {
         ((0.1, 0.7), 3),
         ((356.412150088193, 1313.128239995699), 2048),
         ((0.002757293606, 33.003497392559), 1024),
+        // Near the narrowest range the axis accepts for its bins.
+        (
+            (1000.0, 1000.0 + 2048.0 * 5.0 * 1000.0 * f64::EPSILON),
+            2048,
+        ),
     ] {
         let axis = Axis::new((low, high), bins).expect("a valid axis");
         assert_eq!((axis.edge(0), axis.edge(bins)), (low, high));
@@ -383,6 +388,15 @@ fn requests_are_checked_before_anything_is_read() {
             "{bounds:?}"
         );
     }
+    // Bins narrower than the bounds' precision would have no width.
+    assert_eq!(
+        check(request((0.0, 2.0), 1, (1000.0, 1000.0 + 1e-10), 2048)),
+        Some(MapError::InvalidBounds)
+    );
+    assert_eq!(
+        check(request((0.0, 2.0), 1, (1000.0, 1000.001), 2048)),
+        None
+    );
     assert_eq!(
         check(request((0.0, 2.0), 0, (99.0, 101.0), 1)),
         Some(MapError::InvalidBins)

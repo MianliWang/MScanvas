@@ -90,8 +90,9 @@ read polarity yet; branch `be/reader-meta` adds it.
     except the last, which also holds the view's upper bound.
   - At most 2^21 cells (`MAX_MAP_CELLS`, 16 MiB of `f64`). The caller picks the
     bin counts from the view's size in device pixels.
-  - Bounds must be finite with a finite, positive width; anything else is
-    refused before any spectrum is read.
+  - Bounds must be finite with a finite, positive width, and a bin at least
+    four `f64` units in the last place of the larger bound wide, so every bin
+    has width; anything else is refused before any spectrum is read.
 - **Recomputed per view, within bounds.** A zoom or pan is a new pass over the
   source for the new window, never a resampling of the previous raster.
 - **Never the arrays.** Only the raster crosses to the webview, as one bounded
@@ -147,7 +148,7 @@ partial raster.
 
 | Refusal | Stable identifier |
 | --- | --- |
-| A bound not finite, or a range empty, backwards or not finite | `map_bounds_invalid` |
+| A bound not finite, or a range empty, backwards, not finite or too narrow for its bins | `map_bounds_invalid` |
 | An axis with no bins, or more than 2^21 cells | `map_bins_invalid` |
 | The allocator refuses the raster | `allocation_refused` |
 | The table has no MS1 spectrum | `no_ms1_spectra` |
@@ -168,8 +169,10 @@ partial raster.
 - **Progress** is `(done, total)` after each spectrum, where `total` counts the
   MS1 spectra in the window. It is known before the first read, so the screen
   can show a determinate bar.
-- **Cancel** is checked before each spectrum is read, with the crate's
-  `CancellationToken`. A cancelled pass returns `cancelled` and no raster.
+- **Cancel** is checked before each spectrum is read and once after the last,
+  with the crate's `CancellationToken`, so a cancel heard during the last
+  spectrum or before an empty window still counts. A cancelled pass returns
+  `cancelled` and no raster.
 - **For the desktop slice (recommended, not implemented):**
   - one map pass per session at a time; a new view of the same dataset cancels
     the running pass, and the newest view wins;
@@ -227,26 +230,33 @@ no sum, XIC, summed spectrum, peak picking or feature detection.
 
 ## Evidence
 
-Release build of the example, two or three runs per Orbitrap file and one for
-the LTQ Velos file, on a 14-core, 20-thread Windows machine,
-2026-10-30, warm cache (each file was hashed just before its runs). Inputs are
+Release build of the example at commit `a8eae524`, two runs per file, on a
+14-core, 20-thread Windows machine, 2026-10-30, warm cache (each file was
+hashed just before its runs). Inputs are
 public and not committed; their provenance is recorded with the data under
 `D:\tmp\public-data\` (manifest items 2, 3a and the vendor-centroiding record's
 case `TE1`). No ProteoWizard program ran.
 
 | | Orbitrap MS1 profile | Orbitrap MS1 vendor-centroided | LTQ Velos, mixed |
 | --- | --- | --- | --- |
-| File | PXD081190 RAW → mzML, 546,327,287 bytes, SHA-256 `82328655…de4fc3`, CC0 | [`TE1`](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md), 284,183,742 bytes, SHA-256 `4727d25e…540983`, CC0 | `msconvert` output of ProteoWizard's LTQ Velos test RAW, 5,060,221 bytes, SHA-256 `c72e2c8c…b63ec9` |
+| File | PXD081190 RAW → mzML, 546,327,287 bytes, SHA-256 `82328655…de4fc3`, CC0 | [`TE1`](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md), 284,183,742 bytes, SHA-256 `4727d25e…540983`, CC0 | `msconvert` output of ProteoWizard's LTQ Velos test RAW, 5,060,221 bytes, SHA-256 `c72e2c8c…b63ec9`, from the Apache-2.0 ProteoWizard repository |
 | Spectra, of which MS1 | 43,878; 2,748 profile | 43,878; 2,748 centroid | 85; 44 (29 profile, 15 centroid) |
-| Table pass (exists after the open) | 3,498–3,913 ms | 3,224 ms | 12 ms |
-| Full extent, 1,024 × 2,048 cells | 3,840–4,769 ms; 24,766,275 points; 726,465 cells hold a value | 626–937 ms; 1,724,215 points; 670,590 cells | 63 ms; 326,354 points; 43,894 cells |
-| Middle tenth of each axis | 316–356 ms; 192 spectra | 60–131 ms; 192 spectra | 9 ms; 3 spectra |
+| Table pass (exists after the open) | 3,937–4,180 ms | 3,575–4,422 ms | 9 ms |
+| Full extent, 1,024 × 2,048 cells | 3,652–3,768 ms; 24,766,275 points; 726,465 cells hold a value | 598–654 ms; 1,724,215 points; 670,590 cells | 71–88 ms; 326,354 points; 43,894 cells |
+| Middle tenth of each axis | 324–333 ms; 192 spectra | 48–49 ms; 192 spectra | 9–12 ms; 3 spectra |
 | Points outside the stated m/z range | 1 | 1 | 16 |
-| Peak working set, whole process | 36.2–37.0 MB | 36.0–36.6 MB | not polled |
+| Peak working set, whole process | 36.3–36.4 MB | 36.0–36.9 MB | not captured: the 0.1 s run ended between polls |
 
-- A full profile pass costs about 1.4–1.7 ms per MS1 spectrum of about 9,000
-  points (decode and parse); a centroid pass about 0.2–0.35 ms. Time scales with
-  the MS1 points in the window, not the file size.
+- Full SHA-256: profile
+  `823286559d48f48af0ff0a90d602b33e16791b42bdef46f8cdf44f2021de4fc3`, `TE1`
+  `4727d25e277d98850afde73847953e6b0dab0390e1414cb2627cd2630e540983`, LTQ Velos
+  `c72e2c8c9178005e6842067880810a978976544c6c36be806f88eeaeb1b63ec9`.
+- Peak working set is `Process.PeakWorkingSet64`, polled from outside the
+  process about every 20 ms, in MB of 10^6 bytes.
+- A full profile pass costs about 1.3–1.4 ms per MS1 spectrum of about 9,000
+  points (decode and parse); a centroid pass about 0.22–0.24 ms per spectrum
+  of about 630 points. Time scales with the MS1 points in the window, not the
+  file size.
 - Memory is one raster, one spectrum and the table, and did not grow with the
   file.
 - Not measured: a multi-GB file, a cold cache, the desktop's IPC and drawing.

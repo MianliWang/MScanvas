@@ -43,7 +43,9 @@ pub struct MapRequest {
 /// refusal leaves a partial raster.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum MapError {
-    #[error("a map bound is not finite, or a range is empty, backwards or not finite")]
+    #[error(
+        "a map bound is not finite, or a range is empty, backwards, not finite or too narrow for its bins"
+    )]
     InvalidBounds,
     #[error("a map axis has no bins, or the map would exceed its cell cap")]
     InvalidBins,
@@ -404,10 +406,17 @@ impl Axis {
         if !(low.is_finite() && high.is_finite() && width.is_finite() && width > 0.0) {
             return Err(MapError::InvalidBounds);
         }
+        let step = width / f64::from(bins);
+        // Each edge is within about two units in the last place of the larger
+        // bound, so a bin four of them wide keeps every edge above the last;
+        // a narrower bin would have no width.
+        if step < low.abs().max(high.abs()) * f64::EPSILON * 4.0 {
+            return Err(MapError::InvalidBounds);
+        }
         Ok(Self {
             low,
             high,
-            step: width / f64::from(bins),
+            step,
             bins,
         })
     }
