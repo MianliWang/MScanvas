@@ -64,8 +64,11 @@ that ships the runtime":
    answers `PlanNotCurrent`. Any change to the runtime, a security fix
    included, is therefore an application release.
 2. **The application installs per user.** NSIS `installMode: currentUser`
-   (`tauri.conf.json`) installs below `%LOCALAPPDATA%`, which contains the
-   Windows user name. A Chinese user name makes that path non-ASCII.
+   (`tauri.conf.json`) installs to `%LOCALAPPDATA%\MSCanvas\` by default
+   ([beta-1 installed check](../../release/beta-1/INSTALLED_CHECK.md)), which
+   contains the Windows user name. A Chinese user name makes that path
+   non-ASCII. The installer's folder page lets a user pick another folder, but
+   nothing makes them pick an ASCII one.
 3. **The work area must be ASCII too.** The worker is given ASCII names only:
    its attempt directory, its `TEMP`, its `OPENMS_HOME_PATH` and the hard link
    or verified copy of the source ([ADR 0049](0049-content-bound-execution-snapshot.md)).
@@ -198,6 +201,14 @@ The cost at the installed location is **unmeasured**; fewer files reduce it.
 | Licence notices | MSCanvas's installer carries them | the runtime package carries them | the user's installation carries them; MSCanvas redistributes nothing |
 | Support cost | lowest for the user, highest download | one more step, documented | highest: versions, wheels, paths, PATH, antivirus, user support |
 
+B has two variants, which differ only in who downloads the package. **B1:**
+the user downloads it from the release page and runs it (recommended,
+decision 1). **B2:** the application downloads and installs it when the user
+asks. B2 is not a silent update if the user starts it and the package is
+checked against the pinned digest before anything is installed, but it gives
+MSCanvas a network client and a download feature it does not have today, each
+with its own decision and, likely, a new dependency.
+
 C fails the recipe's own contract: a plan's identity is the manifest digest,
 and a user environment has none MSCanvas can pin. It also fails the packaging
 gate's rule that a user-managed environment is "not an unexplained consumer
@@ -228,7 +239,7 @@ import of `pyopenms.plotting` fails in it; no recipe imports that module.
 
 ## Decisions (recommended)
 
-### 1. Distribution: a separate, verified runtime package (B)
+### 1. Distribution: a separate, verified runtime package the user downloads (B1)
 
 The runtime is published as a second installer, **"MSCanvas analysis
 runtime"**, attached to the same GitHub release as the application, built by
@@ -470,9 +481,9 @@ release-workflow change also needs the owner's approval.
 - **User-installed Python (C).** It cannot be pinned, so results lose their
   engine identity; it is the packaging gate's "unexplained consumer
   requirement".
-- **Download by the application.** A new network capability, a new
-  dependency and a silent-update risk, for a step a release page already
-  serves.
+- **Download by the application (B2), for the first release.** A new network
+  capability and probably a new dependency, for a step a release page already
+  serves. It can follow later if users ask for it.
 - **A per-user runtime below `%LOCALAPPDATA%`.** Non-ASCII for non-ASCII user
   names; the engine fails there (measured in M9.0).
 - **Relying on 8.3 short names or a UTF-8 code page.** M9.0 found 8.3 names
@@ -511,8 +522,10 @@ release-workflow change also needs the owner's approval.
 
 ## Open questions for the owner
 
-1. **Distribution.** A separate runtime package (B, recommended) or inside the
-   application installer (A, 36–55 MB more for every user, and elevation)?
+1. **Distribution.** A separate runtime package the user downloads (B1,
+   recommended), the same package downloaded by the application (B2), or
+   inside the application installer (A, 36–55 MB more for every user, and
+   elevation)?
 2. **Location.** Per machine under Program Files with an elevated runtime
    installer (recommended), with the work area under ProgramData by user SID?
 3. **Without administrator rights.** Offer a user-chosen ASCII folder with a
