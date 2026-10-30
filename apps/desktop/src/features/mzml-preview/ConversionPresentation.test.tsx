@@ -379,7 +379,8 @@ describe("PM9.4 O6: Stop explained where it is offered", () => {
     await check("run-1.raw");
     const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
     await waitFor(() => expect(convert).not.toHaveAttribute("aria-disabled"));
-    expect(convert).toHaveAccessibleDescription(/One Thermo RAW acquisition will be converted to mzML\. Output-only validation: not compared with the vendor source\./);
+    // Described by the short plan (C11): its destination and conflict policy.
+    expect(convert).toHaveAccessibleDescription(new RegExp(en.m74CnvRequestedDestination));
     expect(panel.textContent).not.toMatch(/Stop queue|Stop this file|Skip settles/);
   });
 
@@ -393,15 +394,22 @@ describe("PM9.4 O6: Stop explained where it is offered", () => {
 });
 
 describe("the plan summary", () => {
-  it("says the shipped precision rounds intensities, beside Convert", async () => {
+  it("lists only what differs from the shipped settings, then the destination and the conflict policy (C11)", async () => {
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend }));
     await check("run-1.raw");
-    await waitFor(() => expect(panel.querySelector("[data-plan-precision-note]")).toHaveTextContent(en.cnvMz64I32Note));
+    await waitFor(() => expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull());
+    const summary = panel.querySelector("#conversion-plan-summary")!;
+    // The shipped settings: nothing changed, so no setting is repeated, and the
+    // rounding the form already says beside its control is not said again.
+    expect(summary.querySelectorAll("[data-plan-changed]")).toHaveLength(0);
+    expect(summary).not.toHaveTextContent(en.cnvMz64I32Note);
+    expect(within(summary as HTMLElement).getByText(en.m74CnvRequestedDestination)).toBeVisible();
+    expect(within(summary as HTMLElement).getByText(en.m74CnvConflict)).toBeVisible();
   });
 });
 
 describe("PM9.4 O7: validation extent from the Rust-projected mode", () => {
-  it("says output-only for an output-only plan and claims no check for another", async () => {
+  it("claims no check before a plan has run, whatever its mode", async () => {
     const api = createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend });
     const planned = api.describeConversion;
     let mode: "output_only" | "source_comparison" = "output_only";
@@ -410,14 +418,15 @@ describe("PM9.4 O7: validation extent from the Rust-projected mode", () => {
       return answer.outcome === "planned" ? { ...answer, plan: { ...answer.plan, validationMode: mode } } : answer;
     } });
     await check("run-1.raw");
-    await waitFor(() => expect(panel.querySelector("#conversion-validation-disclosure")).toHaveTextContent(en.m74CnvOutputOnly));
+    await waitFor(() => expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull());
+    // The rail repeats nothing (C11); what a check covered is said with its
+    // result, once one has run.
+    expect(panel).not.toHaveTextContent(en.m74CnvOutputOnly);
     mode = "source_comparison";
     fireEvent.click(within(panel).getByRole("radio", { name: "Beside each source" }));
-    // The judgement resources for that mode report a finished comparison,
-    // which a plan has not run: the review says nothing of it.
     await waitFor(() => {
       expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull();
-      expect(panel.querySelector("#conversion-validation-disclosure")).toBeNull();
+      expect(panel).not.toHaveTextContent(en.m74CnvOutputOnly);
     });
     const convert = within(panel).getByRole("button", { name: "Convert 1 eligible" });
     for (const id of convert.getAttribute("aria-describedby")!.split(" ")) {

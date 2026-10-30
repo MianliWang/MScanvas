@@ -125,9 +125,9 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
     expect(follows(summary, convert)).toBe(true);
     // Nothing the summary depends on sits between it and the action.
     expect([...plan.querySelectorAll("fieldset")].filter((fieldset) => follows(summary, fieldset))).toEqual([]);
-    // Compression in words, like the other axes.
+    // The shipped compression is not repeated in the short summary (C11).
     const term = [...plan.querySelectorAll(".metadata-list dt")].find((node) => node.textContent === "Compression");
-    expect(term?.nextElementSibling?.textContent).toBe("zlib compressed");
+    expect(term).toBeUndefined();
   });
 });
 

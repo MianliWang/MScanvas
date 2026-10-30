@@ -1,5 +1,8 @@
 import { cx } from "./shared";
 
+/** Names up to this length fit every column they are shown in. */
+const SHORT = 24;
+
 /** Where a name splits: its last few characters and its extension stay whole. */
 export function middleSplit(text: string, keep = 8): readonly [string, string] {
   const dot = text.lastIndexOf(".");
@@ -14,6 +17,8 @@ export function middleSplit(text: string, keep = 8): readonly [string, string] {
  */
 export function MiddleEllipsis({ text, className }: { readonly text: string; readonly className?: string }) {
   const [head, tail] = middleSplit(text);
+  // A short name is one text node: nothing in it is worth splitting.
+  if (text.length <= SHORT) return <span className={cx("ui-middle-ellipsis", className)} title={text}>{text}</span>;
   return <span className={cx("ui-middle-ellipsis", className)} title={text}>
     <span className="ui-middle-ellipsis__head">{head}</span><span className="ui-middle-ellipsis__tail">{tail}</span>
   </span>;

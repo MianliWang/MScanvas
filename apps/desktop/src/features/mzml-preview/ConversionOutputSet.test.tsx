@@ -86,11 +86,8 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     fireEvent.click(within(await screen.findByRole("row", { name: /Enolase_repeats\.wiff/ })).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(/One SCIEX WIFF acquisition will be converted to mzML\./),
-      ).toBeVisible();
-    });
+    // The reviewed plan: its one row (C11 keeps no sentence that counts it).
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(1));
 
     // The output column says what will be produced and why it cannot say more.
     // The blank cell this replaces is the defect the whole wire contract exists
@@ -120,13 +117,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     fireEvent.click(within(rows[1]).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(
-          /2 supported vendor acquisitions will be converted to mzML in the order below\. 1 Thermo RAW · 1 SCIEX WIFF\./,
-        ),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(2));
 
     // Each row keeps its own family and its own cardinality, in plan order. A
     // one-to-many row is visually distinct from a one-to-one one because it

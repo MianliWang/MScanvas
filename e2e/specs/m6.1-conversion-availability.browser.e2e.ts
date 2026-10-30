@@ -217,7 +217,7 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     expect(await browser.$(REGION).isExisting()).toBe(true);
     expect(await reasons()).toEqual([]);
     expect(await describedBy(START)).toBe(
-      "conversion-plan-summary conversion-validation-disclosure",
+      "conversion-plan-summary",
     );
     expect(await describedBy(RETRY)).toBe("conversion-retry-scope");
   });
@@ -237,7 +237,7 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     expect(occurrences).toBe(1);
 
     expect(await describedBy(START)).toBe(
-      "conversion-plan-summary conversion-validation-disclosure conversion-availability-backend-unavailable",
+      "conversion-plan-summary conversion-availability-backend-unavailable",
     );
     expect(await describedBy(RETRY)).toBe(
       "conversion-retry-scope conversion-availability-backend-unavailable",
@@ -321,7 +321,7 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     });
 
     expect(await describedBy(START)).toBe(
-      "conversion-plan-summary conversion-validation-disclosure",
+      "conversion-plan-summary",
     );
     const before = conversionStarts(await ipcCalls());
     await browser.$(START).click();

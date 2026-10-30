@@ -277,7 +277,6 @@ describe("M6.6 destination and conflict review", () => {
     await openBoundDetails();
     await scrollNestedIntoView('.conversion-running [aria-label="Queue destination"]');
     expect(await actual.getText()).toContain("Original");
-    expect(await actual.getText()).toContain("Fixed when the queue started");
     await captureView("bound-queue", '.conversion-running [aria-label="Queue destination"]');
     expect(await requestedDestination()).toBe("One local folder, chosen after Convert");
     await scrollNestedIntoView("#conversion-conflict-scope");

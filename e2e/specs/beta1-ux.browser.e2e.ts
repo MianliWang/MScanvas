@@ -66,7 +66,8 @@ function word(locale: Locale, key: string): string {
 function say(locale: Locale, key: string, values: Record<string, string | number> = {}): string {
   return word(locale, key)
     .replace(/\$t\((\w+)\)/gu, (_, nested: string) => word(locale, nested))
-    .replace(/\{\{(\w+)\}\}/gu, (_, name: string) => String(values[name] ?? `{{${name}}}`));
+    // A `{{count, number}}` placeholder formats the number (the counts here stay below 1,000).
+    .replace(/\{\{(\w+)(?:, number)?\}\}/gu, (_, name: string) => String(values[name] ?? `{{${name}}}`));
 }
 
 // ---------------------------------------------------------------- the world
@@ -660,10 +661,11 @@ describe("Beta 1 UX changes, rendered", () => {
         [OPEN.handle, LONG.handle, FIRST.handle]),
       ).toEqual([true, true, true]);
 
-      // O6/O7: a ready review explains no Stop, and says output-only for an output-only plan.
+      // O6/O7: a ready review explains no Stop, and claims no check before one
+      // has run; the short rail repeats nothing (C11).
       const review = await browser.$(".conversion-panel").getText();
       expect(review).not.toContain(words.m74CnvStopQueue);
-      expect(await browser.$("#conversion-validation-disclosure").getText()).toBe(words.m74CnvOutputOnly);
+      expect(review).not.toContain(words.m74CnvOutputOnly);
 
       // O5: the ellipsis promises the custom folder's picker, and only that.
       expect((await control(CONVERT))?.text).toBe(say(locale, "m74CnvConvertSelected", { count: 1 }));

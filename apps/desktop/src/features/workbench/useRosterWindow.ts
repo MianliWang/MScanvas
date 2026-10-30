@@ -95,5 +95,7 @@ export function useRosterWindow<T extends RosterWindowItem>(items: readonly T[],
     for (const key of liveKeys.current) if (!keys.has(key)) sizes.current.delete(key);
     liveKeys.current = keys;
   }, [items]);
-  return { root, measure, onScroll: refresh, rendered, total, windowed };
+  /** Where an item starts in the list's own coordinates, measured or estimated. */
+  const offsetOf = (key: string) => layout.find(placed => placed.item.key === key)?.top ?? null;
+  return { root, measure, onScroll: refresh, rendered, total, windowed, offsetOf };
 }

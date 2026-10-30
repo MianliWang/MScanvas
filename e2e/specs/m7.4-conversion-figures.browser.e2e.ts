@@ -238,9 +238,10 @@ describe("M7.4 conversion, recovery and export composition", () => {
     await browser.$('.conversion-settings[data-settings-state="ready"]').waitForExist();
     await capture("conversion-basic-" + scenario.width);
     const requestCount = (await ipcCalls()).filter(call => call.command === "describe_workspace_conversion_queue").length;
-    await browser.$(".conversion-settings").$("button=" + words.cnvAdvanced).click();
+    // Advanced is a disclosure under Basic (direction A 2.2); its head may add a changed count.
+    await browser.$(".conversion-settings").$("button*=" + words.cnvAdvanced).click();
     await expect(browser.$(".conversion-settings")).toHaveAttribute("data-settings-view", "advanced");
-    await browser.$(".conversion-settings").$("button=" + words.cnvBasic).click();
+    await browser.$(".conversion-settings").$("button*=" + words.cnvAdvanced).click();
     expect((await ipcCalls()).filter(call => call.command === "describe_workspace_conversion_queue")).toHaveLength(requestCount);
     // A data list on the summary since the rebuild (spec 5), not a disclosure.
     await browser.$(".conversion-bound-details").waitForExist();

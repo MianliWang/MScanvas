@@ -687,6 +687,12 @@ button:disabled,
 
 .conversion-setting-choice > .conversion-setting-note { grid-column: 1 / -1; padding-left: 21px; }
 
+/* Advanced: one disclosure under Basic, its head counting what differs from
+   the shipped settings (direction A 2.2, C7). */
+.conversion-advanced { display: grid; justify-items: start; gap: 8px; margin-top: 12px; }
+.conversion-advanced > [role="region"], .conversion-advanced > div { width: 100%; }
+.conversion-advanced-count { margin-left: 8px; color: var(--color-text-secondary); font-weight: 400; }
+
 /* Why the dimmed choices are refused: once for the form, under the groups,
    on a line of its own that names what it is about. */
 .conversion-settings-refusals {
@@ -917,6 +923,10 @@ button:disabled,
 }
 
 .conversion-run-list > li:last-child { border-bottom: 0; }
+/* While the queue runs, a settled row is one line (direction A 2.3). */
+.conversion-run-list > li[data-compact] { padding: 6px 0; }
+.conversion-elapsed { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.conversion-queue-elapsed { margin-left: 6px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 
 .conversion-run-symbol {
   display: grid;

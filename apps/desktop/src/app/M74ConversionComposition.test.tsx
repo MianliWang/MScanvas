@@ -175,8 +175,9 @@ describe("M7.4 bilingual conversion composition", () => {
     await waitFor(() => expect(api.planRequests().at(-1)?.destinationPolicy).toEqual({ kind: "namedSubfolder", name: raw }));
     const reviewed = structuredClone(api.planRequests().at(-1));
     const planCount = api.planRequests().length;
-    fireEvent.click(within(panel).getByRole("radio", { name: en.cnvAdvanced }));
-    fireEvent.click(within(panel).getByRole("radio", { name: en.cnvBasic }));
+    // Open and close Advanced: neither asks the plan again.
+    fireEvent.click(within(panel).getByRole("button", { name: new RegExp(`^${en.cnvAdvanced}`) }));
+    fireEvent.click(within(panel).getByRole("button", { name: new RegExp(`^${en.cnvAdvanced}`) }));
     await chinese();
     expect(panel).toHaveAccessibleName(zh.m74CnvTitle);
     expect(within(panel).getByRole("textbox", { name: zh.m74CnvSubfolderName })).toHaveValue(raw);

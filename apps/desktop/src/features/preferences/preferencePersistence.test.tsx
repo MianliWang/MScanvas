@@ -419,7 +419,8 @@ describe("durable UI preferences", () => {
     // of the application from the accessibility tree.
     expect(rosterToggle()).toHaveAttribute("aria-disabled", "true");
     expect(rosterToggle()).toBeEnabled();
-    expect(rosterToggle()).toHaveAttribute("title", en.panelsLoading);
+    // Its reason, shown beside it on hover and focus.
+    expect(rosterToggle()).toHaveAccessibleDescription(en.panelsLoading);
     const loading = openSettings();
     expect(within(loading).getByText(en.storageLoading)).toBeVisible();
     expect(within(loading).getByRole("radio", { name: en.english })).toBeDisabled();
@@ -557,23 +558,18 @@ describe("durable UI preferences", () => {
     }
   });
 
-  it("keeps a details request as intent while nothing is loaded, and reaches a reset either way", async () => {
+  it("shows a details request while nothing is loaded, and reaches a reset either way", async () => {
     const { preferences } = mount({
       preferences: { stored: storedRecord({ layout: { roster: "hidden", details: "shown" } }) },
     });
     await screen.findByText("No ProteoWizard installation was found");
     await waitFor(() => expect(shell()).toHaveAttribute("data-roster-open", "false"));
-    // Asked for, nothing to show, and nothing loaded to make it showable.
-    expect(shell()).toHaveAttribute("data-details-open", "false");
-    // Refused but reachable (PM9 L20): pressing it requests nothing. A toggle
-    // that got through would store "hidden" -- the open state here says
-    // nothing, since there is nothing loaded to show either way.
+    // Asked for and shown: with nothing loaded it says so in one line (S3),
+    // and its toggle is never a refusal.
+    expect(shell()).toHaveAttribute("data-details-open", "true");
+    expect(document.getElementById("workbench-inspector")).toHaveTextContent(en.inspectorUnavailable);
     const details = screen.getByRole("button", { name: en.inspectorToggle });
-    expect(details).toHaveAttribute("aria-disabled", "true");
-    const before = preferences.requests.length;
-    await act(async () => { fireEvent.click(details); });
-    await act(async () => { await Promise.resolve(); });
-    expect(preferences.requests).toHaveLength(before);
+    expect(details).not.toHaveAttribute("aria-disabled");
     expect(preferences.stored()?.layout.details).toBe("shown");
 
     // The reset is reachable from here, with no dataset and no backend: in

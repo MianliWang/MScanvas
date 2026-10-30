@@ -941,6 +941,7 @@ export function PreviewWorkspace() {
             resolvedScope={resolvedScope}
             onScopeChange={workspace.setConversionScope}
             onSortChange={(sort) => workspace.dispatchRoster({ type: "sortChanged", sort })}
+            buildRelease={backendView.names?.release ?? null}
           />
         </section>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench"}

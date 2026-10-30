@@ -1,7 +1,7 @@
 import { conversionErrorMessage } from "./conversionMessages";
 import { useId, useState, type ReactElement, type ReactNode } from "react";
 
-import { Button, SegmentedControl } from "../../components/ui";
+import { Button, Disclosure } from "../../components/ui";
 
 import type { ConversionCatalogRow, ConversionIntentDescriptor, ConversionNumericPrecision } from "./contracts";
 import { axisChoices, catalogRow, CONVERSION_AXES, recoveryIntent, selectionRefusal,
@@ -47,6 +47,24 @@ function label<A extends ConversionAxis>(axis: A, value: ConversionAxisValues[A]
 function note<A extends ConversionAxis>(axis: A, value: ConversionAxisValues[A], t: UiMessage): string | null {
   const key = NOTE[axis][value];
   return key === undefined ? null : t(key);
+}
+
+/**
+ * The axes on which an intent differs from the settings MSCanvas ships, in
+ * axis order; empty when the shipped row is not in the catalog.
+ */
+export function changedAxes(catalog: readonly ConversionCatalogRow[], shippedId: string, intent: ConversionIntentDescriptor): readonly ConversionAxis[] {
+  const shipped = catalogRow(catalog, shippedId)?.intent;
+  return shipped === undefined ? [] : CONVERSION_AXES.filter(axis => intent[axis] !== shipped[axis]);
+}
+
+function changedFromShipped(catalog: readonly ConversionCatalogRow[], shippedId: string, intent: ConversionIntentDescriptor): number {
+  return changedAxes(catalog, shippedId, intent).length;
+}
+
+/** A value's label, for a summary that names what changed. */
+export function axisValueLabel<A extends ConversionAxis>(axis: A, value: ConversionAxisValues[A], t: UiMessage): string {
+  return label(axis, value, t);
 }
 
 /** What a stored precision rounds, or `null` when it rounds nothing. */
@@ -105,14 +123,16 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
   // Why a choice is refused, said once for the whole form however many groups
   // it dims (rebuild review 9). Every refused control points at its sentence.
   const refusalPrefix = `${prefix}-choices`;
-  const shownStates = CONVERSION_AXES.flatMap(axis => axis === "precision" && !advanced
-    ? precisionGrid(held.catalog, selected.intent).flat().map(cell => cell.state)
-    : axisChoices(held.catalog, selected.intent, axis).map(choice => choice.state));
+  const shownStates = [
+    ...CONVERSION_AXES.flatMap(axis => axis === "precision"
+      ? precisionGrid(held.catalog, selected.intent).flat().map(cell => cell.state)
+      : axisChoices(held.catalog, selected.intent, axis).map(choice => choice.state)),
+    ...(advanced ? axisChoices(held.catalog, selected.intent, "precision").map(choice => choice.state) : []),
+  ];
   const refusalNotes = refusals(refusalPrefix, shownStates, t);
+  const changed = changedFromShipped(held.catalog, held.shipped, selected.intent);
   return <div className="conversion-settings" data-settings-state="ready" data-settings-view={advanced ? "advanced" : "basic"}>
-    {head(<SegmentedControl label={t("cnvSettingsView")} value={advanced ? "advanced" : "basic"}
-      options={[{ value: "basic", label: t("cnvBasic") }, { value: "advanced", label: t("cnvAdvanced") }]}
-      onChange={next => setAdvanced(next === "advanced")} />)}
+    {head()}
     {refusal === null ? null : <p className="conversion-settings-unavailable" data-selection-refusal={refusal} id={unavailableId} role="note">{t(SELECTION_REFUSAL[refusal])}</p>}
     {recovery === null ? null : <div className="conversion-settings-recovery">
       <Button variant="secondary" size="sm" aria-describedby={refusal === null ? undefined : unavailableId}
@@ -126,9 +146,19 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
         <span className="conversion-form-label">{t("cnvFormat")}</span>
         <strong>mzML</strong>
       </div>
-      {CONVERSION_AXES.map(axis => axis === "precision" && !advanced
+      {CONVERSION_AXES.map(axis => axis === "precision"
         ? <PrecisionFields key={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} />
-        : <AxisFieldset key={axis} axis={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} advanced={advanced} />)}
+        : <AxisFieldset key={axis} axis={axis} catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} advanced={false} />)}
+    </div>
+    {/* Basic stays on screen; Advanced is one disclosure under it (direction
+        A 2.2, C7) whose head counts what differs from the shipped settings.
+        It holds the paired precisions, which reach a change of both widths at
+        once that no single width step is admitted for. */}
+    <div className="conversion-advanced">
+      <Disclosure variant="secondary" open={advanced} onOpenChange={setAdvanced}
+        label={<>{t("cnvAdvanced")}{changed === 0 ? null : <span className="conversion-advanced-count">{t("cnvChangedCount", { count: changed })}</span>}</>}>
+        <AxisFieldset axis="precision" catalog={held.catalog} current={selected.intent} onChoose={onChoose} refusalPrefix={refusalPrefix} advanced />
+      </Disclosure>
     </div>
     {/* Labelled, so the one sentence reads as being about the dimmed choices
         rather than as the note of whichever group it happens to sit under. */}

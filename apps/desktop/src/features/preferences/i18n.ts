@@ -76,9 +76,6 @@ export interface MessageParameters {
   readonly m74CnvAnnounceSkipping: { readonly name: string };
   readonly m74CnvAnnounceItem: { readonly position: number; readonly total: number; readonly name: string };
   readonly m74CnvNamedDestination: { readonly name: string };
-  readonly m74CnvOneFamily: { readonly family: string };
-  readonly m74CnvManyFamily: { readonly count: number; readonly family: string };
-  readonly m74CnvMixedFamilies: { readonly count: number; readonly families: string };
   readonly m74CnvOutputBound: { readonly count: number };
   readonly m74CnvAdoptionSummary: { readonly added: string; readonly duplicates: string; readonly refused: string };
   readonly m74CnvMoreRefused: { readonly count: number };
@@ -175,6 +172,8 @@ export interface MessageParameters {
   readonly figureSourceSpectrum: { readonly scan: string; readonly name: string };
   readonly figureSourceSpectrumIndex: { readonly index: string; readonly name: string };
   readonly figureSourceChromatogram: { readonly name: string };
+  readonly cnvChangedCount: { readonly count: number };
+  readonly m74CnvElapsed: { readonly time: string };
   readonly viewerSpectrumAbsent: { readonly index: string };
   readonly viewerSpectrumFailed: { readonly index: string };
   readonly viewerSpectrumSummary: { readonly index: string; readonly level: string; readonly count: number };

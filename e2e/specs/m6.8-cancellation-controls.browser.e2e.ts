@@ -123,8 +123,8 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     const scoped = await browser.execute(() =>
       [...document.querySelectorAll(".conversion-running .conversion-actions button")].map((node) => node.textContent));
     expect(scoped).toEqual(["Stop queue", "Stop this file"]);
-    // Named at the control, not in a legend somewhere else.
-    expect(await browser.$("#conversion-cancel-item-scope").getText())
+    // Named at the control, as its description rather than a paragraph on screen.
+    expect(await browser.$("#conversion-cancel-item-scope").getProperty("textContent"))
       .toContain("Ends sample-2.raw; the rest of the queue continues.");
     // Nothing that would suspend the run or take a row out of the bound plan.
     for (const absent of ["Pause", "Resume", "Remove"]) {

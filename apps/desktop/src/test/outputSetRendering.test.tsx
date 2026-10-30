@@ -228,11 +228,7 @@ describe("rendered QA for the one-to-many output topology", () => {
     renderApp(api);
     fireEvent.click(within(await screen.findByRole("row", { name: new RegExp(LONG_NAME.slice(0, 20)) })).getByRole("checkbox"));
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(/One SCIEX WIFF acquisition will be converted to mzML\./),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(1));
     const output = panel.querySelector(".conversion-queue-output");
     expect(output?.textContent).toContain("1–24 mzML outputs");
     // The acquisition's own stem must not appear in what it converts *to*.

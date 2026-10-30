@@ -600,14 +600,11 @@ describe("the plan the panel is showing", () => {
       expect(panel.querySelector(".conversion-queue-list")).not.toBeNull();
     });
 
-    // Every axis of the combination the plan was computed under, said before a
-    // folder is chosen.
-    const summary = within(panel);
-    expect(summary.getByText("Peaks").nextElementSibling?.textContent).toContain(
-      "No additional centroiding",
-    );
-    expect(summary.getByText("Spectra")).toBeVisible();
-    expect(summary.getByText("Stored precision")).toBeVisible();
+    // The plan computed under the shipped combination: the rail names no axis
+    // (C11 lists only what differs), then its own destination and policy,
+    // said before a folder is chosen.
+    const summary = within(panel.querySelector<HTMLElement>("#conversion-plan-summary")!);
+    expect(panel.querySelectorAll("#conversion-plan-summary [data-plan-changed]")).toHaveLength(0);
     expect(summary.getAllByText("If an output name is taken").length).toBeGreaterThan(0);
     expect(summary.getByText("Requested destination").nextElementSibling?.textContent).toBe(
       "One local folder, chosen after Convert",
@@ -890,7 +887,7 @@ describe("starting the conversion the plan describes", () => {
     expect(reads).toBe(1);
     // And the plan is still the plan: a refusal is not a reason to re-describe
     // a conversion nothing has changed about.
-    expect(within(panel).getByText(/will be converted to mzML/)).toBeVisible();
+    expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull();
     expect(within(panel).getByRole("button", { name: /^Convert/ })).not.toHaveAttribute("aria-disabled");
   });
 

@@ -169,9 +169,9 @@ async function queueResult(): Promise<HTMLElement> {
 
 /** The `<li>` a named row is rendered as. */
 function rowFor(result: HTMLElement, fileName: string): HTMLElement {
-  const row = within(result)
-    .getByText(fileName, { selector: ".conversion-queue-name" })
-    .closest("li");
+  // By the name's whole text: a long one is drawn in two parts (MiddleEllipsis).
+  const row = [...result.querySelectorAll(".conversion-queue-name")]
+    .find((node) => node.textContent === fileName)?.closest("li") ?? null;
   if (row === null) {
     throw new Error(`no queue row for ${fileName}`);
   }

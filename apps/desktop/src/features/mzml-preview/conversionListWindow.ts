@@ -64,5 +64,5 @@ export function useListWindow(keys: readonly string[], estimate: number) {
     "data-windowed": windowing.windowed,
     style: rest > 0 ? { paddingBottom: rest } : undefined,
   };
-  return { listProps, rows, windowed: windowing.windowed };
+  return { listProps, rows, windowed: windowing.windowed, root, offsetOf: windowing.offsetOf };
 }

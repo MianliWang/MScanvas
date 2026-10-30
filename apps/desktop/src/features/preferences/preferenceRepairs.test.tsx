@@ -263,7 +263,7 @@ describe("a read that never arrived", () => {
     // editor acts before the read resolves. The control is refused rather than
     // taken out of the tab order, so the reason is reachable without a pointer.
     expect(rosterToggle()).toHaveAttribute("aria-disabled", "true");
-    expect(rosterToggle()).toHaveAttribute("title", en.panelsLoading);
+    expect(rosterToggle()).toHaveAccessibleDescription(en.panelsLoading);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(10_500); });
     // Bounded. Settings and the toggles are usable again, on the defaults, with

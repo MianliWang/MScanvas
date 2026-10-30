@@ -95,7 +95,8 @@ describe("conversion lists at the queue's full size", () => {
     await waitFor(() => { expectWindowed(panel.querySelector(".conversion-requested-list")); }, { timeout: 15_000 });
     answer.resolve(await planEvery(api.planRequests().at(-1)!));
     await waitFor(() => { expectWindowed(panel.querySelector(".conversion-plan-list")); }, { timeout: 15_000 });
-    expect(within(panel).getByRole("button", { name: `Convert all ${String(FULL)} eligible…` })).not.toHaveAttribute("aria-disabled");
+    // Counts are formatted as every count is (1,024).
+    expect(within(panel).getByRole("button", { name: `Convert all ${FULL.toLocaleString("en-US")} eligible…` })).not.toHaveAttribute("aria-disabled");
   }, 60_000);
 
   it("windows a running queue of 1,024 items", async () => {

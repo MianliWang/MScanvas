@@ -11,12 +11,11 @@ import type {
   ConversionQueueItem,
   ConversionQueuePlanItem,
   ConversionReport,
-  DatasetSourceKind,
   DestinationPolicy,
 } from "./contracts";
 import { SOURCE_KIND_LABEL } from "./contracts";
 import type { ConversionAvailability } from "./conversionAvailability";
-import { ConversionSettings, CONVERSION_VALUE_LABEL, precisionNote } from "./ConversionSettings";
+import { axisValueLabel, changedAxes, ConversionSettings } from "./ConversionSettings";
 import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
 import { OutputOpenActions } from "./OutputOpenActions";
 import { STAGING_STATUS_ID, StagingRecoveryActions } from "./StagingRecoveryActions";
@@ -29,7 +28,7 @@ import type { ConversionOperation, ConversionRequestFailure } from "./useConvers
 import type { ConversionPlanView } from "./useConversionPlan";
 import type { ConversionScope, ResolvedConversionScope } from "./conversionScope";
 import { SORT_MODES, isSortMode, type SortMode } from "./rosterView";
-import { Button, Disclosure, Icon, IconButton } from "../../components/ui";
+import { Button, Disclosure, Icon, IconButton, MiddleEllipsis } from "../../components/ui";
 const SORT_MESSAGE = { added: "sortAdded", "name-asc": "sortNameAsc", "name-desc": "sortNameDesc", "size-asc": "sortSizeAsc", "size-desc": "sortSizeDesc" } as const;
 import type { MessageKey, MessageParameters, UiMessage } from "../preferences/i18n";
 type StaticMessageKey = Exclude<MessageKey, keyof MessageParameters>;
@@ -65,33 +64,10 @@ function describeDestination(policy: DestinationPolicy, t: UiMessage): string {
   }
 }
 
-/**
- * The plan summary sentence, family-aware.
- *
- * A homogeneous queue names its exact family, because "vendor" is vaguer than
- * what is known. A mixed queue counts first and then itemizes per family, in
- * plan order, so the sentence stays true for whatever combination the closed
- * vocabulary allows -- there is deliberately no generic vendor wording that a
- * new family could hide inside.
- */
-function describeQueueFamilies(items: readonly ConversionQueuePlanItem[], t: UiMessage): string {
-  const counts = new Map<DatasetSourceKind, number>();
-  for (const item of items) {
-    counts.set(item.sourceKind, (counts.get(item.sourceKind) ?? 0) + 1);
-  }
-  const count = items.length;
-  const first = items[0];
-  if (counts.size === 1 && first !== undefined) {
-    const family = SOURCE_KIND_LABEL[first.sourceKind];
-    return count === 1
-      ? t("m74CnvOneFamily", { family })
-      : t("m74CnvManyFamily", { count, family });
-  }
-  const perFamily = [...counts.entries()]
-    .map(([kind, familyCount]) => `${String(familyCount)} ${SOURCE_KIND_LABEL[kind]}`)
-    .join(" · ");
-  return t("m74CnvMixedFamilies", { count, families: perFamily || "—" });
-}
+/** How the plan rail names a setting that differs from the shipped one. */
+const PLAN_AXIS_LABEL = {
+  processing: "m74CnvPeaks", population: "m74CnvSpectra", precision: "m74CnvPrecision", compression: "m74CnvCompression",
+} as const;
 
 /**
  * What a backend-named set produces, said before it runs.
@@ -133,6 +109,8 @@ export interface ConversionPanelProps {
   readonly onScopeChange: (scope: ConversionScope) => void;
   /** The execution order the queue takes, kept by the roster (`sortChanged`). */
   readonly onSortChange: (sort: SortMode) => void;
+  /** The release the bound ProteoWizard build reports, for the plan rail (C11). */
+  readonly buildRelease?: string | null;
 }
 
 /**
@@ -148,6 +126,7 @@ export function ConversionPanel({
   resolvedScope,
   onScopeChange,
   onSortChange,
+  buildRelease = null,
 }: ConversionPanelProps): ReactElement | null {
   const t = useUiMessages();
   const { state } = conversion;
@@ -400,6 +379,7 @@ export function ConversionPanel({
       resolvedScope={resolvedScope}
       onScopeChange={onScopeChange}
       startAvailability={startAvailability}
+      buildRelease={buildRelease}
     />
   );
   // Direction A 2.2-2.4, flat: the form -- or the queue's rows -- on the left,
@@ -703,11 +683,6 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
           </Button>
         </div>
       </>
-      {/* Said whether or not anything was added. A queue that is replaced drops
-          the way MSCanvas recognises these files, and nothing about that
-          removes them -- so the honest fallback is named rather than left to be
-          discovered. */}
-      <p className="quiet-text">{t("m74CnvFilesRemain")}</p>
     </div>
   );
 }
@@ -1001,8 +976,7 @@ function PlanStart(props: PlanProps & {
       <Button
         ref={convertButton}
         aria-describedby={describedBy(
-          summary !== null
-            ? summary.validationMode === "output_only" ? `conversion-plan-summary ${VALIDATION_DISCLOSURE_ID}` : "conversion-plan-summary"
+          summary !== null ? "conversion-plan-summary"
             : pendingSaid ? PLAN_PENDING_ID
             : plan.capacityRefusal !== null ? CAPACITY_REFUSAL_ID : "",
           startAvailability,
@@ -1048,11 +1022,16 @@ function PlanStart(props: PlanProps & {
 
 function PlanSummary(props: PlanProps & {
   readonly onScopeChange: (scope: ConversionScope) => void;
+  readonly buildRelease: string | null;
 }): ReactElement {
-  const { plan, resolvedScope, onScopeChange } = props;
+  const { plan, resolvedScope, onScopeChange, configuration, buildRelease } = props;
   const t = useUiMessages();
   const { summary, count, noBackend, pendingSaid } = planFacts(props);
-  const rounding = summary === null ? null : precisionNote(summary.intent.precision, t);
+  // What differs from the settings MSCanvas ships, read off the plan rather
+  // than off the controls (C11): the rail never repeats the left column.
+  const held = configuration.configuration;
+  const changed = summary === null || held === null || held.configuration !== "ready" ? []
+    : changedAxes(held.catalog, held.shipped, summary.intent);
   return (
     <div className="conversion-plan-summary">
       {/* Native radios drawn as a segmented pair, so the group keeps the
@@ -1073,7 +1052,7 @@ function PlanSummary(props: PlanProps & {
         {/* The excluded note joins the counts rather than travelling as a
             parameter of its own: a resource parameter may not be empty, and it
             is empty whenever nothing is excluded. */}
-        {t("m74CnvScopeCounts", { requested: String(resolvedScope.requestedCount), eligible: String(count), excluded: String(resolvedScope.excludedCount) }) +
+        {t("m74CnvScopeCounts", { requested: formatCount(resolvedScope.requestedCount), eligible: formatCount(count), excluded: formatCount(resolvedScope.excludedCount) }) +
           (resolvedScope.excludedCount > 0 ? t("m74CnvNotConvertible") : "")}
       </p>
       {/* Which rows the count excludes, outside the live summary so a scope
@@ -1105,68 +1084,35 @@ function PlanSummary(props: PlanProps & {
         </>
       ) : (
         <>
-          <p className="conversion-plan-sentence" id="conversion-plan-summary">
-            {describeQueueFamilies(summary.items, t)}
-          </p>
-
           <PlanList items={summary.items} />
 
-          {/* Every one of these is read off the plan, never off the controls
-              beside it. The plan is the answer to a question that named a
-              combination and a policy; the controls are what the reader might
-              be moving to *next*, and a summary that read from them would
-              describe a conversion this one is not. */}
-          <dl className="metadata-list conversion-summary-dl">
+          {/* Short (C11): only the settings that differ from the shipped ones,
+              then the build, the destination and the conflict policy. Every
+              value is read off the plan, never off the controls beside it: the
+              plan answers a question that named a combination and a policy;
+              the controls are what the reader might be moving to *next*. */}
+          <dl className="metadata-list conversion-summary-dl" id="conversion-plan-summary">
+            {changed.map(axis => (
+              <div key={axis} data-plan-changed={axis}>
+                <dt>{t(PLAN_AXIS_LABEL[axis])}</dt>
+                <dd>{axisValueLabel(axis, summary.intent[axis], t)}</dd>
+              </div>
+            ))}
+            {buildRelease === null ? null : (
+              <div>
+                <dt>{t("m74CnvBuild")}</dt>
+                <dd>{buildRelease}</dd>
+              </div>
+            )}
             <div>
-              <dt>{t("m74CnvOutput")}</dt>
-              <dd>{summary.outputFormat}</dd>
-            </div>
-            <div>
-              <dt>{t("m74CnvPeaks")}</dt>
-              <dd>{t(CONVERSION_VALUE_LABEL.processing[summary.intent.processing])}</dd>
-            </div>
-            <div>
-              <dt>{t("m74CnvSpectra")}</dt>
-              <dd>{t(CONVERSION_VALUE_LABEL.population[summary.intent.population])}</dd>
-            </div>
-            <div>
-              <dt>{t("m74CnvPrecision")}</dt>
-              <dd>{t(CONVERSION_VALUE_LABEL.precision[summary.intent.precision])}</dd>
-            </div>
-            <div>
-              <dt>{t("m74CnvCompression")}</dt>
-              {/* In words, from the plan's own combination, like the axes
-                  beside it; the backend's token is not the reader's (R4). */}
-              <dd>{t(CONVERSION_VALUE_LABEL.compression[summary.intent.compression])}</dd>
+              <dt>{t("m74CnvRequestedDestination")}</dt>
+              <dd>{describeDestination(summary.destinationPolicy, t)}</dd>
             </div>
             <div>
               <dt>{t("m74CnvConflict")}</dt>
               <dd>{t(CONFLICT_POLICY_LABEL[summary.conflictPolicy])}</dd>
             </div>
-            <div>
-              <dt>{t("m74CnvRequestedDestination")}</dt>
-              <dd>{describeDestination(summary.destinationPolicy, t)}</dd>
-            </div>
           </dl>
-
-          {/* Said only when the mode Rust projects for this plan is output-only
-              (PM9.4 O7). The judgement resources for other modes report a
-              finished check, which a plan has not run. Stop and Skip are
-              explained where they are offered, while the queue runs (O6). */}
-          {summary.validationMode === "output_only" ? (
-            <p className="conversion-side-note" id={VALIDATION_DISCLOSURE_ID} role="note">
-              {t("m74CnvOutputOnly")}
-            </p>
-          ) : null}
-          {/* Rounding is said again here because the precision setting is in
-              the other column. The other losses are said once, beside their
-              selected setting: a summary is only on screen for the current
-              selection. */}
-          {rounding === null ? null : (
-            <p className="conversion-side-note" role="note" data-plan-precision-note="">
-              {rounding}
-            </p>
-          )}
         </>
       )}
     </div>
@@ -1208,9 +1154,8 @@ function PlanList({ items }: { readonly items: readonly ConversionQueuePlanItem[
         return item === undefined ? null : (
           <li key={key} ref={ref} style={style} data-window-key={key} aria-setsize={items.length} aria-posinset={index + 1}>
             <span className="conversion-queue-order">{index + 1}</span>
-            <span className="conversion-queue-name" title={item.fileName}>
-              {item.fileName}
-            </span>
+            {/* Names lose their middle, never their extension (C11). */}
+            <MiddleEllipsis className="conversion-queue-name" text={item.fileName} />
             {/* Which family this row is, said on the row. In a mixed queue
                 the summary's counts cannot say which item is which, and
                 colour is not a channel this information may live in. */}
@@ -1218,9 +1163,7 @@ function PlanList({ items }: { readonly items: readonly ConversionQueuePlanItem[
             <span aria-hidden="true">→</span>
             <span className="visually-hidden">{t("m74CnvConvertsTo")}</span>
             {item.output.kind === "knownSingle" ? (
-              <span className="conversion-queue-output" title={item.output.fileName}>
-                {item.output.fileName}
-              </span>
+              <MiddleEllipsis className="conversion-queue-output" text={item.output.fileName} />
             ) : (
               <span
                 className="conversion-queue-output conversion-queue-output-set"
@@ -1246,8 +1189,6 @@ const PLAN_PENDING_ID = "conversion-plan-pending";
 /** Where an over-capacity scope's counts are named, for Convert to point at. */
 const CAPACITY_REFUSAL_ID = "conversion-capacity-refusal";
 
-/** Where an output-only plan says what its validation does not compare. */
-const VALIDATION_DISCLOSURE_ID = "conversion-validation-disclosure";
 
 /**
  * How many excluded rows are named before the rest are only counted. The
@@ -1329,6 +1270,12 @@ function QueueState({
 }): ReactElement | null {
   const t = useUiMessages();
   const state = conversion.state;
+  const live = !conversion.converting && (state.status === "running" || state.status === "stopping");
+  const current = live ? state.queue.items.find((item) => item.state === "running") ?? null : null;
+  // Measured here, from when this side first saw the queue and the item run
+  // (C13): no percentage, no estimate.
+  const queueElapsed = useSince(live ? state.operationId : null);
+  const itemElapsed = useSince(current === null ? null : `${current.datasetHandle}:${String(current.attempts)}`);
   // A conversion this document dispatched, for a slot that has not been seen to
   // move yet. Rust has no queue to report until it has reserved one, so without
   // this the press goes unacknowledged for a round trip -- and from a finished
@@ -1398,29 +1345,30 @@ function QueueState({
           </p>
         )}
 
-        <RunList items={queue.items} renderRow={(item, index, row) => {
+        <RunList items={queue.items} follow={current?.datasetHandle ?? null} renderRow={(item, index, row) => {
             // Read once per item. Which of the two an item has is the whole of
             // what tells these branches apart, and asking the same question at
             // every use would invite one of them to be answered differently.
             const single = singleReportOf(item);
             const set = setReportOf(item);
             const skipping = conversion.skippingItem(index);
+            // While the queue runs, a converted or skipped row is one line (its
+            // state and name); its outputs and Open actions wait for the
+            // results. A failure keeps its reason and its recovery in view.
+            const compact = live && (item.state === "finalized" || item.state === "skipped" || item.state === "skippedByRequest");
             return (
               <li key={row.key} ref={row.ref} style={row.style} data-window-key={row.key}
-                aria-setsize={queue.items.length} aria-posinset={index + 1} data-item-state={item.state}>
+                aria-setsize={queue.items.length} aria-posinset={index + 1} data-item-state={item.state}
+                data-compact={compact || undefined}>
                 {/* The state as a glyph as well as a word: the word beside it
                     is what carries it, so colour is never the only channel. */}
                 <span className="conversion-run-symbol" aria-hidden="true">{ITEM_STATE_SYMBOL[item.state]}</span>
                 <span className="conversion-run-title">
-                  <span className="conversion-queue-name" title={item.fileName}>
-                    {item.fileName}
-                  </span>
+                  <MiddleEllipsis className="conversion-queue-name" text={item.fileName} />
                   <span aria-hidden="true">→</span>
                   <span className="visually-hidden">{t("m74CnvConvertsTo")}</span>
                   {item.output.kind === "knownSingle" ? (
-                    <span className="conversion-queue-output" title={item.output.fileName}>
-                      {item.output.fileName}
-                    </span>
+                    <MiddleEllipsis className="conversion-queue-output" text={item.output.fileName} />
                   ) : (
                     <span
                       className="conversion-queue-output conversion-queue-output-set"
@@ -1433,6 +1381,7 @@ function QueueState({
                 <span className="conversion-run-aside">
                   <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
                   <span className="conversion-queue-status">{itemStateLabel(item, t)}</span>
+                  {item === current && itemElapsed !== null ? <span className="conversion-queue-elapsed">{formatClock(itemElapsed)}</span> : null}
                   {/* Only on a row that is actually waiting. Skipping is about
                       an item that has not started; the file being converted
                       now is ended by Stop this file, which says so. The same
@@ -1459,7 +1408,7 @@ function QueueState({
                     </Button>
                   ) : null}
                 </span>
-                <div className="conversion-run-detail">
+                {compact ? null : <div className="conversion-run-detail">
                   {/* Why there is no Skip here, at the row that does not have
                       one. Two rows both read "Waiting" during a rerun and only
                       one is skippable: the other failed in the earlier pass and
@@ -1587,7 +1536,7 @@ function QueueState({
                   item.state === "running" ? null : (
                     <ConversionItemJudgements index={index} item={item} />
                   )}
-                </div>
+                </div>}
               </li>
             );
           }} />
@@ -1659,6 +1608,7 @@ function QueueState({
           ) : null}
         </div>
       ) : null}
+      {queueElapsed === null ? null : <p className="conversion-elapsed">{t("m74CnvElapsed", { time: formatClock(queueElapsed) })}</p>}
       {/* No stop controls until the state read dispatched beside a retry
           reports the rerun running. */}
       {retrying ? null : stopping ? (
@@ -1702,9 +1652,11 @@ function QueueState({
             {t("m74CnvStopExplanation")}
           </p>
           {/* Only while there is a file this control would end, or one it is
-              ending: the quarantine branch is the part a reader cannot undo. */}
+              ending: the quarantine branch is the part a reader cannot undo.
+              Its button's description, not a paragraph on screen (direction A
+              2.3 keeps one line under the stops). */}
           {cancelItemDescribed ? (
-            <p className="conversion-side-note" id="conversion-cancel-item-scope" role="note">
+            <p className="visually-hidden" id="conversion-cancel-item-scope">
               {conversion.cancellingItem || conversion.cancellableItem === null
                 ? t("m74CnvCancelItemExplanation")
                 : t("m74CnvCancelNamed", { name: conversion.cancellableItem.fileName })}
@@ -1798,12 +1750,6 @@ function QueueState({
             : describeDestination(queue.destinationPolicy, t)}</dd>
         </div>
         <div>
-          <dt>{t("m74CnvDestinationBinding")}</dt>
-          <dd>{queue.destinationStatus === "bound"
-            ? t("m74CnvDestinationBound")
-            : t("m74CnvDestinationUnbound")}</dd>
-        </div>
-        <div>
           <dt>{t("m74CnvQueueConflict")}</dt>
           <dd>{t(CONFLICT_POLICY_LABEL[queue.conflictPolicy])}</dd>
         </div>
@@ -1817,12 +1763,69 @@ function QueueState({
  * `LIST_WINDOW_THRESHOLD` items. Each row's content is the caller's; the
  * window decides only which rows are mounted and where.
  */
-function RunList({ items, renderRow }: {
+/**
+ * Wall time since this side first saw `key`, ticking once a second; `null`
+ * while there is no key. A new key starts again from zero.
+ */
+function useSince(key: string | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  const started = useRef<{ readonly key: string; readonly at: number } | null>(null);
+  if (key === null) started.current = null;
+  else if (started.current?.key !== key) started.current = { key, at: Date.now() };
+  useEffect(() => {
+    if (key === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [key]);
+  return started.current === null ? null : Math.max(0, now - started.current.at);
+}
+
+/** Elapsed time as m:ss (h:mm:ss past an hour). */
+export function formatClock(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1000);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours > 0 ? `${String(hours)}:${pad(minutes)}:${pad(seconds % 60)}` : `${String(minutes)}:${pad(seconds % 60)}`;
+}
+
+function RunList({ items, renderRow, follow = null }: {
   readonly items: readonly ConversionQueueItem[];
   readonly renderRow: (item: ConversionQueueItem, index: number, row: ListWindowRow) => ReactElement;
+  /** The running item's key: the list keeps it in view until the reader scrolls. */
+  readonly follow?: string | null;
 }): ReactElement {
   const keys = useMemo(() => items.map((item) => item.datasetHandle), [items]);
-  const { listProps, rows } = useListWindow(keys, 64);
+  const { listProps, rows, windowed, root, offsetOf } = useListWindow(keys, 64);
+  // A reader who scrolls the list takes it over; the running item no longer
+  // pulls it back (direction A 2.3).
+  const readerScrolled = useRef(false);
+  useEffect(() => {
+    const element = root.current;
+    if (element === null) return;
+    const took = () => { readerScrolled.current = true; };
+    element.addEventListener("wheel", took, { passive: true });
+    element.addEventListener("pointerdown", took, { passive: true });
+    element.addEventListener("touchstart", took, { passive: true });
+    return () => {
+      element.removeEventListener("wheel", took); element.removeEventListener("pointerdown", took); element.removeEventListener("touchstart", took);
+    };
+  }, [root]);
+  const placeOf = useRef(offsetOf);
+  placeOf.current = offsetOf;
+  // Once per running item, when it changes.
+  useLayoutEffect(() => {
+    if (follow === null || readerScrolled.current) return;
+    const element = root.current;
+    if (element === null) return;
+    if (windowed) {
+      const top = placeOf.current(follow);
+      if (top !== null && (top < element.scrollTop || top > element.scrollTop + element.clientHeight - 64)) element.scrollTop = Math.max(0, top - 64);
+    } else {
+      [...element.querySelectorAll<HTMLElement>("[data-window-key]")].find(row => row.dataset.windowKey === follow)
+        ?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [follow, windowed, root]);
   return (
     <ol className="conversion-queue-list conversion-run-list" {...listProps}>
       {rows.map((row) => {

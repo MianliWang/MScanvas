@@ -463,12 +463,15 @@ describe("compact settings over a retained intent", () => {
     // This pair has no admitted single-width transition. The advanced paired
     // precision axis still exposes the catalog's legitimate diagonal change.
     expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("32-bit")).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
+    // Advanced is a disclosure under Basic, which stays on screen (direction A 2.2).
+    fireEvent.click(screen.getByRole("button", { name: /^Advanced options/ }));
+    expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("64-bit")).toBeChecked();
     expect(screen.getByLabelText("m/z 64-bit · intensity 64-bit")).toBeChecked();
     expect(screen.getByLabelText("m/z 32-bit · intensity 32-bit")).not.toHaveAttribute("aria-disabled");
     fireEvent.click(screen.getByRole("button", { name: "Change language" }));
     expect(screen.getByLabelText("m/z 64 位 · 强度 64 位")).toBeChecked();
-    fireEvent.click(screen.getByRole("radio", { name: "基本" }));
+    fireEvent.click(screen.getByRole("button", { name: /^高级选项/ }));
+    expect(screen.getByRole("button", { name: /^高级选项/ })).toHaveAttribute("aria-expanded", "false");
     expect(within(screen.getByRole("group", { name: "强度精度" })).getByLabelText("64 位")).toBeChecked();
     expect(onChoose).not.toHaveBeenCalled();
   });
@@ -476,7 +479,7 @@ describe("compact settings over a retained intent", () => {
   it("preserves a valid coordinated precision transition without changing processing", () => {
     const onChoose = vi.fn();
     render(<ConversionSettings configuration={view(ready(), { selectedIntentId: CENTROIDED_64 })} onChoose={onChoose} refusalNoticeId={null} />);
-    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Advanced options/ }));
     fireEvent.click(screen.getByLabelText("m/z 32-bit · intensity 32-bit"));
     expect(onChoose).toHaveBeenCalledExactlyOnceWith(CENTROIDED_32);
   });

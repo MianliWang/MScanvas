@@ -282,9 +282,8 @@ describe("destination request and queue truth", () => {
     await waitFor(() => expect(within(panel).getByText("Requested destination")).toBeVisible());
     const actual = queueSummary();
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
-    expect(within(actual).getByText("Destination binding").nextElementSibling?.textContent).toBe(
-      destinationStatus === "bound" ? en.m74CnvDestinationBound : en.m74CnvDestinationUnbound,
-    );
+    // No "binding" row: the destination says where, and that is the fact (C11).
+    expect(within(actual).queryByText("Destination binding")).toBeNull();
     expect(within(panel).getByRole("radio", { name: "Custom local folder" })).toBeChecked();
     fireEvent.click(within(panel).getByRole("radio", { name: "Beside each source" }));
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
@@ -318,13 +317,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     fireEvent.click(within(await screen.findByRole("row", { name: /sample-7\.lcd/ })).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(
-          /One Shimadzu LabSolutions LCD acquisition will be converted to mzML\./,
-        ),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(1));
     // The plan row itself says the family and the output name.
     expect(within(panel).getByText("sample-7.mzML")).toBeVisible();
     expect(within(panel).getAllByText("Shimadzu LabSolutions LCD").length).toBeGreaterThan(0);
@@ -335,7 +328,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     });
   });
 
-  it("describes a mixed queue by count and by exact per-family counts", async () => {
+  it("names each row's family in a mixed queue, in plan order", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [first, lcdRow, second],
       availability: availableBackend,
@@ -345,16 +338,9 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     selectAllRows();
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(
-          en.m74CnvMixedFamilies
-            .replace("{{count}}", "3")
-            .replace("{{families}}", "2 Thermo RAW · 1 Shimadzu LabSolutions LCD"),
-        ),
-      ).toBeVisible();
-    });
-    // Each plan row still names its own family, in the visible order.
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list .conversion-queue-kind")).toHaveLength(3));
+    // Each plan row names its own family, in the visible order; the rail adds
+    // no sentence that counts them again (C11).
     const orderedKinds = [...panel.querySelectorAll(".conversion-queue-kind")].map(
       (node) => node.textContent,
     );
@@ -471,11 +457,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(/One Thermo RAW acquisition will be converted/),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(1));
 
     await pressConvert(panel, "Convert 1 eligible…");
     await waitFor(() => {
@@ -524,11 +506,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     selectAllRows();
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(/2 Thermo RAW acquisitions will be converted to mzML/),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(2));
     // Counted out loud rather than silently dropped.
     expect(
       within(panel).getByText(/3 requested · 2 eligible · 1 excluded/),

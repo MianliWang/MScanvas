@@ -67,7 +67,11 @@ function word(locale: Locale, key: string): string {
 }
 
 function fill(template: string, values: Record<string, string | number>): string {
-  return template.replace(/\{\{(\w+)\}\}/gu, (_, key: string) => String(values[key] ?? ""));
+  // A `{{count, number}}` placeholder formats the number, as i18next does in en.
+  return template.replace(/\{\{(\w+)(, number)?\}\}/gu, (_, key: string, number?: string) => {
+    const value = values[key];
+    return number !== undefined && typeof value === "number" ? value.toLocaleString("en-US") : String(value ?? "");
+  });
 }
 
 /** Any estimate: the lookahead lets the stop control's own "remaining items" through. */
@@ -500,12 +504,13 @@ describe("PM9.4 conversion journey, rendered", () => {
       return { ordered, settingsInPlan: plan?.contains(at(".conversion-settings")) ?? false, fieldsetsAfterSummary: between.length };
     }, CONVERT);
     expect(order).toEqual({ ordered: true, settingsInPlan: true, fieldsetsAfterSummary: 0 });
-    // R4: compression in words, like the other axes.
+    // C11 (was R4): the rail lists only what differs from the shipped settings,
+    // so the shipped compression is not repeated there; the form says it.
     const compression = await browser.execute((label: string) => {
       const term = [...document.querySelectorAll(".conversion-plan-summary .metadata-list dt")].find((node) => (node.textContent ?? "").trim() === label);
-      return (term?.nextElementSibling?.textContent ?? "").trim();
+      return term === undefined ? null : (term.nextElementSibling?.textContent ?? "").trim();
     }, en.m74CnvCompression);
-    expect(compression).toBe(en.cnvZlib);
+    expect(compression).toBe(null);
     // R7: one filled primary, and it is Convert.
     expect(review.filled).toEqual([fill(word("en", "m74CnvConvertSelected"), { count: 2 })]);
 

@@ -148,13 +148,6 @@ describe("adding converted outputs to the workspace", () => {
     expect(adopt).not.toHaveAttribute("aria-disabled");
     // The action names itself; nothing describes it until it is refused.
     expect(adopt).not.toHaveAttribute("aria-describedby");
-
-    // The honest fallback, said before it is needed rather than after.
-    expect(
-      within(panel).getByText(
-        "If this queue is replaced, use Add files… to add its outputs.",
-      ),
-    ).toBeVisible();
   });
 
   it("says one output in the singular", async () => {
