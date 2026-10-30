@@ -51,7 +51,9 @@ changes may merge again, each with the owner's approval as before.
   slice; section 6.1 records what SCIEX's derived companion adds).
 - **Not selected now:** stored-result clipboard copy, a subfolder default and a
   queue capacity above 16 (the last needs a stated basis). Other
-  evidence-gated items stay gated.
+  evidence-gated items stay gated. *2026-10-29: the queue capacity is
+  selected, at 1,024 ([ADR 0057](../architecture/adr/0057-conversion-capacity-and-viewing-during-conversion.md);
+  below).*
 - **Dependencies and Node 26:** after publication, in batches, before beta 2.
 - **Merging:** test-only and docs-only pull requests may be merged by the
   maintainer agent once every required check passes; product, dependency and
@@ -99,6 +101,49 @@ changes may merge again, each with the owner's approval as before.
     reference for chart design, not a dependency: its licence (PolyForm
     Noncommercial) does not allow copying it into this Apache-2.0 project.
 
+**Owner decisions, 2026-10-29** (every recommendation put to the owner was
+accepted):
+
+1. **`serde` in the conversion crate.** `serde` becomes a direct dependency of
+   `crates/proteowizard`; it is already a workspace dependency and in
+   `Cargo.lock`, so no package is added. The wire deserializes into the
+   crate's unvalidated parts, and the structured intent's validating
+   constructor checks them ([ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+   dependency note).
+2. **The "not verified by MSCanvas" flag survives adoption.** It is carried
+   into an adopted output's provenance, in the session and in the project
+   document, not only into the queue outcome and diagnostics. A project schema
+   bump is accepted (ADR 0055, risks).
+3. **Conversion capacity and viewing during conversion**
+   ([ADR 0057](../architecture/adr/0057-conversion-capacity-and-viewing-during-conversion.md)):
+   - an open preview's selected spectra may be read natively during a
+     conversion, once ADR 0056's reader is integrated;
+   - opening a new preview during a conversion stays refused for now, because
+     it would run `msaccess` beside `msconvert`;
+   - queue capacity rises from 16 to 1,024, the roster cap, so one checked
+     roster converts as one queue; conversion lists must be windowed;
+   - parallel conversion waits for a throughput measurement under a bounded
+     ProteoWizard hold release (week 2); until then conversion stays serial.
+4. **User-saved conversion presets**
+   ([ADR 0058](../architecture/adr/0058-user-saved-conversion-presets.md)):
+   presets are user-saved only, MSCanvas ships none, and none is selected at
+   startup. A preset may hold a picker step because the user wrote it, and
+   applying it shows the step's lossy effect in the plan summary. ADR 0055's
+   decision 7 now reads "no default or MSCanvas-authored preset inserts a
+   picker".
+5. **Numpress in the viewer.** The viewer keeps the typed refusal. An adopted
+   numpress output opens, and its spectra show that refusal
+   ([ADR 0056](../architecture/adr/0056-project-owned-mzml-reader-for-viewing.md),
+   open question).
+
+**Still open** (not decided on 2026-10-29):
+
+- the R0 real-file comparison for the reader (ADR 0056, decision 8): the PRIDE
+  `PXD081190` download, an MS1 profile-mode file from the owner, and a
+  ProteoWizard hold release;
+- whether product pull requests may be merged without the owner;
+- which demo direction the interface follows.
+
 ## 3. Parallel execution rules
 
 - **Lanes by disjoint files.** Each lane works in its own git worktree with
@@ -116,7 +161,9 @@ changes may merge again, each with the owner's approval as before.
   calendar (section 4), so each phase asks its open questions once.
 - **ADR numbers are pre-assigned** to avoid the four features racing for 0051:
   0051 folder/drop vendor ingestion, 0052 per-output adoption, 0053 PNG text
-  metadata, 0054 spreadsheet CSV. 0055 is msconvert parity (option C).
+  metadata, 0054 spreadsheet CSV. 0055 is msconvert parity (option C), 0056
+  the mzML reader for viewing, 0057 conversion capacity and viewing during
+  conversion, 0058 user-saved conversion presets.
 
 ## 4. Pace and estimating basis
 
@@ -293,7 +340,7 @@ writer and Rust's ownership of files.
 
 ### 7.1 Near-term engineering
 
-- CI runs no browser or native e2e; `windows-smoke.yml` has never run.
+- CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
 - Security alerts (enabled 2026-10-27), triaged 2026-10-28 — none reaches the
@@ -402,11 +449,19 @@ None can be delivered by engineering alone; each waits for one input.
   rerun to replace a damaged result, diagnostics upload. "Terminal" means
   closed for the route that decided it, not impossible.
 - **Reversible, not selected:** explicit overwrite (needs a new finalization
-  contract), queue capacity above 16 (needs a stated basis), pause/resume and
-  parallel conversion (need a measured need), the settings summary and the
-  steppers (kept by PM9's freeze), presets and target-file import (overlap
-  M10), on-screen result sorting and filtering, view-scoped export, history
-  notes, stored-result clipboard copy.
+  contract), pause/resume (needs a measured need), the settings summary and the
+  steppers (kept by PM9's freeze), target-file import (overlaps M10), on-screen
+  result sorting and filtering, view-scoped export, history notes,
+  stored-result clipboard copy.
+  - *2026-10-29:* three entries left this list.
+    - **Queue capacity above 16** is selected at 1,024, on the basis
+      [ADR 0057](../architecture/adr/0057-conversion-capacity-and-viewing-during-conversion.md)
+      states.
+    - **Parallel conversion** is no longer waiting for a need. It waits for
+      ADR 0057's throughput measurement under a bounded hold release, and
+      conversion stays serial until then.
+    - **Presets** are adopted as user-saved conversion presets
+      ([ADR 0058](../architecture/adr/0058-user-saved-conversion-presets.md)).
 - **Owned elsewhere:** Workbench restore on reopen (WSP-010), surviving queue
   and adoption history (RUN-007), remembered choices (M7.5 preferences),
   saved typed plans and large unattended batches (M10).
@@ -422,11 +477,16 @@ None can be delivered by engineering alone; each waits for one input.
 ## 9. Open owner decisions
 
 - The frontend's target: what "meets requirements" means in execution and
-  scope, before any redesign.
-- Acceptance of [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)
-  (option C). The help text it needed was captured on 2026-10-28.
-- Whether to write a project-owned mzML reader in place of `msaccess` for
-  viewing (a written decision and dependency approval).
+  scope, before any redesign, and which demo direction the interface follows.
+- *Answered 2026-10-29:* the owner accepted
+  [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)
+  (option C) and
+  [ADR 0056](../architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)
+  with its dependency request, and chose the typed refusal for numpress,
+  truncation and prediction (section 2).
+- ADR 0056's re-measurement (R0): the PRIDE `PXD081190` download, an MS1
+  profile-mode file the owner authorizes, and a ProteoWizard hold release.
+- Whether product pull requests may be merged without the owner.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted.
