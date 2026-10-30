@@ -4756,6 +4756,29 @@ fn the_stored_target_figure_document_is_unchanged() {
     );
 }
 
+/// A stored target's saved PNG carries its figure's title and description.
+///
+/// Through `FigureOutput::png`, the call the export command makes. Target 0's
+/// title has quotation marks and an em dash, and target 1's is Chinese.
+#[test]
+fn a_stored_target_png_carries_its_title_and_description() {
+    let settings = crate::preview::dto::FigureSettingsDto {
+        width_px: 1_200,
+        height_px: 640,
+        png_dpi: 300,
+        theme: "light".to_owned(),
+    };
+    let output =
+        crate::preview::scientific_output::FigureOutput::from_wire(&settings).expect("settings");
+    let resolution = output.png_resolution(&settings).expect("a PNG resolution");
+    for position in [0, 1] {
+        let scratch = Scratch::new("m92-png-text");
+        let figure = pinned_figure(&scratch, position);
+        let png = output.png(&figure, resolution).expect("a PNG");
+        crate::preview::scientific_output::assert_png_carries_its_text(&png, &figure);
+    }
+}
+
 const RTS: [f64; 5] = [100.0, 110.0, 120.0, 130.0, 140.0];
 const M0: [f64; 5] = [0.0, 500.0, 2_000.0, 400.0, 0.0];
 

@@ -2195,4 +2195,25 @@ mod tests {
             include_str!("../../../../../fixtures/plot-golden/linked-full-run.svg"),
         );
     }
+
+    /// A saved chromatogram or linked PNG carries its figure's title and
+    /// description (ADR 0053), a typed one with markup and Chinese included.
+    #[test]
+    fn a_saved_chromatogram_or_linked_png_carries_its_title_and_description() {
+        use crate::preview::export::png_of;
+        use crate::preview::figure::PngDpi;
+        use crate::preview::scientific_output::assert_png_carries_its_text;
+
+        let source = golden_chromatogram();
+        let chromatogram =
+            figure_spec(&source, full(&source), both(), settings()).expect("a figure");
+        let pair = linked(&source, &selected(2), full(&source), both());
+        let typed = pair
+            .clone()
+            .with_title(Label::new("Run 7 <QC> & \"blank\" \u{2014} 选定扫描").expect("a label"));
+        for figure in [chromatogram, pair, typed] {
+            let png = png_of(&figure, settings(), PngDpi::default()).expect("a PNG");
+            assert_png_carries_its_text(&png, &figure);
+        }
+    }
 }

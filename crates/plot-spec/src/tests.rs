@@ -484,6 +484,50 @@ fn every_figure_carries_a_title_and_a_description() {
     assert!(document.contains("<desc>"));
 }
 
+/// The accessible pair comes back as words, from the call that wrote it.
+///
+/// What ADR 0053 puts in a PNG: the `<title>` and `<desc>` text an XML reader
+/// gets from this very document, so an escaped character comes back as itself
+/// and non-ASCII text is untouched. The document is the one `render` writes.
+#[test]
+fn render_with_text_returns_the_document_and_its_own_words() {
+    let unescaped = |document: &str, name: &str| {
+        document
+            .split(&format!("<{name}>"))
+            .nth(1)
+            .and_then(|rest| rest.split(&format!("</{name}>")).next())
+            .expect("the document carries the element")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
+    };
+    let title = "Ion <b>&\"count\"</b> 'x' \u{2014} 咖啡因 µ";
+    let caption = "Caption <i>&</i> \"quoted\" \u{2014} 标准品.";
+    let panel = || {
+        spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![1.0, 2.0], vec![1.0, 2.0]),
+        )
+    };
+    let titled = figure_of(panel())
+        .with_title(label(title))
+        .with_caption(Caption::new(caption).expect("a caption"));
+    let untitled = figure_of(panel());
+
+    for figure in [&titled, &untitled] {
+        let rendered = svg::render_with_text(figure);
+        assert_eq!(rendered.svg, svg::render(figure), "the same document");
+        assert_eq!(rendered.title, unescaped(&rendered.svg, "title"));
+        assert_eq!(rendered.description, unescaped(&rendered.svg, "desc"));
+    }
+    let rendered = svg::render_with_text(&titled);
+    assert_eq!(rendered.title, title);
+    assert!(rendered.description.starts_with(&format!("{caption} ")));
+    assert_eq!(svg::render_with_text(&untitled).title, "Mass spectrum");
+}
+
 /// An unreported spectrum is described as unreported.
 ///
 /// Not as centroid, whatever the marks look like. The description is the only

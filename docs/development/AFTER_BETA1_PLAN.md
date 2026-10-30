@@ -376,6 +376,11 @@ writer and Rust's ownership of files.
 - **Slices:** plot-spec accessor (`render_with_text`, SVG bytes unchanged);
   PNG chunks with golden tests per figure kind; records and native evidence.
   **Size S.**
+- **Status, 2026-10-30:** the accessor, the PNG chunks and their golden tests
+  are implemented on branch `be/png-text`
+  ([ADR 0053](../architecture/adr/0053-png-text-metadata.md), accepted), with
+  the changelog entry. Native evidence and the release-notes line are still
+  to come.
 
 ### 6.4 Spreadsheet CSV for the targeted results table (ADR 0054)
 
