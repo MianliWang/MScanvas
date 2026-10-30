@@ -205,9 +205,11 @@ describe("creating a layer from a reference", () => {
       expect(control.hasAttribute("disabled")).toBe(false);
       expect(control.getAttribute("aria-disabled")).toBe("true");
       expect(control.getAttribute("data-project-layer-unavailable")).toBe("notInWorkbench");
-      expect(control.getAttribute("title")).toBe(en.projectLayerNeedsWorkbench);
+      expect(control.getAttribute("title")).toBeNull();
       const reason = document.getElementById(control.getAttribute("aria-describedby") ?? "");
-      expect(reason?.textContent).toBe(en.projectLayerNeedsWorkbench);
+      // The first step of the chain (B4): an unchecked file must be checked
+      // before it can be added, and added before a layer is made from it.
+      expect(reason?.textContent).toBe(id === CHECKED ? en.projectLayerNeedsWorkbench : en.projectAddNeedsCheck);
       // Said directly under the actions it explains (B4), and the row leads
       // with the actions that can be taken now (review 12).
       expect(control.closest(".project-row-actions")?.nextElementSibling).toBe(reason);

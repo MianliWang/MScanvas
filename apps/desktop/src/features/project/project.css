@@ -58,10 +58,11 @@
   gap: 4px 12px;
 }
 
+/* The page title outranks every section title (rendered review). */
 .project-header h2 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 700;
   line-height: 1.3;
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
@@ -223,7 +224,7 @@
 
 .project-section h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--color-text-primary);
 }

@@ -1247,7 +1247,7 @@ export const en = {
   // layer's visible name is its source's label, and its availability is the
   // source's Workbench row resolved against the roster the page already holds.
   projectLayers: "Layers",
-  projectNoLayers: "No layers yet. Create one from a reference in the Workbench.",
+  projectNoLayers: "No layers yet.",
   projectCreateLayer: "Create layer",
   projectCreateLayerNamed: "Create layer: {{name}}",
   projectShowLayer: "Show layer",

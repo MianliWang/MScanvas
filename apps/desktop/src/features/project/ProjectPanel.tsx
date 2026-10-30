@@ -23,7 +23,9 @@
  * is running rather than leaving silence to stand for it.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+
+import { useListWindow, type ListWindowRow } from "../mzml-preview/conversionListWindow";
 
 import { Button, Icon, IconButton } from "../../components/ui";
 import type { PreviewError } from "../mzml-preview/contracts";
@@ -254,6 +256,22 @@ export function busyKey(busy: ProjectBusy) {
  * "it is not there" are said by the row's own state text; only "check it
  * first" and "the Workbench is busy" have a sentence of their own here.
  */
+/**
+ * A project list, windowed past `LIST_WINDOW_THRESHOLD` rows by the conversion
+ * lists' own window; each row spreads `row.ref`, `row.style` and its key.
+ */
+function WindowedProjectList<T>({ items, keyOf, renderRow }: {
+  readonly items: readonly T[];
+  readonly keyOf: (item: T) => string;
+  readonly renderRow: (item: T, row: ListWindowRow) => ReactElement;
+}) {
+  const keys = useMemo(() => items.map(keyOf), [items]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { listProps, rows } = useListWindow(keys, 96);
+  return <ul className="project-list" {...listProps}>
+    {rows.map((row) => { const item = items[row.index]; return item === undefined ? null : renderRow(item, row); })}
+  </ul>;
+}
+
 function unavailableToAddKey(input: ProjectInput, workspaceBusy: boolean) {
   if (input.verification !== "matchingRecordedContent") {
     // The reference's own state first, and it wins. A busy Workbench is a
@@ -1007,8 +1025,9 @@ export function ProjectPanel({
             {state.inputs.length === 0 ? (
               <p id={NO_REFERENCES_ID} className="project-empty">{t("projectNoReferences")}</p>
             ) : (
-              <ul className="project-list">
-                {state.inputs.map((input) => {
+              // Windowed past 50 rows, like every conversion list: a project
+              // holds up to 512 references.
+              <WindowedProjectList items={state.inputs} keyOf={(input) => input.id} renderRow={(input, row) => {
                   const layer = layerOf(input);
                   const attached = inWorkbench(input) !== null;
                   const reasonId = `project-layer-reason-${input.id}`;
@@ -1016,6 +1035,9 @@ export function ProjectPanel({
                   return (
                     <li
                       key={input.id}
+                      ref={row.ref}
+                      style={row.style}
+                      data-window-key={row.key}
                       className={`project-row ${verificationTone(input)}`}
                       data-project-input={input.id}
                       data-verification={input.verification}
@@ -1144,13 +1166,7 @@ export function ProjectPanel({
                             refused={working || addRefused !== null}
                             reasonId={addRefused === null && working ? BUSY_ID : undefined}
                             aria-describedby={
-                              addRefused === null ? undefined : `project-state-${input.id}`
-                            }
-                            title={
-                              addRefused === "projectAddNeedsCheck" ||
-                              addRefused === "projectAddWorkspaceBusy"
-                                ? t(addRefused)
-                                : undefined
+                              addRefused === null ? undefined : `project-state-${input.id} ${reasonId}`
                             }
                             aria-label={t("projectAddToWorkbenchNamed", { name: input.label })}
                             data-project-add-to-workbench={input.id}
@@ -1172,11 +1188,6 @@ export function ProjectPanel({
                           refused={layer === null && (working || !attached)}
                           reasonId={layer === null && attached && working ? BUSY_ID : undefined}
                           aria-describedby={layer === null && !attached ? reasonId : undefined}
-                          title={
-                            layer === null && !attached
-                              ? t("projectLayerNeedsWorkbench")
-                              : undefined
-                          }
                           aria-label={t(
                             layer === null ? "projectCreateLayerNamed" : "projectShowLayerNamed",
                             { name: input.label },
@@ -1212,18 +1223,19 @@ export function ProjectPanel({
                           {t("projectDetails")}
                         </Button>
                       </div>
-                      {/* Why Create layer waits, directly under it: nothing
-                          else on the row says the reference is not in the
-                          Workbench. */}
-                      {layer === null && !attached ? (
+                      {/* One visible reason per row, the first step of the
+                          chain (B4): Add to Workbench waits on this; Create
+                          layer waits on Add. Both point here. */}
+                      {inWorkbench(input) === null && addRefused !== null ? (
+                        <p id={reasonId} className="project-action-reason project-row-reason">{t(addRefused)}</p>
+                      ) : layer === null && !attached ? (
                         <p id={reasonId} className="project-action-reason project-row-reason">
                           {t("projectLayerNeedsWorkbench")}
                         </p>
                       ) : null}
                     </li>
                   );
-                })}
-              </ul>
+                }} />
             )}
           </section>
 
@@ -1406,8 +1418,8 @@ export function ProjectPanel({
             {state.runs.length === 0 ? (
               <p className="project-empty">{t("projectNoRuns")}</p>
             ) : (
-              <ul className="project-list">
-                {state.runs.map((run) => {
+              // Windowed past 50 rows: a project keeps up to 2,048 runs.
+              <WindowedProjectList items={state.runs} keyOf={(run) => run.id} renderRow={(run, row) => {
                   const artifacts = state.artifacts.filter((artifact) =>
                     run.outputArtifactIds.includes(artifact.id),
                   );
@@ -1420,6 +1432,9 @@ export function ProjectPanel({
                   return (
                     <li
                       key={run.id}
+                      ref={row.ref}
+                      style={row.style}
+                      data-window-key={row.key}
                       className="project-row project-run"
                       data-project-run={run.id}
                       data-outcome={run.outcome}
@@ -1554,8 +1569,7 @@ export function ProjectPanel({
                       </p>
                     </li>
                   );
-                })}
-              </ul>
+                }} />
             )}
           </section>
         </>

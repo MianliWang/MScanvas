@@ -204,23 +204,23 @@ describe("adding a project reference to the Workbench", () => {
     expect(addControl(MATCHING).getAttribute("data-project-add-unavailable")).toBe(null);
 
     // Every other state is inert, and each has a different reason -- because
-    // what the reader should do next is different in each. Only "check it
-    // first" adds a sentence; the row's own state text says the rest.
+    // what the reader should do next is different in each. Each says it on a
+    // visible line under the row's actions (B4), never in a tooltip.
     const reasons = [UNCHECKED, CHANGED, MISSING, UNREADABLE].map((id) => [
       addControl(id).getAttribute("aria-disabled"),
       addControl(id).getAttribute("data-project-add-unavailable"),
       addControl(id).getAttribute("title"),
+      document.getElementById(`project-layer-reason-${id}`)?.textContent,
     ]);
     expect(reasons).toEqual([
-      ["true", "projectAddNeedsCheck", en.projectAddNeedsCheck],
-      ["true", "projectAddChanged", null],
-      ["true", "projectAddMissing", null],
-      ["true", "projectAddUnavailable", null],
+      ["true", "projectAddNeedsCheck", null, en.projectAddNeedsCheck],
+      ["true", "projectAddChanged", null, en.projectAddChanged],
+      ["true", "projectAddMissing", null, en.projectAddMissing],
+      ["true", "projectAddUnavailable", null, en.projectAddUnavailable],
     ]);
-    // The reason is on screen in words, and each inert control points at it
-    // rather than hiding it in a tooltip.
+    // The reason is on screen in words, and each inert control points at it.
     for (const id of [UNCHECKED, CHANGED, MISSING, UNREADABLE]) {
-      expect(addControl(id).getAttribute("aria-describedby")).toBe(`project-state-${id}`);
+      expect(addControl(id).getAttribute("aria-describedby")).toBe(`project-state-${id} project-layer-reason-${id}`);
       expect(document.getElementById(`project-state-${id}`)?.textContent).toBeTruthy();
     }
     expect(document.getElementById(`project-state-${UNCHECKED}`)?.textContent).toBe(
@@ -390,7 +390,7 @@ describe("adding a project reference to the Workbench", () => {
     expect(addControl(MATCHING).getAttribute("data-project-add-unavailable")).toBe(
       "projectAddWorkspaceBusy",
     );
-    expect(addControl(MATCHING).getAttribute("title")).toBe(en.projectAddWorkspaceBusy);
+    expect(document.getElementById(`project-layer-reason-${MATCHING}`)?.textContent).toBe(en.projectAddWorkspaceBusy);
 
     await press(addControl(MATCHING));
     expect(api.addProjectInputToWorkspace).not.toHaveBeenCalled();
@@ -461,7 +461,7 @@ describe("adding a project reference to the Workbench", () => {
       "projectAddMissing",
     );
     expect(addControl(MISSING).getAttribute("title")).toBeNull();
-    expect(addControl(MISSING).getAttribute("aria-describedby")).toBe(`project-state-${MISSING}`);
+    expect(addControl(MISSING).getAttribute("aria-describedby")).toBe(`project-state-${MISSING} project-layer-reason-${MISSING}`);
     // Only the otherwise-addable reference is the one waiting for the
     // Workbench.
     expect(addControl(MATCHING).getAttribute("data-project-add-unavailable")).toBe(

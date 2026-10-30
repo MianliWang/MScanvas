@@ -284,9 +284,11 @@ describe("the setup", () => {
         "var(--color-accent)",
       );
       const sectionHeading = rule(".project-section h3")?.style;
-      expect(sectionHeading?.getPropertyValue("font-size")).toBe("16px");
+      // The page title outranks every section title (rendered review): 17px
+      // bold over 14px.
+      expect(sectionHeading?.getPropertyValue("font-size")).toBe("14px");
       expect(sectionHeading?.getPropertyValue("color")).toBe("var(--color-text-primary)");
-      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("18px");
+      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("17px");
     } finally {
       style.remove();
     }

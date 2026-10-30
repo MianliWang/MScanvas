@@ -1210,7 +1210,7 @@ export const zhCN = {
   provenanceInspectArtifactOf: "查看 {{when}} 那次运行产生的记录",
   // --- M8.4 layers.
   projectLayers: "图层",
-  projectNoLayers: "尚无图层。可从工作台中的引用创建。",
+  projectNoLayers: "尚无图层。",
   projectCreateLayer: "创建图层",
   projectCreateLayerNamed: "从 {{name}} 创建图层",
   projectShowLayer: "显示图层",

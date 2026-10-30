@@ -849,7 +849,9 @@ button:disabled,
 /* A list past the window threshold (1,024 items at most, ADR 0057) is its own
    scroll box, because the window is measured against it; a short list never
    is. */
+.project-list[data-windowed="true"] { max-height: max(320px, calc(100vh - 260px)); }
 .conversion-queue-list[data-windowed="true"],
+.project-list[data-windowed="true"],
 .conversion-requested-list[data-windowed="true"] {
   overflow: auto;
   overscroll-behavior: contain;
