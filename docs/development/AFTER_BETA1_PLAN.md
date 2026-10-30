@@ -406,6 +406,18 @@ writer and Rust's ownership of files.
   the operation and its commands; the interface; export provenance). The
   interface slice waits on the owner's choice of interface direction. Native QA
   needs a bounded ProteoWizard hold release.
+  - Slice 1, the cache library, is in [PR #172](https://github.com/MianliWang/MScanvas/pull/172) (2026-10-30): the root
+    and its marker, the key, the manifest, verification, publishing, the pins,
+    eviction, Clear and the staging sweep, with Rust tests. No command, UI or
+    conversion yet; slice 2 is next.
+  - Left to slice 2: a chunked, cancellable hash of the RAW for Checking file
+    and Checking output; reading the volume's free space for `make_space`; the
+    1.5 GiB refusal before any work; the summary and Clear DTOs over `usage`
+    and `clear`; and codes for a check that could not be made
+    (`Lookup::Unreadable`) and for a damaged entry that could not be removed,
+    which decision 10's table does not list. An attempt that a sharing refusal
+    keeps from being removed after `view_cache_not_stored` stays until a later
+    session's sweep, because decision 6 leaves this process's attempts alone.
 - CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
@@ -426,9 +438,24 @@ writer and Rust's ownership of files.
   - owner decision, 2026-10-30: these 44 alerts (Pillow 41, extract-zip 2,
     glib 1) are not dismissed; they stay open and are fixed later as above (see
     [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md)).
-- `PM9.7-I2 … zh-CN-1366x768` (`e2e/specs/pm9.7-integrated.browser.e2e.ts:397`,
-  the scrolled-to-end check) is flaky in CI: it failed on `main` at `7c2c774`
-  and on PR #167 at `9f7b1be` with no frontend change, and passed on rerun.
+- The `PM9.7-I2 … zh-CN-1366x768` flake (the browser spec's scrolled-to-end
+  check, 2 px short in CI on `main` at `7c2c774` and on PRs #167 and #169;
+  reruns passed on #167 and #169, and the next push to `main` passed) is fixed
+  in the test, pending confirmation on Browser e2e 6/6. The case set the end
+  once, right after the selected spectrum reported its range. Under reduced
+  motion, which only the zh-CN cases emulate, `app.css` turns every style
+  change into a 0.01 ms transition, so a commit's layout can land a frame
+  later. Locally that was measured as 1 px: the spectrum summary's line goes
+  from 16.5 px to 19.5 px (11 px to 13 px font) and loses a 2 px margin a frame
+  after the end was set. The 2 px CI state was not captured; CI's failure
+  frame matches the local one except for the evidence column's scroll. The
+  case now waits for the spectrum's drawing, and both its scrolls set the end
+  again until it holds for five frames, whichever commit lands late. Left
+  open: that reduced-motion rule adds transitions where none are declared (a
+  question for the interface rebuild, where the summary no longer changes
+  class); the native I2 (`e2e/specs/pm9.7-integrated.native.e2e.ts`) still
+  sets the end once; the browser workflow keeps screenshots but not
+  `evidence.json`.
 - The real targeted-MS1 engine qualification and, before any release ships the
   runtime, its packaging, licence qualification and worker confinement.
 - Exported values are not the stored binary values: a spectrum is read through
