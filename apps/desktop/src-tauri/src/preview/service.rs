@@ -871,9 +871,13 @@ impl PreviewService {
                 ..Default::default()
             };
         };
-        let facts = observed
-            .authority
-            .bound_identity()
+        // The bound identity describes this reading only while the binding the
+        // reading was taken under is still current: a configuration read or a
+        // conversion can bind another build without taking a new reading.
+        let current = observed.authority.projection().to_dto().receipt();
+        let facts = (reading.authority.receipt() == current)
+            .then(|| observed.authority.bound_identity())
+            .flatten()
             .map(InstallationIdentity::diagnostic_facts)
             .unwrap_or_default();
         crate::environment_diagnostics::Backend {

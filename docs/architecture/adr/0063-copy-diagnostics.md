@@ -45,8 +45,8 @@ redacted ProteoWizard text; this summary holds no backend text at all.
 | System | `WebView2 Runtime` | the runtime's own version string | digits and dots |
 | ProteoWizard | `Checked this session`, `Quarantined` | whether a reading exists; whether the session stopped trusting the backend | `yes`/`no` |
 | ProteoWizard | `State`, `Origin`, `Failure` | the last reading's verdict, `automatic`/`chosen`, and its failure kind | code |
-| ProteoWizard | `Release`, `Build date`, `Source revision` | the reported build identity | digits and dots; `Jan 13 2026`; 6–40 hex digits |
-| ProteoWizard | `msconvert SHA-256` | the digest discovery bound to the executable | 64 hex digits |
+| ProteoWizard | `Release`, `Build date`, `Source revision` | the reported build identity; the revision from the identity the last reading bound | digits and dots; `Jan 13 2026`; 6–40 hex digits |
+| ProteoWizard | `msconvert SHA-256` | the digest discovery bound to the executable the last reading described | 64 hex digits |
 | ProteoWizard | `Folder` | which known root the usable reading's folder sits under, never the folder (decision 4) | one of five placeholders |
 | ProteoWizard | `Remembered folder`, `… refused at startup`, `… not saved` | whether a folder is remembered, and the two owned codes beside it. Never the remembered path | `yes`/`no`; code |
 | View cache | `Usage` | `not in this build` until ADR 0060's slice 2 gives the session a cache; then the held cache's usage, never by opening one | fixed |
@@ -62,6 +62,13 @@ section says `Checked this session: no`, and every value a reading would give,
 `Failure` included, is `unknown`. `Quarantined` and the three
 `Remembered folder` lines are facts about the session and the preference
 record, known without a reading, and are stated as they are.
+
+Every backend value describes one reading. A configuration read or a conversion
+can bind another build without taking a new reading, so the source revision and
+the `msconvert` digest are taken from the bound identity only while the binding
+the reading was taken under is still current, and are `unknown` after it
+changed, never the new build's facts beside the old reading's release and
+folder.
 
 ### 2. What never goes in
 

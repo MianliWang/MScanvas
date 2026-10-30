@@ -1,13 +1,16 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
-use mscanvas_proteowizard::Redactor;
+use mscanvas_proteowizard::{PreviewOperation, Redactor, Sha256Digest};
 
 use super::{
     Backend, Facts, KnownRoots, RECENT_ERROR_CAPACITY, RecentError, RecentErrors, recent_errors,
     render, summary,
 };
 use crate::preferences::UiPreferenceStore;
-use crate::preview::dto::PreviewErrorDto;
+use crate::preview::InstallationIdentity;
+use crate::preview::backend::{OperationAttempt, PreviewProvider};
+use crate::preview::dto::{BackendAvailabilityDto, PreviewErrorDto};
 use crate::preview::idle_provider::NoProcess;
 use crate::preview::service::PreviewService;
 
@@ -458,5 +461,71 @@ fn a_boundary_error_joins_the_ring_by_its_code_alone() {
         entries
             .iter()
             .all(|entry| !entry.code.to_lowercase().contains("plantedsample"))
+    );
+}
+
+/// A usable backend that is whichever build the test last pointed it at.
+struct Swappable(Arc<Mutex<InstallationIdentity>>);
+
+fn build(revision: &str) -> InstallationIdentity {
+    InstallationIdentity::for_test_probed(
+        &PathBuf::from(format!(r"C:\fake\{revision}")),
+        "3.0.26013",
+        None,
+        Some(revision),
+        Sha256Digest::from_bytes([0xAB; 32]),
+    )
+}
+
+impl PreviewProvider for Swappable {
+    fn use_installation(&self, _home: Option<PathBuf>) {}
+
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        let verdict = BackendAvailabilityDto {
+            state: "available".to_owned(),
+            origin: "automatic".to_owned(),
+            release: Some("3.0.26013".to_owned()),
+            build_date: None,
+            same_installation: true,
+            failure: None,
+        };
+        (verdict, Some(self.0.lock().expect("test lock").clone()))
+    }
+
+    fn run(
+        &self,
+        _source: &Path,
+        _operation: &PreviewOperation,
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        panic!("the summary's tests run no preview");
+    }
+}
+
+/// A configuration read or a conversion can bind another build without a new
+/// reading. The summary then says nothing about that build beside the reading
+/// it did not take, rather than mixing the two.
+#[test]
+fn backend_facts_all_describe_the_one_reading_the_session_holds() {
+    let current = Arc::new(Mutex::new(build("aaaaaaa")));
+    let service = PreviewService::new(Box::new(Swappable(Arc::clone(&current))));
+    service.inspect_backend();
+    assert_eq!(
+        service.backend_environment().source_revision.as_deref(),
+        Some("aaaaaaa")
+    );
+
+    *current.lock().expect("test lock") = build("bbbbbbb");
+    service
+        .read_conversion_configuration()
+        .expect("the configuration read answers");
+    let backend = service.backend_environment();
+    assert!(backend.checked);
+    assert_eq!(backend.source_revision, None, "{backend:?}");
+    assert_eq!(backend.msconvert_sha256, None, "{backend:?}");
+
+    service.inspect_backend();
+    assert_eq!(
+        service.backend_environment().source_revision.as_deref(),
+        Some("bbbbbbb")
     );
 }
