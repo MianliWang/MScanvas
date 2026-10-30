@@ -18,7 +18,7 @@ import { MZML_ROW } from "../support/fixtures";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, installIpcBoundary } from "../support/harness";
 import { EMPTY_ROSTER, NO_PROJECT, scenario } from "../support/pm9Scenarios";
 import { type Locale } from "../support/targeted";
-import { readBackSavedPreferences, revealRosterRow, selectTheSpectrum } from "../support/viewer";
+import { readBackSavedPreferences, revealRosterRow, SPECTRUM_STATUS, SPECTRUM_SURFACE, selectTheSpectrum } from "../support/viewer";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 
@@ -132,30 +132,37 @@ async function sample(label: string) {
  * again until the surface holds it, unchanged, for five frames.
  *
  * One assignment was not enough. Under reduced motion every style change is a
- * 0.01 ms transition (app.css), so a commit's layout lands a frame later: the
- * selected spectrum's summary keeps an 11 px font for that frame and takes
- * 13 px after it. An end set in that frame stopped 1-2 px short of the end the
- * column then had.
- * A surface that never stays at its end -- one that does not scroll, or a
- * layout that never settles -- times out here.
+ * 0.01 ms transition (app.css), so a style change can make the layout land a
+ * frame later, and an end set in that frame stops short of the end the
+ * surface then has.
+ * A surface that never stays at its end -- missing, with content that
+ * overflows but cannot be scrolled, or a layout that never settles -- times
+ * out here, and the error carries its last scrollTop, clientHeight and
+ * scrollHeight.
  */
 async function scrollToEnd(owner: string) {
-  await browser.waitUntil(
-    () =>
-      browser.execute(async (css: string) => {
+  let last = "never read";
+  try {
+    await browser.waitUntil(async () => {
+      const { held, reading } = await browser.execute(async (css: string) => {
         const node = document.querySelector<HTMLElement>(css);
-        if (node === null) return false;
+        if (node === null) return { held: false, reading: "missing" };
         node.scrollTop = node.scrollHeight;
-        const read = () => `${String(node.scrollTop)} ${String(node.clientHeight)} ${String(node.scrollHeight)}`;
+        const read = () =>
+          `scrollTop ${String(node.scrollTop)}, clientHeight ${String(node.clientHeight)}, scrollHeight ${String(node.scrollHeight)}`;
         const first = read();
         for (let frame = 0; frame < 5; frame += 1) {
           await new Promise((done) => requestAnimationFrame(done));
-          if (read() !== first) return false;
+          if (read() !== first) return { held: false, reading: read() };
         }
-        return node.scrollTop + node.clientHeight >= node.scrollHeight - 1;
-      }, owner),
-    { timeoutMsg: `${owner} never stayed at the end of its scroll for five frames` },
-  );
+        return { held: node.scrollTop + node.clientHeight >= node.scrollHeight - 1, reading: first };
+      }, owner);
+      last = reading;
+      return held;
+    });
+  } catch (error) {
+    throw new Error(`${owner} never stayed at the end of its scroll for five frames; last ${last}`, { cause: error });
+  }
 }
 
 /** A frame only, for the moments a keyboard stop is what the frame is for. */
@@ -414,6 +421,18 @@ describe("PM9.7 integrated states, rendered", () => {
         await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
         await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForExist({ timeout: 60_000 });
         await selectTheSpectrum(0);
+        // The drawing, not only its range: while the projection loads, the
+        // column is taller than it ends.
+        await browser.waitUntil(
+          () =>
+            browser.execute(
+              (surface: string, status: string) =>
+                document.querySelector(surface) !== null && document.querySelector(status)?.textContent?.trim() === "",
+              SPECTRUM_SURFACE,
+              SPECTRUM_STATUS,
+            ),
+          { timeout: 60_000, timeoutMsg: "the selected spectrum's drawing never arrived" },
+        );
         await scrollToEnd("#workbench-evidence");
         const viewer = await sample(`i2-viewer-end-${at}`);
         const scans = await browser.execute(() => {
