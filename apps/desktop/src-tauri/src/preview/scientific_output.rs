@@ -22,6 +22,8 @@ use super::dto::{
     spectrum_destination_unusable,
 };
 use super::export::png_of;
+#[cfg(test)]
+pub(crate) use super::figure::assert_png_carries_its_text;
 use super::figure::{FigureRenderSettings, PngDpi};
 use super::service::{PreviewService, spectrum_write_failure};
 

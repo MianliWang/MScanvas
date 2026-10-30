@@ -220,6 +220,11 @@ again for **every** accepted resolution — the test walks 72 through 1200 and
 asserts the round trip rather than assuming it — and the native suite parses the
 `pHYs` chunk out of a file the application actually wrote.
 
+> **Amended 2026-10-30 by [ADR 0053](0053-png-text-metadata.md).** A saved PNG
+> also carries two uncompressed `iTXt` chunks, `Title` and `Description`, with
+> the text of the SVG's own `<title>` and `<desc>`. Its pixels are unchanged,
+> and `Copy plot` is unchanged.
+
 ## Bounds
 
 `FigureSize`'s existing validation is unchanged: 200 ≤ width ≤ 20 000, and

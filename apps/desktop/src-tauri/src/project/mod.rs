@@ -3639,7 +3639,7 @@ fn bounded_name(value: String) -> String {
 /// A bound on when a run happened, not a measurement of anything. Derived from
 /// the system clock, which a user can change, so it is presented as what was
 /// recorded rather than as evidence.
-fn now_rfc3339() -> String {
+pub(crate) fn now_rfc3339() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();

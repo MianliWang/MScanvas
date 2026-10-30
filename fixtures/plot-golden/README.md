@@ -30,3 +30,18 @@ They were regenerated once since, deliberately, for the publication figure
 rather than stretched. The data they draw is unchanged and every `<desc>` is
 byte-identical to the earlier documents; only the axes and the text moved. See
 `docs/architecture/FIGURE_MODEL.md`.
+
+## The linked figure and a stored targeted result
+
+`linked-full-run.svg` and `targeted-stored-result.svg` complete the set, so
+every figure kind a user can save has its document pinned. They were rendered on
+main (`01c23d9`) before ADR 0053 added `svg::render_with_text`, and the renderer
+writes the same bytes after it.
+
+- `linked-full-run.svg`: `golden_chromatogram()` over the full run with
+  `selected(2)` below it, through `linked_figure_spec`, pinned in
+  `preview/chromatogram.rs`.
+- `targeted-stored-result.svg`: target 0 of `stored_three()` as an ambiguous
+  detection, through `evidence_figure`, pinned in `targeted_ms1/tests.rs` by
+  `pinned_figure()`. The test fixes the result and plan identifiers that a run
+  would mint, because the caption names both.

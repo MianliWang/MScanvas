@@ -290,17 +290,20 @@ fn may_hold_a_link(directory: &Path) -> bool {
 
 // ---------------------------------------------------------------------------
 // Owners
+//
+// Crate-visible because the view cache's staging attempts (ADR 0060,
+// decision 6) carry the same owner pair and are swept by the same rule.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Owner {
+pub(crate) enum Owner {
     Alive,
     Gone,
     Unknown,
 }
 
 /// What became of the process a marker names.
-fn owner(process_id: u32, created: u64) -> Owner {
+pub(crate) fn owner(process_id: u32, created: u64) -> Owner {
     owner_from(process_created(process_id), created)
 }
 
@@ -316,7 +319,7 @@ fn owner_from(found: Result<Option<u64>, ()>, created: u64) -> Owner {
 }
 
 /// This process's id and creation time, the pair its markers carry.
-fn this_process() -> Option<(u32, u64)> {
+pub(crate) fn this_process() -> Option<(u32, u64)> {
     static OWN: OnceLock<Option<(u32, u64)>> = OnceLock::new();
     *OWN.get_or_init(|| own_creation_time().map(|created| (std::process::id(), created)))
 }

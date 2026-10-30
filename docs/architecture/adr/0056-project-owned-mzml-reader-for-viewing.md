@@ -5,6 +5,7 @@ request: `base64 0.22.1` and `flate2 1.1.10` become direct dependencies of the
 product crate (both already in `Cargo.lock`, so the lock gains no package).
 Proposed 2026-10-28.
 Amended 2026-10-30 by the owner: decision 1's version rule (a note there).
+Amended 2026-10-30 by ADR 0060: decision 4, the view cache's pin (a note there).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -359,6 +360,16 @@ table:
   no two reads share a cursor. The only handle the session keeps on the user's
   file is the row's identity lease (ADR 0006), as today, so a row's handle cost
   is unchanged.
+
+  > **Amended 2026-10-30 by
+  > [ADR 0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+  > decision 8.** For view-cache entries only, the pin is an exception: from
+  > its verification until its preview state ends, a cached view keeps the
+  > entry's `view.mzML` open for reading, sharing read only, so no process
+  > can delete, rename or write it. The pin is a lifetime, like the identity
+  > lease, and not the handle a read goes through. The user's own files keep
+  > the rule. ADR 0060's slice 1 (the cache library) takes the pin; no
+  > preview holds one before its slice 2.
 - **One dataset at a time.** Starting an open drops every other dataset's
   preview state, as it already drops its own. That alone does not hold the
   bound: the commit checks only its own dataset's request epoch, and the gate

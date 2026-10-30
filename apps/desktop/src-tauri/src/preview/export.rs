@@ -2189,8 +2189,24 @@ pub(super) fn png_of(
     settings: FigureRenderSettings,
     dpi: PngDpi,
 ) -> Result<Vec<u8>, FigureFailure> {
-    let raster = raster_of(figure, settings)?;
-    encode_png(&raster, dpi.get()).map_err(FigureFailure::Raster)
+    saved_png(figure, settings.width(), settings.height(), dpi.get())
+}
+
+/// Every PNG written to a file comes through here.
+///
+/// One renderer call yields both the document that is rasterized and the
+/// title and description the file carries (ADR 0053), so the PNG's text is the
+/// SVG's own. `Copy plot` does not come through here: its raster is the same
+/// drawing, and a clipboard image has nowhere for text.
+fn saved_png(
+    figure: &FigureSpec,
+    width: u32,
+    height: u32,
+    dpi: u32,
+) -> Result<Vec<u8>, FigureFailure> {
+    let rendered = mscanvas_plot_spec::svg::render_with_text(figure);
+    let raster = rasterize(&rendered.svg, width, height).map_err(FigureFailure::Raster)?;
+    encode_png(&raster, dpi, &rendered.title, &rendered.description).map_err(FigureFailure::Raster)
 }
 
 /// The words a user typed for a title, or the default where they typed none.
@@ -2260,7 +2276,7 @@ pub(super) fn raster_at(
     expect(dead_code, reason = "wired by the publication-export integration")
 )]
 pub(super) fn png_at(figure: &FigureSpec, plan: RasterPlan) -> Result<Vec<u8>, FigureFailure> {
-    encode_png(&raster_at(figure, plan)?, plan.dpi().get()).map_err(FigureFailure::Raster)
+    saved_png(figure, plan.width(), plan.height(), plan.dpi().get())
 }
 
 /// The TIFF of one figure at a plan's pixels, recording the plan's resolution.
@@ -2279,8 +2295,9 @@ pub(super) fn png_document(
     dpi: PngDpi,
     range: ResolvedSpectrumRange,
 ) -> Result<Vec<u8>, FigureFailure> {
-    let raster = figure_raster(spectrum, settings, range)?;
-    encode_png(&raster, dpi.get()).map_err(FigureFailure::Raster)
+    let figure =
+        figure_spec(spectrum, settings, range).map_err(|_| FigureFailure::Unspecifiable)?;
+    png_of(&figure, settings, dpi)
 }
 
 /// Renders one selected spectrum as the data document a user receives.
@@ -5517,6 +5534,24 @@ mod tests {
         );
     }
 
+    /// A saved spectrum PNG carries its figure's title and description.
+    ///
+    /// Through `png_document`, the call the spectrum export makes, over the full
+    /// source and over a committed m/z window, whose description differs
+    /// (ADR 0053).
+    #[test]
+    fn a_saved_spectrum_png_carries_its_title_and_description() {
+        let spectrum = golden_spectrum();
+        for range in [
+            ResolvedSpectrumRange::Full,
+            ResolvedSpectrumRange::Current(Domain::new(150.0, 450.0).expect("an interval")),
+        ] {
+            let png = png_document(&spectrum, defaults(), resolution(300), range).expect("a PNG");
+            let figure = figure_spec(&spectrum, defaults(), range).expect("specifiable");
+            super::super::figure::assert_png_carries_its_text(&png, &figure);
+        }
+    }
+
     // --------------------------------------------- M5.3: full source, or one
     // committed m/z range
     //
@@ -6680,6 +6715,7 @@ mod tests {
         let plan = RasterPlan::new(figure.size(), resolution(300)).expect("inside the budget");
 
         let png = png_at(&figure, plan).expect("a PNG");
+        super::super::figure::assert_png_carries_its_text(&png, &figure);
         let decoder = png::Decoder::new(std::io::Cursor::new(&png));
         let reader = decoder.read_info().expect("the PNG parses");
         assert_eq!((reader.info().width, reader.info().height), (1_004, 709));
