@@ -383,7 +383,10 @@ button:disabled,
 }
 
 .conversion-main { padding: 18px 20px 20px; }
-.conversion-side { gap: 12px; padding: 16px; }
+/* The sticky start block covers the column's foot (about 50 px in view, more
+   with the retry offer), so a control the keyboard reaches scrolls in above it
+   rather than under it. */
+.conversion-side { gap: 12px; padding: 16px; scroll-padding-bottom: 96px; }
 
 /* Below the two-column floor the summary goes under the form and the surface
    scrolls as one column. Not reached at the 960 px minimum window. */

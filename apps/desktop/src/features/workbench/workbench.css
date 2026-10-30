@@ -43,8 +43,8 @@
 .shell-notices > .notice { align-items: center; }
 .notice-dismiss { margin-left: auto; }
 
-/* The status bar: 28 px, never wrapping; the drop hint gives way first, then
-   the project name's ellipsis. */
+/* The status bar: 28 px, never wrapping; the drop hint gives way first (whole
+   or gone: StatusBar.tsx hides it), then the project name's ellipsis. */
 .workbench-status { grid-area: status; min-width: 0; }
 .workbench-status .ui-status-bar { height: 28px; min-height: 0; flex-wrap: nowrap; gap: 12px; padding: 0 16px; overflow: hidden; background: #fafcff; }
 .workbench-status .ui-status-bar__start { flex: 0 1 auto; flex-wrap: nowrap; gap: 4px; overflow: hidden; }
@@ -52,13 +52,15 @@
 .workbench-status .ui-button { min-height: 24px; max-width: 100%; padding: 0 8px; font-weight: 500; }
 /* The bar clips its overflow, so the ring is drawn inside each control. */
 .workbench-status .ui-button:focus-visible { outline-offset: -2px; }
-.status-item { flex: 0 1 auto; min-width: 0; }
-.status-item:first-child { flex: none; }
+/* Only the project name gives way to an ellipsis; an operation's status, the
+   backend and the busy reason stay whole. */
+.status-item { flex: none; }
+.status-item[data-shell-context="project"] { flex: 0 1 auto; min-width: 0; }
 .status-item-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--color-warning); }
 .status-dot[data-tone="ready"] { background: var(--color-success); }
 .status-dot[data-tone="unavailable"] { background: var(--color-danger); }
-.status-busy { flex: 0 1 auto; min-width: 0; overflow: hidden; padding: 0 4px; color: var(--color-text-primary); text-overflow: ellipsis; white-space: nowrap; }
+.status-busy { flex: none; overflow: hidden; padding: 0 4px; color: var(--color-text-primary); text-overflow: ellipsis; white-space: nowrap; }
 .status-layout { display: flex; min-width: 0; align-items: center; gap: 6px; margin: 0; }
 .workbench-status .workspace-drop-hint { flex: 0 1000 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The hint gives way; its one recovery does not. */
@@ -139,13 +141,17 @@
 .organization-notice:empty { padding: 0; }
 .roster-empty { padding: 16px 10px; font-size: 13px; }
 /* v5.11 `.roster-foot`, one row (owner review): the count, Undo, the list
-   menu, then Convert. The count wraps inside its own space; the controls never do. */
-.roster-foot { flex: none; display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 8px 12px; border-top: 1px solid var(--color-border); background: var(--color-surface); }
+   menu, then Convert. The count wraps inside its own space; the controls never do.
+   Where even its narrowest shape does not fit beside them (a long count, Undo
+   shown), the controls move together to the row under it rather than overlap it. */
+.roster-foot { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-height: 52px; padding: 8px 12px; border-top: 1px solid var(--color-border); background: var(--color-surface); }
 .roster-foot > .ui-button { flex: none; }
+.roster-foot-actions { flex: none; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.roster-foot-actions > .ui-button { flex: none; }
 /* Each count stays with its word, in either language: the resources join them
    with a no-break space, and `keep-all` keeps CJK words whole, so the line
    breaks only at the separators (PM9 UI-16). */
-.roster-selection-context { flex: 1 1 auto; min-width: 0; margin: 0; color: var(--color-text-secondary); font-size: 11px; line-height: 1.35; font-variant-numeric: tabular-nums; word-break: keep-all; }
+.roster-selection-context { flex: 1 1 0; min-width: min-content; margin: 0; color: var(--color-text-secondary); font-size: 11px; line-height: 1.35; font-variant-numeric: tabular-nums; word-break: keep-all; }
 .roster-menu { z-index: 100; min-width: 170px; max-width: min(340px, calc(100vw - 24px)); max-height: min(420px, var(--radix-dropdown-menu-content-available-height)); overflow: auto; padding: 5px; border: 1px solid var(--color-border); border-radius: 8px; background: white; color: var(--color-text-primary); box-shadow: 0 6px 20px rgb(23 35 55 / 0.14); font-family: var(--font-ui); font-size: 13px; }
 .roster-menu [role="menuitem"] { padding: 7px 9px; min-height: 32px; border-radius: 4px; overflow-wrap: anywhere; cursor: pointer; }
 .roster-menu [data-highlighted] { background: var(--color-surface-selected); }

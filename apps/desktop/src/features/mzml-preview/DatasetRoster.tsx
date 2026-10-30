@@ -845,85 +845,89 @@ export const DatasetRoster = memo(function DatasetRoster({
   ) : (
     <div className="roster-foot">
       <p aria-live="polite" className="roster-selection-context" id="roster-selection-count">{selectionCount}</p>
-      {state.organization.history.length ? (
-        <IconButton
-          icon={<Icon name="undo" />}
-          label={t("undoOrganization")}
-          onClick={() => dispatch({ type: "organization", action: { type: "undo" } })}
-          size="sm"
-        />
-      ) : null}
-      <Menu.Root>
-        <Menu.Trigger asChild>
+      {/* The controls stay together on one row. When the count cannot fit
+          beside them even at its narrowest, they take the row under it. */}
+      <div className="roster-foot-actions">
+        {state.organization.history.length ? (
           <IconButton
-            data-roster-list-menu=""
-            icon={<Icon name="more" />}
-            label={t("rosterListActions")}
-            ref={(node: HTMLButtonElement | null) => {
-              listMenuRef.current = node;
-              clearListRef.current = node;
-            }}
+            icon={<Icon name="undo" />}
+            label={t("undoOrganization")}
+            onClick={() => dispatch({ type: "organization", action: { type: "undo" } })}
             size="sm"
-            variant="secondary"
-            {...clearKeyboard}
           />
-        </Menu.Trigger>
-        <Menu.Portal>
-          <Menu.Content
-            align="start"
-            className="roster-menu"
-            // A dialog an item opened -- New group, or Clear's confirmation
-            // during a conversion -- keeps the keyboard it took.
-            onCloseAutoFocus={(event) => {
-              if (document.querySelector('[role="dialog"]') !== null) event.preventDefault();
-            }}
-            side="top"
-            sideOffset={4}
+        ) : null}
+        <Menu.Root>
+          <Menu.Trigger asChild>
+            <IconButton
+              data-roster-list-menu=""
+              icon={<Icon name="more" />}
+              label={t("rosterListActions")}
+              ref={(node: HTMLButtonElement | null) => {
+                listMenuRef.current = node;
+                clearListRef.current = node;
+              }}
+              size="sm"
+              variant="secondary"
+              {...clearKeyboard}
+            />
+          </Menu.Trigger>
+          <Menu.Portal>
+            <Menu.Content
+              align="start"
+              className="roster-menu"
+              // A dialog an item opened -- New group, or Clear's confirmation
+              // during a conversion -- keeps the keyboard it took.
+              onCloseAutoFocus={(event) => {
+                if (document.querySelector('[role="dialog"]') !== null) event.preventDefault();
+              }}
+              side="top"
+              sideOffset={4}
+            >
+              <Menu.Item
+                aria-describedby={removeRefused ? "roster-remove-reason" : undefined}
+                aria-disabled={removeRefused || undefined}
+                data-roster-remove=""
+                onSelect={(event) => {
+                  if (removeRefused) { event.preventDefault(); return; }
+                  onRemoveSelected();
+                }}
+              >
+                {t("removeHighlighted")}
+                {removeRefused ? <span aria-hidden="true" className="plot-menu-reason" id="roster-remove-reason">
+                  {t(state.selected.size === 0 ? "rosterNothingHighlighted" : "rosterActionWaits")}
+                </span> : null}
+              </Menu.Item>
+              <Menu.Item
+                aria-describedby={[canMutate ? null : "roster-clear-reason", clearDescriptions].filter(Boolean).join(" ") || undefined}
+                aria-disabled={!canMutate || undefined}
+                data-roster-clear=""
+                onSelect={(event) => {
+                  if (!canMutate) { event.preventDefault(); return; }
+                  // The keyboard is in the menu, which gives it back to the trigger.
+                  startClear(listMenuRef.current, true);
+                }}
+              >
+                {t("clearList")}
+                {canMutate ? null : <span aria-hidden="true" className="plot-menu-reason" id="roster-clear-reason">{t("rosterActionWaits")}</span>}
+              </Menu.Item>
+              <Menu.Separator />
+              <Menu.Item data-roster-new-group="" onSelect={() => newGroup(listMenuRef.current)}>{t("newGroup")}</Menu.Item>
+            </Menu.Content>
+          </Menu.Portal>
+        </Menu.Root>
+        {onConvertChecked === undefined ? null : (
+          <Button
+            className="roster-convert"
+            onClick={onConvertChecked}
+            reasonId="roster-selection-count"
+            refused={checkedCount === 0}
+            size="sm"
+            variant="primary"
           >
-            <Menu.Item
-              aria-describedby={removeRefused ? "roster-remove-reason" : undefined}
-              aria-disabled={removeRefused || undefined}
-              data-roster-remove=""
-              onSelect={(event) => {
-                if (removeRefused) { event.preventDefault(); return; }
-                onRemoveSelected();
-              }}
-            >
-              {t("removeHighlighted")}
-              {removeRefused ? <span aria-hidden="true" className="plot-menu-reason" id="roster-remove-reason">
-                {t(state.selected.size === 0 ? "rosterNothingHighlighted" : "rosterActionWaits")}
-              </span> : null}
-            </Menu.Item>
-            <Menu.Item
-              aria-describedby={[canMutate ? null : "roster-clear-reason", clearDescriptions].filter(Boolean).join(" ") || undefined}
-              aria-disabled={!canMutate || undefined}
-              data-roster-clear=""
-              onSelect={(event) => {
-                if (!canMutate) { event.preventDefault(); return; }
-                // The keyboard is in the menu, which gives it back to the trigger.
-                startClear(listMenuRef.current, true);
-              }}
-            >
-              {t("clearList")}
-              {canMutate ? null : <span aria-hidden="true" className="plot-menu-reason" id="roster-clear-reason">{t("rosterActionWaits")}</span>}
-            </Menu.Item>
-            <Menu.Separator />
-            <Menu.Item data-roster-new-group="" onSelect={() => newGroup(listMenuRef.current)}>{t("newGroup")}</Menu.Item>
-          </Menu.Content>
-        </Menu.Portal>
-      </Menu.Root>
-      {onConvertChecked === undefined ? null : (
-        <Button
-          className="roster-convert"
-          onClick={onConvertChecked}
-          reasonId="roster-selection-count"
-          refused={checkedCount === 0}
-          size="sm"
-          variant="primary"
-        >
-          {t("rosterConvertChecked", { checked: checkedCount })}
-        </Button>
-      )}
+            {t("rosterConvertChecked", { checked: checkedCount })}
+          </Button>
+        )}
+      </div>
       {importDescriptions}
     </div>
   );

@@ -1462,13 +1462,26 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         // (spec 3.3).
         // Collected and asserted once, so every frame is reached and named.
         const problems: string[] = [];
+        // The count wraps inside its own space and the controls never do
+        // (workbench.css, the one-row footer the owner approved): whole means
+        // never clipped and never split inside a pair, with the controls on
+        // one row -- under the count when it cannot fit beside them. Its
+        // line count and the band's height are recorded.
         const record = async (label: string) => {
           await frames();
           const count = await textShape(".roster-selection-context");
-          const listMenu = await browser.$("[data-roster-list-menu]").getLocation("y");
+          const foot = await browser.execute(() => {
+            const node = document.querySelector<HTMLElement>(".roster-selection-context");
+            const middles = [...document.querySelectorAll<HTMLElement>(".roster-foot .ui-button")].map((button) => {
+              const box = button.getBoundingClientRect();
+              return box.top + box.height / 2;
+            });
+            return { clipped: node === null || node.scrollWidth > node.clientWidth + 1, controlSpread: Math.max(...middles) - Math.min(...middles) };
+          });
           const band = await browser.$(".roster-foot").getSize("height");
-          shapes.push({ label, count, listMenuTop: listMenu, band });
-          if (count?.lines !== 1) problems.push(`${label}: "${String(count?.text)}" on ${String(count?.lines)} lines`);
+          shapes.push({ label, count, foot, band });
+          if (count === null || foot.clipped) problems.push(`${label}: "${String(count?.text)}" clipped`);
+          if (!(foot.controlSpread <= 2)) problems.push(`${label}: the controls off one row by ${String(foot.controlSpread)} px`);
           if ((count?.split ?? []).length > 0) problems.push(`${label}: split inside ${JSON.stringify(count?.split)}`);
         };
         await record(`ui-rework-organizing-${locale}-1366x768`);

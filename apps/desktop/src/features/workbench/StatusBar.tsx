@@ -95,6 +95,29 @@ export function WorkbenchStatusBar({ backend, items, busy, dropStatus, dropProbl
   const unsaved = panels.save.status === "unsaved";
   const dropHint = dropStatus === "available" ? t("shellDropHint") : dropStatus === "unavailable" ? t("shellDropUnavailable") : null;
 
+  /**
+   * The drop hint is whole or gone, and it goes before anything else in the
+   * bar is cut (spec 2.3): shrinking alone would leave a sliver. Measured with
+   * the hint shown and settled in the same frame, so nothing flickers; again
+   * whenever the bar resizes or what it says changes.
+   */
+  const barRef = useRef<HTMLDivElement>(null);
+  const said = [backend.text, busy, dropHint, unsaved, ...items.map(item => `${item.text}${item.unsaved === true ? "*" : ""}`)].join("|");
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    const hint = bar?.querySelector<HTMLElement>(".workspace-drop-hint");
+    if (bar == null || hint == null) return;
+    const fit = () => {
+      hint.hidden = false;
+      hint.hidden = hint.scrollWidth > hint.clientWidth
+        || [...bar.querySelectorAll<HTMLElement>(".status-item-text")].some(text => text.scrollWidth > text.clientWidth);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(bar);
+    return () => { observer.disconnect(); };
+  }, [said]);
+
   const dot = <span className="status-dot" data-tone={backend.tone} aria-hidden="true" />;
   const start = <>
     {backend.toggle === null
@@ -127,7 +150,7 @@ export function WorkbenchStatusBar({ backend, items, busy, dropStatus, dropProbl
       ? <Button variant="secondary" size="sm" className="drop-reconnect" title={dropProblem ?? undefined} onClick={onReconnectDrop}>{t("dropReconnect")}</Button>
       : null}
   </>;
-  return <div className="workbench-status" inert={inert || undefined}>
+  return <div ref={barRef} className="workbench-status" inert={inert || undefined}>
     <StatusBar start={start} end={end} />
   </div>;
 }
