@@ -102,13 +102,25 @@ fn write_stored(scratch: &Scratch, bytes: &[u8]) {
     fs::write(profile(scratch).join(FILE_NAME), bytes).expect("the stored bytes");
 }
 
-/// The one file kept aside, and its bytes.
+/// The one file kept aside beside the published document, and its bytes.
 fn kept_aside(scratch: &Scratch) -> Vec<u8> {
     let names = entries(&profile(scratch));
-    assert_eq!(names.len(), 1, "exactly one document kept aside: {names:?}");
-    assert!(names[0].starts_with("workspace-restore.set-aside-"));
-    fs::read(profile(scratch).join(&names[0])).expect("the kept document")
+    let aside: Vec<&String> = names
+        .iter()
+        .filter(|name| name.starts_with(SET_ASIDE_PREFIX))
+        .collect();
+    assert_eq!(aside.len(), 1, "exactly one document kept aside: {names:?}");
+    assert_eq!(names.len(), 2, "the published document and the kept one");
+    fs::read(profile(scratch).join(aside[0])).expect("the kept document")
 }
+
+fn refused_start(problem: &'static str) -> WorkspaceRestoreReadDto {
+    WorkspaceRestoreReadDto::Refused { problem }
+}
+
+const KEPT: WorkspaceRestoreWriteDto = WorkspaceRestoreWriteDto::Refused {
+    problem: "storedDocumentKept",
+};
 
 // ----------------------------------------------------------------- document
 
@@ -322,51 +334,130 @@ fn a_missing_or_changed_file_is_a_marked_row_never_dropped_or_relinked() {
 }
 
 #[test]
-fn a_corrupt_document_is_refused_whole_kept_aside_and_the_session_starts_empty() {
-    let scratch = Scratch::new("restore-corrupt");
-    write_stored(&scratch, b"{ not a document");
+fn a_bundle_without_its_companion_or_a_folder_in_a_files_place_is_marked() {
+    let scratch = Scratch::new("restore-marked-more");
+    let wiff = scratch.write("s.wiff", b"wiff");
+    let scan = scratch.write("s.wiff.scan", b"scan");
+    let folder = scratch.write("f.mzML", b"<mzML/>");
+    let held = scratch.write("h.mzML", b"<mzML/>");
+    let mut bundle = live("file-0", &wiff);
+    bundle.family = DatasetSourceKindDto::SciexWiff;
+    bundle.members.extend(live("file-0", &scan).members);
     let store = reopen(&scratch);
     assert_eq!(
-        store.read(),
-        WorkspaceRestoreReadDto::Refused {
-            problem: "malformed",
-            set_aside: true
+        store.save(
+            &ungrouped(&["file-0", "file-1", "file-2"]),
+            vec![bundle, live("file-1", &folder), live("file-2", &held)]
+        ),
+        WorkspaceRestoreWriteDto::Saved
+    );
+
+    // Only the companion is gone: the primary alone still matches.
+    fs::remove_file(&scan).expect("remove the companion");
+    fs::remove_file(&folder).expect("remove f");
+    fs::create_dir(&folder).expect("a folder at f's name");
+    #[cfg(windows)]
+    let _held = {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&held)
+            .expect("the holding handle")
+    };
+    let marked = states(&restored(&reopen(&scratch)));
+    assert_eq!(marked[0], ("s.wiff".to_owned(), RowState::Missing));
+    assert_eq!(marked[1], ("f.mzML".to_owned(), RowState::Unsafe));
+    #[cfg(windows)]
+    assert_eq!(marked[2], ("h.mzML".to_owned(), RowState::Unreadable));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_path_that_is_not_unicode_is_refused_rather_than_written_as_something_else() {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+
+    let scratch = Scratch::new("restore-not-storable");
+    let mut wide: Vec<u16> = scratch.join("x").as_os_str().encode_wide().collect();
+    wide.push(0xD800);
+    let row = LiveRow {
+        handle: "file-0".to_owned(),
+        family: DatasetSourceKindDto::Mzml,
+        members: vec![RowMember {
+            path: PathBuf::from(OsString::from_wide(&wide)),
+            byte_length: 1,
+            identity: (7, [1; 16]),
+        }],
+    };
+    assert_eq!(
+        reopen(&scratch).save(&ungrouped(&["file-0"]), vec![row]),
+        WorkspaceRestoreWriteDto::Refused {
+            problem: "notStorable"
         }
     );
-    assert_eq!(kept_aside(&scratch), b"{ not a document");
+    assert!(!profile(&scratch).exists(), "nothing was written");
+}
 
-    // The session is usable, and a new document never touches the kept one.
+#[test]
+fn a_corrupt_document_is_left_as_found_and_restore_stays_off_until_turned_on() {
+    let scratch = Scratch::new("restore-corrupt");
+    write_stored(&scratch, b"{ not a document");
     let a = scratch.write("a.mzML", b"<mzML/>");
+    let store = reopen(&scratch);
+    assert_eq!(store.read(), refused_start("malformed"));
+
+    // Fail closed: nothing is recorded, and nothing is written at all.
+    assert_eq!(
+        store.save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Off
+    );
+    assert_eq!(stored_bytes(&scratch), b"{ not a document");
+    assert_eq!(entries(&profile(&scratch)), vec![FILE_NAME.to_owned()]);
+    assert_eq!(
+        reopen(&scratch).read(),
+        refused_start("malformed"),
+        "a restart still refuses it, and is still off"
+    );
+
+    // Turning restore on keeps the refused document aside, then starts empty.
+    assert_eq!(store.set_enabled(true), WorkspaceRestoreWriteDto::Saved);
+    assert_eq!(kept_aside(&scratch), b"{ not a document");
+    assert_eq!(stored(&scratch), RestoreDocument::empty(true));
+    assert_eq!(
+        restored(&store),
+        Vec::new(),
+        "no longer answered as refused"
+    );
     assert_eq!(
         store.save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
         WorkspaceRestoreWriteDto::Saved
     );
     assert_eq!(stored(&scratch).groups[0].rows.len(), 1);
-    let names = entries(&profile(&scratch));
-    assert_eq!(names.len(), 2);
-    let aside = names
-        .iter()
-        .find(|name| name.starts_with("workspace-restore.set-aside-"))
-        .expect("the kept document");
-    assert_eq!(
-        fs::read(profile(&scratch).join(aside)).expect("kept"),
-        b"{ not a document"
-    );
+    assert_eq!(kept_aside(&scratch), b"{ not a document");
 }
 
 #[test]
-fn a_document_from_a_newer_build_is_refused_and_kept_byte_for_byte() {
+fn a_switched_off_document_from_a_newer_build_keeps_restore_off() {
     let scratch = Scratch::new("restore-newer");
-    let newer = br#"{"schemaVersion":2,"enabled":true,"groups":[],"layers":[]}"#;
+    let newer = br#"{"schemaVersion":2,"enabled":false,"groups":[],"layers":[]}"#;
     write_stored(&scratch, newer);
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let store = reopen(&scratch);
+    assert_eq!(store.read(), refused_start("newerVersion"));
     assert_eq!(
-        reopen(&scratch).read(),
-        WorkspaceRestoreReadDto::Refused {
-            problem: "newerVersion",
-            set_aside: true
-        }
+        store.save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Off,
+        "no path is recorded over a choice this build cannot read"
     );
-    assert_eq!(kept_aside(&scratch), newer);
+    assert_eq!(stored_bytes(&scratch), newer, "kept byte for byte");
+    assert_eq!(entries(&profile(&scratch)), vec![FILE_NAME.to_owned()]);
+
+    // Off and clear are the user forgetting: they replace it, keeping nothing.
+    assert_eq!(store.set_enabled(false), WorkspaceRestoreWriteDto::Saved);
+    assert_eq!(stored(&scratch), RestoreDocument::empty(false));
+    assert_eq!(entries(&profile(&scratch)), vec![FILE_NAME.to_owned()]);
+    assert_eq!(store.read(), WorkspaceRestoreReadDto::Off);
 }
 
 #[test]
@@ -374,13 +465,7 @@ fn an_oversized_document_is_refused_without_being_parsed() {
     let scratch = Scratch::new("restore-oversized");
     let bound = usize::try_from(MAX_DOCUMENT_BYTES).expect("fits");
     write_stored(&scratch, &vec![b' '; bound + 1]);
-    assert_eq!(
-        reopen(&scratch).read(),
-        WorkspaceRestoreReadDto::Refused {
-            problem: "oversized",
-            set_aside: true
-        }
-    );
+    assert_eq!(reopen(&scratch).read(), refused_start("oversized"));
 }
 
 #[test]
@@ -388,26 +473,113 @@ fn an_unsafe_name_is_left_where_it_is_and_never_replaced() {
     let scratch = Scratch::new("restore-unsafe");
     fs::create_dir_all(profile(&scratch).join(FILE_NAME)).expect("a directory at the name");
     let store = reopen(&scratch);
-    assert_eq!(
-        store.read(),
-        WorkspaceRestoreReadDto::Refused {
-            problem: "unsafeTarget",
-            set_aside: false
-        }
-    );
-    assert_eq!(
-        store.save(&ungrouped(&[]), Vec::new()),
-        WorkspaceRestoreWriteDto::Refused {
-            problem: "storedDocumentKept"
-        }
-    );
-    assert_eq!(
-        store.clear(),
-        WorkspaceRestoreWriteDto::Refused {
-            problem: "storedDocumentKept"
-        }
-    );
+    assert_eq!(store.read(), refused_start("unsafeTarget"));
+    assert_eq!(store.save(&ungrouped(&[]), Vec::new()), KEPT);
+    assert_eq!(store.clear(), KEPT);
+    assert_eq!(store.set_enabled(true), KEPT);
+    assert_eq!(store.set_enabled(false), KEPT);
     assert!(profile(&scratch).join(FILE_NAME).is_dir());
+}
+
+#[test]
+fn a_refused_document_that_cannot_be_kept_aside_is_never_replaced_by_turning_on() {
+    let scratch = Scratch::new("restore-no-aside");
+    write_stored(&scratch, b"{ not a document");
+    let store = reopen(&scratch);
+    // Every name a set-aside could take in the next few seconds is taken.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_secs();
+    for seconds in now.saturating_sub(1)..=now + 5 {
+        let name = format!("{SET_ASIDE_PREFIX}{seconds}-{}.json", std::process::id());
+        fs::create_dir(profile(&scratch).join(name)).expect("an occupied name");
+    }
+    assert_eq!(store.set_enabled(true), KEPT);
+    assert_eq!(stored_bytes(&scratch), b"{ not a document");
+    assert_eq!(store.read(), refused_start("malformed"));
+}
+
+#[cfg(windows)]
+#[test]
+fn an_unreadable_document_is_left_as_found_and_read_again_at_the_next_start() {
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    let scratch = Scratch::new("restore-unreadable-document");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    assert_eq!(
+        reopen(&scratch).save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let before = stored_bytes(&scratch);
+    // No sharing at all: this process cannot open it while the handle lives.
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(profile(&scratch).join(FILE_NAME))
+        .expect("the holding handle");
+    let store = reopen(&scratch);
+    drop(held);
+    assert_eq!(store.read(), refused_start("unreadable"));
+    assert_eq!(store.save(&ungrouped(&[]), Vec::new()), KEPT);
+    assert_eq!(store.set_enabled(true), KEPT);
+    assert_eq!(stored_bytes(&scratch), before);
+    assert_eq!(entries(&profile(&scratch)), vec![FILE_NAME.to_owned()]);
+    assert_eq!(states(&restored(&reopen(&scratch))).len(), 1);
+}
+
+#[test]
+fn a_second_process_never_writes_over_the_first_ones_record() {
+    let scratch = Scratch::new("restore-two-processes");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let b = scratch.write("b.mzML", b"<mzML/>");
+    let first = reopen(&scratch);
+    let second = reopen(&scratch);
+    assert_eq!(
+        first.save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let changed_elsewhere = WorkspaceRestoreWriteDto::Refused {
+        problem: "changedElsewhere",
+    };
+    assert_eq!(
+        second.save(&ungrouped(&["file-0"]), vec![live("file-0", &b)]),
+        changed_elsewhere
+    );
+    assert_eq!(second.set_enabled(false), WorkspaceRestoreWriteDto::Saved);
+    // The second turned it off; the first does not record its paths again.
+    assert_eq!(
+        first.save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        changed_elsewhere
+    );
+    assert_eq!(stored(&scratch), RestoreDocument::empty(false));
+}
+
+#[test]
+fn a_restored_row_that_is_back_in_the_workbench_is_recorded_once() {
+    let scratch = Scratch::new("restore-once");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let b = scratch.write("b.mzML", b"<mzML/>");
+    assert_eq!(
+        reopen(&scratch).save(
+            &ungrouped(&["file-0", "file-1"]),
+            vec![live("file-0", &a), live("file-1", &b)]
+        ),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let store = reopen(&scratch);
+    // `a` is back in the Workbench as `file-7`, and still a restored row.
+    assert_eq!(
+        store.save(
+            &ungrouped(&["restored-1", "file-7", "restored-0"]),
+            vec![live("file-7", &a)]
+        ),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let rows = &stored(&scratch).groups[0].rows;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].members[0].path, b.to_str().expect("Unicode"));
+    assert_eq!(rows[1].members[0].path, a.to_str().expect("Unicode"));
 }
 
 #[test]
@@ -476,6 +648,11 @@ fn the_bounds_are_1024_rows_and_the_workbench_group_name_length() {
             problem: "invalidArrangement"
         }
     );
+
+    // Blank as the webview's `trim()` judges it, no stricter.
+    assert!(!valid_group_name(""));
+    assert!(!valid_group_name(" \t\u{3000}"));
+    assert!(valid_group_name("\u{85}"));
 }
 
 #[test]

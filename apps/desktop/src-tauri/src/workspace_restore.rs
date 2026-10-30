@@ -6,25 +6,28 @@
 //! directory, replaced whole through [`crate::local_document`]. It records
 //! each row's locator, its family and the identity facts admission
 //! established (length, volume serial and file ID of every member), the
-//! groups, the order and the checked state. Nothing that starts work is
-//! representable in it: no open preview, no selection, no conversion queue
-//! and no adoption.
+//! groups, the order and the checked state (conversion membership, which
+//! starts nothing by itself). Nothing that starts work is representable in it:
+//! no open preview, no viewed or highlighted row, no conversion queue and no
+//! adoption.
 //!
 //! ## What a start does
 //!
 //! The document is read once, when the store is opened. A document this build
 //! cannot use -- malformed, oversized, unreadable or from a newer build -- is
-//! refused whole and kept aside under another name, and the session starts
-//! empty and says so. Nothing ever replaces a refused document that could not
-//! be kept aside.
+//! refused whole and left exactly as found, and the session starts empty, with
+//! restore off, and says so. Off is the fail-closed answer: a refused document
+//! may be one the user had switched off, so nothing is recorded until the user
+//! turns restore on, and turning it on keeps the refused document aside under
+//! another name before anything replaces it.
 //!
 //! A usable document becomes the session's *restored rows*. They are not
 //! Workbench rows: they carry `restored-N` handles, and putting one back in the
 //! Workbench is ordinary admission, in a later slice. Every read re-checks
 //! them cheaply: the object at the recorded path is opened for reading only,
-//! sharing everything, and its identity and length are compared with what was
-//! recorded. No byte is read and nothing is hashed. A changed or missing file
-//! stays a marked row; it is never dropped and never relinked.
+//! sharing everything, and its file ID, volume serial and length are compared
+//! with what was recorded. No byte is read and nothing is hashed. A changed or
+//! missing file stays a marked row; it is never dropped and never relinked.
 //!
 //! ## When it is written
 //!
@@ -32,7 +35,9 @@
 //! answer and each organization change. Rust composes the document from its
 //! own registry and its own restored rows; the webview contributes only the
 //! groups, the order and the checked state, by handle. A save must place every
-//! live and every restored row exactly once, so no save can drop a row.
+//! live and every restored row of this process exactly once. A save is also
+//! refused when another MSCanvas process has written the document since this
+//! one last read or wrote it, so one window never writes over another's record.
 
 #[cfg(test)]
 mod tests;
@@ -54,6 +59,9 @@ const FILE_NAME: &str = "workspace-restore.json";
 
 /// The prefix of every private sibling a publish creates.
 const TEMPORARY_PREFIX: &str = ".mscanvas-workspace-restore-";
+
+/// The prefix of a refused document kept aside before restore is turned on.
+const SET_ASIDE_PREFIX: &str = "workspace-restore.set-aside-";
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -113,7 +121,8 @@ impl Family {
 pub struct RestoreDocument {
     pub schema_version: u32,
     /// The off switch. An off document holds no rows, so turning restore off
-    /// also forgets every stored path.
+    /// forgets every path this document stored. A copy kept aside after a
+    /// refusal is a separate file and keeps its own.
     pub enabled: bool,
     /// In order. Exactly one group has no name: Ungrouped.
     pub groups: Vec<StoredGroup>,
@@ -193,8 +202,12 @@ impl RestoreDocument {
     }
 }
 
+/// Blank as the webview's `trim()` judges it: U+0085 is Unicode white space
+/// but not JavaScript white space, so a name the Workbench accepts is accepted
+/// here too.
 fn valid_group_name(name: &str) -> bool {
-    !name.trim().is_empty() && name.encode_utf16().count() <= MAX_GROUP_NAME_UTF16
+    !name.chars().all(|c| c.is_whitespace() && c != '\u{85}')
+        && name.encode_utf16().count() <= MAX_GROUP_NAME_UTF16
 }
 
 fn valid_member(member: &StoredMember) -> bool {
@@ -228,12 +241,21 @@ pub enum DocumentProblem {
     NewerVersion,
     UnsupportedVersion,
     Oversized,
+    /// Possibly only for now: a lock or an I/O error says nothing about the
+    /// document. Never replaced this session; the next start reads it again.
     Unreadable,
-    /// The name is a link, a directory or a device. Left exactly where it is.
+    /// The name is a link, a directory or a device. Never replaced.
     UnsafeTarget,
 }
 
 impl DocumentProblem {
+    /// Whether nothing may replace the document this session, even with
+    /// restore turned on: it is not known to be unusable, or it is not this
+    /// application's file to move.
+    const fn kept(self) -> bool {
+        matches!(self, Self::Unreadable | Self::UnsafeTarget)
+    }
+
     #[must_use]
     pub const fn stable_id(self) -> &'static str {
         match self {
@@ -288,8 +310,10 @@ pub fn write_document(document: &RestoreDocument) -> Vec<u8> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RowState {
-    /// The same object, the same length. Not a claim about the bytes: that is
-    /// what admission and the ordinary revalidation decide when it is used.
+    /// The same file ID and volume serial, at the same length. Not a claim
+    /// about the bytes: a same-length rewrite in place, or a file ID the
+    /// filesystem reused after the recorded file was deleted, also matches.
+    /// Admission and the ordinary revalidation decide that when it is used.
     Matching,
     /// Something is there and it is not the object recorded, or it is the
     /// object at another length.
@@ -380,12 +404,13 @@ pub enum WorkspaceRestoreReadDto {
     Restored { groups: Vec<RestoredGroupDto> },
     /// Restore is switched off. Nothing is stored.
     Off,
-    /// The stored document was refused whole; the session started empty.
-    /// `setAside` says whether it was kept under another name.
-    Refused {
-        problem: &'static str,
-        set_aside: bool,
-    },
+    /// The stored document was refused whole and is still where it was,
+    /// unchanged; the session started empty and restore is off. It stays off
+    /// until the user turns it on, which keeps the refused document aside
+    /// first, or forgets it with off or clear. For `unreadable` and
+    /// `unsafeTarget` every write is refused this session
+    /// (`storedDocumentKept`). Answered until the first write succeeds.
+    Refused { problem: &'static str },
     /// There is nowhere to keep a document this session.
     Unavailable { problem: &'static str },
 }
@@ -398,10 +423,15 @@ pub enum WorkspaceRestoreReadDto {
     rename_all_fields = "camelCase"
 )]
 pub enum WorkspaceRestoreWriteDto {
+    /// The stored document now says what was asked. Turning restore on when
+    /// it is already on writes nothing and answers this.
     Saved,
     /// Restore is off; nothing was written.
     Off,
     /// Refused before anything was written. The stored document is unchanged.
+    /// `changedElsewhere`: another MSCanvas process wrote it since this one
+    /// last read or wrote it; this session records nothing more until it
+    /// restarts, and off and clear still work.
     Refused {
         problem: &'static str,
     },
@@ -442,23 +472,23 @@ pub struct ArrangedGroupDto {
 enum Startup {
     Unavailable(&'static str),
     Loaded,
-    Refused {
-        problem: DocumentProblem,
-        set_aside: bool,
-    },
+    /// The start-up document was refused and is still at the name. `Loaded`
+    /// once a write replaces it.
+    Refused(DocumentProblem),
 }
 
 struct Lane {
     startup: Startup,
     enabled: bool,
-    /// A refused document is still at the name and could not be kept aside,
-    /// so nothing may replace it this session.
-    blocked: bool,
+    /// What the name held when this session last read or wrote it, by
+    /// identity; `None` for nothing there.
+    published: Option<(u64, [u8; 16])>,
     /// The start-up rows not yet back in the Workbench, in their stored
     /// groups. The Nth row in order is `restored-N`.
     ///
     /// ponytail: only ever emptied whole (clear, off); putting one row back
-    /// or dismissing one needs stable per-row slots.
+    /// or dismissing one needs stable per-row slots, which the interface
+    /// slice adds first (ADR 0061, decision 4).
     restored: Vec<StoredGroup>,
 }
 
@@ -485,7 +515,7 @@ impl WorkspaceRestoreStore {
                 Lane {
                     startup: Startup::Unavailable(problem),
                     enabled: false,
-                    blocked: true,
+                    published: None,
                     restored: Vec::new(),
                 },
             ),
@@ -506,9 +536,8 @@ impl WorkspaceRestoreStore {
         // The checks touch the filesystem, so they run with the lane free.
         match startup {
             Startup::Unavailable(problem) => WorkspaceRestoreReadDto::Unavailable { problem },
-            Startup::Refused { problem, set_aside } => WorkspaceRestoreReadDto::Refused {
+            Startup::Refused(problem) => WorkspaceRestoreReadDto::Refused {
                 problem: problem.stable_id(),
-                set_aside,
             },
             Startup::Loaded if !enabled => WorkspaceRestoreReadDto::Off,
             Startup::Loaded => {
@@ -542,7 +571,7 @@ impl WorkspaceRestoreStore {
         arrangement: &WorkspaceArrangementDto,
         live: Vec<LiveRow>,
     ) -> WorkspaceRestoreWriteDto {
-        let lane = self.locked();
+        let mut lane = self.locked();
         let directory = match self.writable(&lane) {
             Ok(directory) => directory,
             Err(refusal) => return refusal,
@@ -551,23 +580,29 @@ impl WorkspaceRestoreStore {
             return WorkspaceRestoreWriteDto::Off;
         }
         let mut rows: HashMap<String, StoredRow> = HashMap::new();
+        let mut live_objects = HashSet::new();
         for row in live {
             let Some(stored) = stored_row(&row) else {
                 return refused("notStorable");
             };
+            live_objects.insert(objects(&stored));
             rows.insert(row.handle, stored);
         }
         for (index, row) in lane.restored.iter().flat_map(|g| &g.rows).enumerate() {
             rows.insert(format!("{RESTORED_PREFIX}{index}"), row.clone());
         }
-        let document = match arrange(arrangement, rows) {
+        let document = match arrange(arrangement, rows, &live_objects) {
             Ok(document) => document,
             Err(problem) => return refused(problem),
         };
-        publish(directory, &document)
+        if !unchanged_since_seen(directory, &lane) {
+            return refused("changedElsewhere");
+        }
+        publish(directory, &mut lane, &document)
     }
 
-    /// Forgets every stored row, live and restored, and keeps the switch.
+    /// Forgets every row the document stored, live and restored, and keeps
+    /// the switch. A copy kept aside after a refusal is not removed.
     #[must_use]
     pub fn clear(&self) -> WorkspaceRestoreWriteDto {
         let mut lane = self.locked();
@@ -575,16 +610,19 @@ impl WorkspaceRestoreStore {
             Ok(directory) => directory,
             Err(refusal) => return refusal,
         };
-        let outcome = publish(directory, &RestoreDocument::empty(lane.enabled));
+        let document = RestoreDocument::empty(lane.enabled);
+        let outcome = publish(directory, &mut lane, &document);
         if outcome == WorkspaceRestoreWriteDto::Saved {
             lane.restored.clear();
         }
         outcome
     }
 
-    /// The off switch. Turning restore off forgets every stored row and path;
-    /// turning it on starts from nothing. Setting what is already set writes
-    /// nothing.
+    /// The off switch. Off publishes an empty, disabled document even when
+    /// restore is already off, so it also forgets a refused document's paths;
+    /// a copy kept aside after a refusal is not removed. On starts from an
+    /// empty document, after keeping a refused one aside; turning on what is
+    /// already on writes nothing.
     #[must_use]
     pub fn set_enabled(&self, enabled: bool) -> WorkspaceRestoreWriteDto {
         let mut lane = self.locked();
@@ -592,10 +630,18 @@ impl WorkspaceRestoreStore {
             Ok(directory) => directory,
             Err(refusal) => return refusal,
         };
-        if lane.enabled == enabled {
-            return WorkspaceRestoreWriteDto::Saved;
+        if enabled {
+            if lane.enabled {
+                return WorkspaceRestoreWriteDto::Saved;
+            }
+            if !unchanged_since_seen(directory, &lane) {
+                return refused("changedElsewhere");
+            }
+            if matches!(lane.startup, Startup::Refused(_)) && !set_aside(directory) {
+                return refused("storedDocumentKept");
+            }
         }
-        let outcome = publish(directory, &RestoreDocument::empty(enabled));
+        let outcome = publish(directory, &mut lane, &RestoreDocument::empty(enabled));
         if outcome == WorkspaceRestoreWriteDto::Saved {
             lane.enabled = enabled;
             lane.restored.clear();
@@ -611,7 +657,9 @@ impl WorkspaceRestoreStore {
             (None, _) => Err(WorkspaceRestoreWriteDto::Unavailable {
                 problem: "rootUnresolved",
             }),
-            (Some(_), _) if lane.blocked => Err(refused("storedDocumentKept")),
+            (Some(_), Startup::Refused(problem)) if problem.kept() => {
+                Err(refused("storedDocumentKept"))
+            }
             (Some(directory), _) => Ok(directory.as_path()),
         }
     }
@@ -670,10 +718,22 @@ fn stored_row(row: &LiveRow) -> Option<StoredRow> {
     stored.members.iter().all(valid_member).then_some(stored)
 }
 
+/// The objects a row is, by identity, primary first.
+fn objects(row: &StoredRow) -> Vec<(u64, String)> {
+    row.members
+        .iter()
+        .map(|member| (member.volume_serial, member.file_id.clone()))
+        .collect()
+}
+
 /// Builds the document the arrangement describes over exactly these rows.
+///
+/// A restored row whose objects are a live row's is that row recorded twice:
+/// it is placed like any other and written once, as the live row.
 fn arrange(
     arrangement: &WorkspaceArrangementDto,
     mut rows: HashMap<String, StoredRow>,
+    live_objects: &HashSet<Vec<(u64, String)>>,
 ) -> Result<RestoreDocument, &'static str> {
     let checked: HashSet<&str> = arrangement.checked.iter().map(String::as_str).collect();
     if checked.iter().any(|handle| !rows.contains_key(*handle)) {
@@ -688,6 +748,9 @@ fn arrange(
                 return Err("invalidArrangement");
             }
             let mut row = rows.remove(handle).ok_or("staleArrangement")?;
+            if handle.starts_with(RESTORED_PREFIX) && live_objects.contains(&objects(&row)) {
+                continue;
+            }
             row.checked = checked.contains(handle.as_str());
             stored.push(row);
         }
@@ -714,9 +777,24 @@ fn arrange(
     Ok(document)
 }
 
-/// Replaces the document. Every failing path leaves the previous one where it
-/// was; see [`local_document::publish_through_temporary`].
-fn publish(directory: &Path, document: &RestoreDocument) -> WorkspaceRestoreWriteDto {
+/// Whether the name still holds what this session last read or wrote there.
+///
+/// ponytail: checked and then replaced, so another process's write landing
+/// between the two is still lost; a lock beside the document closes that if
+/// two windows are ever seen racing. A volume with no file ID answers `None`
+/// both times and is not guarded.
+fn unchanged_since_seen(directory: &Path, lane: &Lane) -> bool {
+    local_document::object_identity(&directory.join(FILE_NAME)) == lane.published
+}
+
+/// Replaces the document and remembers what the name now holds. Every failing
+/// path leaves the previous one where it was; see
+/// [`local_document::publish_through_temporary`].
+fn publish(
+    directory: &Path,
+    lane: &mut Lane,
+    document: &RestoreDocument,
+) -> WorkspaceRestoreWriteDto {
     let failed = |problem, retryable, temporary_left_behind| WorkspaceRestoreWriteDto::Failed {
         problem,
         retryable,
@@ -729,13 +807,15 @@ fn publish(directory: &Path, document: &RestoreDocument) -> WorkspaceRestoreWrit
     if std::fs::create_dir_all(directory).is_err() {
         return failed("directoryUnusable", true, false);
     }
-    match local_document::publish_through_temporary(
-        directory,
-        &directory.join(FILE_NAME),
-        &bytes,
-        TEMPORARY_PREFIX,
-    ) {
-        Ok(()) => WorkspaceRestoreWriteDto::Saved,
+    let target = directory.join(FILE_NAME);
+    match local_document::publish_through_temporary(directory, &target, &bytes, TEMPORARY_PREFIX) {
+        Ok(()) => {
+            // ponytail: read after the rename, so a write by another process
+            // in between is taken for this one's.
+            lane.published = local_document::object_identity(&target);
+            lane.startup = Startup::Loaded;
+            WorkspaceRestoreWriteDto::Saved
+        }
         Err(failure) => {
             let (problem, retryable) = match failure.refusal {
                 WriteRefusal::UnsafeTarget => ("unsafeTarget", false),
@@ -747,62 +827,46 @@ fn publish(directory: &Path, document: &RestoreDocument) -> WorkspaceRestoreWrit
     }
 }
 
-/// The start-up read: what is stored, or why it is not used.
+/// The start-up read: what is stored, or why it is not used. Writes nothing:
+/// a refused document is left exactly as found, and the session starts off.
 fn load(directory: &Path) -> Lane {
     let file = directory.join(FILE_NAME);
-    let refusal = |problem, set_aside| Lane {
-        startup: Startup::Refused { problem, set_aside },
-        enabled: true,
-        blocked: !set_aside,
-        restored: Vec::new(),
+    // Taken before the read, so a document replaced in between is one this
+    // session's first save refuses rather than writes over.
+    let published = local_document::object_identity(&file);
+    let lane = |startup, enabled, restored| Lane {
+        startup,
+        enabled,
+        published,
+        restored,
     };
-    let problem = match local_document::read_bounded(&file, MAX_DOCUMENT_BYTES) {
-        Ok(None) => {
-            return Lane {
-                startup: Startup::Loaded,
-                enabled: true,
-                blocked: false,
-                restored: Vec::new(),
-            };
-        }
+    // Off: a refused document may be one the user had switched off.
+    let refusal = |problem| lane(Startup::Refused(problem), false, Vec::new());
+    match local_document::read_bounded(&file, MAX_DOCUMENT_BYTES) {
+        Ok(None) => lane(Startup::Loaded, true, Vec::new()),
         Ok(Some(bytes)) => match read_document(&bytes) {
-            Ok(document) => {
-                return Lane {
-                    startup: Startup::Loaded,
-                    enabled: document.enabled,
-                    blocked: false,
-                    restored: document.groups,
-                };
-            }
-            Err(problem) => problem,
+            Ok(document) => lane(Startup::Loaded, document.enabled, document.groups),
+            Err(problem) => refusal(problem),
         },
-        // Not this application's file to move. Left where it is, and nothing
-        // is written over it.
-        Err(ReadRefusal::UnsafeTarget) => return refusal(DocumentProblem::UnsafeTarget, false),
-        Err(ReadRefusal::Oversized) => DocumentProblem::Oversized,
-        Err(ReadRefusal::Unreadable) => DocumentProblem::Unreadable,
-    };
-    refusal(problem, set_aside(directory, &file))
+        Err(ReadRefusal::UnsafeTarget) => refusal(DocumentProblem::UnsafeTarget),
+        Err(ReadRefusal::Oversized) => refusal(DocumentProblem::Oversized),
+        Err(ReadRefusal::Unreadable) => refusal(DocumentProblem::Unreadable),
+    }
 }
 
-/// Keeps a refused document under a name nothing else uses, and takes it off
-/// the published name.
+/// Keeps the refused document under a name nothing else uses, before turning
+/// restore on replaces it, so a downgrade cannot destroy a newer build's
+/// document.
 ///
-/// A hard link refuses an existing name, so nothing is ever replaced. Once the
-/// link exists the bytes are kept whatever happens to the original name, so a
-/// removal that fails costs nothing: the next publish replaces the name, and
-/// the kept link still holds the old object.
-fn set_aside(directory: &Path, file: &Path) -> bool {
+/// A hard link refuses an existing name, so nothing is ever replaced, and the
+/// published name is left to the publish that follows.
+fn set_aside(directory: &Path) -> bool {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
     let aside = directory.join(format!(
-        "workspace-restore.set-aside-{seconds}-{}.json",
+        "{SET_ASIDE_PREFIX}{seconds}-{}.json",
         std::process::id()
     ));
-    if std::fs::hard_link(file, &aside).is_err() {
-        return false;
-    }
-    let _ = std::fs::remove_file(file);
-    true
+    std::fs::hard_link(directory.join(FILE_NAME), aside).is_ok()
 }

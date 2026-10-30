@@ -2381,8 +2381,9 @@ async fn read_workspace_restore(
 }
 
 /// Records the session for the next start: Rust's own rows, arranged as the
-/// webview arranges them. An arrangement that does not place every row
-/// exactly once is refused, so a save cannot drop one.
+/// webview arranges them. An arrangement that does not place every row of this
+/// process exactly once is refused, and so is a save over a document another
+/// MSCanvas process wrote since this one last read or wrote it.
 #[tauri::command]
 async fn save_workspace_restore(
     arrangement: workspace_restore::WorkspaceArrangementDto,
@@ -2398,7 +2399,8 @@ async fn save_workspace_restore(
         .await
 }
 
-/// Forgets every stored row. Source acquisitions are not touched.
+/// Forgets every row the document stored. Source acquisitions are not touched;
+/// a copy kept aside after a refusal is not removed.
 #[tauri::command]
 async fn clear_workspace_restore(
     ipc_request: tauri::ipc::Request<'_>,
@@ -2411,7 +2413,8 @@ async fn clear_workspace_restore(
     off_the_async_runtime(move || restore.clear()).await
 }
 
-/// The off switch. Off forgets every stored row and path.
+/// The off switch. Off forgets every row and path the document stored; a copy
+/// kept aside after a refusal is not removed.
 #[tauri::command]
 async fn set_workspace_restore_enabled(
     enabled: bool,
@@ -2641,6 +2644,10 @@ pub fn run() {
             // The workspace restore document is read once, here, from the same
             // per-user directory. A QA build binds none, so a rendered
             // campaign never reads or writes the real profile's workspace.
+            // ponytail: once the preference store exposes its bound directory
+            // (`sibling_directory`, which the conversion preset store adds),
+            // bind that instead, so a QA build uses its own QA root; the
+            // interface slice needs it for rendered QA (ADR 0061, decision 2).
             #[cfg(not(feature = "e2e"))]
             let restore_directory = app
                 .path()
