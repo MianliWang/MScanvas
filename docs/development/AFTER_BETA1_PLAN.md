@@ -402,7 +402,8 @@ writer and Rust's ownership of files.
 - One-click view of a Thermo RAW file
   ([ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
   VIEW-009): four slices after ADR 0056's slices 2 and 3 (the cache library;
-  the operation and its commands; the interface; export provenance). Native QA
+  the operation and its commands; the interface; export provenance). The
+  interface slice waits on the owner's choice of interface direction. Native QA
   needs a bounded ProteoWizard hold release.
 - CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
@@ -542,6 +543,7 @@ None can be delivered by engineering alone; each waits for one input.
 
 - The frontend's target: what "meets requirements" means in execution and
   scope, before any redesign, and which demo direction the interface follows.
+  *ADR 0060's interface slice waits on the direction (its open question 8).*
 - *Answered 2026-10-29:* the owner accepted
   [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)
   (option C) and
