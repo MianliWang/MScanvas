@@ -127,6 +127,37 @@ async function sample(label: string) {
   return measured;
 }
 
+/**
+ * Scrolls a surface to its end and waits until it stays there: the end is set
+ * again until the surface holds it, unchanged, for five frames.
+ *
+ * One assignment was not enough. Under reduced motion every style change is a
+ * 0.01 ms transition (app.css), so a commit's layout lands a frame later: the
+ * selected spectrum's summary keeps an 11 px font for that frame and takes
+ * 13 px after it. An end set in that frame stopped 1-2 px short of the end the
+ * column then had.
+ * A surface that never stays at its end -- one that does not scroll, or a
+ * layout that never settles -- times out here.
+ */
+async function scrollToEnd(owner: string) {
+  await browser.waitUntil(
+    () =>
+      browser.execute(async (css: string) => {
+        const node = document.querySelector<HTMLElement>(css);
+        if (node === null) return false;
+        node.scrollTop = node.scrollHeight;
+        const read = () => `${String(node.scrollTop)} ${String(node.clientHeight)} ${String(node.scrollHeight)}`;
+        const first = read();
+        for (let frame = 0; frame < 5; frame += 1) {
+          await new Promise((done) => requestAnimationFrame(done));
+          if (read() !== first) return false;
+        }
+        return node.scrollTop + node.clientHeight >= node.scrollHeight - 1;
+      }, owner),
+    { timeoutMsg: `${owner} never stayed at the end of its scroll for five frames` },
+  );
+}
+
 /** A frame only, for the moments a keyboard stop is what the frame is for. */
 async function shot(label: string) {
   await frames();
@@ -383,10 +414,7 @@ describe("PM9.7 integrated states, rendered", () => {
         await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
         await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForExist({ timeout: 60_000 });
         await selectTheSpectrum(0);
-        await browser.execute(() => {
-          const column = document.querySelector<HTMLElement>("#workbench-evidence");
-          if (column !== null) column.scrollTop = column.scrollHeight;
-        });
+        await scrollToEnd("#workbench-evidence");
         const viewer = await sample(`i2-viewer-end-${at}`);
         const scans = await browser.execute(() => {
           const column = document.querySelector("#workbench-evidence")!.getBoundingClientRect();
@@ -405,10 +433,7 @@ describe("PM9.7 integrated states, rendered", () => {
         await open(scenario("projectWithResult", locale), locale, width, height);
         await navigate(BUNDLES[locale].projectSurface);
         await browser.$("[data-project-run]").waitForExist({ timeout: 30_000 });
-        await browser.execute(() => {
-          const surface = document.querySelector<HTMLElement>("#workbench-project");
-          if (surface !== null) surface.scrollTop = surface.scrollHeight;
-        });
+        await scrollToEnd("#workbench-project");
         const project = await sample(`i2-project-end-${at}`);
         const lastRun = await browser.execute(() => {
           const runs = [...document.querySelectorAll("[data-project-run]")];
