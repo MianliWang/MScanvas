@@ -1,4 +1,5 @@
 /** M6.8 browser evidence: production React, mocked Tauri boundary only. */
+import { metrics } from "../support/cdp";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
@@ -70,9 +71,9 @@ const terminal = (items: readonly ConversionQueueItem[], reason: "completed" | "
 const MID_RUN = [item(1, "finalized", 1), item(2, "running", 1), item(3, "pending", 0)];
 
 async function viewport(width: number, height: number) {
-  await browser.setWindowSize(width, height);
-  const frame = await browser.execute(() => ({ width: outerWidth - innerWidth, height: outerHeight - innerHeight }));
-  await browser.setWindowSize(width + frame.width, height + frame.height);
+  // Emulated rather than a resized OS window: a CI runner's display can be
+  // smaller than the window asked for, which left M6.7 at 1350x617 (2026-10-30).
+  await metrics(width, height);
   expect(await browser.execute(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width, height });
   console.log("M6.8 measured inner viewport", { width, height });
 }
