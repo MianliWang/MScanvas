@@ -183,7 +183,7 @@ fn vendor_row() -> ConversionIntent {
         crate::NumericPrecision::Mz64Intensity32,
         crate::CompressionIntent::Zlib,
     )
-    .expect("TV1, TE1")
+    .expect("TV1, TE1, TQ1")
 }
 
 /// The vendor-centroiding row, planned and run on a Thermo acquisition: the
