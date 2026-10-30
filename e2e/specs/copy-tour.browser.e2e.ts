@@ -24,7 +24,7 @@ import { cdp, metrics } from "../support/cdp";
 import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
 import { CONVERT, checkMembers, waitUntilOffered } from "../support/conversion";
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
-import { MZML_ROW } from "../support/fixtures";
+import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
@@ -46,6 +46,8 @@ import type { SelectedFile } from "../../apps/desktop/src/features/mzml-preview/
 const OUTPUT = resolve(
   process.env["MSCANVAS_COPY_TOUR_OUTPUT"] ?? join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".tmp", "copy-tour"),
 );
+/** `MSCANVAS_COPY_TOUR_ONLY=a,b` re-shoots only the stops named, into the same folder. */
+const ONLY = process.env["MSCANVAS_COPY_TOUR_ONLY"]?.split(",") ?? null;
 const LOCALES: readonly Locale[] = ["en", "zh-CN"];
 const VIEWPORTS = [
   [1366, 768],
@@ -243,6 +245,8 @@ interface Stop {
   readonly anchor: string;
   /** Leaves the keyboard where the state put it, so its focus ring is in the shot. */
   readonly keepFocus?: boolean;
+  /** Only where the window is short enough for the state to differ from another stop's. */
+  readonly narrowOnly?: boolean;
 }
 
 /** A crowded status bar: a conversion under way, a long unsaved project name, drop that stopped working. */
@@ -284,8 +288,13 @@ const STOPS: readonly Stop[] = [
       await revealRosterRow(MZML_ROW.handle);
       await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
       await foldNarrowRoster();
+      // The frames fade in after 300 ms, so a quick read never flashes them.
+      await browser.waitUntil(() => browser.execute(() => {
+        const frame = document.querySelector(".viewer-skeleton-plot");
+        return frame !== null && getComputedStyle(frame).opacity === "1";
+      }), { timeout: 30_000, timeoutMsg: "the reading frames never showed" });
     },
-    anchor: ".workbench-shell",
+    anchor: ".viewer-skeleton",
   },
   { name: "workbench-preview", table: populated, drive: openPreview, anchor: PLOT },
   {
@@ -380,6 +389,25 @@ const STOPS: readonly Stop[] = [
       await waitForFigurePreview();
     },
     anchor: ".figure-export-dialog",
+  },
+  {
+    // A spectrum with no points: Current range is refused, its reason beside it.
+    name: "export-figure-no-peaks",
+    table: (locale) => {
+      const empty = ipcTable({ emptySpectrum: true });
+      return { ...scenario("populated", locale), load_selected_spectrum: empty.load_selected_spectrum,
+        project_selected_spectrum: empty.project_selected_spectrum };
+    },
+    drive: async () => {
+      await answerFigurePreviews();
+      await openPreview();
+      // Not selectTheSpectrum: it waits for a drawn plot, and none is drawn.
+      await browser.execute(() => document.querySelector('div.spectrum-table-row[data-row-position="0"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      await openFigureDialog(".spectrum-panel");
+      await waitForFigurePreview();
+    },
+    anchor: ".figure-export-dialog .figure-export-note",
   },
   // ProteoWizard: an item in the status bar; a one-line notice while no usable
   // backend stands; its details open over the bar from the item.
@@ -495,6 +523,8 @@ const STOPS: readonly Stop[] = [
       await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "center" }), CONVERT);
     },
     anchor: CONVERT,
+    // At 1366 the plan fits without scrolling, so this is conversion-ready again.
+    narrowOnly: true,
   },
   {
     name: "conversion-running",
@@ -523,6 +553,7 @@ const STOPS: readonly Stop[] = [
       });
     },
     anchor: CONVERT,
+    narrowOnly: true,
   },
   {
     // The plan at the queue's full size: every one of 1,024 rows, reviewed,
@@ -543,7 +574,8 @@ const STOPS: readonly Stop[] = [
     name: "conversion-running-long",
     table: (locale) => conversionWorld(locale, LONG_RUN),
     drive: () => go(2),
-    anchor: '.conversion-run-list[data-windowed="true"] li[data-item-state="finalized"]',
+    // Followed to the running item: the list is its own scroll box, moved off its top.
+    anchor: '.conversion-run-list[data-windowed="true"] li[data-item-state="running"]',
   },
   {
     // The roster's footer at its fullest (direction A 2.1): two rows checked,
@@ -577,6 +609,16 @@ const STOPS: readonly Stop[] = [
       await revealInDetails("#workbench-inspector [data-provenance]");
     },
     anchor: "#workbench-inspector [data-provenance]",
+  },
+  {
+    // Open project… refused by Rust: the refusal in words, with the head's buttons to try again.
+    name: "project-open-failed",
+    table: (locale) => ({ ...emptyTable(locale), open_project: { __reject: { kind: "unreadable" } } }),
+    drive: async () => {
+      await go(3);
+      await browser.$(".project-actions > button:nth-child(2)").click();
+    },
+    anchor: "[data-project-problem]",
   },
   {
     name: "settings",
@@ -657,13 +699,18 @@ async function layoutFacts() {
       const element = document.querySelector(css);
       const box = element?.getBoundingClientRect();
       if (element === null || box === undefined || box.width === 0) return null;
-      const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      // The centre and four points between it and the corners: an overlay in
+      // a corner of the data covers it as surely as one in the middle.
+      const unobstructed = [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]].every(([x, y]) => {
+        const at = document.elementFromPoint(box.left + box.width * x!, box.top + box.height * y!);
+        return at !== null && element.contains(at);
+      });
       return {
         top: Math.round(box.top),
         bottom: Math.round(box.bottom),
         height: Math.round(box.height),
         onScreen: box.top >= 0 && box.bottom <= innerHeight,
-        unobstructed: at !== null && element.contains(at),
+        unobstructed,
       };
     };
     const sideways = [...document.querySelectorAll<HTMLElement>("body *")]
@@ -680,6 +727,13 @@ async function layoutFacts() {
       documentOverflowX: document.documentElement.scrollWidth - innerWidth,
       sideways,
       linkButtonsOrDetails: document.querySelectorAll("details, .link-button").length,
+      // A windowed list holds its box and mounts a window of rows, not all of them.
+      windowedLists: [...document.querySelectorAll<HTMLElement>('[data-windowed="true"]')].map((list) => ({
+        list: String(list.className).split(" ").at(-1),
+        height: Math.round(list.getBoundingClientRect().height),
+        scrollTop: Math.round(list.scrollTop),
+        mounted: list.children.length,
+      })),
       // The shell's own facts: where each tab starts (a dot must not move
       // one), the bar's height, the ProteoWizard details' box, and every
       // visible button whose label is cut.
@@ -735,6 +789,8 @@ describe("Copy tour, rendered", () => {
   for (const [width, height] of VIEWPORTS) {
     for (const locale of LOCALES) {
       for (const stop of STOPS) {
+        if (stop.narrowOnly === true && width > 1050) continue;
+        if (ONLY !== null && !ONLY.includes(stop.name)) continue;
         const file = `${stop.name}-${locale}-${String(width)}x${String(height)}.png`;
         it(`${stop.name} ${locale} ${String(width)}x${String(height)}`, async () => {
           await open(stop, locale, width, height);
