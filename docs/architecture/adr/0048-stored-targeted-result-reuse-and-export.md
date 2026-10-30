@@ -162,6 +162,8 @@ Rules:
 Values are written as stored. A spreadsheet may still interpret a field such as
 a label beginning with `=` as a formula; neutralizing it would alter the data,
 so it is not done, and the export's help says values may be reinterpreted.
+[ADR 0054](0054-spreadsheet-csv-for-the-targeted-results-table.md) adds an
+opt-in spreadsheet CSV beside this table; the CSV and TSV above are unchanged.
 
 ### 6. The interface says what the result depends on
 
