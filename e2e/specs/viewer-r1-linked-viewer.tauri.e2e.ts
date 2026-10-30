@@ -72,7 +72,7 @@ async function backToFullRange(): Promise<void> {
   if ((await rangeCaption()).includes("full range")) {
     return;
   }
-  await browser.$('button[aria-label="Reset range"]').click();
+  await browser.$('button[aria-label="Fit all, retention time"]').click();
   await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
     timeout: 30_000,
     timeoutMsg: "the run never came back to full range",
@@ -213,7 +213,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
     expect(facts.toggles).toBe(2);
     expect(await rangeCaption()).toContain("full range");
     // Each axis title says its unit is not reported.
-    const caption = await browser.$("#chromatogram-units").getText();
+    const caption = `${await browser.$("#chromatogram-axis-x").getText()} ${await browser.$("#chromatogram-axis-y").getText()}`;
     expect(caption).toContain("unit not reported");
     // The source sentence lives in Details -> Chromatogram source (rebuild
     // spec 4), so Details is shown before it is read.
@@ -268,7 +268,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
     // Exactly one read, for the scan the click resolved to.
     const reads = await spectrumReads();
     expect(reads).toEqual([selected]);
-    await browser.$("//h2[normalize-space()='Selected spectrum']").waitForDisplayed({
+    await browser.$("//h2[normalize-space()='Spectrum']").waitForDisplayed({
       timeout: 30_000,
     });
 
@@ -338,10 +338,10 @@ describe("the linked viewer on the real Tauri WebView", () => {
       timeout: 30_000,
       timeoutMsg: "the wheel never changed the visible range",
     });
-    await browser.$('button[aria-label="Reset range"]').click();
+    await browser.$('button[aria-label="Fit all, retention time"]').click();
     await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
       timeout: 30_000,
-      timeoutMsg: "Reset range did not return the whole run",
+      timeoutMsg: "Fit all did not return the whole run",
     });
 
     expect((await ipcCalls()).length).toBe(before);
@@ -361,7 +361,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
      * contract does.
      */
     if (!(await rangeCaption()).includes("full range")) {
-      await browser.$('button[aria-label="Reset range"]').click();
+      await browser.$('button[aria-label="Fit all, retention time"]').click();
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 30_000,
         timeoutMsg: "the run never came back to full range",

@@ -19,7 +19,7 @@ function Surface<A extends "rt" | "mz", D extends Domain>({ port }: { readonly p
   // A plot box is a section, and its range actions sit in the box's foot, so
   // they find the plot through the section as they do in the viewer.
   return <section><svg role="img" aria-label="Scientific plot" tabIndex={0} ref={attachPlot}>
-    <rect className="plot-range-band" visibility="hidden" /></svg><div><PlotRangeActions port={port} /></div></section>;
+    <rect className="plot-range-band" visibility="hidden" /></svg><div><PlotRangeActions port={port} editing={false} onClose={() => {}} /></div></section>;
 }
 function Harness({ axis }: { readonly axis: "rt" | "mz" }) {
   const rt = useViewerInteraction(); const mz = useSpectrumViewport();

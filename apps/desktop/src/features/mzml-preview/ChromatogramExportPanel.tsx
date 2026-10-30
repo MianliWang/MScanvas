@@ -19,7 +19,7 @@ import type { FigureSettingsValidation } from "./figureSettingsValidation";
 
 import type { ChromatogramExportFormat } from "./contracts";
 import { formatCount } from "./format";
-import { figureRefusal, QuickFigureActions } from "./QuickFigureActions";
+import { figureRefusal, QuickFigureActions, type PlotMenuItem } from "./QuickFigureActions";
 import type {
   ChromatogramExportState,
   LinkedFigureExportState,
@@ -27,12 +27,12 @@ import type {
   TraceVisibility,
 } from "./usePreviewWorkspace";
 
-/** Where the chromatogram says why PNG or Copy is refused. */
-const REASON_ID = "chromatogram-figure-reason";
 /** The ⋯ menu's note on what the data documents hold, which CSV and TSV point at. */
 const DATA_NOTE_ID = "chromatogram-data-note";
 
 export interface ChromatogramExportToolsProps {
+  /** The plot's own menu items (Set range…), above the figure items. */
+  readonly leadingItems?: readonly PlotMenuItem[];
   readonly onOpenFigure: () => void;
   /** Opens the linked figure dialog, returning focus to `trigger`. */
   readonly onOpenLinkedFigure: (trigger: HTMLElement | null) => void;
@@ -51,12 +51,13 @@ export interface ChromatogramExportToolsProps {
   readonly linkedUnavailable: LinkedFigureUnavailable | null;
 }
 
-export function ChromatogramExportTools({ onOpenFigure, onOpenLinkedFigure, scientificExportBusy, traces, onExport, onCopyPlot,
+export function ChromatogramExportTools({ leadingItems, onOpenFigure, onOpenLinkedFigure, scientificExportBusy, traces, onExport, onCopyPlot,
   figureSettingsValidation, linkedUnavailable }: ChromatogramExportToolsProps) {
   const t = useUiMessages();
   // A panel of no series is refused by the contract, so a figure with neither
   // trace visible is not offered. The data exports are untouched.
   const nothingDrawn = !traces.tic && !traces.bpc;
+  const reason = figureRefusal(t, scientificExportBusy, figureSettingsValidation, nothingDrawn);
   // Scan and trace choices belong to the viewer; range and size corrections
   // remain available inside the figure dialog.
   const linkedBlocked = linkedUnavailable !== null && (
@@ -65,7 +66,7 @@ export function ChromatogramExportTools({ onOpenFigure, onOpenLinkedFigure, scie
   );
   return <QuickFigureActions busy={scientificExportBusy}
     figureUnavailable={figureSettingsValidation.render !== null || nothingDrawn}
-    pngUnavailable={figureSettingsValidation.dpi !== null} reasonId={REASON_ID}
+    pngUnavailable={figureSettingsValidation.dpi !== null} reason={reason} leadingItems={leadingItems}
     onPreview={onOpenFigure} onPng={() => onExport("png")} onCopy={onCopyPlot}
     menuNote={{ id: DATA_NOTE_ID, text: t("viewerExportTraceHelp") }}
     menuItems={[
@@ -80,24 +81,18 @@ export function ChromatogramExportTools({ onOpenFigure, onOpenLinkedFigure, scie
 }
 
 /**
- * Under the plot: why a figure action is refused, then what the last
- * chromatogram and linked exports did. Each result is its own named region, so
- * a reader can tell which export finished.
+ * What the last chromatogram and linked exports did, over the plot's corner so
+ * a result never takes height from the plot. Each result is its own named
+ * region, so a reader can tell which export finished.
  */
-export function ChromatogramExportStatus({ exportState, linkedExportState, scientificExportBusy, traces, figureSettingsValidation,
-  onDismiss, onDismissLinked }: {
+export function ChromatogramExportStatus({ exportState, linkedExportState, onDismiss, onDismissLinked }: {
   readonly exportState: ChromatogramExportState;
   readonly linkedExportState: LinkedFigureExportState;
-  readonly scientificExportBusy: boolean;
-  readonly traces: TraceVisibility;
-  readonly figureSettingsValidation: FigureSettingsValidation;
   readonly onDismiss: () => void;
   readonly onDismissLinked: () => void;
 }) {
   const t = useUiMessages();
-  const reason = figureRefusal(t, scientificExportBusy, figureSettingsValidation, !traces.tic && !traces.bpc);
   return <div className="plot-status">
-    {reason === null ? null : <p className="plot-reason" id={REASON_ID}>{reason}</p>}
     <div aria-label={t("viewerChromatogramExportStatus")} aria-live="polite" className="spectrum-export-status" role="status">
       <ChromatogramExportResult onDismiss={onDismiss} state={exportState} />
     </div>
@@ -151,7 +146,7 @@ function DismissButton({ onDismiss, label }: { readonly onDismiss: () => void; r
   return <IconButton icon={<Icon name="close" />} label={label ?? t("viewerDismiss")} onClick={onDismiss} size="sm" />;
 }
 
-function describeUnavailable(problem: LinkedFigureUnavailable, t: UiMessage): string {
+export function describeUnavailable(problem: LinkedFigureUnavailable, t: UiMessage): string {
   if (problem.code === "minimumHeight") return t("linkedHeight", { value: String(problem.minimum) });
   const keys = { noChromatogram: "linkedNoChromatogram", loading: "linkedLoading", noSpectrum: "linkedNoSpectrum",
     noTrace: "linkedNoTrace", outside: "linkedOutside", figureSettings: "linkedSettings" } as const;

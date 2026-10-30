@@ -84,7 +84,7 @@ async function findSpectrumPlot(): Promise<HTMLElement> {
  */
 function rowByIdentifier(identifier: string): HTMLElement {
   const scan = Number(/scan=(\d+)$/u.exec(identifier)?.[1]);
-  const grid = screen.getByRole("grid", { name: "Spectra" });
+  const grid = screen.getByRole("grid", { name: "Scans" });
   const row = grid.querySelector<HTMLElement>(`[data-source-index="${String(scan - 1)}"]`);
   if (row === null) throw new Error(`no row for ${identifier}`);
   return row;
@@ -181,14 +181,14 @@ describe("mzML preview workspace", () => {
     // than asking the user to open the file again.
     const api = createFakePreviewApi({ chosenInstallation: chosenBackend });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     const readsBefore = api.openCount();
 
     await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+      expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
     });
     // And nothing was re-read on the user's behalf: changing the installation
     // is not a request to run the new one against the open file.
@@ -202,7 +202,7 @@ describe("mzML preview workspace", () => {
     // again in the picker.
     const api = createFakePreviewApi({ chosenInstallation: chosenBackend });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     const picksBefore = api.requestedSpectra.length;
 
     await showBackendBanner();
@@ -215,7 +215,7 @@ describe("mzML preview workspace", () => {
     fireEvent.click(reopen);
 
     // Read again from the handle Rust kept, with no second trip to the picker.
-    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(await screen.findByRole("grid", { name: "Scans" })).toBeVisible();
     expect(api.requestedSpectra.length).toBe(picksBefore);
   });
 
@@ -230,14 +230,14 @@ describe("mzML preview workspace", () => {
         ),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
     // The readings go, and the retained file is offered back rather than left
     // looking like it still describes what is installed.
     expect(await screen.findByRole("button", { name: /^Preview QC_pool_01/ })).toBeVisible();
-    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
   });
 
   it("clears a stale workspace when the backend changed between the check and the spawn", async () => {
@@ -250,14 +250,14 @@ describe("mzML preview workspace", () => {
         Promise.reject(previewError({ kind: "backend_changed_after_check", retryable: false })),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
     // The readings go, and the retained file is offered back rather than left
     // looking like it still describes what is installed.
     expect(await screen.findByRole("button", { name: /^Preview QC_pool_01/ })).toBeVisible();
-    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
   });
 
   it("clears a stale workspace when the backend is gone by the time it is run", async () => {
@@ -269,12 +269,12 @@ describe("mzML preview workspace", () => {
         Promise.reject(previewError({ kind: "backend_not_found_at_launch", retryable: false })),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
     expect(await screen.findByRole("button", { name: /^Preview QC_pool_01/ })).toBeVisible();
-    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
   });
 
   it("re-checks the backend when a row fails in a way that cannot be retried", async () => {
@@ -294,7 +294,7 @@ describe("mzML preview workspace", () => {
       },
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
@@ -311,7 +311,7 @@ describe("mzML preview workspace", () => {
           : Promise.resolve<SelectedSpectrumOutcome>({ outcome: "spectrum", spectrum: buildSpectrum(index, 12) }),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     const identifier = "controllerType=0 controllerNumber=1 scan=1";
     selectRowByIdentifier(identifier);
 
@@ -320,15 +320,15 @@ describe("mzML preview workspace", () => {
     // The failure, in the panel it happened to, beside the selection it was for.
     expect(within(panel).getByText(/could not be loaded/u)).toBeVisible();
     expect(rowByIdentifier(identifier)).toHaveAttribute("aria-selected", "true");
-    // Nothing to make a figure or a file of.
-    for (const name of ["Quick PNG", "Copy plot", "Export figure"]) {
-      expect(within(panel).queryByRole("button", { name })).toBeNull();
-    }
+    // Nothing to make a figure or a file of: no Export… and no ⋯, which is
+    // where Quick PNG and Copy plot are.
+    expect(within(panel).queryByRole("button", { name: "Export figure" })).toBeNull();
     expect(within(panel).queryByRole("button", { name: "More export options" })).toBeNull();
 
     failing = false;
     fireEvent.click(retry);
-    expect(await within(panel).findByRole("button", { name: "Quick PNG" })).toBeVisible();
+    expect(await within(panel).findByRole("button", { name: "Export figure" })).toBeVisible();
+    expect(within(panel).getByRole("button", { name: "More export options" })).toBeVisible();
     expect(rowByIdentifier(identifier)).toHaveAttribute("aria-selected", "true");
   });
 
@@ -343,9 +343,9 @@ describe("mzML preview workspace", () => {
       availability: () => Promise.resolve(trusted ? availableBackend : quarantinedBackend),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     const readsBefore = api.requestedSpectra.length;
     expect(readsBefore).toBeGreaterThan(0);
 
@@ -380,7 +380,7 @@ describe("mzML preview workspace", () => {
     ).toBeVisible();
 
     // The table is still on screen, and clicking it launches nothing.
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
     expect(api.requestedSpectra.length).toBe(readsBefore);
   });
@@ -392,7 +392,7 @@ describe("mzML preview workspace", () => {
     // process launch either way, for a result nobody will see.
     const api = createFakePreviewApi({ chosenInstallation: () => new Promise(() => undefined) });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     const readsBefore = api.requestedSpectra.length;
 
     await showBackendBanner();
@@ -564,19 +564,7 @@ describe("mzML preview workspace", () => {
   it("loads metadata, the run summary and the spectrum table from one open action", async () => {
     await openTheFile(createFakePreviewApi());
 
-    expect(await screen.findByRole("heading", { name: "Run" })).toBeVisible();
-    // Named in the run summary as well as in the workspace list: the summary
-    // says which acquisition these numbers describe, and the list says which
-    // rows the session holds.
-    const summary = screen.getByRole("region", { name: "Run" });
-    expect(within(summary).getByText(/QC_pool_01\.mzML/)).toBeVisible();
-    expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
-    // Each metadata section is folded behind a button named by the file's own heading.
-    expect(screen.getByRole("button", { name: "File description" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Software" }));
-    expect(screen.getByText("software: pwiz 3.0.25000")).toBeVisible();
-
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = await screen.findByRole("grid", { name: "Scans" });
     // The header row counts, so six spectra report seven rows.
     expect(grid).toHaveAttribute("aria-rowcount", "7");
     expect(within(grid).getAllByRole("row")).toHaveLength(7);
@@ -584,6 +572,19 @@ describe("mzML preview workspace", () => {
     // The scan number has a column of its own: the identifier that carries it
     // is truncated from the right, where the scan number is.
     expect(within(grid).getByRole("columnheader", { name: "Scan" })).toBeVisible();
+    // The file row names what is open, and the list says which rows the
+    // session holds.
+    expect(screen.getByRole("heading", { level: 1, name: "QC_pool_01.mzML" })).toBeVisible();
+    expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+
+    // The run summary and the metadata are the file's Metadata tab.
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));
+    const summary = await screen.findByRole("region", { name: "Run" });
+    expect(within(summary).getByText(/QC_pool_01\.mzML/)).toBeVisible();
+    // Each metadata section is folded behind a button named by the file's own heading.
+    expect(screen.getByRole("button", { name: "File description" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Software" }));
+    expect(screen.getByText("software: pwiz 3.0.25000")).toBeVisible();
   });
 
   it("treats a dismissed file picker as no change rather than as a failure", async () => {
@@ -642,7 +643,7 @@ describe("mzML preview workspace", () => {
       },
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     // The user reaches for more files and the dialog will not open.
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
@@ -650,15 +651,15 @@ describe("mzML preview workspace", () => {
 
     // Failing to choose new files is no reason to take away what is already
     // there: the row is still in the workspace and its preview is still shown.
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Run" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1, name: "QC_pool_01.mzML" })).toBeVisible();
     expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Try choosing files again" }));
     await waitFor(() => {
       expect(pickerAttempts).toBe(3);
     });
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
   });
 
   it("draws a spectrum that carries negative intensity below the zero line", async () => {
@@ -687,7 +688,7 @@ describe("mzML preview workspace", () => {
         }),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
     await findSpectrumPlot();
@@ -728,7 +729,7 @@ describe("mzML preview workspace", () => {
         }),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=3");
 
@@ -755,7 +756,7 @@ describe("mzML preview workspace", () => {
         }),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
@@ -786,12 +787,12 @@ describe("mzML preview workspace", () => {
       },
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
     const plot = await findSpectrumPlot();
-    expect(plot).toHaveAccessibleName("Spectrum 0, MS2, 900,000 points.");
+    expect(plot).toHaveAccessibleName("Spectrum 0, MS1, 900,000 points.");
     // The spectrum's facts are in Details, beside the run's.
     expect(screen.getByText("Base peak").nextElementSibling).toHaveTextContent("812.5000 at 4.200e+6");
     // What the drawing covers, now that this spectrum has a viewport. The
@@ -816,11 +817,11 @@ describe("mzML preview workspace", () => {
         Promise.resolve<SelectedSpectrumOutcome>({ outcome: "unavailable", requestedIndex: index }),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
 
-    expect(await within(screen.getByRole("region", { name: "Selected spectrum" })).findByText("Spectrum 1 is not in this run")).toBeVisible();
+    expect(await within(screen.getByRole("region", { name: "Spectrum" })).findByText("Spectrum 1 is not in this run")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Reload spectrum" }),
     ).not.toBeInTheDocument();
@@ -838,7 +839,7 @@ describe("mzML preview workspace", () => {
             }),
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=4");
@@ -858,7 +859,7 @@ describe("mzML preview workspace", () => {
     const slow = deferred<SelectedSpectrumOutcome>();
     const api = createFakePreviewApi({ spectrum: () => slow.promise });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
@@ -879,10 +880,10 @@ describe("mzML preview workspace", () => {
     // being read twice is keyed by request, not by index.
     const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile] });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
-    await screen.findByText(/Spectrum 0, MS2, 12 points\./);
+    await screen.findByText(/Spectrum 0, MS1, 12 points\./);
 
     // The second row is previewed explicitly, which is the only way a second
     // dataset is ever read.
@@ -891,10 +892,10 @@ describe("mzML preview workspace", () => {
     await waitFor(() => {
       expect(api.openedHandles).toEqual(["file-0", "file-1"]);
     });
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
-    await screen.findByText(/Spectrum 0, MS2, 12 points\./);
+    await screen.findByText(/Spectrum 0, MS1, 12 points\./);
     expect(api.requestedSpectra).toEqual([0, 0]);
   });
 
@@ -905,13 +906,13 @@ describe("mzML preview workspace", () => {
     const abandoned = deferred<SelectedSpectrumOutcome>();
     const api = createFakePreviewApi({ spectrum: () => abandoned.promise });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
     fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
     await chooseRosterAction("removeHighlighted");
     await waitFor(() => {
-      expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+      expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
     });
 
     abandoned.resolve({ outcome: "spectrum", spectrum: buildSpectrum(0, 77) });
@@ -920,7 +921,7 @@ describe("mzML preview workspace", () => {
       expect(screen.getByText(/The files on disk were not changed/, VISIBLE)).toBeVisible();
     });
     expect(screen.queryByText(/77 points/)).not.toBeInTheDocument();
-    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
   });
 
   it("discloses a run summary and spectrum list that disagree about the size", async () => {
@@ -935,7 +936,9 @@ describe("mzML preview workspace", () => {
     );
 
     // Two separate reads of one file. MSCanvas shows both rather than picking
-    // one and presenting a single acquisition with a single size.
+    // one and presenting a single acquisition with a single size, where the
+    // run's size is: the Metadata tab.
+    fireEvent.click(await screen.findByRole("tab", { name: "Metadata" }));
     expect(await screen.findByRole("note")).toHaveTextContent(
       "The run summary reports 9 spectra; the spectrum list contains 6.",
     );
@@ -944,7 +947,7 @@ describe("mzML preview workspace", () => {
   it("states the true spectrum count and says plainly when rows were truncated", async () => {
     await openTheFile(createFakePreviewApi({ preview: buildPreview(120, true) }));
 
-    const grid = await screen.findByRole("grid", { name: "Spectra" });
+    const grid = await screen.findByRole("grid", { name: "Scans" });
     expect(grid).toHaveAttribute("aria-rowcount", "121");
     expect(screen.getByText(/120 matches \/ 120 loaded rows \/ 250,000 reported spectra · loaded prefix only/)).toBeVisible();
     // Windowed: the DOM holds far fewer rows than the table describes.
@@ -954,7 +957,7 @@ describe("mzML preview workspace", () => {
   it("moves the focused row with the keyboard and commits the selection explicitly", async () => {
     const api = createFakePreviewApi();
     await openTheFile(api);
-    const grid = await screen.findByRole("grid", { name: "Spectra" });
+    const grid = await screen.findByRole("grid", { name: "Scans" });
 
     within(grid).getAllByRole("row")[1]?.focus();
     pressKey("ArrowDown");
@@ -975,7 +978,7 @@ describe("mzML preview workspace", () => {
 
   it("never presents an unreported unit or representation as if it were measured", async () => {
     await openTheFile(createFakePreviewApi());
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
     await findSpectrumPlot();
@@ -996,8 +999,9 @@ describe("mzML preview workspace", () => {
     expect(
       screen.getByText(/Profile or centroid is not reported; each stick is a measured point\./),
     ).toBeVisible();
-    // No chromatogram count is emitted, so none is shown as zero.
-    expect(screen.getByText("Chromatograms").nextElementSibling).toHaveTextContent("Not reported");
+    // No chromatogram count is emitted, so none is shown as zero (Metadata tab).
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));
+    expect((await screen.findByText("Chromatograms")).nextElementSibling).toHaveTextContent("Not reported");
   });
 });
 
@@ -1400,7 +1404,7 @@ describe("the session workspace roster", () => {
     // Listed but not selected and not being read: nothing here is a decision
     // the user has made yet.
     expect(await rosterActionRefused("removeHighlighted")).toBe(true);
-    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
   });
 
   it("says the list could not be read, and can be told to read it again", async () => {
@@ -1426,7 +1430,7 @@ describe("the session workspace roster", () => {
     const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile, thirdFile] });
     await openTheFile(api);
 
-    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(await screen.findByRole("grid", { name: "Scans" })).toBeVisible();
     // One picker operation, three rows, one process. Reading all of them would
     // be three ProteoWizard launches against three large files for two results
     // nobody asked to see.
@@ -1451,7 +1455,7 @@ describe("the session workspace roster", () => {
       },
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     // A second picker operation, adding to a session that already has a file
     // open. Nothing about that is a request to read something else.
@@ -1459,7 +1463,7 @@ describe("the session workspace roster", () => {
     expect(await screen.findByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
 
     expect(api.openedHandles).toEqual(["file-0"]);
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
     expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("Viewed acquisition");
     // The new row is what is selected, so removing it takes it away again.
     expect(rosterRow(/QC_pool_02\.mzML/)).toHaveAttribute("aria-selected", "true");
@@ -1469,7 +1473,7 @@ describe("the session workspace roster", () => {
   it("reports a file the session already holds rather than listing it twice", async () => {
     const api = createFakePreviewApi({ pickedFiles: [selectedFile] });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -1573,7 +1577,7 @@ describe("the session workspace roster", () => {
   it("removes the selected rows, keeps the preview whose row survived, and says the files are untouched", async () => {
     const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile, thirdFile] });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     // The first row is the one being shown; the other two are removed.
     highlightRows(/QC_pool_02\.mzML/, /Blank_03\.mzML/);
@@ -1585,21 +1589,21 @@ describe("the session workspace roster", () => {
     expect(screen.getByText(/Removed 2 files from the list\./, VISIBLE)).toBeVisible();
     expect(screen.getByText(/The files on disk were not changed\./, VISIBLE)).toBeVisible();
     // The preview belonged to a row that survived, so it is still on screen.
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
     expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("Viewed acquisition");
   });
 
   it("clears the preview when the row it belongs to is removed, and reads nothing else", async () => {
     const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile] });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     const readsBefore = api.openCount();
 
     highlightRows(/QC_pool_01\.mzML/);
     await chooseRosterAction("removeHighlighted");
 
     await waitFor(() => {
-      expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+      expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
     });
     // Nothing takes its place on its own: reading another acquisition is an
     // action the user takes.
@@ -1650,13 +1654,13 @@ describe("the session workspace roster", () => {
   it("empties the list without a restart and gives the keyboard back to Add files", async () => {
     const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile] });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     await chooseRosterAction("clearList");
 
     expect(await screen.findByText("No acquisitions yet")).toBeVisible();
     expect(screen.queryByRole("option")).toBeNull();
-    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
     expect(screen.getByText(/Cleared 2 files from the list\./, VISIBLE)).toBeVisible();
     expect(screen.getByText(/The files on disk were not changed\./, VISIBLE)).toBeVisible();
     // Focus lands somewhere it can be used rather than on the body. Awaited,
@@ -1705,7 +1709,8 @@ describe("the session workspace roster", () => {
       preview: () => open.promise,
     });
     await openTheFile(api);
-    await screen.findByText("Reading the acquisition…");
+    // The wait names the file it is reading.
+    await screen.findByText("Reading QC_pool_01.mzML…");
 
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     highlightRows(/QC_pool_01\.mzML/);
@@ -1723,7 +1728,7 @@ describe("the session workspace roster", () => {
       await open.promise;
     });
     // The reply landed for a row that is gone, so it put nothing back.
-    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
     expect(api.openedHandles).toEqual(["file-0"]);
     // And the backend is idle again: the next activation reads.
     await waitFor(() => {
@@ -1738,14 +1743,14 @@ describe("the session workspace roster", () => {
       pickedFiles: [selectedFile, secondFile],
     });
     await openTheFile(api);
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     const readsBefore = api.openCount();
 
     await showBackendBanner();
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+      expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
     });
     // The rows are Rust's paths and the user's choices; no backend decided
     // either, so neither goes.
@@ -1759,7 +1764,7 @@ describe("the session workspace roster", () => {
     // action rather than a trip back through the picker.
     expect(api.openCount()).toBe(readsBefore);
     fireEvent.click(screen.getByRole("button", { name: /^Preview QC_pool_01/ }));
-    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(await screen.findByRole("grid", { name: "Scans" })).toBeVisible();
   });
 
   it("does not take away a preview that was started while a removal was in flight", async () => {
@@ -1775,7 +1780,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     // The row on screen is removed, and before Rust answers the user reads
     // another one.
@@ -1796,7 +1801,7 @@ describe("the session workspace roster", () => {
     await waitFor(() => {
       expect(rosterRows()).toHaveLength(1);
     });
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
     expect(rosterRow(/QC_pool_02\.mzML/)).toHaveTextContent("Viewed acquisition");
     expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("Reading…");
   });
@@ -1823,7 +1828,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
-    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(await screen.findByRole("grid", { name: "Scans" })).toBeVisible();
 
     // The list menu gives the keyboard back to its trigger, which leaves with
     // the last row.
@@ -1833,7 +1838,7 @@ describe("the session workspace roster", () => {
       expect(api.rosterReads()).toBe(2);
       expect(rosterRows()).toHaveLength(0);
     });
-    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
     expect(screen.getByText("No acquisitions yet")).toBeVisible();
     expect(api.openCount()).toBe(1);
     await waitFor(() => {
@@ -2107,14 +2112,14 @@ describe("the session workspace roster", () => {
     expect(screen.getByRole("row", { name: /run-30\.raw.*Thermo RAW/ })).toBeVisible();
 
     // Exactly one read, and it is the mzML row's.
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     expect(api.openCount()).toBe(1);
     expect(api.openedHandles).toEqual([selectedFile.handle]);
 
     // Moving focus to a Shimadzu row does not clear the mzML preview and does
     // not read anything further.
     fireEvent.click(screen.getByRole("row", { name: /sample-28\.lcd/ }));
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
     expect(api.openCount()).toBe(1);
   });
 
@@ -2138,7 +2143,7 @@ describe("the session workspace roster", () => {
     // Both rows are there, because Rust answered with everything it holds.
     expect(screen.getByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(api.openCount()).toBe(0);
-    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
 
     reading.resolve({ datasets: [selectedFile], capacity: 1_024 });
   });
@@ -2173,7 +2178,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
     // The first addition into an empty session reads exactly one file.
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     const reads = api.openCount();
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
@@ -2182,7 +2187,7 @@ describe("the session workspace roster", () => {
     chooseExecutionOrder("size-asc");
 
     // Still on screen, still the same reading, and nothing re-read to keep it.
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
     expect(api.openCount()).toBe(reads);
     // And the row it belongs to is still on screen, saying why.
     expect(
@@ -2562,7 +2567,7 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
     chooseExecutionOrder("name-desc");
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
@@ -2579,7 +2584,7 @@ describe("adding a folder of mzML files", () => {
     expect(executionOrder()).toHaveValue("name-desc");
     // The preview belongs to the row it was opened for, and a list operation is
     // not a reason to take it away or to read anything else.
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
     expect(api.openCount()).toBe(readsBefore);
   });
 
@@ -3115,7 +3120,7 @@ describe("adding a folder of mzML files", () => {
 
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
-    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(await screen.findByRole("grid", { name: "Scans" })).toBeVisible();
     scan.resolve({ files: [] });
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
@@ -3159,14 +3164,14 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
-    await screen.findByRole("grid", { name: "Spectra" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
     expect(await screen.findByText("The folder could not be added")).toBeVisible();
     expect(screen.getByText(/MSCanvas does not follow links when scanning/)).toBeVisible();
     expect(rosterRows()).toHaveLength(1);
-    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
     // Its own channel: nothing about the workspace was changed, so saying the
     // workspace could not be changed would describe a mutation that never began.
     expect(screen.queryByText("The workspace could not be changed")).toBeNull();
@@ -3364,8 +3369,9 @@ describe("telling two identically named acquisitions apart", () => {
 
     fireEvent.click(await screen.findByRole("row", { name: /sample\.mzML/ }));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
-    const summary = await screen.findByRole("region", { name: "Run" });
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    // Details names the open acquisition by the roster's identity.
+    const grid = await screen.findByRole("grid", { name: "Scans" });
+    const summary = await screen.findByRole("complementary", { name: "Details" });
     const readsAfterOpen = api.openCount();
 
     // It was unique when the preview DTO was produced, so that response has no
@@ -3412,7 +3418,7 @@ describe("telling two identically named acquisitions apart", () => {
 
     fireEvent.click(await screen.findByRole("row", { name: COLLIDING_ONE }));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
-    await screen.findByRole("region", { name: "Run" });
+    await screen.findByRole("grid", { name: "Scans" });
 
     // Changing installation discards backend-derived readings but deliberately
     // retains the active roster row as a one-action recovery affordance.

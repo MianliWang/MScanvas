@@ -72,7 +72,7 @@ async function openTheViewer(preview: PreviewApi): Promise<void> {
     </WorkspaceDropTransportProvider>,
   );
   fireEvent.keyDown(await screen.findByRole("treegrid", {}, SETTLING), { key: "Enter" });
-  await screen.findByRole("grid", { name: "Spectra" }, SETTLING);
+  await screen.findByRole("grid", { name: "Scans" }, SETTLING);
   await screen.findByRole("img", { name: "Chromatogram" }, SETTLING);
   vi.spyOn(plot(), "getBoundingClientRect").mockReturnValue({
     x: 0, y: 0, left: 0, top: 0, right: PLOT_PIXELS, bottom: 210, width: PLOT_PIXELS, height: 210, toJSON: () => ({}),
@@ -116,6 +116,20 @@ function refused(control: HTMLElement): boolean {
   return control.getAttribute("aria-disabled") === "true";
 }
 
+/** A figure action under a plot box's ⋯ menu (Quick PNG, Copy plot: direction A), from a freshly opened menu. */
+async function figure(name: string, box: HTMLElement = panel()): Promise<HTMLElement> {
+  await closeMenu();
+  fireEvent.keyDown(head(en.plotMoreExports, box), { key: "Enter" });
+  return screen.findByRole("menuitem", { name });
+}
+
+/** Whether a figure action is refused right now; the menu is closed again after reading it. */
+async function figureRefused(name: string, box: HTMLElement = panel()): Promise<boolean> {
+  const result = refused(await figure(name, box));
+  await closeMenu();
+  return result;
+}
+
 /** What this panel's own live region currently says. */
 function exportStatus(): string {
   return within(panel()).getByRole("status", { name: "Chromatogram export status" }).textContent ?? "";
@@ -153,10 +167,10 @@ async function commitAWheel(): Promise<void> {
 
 /** Reads one spectrum, so the other surface has exports to offer. */
 async function selectAScan(): Promise<void> {
-  const grid = screen.getByRole("grid", { name: "Spectra" });
+  const grid = screen.getByRole("grid", { name: "Scans" });
   fireEvent.click(within(grid).getAllByRole("row")[1] as HTMLElement);
   await waitFor(() => {
-    expect(within(spectrumPanel()).queryByRole("button", { name: en.viewerCopy })).not.toBeNull();
+    expect(within(spectrumPanel()).queryByRole("button", { name: en.plotMoreExports })).not.toBeNull();
   }, SETTLING);
 }
 
@@ -182,7 +196,7 @@ describe("what the chromatogram can be exported as", () => {
       </WorkspaceDropTransportProvider>,
     );
     fireEvent.keyDown(await screen.findByRole("treegrid", {}, SETTLING), { key: "Enter" });
-    await screen.findByRole("grid", { name: "Spectra" }, SETTLING);
+    await screen.findByRole("grid", { name: "Scans" }, SETTLING);
 
     expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
     expect(within(panel()).queryByRole("button", { name: en.figureExportTitle })).toBeNull();
@@ -275,13 +289,13 @@ describe("what the chromatogram can be exported as", () => {
     await openTheViewer(preview);
 
     // The viewer opens with TIC alone.
-    fireEvent.click(head(en.figureQuickPng));
+    fireEvent.click(await figure(en.figureQuickPng));
     await waitFor(() => expect(preview.chromatogramExportRequests).toHaveLength(1));
     expect(preview.chromatogramExportRequests[0]).toMatchObject({ format: "png", traces: { tic: true, bpc: false } });
-    await waitFor(() => expect(refused(head(en.figureQuickPng))).toBe(false));
+    await waitFor(async () => expect(await figureRefused(en.figureQuickPng)).toBe(false));
 
     fireEvent.click(head("BPC"));
-    fireEvent.click(head(en.figureQuickPng));
+    fireEvent.click(await figure(en.figureQuickPng));
 
     await waitFor(() => expect(preview.chromatogramExportRequests).toHaveLength(2));
     expect(preview.chromatogramExportRequests[1]?.traces).toEqual({ tic: true, bpc: true });
@@ -295,8 +309,9 @@ describe("what the chromatogram can be exported as", () => {
     fireEvent.click(head("TIC"));
 
     for (const name of [en.figureQuickPng, en.viewerCopy]) {
-      expect(refused(head(name))).toBe(true);
-      expect(head(name)).toHaveAccessibleDescription(en.viewerTracesHidden);
+      const item = await figure(name);
+      expect(refused(item)).toBe(true);
+      expect(item).toHaveAccessibleDescription(en.viewerTracesHidden);
     }
     expect(refused(await data("CSV"))).toBe(false);
     fireEvent.click(await data("TSV"));
@@ -314,9 +329,11 @@ describe("what the chromatogram can be exported as", () => {
       fireEvent.change(within(dialog).getByRole("textbox", { name: /^Width/u }), { target: { value: "" } });
     });
 
-    expect(refused(head(en.figureQuickPng))).toBe(true);
-    expect(head(en.figureQuickPng)).toHaveAccessibleDescription(en.invalidWidth);
-    expect(within(panel()).getByText(en.invalidWidth)).toBeVisible();
+    const png = await figure(en.figureQuickPng);
+    expect(refused(png)).toBe(true);
+    expect(png).toHaveAccessibleDescription(en.invalidWidth);
+    // Said inside the item it refuses, where the reader is looking.
+    expect(png).toHaveTextContent(en.invalidWidth);
     expect(refused(await data("CSV"))).toBe(false);
   });
 
@@ -424,9 +441,12 @@ describe("what the chromatogram can be exported as", () => {
     await openTheViewer(preview);
 
     fireEvent.click(await data("CSV"));
-    await waitFor(() => expect(refused(head(en.figureQuickPng))).toBe(true));
-    expect(refused(head(en.viewerCopy))).toBe(true);
-    expect(head(en.viewerCopy)).toHaveAccessibleDescription(en.plotExportBusy);
+    await waitFor(() => expect(preview.chromatogramExportRequests).toHaveLength(1));
+    await waitFor(async () => expect(await figureRefused(en.figureQuickPng)).toBe(true));
+    const copy = await figure(en.viewerCopy);
+    expect(refused(copy)).toBe(true);
+    expect(copy).toHaveAccessibleDescription(en.plotExportBusy);
+    await closeMenu();
 
     // A second export while it runs sends nothing: the item is closed.
     const tsv = await data("TSV");
@@ -436,7 +456,7 @@ describe("what the chromatogram can be exported as", () => {
     await closeMenu();
 
     act(() => { release(); });
-    await waitFor(() => expect(refused(head(en.figureQuickPng))).toBe(false));
+    await waitFor(async () => expect(await figureRefused(en.figureQuickPng)).toBe(false));
     expect(refused(await data("TSV"))).toBe(false);
   });
 
@@ -459,7 +479,7 @@ describe("what the chromatogram can be exported as", () => {
     const preview = api();
     await openTheViewer(preview);
 
-    fireEvent.click(head(en.viewerCopy));
+    fireEvent.click(await figure(en.viewerCopy));
 
     await waitFor(() => expect(preview.chromatogramCopyRequests).toHaveLength(1));
     expect(preview.chromatogramCopyRequests[0]?.traces).toEqual({ tic: true, bpc: false });
@@ -486,19 +506,19 @@ describe("what the chromatogram can be exported as", () => {
     const { preview, release } = heldExport();
     await openTheViewer(preview);
     await selectAScan();
-    expect(refused(head(en.figureQuickPng, spectrumPanel()))).toBe(false);
+    expect(await figureRefused(en.figureQuickPng, spectrumPanel())).toBe(false);
 
     fireEvent.click(await data("CSV"));
-    await waitFor(() => expect(refused(head(en.figureQuickPng, spectrumPanel()))).toBe(true));
-    expect(refused(head(en.viewerCopy, spectrumPanel()))).toBe(true);
-    await closeMenu();
+    await waitFor(() => expect(preview.chromatogramExportRequests).toHaveLength(1));
+    await waitFor(async () => expect(await figureRefused(en.figureQuickPng, spectrumPanel())).toBe(true));
+    expect(await figureRefused(en.viewerCopy, spectrumPanel())).toBe(true);
     expect(refused(await data("CSV", spectrumPanel()))).toBe(true);
     await closeMenu();
     // Saying nothing about an export it did not start.
     expect(within(spectrumPanel()).getByRole("status").textContent ?? "").not.toContain("chromatogram");
 
     act(() => { release(); });
-    await waitFor(() => expect(refused(head(en.figureQuickPng, spectrumPanel()))).toBe(false));
+    await waitFor(async () => expect(await figureRefused(en.figureQuickPng, spectrumPanel())).toBe(false));
   });
 
   it("refuses this panel's actions while a selected-spectrum export runs", async () => {
@@ -508,11 +528,11 @@ describe("what the chromatogram can be exported as", () => {
     });
     await openTheViewer(preview);
     await selectAScan();
-    expect(refused(head(en.figureQuickPng))).toBe(false);
+    expect(await figureRefused(en.figureQuickPng)).toBe(false);
 
     fireEvent.click(await data("CSV", spectrumPanel()));
-    await waitFor(() => expect(refused(head(en.figureQuickPng))).toBe(true));
-    await closeMenu();
+    await waitFor(() => expect(preview.spectrumExportRequests).toHaveLength(1));
+    await waitFor(async () => expect(await figureRefused(en.figureQuickPng)).toBe(true));
     const tsv = await data("TSV");
     expect(refused(tsv)).toBe(true);
     fireEvent.click(tsv);
@@ -521,7 +541,7 @@ describe("what the chromatogram can be exported as", () => {
     await closeMenu();
 
     act(() => { release(); });
-    await waitFor(() => expect(refused(head(en.figureQuickPng))).toBe(false));
+    await waitFor(async () => expect(await figureRefused(en.figureQuickPng)).toBe(false));
   });
 
   it("keeps the settings rules independent of the surface that is not running", async () => {
@@ -534,8 +554,8 @@ describe("what the chromatogram can be exported as", () => {
       fireEvent.change(within(dialog).getByRole("textbox", { name: /^Width/u }), { target: { value: "" } });
     });
 
-    expect(refused(head(en.figureQuickPng))).toBe(true);
-    expect(refused(head(en.figureQuickPng, spectrumPanel()))).toBe(true);
+    expect(await figureRefused(en.figureQuickPng)).toBe(true);
+    expect(await figureRefused(en.figureQuickPng, spectrumPanel())).toBe(true);
     expect(refused(await data("CSV"))).toBe(false);
     await closeMenu();
     expect(refused(await data("CSV", spectrumPanel()))).toBe(false);

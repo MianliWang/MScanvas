@@ -61,9 +61,9 @@ async function loadedApp(api = createFakePreviewApi({ availability: availableBac
   const add = await screen.findByRole("button", { name: "Add files…" });
   await waitFor(() => expect(add).toBeEnabled());
   fireEvent.click(add);
-  const grid = await screen.findByRole("grid", { name: "Spectra" });
+  const grid = await screen.findByRole("grid", { name: "Scans" });
   fireEvent.click(grid.querySelector('[data-source-index="0"]')!);
-  await screen.findByText(/Spectrum 0, MS2, 12 points\./);
+  await screen.findByText(/Spectrum 0, MS1, 12 points\./);
   return api;
 }
 
@@ -279,7 +279,7 @@ describe("session Settings in the real application composition", () => {
     const add = await screen.findByRole("button", { name: "Add files…" });
     await waitFor(() => expect(add).toBeEnabled());
     fireEvent.click(add);
-    const grid = await screen.findByRole("grid", { name: "Spectra" });
+    const grid = await screen.findByRole("grid", { name: "Scans" });
     fireEvent.click(grid.querySelector('[data-source-index="0"]')!);
     expect(api.requestedSpectra).toEqual([0]);
     const calls = [...api.calls()];
@@ -287,7 +287,7 @@ describe("session Settings in the real application composition", () => {
     choose(dialog, en.simplifiedChinese);
     await act(async () => result.resolve({ outcome: "spectrum", spectrum: buildSpectrum(0, 12) }));
     expect(document.querySelector('[data-settings-dialog]')).toBe(dialog);
-    expect(screen.getByText("质谱 0，MS2，12 个点。")).toBeInTheDocument();
+    expect(screen.getByText("质谱 0，MS1，12 个点。")).toBeInTheDocument();
     const spectrum = document.querySelector('.spectrum-panel');
     expect(spectrum).not.toBeNull();
     press(dialog, zh.cancel);
@@ -316,12 +316,13 @@ describe("session Settings in the real application composition", () => {
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
     await applyAndClose(dialog, zh.apply);
-    const png = within(spectrum).getByRole("button", { name: zh.figureQuickPng });
+    // Quick PNG and Copy plot are the ⋯ menu's (direction A), in the new locale.
+    fireEvent.keyDown(within(spectrum).getByRole("button", { name: zh.plotMoreExports }), { key: "Enter" });
+    const png = await screen.findByRole("menuitem", { name: zh.figureQuickPng });
     expect(png).toHaveAttribute("aria-disabled", "true");
     expect(png).toHaveAccessibleDescription(zh.invalidDpi);
-    expect(within(spectrum).getByRole("button", { name: zh.viewerCopy })).not.toHaveAttribute("aria-disabled");
-    fireEvent.keyDown(within(spectrum).getByRole("button", { name: zh.plotMoreExports }), { key: "Enter" });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "导出 CSV…" }));
+    expect(screen.getByRole("menuitem", { name: zh.viewerCopy })).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(screen.getByRole("menuitem", { name: "导出 CSV…" }));
     await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(1));
     expect(api.spectrumExportRequests[0]?.settings).toEqual({ widthPx: 640, heightPx: 480, pngDpi: 300, theme: "dark" });
     vi.unstubAllGlobals();

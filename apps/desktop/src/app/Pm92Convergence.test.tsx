@@ -85,7 +85,7 @@ async function readTheFirstAcquisition() {
     return found;
   });
   await press(row);
-  await screen.findByRole("grid", { name: "Spectra" });
+  await screen.findByRole("grid", { name: "Scans" });
 }
 
 describe("PM9.2: the backend banner folds when there is nothing to act on (L10)", () => {

@@ -481,7 +481,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
       await browser.$('[aria-controls="workbench-roster"]').click();
     }
     await browser.$(row).click();
-    await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+    await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
     await showProjectSurface();
     await browser.$(`[data-project-capture-qc="${LAYER}"]:not([aria-disabled])`).waitForDisplayed();
     const offered = await capture("m85-02-offered");
@@ -601,7 +601,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
       await browser.$('[aria-controls="workbench-roster"]').click();
     }
     await browser.$(row).click();
-    await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+    await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
     await showProjectSurface();
     await browser.$(`[data-project-capture-qc="${LAYER}"]:not([aria-disabled])`).waitForExist();
 

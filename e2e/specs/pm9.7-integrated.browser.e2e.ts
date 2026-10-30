@@ -283,7 +283,7 @@ describe("PM9.7 integrated states, rendered", () => {
         await browser.$(".roster-empty").waitForExist({ timeout: 30_000 });
         const workbench = await sample(`i1-workbench-${at}`);
         expect(workbench.surface).toBe("workbench");
-        expect(workbench.text).toContain(words.emptyEvidence);
+        expect(workbench.text).toContain(words.evidenceFirstRun);
         let add = await mark(".workbench-shell", words.addFiles, "data-pm97-add");
         if (add === null) {
           // Folded below 1050 px: the header's Acquisitions action unfolds it.
@@ -357,7 +357,7 @@ describe("PM9.7 integrated states, rendered", () => {
         await open(scenario("populated", locale), locale, width, height);
         await revealRosterRow(MZML_ROW.handle);
         await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
-        await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+        await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
         await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForExist({ timeout: 60_000 });
         await selectTheSpectrum(0);
         await browser.execute(() => {
@@ -431,7 +431,7 @@ describe("PM9.7 integrated states, rendered", () => {
       await open(scenario("populated", locale), locale, 960, 640);
       await revealRosterRow(MZML_ROW.handle);
       await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
-      await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+      await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
       await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForExist({ timeout: 60_000 });
       await selectTheSpectrum(0);
       await walk("viewer-960x640", 13);
@@ -446,7 +446,7 @@ describe("PM9.7 integrated states, rendered", () => {
       await open(scenario("populated", locale), locale, 1366, 768);
       await revealRosterRow(MZML_ROW.handle);
       await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
-      await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+      await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
       await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForExist({ timeout: 60_000 });
       await selectTheSpectrum(0);
       await walk("workbench-1366x768", 20, 120);

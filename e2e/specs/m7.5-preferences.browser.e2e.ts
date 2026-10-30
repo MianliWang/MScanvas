@@ -558,15 +558,24 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await browser.$(".inspector-panel").waitForDisplayed();
     const state = await capture("19-inspector-zh");
     expect(state.detailsOpen).toBe("true");
+    // Details names the open file and what each plot is drawn from; the run
+    // and its MS levels are the file's Metadata tab (direction A).
     const inspector = state.inspector?.text ?? "";
-    expect(inspector).toContain(zh.summaryRun);
-    expect(inspector).toContain(zh.summarySpectra);
-    expect(inspector).toContain(zh.summaryMsLevels);
+    expect(inspector).toContain(zh.viewerSpectrum);
+    expect(inspector).toContain(zh.detailsChromatogramSource);
     // The unreported state stays the unreported state.
     expect(inspector).not.toContain("(unit not reported)");
     expect(inspector).not.toContain(en.summaryRetentionTime);
     // Nothing clipped, and the panel owns its own scroll.
     expect(state.inspector?.insideViewport).toBe(true);
+    await browser.$(`//*[@role="tab"][normalize-space()="${zh.viewerTabMetadata}"]`).click();
+    await browser.$(".preview-metadata").waitForDisplayed();
+    const metadata = await browser.$(".preview-metadata").getText();
+    expect(metadata).toContain(zh.summaryRun);
+    expect(metadata).toContain(zh.summarySpectra);
+    expect(metadata).toContain(zh.summaryMsLevels);
+    expect(metadata).not.toContain("(unit not reported)");
+    expect(metadata).not.toContain(en.summaryRetentionTime);
 
     // And nothing anywhere in this session is reading English where a Chinese
     // value exists. Named sentences rather than a heuristic: each is a value

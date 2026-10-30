@@ -495,7 +495,7 @@ describe("the m/z viewport against the real projection boundary", () => {
       expect(claimed).toBe(false);
 
       const disabled = await browser.execute(() =>
-        ["Zoom in m/z", "Zoom out m/z", "Reset m/z range"].map((label) => {
+        ["Zoom in m/z", "Zoom out m/z", "Fit all, m/z"].map((label) => {
           const node = [...document.querySelectorAll("button")].find(
             (candidate) => candidate.textContent?.trim() === label,
           );
@@ -689,7 +689,7 @@ describe("the m/z viewport against the real projection boundary", () => {
         .move({ duration: 60, x: at - 60, y })
         .up()
         .perform();
-      await pressButton("Reset m/z range");
+      await pressButton("Fit all, m/z");
       await waitForADrawing();
 
       const after = await ipcCalls();

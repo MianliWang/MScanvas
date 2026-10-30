@@ -35,6 +35,8 @@ export interface ExportFigureDialogProps {
   readonly committedDomain: { readonly low: number; readonly high: number } | null;
   /** The data export of the same source and range (spectrum and chromatogram; never linked). */
   readonly onExportData?: (format: "csv" | "tsv") => void;
+  /** Why the lane would refuse this figure now, or `null`: shown beside the actions it refuses. */
+  readonly refusal?: string | null;
 }
 
 /** One current question; old answers never grant a matching-preview action. */
@@ -107,20 +109,25 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
   useEffect(() => () => { if (shown !== null) URL.revokeObjectURL(shown.url); }, [shown]);
   const error = !stale && state.status === "answered" && state.answer.status === "refused" ? state.answer.error : null;
   const status = sourceChanged ? t("figurePreviewSourceChanged") : stale ? t("figurePreviewStale") : state.status === "none" ? t("figurePreviewNone") : state.status === "loading" ? t("figurePreviewLoading") : state.status === "failed" ? t("figurePreviewFailed") : error ? ownedErrorMessage(error, t) : artifact?.empty ? t("figurePreviewEmpty") : t("figurePreviewCurrent");
+  // A figure the lane would refuse is refused here, with its reason beside the
+  // actions, so a press never reaches a dispatch that starts nothing and
+  // leaves the dialog waiting on a lane that never became busy.
+  const refusal = props.refusal ?? null;
   const save = (format: "svg" | "png") => {
-    if (dispatched.current || props.busy || artifact === null || props.question === null || (format === "png" && props.validation.dpi !== null)) return;
+    if (dispatched.current || props.busy || artifact === null || refusal !== null || props.question === null || (format === "png" && props.validation.dpi !== null)) return;
     dispatched.current = props.onExport(props.question, format);
     if (!dispatched.current) setState({ status: "none", key: "" });
   };
   const prefix = `export-${id}`;
-  const ids = { range: `${id}-range`, data: `${id}-data`, dataNote: `${id}-data-note`, status: `${id}-status`, result: `${id}-result` };
+  const ids = { range: `${id}-range`, data: `${id}-data`, dataNote: `${id}-data-note`, status: `${id}-status`, result: `${id}-result`,
+    refusal: `${id}-refusal` };
   // A refused action points at the visible line that says why: the preview
   // status (no current drawing, or one rendering) and, while an export runs,
   // the result line, which then says what that export is waiting on. An
   // up-to-date preview says so only to a screen reader, so it is no reason.
   const busyReason = status === t("figurePreviewCurrent") ? ids.result : `${ids.status} ${ids.result}`;
-  const figureReason = props.busy ? busyReason : ids.status;
-  const figureRefused = props.busy || artifact === null;
+  const figureReason = props.busy ? busyReason : refusal !== null && artifact !== null ? ids.refusal : ids.status;
+  const figureRefused = props.busy || artifact === null || refusal !== null;
   const rangeWindow = props.committedDomain === null ? null : t(props.kind === "spectrum" ? "viewerExportMzWindow" : "viewerExportRtWindow",
     { low: props.committedDomain.low.toFixed(4), high: props.committedDomain.high.toFixed(4) });
   const rangeNote = props.rangeAvailability === "noPeaks" ? t("viewerExportNoPeaks") : props.rangeAvailability === "noViewport" ? t("viewerExportNoViewport") : null;
@@ -178,10 +185,11 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
           </div>
         </div>
         <footer className="figure-export-foot">
+          {refusal === null ? null : <p className="figure-export-refusal" id={ids.refusal}>{refusal}</p>}
           <div className="figure-export-result" id={ids.result}>{props.result}</div>
           <div className="figure-export-actions">
             <Button refused={figureRefused} reasonId={figureReason} onClick={() => {
-              if (!dispatched.current && !props.busy && artifact !== null && props.question !== null) dispatched.current = props.onCopy(props.question);
+              if (!dispatched.current && !props.busy && artifact !== null && refusal === null && props.question !== null) dispatched.current = props.onCopy(props.question);
             }}>{t("viewerCopy")}</Button>
             {(["svg", "png"] as const).map(format => {
               const dpiRefused = format === "png" && props.validation.dpi !== null;

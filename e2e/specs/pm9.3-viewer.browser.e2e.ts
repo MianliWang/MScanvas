@@ -778,8 +778,10 @@ async function observeViewer(label: string) {
       toolbars: {
         chromatogramHeader: rows(".chromatogram-panel > .plot-head"),
         spectrumHeader: rows(".spectrum-panel > .plot-head"),
-        scansHeader: rows(".spectrum-table-panel > .plot-head"),
-        scanViewControls: rows(".scan-view-controls"),
+        // The scan head holds the title, the search and the filter on one
+        // line since direction A, so both measures read it.
+        scansHeader: rows(".spectrum-table-panel > .scan-head"),
+        scanViewControls: rows(".spectrum-table-panel > .scan-head"),
       },
       rangeRows: {
         chromatogram: rows(".chromatogram-panel .plot-range-actions"),
@@ -787,8 +789,8 @@ async function observeViewer(label: string) {
       },
       reach: {
         spectrumHeader: reach(".spectrum-panel > .plot-head"),
-        // Previous and Next, in the scan list's head (spec 3.5).
-        scanSteps: reach(".spectrum-table-panel > .plot-head .plot-tools"),
+        // Previous and Next, around the scan in the spectrum's head (direction A).
+        scanSteps: reach(".spectrum-panel .spectrum-stepper"),
         tableHeader: reach(".spectrum-table-head"),
         firstRow: reach('.spectrum-table-panel [data-row-position="0"]'),
       },
@@ -837,13 +839,13 @@ async function observeViewer(label: string) {
         const room = head.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
         return at(title) + 2 * (parseFloat(style.columnGap) || 0) + at(tools) <= room + 0.5;
       })(),
-      // The sentence about the selected spectrum, the head's subtitle, and
-      // whether the head's controls cover it (UI-28). Since the rebuild the
-      // head is one 36 px line whose subtitle ellipsizes first (spec 3.4), so
-      // `cut` is recorded, not a failure.
+      // What the head says about the selected spectrum, its subtitle, and
+      // whether the head's controls cover it (UI-28). The head is one line
+      // whose subtitle (MS level and size; the sentence is the plot's name)
+      // ellipsizes first (direction A), so `cut` is recorded, not a failure.
       spectrumHeading: (() => {
         const head = document.querySelector<HTMLElement>(".spectrum-panel > .plot-head");
-        const summary = head?.querySelector<HTMLElement>("#selected-spectrum-summary");
+        const summary = head?.querySelector<HTMLElement>(".spectrum-head-facts");
         if (!head || !summary || summary.getClientRects().length === 0) return null;
         const text = summary.getBoundingClientRect();
         const covered = [...head.querySelectorAll<HTMLElement>("button")]
@@ -855,7 +857,7 @@ async function observeViewer(label: string) {
       // Which acquisition the evidence belongs to, where the shell names it
       // (ADR 0006's Run identity; the Workbench's identity row, spec 3.2).
       identity: (() => {
-        const item = document.querySelector<HTMLElement>(".viewer-identity-name");
+        const item = document.querySelector<HTMLElement>(".viewer-file-name");
         return item === null ? null : { text: item.textContent, truncated: item.scrollWidth > item.clientWidth };
       })(),
       panels: {
@@ -1042,11 +1044,11 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await waitForReads(1);
       await expectSelected(3);
 
-      await iconButton(SCANS, en.scanNext).click();
+      await iconButton(MZ_PANEL, en.scanNext).click();
       await waitForReads(2);
       await expectSelected(4);
 
-      await iconButton(SCANS, en.scanPrevious).click();
+      await iconButton(MZ_PANEL, en.scanPrevious).click();
       await waitForReads(3);
       await expectSelected(3);
 
@@ -1071,20 +1073,18 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await expectSelected(3);
       const reads = (await spectrumReads()).length;
 
-      // Sort by total ion current, descending. The compact list shows four
-      // columns, so a field without one is ordered from Sort scans, which
-      // names the order it applied (rebuild spec 3.5).
-      const sortScans = () => browser.$(`${SCANS} button[aria-label^="${en.scanSortBy}"]`);
-      for (const choice of [en.scanTotalIonCurrent, en.scanSortDescending]) {
-        await sortScans().click();
-        const item = browser.$(`//*[@role="menuitemradio"][normalize-space()="${choice}"]`);
-        await item.waitForDisplayed();
-        await item.click();
-        await item.waitForExist({ reverse: true });
-      }
-      expect(await sortScans().getAttribute("aria-label")).toBe(
-        fill(en.scanSortCurrent, { name: en.scanTotalIonCurrent, direction: en.scanSortDescending }),
-      );
+      // Sort by total ion current, descending. The list beside the spectrum
+      // shows four columns; the Scans tab puts every field under its own
+      // header (direction A, P11), and its header says the order it applied.
+      await browser.$(`//*[@role="tab"][normalize-space()="${en.viewerTabScans}"]`).click();
+      const tic = browser.$(`${SCANS}[data-layout="full"] button[title="${en.scanTotalIonCurrent}"]`);
+      await tic.waitForDisplayed();
+      await tic.click();
+      await tic.click();
+      expect(await browser.$(`${SCANS} [role="columnheader"][aria-sort="descending"]`).getText()).toBe(en.scanTotalIonCurrent);
+      // Back beside the plots, the order holds.
+      await browser.$(`//*[@role="tab"][normalize-space()="${en.viewerTabSpectra}"]`).click();
+      await browser.$(`${SCANS}[data-layout="compact"]`).waitForDisplayed();
 
       await browser.$(`${SCANS} input[type="search"]`).setValue("rare-");
       expect(
@@ -1097,9 +1097,10 @@ describe("PM9.3 viewer contracts, rendered", () => {
       expect(await browser.$(`${SCANS} .scan-hidden-selection`).getText()).toContain(
         fill(en.scanSelectedOutside, { name: "3" }),
       );
-      // Refused, not disabled: still Tab stops, with the hidden selection as the reason.
-      expect(await refused(SCANS, en.scanNext)).toBe(true);
-      expect(await refused(SCANS, en.scanPrevious)).toBe(true);
+      // Refused, not disabled: still Tab stops, with the hidden selection as
+      // the reason. The steps are the spectrum head's (direction A).
+      expect(await refused(MZ_PANEL, en.scanNext)).toBe(true);
+      expect(await refused(MZ_PANEL, en.scanPrevious)).toBe(true);
       expect((await shownSelection()).summary).toMatch(/^Spectrum 3,/u);
       // Nothing else was chosen for the reader, and nothing was read.
       expect((await spectrumReads()).length).toBe(reads);
@@ -1107,7 +1108,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
       // The one recovery path: clear the filters, which keeps the sort.
       await browser.$(SCANS).$(`button=${en.scanReveal}`).click();
       await browser.$(`${row(3)}[aria-selected="true"]`).waitForDisplayed();
-      await iconButton(SCANS, en.scanNext).click();
+      await iconButton(MZ_PANEL, en.scanNext).click();
       await waitForReads(reads + 1);
       // Next in the displayed, still-sorted order: 3 is followed by 2.
       await expectSelected(2);
@@ -1267,7 +1268,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
 
       // Another spectrum is another viewport context (ADR 0038) and another
       // export context (ADR 0040): the view opens full and the scope at Full.
-      await iconButton(SCANS, en.scanNext).click();
+      await iconButton(MZ_PANEL, en.scanNext).click();
       await waitForReads(2);
       await expectSelected(2);
       await browser.waitUntil(async () => (await mzCaption()).includes(en.viewerFullRange.trim()), {
@@ -1330,11 +1331,13 @@ describe("PM9.3 viewer contracts, rendered", () => {
       const spectrumMenu = await plotMenuItems(MZ_PANEL);
       const chromatogramMenu = await plotMenuItems(RT_PANEL);
       evidence.push({ label: "pm93-v8-labels", spectrumDialog, chromatogramDialog, spectrumMenu, chromatogramMenu });
-      // A spectrum's figure and its data are separate groups.
+      // A spectrum's figure and its data are separate groups. Each ⋯ menu
+      // (direction A) holds the plot's own Set range…, then the quick figure
+      // actions, then the data.
       expect(spectrumDialog).toEqual({ figure: [en.viewerCopy, svg, png], data: [csv, tsv] });
-      expect(spectrumMenu).toEqual([csv, tsv]);
+      expect(spectrumMenu).toEqual([en.rangeSet, en.figureQuickPng, en.viewerCopy, csv, tsv]);
       expect(chromatogramDialog.data).toEqual([csv, tsv]);
-      expect(chromatogramMenu).toEqual([csv, tsv, en.figurePreviewLinked]);
+      expect(chromatogramMenu).toEqual([en.rangeSet, en.figureQuickPng, en.viewerCopy, csv, tsv, en.figurePreviewLinked]);
 
       // Each action sends its own command and its own format.
       const chromatogram = countOf(await ipcCalls(), "begin_chromatogram_export");
@@ -1342,9 +1345,9 @@ describe("PM9.3 viewer contracts, rendered", () => {
       expect((await lastRequest("begin_chromatogram_export", chromatogram))["format"]).toBe("tsv");
       await laneFree();
 
-      // The spectrum head's PNG repeats the dialog's settings without it.
+      // The spectrum's Quick PNG repeats the dialog's settings without it.
       const spectrum = countOf(await ipcCalls(), "begin_selected_spectrum_export");
-      await press(figureActions(MZ_PANEL), "PNG");
+      await choosePlotMenuItem(MZ_PANEL, en.figureQuickPng);
       expect((await lastRequest("begin_selected_spectrum_export", spectrum))["format"]).toBe("png");
       await laneFree();
 

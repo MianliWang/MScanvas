@@ -33,11 +33,13 @@ import {
 import {
   FIGURE_DIALOG,
   answerFigurePreviews,
+  choosePlotMenuItem,
   closeFigureDialog,
   figureActions,
   openFigureDialog,
   openPlotMenu,
   plotMenuItem,
+  plotMenuTrigger,
 } from "../support/figure";
 
 /** Enough scans that a range can hold some of them and not others. */
@@ -597,11 +599,16 @@ describe("exporting the chromatogram, rendered", () => {
     expect(await bandVisibility()).toBe("visible");
     expect(await rangeCaption()).toBe(committed);
 
-    // An export asked for now -- the head's Copy, pressed without moving the
-    // held pointer -- carries the committed range, not the one being drawn.
+    // An export asked for now -- Copy plot from the ⋯ menu (direction A),
+    // chosen from the keyboard without moving the held pointer -- carries the
+    // committed range, not the one being drawn.
     await browser.execute((css: string) => {
-      document.querySelector<HTMLButtonElement>(css)?.click();
-    }, `${figureActions(CHROMATOGRAM)} button[aria-label="Copy plot"]`);
+      document.querySelector<HTMLElement>(css)?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    }, plotMenuTrigger(CHROMATOGRAM));
+    await browser.$('[role="menuitem"]').waitForExist({ timeout: 10_000 });
+    await browser.execute(() => {
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.startsWith("Copy plot"))?.click();
+    });
     await browser.waitUntil(
       async () => (await ipcCalls()).some((call) => call.command === "copy_chromatogram_plot"),
       { timeout: 10_000, timeoutMsg: "the copy never reached the boundary" },
@@ -646,34 +653,22 @@ describe("exporting the chromatogram, rendered", () => {
     await openViewer();
     await browser.$(CHROMATOGRAM).$("button=TIC").click();
 
-    // The head's figure actions are refused, not disabled: each keeps its Tab
-    // stop and points at the sentence that says why.
-    const figureOutputs = [
-      `${figureActions(CHROMATOGRAM)} button[aria-label="Quick PNG"]`,
-      `${figureActions(CHROMATOGRAM)} button[aria-label="Copy plot"]`,
-    ];
-    await browser.waitUntil(
-      async () => (await browser.$(figureOutputs[0]!).getAttribute("aria-disabled")) === "true",
-      { timeout: 10_000, timeoutMsg: "hiding both traces never refused the figure" },
-    );
-    for (const selector of figureOutputs) {
-      expect(await browser.$(selector).getAttribute("aria-disabled")).toBe("true");
-      expect(await browser.$(selector).getAttribute("aria-describedby")).toContain(
-        "chromatogram-figure-reason",
-      );
+    // The figure actions under ⋯ (direction A) are refused, not disabled: each
+    // stays in the menu's order and says why inside itself.
+    await openPlotMenu(CHROMATOGRAM);
+    for (const name of ["Quick PNG", "Copy plot"]) {
+      const item = browser.$(plotMenuItem(name));
+      expect(await item.getAttribute("aria-disabled")).toBe("true");
+      expect(await item.getText()).toContain("Both traces are hidden.");
+      // Chosen anyway: the refusal is what reaches the boundary, which is nothing.
+      await item.click();
     }
-    expect(await browser.$("#chromatogram-figure-reason").getText()).toBe("Both traces are hidden.");
-    // Pressed anyway: the refusal is what reaches the boundary, which is nothing.
-    await browser.execute((selectors: string[]) => {
-      for (const css of selectors) document.querySelector<HTMLButtonElement>(css)?.click();
-    }, figureOutputs);
     const figureCalls = (await ipcCalls()).filter(
       (call) => call.command === "begin_chromatogram_export" || call.command === "copy_chromatogram_plot",
     );
     expect(figureCalls).toEqual([]);
 
-    // The data documents stay offered in the ⋯ menu, and still work.
-    await openPlotMenu(CHROMATOGRAM);
+    // The data documents stay offered in the same menu, and still work.
     for (const name of ["Export CSV", "Export TSV"]) {
       expect(await browser.$(plotMenuItem(name)).getAttribute("aria-disabled")).toBe(null);
     }
@@ -751,8 +746,8 @@ describe("exporting the chromatogram, rendered", () => {
   it("copies the plot without a dialog", async () => {
     await openViewer();
 
-    // The head's Copy: no figure dialog and no save dialog.
-    await browser.$(`${figureActions(CHROMATOGRAM)} button[aria-label="Copy plot"]`).click();
+    // Copy plot from the ⋯ menu: no figure dialog and no save dialog.
+    await choosePlotMenuItem(CHROMATOGRAM, "Copy plot");
 
     await browser.waitUntil(
       async () => (await ipcCalls()).some((call) => call.command === "copy_chromatogram_plot"),

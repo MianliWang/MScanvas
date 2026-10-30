@@ -180,7 +180,7 @@ async function home() {
 /** The viewed acquisition, as the Workbench identity row names it (rebuild spec 3.2). */
 function viewedName(): Promise<string | null> {
   return browser.execute(
-    () => document.querySelector("#workbench-evidence .viewer-identity-name")?.textContent ?? null,
+    () => document.querySelector("#workbench-evidence .viewer-file-name")?.textContent ?? null,
   ) as Promise<string | null>;
 }
 
@@ -258,7 +258,7 @@ async function viewTheRow() {
     await browser.$('[aria-controls="workbench-roster"]').click();
   }
   await browser.$(row).click();
-  await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+  await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
 }
 
 /** Each roster row as the reader's state leaves it: order, highlight, viewed, membership. */
@@ -1357,7 +1357,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     /** The identity row's file name: its text, its tooltip, and whether any of it is on screen. */
     function identityName() {
       return browser.execute(() => {
-        const name = document.querySelector<HTMLElement>("#workbench-evidence .viewer-identity-name");
+        const name = document.querySelector<HTMLElement>("#workbench-evidence .viewer-file-name");
         return name === null
           ? null
           : { text: name.textContent, title: name.getAttribute("title"), shown: name.getBoundingClientRect().width > 0 };
@@ -1758,7 +1758,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await open("populated");
       await revealRosterRow(MZML_ROW.handle);
       await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
-      await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+      await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
       await selectTheSpectrum(0);
       await browser.execute(() => {
         const rows = document.querySelectorAll(".spectrum-table-row[data-source-index]");

@@ -51,9 +51,10 @@ const VIEWPORTS = [
 /** The one explanation, and the region that carries it either way. */
 const NOTICE = "#viewer-selection-availability";
 const REGION = '[data-live-region="spectrum-selection-availability"]';
-const VIEWER_COLUMN = ".viewer-column";
-const VIEWER_STACK = ".viewer-stack";
-const IDENTITY = ".viewer-identity";
+/** The evidence column, the open file (its row, then its view), and the file row's name (direction A). */
+const VIEWER_COLUMN = "#workbench-evidence";
+const VIEWER_STACK = ".viewer-file";
+const IDENTITY = ".viewer-file-name";
 const GRID = "div.spectrum-table";
 const FIRST_ROW = 'div.spectrum-table-row[data-row-position="0"]';
 
@@ -136,7 +137,7 @@ describe("M5.7 — selection availability, rendered", () => {
     expect(await describedBy(GRID)).toBe(null);
     // The readout, then each axis's unit state (PM9 UI-33), then the plot's
     // gestures, whose disclosure became a hidden description (rebuild spec 3.4).
-    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units plot-range-rt-gestures");
+    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures");
   });
 
   it("explains a closed lane once, and points both surfaces at that one sentence", async () => {
@@ -154,7 +155,7 @@ describe("M5.7 — selection availability, rendered", () => {
     expect(await browser.$$(NOTICE).length).toBe(1);
 
     expect(await describedBy(GRID)).toBe("viewer-selection-availability");
-    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units plot-range-rt-gestures viewer-selection-availability");
+    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures viewer-selection-availability");
     // Announced politely, by the element that was already there.
     expect(
       await browser.execute(
@@ -278,14 +279,13 @@ describe("M5.7 — selection availability, rendered", () => {
         expect(await browser.$(panel).isExisting()).toBe(true);
       }
 
-      // And the stack still fills what the column has left. Presence is not
-      // enough: wrapping the stack in a flex column takes away the stretch it
-      // had for free as a grid item, and the symptom is a band of nothing under
-      // three views that have bunched at the top.
+      // And the view still fills what the column has left. Presence is not
+      // enough: a flex item takes its own content height, and the symptom is
+      // a band of nothing under three views that have bunched at the top.
       const stack = await boxOf(VIEWER_STACK);
       expect(Math.abs(stack.bottom - column.bottom)).toBeLessThan(2);
-      // The sentence sits in the identity row, the stack's first row (rebuild
-      // spec 3.2), and stays inside it: the chromatogram below is not covered.
+      // The sentence sits in the file row (the file's name and its tabs,
+      // direction A) and stays inside it: the chromatogram below is not covered.
       const identity = await boxOf(IDENTITY);
       expect(identity.top).toBeGreaterThanOrEqual(stack.top - 1);
       expect(notice.top).toBeGreaterThanOrEqual(identity.top - 1);

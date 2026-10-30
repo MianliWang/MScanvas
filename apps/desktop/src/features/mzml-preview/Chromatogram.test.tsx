@@ -404,13 +404,18 @@ describe("what the traces are made of", () => {
   it("says neither axis carries a unit, in each axis's title", () => {
     renderChromatogram();
 
-    const units = document.querySelector("#chromatogram-units");
-    expect(units).toHaveTextContent(UI_RESOURCES.en.plotAxisRt);
-    expect(units).toHaveTextContent(UI_RESOURCES.en.plotAxisIntensity);
+    // Each title describes the plot, so a reader hears both units.
+    expect(document.querySelector("#chromatogram-axis-x")).toHaveTextContent(UI_RESOURCES.en.plotAxisRt);
+    expect(document.querySelector("#chromatogram-axis-y")).toHaveTextContent(UI_RESOURCES.en.plotAxisIntensity);
     expect(screen.getByText(UI_RESOURCES.en.plotAxisRt)).toBeVisible();
     expect(screen.getByText(UI_RESOURCES.en.plotAxisIntensity)).toBeVisible();
-    // Said once per axis: the line under the plot no longer repeats it.
-    expect(document.querySelector(".plot-foot")?.textContent).not.toMatch(/unit/u);
+    // The value title is above the drawing, and the position title on the line
+    // under the ticks: neither sits in a tick row, so no tick gives way to one.
+    expect(document.querySelector(".plot-frame > .plot-axis-title-y")).not.toBeNull();
+    expect(document.querySelector(".plot-x-ticks .plot-axis-title, .plot-x-ticks + .plot-axis-title")).toBeNull();
+    expect(document.querySelector(".plot-foot > .plot-axis-title-x")).not.toBeNull();
+    // Said once per axis: the readout beside the title does not repeat it.
+    expect(document.querySelector(".plot-readout")?.textContent).not.toMatch(/unit/u);
   });
 
   it("ticks both axes at round values outside the drawing, with headroom over the tallest point", () => {
@@ -1100,7 +1105,7 @@ describe("reaching the plot without a pointer", () => {
 
     expect(document.activeElement).toBe(plot());
     // The readout, then each axis's unit state, said once on the panel (PM9 UI-33).
-    expect(plot()).toHaveAttribute("aria-describedby", "chromatogram-readout chromatogram-units plot-range-rt-gestures");
+    expect(plot()).toHaveAttribute("aria-describedby", "chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures");
     expect(document.querySelector("#plot-range-rt-gestures")).toHaveTextContent(UI_RESOURCES.en.rangeHelpText);
     expect(document.querySelector("#chromatogram-readout")?.textContent).toMatch(
       /^Selected index 20,/u,
@@ -1270,7 +1275,7 @@ describe("a run of a single scan", () => {
  * component was told to look for.
  */
 describe("the viewport control group", () => {
-  const CONTROLS = ["Zoom in", "Zoom out", "Reset range"] as const;
+  const CONTROLS = ["Zoom in", "Zoom out", "Fit all, retention time"] as const;
 
   function control(label: (typeof CONTROLS)[number]): HTMLButtonElement {
     return screen.getByRole("button", { name: label }) as HTMLButtonElement;
@@ -1306,7 +1311,7 @@ describe("the viewport control group", () => {
 
     const narrowed = shown();
     expect(narrowed.high - narrowed.low).toBeLessThan(full.high - full.low);
-    expect(enabledControls()).toEqual(["Zoom in", "Zoom out", "Reset range"]);
+    expect(enabledControls()).toEqual(["Zoom in", "Zoom out", "Fit all, retention time"]);
   });
 
   it("stops offering to zoom in at the narrowest viewport the run allows", () => {
@@ -1319,7 +1324,7 @@ describe("the viewport control group", () => {
     expect(refused("Zoom in")).toBe(true);
     // And the way back is still open.
     expect(refused("Zoom out")).toBe(false);
-    expect(refused("Reset range")).toBe(false);
+    expect(refused("Fit all, retention time")).toBe(false);
   });
 
   it("offers nothing for a run whose scans all share one retention time", () => {
@@ -1389,17 +1394,17 @@ describe("the viewport control group", () => {
      */
     renderChromatogram();
     press("Zoom in");
-    expect(refused("Reset range")).toBe(false);
+    expect(refused("Fit all, retention time")).toBe(false);
 
     let afterReset: ViewerInteractionState | null = null;
     act(() => {
       afterReset = controller?.dispatch({ type: "viewport-reset" }) ?? null;
-      control("Reset range").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      control("Fit all, retention time").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(afterReset).not.toBeNull();
     expect(state()).toBe(afterReset);
-    expect(refused("Reset range")).toBe(true);
+    expect(refused("Fit all, retention time")).toBe(true);
   });
 
   it("takes the same rule from the keyboard, without inventing a transition", () => {
@@ -1426,7 +1431,7 @@ describe("the viewport control group", () => {
 
     fireEvent.keyDown(plot(), { key: "Home" });
     expect(shown()).toEqual(renderedDomain(state()));
-    expect(refused("Reset range")).toBe(true);
+    expect(refused("Fit all, retention time")).toBe(true);
   });
 
   it("says nothing about the range when there is no chromatogram to have one", () => {
@@ -2430,7 +2435,7 @@ describe("choosing a scan while selection is unavailable", () => {
     // Described, never disabled: this plot can still be read, and marking it
     // unavailable would say the run cannot be.
     expect(plot().getAttribute("aria-describedby")).toBe(
-      "chromatogram-readout chromatogram-units plot-range-rt-gestures viewer-selection-availability",
+      "chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures viewer-selection-availability",
     );
     expect(plot().getAttribute("aria-disabled")).toBeNull();
     expect(styleOf(".chromatogram-svg").pointerEvents).not.toBe("none");
@@ -2440,7 +2445,7 @@ describe("choosing a scan while selection is unavailable", () => {
 
   it("keeps describing the readout and the units alone once selection returns", () => {
     renderChromatogram();
-    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units plot-range-rt-gestures");
+    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures");
   });
 
   it("still reports the scan under the pointer", () => {
@@ -2503,8 +2508,8 @@ describe("choosing a scan while selection is unavailable", () => {
       vi.advanceTimersByTime(200);
     });
 
-    expect(screen.getByRole("button", { name: "Reset range" })).not.toHaveAttribute("aria-disabled");
-    fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
+    expect(screen.getByRole("button", { name: "Fit all, retention time" })).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(screen.getByRole("button", { name: "Fit all, retention time" }));
     expect(shown()).toEqual(state().fullDomain);
   });
 

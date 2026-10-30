@@ -191,7 +191,9 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await browser.$(row(selectedFile.handle)).click();
       await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
       await browser.$(".workbench-home").click();
-      expect(await browser.$("#workbench-evidence strong").getText()).toBe(language === "en" ? "Reading the acquisition…" : "正在读取采集…");
+      // The wait names the file it is reading.
+      expect(await browser.$("#workbench-evidence strong").getText()).toBe(
+        language === "en" ? `Reading ${selectedFile.fileName}…` : `正在读取 ${selectedFile.fileName}…`);
       await unavailable("reading");
       // A held call resolves at release; a malformed DTO exercises the real
       // adapter's retryable protocol failure without modifying the harness.

@@ -82,6 +82,18 @@ async function dataItems(): Promise<readonly HTMLElement[]> {
   return Promise.all(["CSV", "TSV"].map(format => screen.findByRole("menuitem", { name: `Export ${format}…` })));
 }
 
+/** Opens the ⋯ menu and returns Quick PNG and Copy plot, which live there (direction A). */
+async function figureItems(): Promise<{ readonly png: HTMLElement; readonly copy: HTMLElement }> {
+  fireEvent.keyDown(button(en.plotMoreExports), { key: "Enter" });
+  return { png: await screen.findByRole("menuitem", { name: en.figureQuickPng }), copy: screen.getByRole("menuitem", { name: en.viewerCopy }) };
+}
+
+/** Closes the open menu from its own keyboard. */
+async function closeMenu() {
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+}
+
 describe("selected spectrum export actions", () => {
   it("offers nothing before a spectrum has loaded", () => {
     // None of these states has a measurement to write. An export control here
@@ -100,12 +112,14 @@ describe("selected spectrum export actions", () => {
     }
   });
 
-  it("offers the figure, PNG, Copy and both data formats for a loaded spectrum", async () => {
+  it("offers the figure in the head, and PNG, Copy and both data formats under ⋯, for a loaded spectrum", async () => {
     const { onExport, onCopyPlot, onOpenFigure } = renderPanel(loaded());
 
     fireEvent.click(button(en.figureExportTitle));
-    fireEvent.click(button(en.figureQuickPng));
-    fireEvent.click(button(en.viewerCopy));
+    fireEvent.click((await figureItems()).png);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.click((await figureItems()).copy);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     for (const item of await dataItems()) expect(item).not.toHaveAttribute("aria-disabled");
     fireEvent.click(screen.getByRole("menuitem", { name: "Export CSV…" }));
 
@@ -119,48 +133,56 @@ describe("selected spectrum export actions", () => {
     // is a real export of it.
     renderPanel(loaded({ pointCount: 0, mz: [], intensity: [] }));
 
-    expect(button(en.figureQuickPng)).not.toHaveAttribute("aria-disabled");
-    for (const item of await dataItems()) expect(item).not.toHaveAttribute("aria-disabled");
     expect(screen.queryByRole("button", { name: en.viewerMzZoomIn })).toBeNull();
     expect(screen.getByText("This spectrum has no peaks")).toBeVisible();
+    const { png } = await figureItems();
+    expect(png).not.toHaveAttribute("aria-disabled");
+    // Nothing to narrow, so no Set range….
+    expect(screen.queryByRole("menuitem", { name: en.rangeSet })).toBeNull();
+    await closeMenu();
+    for (const item of await dataItems()) expect(item).not.toHaveAttribute("aria-disabled");
   });
 
   it("refuses every action while one export is running, and says why and which", async () => {
     renderPanel(loaded(), { status: "running", operation: "svg", namesVisibleRun: true });
 
-    // Rust holds one export slot and refuses a second, so the others are
-    // refused -- still focusable, pointing at the visible reason.
-    for (const name of [en.figureQuickPng, en.viewerCopy]) {
-      expect(button(name)).toHaveAttribute("aria-disabled", "true");
-      expect(button(name)).toHaveAccessibleDescription(en.plotExportBusy);
-    }
-    expect(screen.getByText(en.plotExportBusy)).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("Choose where to save the SVG file.");
+    // Rust holds one export slot and refuses a second, so the others are
+    // refused -- still in the menu's order, each saying why inside itself.
+    const items = await figureItems();
+    for (const item of [items.png, items.copy]) {
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription(en.plotExportBusy);
+      expect(item).toHaveTextContent(en.plotExportBusy);
+    }
+    await closeMenu();
     for (const item of await dataItems()) expect(item).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("names the running PNG on its own initiator", () => {
+  it("names the running PNG in the result, and refuses PNG while it runs", async () => {
     renderPanel(loaded(), { status: "running", operation: "png", namesVisibleRun: true });
     expect(screen.getByRole("status")).toHaveTextContent("Choose where to save the PNG file.");
-    expect(button(en.figureQuickPng)).toHaveAttribute("aria-disabled", "true");
+    expect((await figureItems()).png).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("refuses PNG alone when the resolution is the unusable field, and says so", () => {
+  it("refuses PNG alone when the resolution is the unusable field, and says so", async () => {
     renderPanel(loaded(), { status: "idle" }, { ...DEFAULT_DRAFT, pngDpi: "0" });
 
-    expect(button(en.figureQuickPng)).toHaveAttribute("aria-disabled", "true");
-    expect(button(en.figureQuickPng)).toHaveAccessibleDescription(en.invalidDpi);
-    expect(button(en.viewerCopy)).not.toHaveAttribute("aria-disabled");
-    expect(screen.getByText(en.invalidDpi)).toBeVisible();
+    const { png, copy } = await figureItems();
+    expect(png).toHaveAttribute("aria-disabled", "true");
+    expect(png).toHaveAccessibleDescription(en.invalidDpi);
+    expect(png).toHaveTextContent(en.invalidDpi);
+    expect(copy).not.toHaveAttribute("aria-disabled");
   });
 
-  it("refuses PNG and Copy when the size is the unusable field, and leaves the dialog open to fix it", () => {
+  it("refuses PNG and Copy when the size is the unusable field, and leaves the dialog open to fix it", async () => {
     renderPanel(loaded(), { status: "idle" }, { ...DEFAULT_DRAFT, widthPx: "" });
 
-    expect(button(en.figureQuickPng)).toHaveAttribute("aria-disabled", "true");
-    expect(button(en.viewerCopy)).toHaveAttribute("aria-disabled", "true");
     expect(button(en.figureExportTitle)).not.toHaveAttribute("aria-disabled");
-    expect(screen.getByText(en.invalidWidth)).toBeVisible();
+    const { png, copy } = await figureItems();
+    expect(png).toHaveAttribute("aria-disabled", "true");
+    expect(copy).toHaveAttribute("aria-disabled", "true");
+    expect(png).toHaveTextContent(en.invalidWidth);
   });
 
   it("reports a saved export by name and point count, and never a path", () => {
@@ -198,15 +220,15 @@ describe("selected spectrum export actions", () => {
     expect(button("Dismiss export message")).toBeVisible();
   });
 
-  it("treats a dismissed dialog as an outcome rather than a failure", () => {
+  it("treats a dismissed dialog as an outcome rather than a failure", async () => {
     renderPanel(loaded(), { status: "cancelled" });
 
     expect(screen.getByRole("status")).toHaveTextContent("Export cancelled. Nothing was saved.");
-    expect(button(en.figureQuickPng)).not.toHaveAttribute("aria-disabled");
-    expect(screen.getByText(/^Spectrum 3, MS/u)).toBeVisible();
+    expect(screen.getByText(/^Spectrum 3, MS/u)).toBeInTheDocument();
+    expect((await figureItems()).png).not.toHaveAttribute("aria-disabled");
   });
 
-  it("localizes a known typed refusal, says what it left behind and keeps recovery", () => {
+  it("localizes a known typed refusal, says what it left behind and keeps recovery", async () => {
     renderPanel(loaded(), {
       status: "failed", operation: "csv",
       error: {
@@ -220,7 +242,7 @@ describe("selected spectrum export actions", () => {
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent(en.m74ErrorExists);
     expect(status).toHaveTextContent(".mscanvas-export-");
-    expect(button(en.viewerCopy)).not.toHaveAttribute("aria-disabled");
+    expect((await figureItems()).copy).not.toHaveAttribute("aria-disabled");
   });
 
   it("lets a result be dismissed without touching the spectrum, and offers no dismissal at rest", () => {

@@ -269,7 +269,7 @@ describe("the linked viewer, rendered", () => {
         expect(plot.top).toBeGreaterThanOrEqual(panel.top - 0.5);
         expect(plot.bottom).toBeLessThanOrEqual(panel.bottom + 0.5);
 
-        for (const control of ["Zoom in", "Zoom out", "Reset range"]) {
+        for (const control of ["Zoom in", "Zoom out", "Fit all, retention time"]) {
           const button = await boxOfButton(control);
           expect(button.width).toBeGreaterThan(0);
           expect(button.height).toBeGreaterThan(0);
@@ -299,13 +299,15 @@ describe("the linked viewer, rendered", () => {
         await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
 
         const table = await boxOf(TABLE);
+        const spectrum = await boxOf(SPECTRUM);
+        // The steps are around the scan in the spectrum's head (direction A).
         for (const control of ["Previous scan", "Next scan"]) {
           const button = await boxOfButton(control);
           expect(button.width).toBeGreaterThan(0);
           expect(button.height).toBeGreaterThan(0);
-          expect(button.left).toBeGreaterThanOrEqual(table.left - 0.5);
-          expect(button.right).toBeLessThanOrEqual(table.right + 0.5);
-          expect(button.bottom).toBeLessThanOrEqual(table.bottom + 0.5);
+          expect(button.left).toBeGreaterThanOrEqual(spectrum.left - 0.5);
+          expect(button.right).toBeLessThanOrEqual(spectrum.right + 0.5);
+          expect(button.bottom).toBeLessThanOrEqual(spectrum.bottom + 0.5);
         }
 
         // Clear of each other, not overlapping. Two panels sharing pixels would
@@ -313,7 +315,6 @@ describe("the linked viewer, rendered", () => {
         // and a unit test could not. In the rebuild's order (spec 3.1): the
         // chromatogram across the top, then the scans left of the spectrum.
         const chromatogram = await boxOf(CHROMATOGRAM);
-        const spectrum = await boxOf(SPECTRUM);
         expect(chromatogram.bottom).toBeLessThanOrEqual(spectrum.top + 0.5);
         expect(chromatogram.bottom).toBeLessThanOrEqual(table.top + 0.5);
         expect(table.right).toBeLessThanOrEqual(spectrum.left + 0.5);
@@ -481,7 +482,7 @@ describe("the linked viewer, rendered", () => {
       // Still there after the debounce has had every chance to fire.
       await browser.pause(300);
       expect(await rangeCaption()).toBe(settled);
-      expect(await browser.$('button[aria-label="Reset range"]').getAttribute("aria-disabled")).toBeNull();
+      expect(await browser.$('button[aria-label="Fit all, retention time"]').getAttribute("aria-disabled")).toBeNull();
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -492,13 +493,13 @@ describe("the linked viewer, rendered", () => {
         timeout: 10_000,
       });
 
-      await browser.$('button[aria-label="Reset range"]').click();
+      await browser.$('button[aria-label="Fit all, retention time"]').click();
 
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 10_000,
-        timeoutMsg: "Reset range did not return the whole run",
+        timeoutMsg: "Fit all did not return the whole run",
       });
-      expect(await browser.$('button[aria-label="Reset range"]').getAttribute("aria-disabled")).toBe("true");
+      expect(await browser.$('button[aria-label="Fit all, retention time"]').getAttribute("aria-disabled")).toBe("true");
     });
 
     it("never asks the backend for anything while the viewport moves", async () => {
@@ -510,7 +511,7 @@ describe("the linked viewer, rendered", () => {
       await browser.action("pointer").move({ x: at.x, y: at.y }).perform();
       await browser.$('button[aria-label="Zoom in"]').click();
       await browser.$('button[aria-label="Zoom out"]').click();
-      await browser.$('button[aria-label="Reset range"]').click();
+      await browser.$('button[aria-label="Fit all, retention time"]').click();
 
       expect(viewerReads(await ipcCalls())).toBe(before);
     });
@@ -856,7 +857,7 @@ describe("the linked viewer, rendered", () => {
         timeout: 10_000,
         timeoutMsg: "the plot never reported the selected scan",
       });
-      await browser.$("//h2[normalize-space()='Selected spectrum']").waitForDisplayed();
+      await browser.$("//h2[normalize-space()='Spectrum']").waitForDisplayed();
 
       // From the table, to a different row. The reveal above scrolled the table
       // to the selected row, so the first row is above the fold; scrolled back,
@@ -951,7 +952,7 @@ describe("the linked viewer, rendered", () => {
      * visible viewport action is available exactly when applying it would change
      * the range on screen.
      */
-    const CONTROLS = ["Zoom in", "Zoom out", "Reset range"] as const;
+    const CONTROLS = ["Zoom in", "Zoom out", "Fit all, retention time"] as const;
 
     async function controlStates(): Promise<Record<string, boolean>> {
       return browser.execute((labels: readonly string[]) => {
@@ -975,7 +976,7 @@ describe("the linked viewer, rendered", () => {
       expect(await controlStates()).toEqual({
         "Zoom in": true,
         "Zoom out": false,
-        "Reset range": false,
+        "Fit all, retention time": false,
       });
       expect(await unexpectedConsole()).toEqual([]);
     });
@@ -994,7 +995,7 @@ describe("the linked viewer, rendered", () => {
       expect(await controlStates()).toEqual({
         "Zoom in": true,
         "Zoom out": true,
-        "Reset range": true,
+        "Fit all, retention time": true,
       });
     });
 
@@ -1012,7 +1013,7 @@ describe("the linked viewer, rendered", () => {
       expect(states["Zoom in"]).toBe(false);
       // And the way back out is still open.
       expect(states["Zoom out"]).toBe(true);
-      expect(states["Reset range"]).toBe(true);
+      expect(states["Fit all, retention time"]).toBe(true);
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -1029,7 +1030,7 @@ describe("the linked viewer, rendered", () => {
       expect(await controlStates()).toEqual({
         "Zoom in": false,
         "Zoom out": false,
-        "Reset range": false,
+        "Fit all, retention time": false,
       });
       expect(await unexpectedConsole()).toEqual([]);
     });
@@ -1102,8 +1103,9 @@ describe("the linked viewer, rendered", () => {
       readonly overflowY: string;
     }> {
       return browser.execute(() => {
-        // The evidence column, the scroll owner since M7.2/M7.3 (PM9.3).
-        const stack = document.querySelector<HTMLElement>("#workbench-evidence");
+        // The open file's view, under its tabs: the scroll owner since
+        // direction A (the file row stays put; the evidence held it before).
+        const stack = document.querySelector<HTMLElement>("#workbench-evidence .viewer-tabs > .ui-tabpanel");
         return {
           scrollHeight: stack?.scrollHeight ?? 0,
           clientHeight: stack?.clientHeight ?? 0,
@@ -1331,10 +1333,10 @@ describe("the linked viewer, rendered", () => {
       expect(await wheelClaim(at.x, -1)).toBe(true);
       const gentle = await visibleSpan();
 
-      await browser.$('button[aria-label="Reset range"]').click();
+      await browser.$('button[aria-label="Fit all, retention time"]').click();
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 10_000,
-        timeoutMsg: "Reset range did not return the whole run",
+        timeoutMsg: "Fit all did not return the whole run",
       });
 
       expect(await wheelClaim(at.x, -100)).toBe(true);
@@ -1353,10 +1355,10 @@ describe("the linked viewer, rendered", () => {
       expect(await wheelClaim(at.x, -100)).toBe(true);
       const once = await visibleDomain();
 
-      await browser.$('button[aria-label="Reset range"]').click();
+      await browser.$('button[aria-label="Fit all, retention time"]').click();
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 10_000,
-        timeoutMsg: "Reset range did not return the whole run",
+        timeoutMsg: "Fit all did not return the whole run",
       });
 
       expect(await wheelStream(at.x, -1, 100)).toBe(100);
@@ -1394,10 +1396,10 @@ describe("the linked viewer, rendered", () => {
       expect(await wheelClaim(at.x, -1, LINE_MODE)).toBe(true);
       const fromLines = await visibleDomain();
 
-      await browser.$('button[aria-label="Reset range"]').click();
+      await browser.$('button[aria-label="Fit all, retention time"]').click();
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 10_000,
-        timeoutMsg: "Reset range did not return the whole run",
+        timeoutMsg: "Fit all did not return the whole run",
       });
 
       expect(await wheelClaim(at.x, -25)).toBe(true);

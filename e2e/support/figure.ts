@@ -2,8 +2,8 @@
  * A plot's figure and data exports since the rebuild (spec 3.4, 6).
  *
  * The inline export panels are gone. Each plot head carries Export… (the
- * figure dialog), PNG, Copy and a ⋯ menu (CSV, TSV and, on the chromatogram,
- * Linked figure…). The dialog is portaled to the body, so its controls are
+ * figure dialog) and a ⋯ menu (direction A: Set range…, Quick PNG, Copy plot,
+ * CSV, TSV and, on the chromatogram, Linked figure…). The dialog is portaled to the body, so its controls are
  * looked up under `FIGURE_DIALOG`, never under the plot that opened it. Its
  * Copy, SVG and PNG are refused until a preview is drawn, which is why a spec
  * that exports from it answers `preview_figure` first.
@@ -12,7 +12,7 @@ import { IPC_TABLE_KEY } from "./harness";
 
 export const FIGURE_DIALOG = ".figure-export-dialog";
 
-/** A plot's figure actions in its head: Export…, PNG, Copy, ⋯. */
+/** A plot's figure actions in its head: Export…, then ⋯. */
 export const figureActions = (plot: string): string => `${plot} .figure-quick-actions`;
 
 /** The plot head's ⋯ trigger. */

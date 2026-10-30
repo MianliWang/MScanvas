@@ -84,7 +84,7 @@ describe("M5.7 — selection availability in the real shell", () => {
     expect(await noticeText()).toBe(null);
     expect(await attributeOf(GRID, "aria-describedby")).toBe(null);
     // The readout, then each axis's unit state (PM9 UI-33).
-    expect(await attributeOf(PLOT, "aria-describedby")).toBe("chromatogram-readout chromatogram-units");
+    expect(await attributeOf(PLOT, "aria-describedby")).toBe("chromatogram-readout chromatogram-axis-x chromatogram-axis-y");
   });
 
   it("explains a closed lane once, and sends nothing from either surface", async () => {
@@ -103,7 +103,7 @@ describe("M5.7 — selection availability in the real shell", () => {
     ).toBe(1);
     expect(await attributeOf(GRID, "aria-describedby")).toBe("viewer-selection-availability");
     expect(await attributeOf(PLOT, "aria-describedby")).toBe(
-      "chromatogram-readout chromatogram-units viewer-selection-availability",
+      "chromatogram-readout chromatogram-axis-x chromatogram-axis-y viewer-selection-availability",
     );
     expect(await attributeOf(NOTICE, "aria-live")).toBe("polite");
 

@@ -343,7 +343,7 @@ describe("narrow desktop layout markup", () => {
       </WorkspaceDropTransportProvider>,
     );
 
-    expect(await screen.findByText("Inspect an acquisition")).toBeVisible();
+    expect(await screen.findByText("Add acquisitions or open a project.")).toBeVisible();
   });
 
   it("keeps the roster tall enough to be a list when the column is stacked", () => {
@@ -432,9 +432,9 @@ describe("narrow desktop layout markup", () => {
       "minmax(342px, 0.9fr) minmax(526px, 1.6fr)",
     );
     expect(workspace.getPropertyValue("overflow-y")).toBe("auto");
-    // The stack's own grid floors were never applied under the workbench
-    // shell, which lays it out as a flex column, and are gone (PM9 UI-47).
-    expect(requireStyleRule(app, ".viewer-stack").style.getPropertyValue("grid-template-rows")).toBe("");
+    // The old stack's own grid floors were never applied under the workbench
+    // shell and are gone with it (PM9 UI-47): app.css has no viewer stack.
+    expect(appStyles).not.toContain(".viewer-stack");
   });
 
   it("lets a row's notes give ground so the file name keeps a column", () => {

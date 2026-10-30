@@ -76,7 +76,7 @@ const CURRENT_SCOPE = "Current range";
 const MZ_WINDOW = /m\/z (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)/u;
 
 /** The viewer column, which is one of the two scroll owners in play. */
-const VIEWER_STACK = ".viewer-stack";
+const VIEWER_STACK = ".viewer-view";
 
 async function unexpectedConsole(): Promise<string[]> {
   return (await consoleEntries())

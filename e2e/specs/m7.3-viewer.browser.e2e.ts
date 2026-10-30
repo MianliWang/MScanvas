@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 import { ipcTable } from "../support/fixtures";
 import { readBackSavedPreferences, revealRosterRow, seedARunOf } from "../support/viewer";
+import { choosePlotMenuItem } from "../support/figure";
 import { installIpcBoundary, IPC_TABLE_KEY, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult, setInvokeRejection } from "../support/harness";
 
 const RT = "svg.chromatogram-svg";
@@ -340,13 +341,15 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.$("button=Redraw").click();
     await browser.waitUntil(async () => (await scientificCalls()).length === count + 1);
     await browser.$("button=Redraw").waitForExist({ reverse: true });
-    expect(await browser.$(".spectrum-caption").getText()).toMatch(/sticks? ·/u);
+    // The drawing's caption is the plot's description (Details shows it to the eye).
+    expect(await browser.$(".spectrum-caption").getProperty("textContent")).toMatch(/sticks? ·/u);
   });
   it("keeps numeric raw text, IME and host keys separate and supports wheel and pan with reduced motion", async () => {
     await open("complete", { width: 1920, height: 1080, dpr: 1 });
     await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
     await clickPlot(RT, .4); await browser.$(MZ).waitForDisplayed();
-    await browser.$(".spectrum-panel .plot-range-toggle").click();
+    // Set range… is the spectrum's ⋯ menu's first item (direction A).
+    await choosePlotMenuItem(".spectrum-panel", "Set range…");
     const low = browser.$("#plot-range-mz-low"), high = browser.$("#plot-range-mz-high");
     await low.setValue("1,00"); await browser.$(".spectrum-panel .plot-range-form button[type=submit]").click();
     expect(await low.getAttribute("aria-invalid")).toBe("true");
@@ -372,8 +375,10 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.keys(["Control", "+"]); await browser.keys(["Control", "0"]);
     expect(await scientificCalls()).toEqual(host);
     await browser.keys("Tab"); expect(await browser.execute(css => document.activeElement?.matches(css), MZ)).not.toBe(true);
-    await browser.$(".spectrum-panel .plot-range-toggle").click(); await low.setValue("0200."); await browser.keys("Escape");
-    expect(await browser.$(".spectrum-panel .plot-range-toggle").getAttribute("aria-expanded")).toBe("false");
+    await choosePlotMenuItem(".spectrum-panel", "Set range…"); await low.setValue("0200."); await browser.keys("Escape");
+    // Closed, and the keyboard is back on the ⋯ it came from.
+    expect(await browser.$("#plot-range-mz-editor").isExisting()).toBe(false);
+    expect(await browser.execute(() => document.activeElement?.getAttribute("aria-haspopup"))).toBe("menu");
     expect(await scientificCalls()).toEqual(host);
     await capture("numeric-wheel-pan-reduced-motion");
     await cdp("Emulation.setEmulatedMedia", { features: [] });
