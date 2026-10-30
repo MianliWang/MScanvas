@@ -3,8 +3,6 @@
 Status: **Accepted** by the owner on 2026-10-29, including the dependency
 request: `base64 0.22.1` and `flate2 1.1.10` become direct dependencies of the
 product crate (both already in `Cargo.lock`, so the lock gains no package).
-Decision 1 amended by the owner on 2026-10-30: an `<mzML>` element without a
-`version` attribute takes its version from `xsi:schemaLocation`.
 Proposed 2026-10-28.
 Amended 2026-10-30 by the owner: decision 1's version rule (a note there).
 Related: [0002](0002-external-proteowizard.md),
@@ -100,15 +98,8 @@ has a scope.
 
 The open, meaning the whole spectrum table, is refused for:
 
-- a document that is not mzML 1.1, or not UTF-8. The `<mzML>` element's
-  `version` attribute decides when it is present, even if empty, and it must be
-  `1.1.x`. When `version` is absent, the schema that `xsi:schemaLocation` pairs
-  with the mzML namespace decides: its file name must be exactly
-  `mzML1.1.<n>.xsd`. The location may be any URL or path, and the
-  `xsi:schemaLocation` attribute is matched by its resolved namespace, not by
-  its prefix. The index wrapper's `mzML1.1.<n>_idx.xsd` is not the `<mzML>`
-  element's schema, so it does not count. A document that states neither is
-  refused (amended by the owner on 2026-10-30, after R0, decision 8);
+- a document that is not mzML 1.1 under the version rule in the amendment
+  note below, or not UTF-8;
 - a `DOCTYPE` or a custom entity;
 - a `referenceableParamGroupRef` to an undefined group;
 - a spectrum with more than one `scan`;
@@ -140,8 +131,19 @@ The open, meaning the whole spectrum table, is refused for:
 > - a document with neither is refused.
 >
 > ProteoWizard prefers the schema location to the attribute; this reader
-> prefers the attribute. Slice 1 needs a fixture for each case and a rerun of
-> R0 before it merges.
+> prefers the attribute.
+>
+> Slice 1 reads the rule strictly:
+>
+> - a `version` attribute decides even when it is empty;
+> - `xsi:schemaLocation` is matched by its resolved namespace, not by its
+>   prefix;
+> - only the location paired with the mzML namespace counts, and it must be
+>   paired once;
+> - the location may be any URL or path, but its file name must be exactly
+>   `mzML1.1.<n>.xsd`.
+>
+> Slice 1 has a fixture for each case, and R0 passed on the rerun (decision 8).
 
 A selected spectrum is refused, and the open and every other spectrum stand,
 for:
