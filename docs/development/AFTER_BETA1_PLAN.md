@@ -528,7 +528,9 @@ writer and Rust's ownership of files.
   exported figure (owner design decision); no recovery UI for retained
   scratch; batch history session-only; whole target lists stored per plan.
   - *2026-10-30:* a run whose new plan alone takes the document past the
-    bound is refused `oversized` before its worker starts and records nothing.
+    bound is refused `oversized` before its worker starts and records nothing,
+    after its own source and preflight checks (a batch member those refuse
+    still stops only itself; `oversized` stops the batch).
     The bound and what a run records are unchanged; a run that fits with its
     plan, or reruns a recorded one, is still measured after its attempt (a
     run record is about 4.7 kB of a member's 54.8 kB). In the M9 closure's
@@ -544,7 +546,9 @@ writer and Rust's ownership of files.
     `<name>.mscanvas.payloads`, also for a project that never runs targeted
     MS1; a document publish that fails after it leaves that empty folder, and
     a retry to the same name is refused `destinationStoreExists` until the
-    folder is removed or another name is chosen. The next release's
+    folder is removed or another name is chosen. The store is assembled under
+    a fixed-length pending name, so a document name its store name still fits
+    is not refused for the pending name's length. The next release's
     `INSTALL_AND_SUPPORT.md` Projects row ("when the project holds stored
     results") needs updating; the beta-1 text is right for beta-1. The
     pre-copy refusal has a

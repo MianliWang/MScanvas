@@ -110,7 +110,8 @@ recorded are exactly the 76 members before it; the saved document is under the
 bound and saves.
 
 *2026-10-30:* a new plan that alone no longer fits is now refused before its
-worker starts. The same test, on `fix/backend-defects-1030`, now prints the
+worker starts, after the member's own source and preflight checks (which pass
+here). The same test, on `fix/backend-defects-1030`, now prints the
 attempts of the halted batch and asserts that the refused member's attempt
 never ran (`halted_batch_attempts` equals `refused_member_index`); every other
 figure is unchanged:

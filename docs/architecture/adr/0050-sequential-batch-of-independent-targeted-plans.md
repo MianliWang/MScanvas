@@ -185,5 +185,6 @@ shows two members' results together.
 > **2026-10-30.** A member whose new plan alone no longer fits is now refused
 > `oversized` before its worker starts, which is what the member meeting the
 > bound in that measurement now does; one whose plan fits but whose run and
-> result records do not is still refused after its worker ran. The decision is
-> unchanged.
+> result records do not is still refused after its worker ran. The check comes
+> after the member's own source and preflight checks, so a member those refuse
+> stops only itself, as before. The decision is unchanged.

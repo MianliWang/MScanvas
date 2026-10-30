@@ -2673,7 +2673,7 @@ impl ProjectStore {
         choice: PlanChoice<'_>,
         executor: &dyn RecipeExecutor,
     ) -> Result<PreparedRun, ProjectError> {
-        let (plan, input, binding_path, project_id, plan_recorded) = {
+        let (plan, input, binding_path, project_id, plan_recorded, plan_fits) = {
             let session = self.locked();
             if session.analysis_quarantined {
                 return Err(ProjectError::AnalysisQuarantined);
@@ -2722,19 +2722,18 @@ impl ProjectStore {
             // only add bytes: where the document and the plan alone could not
             // be saved, no end of the attempt could be kept, so no worker is
             // started for one. Measured again once the attempt ended.
-            if recorded.is_none() {
+            let plan_fits = recorded.is_some() || {
                 let mut with_plan = project.document.clone();
                 with_plan.plans.push(plan.clone());
-                if !fits_every_later_save(&with_plan) {
-                    return Err(ProjectError::Oversized);
-                }
-            }
+                fits_every_later_save(&with_plan)
+            };
             (
                 plan,
                 input,
                 binding.path,
                 project.document.project_id,
                 recorded.is_some(),
+                plan_fits,
             )
         };
         if !recipe::source_is_supported(&input) {
@@ -2743,6 +2742,11 @@ impl ProjectStore {
         let base = binding_path.parent().unwrap_or_else(|| Path::new(""));
         let source = record::resolve(&input.locator, base).map_err(ProjectError::Document)?;
         executor.preflight(&plan, &source)?;
+        // After the member's own refusals: `oversized` stops a whole batch,
+        // and a member its source or preflight refuses stops only itself.
+        if !plan_fits {
+            return Err(ProjectError::Oversized);
+        }
         let store = payload::store_of(&binding_path).ok_or(ProjectError::NotYetPublished)?;
         payload::ensure_store(&store, project_id)
             .map_err(|_| ProjectError::PayloadStoreUnusable)?;
@@ -3258,11 +3262,7 @@ fn assemble_store(
     managed: &[ManagedResult],
     seams: &SaveAsSeams<'_>,
 ) -> Result<PendingStore, ProjectError> {
-    let name = store
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or(ProjectError::DestinationNotNamed)?;
-    let path = directory.join(format!(".{name}.{}.pending", uuid::Uuid::new_v4()));
+    let path = payload::pending_store(directory);
     std::fs::create_dir(&path).map_err(|_| ProjectError::NotPublished)?;
     let source_store = bound.and_then(payload::store_of);
     let mut copied = Vec::new();
