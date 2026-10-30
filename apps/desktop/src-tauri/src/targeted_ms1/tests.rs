@@ -1230,6 +1230,9 @@ fn a_foreign_store_at_the_result_name_blocks_a_run_rather_than_being_written_int
     let scratch = Scratch::new("m91-foreign-store");
     let (store, layer, document) = fake_project(&scratch);
     let store_dir = payload::store_of(&document).expect("store");
+    // The store Save As reserved, replaced outside MSCanvas by another
+    // project's.
+    fs::remove_dir_all(&store_dir).expect("the reserved store");
     fs::create_dir(&store_dir).expect("dir");
     fs::write(
         store_dir.join(".owner.json"),
@@ -1697,6 +1700,79 @@ fn a_save_as_at_the_last_revision_copies_no_result_and_writes_nothing() {
             .total,
         1
     );
+}
+
+/// M9.1's pre-copy refusal: a Save As whose document could not be published
+/// is refused before one result file is copied, not after a copy that is then
+/// thrown away. The test above cannot tell the two apart; this one counts.
+#[test]
+fn a_save_as_that_could_not_publish_is_refused_before_any_result_is_copied() {
+    let scratch = Scratch::new("m91-save-as-pre-copy");
+    let (_, document, _) = saved_with_result(&scratch);
+    let mut value = document_json(&document);
+    value["revision"] = serde_json::Value::from(u64::MAX);
+    fs::write(
+        &document,
+        serde_json::to_vec_pretty(&value).expect("serializable"),
+    )
+    .expect("write");
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    let copy = scratch.join("copy/study-copy.mscanvas");
+    fs::create_dir_all(copy.parent().expect("parent")).expect("dir");
+    let copies = AtomicU64::new(0);
+    let counted = |from: &Path, to: &Path| {
+        copies.fetch_add(1, Ordering::SeqCst);
+        payload::plain_copy(from, to)
+    };
+    let seams = SaveAsSeams {
+        copy_file: &counted,
+        before_document: &|| Ok(()),
+    };
+
+    assert_eq!(
+        reopened.save_as_with(&copy, &seams),
+        Err(ProjectError::RevisionExhausted)
+    );
+    assert_eq!(
+        copies.load(Ordering::SeqCst),
+        0,
+        "no result file was copied"
+    );
+}
+
+/// A plan that would take the document past what a Save publishes is refused
+/// before its worker runs: whatever the attempt ended as, its record could
+/// not be kept.
+#[test]
+fn a_run_whose_plan_cannot_fit_the_document_is_refused_before_its_worker_runs() {
+    let scratch = Scratch::new("m9-size-before-attempt");
+    let (store, layer, _) = fake_project(&scratch);
+    let attempts = AtomicU64::new(0);
+    let executor = Fake::new(|order| {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        completed(order)
+    });
+    let reviewed = plan(&store, layer, one_target(), &executor);
+    let unpad = crate::project::tests::fill_to_just_short(&store, 64);
+    let before = store.describe();
+
+    assert_eq!(
+        run(&store, &reviewed, &executor),
+        Err(ProjectError::Oversized)
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 0, "the worker never ran");
+    let after = store.describe();
+    assert_eq!(
+        (after.runs.len(), after.dirty),
+        (before.runs.len(), before.dirty),
+        "nothing was recorded"
+    );
+
+    // Control: with room for it, the same plan runs.
+    unpad(&store);
+    run(&store, &reviewed, &executor).expect("it runs once there is room");
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
 }
 
 // ---------------------------------------------------------------------------

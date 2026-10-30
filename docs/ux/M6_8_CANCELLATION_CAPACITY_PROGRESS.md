@@ -910,4 +910,7 @@ and no native evidence is inherited across that.
   counted nowhere. Corrected for the refusal this slice adds, where the backend
   is quarantined and nothing can run; left alone for the inherited shape, where
   a retry may still reach those items and stranding them would change what a
-  rerun converts. Owner: whichever slice next owns retry semantics.
+  rerun converts. Owner: whichever slice next owns retry semantics. *Fixed
+  2026-10-30: every queue-level refusal settles those items as `NotRun`, and a
+  retry moves them back to pending with the retryable failures, so a rerun
+  converts what it did before.*

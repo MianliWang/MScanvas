@@ -1405,15 +1405,37 @@ fn a_save_as_with_no_stored_result_refuses_whatever_occupies_the_result_store_na
 }
 
 #[test]
-fn a_save_as_with_no_stored_result_to_a_free_name_publishes_and_makes_no_store() {
+fn a_save_as_with_no_stored_result_reserves_the_result_store_name_before_the_document() {
     let scratch = Scratch::new("store-name-free");
     let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
     let destination = scratch.join("project.mscanvas");
+    let name = scratch.join("project.mscanvas.payloads");
+    let own = document_of(&store).project_id;
+    let another = record::ProjectId::new();
+    // A second writer reaching for the name while the document is published.
+    let found = std::sync::Mutex::new(None);
+    let seams = super::SaveAsSeams {
+        copy_file: &super::payload::plain_copy,
+        before_document: &|| {
+            *found.lock().expect("found") = Some(super::payload::ensure_store(&name, another));
+            Ok(())
+        },
+    };
 
-    store.save_as(&destination).expect("save as");
+    store.save_as_with(&destination, &seams).expect("save as");
 
+    assert_eq!(
+        found.into_inner().expect("found"),
+        Some(Err(super::payload::StoreRefusal::NotOwned)),
+        "the name is this project's before its document is published"
+    );
     assert!(destination.exists());
-    assert!(!scratch.join("project.mscanvas.payloads").exists());
+    // And it stays this project's: its first run finds its own store.
+    assert_eq!(super::payload::ensure_store(&name, own), Ok(()));
+    assert_eq!(
+        super::payload::ensure_store(&name, another),
+        Err(super::payload::StoreRefusal::NotOwned)
+    );
     assert!(!store.describe().dirty);
     store.save().expect("and it saves again where it was bound");
 }
@@ -1424,8 +1446,11 @@ fn a_save_as_over_the_bound_document_is_not_refused_for_the_store_beside_it() {
     let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
     let document = scratch.join("project.mscanvas");
     store.save_as(&document).expect("save as");
-    // The store beside the bound document is its own, whatever it holds.
-    fs::create_dir(scratch.join("project.mscanvas.payloads")).expect("dir");
+    // The store beside the bound document is its own, whatever it holds: here
+    // the one Save As reserved, replaced by an empty directory.
+    let beside = scratch.join("project.mscanvas.payloads");
+    fs::remove_dir_all(&beside).expect("the reserved store");
+    fs::create_dir(&beside).expect("dir");
 
     store
         .save_as(&document)
@@ -4322,7 +4347,7 @@ fn a_schema_two_document_is_refused_as_unsupported_and_not_migrated() {
 /// With a record whose observations are only padding: a capture measures bytes
 /// rather than validating what it did not write. Answers how to take the
 /// padding back out.
-fn fill_to_just_short(store: &ProjectStore, slack: u64) -> impl Fn(&ProjectStore) {
+pub(crate) fn fill_to_just_short(store: &ProjectStore, slack: u64) -> impl Fn(&ProjectStore) {
     let size = |store: &ProjectStore| {
         record::serialize(&document_of(store))
             .expect("serializable")

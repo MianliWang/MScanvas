@@ -504,13 +504,39 @@ writer and Rust's ownership of files.
   data unless Delete the application data is selected, which the bundled
   template says removes both (not yet observed); decide whether the uninstaller
   should remove the key by default, and check the selected path.
+  - *2026-10-30, read from the NSIS template of Tauri CLI 2.12.4 (the locked
+    version; no installer hooks are configured), not observed for the checked
+    path:* under `installMode` `currentUser` the registry root is HKCU. Every
+    uninstall that is not an update removes the install folder's files, the
+    shortcuts, the uninstall entry and the `Run` value. Only an interactive
+    uninstall with Delete the application data checked also deletes
+    `HKCU\Software\MSCanvas contributors\MSCanvas` (the install location and
+    the installer language), then the parent key if it is empty, and
+    `%APPDATA%\org.mscanvas.desktop` and `%LOCALAPPDATA%\org.mscanvas.desktop`
+    whole (preferences, presets, WebView2 data, and the view cache once it
+    ships); `/S`, `/P` and `/UPDATE` never do. Proposed: leave both opt-in (the
+    folder holds user-authored presets; the next install reads the key for its
+    location), and decide before the view cache ships whether uninstall
+    removes the cache alone. A release-path change, so the owner's.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
   scratch; batch history session-only; whole target lists stored per plan.
+  - *2026-10-30:* a run whose new plan alone takes the document past the
+    bound is refused `oversized` before its worker starts and records nothing.
+    The bound and what a run records are unchanged; a run that fits with its
+    plan, or reruns a recorded one, is still measured after its attempt. In
+    the M9 closure's measurement the fifth batch's thirteenth member is now
+    refused before its worker.
 - Defects and gaps: Save As does not reserve the result-store name; the M9.1
   Save As pre-copy refusal has no dedicated test; a recoverable queue-level
   refusal leaves later items showing "Waiting".
+  - *2026-10-30, fixed:* Save As claims the result-store name before it
+    publishes the document, with an empty store when there is no result, so no
+    other writer can take it (every Save As to a new name now leaves a
+    `.payloads` folder; proposed, for the owner); the pre-copy refusal has a
+    test that counts copies; a recoverable queue-level refusal settles the rows
+    it kept from starting as Not run, and a retry still converts them.
 - PM9 options left to the owner: the request-error banner beside its control
   (PM9.4 O4), Retry bound to an operation id (PM9.4 F1), Rust-projected
   parameter bounds for exact range wording (PM9.5 F1).

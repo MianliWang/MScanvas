@@ -367,9 +367,10 @@ pub(super) enum ItemState {
     Cancelled,
     /// The queue never began it. Not a failure and not an attempt.
     ///
-    /// A stop is one way that happens and not the only one: a session that
-    /// loses track of a process it started refuses the rest of the queue, and
-    /// that queue is `Completed`.
+    /// A stop is one way that happens and not the only one: any queue-level
+    /// refusal settles the rest of the queue this way, and that queue is
+    /// `Completed` -- retried, it reaches those rows again, unless the refusal
+    /// was a session that lost track of a process it started.
     NotRun,
     /// The user settled this item without running it, while the queue carried
     /// on with the rest.
@@ -1480,21 +1481,6 @@ impl fmt::Debug for CurrentAttempt {
     }
 }
 
-/// What becomes of items still waiting when a refusal ends a queue.
-///
-/// The caller decides, because only the caller knows whether anything of this
-/// session's can still run. A refusal the session can recover from leaves a
-/// waiting item waiting, so a retry that reaches it still does; a refusal that
-/// quarantines the backend cannot be recovered from at all, and a row rendered
-/// as "Waiting" in a queue that is over describes work that will never happen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PendingDisposition {
-    /// Leave them pending: this queue may yet be retried.
-    Keep,
-    /// Settle them as never run: nothing further of this session's will start.
-    Strand,
-}
-
 /// What a stop request produced, for the caller that made it.
 #[derive(Debug)]
 pub(super) enum StopAccepted {
@@ -2541,12 +2527,7 @@ impl ConversionSlot {
     // refused for a reason they can fix would have lost the failures they
     // meant to fix. A pass that never started cannot have moved anything, so
     /// on a first pass this restores nothing.
-    pub(super) fn refuse(
-        &mut self,
-        operation: u64,
-        error: PreviewErrorDto,
-        pending: PendingDisposition,
-    ) {
+    pub(super) fn refuse(&mut self, operation: u64, error: PreviewErrorDto) {
         if self.operation != operation {
             return;
         }
@@ -2558,38 +2539,19 @@ impl ConversionSlot {
         };
         let mut queue = queue;
         queue.reclaim_untouched_destinations();
-        // A refusal that lands on a stopped queue is still a stop. What refused
-        // it is recorded, and everything the stop prevented is marked as never
-        // run rather than left pending -- a pending item in a terminal queue is
-        // counted nowhere. `strand_pending` restores what a retry moved back to
-        // pending as part of that, which is why it is not repeated here.
+        // Everything the refusal kept from starting is marked as never run
+        // rather than left pending: a `Pending` row in a terminal queue is
+        // rendered as "Waiting" and counted nowhere, which describes a queue
+        // that is still going. `strand_pending` puts what a retry moved back to
+        // pending back to the result it earned, and a retry moves what it marks
+        // back to pending (`begin_retry`), so what a rerun converts is
+        // unchanged. A refusal that lands on a stopped queue is still a stop.
+        queue.strand_pending();
         let reason = if self.stop_requested {
-            queue.strand_pending();
             TerminalReason::Stopped
-        } else if pending == PendingDisposition::Strand {
-            // The session cannot run anything further, so an item still waiting
-            // its turn is an item that never ran -- not one waiting for a turn
-            // that will not come. A `Pending` row in a terminal queue is
-            // rendered as "Waiting" and counted nowhere, which describes a
-            // queue that is still going.
-            queue.strand_pending();
-            TerminalReason::Completed
         } else {
-            // Not a stop, and the queue could still be retried. What a retry
-            // moved back to pending keeps the result it earned: an item this
-            // pass never reached did run in the one before, and what it carries
-            // says so.
-            for item in &mut queue.items {
-                if !item.state.is_pending() {
-                    continue;
-                }
-                if let Some(earned) = item.earned_state() {
-                    item.state = earned;
-                }
-            }
             TerminalReason::Completed
         };
-        queue.recount();
         queue.error = Some(error);
         self.state = SlotState::Terminal { reason, queue };
         self.current_attempt = None;
@@ -2624,7 +2586,8 @@ impl ConversionSlot {
         true
     }
 
-    /// Moves every retryable failure back to pending for another pass.
+    /// Moves every retryable failure back to pending for another pass, with
+    /// every row a queue-level refusal kept from starting.
     //
     // Successes, skips and non-retryable failures are left exactly as they
     // are, and the order never changes: a retry is the same queue again, not a
@@ -2646,7 +2609,12 @@ impl ConversionSlot {
         }
         let mut queue = queue.clone();
         for item in &mut queue.items {
-            if item.state == ItemState::Failed && item.retryable {
+            // `NotRun` in a queue that ran to its own end is only ever what a
+            // refusal kept from starting: a stopped queue is not retried, and a
+            // quarantined session refuses the retry before it reaches here.
+            if (item.state == ItemState::Failed && item.retryable)
+                || item.state == ItemState::NotRun
+            {
                 item.state = ItemState::Pending;
             }
         }

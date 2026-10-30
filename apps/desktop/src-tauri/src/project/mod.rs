@@ -763,7 +763,9 @@ impl ProjectStore {
     /// whole is copied into a store assembled beside the destination, checked
     /// byte for byte, and given the store's name by a rename that refuses an
     /// existing one -- and only then is the document published, so a new
-    /// document never names results it does not have. A result already missing
+    /// document never names results it does not have. A project with none
+    /// gets an empty store the same way, so the name is its own before the
+    /// document is published. A result already missing
     /// or damaged is carried forward as the record it is and stays unavailable;
     /// copying cannot make it whole. An existing store at the destination is
     /// refused and never deleted, whoever it seems to belong to.
@@ -843,23 +845,19 @@ impl ProjectStore {
             None
         } else {
             // Whether or not there is a result to copy: a project with none
-            // yet would otherwise be published beside a store it does not
-            // own, and its first run would find that store instead of making
-            // its own. What is observed here is refused now; it is not a
-            // reservation of the name.
-            let store = unoccupied_store(destination)?;
-            if managed.is_empty() {
-                None
-            } else {
-                Some(assemble_store(
-                    store,
-                    directory,
-                    project_id,
-                    binding.as_ref().map(|binding| binding.path.as_path()),
-                    &managed,
-                    seams,
-                )?)
-            }
+            // yet would otherwise be published beside a name anyone could take
+            // before its first run, and that run would find another writer's
+            // store instead of making its own. The store is assembled, empty
+            // if need be, and claimed by the same no-replace rename before the
+            // document is published: the reservation of the name.
+            Some(assemble_store(
+                unoccupied_store(destination)?,
+                directory,
+                project_id,
+                binding.as_ref().map(|binding| binding.path.as_path()),
+                &managed,
+                seams,
+            )?)
         };
         let abandon = |pending: &Option<PendingStore>| {
             if let Some(pending) = pending {
@@ -2132,7 +2130,8 @@ impl ProjectStore {
     /// Anything refused before the attempt starts records nothing: no saved
     /// document, a plan that is not current, a source this recipe does not
     /// read, a runtime that is not there, a work area with no room for the
-    /// source's copy, a store that is not this project's. Once the attempt starts, the run is
+    /// source's copy, a store that is not this project's, a new plan the
+    /// document has no room for. Once the attempt starts, the run is
     /// recorded however it ends. A completed attempt's result is published
     /// beside the document first and referenced second; a failed or cancelled
     /// one publishes nothing and keeps its run, with its code and stage.
@@ -2719,6 +2718,17 @@ impl ProjectStore {
                 .clone()
                 .ok_or(ProjectError::NotYetPublished)?;
             refuse_full_history(&project.document)?;
+            // A plan not yet recorded is recorded with the run, and records
+            // only add bytes: where the document and the plan alone could not
+            // be saved, no end of the attempt could be kept, so no worker is
+            // started for one. Measured again once the attempt ended.
+            if recorded.is_none() {
+                let mut with_plan = project.document.clone();
+                with_plan.plans.push(plan.clone());
+                if !fits_every_later_save(&with_plan) {
+                    return Err(ProjectError::Oversized);
+                }
+            }
             (
                 plan,
                 input,
