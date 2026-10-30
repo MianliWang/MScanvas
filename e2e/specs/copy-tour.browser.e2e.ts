@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { cdp, metrics } from "../support/cdp";
 import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
 import { CONVERT, checkMembers, waitUntilOffered } from "../support/conversion";
-import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails } from "../support/harness";
+import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW } from "../support/fixtures";
 import { EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
@@ -109,6 +109,9 @@ const LONG_RUN = {
   })),
 };
 
+/** The workspace at the queue's full size (ADR 0057): 1,024 rows. */
+const MANY: readonly SelectedFile[] = Array.from({ length: 1_024 }, (_, index) => raw(index + 1, `Plasma_S${String(index + 1).padStart(4, "0")}.raw`));
+
 function slot(sequence: number, state: unknown) {
   return {
     sequence,
@@ -120,10 +123,10 @@ function slot(sequence: number, state: unknown) {
 }
 
 /** The conversion surface over three rows, with a ready configuration and the queue `state`. */
-function conversionWorld(locale: Locale, state: { status: string }): Record<string, unknown> {
+function conversionWorld(locale: Locale, state: { status: string }, rows: readonly SelectedFile[] = ROWS): Record<string, unknown> {
   const table = scenario("populated", locale);
   table.inspect_backend = { ...availableBackend, authority: AUTHORITY };
-  table.get_workspace_roster = { datasets: ROWS, capacity: 1024 };
+  table.get_workspace_roster = { datasets: rows, capacity: 1024 };
   table.get_project_state = NO_PROJECT;
   table.read_conversion_configuration = {
     authority: AUTHORITY,
@@ -137,7 +140,7 @@ function conversionWorld(locale: Locale, state: { status: string }): Record<stri
 }
 
 /** Answers each plan question for the rows it names, as Rust's describe does (beta1-ux's boundary). */
-async function answerPlans() {
+async function answerPlans(rows: readonly SelectedFile[] = ROWS) {
   await browser.execute(
     (tableKey: string, known: readonly SelectedFile[], intents: readonly { id: string }[]) => {
       const table = Reflect.get(window, tableKey) as Record<string, unknown>;
@@ -169,7 +172,7 @@ async function answerPlans() {
               outputFormat: "mzML",
               compression: "zlib",
               validationMode: "output_only",
-              capacity: 16,
+              capacity: Math.max(16, known.length),
               intent: intents.find((intent) => intent.id === request.intentId),
               conflictPolicy: request.conflictPolicy,
               destinationPolicy: request.destinationPolicy,
@@ -181,7 +184,7 @@ async function answerPlans() {
       };
     },
     IPC_TABLE_KEY,
-    ROWS,
+    rows,
     admittedIntents,
   );
 }
@@ -362,6 +365,21 @@ const STOPS: readonly Stop[] = [
     },
     anchor: '[data-backend-help][aria-expanded="true"]',
   },
+  {
+    // A preview read, then a check that finds no usable backend: the one-line
+    // notice above plots that stay on screen (rendered review, issue 1).
+    name: "backend-unusable-preview",
+    table: populated,
+    drive: async () => {
+      await openPreview();
+      await setInvokeResult("inspect_backend", unavailableBackend);
+      await expandBackend();
+      await browser.$(`${POPOVER} [data-backend-action="recheck"]`).click();
+      await browser.keys("Escape");
+      await browser.$('#backend-status[data-backend-mode="notice"]').waitForDisplayed({ timeout: 30_000 });
+    },
+    anchor: '#backend-status[data-backend-mode="notice"]',
+  },
   { name: "backend-quarantined", table: withBackend(quarantinedBackend), anchor: '#backend-status[data-backend-mode="notice"][data-backend-status="quarantined"]' },
   { name: "backend-quarantined-open", table: withBackend(quarantinedBackend), drive: expandBackend, anchor: POPOVER },
   { name: "backend-folder-without-tools", table: withBackend(chosenFolderWithoutTools), anchor: '#backend-status[data-backend-mode="notice"]' },
@@ -456,6 +474,20 @@ const STOPS: readonly Stop[] = [
       });
     },
     anchor: CONVERT,
+  },
+  {
+    // The plan at the queue's full size: every one of 1,024 rows, reviewed,
+    // the list windowed (ADR 0057).
+    name: "conversion-plan-long",
+    table: (locale) => conversionWorld(locale, { status: "idle" }, MANY),
+    drive: async () => {
+      await answerPlans(MANY);
+      await go(2);
+      // The scope is a segmented row over visually hidden radios.
+      await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+      await waitUntilOffered(CONVERT);
+    },
+    anchor: '.conversion-plan-list[data-windowed="true"]',
   },
   {
     // A running queue at its full size: the list is windowed (ADR 0057).
