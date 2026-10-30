@@ -377,7 +377,7 @@ writer and Rust's ownership of files.
   PNG chunks with golden tests per figure kind; records and native evidence.
   **Size S.**
 - **Status, 2026-10-30:** the accessor, the PNG chunks and their golden tests
-  are implemented on branch `be/png-text`
+  are implemented
   ([ADR 0053](../architecture/adr/0053-png-text-metadata.md), accepted), with
   the changelog entry. Native evidence and the release-notes line are still
   to come.

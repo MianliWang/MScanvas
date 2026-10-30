@@ -114,7 +114,7 @@ Where each output carries provenance:
 | --- | --- |
 | CSV / TSV | the `#` preamble: recipe and version, result and run identifiers, plan, target-list, source, adapter, engine-profile, runtime-manifest and payload-manifest digests, the engine's reported versions, parameters, units and row order |
 | SVG | the title (`<label> — <Outcome>`) and the description, which names the result identifier and the plan SHA-256 (checked in the real-runtime output) |
-| PNG | the drawn title only. The existing PNG path writes no text chunks, so a PNG carries no identifier or digest |
+| PNG | the drawn title only. The existing PNG path writes no text chunks, so a PNG carries no identifier or digest. *2026-10-30: superseded by [ADR 0053](../architecture/adr/0053-png-text-metadata.md); a saved PNG now carries the SVG's title and description, and so the result identifier and plan SHA-256 the description names* |
 
 ## Rendered interface
 

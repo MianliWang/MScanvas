@@ -93,17 +93,18 @@ The chunks go before the image data. Nothing is added to `Cargo.lock`.
 
 The change is stated in the changelog's unreleased section and, when the next
 release is prepared, in its release notes. A PNG now carries the figure's
-labels: a title the user typed, a target's label, and a stored result's
-identifiers can be read from the file without opening the image.
+labels: a target label the user typed, a stored result's identifiers and,
+once a figure title can be typed, that title can be read from the file
+without opening the image.
 
 ## Alternatives rejected
 
 - **`tEXt`.** It is Latin-1 only. A Chinese target label or the em dash in a
   stored result's title cannot be written, and transcoding or dropping it would
   make the PNG disagree with the SVG.
-- **`zTXt` or compressed `iTXt`.** Simple readers and file property views often
-  read only uncompressed text. A description is a few hundred bytes, so
-  compression saves almost nothing.
+- **`zTXt` or compressed `iTXt`.** Uncompressed text can be read without
+  inflating anything. A description is a few hundred bytes, so compression
+  saves almost nothing.
 - **A provenance key.** Not selected by the owner. It would be a machine
   contract to version, and it would put more in the PNG than the SVG carries.
 - **XMP or `eXIf`.** Heavier, and either one needs a second serialization of
