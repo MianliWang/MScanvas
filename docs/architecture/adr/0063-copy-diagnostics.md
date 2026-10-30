@@ -27,7 +27,9 @@ Diagnostics upload stays refused
 ([plan, section 7.6](../../development/AFTER_BETA1_PLAN.md#76-refused-or-not-adopted)).
 So this is text the user copies and pastes into an issue themselves. It is not
 the conversion failure export of ADR 0017, which is a JSON file holding
-redacted ProteoWizard text; this summary holds no backend text at all.
+redacted ProteoWizard text; this summary holds no backend text beyond three
+shape-checked identity tokens (the release, the build date and the source
+revision).
 
 ## Decisions
 
@@ -75,8 +77,9 @@ folder.
 No file name of the user's data and no name, path or count from the workspace,
 a project or a conversion; no full path, and nothing under the profile other
 than as a placeholder; no runtime environment variable (the version and the
-build commit are compile-time values); no user name; no ProteoWizard help text,
-and no error summary or detail. Only those environment variables are read that
+build commit are compile-time values); no user name; no ProteoWizard help text
+beyond the release, the build date and the source revision, each admitted only
+in its own shape; and no error summary or detail. Only those environment variables are read that
 locate the profile, the local application data and Program Files, or that name
 the account, and they are used only to recognise and redact.
 
@@ -84,29 +87,44 @@ The recent error codes of decision 5 do say something about the user's work: a
 code can name the input's vendor (`sciex_companion_missing`) or a feature that
 was used (`targeted_evidence_absent`), and its times say when.
 
-### 3. Every value comes from an owned source, then passes its shape and the redactor, or is withheld whole
+### 3. Codes come from owned ids; every value passes its shape and the redactor, or is withheld whole
 
-There is no free-text field. The first line of defence is where each value
-comes from: a *code* is a stable id the repository defines — a backend failure
-kind, a preference problem, a boundary error kind — never text a person or a
-file supplied. As of 2026-10-30 every source of a code field and every
-`PreviewErrorDto::new` kind is such an id.
+There is no free-text field. The first line of defence covers the code fields
+only: a *code* is a stable id the repository defines — a backend failure kind,
+a preference problem, a boundary error kind — never text a person or a file
+supplied. As of 2026-10-30 every source of a code field and every
+`PreviewErrorDto::new` kind is such an id. The version and the build commit are
+compile-time values. The other values are not MSCanvas's own: the Windows facts
+come from the registry, the WebView2 version from the runtime, and the
+ProteoWizard release, build date and source revision from the installed tool's
+own help text. Those are held by their shapes alone, none of which admits a
+path separator or a colon, so loosening one of those shapes removes the only
+defence that value has.
 
 The second line is shape and redaction. Each value must match its own shape
-from the table, must come back unchanged from a redactor that knows the profile
-path, and must not hold the account name (`USERNAME` or `USER`) as a whole
-token: the whole value, or a run with the value's edge or `_`, `.`, `-` or a
-space on each side, compared without case. A value that fails any of these is
-replaced whole by `<withheld>`; nothing is partly rewritten.
+from the table and must come back unchanged from a redactor that knows the
+profile path. A value whose shape admits a word — a code, the Windows version
+and edition, the application version — must also not hold the account name
+(`USERNAME` or `USER`) as a whole token: the whole value, or a run with the
+value's edge or `_`, `.`, `-`, `+` or a space on each side, compared without
+case. A value that fails any of these is replaced whole by `<withheld>`;
+nothing is partly rewritten.
+
+A shape that admits no free word — the language (`en` or `zh-CN`), a dotted
+number, the build date, hex — is not checked for the account name. The name
+can only match one by chance, and withholding it would then say the name is
+one of its tokens: a user named `jan` would lose every January build date,
+beside a release number that already gives the day, and `en` or `cn` would lose
+the language line.
 
 The account name is not matched as a substring. A shared workstation's `lab`
 would then withhold `available` and `unavailable` in every line that can hold
 them, and which lines were withheld would spell the name out. As a token it
-still withholds a value the name is part of: a user named `en` loses the
-language line `en`, `cn` loses `zh-CN`, and `jan` loses a January build date.
-The withheld line then says that the name is one of that line's tokens. This
-small side channel is accepted: showing the value instead would write the name
-whenever it really is there.
+still withholds a word-shaped value the name is part of, and the withheld line
+then says that the name is one of that line's tokens: a user named `core`
+loses `Windows edition: Core`. This small side channel is accepted where a word
+can appear: showing the value instead would write the name whenever it really
+is there.
 
 The second line alone does not stop a code-shaped name nothing knows, such as a
 file stem without its extension, so a change that routes supplied text into a
@@ -181,7 +199,11 @@ Recommended: a **Copy diagnostics** button in Settings that shows the text in a
 read-only box, with **Copy** beside it and one sentence saying that nothing
 was sent and that the user should read it before sharing. Copying uses the
 platform's text clipboard write from that button's click, which needs no Tauri
-capability and reads nothing. The release guide's
+capability and reads nothing. This departs from the posture of ADR 0030 and
+ADR 0034, where the clipboard is reached from Rust only. `check_repo.py` checks
+that posture through the capabilities and `package.json`, so a
+`navigator.clipboard.writeText` call still passes it; the owner chooses
+(question 4). The release guide's
 "For the environment, give" list then points at the button.
 
 ## Alternatives
@@ -210,6 +232,13 @@ capability and reads nothing. The release guide's
   `msconvert.exe` digest. Draft PR #161 adds that constant; this lane would have
   been a fourth copy of it. The digest itself is in the summary, so support can
   compare it today.
+- **The account check on every value**, as an earlier draft of this record did.
+  Withholds a value the name can only match by chance, and the withheld line
+  then points at the name: `jan` loses `Jan 13 2026` while `Release: 3.0.26013`
+  already gives the day.
+- **The account check on codes only.** Narrower still, but a word-shaped value
+  that is not a code, such as the Windows edition or the application version,
+  would then carry a planted name through.
 - **JSON.** Machine-readable, but a user pasting into an issue reads plain text
   more easily, and nothing reads the summary by program.
 - **A saved file, like ADR 0017.** A file needs a save dialog and a place, and
@@ -245,8 +274,14 @@ capability and reads nothing. The release guide's
 3. **The verified-build line.** Recommended: add `Verified build: yes/no` once
    PR #161 merges, reading its constant rather than a copy.
 4. **The interface and the copy route (decision 10).** Recommended: a Settings
-   button, a read-only preview and the platform text clipboard.
+   button, a read-only preview and the platform text clipboard. This departs
+   from ADR 0030 and ADR 0034's "the clipboard is reached from Rust". The
+   alternative keeps that posture: Rust writes the text through the clipboard
+   plugin, at the cost of a second command or a read that also copies.
 5. **Workspace contents by family.** Recommended: leave out until a support case
    needs it. A recent error code can already name a vendor or a feature
    (decision 5); a code allowlist or category for the ring is the alternative
    if that is not acceptable.
+6. **Where the account name is checked (decision 3).** Recommended: only values
+   whose shape admits a word, as a whole token. The alternatives are every
+   value as a whole token, every value as a substring, or codes only.

@@ -366,21 +366,35 @@ fn an_account_name_withholds_only_a_value_it_is_a_whole_token_of() {
             },
             "UI preferences: absent",
         ),
-        // The whole value, or a token between delimiters, even when the name
-        // holds a delimiter itself: withheld.
+        // A shape that admits no free word is not checked: the name could only
+        // match it by chance, and withholding it would point at the name.
         (
             "en",
             Facts {
                 saved_ui_language: Some("en".to_owned()),
                 ..ordinary()
             },
-            "Saved UI language: <withheld>",
+            "Saved UI language: en",
         ),
+        ("cn", ordinary(), "Saved UI language: zh-CN"),
+        ("jan", ordinary(), "Build date: Jan 13 2026"),
+        ("26200", ordinary(), "Windows build: 26200.6899"),
+        // Where the shape admits a word, the whole value, or a token between
+        // delimiters, even when the name holds a delimiter itself: withheld.
         ("lab", state("lab_unavailable"), "State: <withheld>"),
+        ("core", ordinary(), "Windows edition: <withheld>"),
         (
             "wang.lab",
             Facts {
                 app_version: "0.1.0-wang.lab".to_owned(),
+                ..ordinary()
+            },
+            "Version: <withheld>",
+        ),
+        (
+            "wang",
+            Facts {
+                app_version: "0.1.0+wang".to_owned(),
                 ..ordinary()
             },
             "Version: <withheld>",

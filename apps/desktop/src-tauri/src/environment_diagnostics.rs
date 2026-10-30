@@ -5,15 +5,22 @@
 //! probes ProteoWizard, writes a file or sends anything: the text goes back to
 //! the caller and no further.
 //!
-//! There is no free-text field. What keeps a file name, a path, a user name or
-//! an environment variable out is where each value comes from: a code is a
-//! stable id the repository defines (a backend failure kind, a preference
-//! problem, a boundary error kind), never text a person or a file supplied.
-//! Shape and redaction are the second line: every value must also match its
-//! own shape, come back unchanged from the profile redactor and not hold the
-//! account name as a whole token, or it is replaced whole by `<withheld>`. The
-//! account name is not matched as a substring: a user named `lab` would lose
-//! `available`, and which lines were withheld would spell the name out. A
+//! There is no free-text field. For a code, what keeps a file name, a path, a
+//! user name or an environment variable out is where it comes from: a stable
+//! id the repository defines (a backend failure kind, a preference problem, a
+//! boundary error kind), never text a person or a file supplied. The Windows
+//! facts come from the registry, WebView2's from the runtime, and the
+//! ProteoWizard release, build date and source revision from the installed
+//! tool's own help text: those are held by their shapes alone, so loosening
+//! one removes the only defence that value has. Every value must match its own
+//! shape and come back unchanged from the profile redactor, or it is replaced
+//! whole by `<withheld>`. A value whose shape admits a word (a code, the
+//! Windows version and edition, the application version) must also not hold
+//! the account name as a whole token. A shape that admits no free word (the
+//! language, a dotted number, the build date, hex) is not checked: the name
+//! could only match it by chance, and withholding it would point at the name.
+//! The account name is not matched as a substring: a user named `lab` would
+//! lose `available`, and which lines were withheld would spell the name out. A
 //! code-shaped name, such as a file stem without its extension, would pass
 //! that second line, so a change that routes supplied text into a code field
 //! breaks the first. The ProteoWizard folder is never
@@ -258,13 +265,14 @@ pub(crate) fn account_names(var: impl Fn(&'static str) -> Option<OsString>) -> V
 }
 
 /// Whether `value` holds `account` as a whole token: the whole value, or a run
-/// with the value's edge or `_`, `.`, `-` or a space on each side, compared
-/// without ASCII case. Never as a substring (ADR 0063, decision 3).
+/// with the value's edge or `_`, `.`, `-`, `+` or a space on each side,
+/// compared without ASCII case. Never as a substring (ADR 0063, decision 3).
 fn names_account(value: &str, account: &str) -> bool {
     let value = value.as_bytes();
     let account = account.as_bytes();
-    let bounds =
-        |byte: Option<&u8>| byte.is_none_or(|byte| matches!(byte, b'_' | b'.' | b'-' | b' '));
+    let bounds = |byte: Option<&u8>| {
+        byte.is_none_or(|byte| matches!(byte, b'_' | b'.' | b'-' | b'+' | b' '))
+    };
     !account.is_empty()
         && value
             .windows(account.len())
@@ -349,17 +357,22 @@ pub(crate) fn render(
     redactor: &Redactor,
     accounts: &[String],
 ) -> String {
-    let shown = |value: Option<&str>, shape: fn(&str) -> bool| -> String {
+    // For a shape that admits no free word: the account name could only match
+    // it by chance, and withholding it then would point at the name.
+    let patterned = |value: Option<&str>, shape: fn(&str) -> bool| -> String {
         match value {
             None => UNKNOWN.to_owned(),
-            Some(value)
-                if shape(value)
-                    && redactor.redact(value) == value
-                    && !accounts.iter().any(|account| names_account(value, account)) =>
-            {
-                value.to_owned()
-            }
+            Some(value) if shape(value) && redactor.redact(value) == value => value.to_owned(),
             Some(_) => WITHHELD.to_owned(),
+        }
+    };
+    // For a shape that admits a word.
+    let shown = |value: Option<&str>, shape: fn(&str) -> bool| -> String {
+        match value {
+            Some(value) if accounts.iter().any(|account| names_account(value, account)) => {
+                WITHHELD.to_owned()
+            }
+            value => patterned(value, shape),
         }
     };
     let code_or_none = |value: Option<&str>| match value {
@@ -390,14 +403,14 @@ pub(crate) fn render(
         ),
         format!(
             "Build commit: {}",
-            shown(facts.build_commit.as_deref(), is_commit)
+            patterned(facts.build_commit.as_deref(), is_commit)
         ),
         format!(
             "Saved UI language: {}",
             match facts.saved_ui_language.as_deref() {
                 // Nothing saved. A record that could not be read is `unknown`.
                 None if facts.ui_preferences == "absent" => NONE.to_owned(),
-                value => shown(value, is_locale),
+                value => patterned(value, is_locale),
             }
         ),
         format!(
@@ -416,7 +429,7 @@ pub(crate) fn render(
         ),
         format!(
             "Windows build: {}",
-            shown(facts.windows_build.as_deref(), is_dotted_number)
+            patterned(facts.windows_build.as_deref(), is_dotted_number)
         ),
         format!(
             "Windows edition: {}",
@@ -424,7 +437,7 @@ pub(crate) fn render(
         ),
         format!(
             "WebView2 Runtime: {}",
-            shown(facts.webview2.as_deref(), is_dotted_number)
+            patterned(facts.webview2.as_deref(), is_dotted_number)
         ),
         String::new(),
         "[ProteoWizard]".to_owned(),
@@ -434,19 +447,19 @@ pub(crate) fn render(
         format!("Origin: {}", shown(backend.origin.as_deref(), is_code)),
         format!(
             "Release: {}",
-            shown(backend.release.as_deref(), is_dotted_number)
+            patterned(backend.release.as_deref(), is_dotted_number)
         ),
         format!(
             "Build date: {}",
-            shown(backend.build_date.as_deref(), is_build_date)
+            patterned(backend.build_date.as_deref(), is_build_date)
         ),
         format!(
             "Source revision: {}",
-            shown(backend.source_revision.as_deref(), is_revision)
+            patterned(backend.source_revision.as_deref(), is_revision)
         ),
         format!(
             "msconvert SHA-256: {}",
-            shown(backend.msconvert_sha256.as_deref(), is_sha256)
+            patterned(backend.msconvert_sha256.as_deref(), is_sha256)
         ),
         format!("Folder: {folder}"),
         format!(
