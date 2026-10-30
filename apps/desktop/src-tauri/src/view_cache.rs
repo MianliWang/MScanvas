@@ -623,7 +623,17 @@ impl ViewCache {
     /// directory's last-write time, then the key -- until `bytes_to_free` bytes
     /// are freed or no entry is left (decision 9). A pinned entry is skipped.
     pub(crate) fn evict(&self, bytes_to_free: u64) -> Result<Removal, RootRefusal> {
+        self.evict_keeping(bytes_to_free, None)
+    }
+
+    /// `evict`, never taking the entry named `keep`.
+    fn evict_keeping(
+        &self,
+        bytes_to_free: u64,
+        keep: Option<&str>,
+    ) -> Result<Removal, RootRefusal> {
         let (mut candidates, unrecognized) = self.scan()?;
+        candidates.retain(|candidate| Some(candidate.key.as_str()) != keep);
         candidates.sort_by(|left, right| {
             left.opened
                 .cmp(&right.opened)
@@ -674,15 +684,19 @@ impl ViewCache {
         Ok(removal)
     }
 
-    /// Evicts until the published total plus `incoming` fits the cap. Pinned
-    /// entries may keep it above.
-    fn make_room(&self, incoming: u64) -> Result<Removal, RootRefusal> {
-        let total = self.usage()?.bytes;
-        self.evict(
-            total
+    /// Evicts, never taking `keep`, until the published total plus `incoming`
+    /// fits the cap. Only pinned entries, and `keep`, may keep it above:
+    /// `false` when an unpinned entry that could not be removed does.
+    fn make_room(&self, incoming: u64, keep: Option<&str>) -> Result<bool, RootRefusal> {
+        let over = |usage: &Usage| {
+            usage
+                .bytes
                 .saturating_add(incoming)
-                .saturating_sub(self.cap_bytes),
-        )
+                .saturating_sub(self.cap_bytes)
+        };
+        self.evict_keeping(over(&self.usage()?), keep)?;
+        let left = self.usage()?;
+        Ok(over(&left) == 0 || left.bytes <= left.in_use_bytes)
     }
 
     /// Every entry under `entries` -- a key-named plain directory holding
@@ -1006,12 +1020,17 @@ impl ViewCache {
             attempt.manifest_staged = true;
         }
         drop(held);
-        self.make_room(facts.output_byte_length)
-            .map_err(|_| StoreFailure::NotStored)?;
+        if self.make_room(facts.output_byte_length, None) != Ok(true) {
+            return Err(StoreFailure::NotStored);
+        }
         let published = self.entries().join(key.name());
         match rename(&staged, &published) {
             Ok(()) => {
                 let _ = set_directory_time(&published, SystemTime::now());
+                // Another process may have made room and published at the
+                // same time as this one: whichever publishes second trims the
+                // total back to the cap, sparing the entry it just published.
+                let _ = self.make_room(0, Some(key.name()));
                 Ok(Stored::Published)
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {

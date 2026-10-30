@@ -1380,3 +1380,56 @@ fn a_kept_attempt_stays_with_its_marker_while_this_process_runs() {
         }
     );
 }
+
+#[test]
+fn two_publishers_that_made_room_at_once_leave_the_cache_at_the_cap() {
+    let scratch = Scratch::new("vc-cap-race");
+    let (first, second) = (capped(&scratch, 30), capped(&scratch, 30));
+    for (index, key) in [key(1), key(2)].iter().enumerate() {
+        published(&first, key, &[1; 10]);
+        age(&first, key, index as u64);
+    }
+    // The second publisher makes room and publishes between the first one's
+    // making room and its rename.
+    let attempt = first.begin_attempt().expect("an attempt");
+    fs::write(attempt.staged_output(), [3; 10]).expect("stage");
+    let stored = first.publish_with(attempt, &key(3), &facts(&[3; 10]), |from, to| {
+        published(&second, &key(4), &[4; 10]);
+        rename_no_replace(from, to)
+    });
+
+    assert!(matches!(stored, Ok(Stored::Published)));
+    assert_eq!(first.usage().expect("listed").bytes, 30);
+    assert!(!entry(&first, &key(1)).exists(), "the oldest went");
+    for kept in [key(2), key(3), key(4)] {
+        assert!(entry(&first, &kept).exists(), "{}", kept.name());
+    }
+}
+
+#[test]
+fn an_unpinned_entry_that_cannot_be_removed_refuses_a_publish_over_the_cap() {
+    let scratch = Scratch::new("vc-cap-stuck");
+    let cache = capped(&scratch, 20);
+    let read_only = |key: &CacheKey, read_only: bool| {
+        let output = entry(&cache, key).join(OUTPUT);
+        let mut permissions = fs::metadata(&output).expect("metadata").permissions();
+        permissions.set_readonly(read_only);
+        fs::set_permissions(&output, permissions).expect("permissions");
+    };
+    // Neither pinned nor removable: a read-only file refuses deletion.
+    let stuck = [key(1), key(2)];
+    for key in &stuck {
+        published(&cache, key, &[1; 10]);
+        read_only(key, true);
+    }
+    let before = snapshot(&cache.root);
+
+    assert!(matches!(
+        store(&cache, &key(3), &[3; 10]),
+        Ended::Refused(StoreFailure::NotStored)
+    ));
+    assert_eq!(snapshot(&cache.root), before);
+    for key in &stuck {
+        read_only(key, false);
+    }
+}
