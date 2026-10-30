@@ -301,8 +301,9 @@ async function capture(label: string) {
                   overflow: inspector.scrollWidth - inspector.clientWidth,
                 },
               },
+        // What each recorded-work row is called: the record it left, as text.
         runs: [...document.querySelectorAll("[data-project-run]")].map((node) =>
-          node.querySelector("[data-project-inspect-run]")?.textContent ?? null,
+          node.querySelector(".project-row-name")?.textContent ?? null,
         ),
         activeElement:
           active === null ? null : attribute(active, "data-project-capture-qc"),
@@ -507,7 +508,8 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
     // The keyboard went to what the press made, and it is on screen.
     expect(recorded.focus).toEqual({ id: "qc-report-title", visible: true });
     expect(recorded.report?.headingVisible).toBe(true);
-    expect(recorded.runs).toEqual(["Capture QC summary"]);
+    // Named by the record it left, never by the layer's "Capture QC summary".
+    expect(recorded.runs).toEqual(["QC summary snapshot"]);
     expectTheRecordedValues(recorded.report);
     expect(recorded.report?.source).toContain(MZML_ROW.fileName);
     // Details answers for the report: its lineage and its build, not its

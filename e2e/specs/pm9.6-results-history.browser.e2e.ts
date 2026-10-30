@@ -701,14 +701,13 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
       expect((await text(snapshot)).toLowerCase()).not.toMatch(/\b(pass|fail|good|poor|grade|score)\b|合格|不合格|评分|等级/u);
       await mark(snapshot);
 
-      // Its run keeps the report on screen.
-      await browser.$(`[data-project-inspect-run="${QC_RUN}"]`).click();
+      // Its run -- one step on from the record, in Details -- keeps the
+      // report on screen.
+      await showDetails();
+      await browser.$(`#workbench-inspector [data-provenance-link="${QC_RUN}"]`).click();
       await frames();
       expect(await marked(snapshot)).toBe(true);
-      if (width >= 1366) {
-        await showDetails();
-        expect(await browser.$('#workbench-inspector [data-provenance="run"]').isDisplayed()).toBe(true);
-      }
+      expect(await browser.$('#workbench-inspector [data-provenance="run"]').isDisplayed()).toBe(true);
       // Opening a snapshot captures nothing.
       expect(await work(before)).toEqual([]);
       expect(await unexpectedConsole()).toEqual([]);
@@ -727,8 +726,8 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     table.export_targeted_ms1_table = { status: "saved", format: "csv", fileName: "result.csv", rowCount: 2 };
     await open(table, "en", 1366, 768);
     // Both records carry one name in the history; only their identities differ.
-    expect(await content(`[data-project-inspect-artifact="${ARTIFACTS[0]}"]`)).toBe(
-      await content(`[data-project-inspect-artifact="${ARTIFACTS[1]}"]`),
+    expect(await content(`[data-project-run="${RUNS[0]}"] .project-row-name`)).toBe(
+      await content(`[data-project-run="${RUNS[1]}"] .project-row-name`),
     );
     await openRecord(ARTIFACTS[0]);
     await browser.$(`${report(ARTIFACTS[0])} [data-targeted-row]`).waitForDisplayed();
@@ -1209,11 +1208,13 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
         );
         expect(await exists(`[data-project-artifact="${ARTIFACTS[0]}"] [data-project-artifact-availability]`)).toBe(false);
 
-        // One plan run twice: two runs and two records, each named by when it ended.
+        // One plan run twice: two runs and two records, each row's Details
+        // named by when its run ended.
         const names = await browser.execute(
-          (ids: readonly string[]) => ids.map((id) => document.querySelector(`[data-project-inspect-run="${id}"]`)?.getAttribute("aria-label") ?? ""),
+          (ids: readonly string[]) => ids.map((id) => document.querySelector(`[data-project-run="${id}"] [aria-controls="workbench-inspector"]`)?.getAttribute("aria-label") ?? ""),
           [RUNS[0], REPEAT_RUN],
         );
+        expect(names[0]).not.toBe("");
         expect(names[0]).not.toBe(names[1]);
         await openRecord(ARTIFACTS[0]);
         await browser.$(`${report(ARTIFACTS[0])} [data-targeted-row]`).waitForDisplayed();
@@ -1311,16 +1312,23 @@ describe("PM9.6 results, history and explicit continuation, rendered", () => {
     await browser.$(`${report(ARTIFACTS[0])} [data-targeted-row]`).waitForDisplayed();
     await mark(report(ARTIFACTS[0]));
     const loaded = await callCount();
-    await browser.$(`[data-project-inspect-run="${RUNS[0]}"]`).click();
+    // The run, one step on from its record in Details.
+    await showDetails();
+    await browser.$(`#workbench-inspector [data-provenance-link="${RUNS[0]}"]`).click();
     await frames();
     expect(await marked(report(ARTIFACTS[0]))).toBe(true);
-    // Another run, or a reference, is not this report's origin.
-    await browser.$(`[data-project-inspect-run="${RUNS[1]}"]`).click();
+    // Another layer, or another run, is not this report's origin.
+    await browser.$(`[data-project-inspect-layer="${LAYERS[1]}"]`).click();
+    await frames();
+    expect(await exists("[data-targeted-report]")).toBe(false);
+    await browser.$(`#workbench-inspector [data-provenance-link="${RUNS[1]}"]`).click();
     await frames();
     expect(await exists("[data-targeted-report]")).toBe(false);
     // And a run never opens a report that was not already on screen.
-    await browser.$(`[data-project-inspect-run="${RUNS[0]}"]`).click();
+    await browser.$(`[data-project-inspect-layer="${LAYERS[0]}"]`).click();
+    await browser.$(`#workbench-inspector [data-provenance-link="${RUNS[0]}"]`).click();
     await frames();
+    expect(await browser.$('#workbench-inspector [data-provenance="run"]').isDisplayed()).toBe(true);
     expect(await exists("[data-targeted-report]")).toBe(false);
     expect(await issued("read_targeted_ms1_rows", loaded)).toBe(0);
     expect(await unexpectedConsole()).toEqual([]);

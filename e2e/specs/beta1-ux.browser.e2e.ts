@@ -805,16 +805,16 @@ describe("Beta 1 UX changes, rendered", () => {
           other: other === null ? null : { fontSize: getComputedStyle(other).fontSize, color: getComputedStyle(other).color },
         };
       }, setup);
-      expect(styles).toMatchObject({ tag: "H3", fontSize: "14px" });
+      // A section title on the type scale's one section size (16px, V2).
+      expect(styles).toMatchObject({ tag: "H3", fontSize: "16px" });
       expect(styles.color).toBe(styles.primaryText);
       expect(styles.shadow).toContain("inset");
       expect(styles.shadow).toContain(styles.accent);
       expect(styles.shadow).toMatch(/\b0px 3px 0px\b/u);
       expect(styles.other).not.toBeNull();
-      // A step below the setup's heading. Since the v5.11 rebuild every panel
-      // title is in primary text (rebuild spec 1.3); the setup stays apart by
-      // its size and its accent bar.
-      expect(styles.other!.fontSize).toBe("13px");
+      // Every section title shares that size and primary text (V2, rebuild
+      // spec 1.3); the setup stays apart by its accent bar alone.
+      expect(styles.other).toEqual({ fontSize: styles.fontSize, color: styles.color });
 
       // O2: a run that left no result, then Show run with Details folded.
       await browser.execute(
