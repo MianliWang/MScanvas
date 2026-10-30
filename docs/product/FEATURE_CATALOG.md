@@ -9,7 +9,7 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 | ENV-001 | Detect ProteoWizard | P0 | Report the release, the build and which installation the verdict describes, or an actionable missing state. No backend path reaches the interface. |
 | ENV-002 | Choose the backend installation | P0 | User can choose the installation folder for the session only; it is never stored, invalid choices explain why in terms of the actions the application has, and returning to automatic discovery is always offered. |
 | ENV-003 | Backend self-test | P0 | A read-only test distinguishes launch failure from format support. |
-| ENV-004 | Copy diagnostics | P1 | Produces a redacted, shareable environment summary. |
+| ENV-004 | Copy diagnostics | P1 | Produces a redacted, shareable environment summary. **Rust side implemented on 2026-10-30 ([ADR 0063](../architecture/adr/0063-copy-diagnostics.md), Proposed); no interface calls it yet.** One read command returns plain text with stable English keys: the application version and build, the Windows version and build, WebView2, the saved interface language, the ProteoWizard reading the session already holds, and this session's recent error codes with their times. Every value must match its own shape and survive redaction or it is withheld whole, so no data file name, path under the profile, environment variable or user name appears. Nothing is written, sent or launched, and upload stays refused. |
 
 ## Data workspace
 

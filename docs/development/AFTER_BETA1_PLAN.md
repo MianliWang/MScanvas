@@ -531,7 +531,7 @@ M10.0 route decision.
 ### 7.4 Future capabilities
 
 - P1: WSP-010 restore workspace; FIG-007 saved FigureSpec; ENV-004 copy
-  diagnostics.
+  diagnostics (*2026-10-30:* Rust side implemented, no interface yet; [ADR 0063](../architecture/adr/0063-copy-diagnostics.md), Proposed).
 - P2: FIG-008 figure composer; VIEW-008 multi-layer comparison (needs an
   admitted normalization first); RUN-007 persistent conversion history;
   ANA-002 QC recipe or a second recipe.

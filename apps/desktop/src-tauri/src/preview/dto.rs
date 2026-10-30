@@ -3365,9 +3365,13 @@ pub enum PreviewErrorContextDto {
 }
 
 impl PreviewErrorDto {
+    /// Every boundary error is built here, so this is also where its code, and
+    /// only its code, joins the session's recent-error ring (ADR 0063).
     pub fn new(kind: impl Into<String>, summary: impl Into<String>, retryable: bool) -> Self {
+        let kind = kind.into();
+        crate::environment_diagnostics::note_error(&kind);
         Self {
-            kind: kind.into(),
+            kind,
             summary: summary.into(),
             detail: None,
             retryable,

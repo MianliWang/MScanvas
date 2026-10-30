@@ -1,0 +1,204 @@
+# ADR 0063 — Copy diagnostics: a redacted environment summary the user shares
+
+Status: **Proposed** on 2026-10-30. The owner asked that day for every backend
+item that can be done now to start; this record states the recommendations that
+lane implemented, and each choice the owner has not made is listed
+[at the end](#open-questions-for-the-owner). The Rust side is implemented on
+branch `be/copy-diagnostics`. No interface calls it yet.
+Related: [0017](0017-redacted-conversion-diagnostics-export.md),
+[0044](0044-conversion-configuration-authority.md),
+[0055](0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+[0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md);
+the [after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md#74-future-capabilities)
+and the beta-1 [install and support guide](../../release/beta-1/INSTALL_AND_SUPPORT.md#report-a-problem).
+
+## Context
+
+ENV-004 asks for "a redacted, shareable environment summary". Today a bug
+report asks the user to type four facts by hand: the MSCanvas version, the
+Windows edition, version and build that `winver` shows, the ProteoWizard build
+the banner names, and the input format. Two of them are hard to get right. The
+installed version reads `0.1.0` for every beta, because the package version is
+not bumped per prerelease, and the banner names the ProteoWizard release but
+not which executable ran.
+
+Diagnostics upload stays refused
+([plan, section 7.6](../../development/AFTER_BETA1_PLAN.md#76-refused-or-not-adopted)).
+So this is text the user copies and pastes into an issue themselves. It is not
+the conversion failure export of ADR 0017, which is a JSON file holding
+redacted ProteoWizard text; this summary holds no backend text at all.
+
+## Decisions
+
+### 1. A closed list of facts
+
+| Section | Key | Source | Admitted shape |
+|---|---|---|---|
+| — | `Format`, `Created` | this layout's number; the clock, as RFC 3339 UTC | fixed |
+| Application | `Version` | the package version | starts with a digit; digits, letters, `.`, `-`, `+`; at most 32 |
+| Application | `Build profile` | `release` or `debug` | code |
+| Application | `Build commit` | `GITHUB_SHA` at compile time, which GitHub Actions sets for every CI and release build; a pull-request build records its merge commit | 40 hex digits, else `unknown` |
+| Application | `Saved UI language` | the preference record's locale, or `none` when nothing is saved | `en` or `zh-CN` |
+| Application | `UI preferences`, `UI preferences problem` | the preference store's read outcome and its owned problem code | code |
+| System | `Windows version`, `Windows build`, `Windows edition` | `DisplayVersion`, `CurrentBuildNumber`.`UBR` and `EditionID` under `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, what `winver` reads. `ProductName` is not read: it says "Windows 10" on Windows 11 | letters and digits, at most 8; digits and dots; letters and digits, at most 32 |
+| System | `WebView2 Runtime` | the runtime's own version string | digits and dots |
+| ProteoWizard | `Checked this session`, `Quarantined` | whether a reading exists; whether the session stopped trusting the backend | `yes`/`no` |
+| ProteoWizard | `State`, `Origin`, `Failure` | the last reading's verdict, `automatic`/`chosen`, and its failure kind | code |
+| ProteoWizard | `Release`, `Build date`, `Source revision` | the reported build identity | digits and dots; `Jan 13 2026`; 6–40 hex digits |
+| ProteoWizard | `msconvert SHA-256` | the digest discovery bound to the executable | 64 hex digits |
+| ProteoWizard | `Folder` | the usable reading's folder, described as decision 4 says | decision 4 |
+| ProteoWizard | `Remembered folder`, `… refused at startup`, `… not saved` | whether a folder is remembered, and the two owned codes beside it. Never the remembered path | `yes`/`no`; code |
+| View cache | `Usage` | `not in this build` until ADR 0060's slice 2 gives the session a cache; then the held cache's usage, never by opening one | fixed |
+| Recent errors | `Held`, then one line per code | the ring of decision 5 | code, RFC 3339 times |
+
+A *code* is a letter followed by letters, digits and underscores, at most 64.
+
+The backend lines come from what the session already holds: the last reading
+and the identity it bound. Building the summary probes nothing and launches
+nothing, so it can be taken while a conversion runs or after the backend was
+quarantined, which is when it is most needed. Before the first reading the
+section says `Checked this session: no` and every other backend value is
+`unknown`.
+
+### 2. What never goes in
+
+No file name of the user's data and nothing from the workspace, a project or a
+conversion; no full path, and nothing under the profile other than as a
+placeholder; no environment variable; no user name; no ProteoWizard help text,
+and no error summary or detail. Only those environment variables are read that
+locate the profile, the local application data and Program Files, or that name
+the account, and they are used only to recognise and redact.
+
+### 3. Every value is admitted by its shape, then by the redactor, or withheld whole
+
+There is no free-text field. Each value must match its own shape from the table,
+and must come back unchanged from a redactor that knows the profile path and the
+account name. A value that fails either is replaced whole by `<withheld>`;
+nothing is partly rewritten. Withholding is the safe failure: a user named `en`
+loses the language line, and nothing worse.
+
+### 4. The ProteoWizard folder is a placeholder and an installer-shaped remainder
+
+The folder is the one path described. It is written as the known root it sits
+under — `<program-files>`, `<program-files-x86>`, `<local-app-data>`,
+`<user-profile>`, most specific first — followed by the remainder only when
+every remaining component is a name a ProteoWizard installer or its portable
+archive writes: `ProteoWizard`, `ProteoWizard <version>` with an optional
+`32-bit`/`64-bit`, or `pwiz-bin-windows-…` with no dot, optionally inside `Apps`
+or `Programs` under the local application data, at most three deep. Anything
+else is `<root>\<withheld>`, and a folder under no known root is
+`<other-folder>\<withheld>`. Roots compare by component and without case, as
+Windows does. So `C:\Program Files\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit`
+reads `<program-files>\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit`,
+and a folder the user named, inside the profile or elsewhere, never appears.
+
+### 5. A bounded, in-memory ring of boundary error codes
+
+Every boundary error is built through `PreviewErrorDto::new`, so that is where
+its code, and only its code, joins the ring. The one boundary error built
+elsewhere, `figure_preview_too_large`, now goes through it too. The ring holds
+32 entries and counts the ones it drops. Consecutive repeats of one code are one
+entry with a first and a last time, so a retry loop or a failure projected
+again cannot push every other code out. A value that is not shaped like a code
+is kept as `unrecognized_code`. The ring lives for the process and is never
+written anywhere.
+
+It says what the native boundary *produced* this session, which is close to,
+but not exactly, what the interface showed: an error built and then discarded
+is counted too. A search of the native sources on 2026-10-30 found no
+`ok_or`, `unwrap_or`, `map_or` or `or` that builds one eagerly.
+
+### 6. Format
+
+Plain text, so it pastes into an issue as it is. The first line is
+`MSCanvas diagnostics`, then `Format: 1` and `Created`. Sections are
+`[Application]`, `[System]`, `[ProteoWizard]`, `[View cache]` and
+`[Recent errors]`, each a run of `Key: value` lines. Keys are English and
+stable, so support can read a summary whatever the interface language was.
+Values are written as they are, never translated. `Format` changes when a
+heading or a key does. A recent error is
+`- <first time> <code>`, followed by `(repeated until <last time>)` when it
+repeated.
+
+### 7. Bounds
+
+Every value has a maximum length, the folder at most three components of at
+most 64 characters, and the ring 32 lines. The largest summary every shape
+admits is held under 8 KiB by a test.
+
+### 8. Nothing is written, sent or launched
+
+The summary is returned to the caller and goes no further: no file, no log, no
+network, no clipboard from Rust, no process. Reading the saved language reads
+the preference record; nothing writes it.
+
+### 9. One narrow command
+
+`read_environment_diagnostics` takes no argument and returns the text. Its only
+error is the existing `preview_worker_unavailable`, so it adds no boundary
+error code for the interface to account for. It runs off the async runtime,
+because the preference record lives on the profile volume.
+
+### 10. The interface is the interface lane's, and is proposed here
+
+Recommended: a **Copy diagnostics** button in Settings that shows the text in a
+read-only box, with **Copy** beside it and one sentence saying that nothing
+was sent and that the user should read it before sharing. Copying uses the
+platform's text clipboard write from that button's click, which needs no Tauri
+capability and reads nothing. The release guide's
+"For the environment, give" list then points at the button.
+
+## Alternatives
+
+- **Record errors at each command in `lib.rs`.** Exact about what was returned,
+  but about 84 call sites, a large diff in the most shared file, and a new
+  command that forgot to record would be silently missing. Tauri 2.11 gives no
+  public hook on command results.
+- **Record errors when they are serialized.** Catches exactly what crossed the
+  boundary, but a side effect in `Serialize` is surprising, and a polled state
+  that carries a failure would record it on every poll.
+- **The folder with only the profile part replaced.** What the task first
+  suggested. It leaks a folder the user named under Program Files or on another
+  drive, and a planted data-file name in such a folder appears in the text.
+- **No folder, or only its category.** Safe, but loses which of two side-by-side
+  installations ran, which the installer-shaped remainder keeps.
+- **A `Verified build: yes/no` line now.** The verified build is ADR 0055's
+  `msconvert.exe` digest. Draft PR #161 adds that constant; this lane would have
+  been a fourth copy of it. The digest itself is in the summary, so support can
+  compare it today.
+- **JSON.** Machine-readable, but a user pasting into an issue reads plain text
+  more easily, and nothing reads the summary by program.
+- **A saved file, like ADR 0017.** A file needs a save dialog and a place, and
+  this is short enough to paste.
+- **Rust writes the clipboard** through the clipboard plugin's Rust API, as Copy
+  plot does. Keeps the repository's "the clipboard is reached from Rust"
+  posture, but needs a second command beside the read, or one read that also
+  copies before the user has seen the text.
+- **Workspace contents by family** (how many mzML, Thermo RAW, Shimadzu or
+  SCIEX rows). Answers the guide's input-format question, but is workspace
+  state the summary otherwise avoids. Left for the owner.
+
+## Consequences
+
+- `PreviewErrorDto::new` takes a process-wide lock once per error built. The
+  cost is a short critical section, and the lock never panics.
+- `project::format_rfc3339` and `BackendAuthority::bound_identity` are visible
+  within the crate.
+- The registration test lists the command and exempts it from "the frontend
+  calls every command" until the interface lane adds its caller.
+- When ADR 0060's slice 2 gives the session a view cache, the `[View cache]`
+  section reports its usage and `Format` stays `1` only if the keys do not
+  change.
+
+## Open questions for the owner
+
+1. **The folder rule (decision 4).** Recommended as written. The alternative is
+   no folder at all.
+2. **The error ring's recording point (decision 5).** Recommended: at
+   `PreviewErrorDto::new`, accepting that a built-and-discarded error counts.
+3. **The verified-build line.** Recommended: add `Verified build: yes/no` once
+   PR #161 merges, reading its constant rather than a copy.
+4. **The interface and the copy route (decision 10).** Recommended: a Settings
+   button, a read-only preview and the platform text clipboard.
+5. **Workspace contents by family.** Recommended: leave out until a support case
+   needs it.

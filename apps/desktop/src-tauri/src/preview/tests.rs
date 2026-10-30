@@ -4155,6 +4155,9 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         registered,
         [
             "get_bootstrap_status",
+            // ENV-004's environment summary (ADR 0063): one read, no argument,
+            // text back. It writes, sends and launches nothing.
+            "read_environment_diagnostics",
             // The UI preference store. Two commands for the record the
             // webview owns: reading and committing are the whole boundary,
             // and the reset-and-replace of an unusable record is a commit
@@ -4333,8 +4336,12 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
 
     // Every command the product uses is a command the host registers, spelled
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
-    // caller here and is deliberately not in this list.
-    for name in &registered[1..] {
+    // caller here and is deliberately not in this list. The environment summary
+    // has no caller until the interface lane adds Copy diagnostics.
+    for name in registered[1..]
+        .iter()
+        .filter(|name| **name != "read_environment_diagnostics")
+    {
         assert!(
             api.contains(&format!("\"{name}\""))
                 || drop_transport.contains(&format!("\"{name}\""))
