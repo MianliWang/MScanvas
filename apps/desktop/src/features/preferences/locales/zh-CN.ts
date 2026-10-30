@@ -541,6 +541,7 @@ export const zhCN = {
   scanPrevious: "上一个扫描",
   scanNext: "下一个扫描",
   scanSearch: "搜索已加载的扫描",
+  scanSearchShort: "搜索扫描",
   scanAllLevels: "全部 MS 级别",
   scanHelpText: "在已加载的行中搜索标识符、索引和扫描编号（区分大小写）。点击表头或“扫描排序”排序；上一项/下一项按当前结果导航。方向键、Page、Home、End 移动焦点；Enter 或空格打开。保留时间和强度的单位未报告。",
   scanSelectedOutside: "选中的扫描 {{name}} 被筛选隐藏。",

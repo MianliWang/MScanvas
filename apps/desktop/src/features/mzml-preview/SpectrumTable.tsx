@@ -331,7 +331,8 @@ export const SpectrumTable = memo(function SpectrumTable({
         <div className="plot-search">
           <Icon name="search" />
           <label className="visually-hidden" htmlFor="scan-search">{t("scanSearch")}</label>
-          <input id="scan-search" type="search" value={view.options.query} placeholder={t("scanSearch")}
+          {/* A placeholder short enough for the compact column; the label keeps the full name. */}
+          <input id="scan-search" type="search" value={view.options.query} placeholder={t("scanSearchShort")}
             onChange={event => view.setQuery(event.target.value)} aria-describedby="scan-view-help" />
         </div>
         <label className="visually-hidden" htmlFor="scan-ms-level">{t("scanMsLevel")}</label>

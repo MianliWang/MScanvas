@@ -541,6 +541,7 @@ export const en = {
   scanPrevious: "Previous scan",
   scanNext: "Next scan",
   scanSearch: "Search loaded scans",
+  scanSearchShort: "Search scans",
   scanAllLevels: "All MS levels",
   scanHelpText: "Searches identifiers, indices and scan numbers in loaded rows (case-sensitive). Headers and Sort scans sort; Previous/Next follow the results. Arrow/Page/Home/End move focus; Enter/Space opens. Retention-time and intensity units are not reported.",
   scanSelectedOutside: "Selected scan {{name}} is hidden by the filters.",
