@@ -390,7 +390,8 @@ fn agree(seen: &mut Option<ArrayUnit>, unit: &ArrayUnit, role: ArrayRole) -> Res
 struct Axis {
     low: f64,
     high: f64,
-    width: f64,
+    /// The width of one bin.
+    step: f64,
     bins: u32,
 }
 
@@ -406,7 +407,7 @@ impl Axis {
         Ok(Self {
             low,
             high,
-            width,
+            step: width / f64::from(bins),
             bins,
         })
     }
@@ -417,7 +418,7 @@ impl Axis {
         if k >= self.bins {
             return self.high;
         }
-        (self.low + self.width * f64::from(k) / f64::from(self.bins)).min(self.high)
+        (self.low + self.step * f64::from(k)).min(self.high)
     }
 
     fn edges(self, k: u32) -> Option<(f64, f64)> {
@@ -430,18 +431,33 @@ impl Axis {
         if !(self.low..=self.high).contains(&value) {
             return None;
         }
-        // A first guess from the ratio, which is in [0, 1], so nothing
-        // overflows and `as` floors it. Rounding can put the guess one bin off
-        // an edge, so the edges themselves decide.
-        let mut bin =
-            (((value - self.low) / self.width * f64::from(self.bins)) as u32).min(self.bins - 1);
+        // A first guess; the quotient is not negative, and `as` floors and
+        // saturates it. Rounding can put the guess one bin off an edge, so the
+        // edges themselves decide.
+        let guess = (((value - self.low) / self.step) as u32).min(self.bins - 1);
+        let bin = if guess > 0 && value < self.edge(guess) {
+            self.search(value, guess - 1)
+        } else if guess + 1 < self.bins && value >= self.edge(guess + 1) {
+            self.search(value, guess + 1)
+        } else {
+            guess
+        };
+        Some(bin as usize)
+    }
+
+    /// Walks from `bin` to the bin whose edges hold `value`: rarely needed,
+    /// and more than one step only where rounding makes edges coincide. Kept
+    /// out of line: the same loops inside `bin` added about 2 s to the
+    /// measured 25-million-point profile pass.
+    #[cold]
+    fn search(self, value: f64, mut bin: u32) -> u32 {
         while bin > 0 && value < self.edge(bin) {
             bin -= 1;
         }
         while bin + 1 < self.bins && value >= self.edge(bin + 1) {
             bin += 1;
         }
-        Some(bin as usize)
+        bin
     }
 }
 
