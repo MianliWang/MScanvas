@@ -586,24 +586,38 @@ Each later in its own slice:
   >   every input: nothing is recorded, never verified; beta 1 ran only the
   >   measured build and recorded no label.
   > - Opening writes nothing and leaves the project with no unsaved changes.
-  >   Only an explicit Save writes, and it writes schema 5. Nothing is
-  >   dropped; besides the version, each input gains its `null` label, and a
-  >   digest is written in upper case, the one spelling this build writes
-  >   (beta 1 wrote no other).
+  >   A Save with nothing unsaved writes nothing either and succeeds. The
+  >   first Save after a change writes schema 5. Nothing is dropped; besides
+  >   the version, each input gains its `null` label, and a digest is written
+  >   in upper case, the one spelling this build writes (beta 1 wrote no
+  >   other).
   > - Save As replaces a schema-4 document only where it is the one this
-  >   session is bound to, which Save replaces anyway. Any other copy, even
-  >   of this project at this revision, is refused as
-  >   `destinationNotAProject` and left as it is.
+  >   session is bound to, chosen again in the dialog; that writes schema 5
+  >   with or without a change. Any other copy, even of this project at this
+  >   revision, is refused as `destinationNotAProject` and left as it is.
+  > - The bound document found in another schema than it was bound in, at
+  >   the same project and revision, was written by someone else: Save and
+  >   Save As onto it are refused as `staleDocument`.
   > - Schemas 1–3 and 6 or later stay `unsupportedVersion`; a document with
   >   no version stays `malformed`.
   >
-  > **The consequence: once this build saves a project, beta 1 can no longer
-  > open it.** Beta 1 refuses schema 5 as `unsupportedVersion`, and
+  > **The consequence: beta 1 cannot open a document this build has
+  > written.** Beta 1 refuses schema 5 as `unsupportedVersion`, and
   > reinstalling beta 1 (its Roll back) does not undo that. A beta-1 project
-  > that is only opened and closed stays readable by beta 1. Nothing in the
-  > interface says so before the first Save yet: a prompt there is later
-  > work, and the next release notes' known limitations and roll-back
-  > section must state the consequence.
+  > that is only opened, saved with nothing unsaved, and closed stays
+  > readable by beta 1. Nothing in the interface says so before the first
+  > write yet: a prompt there is later work, and the next release notes'
+  > known limitations and roll-back section must state the consequence.
+  >
+  > **Known limitation: a beta-1 document near the size bound.** Beta 1
+  > published documents up to 4 MiB. The `null` label adds 37 bytes per
+  > input when written, so a beta-1 document whose size plus 37 bytes per
+  > input exceeds the bound opens but can never be saved by this build
+  > (`a_schema_four_document_without_room_for_its_labels_opens_and_is_never_written`):
+  > every Save after
+  > a change and every Save As is refused as `oversized`, and the file is
+  > left as beta 1 wrote it. Where the size is history that cannot be
+  > removed, the project stays read-only here. No data is lost.
 
   > **Implemented on `be/integrate` (draft PR #161), 2026-10-29.**
   >

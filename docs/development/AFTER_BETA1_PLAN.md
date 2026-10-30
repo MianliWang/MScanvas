@@ -140,9 +140,10 @@ accepted):
 
 - what the schema-5 build does with beta 1's schema-4 projects. Implemented on
   `be/integrate` (draft PR #161), pending an owner decision before merge: it
-  reads them, writes schema 5 on the next explicit Save, and from then on beta
-  1 cannot open that project (ADR 0055, risks, the note of 2026-10-29 on a
-  schema-4 document). Beta 1's `INSTALL_AND_SUPPORT.md` says no compatibility
+  reads them, writes nothing on a Save with nothing unsaved, writes schema 5 on
+  the first Save after a change, and from then on beta 1 cannot open that
+  project (ADR 0055, risks, the note of 2026-10-29 on a schema-4 document). A
+  beta-1 document near the 4 MiB bound opens but cannot be saved here. Beta 1's `INSTALL_AND_SUPPORT.md` says no compatibility
   between betas is promised, while the M9 closure says publishing begins
   schema 4's promise; the owner decides which one stands;
 - the R0 real-file comparison for the reader (ADR 0056, decision 8): the PRIDE

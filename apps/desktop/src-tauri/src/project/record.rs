@@ -37,9 +37,9 @@ use uuid::Uuid;
 /// carry the "not verified by MSCanvas" label of a conversion
 /// ([`NotVerifiedByMscanvas`]), was published in beta 1 and is read: exactly,
 /// through its own types, and held in memory as this schema with a `null`
-/// label on every input. Opening writes nothing; the next explicit Save writes
-/// this schema, which beta 1 refuses. A later schema belongs to the build that
-/// wrote it.
+/// label on every input. Opening writes nothing, and nor does a Save with
+/// nothing unsaved; the first Save after a change writes this schema, which
+/// beta 1 refuses. A later schema belongs to the build that wrote it.
 pub const SCHEMA_VERSION: u32 = 5;
 
 /// The schema beta 1 published, which this build reads and never writes.
@@ -49,8 +49,10 @@ pub const SCHEMA_VERSION: u32 = 5;
 /// their closed vocabularies, or a field added to one of them, must also be
 /// refused on this path: a schema-4 document cannot hold what beta 1 did not
 /// write. `project::tests::schema_four_shares_only_beta_one_words_and_fields`
-/// lists every one of them without a wildcard, so such an addition does not
-/// compile until it is decided there.
+/// lists every one of them without a wildcard, so a variant or a field added
+/// does not compile until it is decided there. A serde attribute changed on an
+/// existing one (`alias`, `other`, `rename`, `default`, `skip`) compiles all
+/// the same and is caught only by review.
 pub const PUBLISHED_SCHEMA_VERSION: u32 = 4;
 
 /// The largest project document this build will read.

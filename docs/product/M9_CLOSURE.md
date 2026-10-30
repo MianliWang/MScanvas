@@ -202,15 +202,16 @@ Beta 1 published schema 4, which began its promise below, so the schema-5
 build on `be/integrate` **reads** `schema_4_canonical.json` exactly as schema 4
 and holds it as schema 5 with a `null` label on every input
 (`the_canonical_schema_four_document_is_read_as_schema_five_with_no_label`);
-opening writes nothing, and the next explicit Save writes schema 5, which beta 1
-can no longer open. That disposition is a release decision for the owner
-before merge (ADR 0055, the note of 2026-10-29 on a schema-4 document).
-Schema 4 is now frozen at beta 1's words and fields: a word or field added to a
-shared type later belongs to schema 5 or later and must be refused on the
-schema-4 read path, which
-`project::tests::schema_four_shares_only_beta_one_words_and_fields` enforces at
-compile time (ADR 0049, decision 4 note). Below, schema 4 as it stood at the M9
-closure; each statement marked "as of the M9 closure" is superseded by this
+opening writes nothing, nor does a Save with nothing unsaved, and the first
+Save after a change writes schema 5, which beta 1 can no longer open. That
+disposition is a release decision for the owner before merge (ADR 0055, the
+note of 2026-10-29 on a schema-4 document). Schema 4 is now frozen at beta 1's
+words and fields: a word or field added to a shared type later belongs to
+schema 5 or later and must be refused on the schema-4 read path.
+`project::tests::schema_four_shares_only_beta_one_words_and_fields` makes an
+added variant or field fail to compile; a serde attribute changed on an
+existing one is left to review (ADR 0049, decision 4 note). Below, schema 4 as
+it stood at the M9 closure; each statement marked "as of the M9 closure" is superseded by this
 note.
 
 **Schema 4 is the current unpublished development schema, and its

@@ -4708,10 +4708,19 @@ fn a_schema_four_document_keeps_every_rule_and_one_digest_spelling() {
     );
 }
 
-/// Opening writes nothing and leaves nothing unsaved, so a beta-1 project that
-/// is only looked at stays readable by beta 1. The next explicit Save writes
-/// schema 5, which beta 1 refuses, and changes nothing else but the revision
-/// and a `null` label on each input.
+/// Leaves the open project with an unsaved change and the content it had.
+fn change_and_undo(store: &ProjectStore, scratch: &Scratch) {
+    let file = scratch.write("unsaved.txt", b"bytes");
+    let id = store.register_input(&file).expect("registered");
+    store.remove_input(id).expect("removed");
+    assert!(store.describe().dirty);
+}
+
+/// Opening writes nothing and leaves nothing unsaved, and a Save with nothing
+/// unsaved writes nothing either, so a beta-1 project that is only looked at
+/// stays readable by beta 1. The first Save after a change writes schema 5,
+/// which beta 1 refuses, and changes nothing else but the revision and a
+/// `null` label on each input.
 #[test]
 fn opening_a_schema_four_document_writes_nothing_and_its_save_writes_schema_five() {
     let scratch = Scratch::new("schema-four");
@@ -4733,9 +4742,17 @@ fn opening_a_schema_four_document_writes_nothing_and_its_save_writes_schema_five
             .all(|input| input.not_verified_by_mscanvas.is_none())
     );
 
-    store
-        .save()
-        .expect("an explicit Save over the schema-4 document");
+    store.save().expect("a Save with nothing unsaved");
+    assert_eq!(
+        fs::read(&path).expect("read"),
+        SCHEMA_FOUR.as_bytes(),
+        "a Save with nothing unsaved leaves beta 1's document as it was"
+    );
+    assert_eq!(fs::read_dir(scratch.directory()).expect("list").count(), 1);
+    assert!(!store.describe().dirty);
+
+    change_and_undo(&store, &scratch);
+    store.save().expect("the first Save after a change");
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(&path).expect("read")).expect("json");
     let expected = schema_four_after(|value| {
@@ -4749,7 +4766,7 @@ fn opening_a_schema_four_document_writes_nothing_and_its_save_writes_schema_five
 }
 
 /// Save As replaces a schema-4 document only where it is the one this session
-/// is bound to, which Save replaces anyway. A copy anywhere else is something
+/// is bound to, chosen again. A copy anywhere else is something
 /// beta 1 wrote and can still read, so it is refused and left as it is -- even
 /// a copy of this project at this revision, which the same-project rule alone
 /// would replace.
@@ -4794,6 +4811,128 @@ fn save_as_replaces_no_schema_four_document_but_the_bound_one() {
     let saved = record::parse(&fs::read(&bound).expect("read")).expect("schema 5 is read");
     assert_eq!(saved.schema_version, 5);
     assert_eq!(saved.revision, 8);
+}
+
+/// The bound document found in another schema than it was bound in was
+/// written by someone else, even at this project and this revision. Save and
+/// Save As onto it are refused and it is left as it is, in both directions.
+#[test]
+fn the_bound_document_in_another_schema_is_another_writers() {
+    let scratch = Scratch::new("schema-four-stale");
+    let path = scratch.write("project.mscanvas", SCHEMA_FOUR.as_bytes());
+    let store = ProjectStore::new();
+    store.open_document(&path, false).expect("schema 4 opens");
+    let refused = |bytes: &[u8], what: &str| {
+        fs::write(&path, bytes).expect("write");
+        assert_eq!(
+            store.save(),
+            Err(ProjectError::StaleDocument),
+            "Save, {what}"
+        );
+        assert_eq!(
+            store.save_as(&path),
+            Err(ProjectError::StaleDocument),
+            "Save As, {what}"
+        );
+        assert_eq!(fs::read(&path).expect("read"), bytes, "{what}");
+    };
+
+    let five = serde_json::to_vec(&schema_four_after(as_schema_five)).expect("bytes");
+    refused(&five, "bound at schema 4, found at schema 5");
+
+    fs::write(&path, SCHEMA_FOUR).expect("write");
+    change_and_undo(&store, &scratch);
+    store.save().expect("schema 5 at revision 8");
+    let four = schema_four_after(|value| value["revision"] = 8.into());
+    refused(
+        &serde_json::to_vec(&four).expect("bytes"),
+        "bound at schema 5, found at schema 4",
+    );
+}
+
+/// Beta 1 published documents up to the size bound, and reading one gives
+/// every input a `null` label 37 bytes long when written. A document closer to
+/// the bound than that opens, and nothing this build does can write it: every
+/// Save and Save As is refused as oversized, and the file stays as beta 1 wrote
+/// it.
+#[test]
+fn a_schema_four_document_without_room_for_its_labels_opens_and_is_never_written() {
+    // As beta 1 wrote it: pretty-printed, with a final newline.
+    let published = |document: &ProjectDocument| {
+        let value: serde_json::Value =
+            serde_json::from_slice(&schema_four_bytes(document)).expect("json");
+        let mut bytes = serde_json::to_vec_pretty(&value).expect("bytes");
+        bytes.push(b'\n');
+        bytes
+    };
+    let mut document = record::parse(SCHEMA_FOUR.as_bytes()).expect("schema 4");
+    // Inputs enough that their labels outgrow one padding record, and room
+    // for one more to be registered.
+    let template = document.inputs[0].clone();
+    while document.inputs.len() < record::MAX_INPUTS - 1 {
+        document.inputs.push(record::InputRecord {
+            id: InputId::new(),
+            ..template.clone()
+        });
+    }
+    let observed: Vec<InputId> = document
+        .inputs
+        .iter()
+        .take(32)
+        .map(|input| input.id)
+        .collect();
+    let padding = || record::ArtifactRecord {
+        id: mscanvas_core::ArtifactId::new(),
+        label: "padding".to_owned(),
+        payload: record::ArtifactPayload::FileFactsV1(record::FileFactsV1 {
+            observations: observed
+                .iter()
+                .map(|&input_id| record::ObservedInput {
+                    input_id,
+                    members: vec![record::ObservedMember {
+                        role: MemberRole::Primary,
+                        relative_name: String::new(),
+                        byte_length: 1,
+                        sha256: "A".repeat(64),
+                    }],
+                })
+                .collect(),
+        }),
+    };
+    document.artifacts.push(padding());
+    let one = published(&document).len() as u64;
+    document.artifacts.push(padding());
+    let each = published(&document).len() as u64 - one;
+    let room = record::MAX_DOCUMENT_BYTES - one - each;
+    document
+        .artifacts
+        .extend((0..room / each).map(|_| padding()));
+    let bytes = published(&document);
+    assert!(
+        bytes.len() as u64 <= record::MAX_DOCUMENT_BYTES,
+        "beta 1 could publish it"
+    );
+    let read = record::parse(&bytes).expect("it is read");
+    assert!(
+        record::serialize(&read).expect("serialized").len() as u64 > record::MAX_DOCUMENT_BYTES,
+        "its labels take it past the bound"
+    );
+
+    let scratch = Scratch::new("schema-four-full");
+    let path = scratch.write("project.mscanvas", &bytes);
+    let elsewhere = scratch.directory().join("elsewhere.mscanvas");
+    let store = ProjectStore::new();
+    store.open_document(&path, false).expect("it opens");
+    store
+        .save()
+        .expect("a Save with nothing unsaved writes nothing");
+    assert_eq!(store.save_as(&path), Err(ProjectError::Oversized));
+    assert_eq!(store.save_as(&elsewhere), Err(ProjectError::Oversized));
+    change_and_undo(&store, &scratch);
+    assert_eq!(store.save(), Err(ProjectError::Oversized));
+    assert_eq!(fs::read(&path).expect("read"), bytes);
+    assert!(!elsewhere.exists(), "nothing published elsewhere");
+    assert!(store.describe().dirty, "nothing was published");
 }
 
 /// A schema-4 document is schema 4 exactly: a schema-5 field in one is refused
@@ -4868,7 +5007,10 @@ fn a_schema_five_label_or_release_that_is_omitted_is_malformed() {
 /// until it is added here -- and whoever adds it must also refuse it on the
 /// schema-4 read path, with a test, or keep it out of the shared types.
 ///
-/// The check is the compiler's; running it asserts nothing more. Not listed:
+/// The check is the compiler's; running it asserts nothing more. It cannot see
+/// a serde attribute changed on an existing word or field (`alias`, `other`,
+/// `rename`, `default`, `skip`), which can admit a spelling beta 1 never wrote
+/// and is left to review. Not listed:
 /// the identifier newtypes and `DecimalValue`, transparent wrappers of one
 /// private field, and `mscanvas_core::ArtifactId`, another crate's identifier.
 #[test]
