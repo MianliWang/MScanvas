@@ -126,11 +126,15 @@ pub(crate) struct CacheKey {
 }
 
 impl CacheKey {
-    /// The key of these three inputs.
+    /// The key of these three inputs: the lowercase hex SHA-256 of the UTF-8
+    /// text `mscanvas-view-cache-key/1`, `source-sha256=<hex>`,
+    /// `provider-sha256=<hex>` and `intent=<intent>`, each line ended by one
+    /// LF, the last included, with the digests in lowercase hex.
     ///
     /// `intent` is the caller's canonical intent, opaque here. `None` where it
-    /// is not one line of bounded text -- a line break in it could spell another
-    /// key's text -- or where SHA-256 is unavailable.
+    /// is not one line of at most 1 KiB without control characters -- a line
+    /// break in it could spell another key's text -- or where SHA-256 is
+    /// unavailable.
     pub(crate) fn new(source: Sha256Digest, provider: Sha256Digest, intent: &str) -> Option<Self> {
         if !bounded_line(intent) {
             return None;
@@ -233,7 +237,12 @@ pub(crate) enum RootRefusal {
     /// `view_cache_root_unrecognized`: something MSCanvas did not make is
     /// where the root goes, or inside it where `entries` or `staging` goes.
     /// Nothing under it was read past the marker, written or removed.
+    /// A summary, eviction, Clear or sweep answers it too when the root,
+    /// `entries` or `staging` stopped being a plain directory while held.
     Unrecognized,
+    /// A summary's `unreadable`: `entries` or `staging` could not be listed.
+    /// Nothing was removed.
+    Unreadable,
 }
 
 /// One process's handle on the cache. Two processes, or two of these in one
@@ -294,6 +303,16 @@ impl ViewCache {
                 .is_ok_and(|metadata| plain_directory(&metadata))
         })
     }
+
+    /// The names under `entries` or `staging`, after `intact`.
+    fn list(&self, directory: &Path) -> Result<Vec<fs::DirEntry>, RootRefusal> {
+        if !self.intact() {
+            return Err(RootRefusal::Unrecognized);
+        }
+        fs::read_dir(directory)
+            .and_then(Iterator::collect)
+            .map_err(|_| RootRefusal::Unreadable)
+    }
 }
 
 /// Makes the root whole or not at all (decision 6): a creation directory with
@@ -316,7 +335,7 @@ fn make_root(
         });
     // Absent after a rename; otherwise only this call's own creation
     // directory, holding at most the marker.
-    let _ = remove_fixed(&creating, &[ROOT_MARKER]);
+    let _ = remove_fixed(&creating, &[ROOT_MARKER], None);
     made
 }
 
@@ -359,7 +378,15 @@ pub(crate) enum Lookup {
     /// for instance while another process removes it. Nothing was removed and
     /// nothing is opened.
     Unreadable,
+    /// The caller stopped the read (decision 10). Nothing was removed and
+    /// nothing is opened.
+    Cancelled,
 }
+
+/// Asked before each chunk of a cached copy is read, with the bytes read so
+/// far and the file's length (`bytesRead`, `bytesTotal`); `false` stops the
+/// read there.
+pub(crate) type KeepGoing<'a> = &'a mut dyn FnMut(u64, u64) -> bool;
 
 /// An entry that passed every check, pinned.
 ///
@@ -396,6 +423,7 @@ impl VerifiedEntry {
 enum Check {
     Damaged,
     Unreadable,
+    Cancelled,
 }
 
 impl ViewCache {
@@ -403,9 +431,11 @@ impl ViewCache {
     ///
     /// A plain directory holding exactly `entry.json` and `view.mzML`; a
     /// schema-1 manifest of `key`'s inputs within 16 KiB; and a regular
-    /// `view.mzML` whose length and SHA-256, read through the pin, are the
-    /// manifest's. A damaged entry is removed and never opened.
-    pub(crate) fn verify(&self, key: &CacheKey) -> Lookup {
+    /// `view.mzML` whose length and SHA-256, read through the pin in chunks
+    /// that `keep_going` is asked about, are the manifest's. A damaged entry
+    /// is removed -- the directory object that was checked, and no other --
+    /// and never opened.
+    pub(crate) fn verify(&self, key: &CacheKey, keep_going: KeepGoing<'_>) -> Lookup {
         if !self.intact() {
             return Lookup::Unreadable;
         }
@@ -423,7 +453,7 @@ impl ViewCache {
             Listing::Unrecognized => return Lookup::Unrecognized,
             Listing::Unreadable => return Lookup::Unreadable,
         }
-        match check(&path, key) {
+        match check(&path, key, keep_going) {
             Ok((pin, manifest)) => Lookup::Hit(Box::new(VerifiedEntry {
                 _directory: directory,
                 _pin: pin,
@@ -431,20 +461,52 @@ impl ViewCache {
                 path,
             })),
             Err(Check::Unreadable) => Lookup::Unreadable,
+            Err(Check::Cancelled) => Lookup::Cancelled,
             Err(Check::Damaged) => {
-                // The removal holds the directory itself, and checks it again.
+                // The removal holds the directory itself, checks it again, and
+                // must find the object checked here: another process may have
+                // removed it and published a sound entry in its place.
+                let identity = local_document::object_identity_of(&directory);
                 drop(directory);
-                let removed = remove_fixed(&path, &ENTRY_NAMES);
-                Lookup::Damaged {
-                    removed: matches!(removed, Removed::Gone { .. }),
-                }
+                let removed = identity.is_some()
+                    && matches!(
+                        remove_fixed(&path, &ENTRY_NAMES, identity),
+                        Removed::Gone { .. }
+                    );
+                Lookup::Damaged { removed }
             }
         }
     }
 }
 
+/// The pin, read in the hash's chunks, asking before each whether to go on
+/// (decision 10: Cancel stops MSCanvas's own read at the next chunk).
+struct Reported<'a, 'b> {
+    pin: &'a File,
+    read: u64,
+    total: u64,
+    keep_going: KeepGoing<'b>,
+    stopped: bool,
+}
+
+impl io::Read for Reported<'_, '_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if !(self.keep_going)(self.read, self.total) {
+            self.stopped = true;
+            return Err(io::Error::other("cancelled"));
+        }
+        let count = io::Read::read(&mut self.pin, buffer)?;
+        self.read += count as u64;
+        Ok(count)
+    }
+}
+
 /// The checks after the names: pin first, so nothing changes under them.
-fn check(path: &Path, key: &CacheKey) -> Result<(File, Manifest), Check> {
+fn check(
+    path: &Path,
+    key: &CacheKey,
+    keep_going: KeepGoing<'_>,
+) -> Result<(File, Manifest), Check> {
     let pin = match OpenOptions::new()
         .read(true)
         .share_mode(SHARE_READ)
@@ -471,7 +533,19 @@ fn check(path: &Path, key: &CacheKey) -> Result<(File, Manifest), Check> {
     {
         return Err(Check::Damaged);
     }
-    let digest = Sha256Digest::calculate_reader(&pin).map_err(|_| Check::Unreadable)?;
+    let mut reported = Reported {
+        pin: &pin,
+        read: 0,
+        total: metadata.len(),
+        keep_going,
+        stopped: false,
+    };
+    // A stop is an I/O error to the hash, so the flag tells it apart.
+    let digest = Sha256Digest::calculate_reader(&mut reported);
+    if reported.stopped {
+        return Err(Check::Cancelled);
+    }
+    let digest = digest.map_err(|_| Check::Unreadable)?;
     if parse_hex(&manifest.output_sha256) != Some(digest) {
         return Err(Check::Damaged);
     }
@@ -482,13 +556,18 @@ fn check(path: &Path, key: &CacheKey) -> Result<(File, Manifest), Check> {
 // Size: eviction and Clear
 // ---------------------------------------------------------------------------
 
-/// What `entries` holds, as a summary can state it.
+/// What `entries` holds, as a summary can state it (`ViewCacheSummaryDto`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Usage {
+    /// Key-named plain directories holding only an entry's fixed names.
     pub(crate) entries: usize,
-    /// The `view.mzML` lengths, which is what the cap counts.
+    /// Their `view.mzML` lengths, which is what the cap counts.
     pub(crate) bytes: u64,
-    /// Names under `entries` that are not a key-named plain directory.
+    /// The entries a pin holds (`inUse`), and their bytes: no eviction frees
+    /// them.
+    pub(crate) in_use: usize,
+    pub(crate) in_use_bytes: u64,
+    /// Every other name under `entries`, left as found.
     pub(crate) unrecognized: usize,
 }
 
@@ -524,28 +603,27 @@ struct Candidate {
     key: String,
     bytes: u64,
     opened: SystemTime,
+    in_use: bool,
 }
 
 impl ViewCache {
-    pub(crate) fn usage(&self) -> Usage {
-        let (candidates, unrecognized) = self.scan();
-        Usage {
+    pub(crate) fn usage(&self) -> Result<Usage, RootRefusal> {
+        let (candidates, unrecognized) = self.scan()?;
+        let in_use = candidates.iter().filter(|candidate| candidate.in_use);
+        Ok(Usage {
             entries: candidates.len(),
             bytes: candidates.iter().map(|candidate| candidate.bytes).sum(),
+            in_use: in_use.clone().count(),
+            in_use_bytes: in_use.map(|candidate| candidate.bytes).sum(),
             unrecognized,
-        }
+        })
     }
 
     /// Removes unpinned entries, least recently opened first -- by the entry
     /// directory's last-write time, then the key -- until `bytes_to_free` bytes
     /// are freed or no entry is left (decision 9). A pinned entry is skipped.
-    ///
-    /// The cap and a later free-space target both reduce to this.
-    pub(crate) fn evict(&self, bytes_to_free: u64) -> Removal {
-        if !self.intact() {
-            return Removal::default();
-        }
-        let (mut candidates, unrecognized) = self.scan();
+    pub(crate) fn evict(&self, bytes_to_free: u64) -> Result<Removal, RootRefusal> {
+        let (mut candidates, unrecognized) = self.scan()?;
         candidates.sort_by(|left, right| {
             left.opened
                 .cmp(&right.opened)
@@ -562,26 +640,44 @@ impl ViewCache {
             removal.count(remove_fixed(
                 &self.entries().join(&candidate.key),
                 &ENTRY_NAMES,
+                None,
             ));
         }
-        removal
+        Ok(removal)
+    }
+
+    /// Decision 9's disk-space rule, for a miss `short_by` bytes short of the
+    /// space it needs: when every unpinned entry together frees that much, the
+    /// least recently opened are evicted until it is freed. `None` when they
+    /// do not, and nothing was evicted (`view_cache_no_space`).
+    ///
+    /// ponytail: a pin taken between the count and the eviction frees less
+    /// than counted; the caller reads the free space again either way.
+    pub(crate) fn make_space(&self, short_by: u64) -> Result<Option<Removal>, RootRefusal> {
+        let usage = self.usage()?;
+        if usage.bytes.saturating_sub(usage.in_use_bytes) < short_by {
+            return Ok(None);
+        }
+        self.evict(short_by).map(Some)
     }
 
     /// Clear view cache: every unpinned entry, then every attempt whose owner
     /// is gone. What it could not remove, and what it does not recognise, is
     /// counted and left.
-    pub(crate) fn clear(&self) -> Removal {
-        let mut removal = self.evict(u64::MAX);
-        let sweep = self.sweep_staging();
-        removal.failed += sweep.failed;
+    pub(crate) fn clear(&self) -> Result<Removal, RootRefusal> {
+        let mut removal = self.evict(u64::MAX)?;
+        let sweep = self.sweep_staging()?;
+        // An attempt whose owner could not be asked about could not be
+        // removed either.
+        removal.failed += sweep.failed + sweep.uncertain;
         removal.unrecognized_left += sweep.unrecognized + sweep.linked;
-        removal
+        Ok(removal)
     }
 
     /// Evicts until the published total plus `incoming` fits the cap. Pinned
     /// entries may keep it above.
-    fn make_room(&self, incoming: u64) -> Removal {
-        let total = self.usage().bytes;
+    fn make_room(&self, incoming: u64) -> Result<Removal, RootRefusal> {
+        let total = self.usage()?.bytes;
         self.evict(
             total
                 .saturating_add(incoming)
@@ -589,25 +685,28 @@ impl ViewCache {
         )
     }
 
-    /// Every key-named plain directory under `entries`, and how many other
-    /// names there are. What is inside an entry is judged when it is removed.
-    fn scan(&self) -> (Vec<Candidate>, usize) {
+    /// Every entry under `entries` -- a key-named plain directory holding
+    /// only an entry's fixed names, as a removal requires -- and how many
+    /// other names there are.
+    fn scan(&self) -> Result<(Vec<Candidate>, usize), RootRefusal> {
         let mut candidates = Vec::new();
         let mut unrecognized = 0;
-        let Ok(children) = fs::read_dir(self.entries()) else {
-            return (candidates, unrecognized);
-        };
-        for child in children.flatten() {
+        for child in self.list(&self.entries())? {
             let key = child
                 .file_name()
                 .into_string()
                 .ok()
                 .filter(|name| parse_hex(name).is_some());
+            let path = child.path();
             // Read from the entry itself: a directory listing's copy of the
             // time can lag behind the one eviction orders by.
-            match (key, fs::symlink_metadata(child.path())) {
-                (Some(key), Ok(metadata)) if plain_directory(&metadata) => {
-                    let bytes = fs::symlink_metadata(child.path().join(OUTPUT))
+            let metadata = fs::symlink_metadata(&path).ok().filter(plain_directory);
+            match (key, metadata) {
+                (Some(key), Some(metadata))
+                    if matches!(list_fixed(&path, &ENTRY_NAMES), Listing::Fixed(_)) =>
+                {
+                    let output = path.join(OUTPUT);
+                    let bytes = fs::symlink_metadata(&output)
                         .ok()
                         .filter(local_document::is_ordinary_file)
                         .map_or(0, |output| output.len());
@@ -615,13 +714,29 @@ impl ViewCache {
                         key,
                         bytes,
                         opened: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                        in_use: pinned(&output),
                     });
                 }
                 _ => unrecognized += 1,
             }
         }
-        (candidates, unrecognized)
+        Ok((candidates, unrecognized))
     }
+}
+
+/// Whether a pin holds `output`, without removing anything. A pin shares read
+/// only, so an open asking for delete access -- and sharing everything --
+/// meets a sharing refusal.
+///
+/// ponytail: a pin taken at that instant meets the probe instead and reads as
+/// unreadable once, the same transient an eviction's own open can cause.
+fn pinned(output: &Path) -> bool {
+    OpenOptions::new()
+        .access_mode(DELETE | SYNCHRONIZE)
+        .share_mode(SHARE_READ | SHARE_WRITE | SHARE_DELETE)
+        .custom_flags(OPEN_REPARSE_POINT)
+        .open(output)
+        .is_err_and(|error| error.raw_os_error() == Some(ERROR_SHARING_VIOLATION))
 }
 
 // ---------------------------------------------------------------------------
@@ -639,14 +754,25 @@ struct AttemptOwner {
 }
 
 /// One attempt's private area under `staging`, removed whole when this is
-/// dropped -- a failure, a cancel, or after publishing.
+/// dropped -- a failure, a cancel, or after publishing -- unless it is kept.
 #[derive(Debug)]
 pub(crate) struct Attempt {
     path: PathBuf,
     identity: Option<(u64, [u8; 16])>,
+    /// `entry.json` is staged beside the output, so a publish after an
+    /// occupied place does not write it again.
+    manifest_staged: bool,
+    kept: bool,
 }
 
 impl Attempt {
+    /// Leaves the attempt in place, marker and all: a conversion whose end
+    /// was not observed may still use it (decision 10). A sweep in a later
+    /// session removes it once this process is gone.
+    pub(crate) fn keep(mut self) {
+        self.kept = true;
+    }
+
     /// The attempt's own directory. The conversion's staging area goes beneath
     /// it (slice 2).
     pub(crate) fn path(&self) -> &Path {
@@ -661,7 +787,9 @@ impl Attempt {
 
 impl Drop for Attempt {
     fn drop(&mut self) {
-        let _ = remove_attempt(&self.path, self.identity);
+        if !self.kept {
+            let _ = remove_attempt(&self.path, self.identity);
+        }
     }
 }
 
@@ -698,7 +826,12 @@ impl ViewCache {
         let identity = open_directory(&path, 0, SHARE_READ | SHARE_WRITE | SHARE_DELETE)
             .ok()
             .and_then(|directory| local_document::object_identity_of(&directory));
-        let attempt = Attempt { path, identity };
+        let attempt = Attempt {
+            path,
+            identity,
+            manifest_staged: false,
+            kept: false,
+        };
         let marked = this_process().is_some_and(|(owner_process_id, owner_process_created)| {
             serde_json::to_vec(&AttemptOwner {
                 schema: ATTEMPT_SCHEMA.to_owned(),
@@ -718,20 +851,14 @@ impl ViewCache {
     /// Removes the attempts whose owner is gone. Runs at the start of a view
     /// operation and in Clear, never at startup. An attempt of a running
     /// process, this one included, is left.
-    pub(crate) fn sweep_staging(&self) -> Sweep {
+    pub(crate) fn sweep_staging(&self) -> Result<Sweep, RootRefusal> {
         let mut sweep = Sweep::default();
-        if !self.intact() {
-            return sweep;
-        }
-        let Ok(children) = fs::read_dir(self.staging()) else {
-            return sweep;
-        };
-        for child in children.flatten() {
+        for child in self.list(&self.staging())? {
             let path = child.path();
             match attempt_owner(&path) {
                 Found::NotAnAttempt => sweep.unrecognized += 1,
                 Found::Owned(Owner::Alive, _) => sweep.live += 1,
-                Found::Owned(Owner::Unknown, _) => sweep.uncertain += 1,
+                Found::Unsettled | Found::Owned(Owner::Unknown, _) => sweep.uncertain += 1,
                 Found::Owned(Owner::Gone, identity) => {
                     match remove_attempt(&path, Some(identity)) {
                         // Absent: another process swept it first.
@@ -744,12 +871,15 @@ impl ViewCache {
                 }
             }
         }
-        sweep
+        Ok(sweep)
     }
 }
 
 enum Found {
     NotAnAttempt,
+    /// A plain directory with an attempt's name that could not be held or
+    /// identified just now: neither judged nor touched.
+    Unsettled,
     Owned(Owner, (u64, [u8; 16])),
 }
 
@@ -764,11 +894,20 @@ fn attempt_owner(path: &Path) -> Found {
     if !uuid::Uuid::parse_str(name).is_ok_and(|id| id.to_string() == name) {
         return Found::NotAnAttempt;
     }
-    let Ok(directory) = hold_directory(path) else {
-        return Found::NotAnAttempt;
+    let directory = match hold_directory(path) {
+        Ok(directory) => directory,
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotADirectory | io::ErrorKind::NotFound
+            ) =>
+        {
+            return Found::NotAnAttempt;
+        }
+        Err(_) => return Found::Unsettled,
     };
     let Some(identity) = local_document::object_identity_of(&directory) else {
-        return Found::NotAnAttempt;
+        return Found::Unsettled;
     };
     let marker = local_document::read_bounded(&path.join(ATTEMPT_OWNER), MAX_ATTEMPT_OWNER_BYTES)
         .ok()
@@ -788,15 +927,19 @@ fn attempt_owner(path: &Path) -> Found {
 // Publishing
 // ---------------------------------------------------------------------------
 
-/// A publish that went through (decision 8).
+/// What a publish did (decision 8).
 #[derive(Debug)]
 pub(crate) enum Stored {
     /// This attempt's entry now holds its key's place. It is not verified yet:
     /// the caller verifies it, and a failure then is `view_cache_entry_lost`.
     Published,
-    /// Another publisher stored the key first. Its entry is verified and
-    /// pinned, and this attempt's copy was discarded.
-    Existing(Box<VerifiedEntry>),
+    /// Something holds the key's place, and nothing was replaced. The attempt
+    /// comes back unpublished, so that the caller verifies what is there as
+    /// Checking cached copy, which Cancel can stop (decision 10): a hit is
+    /// used and the attempt dropped; `Unrecognized` is
+    /// `view_cache_entry_unrecognized`; a damaged entry it removed, or a miss,
+    /// is this attempt published once more -- once, which the caller counts.
+    Occupied(Attempt),
 }
 
 /// Why a publish did not go through. Nothing was published by this attempt,
@@ -805,8 +948,6 @@ pub(crate) enum Stored {
 pub(crate) enum StoreFailure {
     /// `view_cache_not_stored`, retryable.
     NotStored,
-    /// `view_cache_entry_unrecognized`, not retryable.
-    EntryUnrecognized,
     /// `view_cache_entry_too_large`, not retryable: over the 4 GiB ceiling, or
     /// alone over the cap. Nothing was evicted for it.
     EntryTooLarge,
@@ -828,7 +969,7 @@ impl ViewCache {
 
     fn publish_with(
         &self,
-        attempt: Attempt,
+        mut attempt: Attempt,
         key: &CacheKey,
         facts: &StagedFacts,
         rename: impl Fn(&Path, &Path) -> io::Result<()>,
@@ -839,58 +980,69 @@ impl ViewCache {
             return Err(StoreFailure::EntryTooLarge);
         }
         let staged = attempt.path.join(ATTEMPT_ENTRY);
+        // Held while it is read and written, so `entry` stays this plain
+        // directory; released before the rename, which it would refuse.
+        let Ok(held) = hold_directory(&staged) else {
+            return Err(StoreFailure::NotStored);
+        };
+        let names: &[&str] = if attempt.manifest_staged {
+            &ENTRY_NAMES
+        } else {
+            &[OUTPUT]
+        };
         let staged_length = fs::symlink_metadata(staged.join(OUTPUT))
             .ok()
             .filter(local_document::is_ordinary_file)
             .map(|metadata| metadata.len());
         if !self.intact()
             || !bounded_line(&facts.provider_release)
-            || !matches!(list_fixed(&staged, &[OUTPUT]), Listing::Fixed(found) if found.len() == 1)
+            || !matches!(list_fixed(&staged, names), Listing::Fixed(found) if found.len() == names.len())
             || staged_length != Some(facts.output_byte_length)
         {
             return Err(StoreFailure::NotStored);
         }
-        let manifest = Manifest {
-            schema_version: MANIFEST_SCHEMA,
-            key: key.name.clone(),
-            source_sha256: hex(&key.source),
-            source_byte_length: facts.source_byte_length,
-            source_kind: SOURCE_KIND.to_owned(),
-            provider_release: facts.provider_release.clone(),
-            provider_sha256: hex(&key.provider),
-            intent: key.intent.clone(),
-            output_sha256: hex(&facts.output_sha256),
-            output_byte_length: facts.output_byte_length,
-            created_at: crate::project::now_rfc3339(),
-        };
-        let written = serde_json::to_vec(&manifest)
-            .is_ok_and(|bytes| write_new(&staged.join(MANIFEST), &bytes).is_ok());
-        if !written {
-            return Err(StoreFailure::NotStored);
+        if !attempt.manifest_staged {
+            stage_manifest(&staged, key, facts)?;
+            attempt.manifest_staged = true;
         }
-        self.make_room(facts.output_byte_length);
+        drop(held);
+        self.make_room(facts.output_byte_length)
+            .map_err(|_| StoreFailure::NotStored)?;
         let published = self.entries().join(key.name());
-        let mut retried = false;
-        loop {
-            match rename(&staged, &published) {
-                Ok(()) => {
-                    let _ = set_directory_time(&published, SystemTime::now());
-                    return Ok(Stored::Published);
-                }
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists && !retried => {
-                    match self.verify(key) {
-                        Lookup::Hit(existing) => return Ok(Stored::Existing(existing)),
-                        // Removed as damaged, or gone meanwhile: once more.
-                        Lookup::Damaged { removed: true } | Lookup::Miss => retried = true,
-                        Lookup::Unrecognized => return Err(StoreFailure::EntryUnrecognized),
-                        Lookup::Damaged { removed: false } | Lookup::Unreadable => {
-                            return Err(StoreFailure::NotStored);
-                        }
-                    }
-                }
-                Err(_) => return Err(StoreFailure::NotStored),
+        match rename(&staged, &published) {
+            Ok(()) => {
+                let _ = set_directory_time(&published, SystemTime::now());
+                Ok(Stored::Published)
             }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                Ok(Stored::Occupied(attempt))
+            }
+            Err(_) => Err(StoreFailure::NotStored),
         }
+    }
+}
+
+/// Writes `entry.json` beside the staged output, once.
+fn stage_manifest(staged: &Path, key: &CacheKey, facts: &StagedFacts) -> Result<(), StoreFailure> {
+    let manifest = Manifest {
+        schema_version: MANIFEST_SCHEMA,
+        key: key.name.clone(),
+        source_sha256: hex(&key.source),
+        source_byte_length: facts.source_byte_length,
+        source_kind: SOURCE_KIND.to_owned(),
+        provider_release: facts.provider_release.clone(),
+        provider_sha256: hex(&key.provider),
+        intent: key.intent.clone(),
+        output_sha256: hex(&facts.output_sha256),
+        output_byte_length: facts.output_byte_length,
+        created_at: crate::project::now_rfc3339(),
+    };
+    let written = serde_json::to_vec(&manifest)
+        .is_ok_and(|bytes| write_new(&staged.join(MANIFEST), &bytes).is_ok());
+    if written {
+        Ok(())
+    } else {
+        Err(StoreFailure::NotStored)
     }
 }
 
@@ -918,12 +1070,18 @@ enum Removed {
 /// Removes a directory whose children are only plain files with `names`
 /// (ignoring case, each at most once), in `names` order, then the directory.
 /// Anything else in it -- a link, a subdirectory, another name -- leaves the
-/// whole directory untouched.
-fn remove_fixed(path: &Path, names: &[&str]) -> Removed {
+/// whole directory untouched. With `identity`, the directory must still be
+/// that object.
+fn remove_fixed(path: &Path, names: &[&str], identity: Option<(u64, [u8; 16])>) -> Removed {
     let directory = match open_directory(path, DELETE, SHARE_READ) {
         Ok(directory) => directory,
         Err(error) => return removal_refusal(&error),
     };
+    if identity
+        .is_some_and(|expected| local_document::object_identity_of(&directory) != Some(expected))
+    {
+        return Removed::Unrecognized;
+    }
     let found = match list_fixed(path, names) {
         Listing::Fixed(found) => found,
         Listing::Unrecognized => return Removed::Unrecognized,

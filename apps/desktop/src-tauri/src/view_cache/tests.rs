@@ -48,19 +48,55 @@ fn facts(bytes: &[u8]) -> StagedFacts {
     }
 }
 
-/// Stages `bytes` as a validated output and publishes it under `key`.
-fn store(cache: &ViewCache, key: &CacheKey, bytes: &[u8]) -> Result<Stored, StoreFailure> {
+/// How a publish ends for the view operation (slice 2), which verifies an
+/// occupied place itself and publishes once more over a damaged entry it
+/// removed.
+#[derive(Debug)]
+enum Ended {
+    Published,
+    Existing(Box<VerifiedEntry>),
+    /// `view_cache_entry_unrecognized`.
+    Unrecognized,
+    Refused(StoreFailure),
+}
+
+/// Stages `bytes` as a validated output and publishes it under `key`, as the
+/// view operation does.
+fn store(cache: &ViewCache, key: &CacheKey, bytes: &[u8]) -> Ended {
     let attempt = cache.begin_attempt().expect("an attempt");
     fs::write(attempt.staged_output(), bytes).expect("stage the output");
-    cache.publish(attempt, key, &facts(bytes))
+    let facts = facts(bytes);
+    let mut retried = false;
+    let mut stored = cache.publish(attempt, key, &facts);
+    loop {
+        let attempt = match stored {
+            Ok(Stored::Published) => return Ended::Published,
+            Ok(Stored::Occupied(attempt)) => attempt,
+            Err(failure) => return Ended::Refused(failure),
+        };
+        match verify(cache, key) {
+            Lookup::Hit(existing) => return Ended::Existing(existing),
+            Lookup::Unrecognized => return Ended::Unrecognized,
+            Lookup::Damaged { removed: true } | Lookup::Miss if !retried => {
+                retried = true;
+                stored = cache.publish(attempt, key, &facts);
+            }
+            _ => return Ended::Refused(StoreFailure::NotStored),
+        }
+    }
 }
 
 fn published(cache: &ViewCache, key: &CacheKey, bytes: &[u8]) {
-    assert!(matches!(store(cache, key, bytes), Ok(Stored::Published)));
+    assert!(matches!(store(cache, key, bytes), Ended::Published));
+}
+
+/// Verifies to the end, as nobody cancels.
+fn verify(cache: &ViewCache, key: &CacheKey) -> Lookup {
+    cache.verify(key, &mut |_, _| true)
 }
 
 fn hit(cache: &ViewCache, key: &CacheKey) -> Box<VerifiedEntry> {
-    match cache.verify(key) {
+    match verify(cache, key) {
         Lookup::Hit(entry) => entry,
         other => panic!("expected a hit, found {other:?}"),
     }
@@ -322,7 +358,10 @@ fn a_crash_before_the_rename_never_blocks_the_root_and_is_left_in_place() {
     fs::write(leftover.join(ROOT_MARKER), ROOT_MARKER_CONTENT).expect("its marker");
 
     let cache = cache(&scratch);
-    let _ = (cache.clear(), cache.sweep_staging());
+    let _ = (
+        cache.clear().expect("cleared"),
+        cache.sweep_staging().expect("swept"),
+    );
     assert_eq!(names(&leftover), [ROOT_MARKER]);
     assert_eq!(names(&parent(&scratch)).len(), 2);
 }
@@ -496,7 +535,7 @@ fn a_second_publish_of_a_key_uses_the_first_entry_and_rewrites_nothing() {
     // The same key from another handle, with other bytes: the entry in place
     // wins and its copy is discarded.
     match store(&second, &key, b"second copy") {
-        Ok(Stored::Existing(existing)) => {
+        Ended::Existing(existing) => {
             assert_eq!(fs::read(existing.output()).expect("read"), b"first copy");
         }
         other => panic!("expected the existing entry, found {other:?}"),
@@ -627,11 +666,11 @@ fn every_damaged_entry_is_never_opened_and_is_removed_when_its_names_are_mscanva
         published(&cache, &key, bytes);
         apply(&key);
         assert!(
-            matches!(cache.verify(&key), Lookup::Damaged { removed: true }),
+            matches!(verify(&cache, &key), Lookup::Damaged { removed: true }),
             "{damage}"
         );
         assert!(!entry(&cache, &key).exists(), "{damage}");
-        assert!(matches!(cache.verify(&key), Lookup::Miss), "{damage}");
+        assert!(matches!(verify(&cache, &key), Lookup::Miss), "{damage}");
     }
 }
 
@@ -660,13 +699,13 @@ fn an_entry_with_anything_else_in_it_is_unrecognized_and_left_as_found() {
 
     let before = snapshot(&cache.root);
     for key in [&extra, &directory_at_a_name, &link_inside, &link_in_place] {
-        assert!(matches!(cache.verify(key), Lookup::Unrecognized));
+        assert!(matches!(verify(&cache, key), Lookup::Unrecognized));
     }
     // A publish into a place something else holds stores nothing.
-    assert_eq!(
-        store(&cache, &link_in_place, b"bytes").err(),
-        Some(StoreFailure::EntryUnrecognized)
-    );
+    assert!(matches!(
+        store(&cache, &link_in_place, b"bytes"),
+        Ended::Unrecognized
+    ));
     assert!(names(&cache.staging()).is_empty());
     assert_eq!(snapshot(&cache.root), before);
     assert_eq!(snapshot(&elsewhere), elsewhere_before);
@@ -718,7 +757,7 @@ fn a_rename_that_fails_otherwise_stores_nothing() {
     // What the scanner kept from being removed keeps its marker, and a sweep
     // in this session leaves it: its owner is this process.
     assert!(attempt_path.join(ATTEMPT_OWNER).is_file());
-    assert_eq!(cache.sweep_staging().live, 1);
+    assert_eq!(cache.sweep_staging().expect("swept").live, 1);
 }
 
 #[test]
@@ -729,10 +768,10 @@ fn an_entry_over_the_ceiling_or_alone_over_the_cap_is_refused_before_any_evictio
     published(&cache, &key(2), &[2; 40]);
     let before = snapshot(&cache.root);
 
-    assert_eq!(
-        store(&cache, &key(3), &[3; 101]).err(),
-        Some(StoreFailure::EntryTooLarge)
-    );
+    assert!(matches!(
+        store(&cache, &key(3), &[3; 101]),
+        Ended::Refused(StoreFailure::EntryTooLarge)
+    ));
     assert_eq!(
         snapshot(&cache.root),
         before,
@@ -781,7 +820,7 @@ fn a_pinned_entry_is_never_evicted_or_cleared_from_any_handle_on_the_root() {
     // A second reader pins it too: read sharing admits it.
     let second_pin = hit(&other_handle, &pinned);
     assert_eq!(
-        other_handle.evict(u64::MAX),
+        other_handle.evict(u64::MAX).expect("evicted"),
         Removal {
             removed: 1,
             freed_bytes: 6,
@@ -790,7 +829,7 @@ fn a_pinned_entry_is_never_evicted_or_cleared_from_any_handle_on_the_root() {
         }
     );
     assert_eq!(
-        other_handle.clear(),
+        other_handle.clear().expect("cleared"),
         Removal {
             kept_in_use: 1,
             ..Removal::default()
@@ -800,13 +839,13 @@ fn a_pinned_entry_is_never_evicted_or_cleared_from_any_handle_on_the_root() {
 
     drop(pin);
     assert_eq!(
-        other_handle.clear().kept_in_use,
+        other_handle.clear().expect("cleared").kept_in_use,
         1,
         "one pin still holds it"
     );
     drop(second_pin);
     assert_eq!(
-        other_handle.clear(),
+        other_handle.clear().expect("cleared"),
         Removal {
             removed: 1,
             freed_bytes: 6,
@@ -836,10 +875,10 @@ fn eviction_takes_the_least_recently_opened_entry_first_then_the_key() {
     // Opening the oldest moves it to the back.
     assert!(hit(&cache, &old).mark_opened());
     for expected in [first_tied, second_tied, &old] {
-        assert_eq!(cache.evict(1).removed, 1);
+        assert_eq!(cache.evict(1).expect("evicted").removed, 1);
         assert!(!entry(&cache, expected).exists(), "{}", expected.name());
     }
-    assert_eq!(cache.evict(1), Removal::default());
+    assert_eq!(cache.evict(1).expect("evicted"), Removal::default());
 }
 
 #[test]
@@ -853,11 +892,11 @@ fn publishing_evicts_to_the_cap_and_pinned_entries_alone_may_keep_it_above() {
     published(&cache, &key(4), &[4; 10]);
     assert!(!entry(&cache, &key(1)).exists(), "the oldest went");
     assert_eq!(
-        cache.usage(),
+        cache.usage().expect("listed"),
         Usage {
             entries: 3,
             bytes: 30,
-            unrecognized: 0
+            ..Usage::default()
         }
     );
 
@@ -865,15 +904,25 @@ fn publishing_evicts_to_the_cap_and_pinned_entries_alone_may_keep_it_above() {
         .iter()
         .map(|key| hit(&cache, key))
         .collect();
+    assert_eq!(
+        cache.usage().expect("listed"),
+        Usage {
+            entries: 3,
+            bytes: 30,
+            in_use: 3,
+            in_use_bytes: 30,
+            unrecognized: 0
+        }
+    );
     published(&cache, &key(5), &[5; 10]);
     assert_eq!(
-        cache.usage().bytes,
+        cache.usage().expect("listed").bytes,
         40,
         "above the cap by pinned entries only"
     );
     drop(pins);
     published(&cache, &key(6), &[6; 10]);
-    assert_eq!(cache.usage().bytes, 30);
+    assert_eq!(cache.usage().expect("listed").bytes, 30);
 }
 
 // ---------------------------------------------------------------------------
@@ -940,7 +989,7 @@ fn the_sweep_removes_only_attempts_whose_owner_is_gone() {
         .collect();
 
     assert_eq!(
-        cache.sweep_staging(),
+        cache.sweep_staging().expect("swept"),
         Sweep {
             removed: 2,
             live: 1,
@@ -974,7 +1023,7 @@ fn an_attempt_removal_that_cannot_finish_keeps_its_marker_for_the_next_sweep() {
         .expect("hold a staged file");
 
     assert_eq!(
-        cache.sweep_staging(),
+        cache.sweep_staging().expect("swept"),
         Sweep {
             failed: 1,
             ..Sweep::default()
@@ -983,7 +1032,7 @@ fn an_attempt_removal_that_cannot_finish_keeps_its_marker_for_the_next_sweep() {
     assert!(gone.join(ATTEMPT_OWNER).is_file(), "the marker stays");
 
     drop(held);
-    assert_eq!(cache.sweep_staging().removed, 1);
+    assert_eq!(cache.sweep_staging().expect("swept").removed, 1);
     assert!(!gone.exists());
 }
 
@@ -1047,18 +1096,18 @@ fn links_planted_in_the_cache_are_never_followed_by_eviction_clear_or_the_sweep(
         kept_links.push(gone.join("symlink"));
     }
 
-    assert!(matches!(cache.verify(&key(3)), Lookup::Unrecognized));
-    let evicted = cache.evict(u64::MAX);
+    assert!(matches!(verify(&cache, &key(3)), Lookup::Unrecognized));
+    let evicted = cache.evict(u64::MAX).expect("evicted");
     assert_eq!(
         (evicted.removed, evicted.kept_in_use),
         (1, 1),
         "{evicted:?}"
     );
-    let swept = cache.sweep_staging();
+    let swept = cache.sweep_staging().expect("swept");
     // The gone owner's attempt holds links, so it is left whole.
     assert_eq!((swept.removed, swept.linked), (0, 1), "{swept:?}");
     assert!(gone.join(ATTEMPT_OWNER).is_file(), "its marker stays");
-    let cleared = cache.clear();
+    let cleared = cache.clear().expect("cleared");
     // The planted links, the entry holding a link, and the attempt holding
     // links.
     assert_eq!(cleared.unrecognized_left, planted + 2, "{cleared:?}");
@@ -1088,7 +1137,7 @@ fn foreign_names_are_left_where_they_are_and_counted() {
     fs::create_dir(&uppercase_key).expect("dir");
     fs::write(uppercase_key.join(OUTPUT), b"theirs").expect("file");
 
-    let cleared = cache.clear();
+    let cleared = cache.clear().expect("cleared");
     assert_eq!(
         cleared,
         Removal {
@@ -1132,35 +1181,46 @@ fn a_key_spelled_in_capitals_is_unrecognized_and_left_as_found() {
 
     for key in [&renamed, &empty] {
         assert!(
-            matches!(cache.verify(key), Lookup::Unrecognized),
+            matches!(verify(&cache, key), Lookup::Unrecognized),
             "{}",
             key.name()
         );
-        assert_eq!(
-            store(&cache, key, b"bytes").err(),
-            Some(StoreFailure::EntryUnrecognized)
-        );
+        assert!(matches!(store(&cache, key, b"bytes"), Ended::Unrecognized));
     }
-    assert_eq!(cache.clear().unrecognized_left, 2);
+    assert_eq!(cache.clear().expect("cleared").unrecognized_left, 2);
     assert_eq!(snapshot(&cache.root), before);
 }
 
 #[test]
-fn an_attempt_that_is_no_longer_the_object_checked_is_not_removed() {
-    let scratch = Scratch::new("vc-attempt-identity");
+fn an_attempt_or_entry_that_is_no_longer_the_object_checked_is_not_removed() {
+    let scratch = Scratch::new("vc-identity");
     let cache = cache(&scratch);
+    let identity = |path: &Path| {
+        open_directory(path, 0, SHARE_READ | SHARE_WRITE | SHARE_DELETE)
+            .ok()
+            .and_then(|directory| local_document::object_identity_of(&directory))
+            .expect("an identity")
+    };
     let (checked, other) = (abandoned(&cache), abandoned(&cache));
-    let other_identity = open_directory(&other, 0, SHARE_READ | SHARE_WRITE | SHARE_DELETE)
-        .ok()
-        .and_then(|directory| local_document::object_identity_of(&directory));
-    assert!(other_identity.is_some());
-    let before = snapshot(&cache.staging());
+    // What a damaged entry's removal must not take: a sound entry published
+    // in its place by another process.
+    published(&cache, &key(1), b"sound");
+    published(&cache, &key(2), b"other");
+    let before = snapshot(&cache.root);
 
     assert_eq!(
-        remove_attempt(&checked, other_identity),
+        remove_attempt(&checked, Some(identity(&other))),
         Removed::Unrecognized
     );
-    assert_eq!(snapshot(&cache.staging()), before);
+    assert_eq!(
+        remove_fixed(
+            &entry(&cache, &key(1)),
+            &ENTRY_NAMES,
+            Some(identity(&entry(&cache, &key(2))))
+        ),
+        Removed::Unrecognized
+    );
+    assert_eq!(snapshot(&cache.root), before);
 }
 
 #[test]
@@ -1177,7 +1237,7 @@ fn an_entry_removal_that_stops_part_way_leaves_a_remainder_the_next_pass_removes
         .expect("hold the manifest");
 
     assert_eq!(
-        cache.evict(u64::MAX),
+        cache.evict(u64::MAX).expect("evicted"),
         Removal {
             failed: 1,
             ..Removal::default()
@@ -1187,11 +1247,136 @@ fn an_entry_removal_that_stops_part_way_leaves_a_remainder_the_next_pass_removes
 
     drop(held);
     assert_eq!(
-        cache.evict(u64::MAX),
+        cache.evict(u64::MAX).expect("evicted"),
         Removal {
             removed: 1,
             ..Removal::default()
         }
     );
     assert!(!entry(&cache, &key).exists());
+}
+
+#[test]
+fn a_check_that_cannot_take_the_pin_removes_nothing() {
+    let scratch = Scratch::new("vc-unreadable");
+    let cache = cache(&scratch);
+    let key = key(1);
+    published(&cache, &key, b"held by a writer");
+    // A writer's handle: the pin, which shares read only, cannot be taken.
+    let writer = fs::OpenOptions::new()
+        .write(true)
+        .share_mode(SHARE_READ | SHARE_WRITE | SHARE_DELETE)
+        .open(entry(&cache, &key).join(OUTPUT))
+        .expect("a writer");
+    let before = snapshot(&cache.root);
+
+    assert!(matches!(verify(&cache, &key), Lookup::Unreadable));
+    assert_eq!(snapshot(&cache.root), before);
+    drop(writer);
+    drop(hit(&cache, &key));
+}
+
+#[test]
+fn a_check_reports_its_bytes_and_a_cancel_stops_it_at_the_next_chunk() {
+    let scratch = Scratch::new("vc-cancel");
+    let cache = cache(&scratch);
+    let key = key(1);
+    let bytes = vec![7_u8; 300 * 1024];
+    let total = bytes.len() as u64;
+    published(&cache, &key, &bytes);
+    let before = snapshot(&cache.root);
+
+    let mut asked = Vec::new();
+    let lookup = cache.verify(&key, &mut |read, of| {
+        asked.push((read, of));
+        asked.len() < 2
+    });
+    assert!(matches!(lookup, Lookup::Cancelled));
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert_eq!(asked[0], (0, total));
+    assert!(0 < asked[1].0 && asked[1].0 < total, "{asked:?}");
+    assert_eq!(snapshot(&cache.root), before, "nothing removed");
+
+    let mut last = None;
+    let lookup = cache.verify(&key, &mut |read, of| {
+        last = Some((read, of));
+        true
+    });
+    assert!(matches!(lookup, Lookup::Hit(_)));
+    assert_eq!(last, Some((total, total)));
+}
+
+#[test]
+fn disk_space_is_made_only_when_unpinned_entries_can_make_all_of_it() {
+    let scratch = Scratch::new("vc-space");
+    let cache = cache(&scratch);
+    for (index, key) in [key(1), key(2), key(3)].iter().enumerate() {
+        published(&cache, key, &[1; 10]);
+        age(&cache, key, index as u64);
+    }
+    let pin = hit(&cache, &key(3));
+    let before = snapshot(&cache.root);
+
+    // The unpinned entries hold 20 bytes: 21 cannot be freed, so none goes.
+    assert_eq!(cache.make_space(21).expect("listed"), None);
+    assert_eq!(snapshot(&cache.root), before);
+
+    // 15 can: the least recently opened go until it is.
+    assert_eq!(
+        cache.make_space(15).expect("listed"),
+        Some(Removal {
+            removed: 2,
+            freed_bytes: 20,
+            ..Removal::default()
+        })
+    );
+    assert!(entry(&cache, &key(3)).exists());
+    drop(pin);
+}
+
+#[test]
+fn a_key_named_directory_with_anything_else_in_it_counts_toward_nothing() {
+    let scratch = Scratch::new("vc-cap-foreign");
+    let cache = capped(&scratch, 30);
+    published(&cache, &key(1), &[1; 10]);
+    published(&cache, &key(2), &[2; 10]);
+    // Neither an entry nor removable, so it must not make eviction take more.
+    let foreign = entry(&cache, &key(3));
+    fs::create_dir(&foreign).expect("dir");
+    fs::write(foreign.join(OUTPUT), [3; 10]).expect("file");
+    fs::write(foreign.join("notes.txt"), b"theirs").expect("file");
+    assert_eq!(
+        cache.usage().expect("listed"),
+        Usage {
+            entries: 2,
+            bytes: 20,
+            unrecognized: 1,
+            ..Usage::default()
+        }
+    );
+
+    published(&cache, &key(4), &[4; 10]);
+    for kept in [key(1), key(2), key(4)] {
+        assert!(entry(&cache, &kept).exists(), "{}", kept.name());
+    }
+    assert_eq!(names(&foreign), ["notes.txt", OUTPUT]);
+}
+
+#[test]
+fn a_kept_attempt_stays_with_its_marker_while_this_process_runs() {
+    let scratch = Scratch::new("vc-attempt-keep");
+    let cache = cache(&scratch);
+    let attempt = cache.begin_attempt().expect("an attempt");
+    let path = attempt.path().to_owned();
+    fs::write(attempt.staged_output(), b"<mzML").expect("staged");
+    attempt.keep();
+
+    assert!(path.join(ATTEMPT_OWNER).is_file());
+    assert_eq!(
+        cache.sweep_staging().expect("swept"),
+        Sweep {
+            live: 1,
+            ..Sweep::default()
+        }
+    );
 }
