@@ -5507,3 +5507,176 @@ fn a_chosen_destination_is_written_new_named_as_its_format_and_never_over_a_file
     assert_eq!(misnamed.kind, "spectrum_destination_misnamed");
     assert!(!scratch.join("results.txt").exists());
 }
+
+// ---------------------------------------------------------------------------
+// The tables' bytes, pinned (ADR 0054)
+//
+// A stored result built from literals alone: no store, no random identifier
+// and no digest of this build's recipe, so what a table holds depends on the
+// table writer and on nothing else. Its text carries every character a
+// spreadsheet reads as the start of a formula that a TSV can also carry, so
+// the CSV and TSV fixtures show those values written exactly as stored.
+// ---------------------------------------------------------------------------
+
+use crate::project::record::{
+    DecimalValue, EngineReport, ObservedMember, PayloadReference, RecipeBinding, RecipeId, RunId,
+    TargetDefinition, TargetedMs1Execution, TargetedMs1Parameters,
+};
+
+fn fixed<T: std::str::FromStr>(value: &str) -> T
+where
+    T::Err: std::fmt::Debug,
+{
+    value.parse().expect("a fixed identifier")
+}
+
+fn golden_target(index: u8) -> TargetId {
+    fixed(&format!("00000000-0000-4000-8000-0000000000{index:02}"))
+}
+
+/// The result every golden table is written from.
+fn golden_stored() -> StoredResult {
+    let digest = |character: char| character.to_string().repeat(64);
+    let decimal = |value: f64| DecimalValue::of(value).expect("finite");
+    let definition =
+        |index: u8, label: &str, formula: &str, mass: Option<f64>, rt: f64| TargetDefinition {
+            target_id: golden_target(index),
+            label: label.to_owned(),
+            formula: formula.to_owned(),
+            neutral_mass: mass.map(decimal),
+            rt_s: decimal(rt),
+            rt_half_width_s: decimal(10.0),
+        };
+    let targets = vec![
+        definition(1, "Caffeine, the \"one\"", "C8H10N4O2", None, 60.0),
+        definition(2, "=SUM(1,2)", "C5H5N5", Some(135.054_495), 40.5),
+        definition(3, "咖啡因 · 标准品", "C9H11NO3", None, 80.0),
+        definition(4, "+x;-y;@z;=w", "C8H10N4O2", None, 120.0),
+        definition(5, "@home", "C5H5N5", None, 125.0),
+        definition(6, "#hash first", "C9H11NO3", Some(0.5), 300.0),
+    ];
+    let member = ObservedMember {
+        role: MemberRole::Primary,
+        relative_name: "sample.mzML".to_owned(),
+        byte_length: 7,
+        sha256: digest('1'),
+    };
+
+    let mut ambiguous = extracted_row(golden_target(1), RowOutcome::DetectedAmbiguous);
+    ambiguous.feature = Some(feature(114.0, 126.0, IntensitySource::ModelArea));
+    ambiguous.candidates = vec![candidate(114.0, 126.0), candidate(95.0, 99.0)];
+    let mut absent = extracted_row(golden_target(2), RowOutcome::Failed);
+    absent.failure_reason = Some(payload::RowFailure::TargetAbsentFromEngineLibrary);
+    absent.ion = None;
+    absent.windows = None;
+    absent.signal = None;
+    let mut negative = feature(114.0, 126.0, IntensitySource::ImputedFromRunRegression);
+    negative.raw_area = -12.5;
+    negative.model_status = "-1 (did not converge)".to_owned();
+    negative.model_area = Some(-3.25);
+    negative.model_fwhm_s = Some(4.5);
+    let mut shared_low = extracted_row(golden_target(3), RowOutcome::Shared);
+    shared_low.feature = Some(negative.clone());
+    shared_low.candidates = vec![candidate(114.0, 126.0)];
+    shared_low.relations.shared_with = vec![golden_target(4)];
+    let mut shared_high = extracted_row(golden_target(4), RowOutcome::Shared);
+    shared_high.feature = Some(negative);
+    shared_high.candidates = vec![candidate(114.0, 126.0)];
+    shared_high.relations.shared_with = vec![golden_target(3)];
+    shared_high.relations.overlap_removed = vec![golden_target(5), golden_target(6)];
+    shared_high.overlap_winner = true;
+    let mut suppressed = extracted_row(golden_target(5), RowOutcome::SuppressedByOverlap);
+    suppressed.relations.suppressed_by = Some(golden_target(4));
+    let mut not_detected = extracted_row(golden_target(6), RowOutcome::NotDetected);
+    not_detected.recovered_from_empty_selection = true;
+
+    StoredResult {
+        artifact: fixed("00000000-0000-4000-8000-0000000000a1"),
+        run: fixed::<RunId>("00000000-0000-4000-8000-0000000000b1"),
+        plan: TargetedMs1Plan {
+            plan_sha256: digest('A'),
+            recipe: RecipeBinding {
+                recipe: RecipeId::TargetedMs1,
+                recipe_version: 1,
+                adapter_sha256: digest('C'),
+                engine_profile_sha256: digest('D'),
+                runtime_manifest_sha256: digest('E'),
+            },
+            layer_id: fixed::<LayerId>("00000000-0000-4000-8000-0000000000c1"),
+            input_id: fixed::<InputId>("00000000-0000-4000-8000-0000000000d1"),
+            expected_content: vec![member.clone()],
+            parameters: TargetedMs1Parameters {
+                mz_half_width_ppm: decimal(5.0),
+                expected_peak_width_s: decimal(6.0),
+            },
+            target_list_sha256: digest('B'),
+            targets,
+        },
+        execution: TargetedMs1Execution {
+            plan_sha256: digest('A'),
+            consumed_content: vec![member],
+            attempt: Some(AttemptFacts {
+                adapter_sha256: digest('C'),
+                runtime_manifest_sha256: digest('E'),
+                interpreter_sha256: digest('9'),
+                source_view: SourceView::HardLinkInWorkArea,
+                engine_report: Some(EngineReport {
+                    python: "3.13.1".to_owned(),
+                    pyopenms: "3.4.0".to_owned(),
+                    openms: "@3.4.0".to_owned(),
+                    openms_revision: "-dirty".to_owned(),
+                    openms_build_time: "2025-01-01".to_owned(),
+                }),
+                loaded_modules: Vec::new(),
+            }),
+            failure: None,
+            stop: None,
+        },
+        result: TargetedMs1ResultV1 {
+            summary: OutcomeSummary {
+                targets: 6,
+                detected: 0,
+                detected_ambiguous: 1,
+                shared: 2,
+                suppressed_by_overlap: 1,
+                not_detected: 1,
+                failed: 1,
+            },
+            no_candidate_recovery: true,
+            payload: PayloadReference {
+                manifest_sha256: digest('F'),
+                files: Vec::new(),
+            },
+        },
+        rows: vec![
+            ambiguous,
+            absent,
+            shared_low,
+            shared_high,
+            suppressed,
+            not_detected,
+        ],
+    }
+}
+
+/// CSV and TSV are byte for byte what they were before ADR 0054: the
+/// spreadsheet variant is a third document beside them, not a change to them.
+#[test]
+fn the_csv_and_tsv_tables_are_byte_for_byte_what_they_were() {
+    let stored = golden_stored();
+    for (format, golden) in [
+        (
+            TableFormat::Csv,
+            include_str!("../../../../../fixtures/targeted-table-golden/results.csv"),
+        ),
+        (
+            TableFormat::Tsv,
+            include_str!("../../../../../fixtures/targeted-table-golden/results.tsv"),
+        ),
+    ] {
+        let (table, count) = result_table(&stored, format).expect("a table");
+        assert_eq!(count, 6);
+        assert_eq!(table, golden, "{format:?}");
+        assert!(!table.starts_with('\u{FEFF}'), "no byte-order mark");
+    }
+}
