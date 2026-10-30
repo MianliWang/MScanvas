@@ -87,9 +87,9 @@ use super::dto::{
     DropIngestionResultDto, MAX_CONVERSION_QUEUE_ITEMS, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
     MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS,
     MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
-    PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
-    SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto,
-    ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
+    PreviewDto, PreviewErrorDto, RememberedFolderDto, RetentionTimeDto, RetentionTimeRangeDto,
+    RunSummaryDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto,
+    SpectrumTableDto, ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
     WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
     WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
     WorkspaceRosterDto, bounded_text, conversion_busy,
@@ -640,6 +640,24 @@ pub struct PreviewService {
     // release after one is removed, and a folder whose binaries are upgraded in
     /// place. Comparing requests would miss both.
     resolved: Mutex<ObservedBackend>,
+    /// What this session knows about the folder remembered across launches.
+    //
+    // A leaf, held only to read or replace it. The preference store that
+    // actually holds the folder is never touched from here: its lock is not
+    // taken under the backend gate, so the commands write it after this
+    /// service has answered and then tell this what happened.
+    remembered: Mutex<RememberedFolder>,
+}
+
+/// The session's side of the remembered ProteoWizard folder.
+#[derive(Default)]
+struct RememberedFolder {
+    /// Seeded at startup with the stored folder and not yet judged by a
+    /// reading. The first reading judges it, and an explicit change of
+    /// installation supersedes it.
+    on_trial: bool,
+    /// What [`RememberedFolderDto`] says, kept current by the commands.
+    facts: RememberedFolderDto,
 }
 
 /// What the service has observed about which backend resolves.
@@ -710,6 +728,7 @@ impl PreviewService {
             diagnostics_exporting: AtomicBool::new(false),
             spectrum_export: Mutex::new(ScientificExportSlots::default()),
             resolved: Mutex::new(ObservedBackend::default()),
+            remembered: Mutex::new(RememberedFolder::default()),
         }
     }
 
@@ -743,7 +762,108 @@ impl PreviewService {
         if let Some(reading) = self.quarantined_availability() {
             return reading;
         }
+        let reading = self.stamped_availability();
+        if !self.remembered_folder_judged() || reading.availability.state == "available" {
+            return reading;
+        }
+        // The remembered folder no longer holds usable tools. Discovery, not a
+        // backend fallback: the user is told why the folder was not used, the
+        // folder stays remembered, and the session searches where it would
+        // have searched had nothing been remembered.
+        let refusal = reading.availability.failure.unwrap_or_else(|| {
+            let problem = super::installation::ChosenFolderProblem::ProbeFailed;
+            BackendFailureDto {
+                kind: problem.kind().to_owned(),
+                summary: problem.summary().to_owned(),
+                corrective_action: String::from(
+                    "Choose a different folder, or go back to searching automatically.",
+                ),
+            }
+        });
+        self.remembered_lock().facts.refused_at_startup = Some(refusal);
+        // The look at the folder was a discovery, and one that lost a process
+        // it started leaves a session that launches nothing more, the search
+        // included.
+        if let Some(reading) = self.quarantined_availability() {
+            return reading;
+        }
+        self.provider.use_installation(None);
+        self.note_discovery_target(None);
         self.stamped_availability()
+    }
+
+    /// Starts this session on the folder a previous one remembered.
+    //
+    // Called once, from the host's startup, before any document can ask
+    // anything. It launches nothing: the first reading probes the folder
+    // through the same discovery a picker choice goes through, and that
+    // reading is what decides whether the session stays on it.
+    pub fn start_on_remembered_folder(&self, folder: PathBuf) {
+        let _running = self.enter_backend();
+        // Should anything have settled a binding first, it is not re-pointed
+        // underneath that binding with no reading to say so; the folder is
+        // only reported as remembered.
+        if self.authority_projection().state.binding().is_some() {
+            self.remembered_lock().facts.stored = true;
+            return;
+        }
+        self.provider.use_installation(Some(folder.clone()));
+        self.note_discovery_target(Some(folder));
+        let mut remembered = self.remembered_lock();
+        remembered.on_trial = true;
+        remembered.facts.stored = true;
+    }
+
+    /// Uses one folder the user chose, and remembers it if it read as usable.
+    //
+    // `remember` writes the preference store and answers its problem code on
+    // a refusal. It is called after `use_installation` has returned, so the
+    // preference lock is never taken under the backend gate. A folder that is
+    // not usable is not remembered, and neither is anything a quarantined
+    // session answers, since that answer is never `available`. The reading
+    /// returned says what remembering did.
+    pub fn choose_installation(
+        &self,
+        home: PathBuf,
+        remember: impl FnOnce(&Path) -> Result<(), &'static str>,
+    ) -> BackendReadingDto {
+        let mut reading = self.use_installation(Some(home.clone()));
+        if reading.availability.state != "available" || reading.availability.origin != "chosen" {
+            return reading;
+        }
+        match remember(&home) {
+            Ok(()) => self.note_folder_stored(true),
+            Err(problem) => {
+                self.remembered_lock().facts.not_remembered = Some(problem.to_owned());
+            }
+        }
+        reading.remembered = self.remembered_folder();
+        reading
+    }
+
+    /// Records that the store now remembers a folder, or none.
+    pub fn note_folder_stored(&self, stored: bool) {
+        self.remembered_lock().facts = RememberedFolderDto {
+            stored,
+            ..RememberedFolderDto::default()
+        };
+    }
+
+    /// What the remembered folder's facts are now.
+    pub fn remembered_folder(&self) -> RememberedFolderDto {
+        self.remembered_lock().facts.clone()
+    }
+
+    /// Whether the reading just taken was the one judging the remembered
+    /// folder. True once, for the first reading after startup seeded it.
+    fn remembered_folder_judged(&self) -> bool {
+        std::mem::take(&mut self.remembered_lock().on_trial)
+    }
+
+    fn remembered_lock(&self) -> std::sync::MutexGuard<'_, RememberedFolder> {
+        self.remembered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Points the backend at one folder, or back at automatic discovery, and
@@ -773,6 +893,15 @@ impl PreviewService {
         // and a different request to the same one -- so it is decided below, by
         // what the reading that follows actually resolves to.
         self.provider.use_installation(home.clone());
+        // An explicit change supersedes whatever startup made of the
+        // remembered folder. What is stored is not changed here; the command
+        // that remembers or forgets does that once this has answered.
+        {
+            let mut remembered = self.remembered_lock();
+            remembered.on_trial = false;
+            remembered.facts.refused_at_startup = None;
+            remembered.facts.not_remembered = None;
+        }
         // And the session records where it is now pointed. An absence is only
         // distinguishable from the absence before it by the folder it is an
         // absence at, so a `NoInstallation` binding is minted against this and
@@ -908,9 +1037,15 @@ impl PreviewService {
         } else {
             PreviewAvailability::Unusable
         };
+        let location = verdict
+            .is_usable()
+            .then(|| identity.as_ref().and_then(InstallationIdentity::location))
+            .flatten();
         let reading = BackendReadingDto {
             authority: self.note_resolved(identity, verdict).to_dto(),
             availability,
+            location,
+            remembered: self.remembered_folder(),
         };
         self.resolved
             .lock()
@@ -986,6 +1121,9 @@ impl PreviewService {
                     ),
                 }),
             },
+            // No build is claimed, so no folder is named either.
+            location: None,
+            remembered: self.remembered_folder(),
         })
     }
 

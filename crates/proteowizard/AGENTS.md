@@ -21,3 +21,10 @@ This crate translates typed MSCanvas intent into validated ProteoWizard executab
 - A required invariant must be one a faithful conversion cannot violate. Anything the measured evidence shows `msconvert` can legitimately change stays advisory, and anything genuinely unestablishable becomes unverified rather than a failure.
 - Never claim byte-for-byte equivalence, general losslessness or vendor fidelity, and never fail a conversion for a legal mzML serialization difference.
 - Keep every new error and outcome variant free of paths and raw backend text, give it a stable identifier, and keep raw scientific identifiers out of debug projections.
+
+## mzML viewing reader (ADR 0056)
+
+- `mzml_reader.rs` is the only module that base64-decodes or inflates an array, and only the m/z and intensity arrays of one selected spectrum. The inspector above stays decode-free.
+- It reuses the inspector's byte-counting reader, limits and `DOCTYPE`/entity refusal. Resolve element names by namespace, never by literal qualified name.
+- Check the decode caps before reserving anything, with checked arithmetic, and reserve with `try_reserve_exact`. Inflate into the declared length + 1 and refuse overrun and underrun.
+- Every refusal is typed and scoped: the open, or one selected spectrum. Never skip, guess, fall back to `msaccess`, or compute from the arrays.

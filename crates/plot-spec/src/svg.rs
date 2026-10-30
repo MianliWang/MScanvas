@@ -14,10 +14,12 @@
 //! screenshot would be a picture of this product rather than a figure of the
 //! measurement.
 
+use crate::metrics::{FONT_FAMILY, char_width, text_width};
 use crate::spec::{
     DataScope, Domain, FigureSpec, FigureTheme, IntervalRole, IntervalSpec, Label, PanelSpec,
     PlotKind, SeriesSpec, SpectrumRepresentation, StyleRole, UnitState,
 };
+use crate::ticks::{Tick, nice_ticks};
 use std::fmt::Write as _;
 
 /// The fewest decimals a coordinate is written to.
@@ -32,7 +34,7 @@ const COORDINATE_DECIMALS: usize = 3;
 /// The most decimals a coordinate is written to.
 ///
 /// Seventeen significant decimals round-trip an `f64`, and every *drawn
-/// position* this renderer writes lies at least `MARGIN_TOP` figure units from
+/// position* this renderer writes lies at least `MARGIN_TOP_BARE` figure units from
 /// the origin -- so seventeen decimal *places* separate two neighbouring `f64`
 /// anywhere on the plotting area, and past here there is nothing left of a
 /// coordinate to preserve.
@@ -91,20 +93,6 @@ const SELECTED_BAND_OPACITY: &str = "0.16";
 /// position, which is the honest drawing of a stretch the figure cannot widen.
 const NARROWEST_BAND: f64 = 1.0;
 
-/// The width one character of laid-out text is given, in em.
-///
-/// Not an average and not an estimate of one. `0.6em` is roughly the *mean*
-/// advance of a proportional sans-serif face, so a line of `W`s exceeds it and
-/// a viewer choosing a wider fallback face exceeds it again -- and this
-/// document embeds no font, so the face is the viewer's choice.
-///
-/// So this is an upper bound on a glyph rather than a guess at one, and every
-/// laid-out string is written with an explicit `textLength` computed from it.
-/// The width then stops being a prediction about a font and becomes an
-/// instruction to the renderer, which is what makes the placement below exact
-/// rather than probable.
-const TEXT_EM: f64 = 1.0;
-
 /// The font size a marker label and an axis caption are drawn at.
 const MARKER_LABEL_SIZE: f64 = 11.0;
 
@@ -145,10 +133,68 @@ const LEGEND_SWATCH: f64 = 18.0;
 const LEGEND_GAP: f64 = 4.0;
 
 /// The gutter around the plotting area, in figure units.
-const MARGIN_LEFT: f64 = 64.0;
+///
+/// The left one is not a constant: it is as wide as the value axis's widest
+/// tick label needs, between [`MIN_MARGIN_LEFT`] and [`MAX_MARGIN_LEFT_SHARE`]
+/// of the figure.
 const MARGIN_RIGHT: f64 = 20.0;
-const MARGIN_TOP: f64 = 40.0;
-const MARGIN_BOTTOM: f64 = 56.0;
+/// Above the first panel: room for the visible heading, or only a gap.
+const MARGIN_TOP_TITLED: f64 = 40.0;
+const MARGIN_TOP_BARE: f64 = 12.0;
+/// Below the last panel, whose own band already holds its tick labels and
+/// title: a publication figure is placed by its edges, and empty paper inside
+/// them is paper a layout cannot use.
+const MARGIN_BOTTOM: f64 = 8.0;
+
+/// The narrowest the left gutter is.
+const MIN_MARGIN_LEFT: f64 = 40.0;
+
+/// The most of the figure's width the left gutter may take.
+const MAX_MARGIN_LEFT_SHARE: f64 = 0.4;
+
+/// The size every tick label is drawn at.
+const TICK_LABEL_SIZE: f64 = MARKER_LABEL_SIZE;
+
+/// How far a tick mark reaches out of the plotting area.
+const TICK_LENGTH: f64 = 4.0;
+
+/// The gap between a tick mark and its label.
+const TICK_LABEL_GAP: f64 = 2.0;
+
+/// Where the rotated value-axis title is centred.
+const VALUE_TITLE_X: f64 = 14.0;
+
+/// How far from the document's left edge the value-axis tick labels must end.
+///
+/// Right of the rotated title, whose glyphs reach about a quarter of its size
+/// past its own baseline, plus a gap.
+const VALUE_TITLE_CLEARANCE: f64 = VALUE_TITLE_X + AXIS_CAPTION_SIZE * 0.25 + 4.0;
+
+/// How far below a value-axis tick its label's baseline sits, in em.
+///
+/// Half the cap height of the face the figure names, so the digits are centred
+/// on the tick.
+const TICK_LABEL_CENTRE: f64 = 0.36;
+
+/// The domain-axis tick labels' baseline, below the plotting area.
+const DOMAIN_LABEL_DROP: f64 = 15.0;
+
+/// The domain-axis title's baseline, below the plotting area.
+const DOMAIN_TITLE_DROP: f64 = 30.0;
+
+/// How much room the value axis leaves past the data, as a share of its span.
+///
+/// Above the tallest value and below the deepest negative one, never across
+/// zero: a stick's length is read from the zero line, and padding the axis
+/// past zero would move the line a reader measures from.
+const HEADROOM: f64 = 0.05;
+
+/// How visible a gridline is, drawn in the axis colour.
+///
+/// A reading aid rather than data: light enough that no trace has to compete
+/// with it, and in the axis colour so it needs no colour of its own to clear a
+/// contrast floor it is not asked to meet.
+const GRID_OPACITY: &str = "0.18";
 
 /// One resolved palette.
 ///
@@ -297,7 +343,7 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
     let mut smallest = f64::INFINITY;
     for (panel, frame) in figure.panels.iter().zip(frames) {
         let drawn = panel.drawn_domain();
-        let values = panel.displayed_value_domain();
+        let values = frame.values;
         for series in &panel.series {
             let height = |value: f64| project(value, values, frame.plot_bottom, frame.plot_top);
             let mut across: Option<f64> = None;
@@ -441,14 +487,18 @@ fn project(value: f64, from: Domain, to_low: f64, to_high: f64) -> f64 {
     to_low + ((value - from.low()) / span) * (to_high - to_low)
 }
 
-/// What one axis is called, with its unit only where there is one.
+/// What one axis is called, with what the source said its unit is.
 ///
-/// An unreported unit adds nothing, which is the whole point: printing an empty
-/// bracket, or a guess, would display a fact the file never carried.
+/// A reported unit in brackets; an unreported one says so in the same place,
+/// because an axis title is what a reader of a printed figure reads and a bare
+/// "Intensity" there reads as a quantity whose unit was simply left off. Never a
+/// guess: the words are the absence, not a unit this application supplied. A
+/// genuinely dimensionless quantity adds nothing.
 fn axis_caption(label: &str, unit: &UnitState) -> String {
     match unit {
         UnitState::Known { unit } => format!("{label} ({})", unit.as_str()),
-        UnitState::Unreported | UnitState::Dimensionless => label.to_owned(),
+        UnitState::Unreported => format!("{label} (unit not reported)"),
+        UnitState::Dimensionless => label.to_owned(),
     }
 }
 
@@ -961,12 +1011,7 @@ fn panel_description(
             }
             if discrete
                 && draws_without_length(
-                    project(
-                        *value,
-                        panel.displayed_value_domain(),
-                        frame.plot_bottom,
-                        frame.plot_top,
-                    ),
+                    project(*value, frame.values, frame.plot_bottom, frame.plot_top),
                     frame.zero_y,
                 )
             {
@@ -1073,12 +1118,7 @@ fn panel_description(
                 && **at <= drawn.high()
                 && !is_measured_zero(**value)
                 && draws_without_length(
-                    project(
-                        **value,
-                        panel.displayed_value_domain(),
-                        frame.plot_bottom,
-                        frame.plot_top,
-                    ),
+                    project(**value, frame.values, frame.plot_bottom, frame.plot_top),
                     frame.zero_y,
                 )
         })
@@ -1243,6 +1283,238 @@ struct Frame {
     plot_top: f64,
     plot_bottom: f64,
     zero_y: f64,
+    /// The value range projected onto the plotting area: the displayed one,
+    /// with [`HEADROOM`] past the data.
+    values: Domain,
+    /// The labelled positions on the value axis, outside the plotting area.
+    value_labels: Vec<AxisLabel>,
+    /// The labelled positions on the domain axis, below the plotting area.
+    domain_labels: Vec<AxisLabel>,
+    /// The weight every line is drawn at.
+    line: f64,
+}
+
+/// One labelled position on an axis, and which way its text runs from it.
+struct AxisLabel {
+    at: f64,
+    text: String,
+    anchor: Anchor,
+}
+
+/// Which end of a line of text its position names.
+#[derive(Clone, Copy)]
+enum Anchor {
+    Start,
+    Middle,
+    End,
+}
+
+impl Anchor {
+    const fn attribute(self) -> &'static str {
+        match self {
+            Self::Start => "",
+            Self::Middle => " text-anchor=\"middle\"",
+            Self::End => " text-anchor=\"end\"",
+        }
+    }
+}
+
+/// One line of laid-out text, and the most width it may take.
+struct Line<'a> {
+    x: f64,
+    y: f64,
+    size: f64,
+    anchor: Anchor,
+    bold: bool,
+    /// Turned a quarter anticlockwise about its own position.
+    rotated: bool,
+    fill: &'a str,
+    room: f64,
+}
+
+/// Writes one line of text at its measured width.
+///
+/// Never stretched. Text that fits is drawn at its natural width with no
+/// declared length at all, so a viewer draws the face it resolves at that
+/// face's own advances. Only text that does not fit its room even so -- at the
+/// smallest size its caller would shrink it to -- is condensed into the room,
+/// which is the last resort an over-long label has before leaving the document.
+fn write_line(out: &mut String, line: &Line<'_>, text: &str, precision: Precision) {
+    let (x, y) = (precision.coordinate(line.x), precision.coordinate(line.y));
+    let weight = if line.bold {
+        " font-weight=\"700\""
+    } else {
+        ""
+    };
+    let turn = if line.rotated {
+        format!(" transform=\"rotate(-90 {x} {y})\"")
+    } else {
+        String::new()
+    };
+    let fit = if text_width(text, line.size, line.bold) > line.room {
+        format!(
+            " textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\"",
+            precision.coordinate(line.room.max(1.0)),
+        )
+    } else {
+        String::new()
+    };
+    let _ = writeln!(
+        out,
+        "<text x=\"{x}\" y=\"{y}\" fill=\"{}\" font-family=\"{FONT_FAMILY}\" font-size=\"{}\"\
+         {weight}{}{turn} xml:space=\"preserve\"{fit}>{}</text>",
+        line.fill,
+        precision.coordinate(line.size),
+        line.anchor.attribute(),
+        escape(text),
+    );
+}
+
+/// The value range a panel is drawn against: the displayed one, with headroom.
+///
+/// The renderer's own and nothing more. The contract's domains stay the data's,
+/// the description keeps stating them, and nothing here is a value the source
+/// holds; it is space on the page beyond the data, so the tallest mark does not
+/// touch the frame.
+fn value_axis(values: Domain) -> Domain {
+    let span = values.span();
+    if span <= 0.0 {
+        return values;
+    }
+    let pad = span * HEADROOM;
+    let high = if values.high() > 0.0 {
+        values.high() + pad
+    } else {
+        values.high()
+    };
+    let low = if values.low() < 0.0 {
+        values.low() - pad
+    } else {
+        values.low()
+    };
+    Domain::new(low, high).unwrap_or(values)
+}
+
+/// The labels for a value axis, outside the plotting area to its left.
+///
+/// Nice ticks where they fit -- further apart than a line of text, and no wider
+/// than `room` -- and otherwise the ends of the displayed range in the notation
+/// that keeps them two numbers, which is how every value axis was labelled
+/// before ticks existed.
+fn value_labels(
+    displayed: Domain,
+    values: Domain,
+    plot_top: f64,
+    plot_bottom: f64,
+    room: f64,
+) -> Vec<AxisLabel> {
+    let height = |at: f64| project(at, values, plot_bottom, plot_top);
+    let fits = |ticks: &[Tick]| {
+        ticks
+            .iter()
+            .all(|tick| text_width(&tick.label, TICK_LABEL_SIZE, false) <= room)
+            && ticks.windows(2).all(|pair| {
+                (height(pair[0].at) - height(pair[1].at)).abs() >= TICK_LABEL_SIZE + 2.0
+            })
+    };
+    if let Some(ticks) = nice_ticks(values, fits) {
+        let mut labels: Vec<AxisLabel> = ticks
+            .into_iter()
+            .map(|tick| AxisLabel {
+                at: tick.at,
+                text: tick.label,
+                anchor: Anchor::End,
+            })
+            .collect();
+        // A range that excludes zero has no zero line: the rule at its edge is
+        // the range's own end, exactly where a zero line would be drawn. Left
+        // unlabelled, the axis reads as zero-based and every height on it as
+        // larger than it is -- so that end is labelled, and a round tick too
+        // close to it gives way.
+        if displayed.low() > 0.0 || displayed.high() < 0.0 {
+            let edge = if displayed.high() < 0.0 {
+                displayed.high()
+            } else {
+                displayed.low()
+            };
+            let at = height(edge);
+            labels.retain(|label| (height(label.at) - at).abs() >= TICK_LABEL_SIZE + 2.0);
+            labels.push(AxisLabel {
+                at: edge,
+                text: axis_number(edge, axis_notation(displayed)),
+                anchor: Anchor::End,
+            });
+            labels.sort_by(|a, b| a.at.total_cmp(&b.at));
+        }
+        return labels;
+    }
+    let (low, high) = axis_ends(displayed);
+    let mut labels = vec![AxisLabel {
+        at: displayed.low(),
+        text: low,
+        anchor: Anchor::End,
+    }];
+    if displayed.span() > 0.0 {
+        labels.push(AxisLabel {
+            at: displayed.high(),
+            text: high,
+            anchor: Anchor::End,
+        });
+    }
+    labels
+}
+
+/// The labels for a domain axis, below the plotting area.
+///
+/// Nice ticks centred on their positions where none collides and none leaves
+/// the document; otherwise the two ends, each held to its own end of the axis,
+/// or the one value a single-valued axis has, where its data is drawn.
+fn domain_labels(drawn: Domain, left: f64, right: f64, width: f64) -> Vec<AxisLabel> {
+    let fits = |ticks: &[Tick]| {
+        let boxes: Vec<(f64, f64)> = ticks
+            .iter()
+            .map(|tick| {
+                let x = project(tick.at, drawn, left, right);
+                let half = text_width(&tick.label, TICK_LABEL_SIZE, false) / 2.0;
+                (x - half, x + half)
+            })
+            .collect();
+        boxes.first().is_some_and(|first| first.0 >= 2.0)
+            && boxes.last().is_some_and(|last| last.1 <= width - 2.0)
+            && boxes
+                .windows(2)
+                .all(|pair| pair[1].0 - pair[0].1 >= TICK_LABEL_SIZE / 2.0)
+    };
+    if let Some(ticks) = nice_ticks(drawn, fits) {
+        return ticks
+            .into_iter()
+            .map(|tick| AxisLabel {
+                at: tick.at,
+                text: tick.label,
+                anchor: Anchor::Middle,
+            })
+            .collect();
+    }
+    let (low, high) = axis_ends(drawn);
+    if drawn.span() <= 0.0 {
+        return vec![AxisLabel {
+            at: drawn.low(),
+            text: low,
+            anchor: Anchor::Middle,
+        }];
+    }
+    vec![
+        AxisLabel {
+            at: drawn.low(),
+            text: low,
+            anchor: Anchor::Start,
+        },
+        AxisLabel {
+            at: drawn.high(),
+            text: high,
+            anchor: Anchor::End,
+        },
+    ]
 }
 
 /// Renders one figure as a standalone SVG document.
@@ -1262,12 +1534,22 @@ pub fn render(figure: &FigureSpec) -> String {
 
     let mut out = String::with_capacity(4_096);
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    // A printed figure states its size on paper and keeps its drawing in
+    // figure units, so a viewer or a layout program places it at exactly the
+    // millimetres asked for and its text comes out at the points asked for.
+    let (outer_width, outer_height) = figure.size.print().map_or_else(
+        || (precision.coordinate(width), precision.coordinate(height)),
+        |print| {
+            (
+                format!("{}mm", precision.coordinate(print.width_mm())),
+                format!("{}mm", precision.coordinate(print.height_mm())),
+            )
+        },
+    );
     let _ = write!(
         out,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" \
-         viewBox=\"0 0 {} {}\" role=\"img\"",
-        precision.coordinate(width),
-        precision.coordinate(height),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{outer_width}\" \
+         height=\"{outer_height}\" viewBox=\"0 0 {} {}\" role=\"img\"",
         precision.coordinate(width),
         precision.coordinate(height),
     );
@@ -1284,11 +1566,13 @@ pub fn render(figure: &FigureSpec) -> String {
     // before the description is written so the words can report it when it
     // cannot. `<title>` carries the text either way, so nothing leaves the
     // file -- what is at stake is the heading a sighted reader sees.
+    let heading_left = frames.first().map_or(MIN_MARGIN_LEFT, |frame| frame.left);
     let heading = figure.title.as_ref().and_then(|label| {
         readable_size(
             label.as_str(),
             TITLE_SIZE,
-            width - MARGIN_LEFT - MARGIN_RIGHT,
+            width - heading_left - MARGIN_RIGHT,
+            true,
         )
         .map(|size| (label, size))
     });
@@ -1343,21 +1627,24 @@ pub fn render(figure: &FigureSpec) -> String {
     );
 
     if let Some((label, size)) = heading {
-        // The visible title is laid out to a declared width like every other
-        // string here. The `<title>` element carries the same words to a screen
-        // reader either way, but a published figure is read by looking at it,
-        // and a metadata element is no substitute for the heading a reader can
-        // see.
-        let _ = writeln!(
-            out,
-            "<text x=\"{}\" y=\"24.000\" fill=\"{}\" font-family=\"sans-serif\" \
-             font-size=\"{}\" font-weight=\"600\" xml:space=\"preserve\" textLength=\"{}\" \
-             lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-            precision.coordinate(MARGIN_LEFT),
-            colours.text,
-            precision.coordinate(size),
-            precision.coordinate(label.as_str().chars().count() as f64 * TEXT_EM * size),
-            escape(label.as_str()),
+        // The visible title, at a size it fits at. The `<title>` element
+        // carries the same words to a screen reader either way, but a
+        // published figure is read by looking at it, and a metadata element is
+        // no substitute for the heading a reader can see.
+        write_line(
+            &mut out,
+            &Line {
+                x: heading_left,
+                y: 24.0,
+                size,
+                anchor: Anchor::Start,
+                bold: true,
+                rotated: false,
+                fill: colours.text,
+                room: width - heading_left - MARGIN_RIGHT,
+            },
+            label.as_str(),
+            precision,
         );
     }
 
@@ -1379,18 +1666,51 @@ pub fn render(figure: &FigureSpec) -> String {
 /// where the plot is.
 fn panel_frames(figure: &FigureSpec, width: f64, height: f64) -> Vec<Frame> {
     let panel_count = figure.panels.len();
-    let usable = height - MARGIN_TOP - MARGIN_BOTTOM;
+    let margin_top = if figure.title.is_some() {
+        MARGIN_TOP_TITLED
+    } else {
+        MARGIN_TOP_BARE
+    };
+    let usable = height - margin_top - MARGIN_BOTTOM;
     let panel_height = usable / panel_count as f64;
-    figure
+    // The most width a value-axis tick label may take, so the gutter that holds
+    // it can never squeeze the plotting area out of a narrow figure.
+    let label_room =
+        (width * MAX_MARGIN_LEFT_SHARE - VALUE_TITLE_CLEARANCE - TICK_LABEL_GAP - TICK_LENGTH)
+            .max(TICK_LABEL_SIZE);
+    // The vertical geometry and the value axis first: a value axis's labels
+    // depend only on the panel's height, and the gutter they need is what
+    // decides where every panel's plotting area starts.
+    let rows: Vec<(f64, f64, Domain, Vec<AxisLabel>)> = figure
         .panels
         .iter()
         .enumerate()
         .map(|(index, panel)| {
-            let top = MARGIN_TOP + panel_height * index as f64;
-            let bottom = MARGIN_TOP + panel_height * (index as f64 + 1.0);
+            let top = margin_top + panel_height * index as f64;
+            let bottom = margin_top + panel_height * (index as f64 + 1.0);
             let plot_top = top + 8.0;
             let plot_bottom = bottom - 34.0;
-            let values = panel.displayed_value_domain();
+            let displayed = panel.displayed_value_domain();
+            let values = value_axis(displayed);
+            let labels = value_labels(displayed, values, plot_top, plot_bottom, label_room);
+            (plot_top, plot_bottom, values, labels)
+        })
+        .collect();
+    // One gutter for every panel, so stacked plotting areas share a left edge
+    // and a linked figure's two domain axes start at the same place.
+    let widest = rows
+        .iter()
+        .flat_map(|row| &row.3)
+        .map(|label| text_width(&label.text, TICK_LABEL_SIZE, false))
+        .fold(0.0, f64::max)
+        .min(label_room);
+    let left = (VALUE_TITLE_CLEARANCE + widest + TICK_LABEL_GAP + TICK_LENGTH).max(MIN_MARGIN_LEFT);
+    let right = width - MARGIN_RIGHT;
+    figure
+        .panels
+        .iter()
+        .zip(rows)
+        .map(|(panel, (plot_top, plot_bottom, values, value_labels))| {
             // Where zero falls in the value range, so a negative value hangs
             // below it and a positive one rises above it. A range that never
             // reaches zero puts the line at the nearer edge rather than off the
@@ -1403,11 +1723,15 @@ fn panel_frames(figure: &FigureSpec, width: f64, height: f64) -> Vec<Frame> {
                 plot_bottom
             };
             Frame {
-                left: MARGIN_LEFT,
-                right: width - MARGIN_RIGHT,
+                left,
+                right,
                 plot_top,
                 plot_bottom,
                 zero_y,
+                values,
+                value_labels,
+                domain_labels: domain_labels(panel.drawn_domain(), left, right, width),
+                line: figure.size.line_width(),
             }
         })
         .collect()
@@ -1422,8 +1746,11 @@ fn render_panels(
 ) -> (String, Vec<Vec<usize>>) {
     let mut body = String::with_capacity(4_096);
     let mut unplaced = Vec::with_capacity(figure.panels.len());
+    let titles = (figure.x_axis_title(), figure.y_axis_title());
     for (panel, frame) in figure.panels.iter().zip(frames) {
-        unplaced.push(render_panel(&mut body, panel, frame, colours, precision));
+        unplaced.push(render_panel(
+            &mut body, panel, titles, frame, colours, precision,
+        ));
     }
     (body, unplaced)
 }
@@ -1455,34 +1782,52 @@ fn default_title(figure: &FigureSpec) -> String {
 fn render_panel(
     out: &mut String,
     panel: &PanelSpec,
+    titles: (Option<&Label>, Option<&Label>),
     frame: &Frame,
     colours: &Palette,
     precision: Precision,
 ) -> Vec<usize> {
     let domain = panel.drawn_domain();
-    let values = panel.displayed_value_domain();
+    let values = frame.values;
     let plot_top = frame.plot_top;
     let plot_bottom = frame.plot_bottom;
     let zero_y = frame.zero_y;
+    let line = precision.coordinate(frame.line);
+    let rule = |out: &mut String, (x1, y1): (f64, f64), (x2, y2): (f64, f64), extra: &str| {
+        let _ = writeln!(
+            out,
+            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{line}\"\
+             {extra}/>",
+            precision.coordinate(x1),
+            precision.coordinate(y1),
+            precision.coordinate(x2),
+            precision.coordinate(y2),
+            colours.axis,
+        );
+    };
 
-    let _ = writeln!(
-        out,
-        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"1\"/>",
-        precision.coordinate(frame.left),
-        precision.coordinate(zero_y),
-        precision.coordinate(frame.right),
-        precision.coordinate(zero_y),
-        colours.axis,
-    );
-    let _ = writeln!(
-        out,
-        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"1\"/>",
-        precision.coordinate(frame.left),
-        precision.coordinate(plot_top),
-        precision.coordinate(frame.left),
-        precision.coordinate(plot_bottom),
-        colours.axis,
-    );
+    // Light horizontal gridlines at the value ticks, first, so everything else
+    // is drawn over them. None on the zero line, which is drawn as a rule.
+    let height = |at: f64| project(at, values, plot_bottom, plot_top);
+    let grid = format!(" stroke-opacity=\"{GRID_OPACITY}\"");
+    for label in &frame.value_labels {
+        let y = height(label.at);
+        if (y - zero_y).abs() > 0.5 && (y - plot_bottom).abs() > 0.5 {
+            rule(out, (frame.left, y), (frame.right, y), &grid);
+        }
+    }
+
+    rule(out, (frame.left, zero_y), (frame.right, zero_y), "");
+    rule(out, (frame.left, plot_top), (frame.left, plot_bottom), "");
+    // The domain axis, where its ticks hang, when the zero line is elsewhere.
+    if (zero_y - plot_bottom).abs() > f64::EPSILON {
+        rule(
+            out,
+            (frame.left, plot_bottom),
+            (frame.right, plot_bottom),
+            "",
+        );
+    }
 
     // Under the traces, so a band tints the stretch without covering a sample.
     for interval in panel.intervals() {
@@ -1495,59 +1840,15 @@ fn render_panel(
 
     // After the traces, so the names are not drawn under them, and before the
     // annotations, so a marker label can be told where the names already are.
-    let legend = render_legend(out, panel, frame, colours, precision);
-
-    // The two domain ends and the two value ends, as real text rather than as
-    // paths, so the figure remains searchable and re-typesettable after export.
-    // Each axis picks its own precision from its own span: a narrow m/z window
-    // and a tall intensity range need different numbers of decimals to stay
-    // legible and to stay distinguishable from each other.
     //
-    // Formatted here rather than beside the text that carries them, because a
-    // marker label has to know how far the value-axis maximum reaches before it
-    // can avoid being drawn on top of it.
-    let (domain_low_text, domain_high_text) = axis_ends(domain);
-    let (value_low_text, value_high_text) = axis_ends(values);
-    // Half the axis each, so the two domain ends cannot meet in the middle, and
-    // a declared width so neither can leave the document. An end is a number
-    // rather than a `Label`, but `Domain` accepts any finite pair -- and a
-    // magnitude an axis cannot print is a figure the reader loses, not an input
-    // this renderer gets to assume away.
-    let end_room = (frame.right - frame.left) / 2.0;
-    let value_room = frame.right - frame.left - 4.0;
-
     // Where each label already drawn in this panel ended up, so the next one
     // does not land on it. Two markers at the same m/z is a legitimate panel --
     // a precursor window and its monoisotopic peak, say -- and drawing both
     // labels at one baseline hides whichever was written first, leaving a
-    // figure that looks annotated and is missing an annotation.
-    //
-    // Seeded with the two value-axis ends, because both are drawn *inside* the
-    // plotting area and are therefore exactly as collidable as another label.
-    // Keeping the plotting area as the floor was not enough on its own: the
-    // low end sits two units above that floor, so a marker label stepping down
-    // to the last position the floor allows landed on top of it -- and the axis
-    // end is written afterwards, so it covered the annotation. Treating them as
-    // occupied rather than special-casing either replaces the earlier
-    // hand-rolled avoidance of the high end with the collision machinery that
-    // was already here, and covers both ends by construction.
-    let mut occupied: Vec<TextBox> = vec![TextBox::new(
-        frame.left + 4.0,
-        plot_top + 10.0,
-        fitted_width(&value_high_text, MARKER_LABEL_SIZE, value_room),
-        0.0,
-        MARKER_LABEL_SIZE,
-    )];
-    if values.low() != 0.0 {
-        occupied.push(TextBox::new(
-            frame.left + 4.0,
-            plot_bottom - 2.0,
-            fitted_width(&value_low_text, MARKER_LABEL_SIZE, value_room),
-            0.0,
-            MARKER_LABEL_SIZE,
-        ));
-    }
-    occupied.extend(legend);
+    // figure that looks annotated and is missing an annotation. Every axis
+    // label is outside the plotting area, so the legend is all a marker label
+    // starts out having to step around.
+    let mut occupied = render_legend(out, panel, frame, colours, precision);
     // Which markers lost their labels, by index rather than by label text. Two
     // markers may legitimately carry the same words, and matching on those
     // words would attach one marker's layout failure to the other's clause.
@@ -1560,7 +1861,7 @@ fn render_panel(
         let _ = writeln!(
             out,
             "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" \
-             stroke-width=\"1\" stroke-dasharray=\"4 3\"/>",
+             stroke-width=\"{line}\" stroke-dasharray=\"4 3\"/>",
             precision.coordinate(x),
             precision.coordinate(plot_top),
             precision.coordinate(x),
@@ -1574,102 +1875,105 @@ fn render_panel(
         }
     }
 
-    let _ = writeln!(
-        out,
-        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
-         textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        precision.coordinate(frame.left),
-        precision.coordinate(plot_bottom + 14.0),
-        colours.text,
-        precision.coordinate(fitted_width(&domain_low_text, MARKER_LABEL_SIZE, end_room)),
-        escape(&domain_low_text),
-    );
-    let _ = writeln!(
-        out,
-        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
-         text-anchor=\"end\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        precision.coordinate(frame.right),
-        precision.coordinate(plot_bottom + 14.0),
-        colours.text,
-        precision.coordinate(fitted_width(&domain_high_text, MARKER_LABEL_SIZE, end_room)),
-        escape(&domain_high_text),
-    );
-    // Both captions are written to a declared width. A caption is a `Label`, so
-    // it may be 120 characters, and the figure may be 200 units wide -- both
-    // accepted by the contract, and centred text of that length runs off a
-    // document that has no viewport to scroll. Condensed text is harder to read;
-    // absent text cannot be read at all, and nothing in the file would say a
-    // word had been cut off.
-    let domain_caption = axis_caption(panel.x_axis.label.as_str(), &panel.x_axis.unit);
-    let domain_caption_room = frame.right - frame.left;
-    let domain_caption_size = caption_size(&domain_caption, domain_caption_room);
-    let _ = writeln!(
-        out,
-        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"{}\" \
-         text-anchor=\"middle\" xml:space=\"preserve\" textLength=\"{}\" \
-         lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        precision.coordinate(f64::midpoint(frame.left, frame.right)),
-        precision.coordinate(plot_bottom + 30.0),
-        colours.text,
-        precision.coordinate(domain_caption_size),
-        precision.coordinate(fitted_width(
-            &domain_caption,
-            domain_caption_size,
-            domain_caption_room,
-        )),
-        escape(&domain_caption),
-    );
-    let value_caption = axis_caption(panel.y_axis.label.as_str(), &panel.y_axis.unit);
-    let centre_y = f64::midpoint(plot_top, plot_bottom);
-    let value_caption_room = plot_bottom - plot_top;
-    let value_caption_size = caption_size(&value_caption, value_caption_room);
-    let _ = writeln!(
-        out,
-        "<text x=\"14.000\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"{}\" \
-         text-anchor=\"middle\" transform=\"rotate(-90 14.000 {})\" xml:space=\"preserve\" \
-         textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        precision.coordinate(centre_y),
-        colours.text,
-        precision.coordinate(value_caption_size),
-        precision.coordinate(centre_y),
-        precision.coordinate(fitted_width(
-            &value_caption,
-            value_caption_size,
-            value_caption_room,
-        )),
-        escape(&value_caption),
-    );
-    let _ = writeln!(
-        out,
-        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
-         textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        precision.coordinate(frame.left + 4.0),
-        precision.coordinate(plot_top + 10.0),
-        colours.text,
-        precision.coordinate(fitted_width(
-            &value_high_text,
-            MARKER_LABEL_SIZE,
-            value_room
-        )),
-        escape(&value_high_text),
-    );
-    // Printed whenever it is not zero, rather than only when it is negative. A
-    // trace may legitimately be zoomed to a value range that excludes zero, and
-    // in that case the horizontal line sits at the bottom edge exactly as a zero
-    // line would -- so suppressing the lower endpoint made the axis read as
-    // zero-based and understated every height on it.
-    if values.low() != 0.0 {
-        let _ = writeln!(
+    // The ticks and their numbers, as real text rather than as paths, so the
+    // figure remains searchable and re-typesettable after export. Value labels
+    // sit outside the plotting area, right-aligned against their ticks; domain
+    // labels hang below theirs.
+    let value_room = frame.left - VALUE_TITLE_CLEARANCE - TICK_LENGTH - TICK_LABEL_GAP;
+    for label in &frame.value_labels {
+        let y = height(label.at);
+        rule(out, (frame.left - TICK_LENGTH, y), (frame.left, y), "");
+        write_line(
             out,
-            "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
-             textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-            precision.coordinate(frame.left + 4.0),
-            precision.coordinate(plot_bottom - 2.0),
-            colours.text,
-            precision.coordinate(fitted_width(&value_low_text, MARKER_LABEL_SIZE, value_room)),
-            escape(&value_low_text),
+            &Line {
+                x: frame.left - TICK_LENGTH - TICK_LABEL_GAP,
+                y: y + TICK_LABEL_SIZE * TICK_LABEL_CENTRE,
+                size: TICK_LABEL_SIZE,
+                anchor: label.anchor,
+                bold: false,
+                rotated: false,
+                fill: colours.text,
+                room: value_room,
+            },
+            &label.text,
+            precision,
         );
     }
+    // A label held to one end of the axis may take half of it, so the two ends
+    // cannot meet in the middle; a centred tick label was laid out to fit.
+    let end_room = (frame.right - frame.left) / 2.0;
+    for label in &frame.domain_labels {
+        let x = project(label.at, domain, frame.left, frame.right);
+        rule(out, (x, plot_bottom), (x, plot_bottom + TICK_LENGTH), "");
+        let (at, room) = match label.anchor {
+            Anchor::Start => (frame.left, end_room),
+            Anchor::End => (frame.right, end_room),
+            Anchor::Middle => (x, f64::INFINITY),
+        };
+        write_line(
+            out,
+            &Line {
+                x: at,
+                y: plot_bottom + DOMAIN_LABEL_DROP,
+                size: TICK_LABEL_SIZE,
+                anchor: label.anchor,
+                bold: false,
+                rotated: false,
+                fill: colours.text,
+                room,
+            },
+            &label.text,
+            precision,
+        );
+    }
+
+    // Both titles are fitted to the room they have. A title is a `Label`, so it
+    // may be 120 characters, and the figure may be 200 units wide -- both
+    // accepted by the contract, and centred text of that length runs off a
+    // document that has no viewport to scroll. Smaller text first; condensed
+    // only at the floor, because absent text cannot be read at all and nothing
+    // in the file would say a word had been cut off.
+    let (x_title, y_title) = titles;
+    let domain_caption = axis_caption(
+        x_title.unwrap_or(&panel.x_axis.label).as_str(),
+        &panel.x_axis.unit,
+    );
+    let domain_caption_room = frame.right - frame.left;
+    write_line(
+        out,
+        &Line {
+            x: f64::midpoint(frame.left, frame.right),
+            y: plot_bottom + DOMAIN_TITLE_DROP,
+            size: caption_size(&domain_caption, domain_caption_room),
+            anchor: Anchor::Middle,
+            bold: false,
+            rotated: false,
+            fill: colours.text,
+            room: domain_caption_room,
+        },
+        &domain_caption,
+        precision,
+    );
+    let value_caption = axis_caption(
+        y_title.unwrap_or(&panel.y_axis.label).as_str(),
+        &panel.y_axis.unit,
+    );
+    let value_caption_room = plot_bottom - plot_top;
+    write_line(
+        out,
+        &Line {
+            x: VALUE_TITLE_X,
+            y: f64::midpoint(plot_top, plot_bottom),
+            size: caption_size(&value_caption, value_caption_room),
+            anchor: Anchor::Middle,
+            bold: false,
+            rotated: true,
+            fill: colours.text,
+            room: value_caption_room,
+        },
+        &value_caption,
+        precision,
+    );
     unplaced
 }
 
@@ -1685,7 +1989,7 @@ fn render_series(
         return;
     }
     let domain = panel.drawn_domain();
-    let values = panel.displayed_value_domain();
+    let values = frame.values;
     let (plot_top, plot_bottom, zero_y) = (frame.plot_top, frame.plot_bottom, frame.zero_y);
     let (stroke, dashes) = stroke_for(series.role, colours);
 
@@ -1844,7 +2148,8 @@ fn render_series(
     if !path.is_empty() {
         let _ = writeln!(
             out,
-            "<path d=\"{path}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"1\"{dashes}/>",
+            "<path d=\"{path}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"{}\"{dashes}/>",
+            precision.coordinate(frame.line),
         );
     }
 
@@ -1861,8 +2166,11 @@ fn render_series(
                 "{}",
                 sample_mark(
                     series.role(),
-                    project(*x, domain, frame.left, frame.right),
-                    project(*y, values, plot_bottom, plot_top),
+                    (
+                        project(*x, domain, frame.left, frame.right),
+                        project(*y, values, plot_bottom, plot_top),
+                    ),
+                    frame.line,
                     colours,
                     precision,
                 )
@@ -1873,7 +2181,13 @@ fn render_series(
 
 /// One sample mark, shaped by role so the two measured series are told apart
 /// without colour: filled for the measurement, open for the second one.
-fn sample_mark(role: StyleRole, x: f64, y: f64, colours: &Palette, precision: Precision) -> String {
+fn sample_mark(
+    role: StyleRole,
+    (x, y): (f64, f64),
+    line: f64,
+    colours: &Palette,
+    precision: Precision,
+) -> String {
     let (stroke, _) = stroke_for(role, colours);
     match role {
         StyleRole::Measurement => format!(
@@ -1884,11 +2198,12 @@ fn sample_mark(role: StyleRole, x: f64, y: f64, colours: &Palette, precision: Pr
         ),
         StyleRole::SecondaryMeasurement => format!(
             "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" stroke=\"{stroke}\" \
-             stroke-width=\"1\"/>",
+             stroke-width=\"{}\"/>",
             precision.coordinate(x),
             precision.coordinate(y),
             precision.coordinate(SAMPLE_MARK_RADIUS),
             colours.background,
+            precision.coordinate(line),
         ),
         StyleRole::Baseline => format!(
             "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{stroke}\"/>",
@@ -1921,11 +2236,12 @@ fn render_interval(
         let x = project(at, domain, frame.left, frame.right);
         format!(
             "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{stroke}\" \
-             stroke-width=\"1\" stroke-dasharray=\"{dashes}\"/>",
+             stroke-width=\"{}\" stroke-dasharray=\"{dashes}\"/>",
             precision.coordinate(x),
             precision.coordinate(frame.plot_top),
             precision.coordinate(x),
             precision.coordinate(frame.plot_bottom),
+            precision.coordinate(frame.line),
         )
     };
     match interval.role() {
@@ -1978,12 +2294,13 @@ fn render_interval(
                 let _ = writeln!(
                     out,
                     "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"none\" \
-                     stroke=\"{}\" stroke-width=\"1\" stroke-dasharray=\"2 2\"/>",
+                     stroke=\"{}\" stroke-width=\"{}\" stroke-dasharray=\"2 2\"/>",
                     precision.coordinate(left),
                     precision.coordinate(frame.plot_top),
                     precision.coordinate(right - left),
                     precision.coordinate(frame.plot_bottom - frame.plot_top),
                     colours.considered,
+                    precision.coordinate(frame.line),
                 );
             }
         }
@@ -2050,6 +2367,7 @@ fn render_legend(
         // Condensed rather than clipped, exactly as an axis end is: a name the
         // page had no room for is a legend entry that names nothing.
         let width = fitted_width(name, LEGEND_SIZE, room);
+        let line = precision.coordinate(frame.line);
         let baseline = frame.plot_top + LEGEND_SIZE + (row as f64) * (LEGEND_SIZE + 3.0);
         if baseline > frame.plot_bottom {
             break;
@@ -2060,7 +2378,7 @@ fn render_legend(
         let _ = writeln!(
             out,
             "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{stroke}\" \
-             stroke-width=\"1\"{dashes}/>",
+             stroke-width=\"{line}\"{dashes}/>",
             precision.coordinate(swatch_left.max(frame.left)),
             precision.coordinate(baseline - LEGEND_SIZE / 3.0),
             precision.coordinate(swatch_right.max(frame.left)),
@@ -2075,24 +2393,30 @@ fn render_legend(
                 "{}",
                 sample_mark(
                     series.role(),
-                    f64::midpoint(swatch_left.max(frame.left), swatch_right.max(frame.left)),
-                    baseline - LEGEND_SIZE / 3.0,
+                    (
+                        f64::midpoint(swatch_left.max(frame.left), swatch_right.max(frame.left)),
+                        baseline - LEGEND_SIZE / 3.0,
+                    ),
+                    frame.line,
                     colours,
                     precision,
                 )
             );
         }
-        let _ = writeln!(
+        write_line(
             out,
-            "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
-             font-size=\"{}\" text-anchor=\"end\" textLength=\"{}\" \
-             lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-            precision.coordinate(right),
-            precision.coordinate(baseline),
-            colours.text,
-            precision.coordinate(LEGEND_SIZE),
-            precision.coordinate(width),
-            escape(name),
+            &Line {
+                x: right,
+                y: baseline,
+                size: LEGEND_SIZE,
+                anchor: Anchor::End,
+                bold: false,
+                rotated: false,
+                fill: colours.text,
+                room,
+            },
+            name,
+            precision,
         );
         occupied.push(TextBox::new(
             swatch_left.max(frame.left),
@@ -2163,15 +2487,14 @@ impl TextBox {
     }
 }
 
-/// The width to lay one string out in: its natural width, or the space there is.
+/// The width to lay one string out in: its measured width, or the space there is.
 ///
-/// The natural width comes from [`TEXT_EM`], which is an upper bound on a glyph
-/// rather than an average, so a string given its natural width cannot overflow
-/// whatever face a viewer happens to pick. A string too long for its space is
-/// condensed into that space rather than allowed to leave the document.
+/// Measured with the advances of the face the figure names first, so a string
+/// given its natural width is drawn at exactly that width by every face that
+/// shares them. A string too long for its space is condensed into that space
+/// rather than allowed to leave the document.
 fn fitted_width(text: &str, size: f64, available: f64) -> f64 {
-    let natural = text.chars().count() as f64 * TEXT_EM * size;
-    natural.min(available.max(1.0))
+    text_width(text, size, false).min(available.max(1.0))
 }
 
 /// The size an axis caption is drawn at: the largest that needs no condensing.
@@ -2182,7 +2505,7 @@ fn fitted_width(text: &str, size: f64, available: f64) -> f64 {
 /// equivalent for an axis. So this shrinks first and condenses only what will
 /// not fit even at the floor.
 fn caption_size(text: &str, available: f64) -> f64 {
-    readable_size(text, AXIS_CAPTION_SIZE, available).unwrap_or(MIN_TEXT_SIZE)
+    readable_size(text, AXIS_CAPTION_SIZE, available, false).unwrap_or(MIN_TEXT_SIZE)
 }
 
 /// The largest size at which this string fits without being condensed at all.
@@ -2190,14 +2513,13 @@ fn caption_size(text: &str, available: f64) -> f64 {
 /// `None` when even the floor is too wide. Condensing is the fallback of last
 /// resort rather than the first answer: `lengthAdjust="spacingAndGlyphs"` will
 /// squeeze any string into any width, and a 120-character title on a
-/// 200-unit-wide figure came out at 0.97 units a glyph at font-size 16 -- inside
-/// the document, inside its declared box, and completely unreadable. Text
-/// present but illegible is not the thing "condensed beats absent" was weighing.
-fn readable_size(text: &str, largest: f64, available: f64) -> Option<f64> {
-    let count = text.chars().count() as f64;
+/// 200-unit-wide figure came out at under one unit a glyph -- inside the
+/// document, inside its declared box, and completely unreadable. Text present
+/// but illegible is not the thing "condensed beats absent" was weighing.
+fn readable_size(text: &str, largest: f64, available: f64, bold: bool) -> Option<f64> {
     let mut size = largest;
     while size >= MIN_TEXT_SIZE {
-        if count * TEXT_EM * size <= available {
+        if text_width(text, size, bold) <= available {
             return Some(size);
         }
         size -= 1.0;
@@ -2205,7 +2527,7 @@ fn readable_size(text: &str, largest: f64, available: f64) -> Option<f64> {
     None
 }
 
-/// Splits one label into lines no wider than `columns` characters.
+/// Splits one label into lines no wider than `available` at `size`.
 ///
 /// **Every character of the label appears, in order, exactly once** -- this cuts
 /// the text into pieces and never rewrites it. That is not a nicety: this
@@ -2218,25 +2540,34 @@ fn readable_size(text: &str, largest: f64, available: f64) -> Option<f64> {
 /// where a word is longer than a line -- an over-long word is usually an
 /// identifier, and one running off the page carries less than one broken across
 /// two lines. A space a line ends on stays on that line, because dropping it
-/// would be the edit again.
-fn wrap_label(text: &str, columns: usize) -> Vec<String> {
-    let columns = columns.max(1);
+/// would be the edit again. Every line holds at least one character, so a line
+/// narrower than one glyph still ends.
+fn wrap_label(text: &str, size: f64, available: f64) -> Vec<String> {
     let characters: Vec<char> = text.chars().collect();
     let mut lines: Vec<String> = Vec::new();
     let mut start = 0;
     while start < characters.len() {
-        let remaining = characters.len() - start;
-        if remaining <= columns {
+        // The longest run from here that fits.
+        let mut end = start;
+        let mut width = 0.0;
+        while end < characters.len() {
+            let next = width + char_width(characters[end], size);
+            if next > available && end > start {
+                break;
+            }
+            width = next;
+            end += 1;
+        }
+        if end == characters.len() {
             lines.push(characters[start..].iter().collect());
             break;
         }
         // The last space inside the line, so the break lands between words when
         // there is a between to land in. The space itself stays behind.
-        let hard = start + columns;
-        let cut = characters[start..hard]
+        let cut = characters[start..end]
             .iter()
             .rposition(char::is_ascii_whitespace)
-            .map_or(hard, |offset| start + offset + 1);
+            .map_or(end, |offset| start + offset + 1);
         lines.push(characters[start..cut].iter().collect());
         start = cut;
     }
@@ -2261,9 +2592,8 @@ fn wrap_label(text: &str, columns: usize) -> Vec<String> {
 /// markers at the same position is a legitimate figure and one label written
 /// over another is an annotation silently lost.
 ///
-/// The character width is an upper bound on a glyph rather than an average, and
-/// every line is written with the `textLength` computed from it, so these boxes
-/// are what the viewer actually lays out rather than what this renderer guessed.
+/// Every line is measured with the advances of the face the figure names first,
+/// so these boxes are what a viewer drawing that face lays out.
 fn render_marker_label(
     out: &mut String,
     label: &Label,
@@ -2285,20 +2615,16 @@ fn render_marker_label(
     let mut chosen: Option<(f64, Vec<String>, f64, f64, f64)> = None;
     let mut size = MARKER_LABEL_SIZE;
     while size >= MIN_MARKER_LABEL_SIZE {
-        let character = TEXT_EM * size;
         let leading = size + 2.0;
-        let available = (frame.right - frame.left).max(character);
-        let columns = (available / character).floor().max(1.0);
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "bounded above by the canvas width and below by one"
-        )]
-        let lines = wrap_label(label.as_str(), columns as usize);
-        let Some(widest) = lines.iter().map(|line| line.chars().count()).max() else {
+        let available = frame.right - frame.left;
+        let lines = wrap_label(label.as_str(), size, available);
+        if lines.is_empty() {
             return false;
-        };
-        let block = widest as f64 * character;
+        }
+        let block = lines
+            .iter()
+            .map(|line| text_width(line, size, false))
+            .fold(0.0, f64::max);
         // Clamped to the plotting area rather than to the page. Left of the
         // frame is the value axis's own gutter, where its caption is drawn
         // rotated through the whole plot height -- and that caption is written
@@ -2307,9 +2633,7 @@ fn render_marker_label(
         // right bound for it, and bounding it here needs no second collision
         // box to discover that.
         let left = (x + 3.0).max(frame.left).min(frame.right - block);
-        // The natural place for every label. Both value-axis ends are already
-        // in `occupied`, so a label that would land on one steps past it below
-        // rather than being pushed down by a rule of its own.
+        // The natural place for every label, just inside the top of the plot.
         let wanted = plot_top + 12.0;
         // The block belongs to the panel that owns the marker, not to the
         // page. Below the plotting area sit this panel's own domain-end labels
@@ -2343,26 +2667,26 @@ fn render_marker_label(
         return false;
     };
     let leading = size + 2.0;
-    let character = TEXT_EM * size;
     let depth = (lines.len() - 1) as f64 * leading;
     occupied.push(TextBox::new(left, top, block, depth, size));
 
     let _ = write!(
         out,
-        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"{}\">",
+        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"{FONT_FAMILY}\" \
+         font-size=\"{}\">",
         precision.coordinate(left),
         precision.coordinate(top),
         colours.marker,
         precision.coordinate(size),
     );
+    // Each line was cut to fit at its measured width, so none declares a
+    // length to be stretched or squeezed to.
     for (index, line) in lines.iter().enumerate() {
         let _ = write!(
             out,
-            "<tspan x=\"{}\" y=\"{}\" xml:space=\"preserve\" textLength=\"{}\" \
-             lengthAdjust=\"spacingAndGlyphs\">{}</tspan>",
+            "<tspan x=\"{}\" y=\"{}\" xml:space=\"preserve\">{}</tspan>",
             precision.coordinate(left),
             precision.coordinate(top + index as f64 * leading),
-            precision.coordinate(line.chars().count() as f64 * character),
             escape(line),
         );
     }

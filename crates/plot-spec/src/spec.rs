@@ -40,7 +40,12 @@ use std::fmt;
 /// role, for the extraction window, the interval the engine selected and the
 /// others it considered. A version 2 reader refuses both, so the version says so.
 /// A figure using neither renders exactly as it did.
-pub const SCHEMA_VERSION: u32 = 3;
+///
+/// **Four since the publication figure**, for the same reason again: a figure
+/// may now carry a printed size -- millimetres and the point sizes its text and
+/// lines are set in -- and a title for each axis that replaces the label the
+/// source gave it. A version 3 reader refuses both fields.
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// The longest a label may be.
 ///
@@ -137,6 +142,10 @@ pub enum SpecError {
     IntervalOutsideFullDomain,
     /// A series drawn as marks from zero was asked to mark its samples again.
     SampleMarksOnDiscreteSeries,
+    /// A printed figure's text or line size was outside the accepted range.
+    TypographyOutOfRange,
+    /// One axis title was given for panels whose axes are different things.
+    AxisTitleAmbiguous,
 }
 
 impl fmt::Display for SpecError {
@@ -175,6 +184,10 @@ impl fmt::Display for SpecError {
             Self::IntervalOutsideFullDomain => "an interval was outside the panel's source domain",
             Self::SampleMarksOnDiscreteSeries => {
                 "a series drawn as marks from zero was asked to mark its samples"
+            }
+            Self::TypographyOutOfRange => "a text or line size was out of range",
+            Self::AxisTitleAmbiguous => {
+                "one axis title was given for panels whose axes are different quantities"
             }
         })
     }
@@ -1645,12 +1658,176 @@ pub enum FigureTheme {
     Dark,
 }
 
-/// How large the figure is, in figure units.
+/// A single journal column, in millimetres.
+pub const SINGLE_COLUMN_WIDTH_MM: f64 = 85.0;
+
+/// A full page width of two journal columns, in millimetres.
+pub const DOUBLE_COLUMN_WIDTH_MM: f64 = 175.0;
+
+/// The text size a printed figure starts at, in points.
+///
+/// Inside the 5 to 8 points journals ask for at final size.
+pub const DEFAULT_TEXT_PT: f64 = 7.0;
+
+/// The line weight a printed figure starts at, in points.
+pub const DEFAULT_LINE_PT: f64 = 0.75;
+
+/// The edges a printed figure may have, in millimetres.
+pub const MIN_PRINT_EDGE_MM: f64 = 20.0;
+pub const MAX_PRINT_EDGE_MM: f64 = 600.0;
+
+/// The text sizes a printed figure may be set in, in points.
+pub const MIN_TEXT_PT: f64 = 4.0;
+pub const MAX_TEXT_PT: f64 = 24.0;
+
+/// The line weights a printed figure may be drawn with, in points.
+pub const MIN_LINE_PT: f64 = 0.1;
+pub const MAX_LINE_PT: f64 = 4.0;
+
+/// The size the renderer sets its tick labels at, in figure units.
+///
+/// The one number the printed scale is defined by: a figure unit of a printed
+/// figure is whatever length makes this many of them the chosen text size. Every
+/// floor above -- the narrowest figure, the chrome, the shortest panel -- was
+/// drawn for text this size, so they keep meaning "room for the words" whatever
+/// the paper is, and a figure too small for its own text is refused by the same
+/// rule a pixel figure is.
+pub const BASE_TEXT_UNITS: f64 = 11.0;
+
+const MM_PER_INCH: f64 = 25.4;
+const PT_PER_INCH: f64 = 72.0;
+
+/// A figure's size on paper, and the sizes its text and lines are set in.
+///
+/// `Deserialize` is implemented rather than derived, as [`Domain`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct PrintSize {
+    width_mm: f64,
+    height_mm: f64,
+    text_pt: f64,
+    line_pt: f64,
+}
+
+#[derive(Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
+struct WirePrintSize {
+    width_mm: f64,
+    height_mm: f64,
+    text_pt: f64,
+    line_pt: f64,
+}
+
+impl From<WirePrintSize> for PrintSize {
+    fn from(wire: WirePrintSize) -> Self {
+        Self {
+            width_mm: wire.width_mm,
+            height_mm: wire.height_mm,
+            text_pt: wire.text_pt,
+            line_pt: wire.line_pt,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PrintSize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let print = Self::from(WirePrintSize::deserialize(deserializer)?);
+        print.validate().map_err(serde::de::Error::custom)?;
+        Ok(print)
+    }
+}
+
+impl PrintSize {
+    /// Accepts one printed size, or says why it is not one.
+    ///
+    /// # Errors
+    ///
+    /// [`SpecError::FigureSizeOutOfRange`] for an edge outside
+    /// [`MIN_PRINT_EDGE_MM`]..=[`MAX_PRINT_EDGE_MM`], and
+    /// [`SpecError::TypographyOutOfRange`] for a text or line size outside its
+    /// range. Whether the text fits the paper is [`FigureSize::printed`]'s
+    /// question.
+    pub fn new(
+        width_mm: f64,
+        height_mm: f64,
+        text_pt: f64,
+        line_pt: f64,
+    ) -> Result<Self, SpecError> {
+        let print = Self {
+            width_mm,
+            height_mm,
+            text_pt,
+            line_pt,
+        };
+        print.validate()?;
+        Ok(print)
+    }
+
+    fn validate(self) -> Result<(), SpecError> {
+        let within =
+            |value: f64, low: f64, high: f64| value.is_finite() && (low..=high).contains(&value);
+        if !within(self.width_mm, MIN_PRINT_EDGE_MM, MAX_PRINT_EDGE_MM)
+            || !within(self.height_mm, MIN_PRINT_EDGE_MM, MAX_PRINT_EDGE_MM)
+        {
+            return Err(SpecError::FigureSizeOutOfRange);
+        }
+        if !within(self.text_pt, MIN_TEXT_PT, MAX_TEXT_PT)
+            || !within(self.line_pt, MIN_LINE_PT, MAX_LINE_PT)
+        {
+            return Err(SpecError::TypographyOutOfRange);
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub const fn width_mm(self) -> f64 {
+        self.width_mm
+    }
+
+    #[must_use]
+    pub const fn height_mm(self) -> f64 {
+        self.height_mm
+    }
+
+    #[must_use]
+    pub const fn text_pt(self) -> f64 {
+        self.text_pt
+    }
+
+    #[must_use]
+    pub const fn line_pt(self) -> f64 {
+        self.line_pt
+    }
+
+    /// The figure units this paper size is drawn in.
+    fn units(self) -> (f64, f64) {
+        let per_mm = PT_PER_INCH / MM_PER_INCH * BASE_TEXT_UNITS / self.text_pt;
+        (self.width_mm * per_mm, self.height_mm * per_mm)
+    }
+
+    /// The line weight, in figure units.
+    fn line_units(self) -> f64 {
+        self.line_pt * BASE_TEXT_UNITS / self.text_pt
+    }
+}
+
+/// How large the figure is, in figure units, and on paper when it is printed.
+///
+/// A figure unit is a CSS pixel for a figure sized in pixels, and the length
+/// that makes [`BASE_TEXT_UNITS`] the chosen text size for a printed one.
 /// `Deserialize` is implemented rather than derived, as [`Domain`].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct FigureSize {
     width: f64,
     height: f64,
+    /// The paper size these units were derived from, when there is one.
+    print: Option<PrintSize>,
 }
 
 #[derive(Deserialize)]
@@ -1662,6 +1839,8 @@ pub struct FigureSize {
 struct WireFigureSize {
     width: f64,
     height: f64,
+    #[serde(default)]
+    print: Option<WirePrintSize>,
 }
 
 impl From<WireFigureSize> for FigureSize {
@@ -1669,6 +1848,7 @@ impl From<WireFigureSize> for FigureSize {
         Self {
             width: wire.width,
             height: wire.height,
+            print: wire.print.map(Into::into),
         }
     }
 }
@@ -1685,18 +1865,50 @@ impl<'de> Deserialize<'de> for FigureSize {
 }
 
 impl FigureSize {
-    /// Accepts one size, or says why it is not one.
+    /// Accepts one size in figure units, or says why it is not one.
     ///
     /// # Errors
     ///
     /// Refuses a non-finite, non-positive or unbounded edge.
     pub fn new(width: f64, height: f64) -> Result<Self, SpecError> {
-        let size = Self { width, height };
+        let size = Self {
+            width,
+            height,
+            print: None,
+        };
+        size.validate()?;
+        Ok(size)
+    }
+
+    /// Accepts one printed size, drawn at its physical dimensions.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`], over the figure units the paper and the text size
+    /// come to: text too large for its paper leaves too few units for the
+    /// floors, and is refused as [`SpecError::FigureSizeOutOfRange`].
+    pub fn printed(print: PrintSize) -> Result<Self, SpecError> {
+        print.validate()?;
+        let (width, height) = print.units();
+        let size = Self {
+            width,
+            height,
+            print: Some(print),
+        };
         size.validate()?;
         Ok(size)
     }
 
     fn validate(self) -> Result<(), SpecError> {
+        // A decoded printed size states its units as well as its paper, and the
+        // two must be the one derivation: units that disagree with their paper
+        // would draw one figure and label it another size.
+        if let Some(print) = self.print {
+            print.validate()?;
+            if print.units() != (self.width, self.height) {
+                return Err(SpecError::FigureSizeOutOfRange);
+            }
+        }
         let sane =
             |edge: f64, floor: f64| edge.is_finite() && edge >= floor && edge <= MAX_FIGURE_EDGE;
         // The height floor here is the one-panel case; a figure with more
@@ -1719,6 +1931,21 @@ impl FigureSize {
     pub const fn height(self) -> f64 {
         self.height
     }
+
+    /// The paper size, for a printed figure.
+    #[must_use]
+    pub const fn print(self) -> Option<PrintSize> {
+        self.print
+    }
+
+    /// The weight every line is drawn at, in figure units.
+    ///
+    /// One unit for a figure sized in pixels, which is what every figure before
+    /// printed sizes drew.
+    #[must_use]
+    pub fn line_width(self) -> f64 {
+        self.print.map_or(1.0, PrintSize::line_units)
+    }
 }
 
 /// One figure: ordered panels, a size, a theme and its own words.
@@ -1733,6 +1960,15 @@ pub struct FigureSpec {
     pub(crate) size: FigureSize,
     pub(crate) title: Option<Label>,
     pub(crate) caption: Option<Caption>,
+    /// The words drawn for the domain axis in place of each panel's own label.
+    ///
+    /// `None` is the default: the label the panel's axis carries. The unit is
+    /// never part of this -- it stays the source's own state, folded in after
+    /// whatever words are drawn, so an edited title cannot assert a unit the
+    /// file never reported.
+    pub(crate) x_axis_title: Option<Label>,
+    /// The words drawn for the value axis, as [`Self::x_axis_title`].
+    pub(crate) y_axis_title: Option<Label>,
     /// Ordered. One panel today; the order is in the contract because a second
     /// panel must not have to change the shape to be placed.
     pub(crate) panels: Vec<PanelSpec>,
@@ -1764,6 +2000,18 @@ impl FigureSpec {
         self.caption.as_ref()
     }
 
+    /// The edited domain-axis title, when there is one.
+    #[must_use]
+    pub const fn x_axis_title(&self) -> Option<&Label> {
+        self.x_axis_title.as_ref()
+    }
+
+    /// The edited value-axis title, when there is one.
+    #[must_use]
+    pub const fn y_axis_title(&self) -> Option<&Label> {
+        self.y_axis_title.as_ref()
+    }
+
     #[must_use]
     pub fn panels(&self) -> &[PanelSpec] {
         &self.panels
@@ -1785,6 +2033,8 @@ impl FigureSpec {
             size,
             title: None,
             caption: None,
+            x_axis_title: None,
+            y_axis_title: None,
             panels,
         };
         figure.validate()?;
@@ -1821,6 +2071,27 @@ impl FigureSpec {
         for panel in &self.panels {
             panel.validate()?;
         }
+        // One title for every panel's axis is only one title where the panels'
+        // axes are one quantity. A linked figure's domain axes are retention
+        // time above and m/z below, and a single edited title would rename one
+        // of them to the other; which panel was meant is not something this
+        // boundary gets to guess.
+        let shared = |axis: fn(&PanelSpec) -> &AxisSpec| {
+            self.panels
+                .windows(2)
+                .all(|pair| axis(&pair[0]).label == axis(&pair[1]).label)
+        };
+        if (self.x_axis_title.is_some() && !shared(PanelSpec::x_axis))
+            || (self.y_axis_title.is_some() && !shared(PanelSpec::y_axis))
+        {
+            return Err(SpecError::AxisTitleAmbiguous);
+        }
+        for title in [&self.x_axis_title, &self.y_axis_title]
+            .into_iter()
+            .flatten()
+        {
+            title.validate()?;
+        }
         Ok(())
     }
 
@@ -1828,6 +2099,34 @@ impl FigureSpec {
     pub fn with_title(mut self, title: Label) -> Self {
         self.title = Some(title);
         self
+    }
+
+    /// Replaces the words drawn for either axis; `None` keeps the default.
+    ///
+    /// # Errors
+    ///
+    /// [`SpecError::AxisTitleAmbiguous`] where the figure's panels disagree
+    /// about what that axis is.
+    pub fn with_axis_titles(
+        mut self,
+        x_axis: Option<Label>,
+        y_axis: Option<Label>,
+    ) -> Result<Self, SpecError> {
+        self.x_axis_title = x_axis;
+        self.y_axis_title = y_axis;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// The same figure at another size: pixels, or printed.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a size too small for the panels this figure holds.
+    pub fn with_size(mut self, size: FigureSize) -> Result<Self, SpecError> {
+        self.size = size;
+        self.validate()?;
+        Ok(self)
     }
 
     #[must_use]
@@ -1891,6 +2190,10 @@ struct WireFigure {
     size: WireFigureSize,
     title: Option<Label>,
     caption: Option<Caption>,
+    #[serde(default)]
+    x_axis_title: Option<Label>,
+    #[serde(default)]
+    y_axis_title: Option<Label>,
     panels: Vec<WirePanel>,
 }
 
@@ -1902,6 +2205,8 @@ impl From<WireFigure> for FigureSpec {
             size: wire.size.into(),
             title: wire.title,
             caption: wire.caption,
+            x_axis_title: wire.x_axis_title,
+            y_axis_title: wire.y_axis_title,
             panels: wire.panels.into_iter().map(Into::into).collect(),
         }
     }
