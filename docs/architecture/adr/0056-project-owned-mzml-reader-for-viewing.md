@@ -179,9 +179,9 @@ for:
 >   CSV/TSV preamble and the figure's labels, which admit no quoting. An
 >   undeclared unit stays undeclared.
 >
-> The desktop answers it with the existing `spectrum_refused` kind, detail
-> `mz:unit_not_an_accession` or `intensity:unit_not_an_accession`, so it needs
-> no new error kind or webview resource.
+> The desktop answers it with slice 2's `spectrum_refused` kind, detail
+> `mz:unit_not_an_accession` or `intensity:unit_not_an_accession`, so it adds
+> no error kind or webview resource beyond slice 2's eight.
 
 **It must not panic or abort on any input.** That is a requirement slice 1
 proves with its probes (decision 9). The spike did not establish it (see
