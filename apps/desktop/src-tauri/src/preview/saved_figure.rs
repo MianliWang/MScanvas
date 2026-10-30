@@ -42,8 +42,9 @@ use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
 use mscanvas_plot_spec::spec::{
-    DOUBLE_COLUMN_WIDTH_MM, Domain, FigureSize, FigureSpec, FigureTheme, Label, PrintSize,
-    SINGLE_COLUMN_WIDTH_MM, SpecError,
+    DOUBLE_COLUMN_WIDTH_MM, DataScope, Domain, FigureSize, FigureSpec, FigureTheme, Label,
+    PlotKind, PrintSize, ReductionRule, SINGLE_COLUMN_WIDTH_MM, SpecError, SpectrumRepresentation,
+    StyleRole, UnitState,
 };
 use mscanvas_proteowizard::{SelectedSpectrumResult, Sha256Digest};
 use serde::{Deserialize, Serialize};
@@ -739,28 +740,76 @@ fn seal(mut wire: WireDocument) -> Option<Vec<u8>> {
 /// another representation, a unit it now declares -- does not, and that is the
 /// difference reopening refuses. Every length is written before what it counts,
 /// so no two figures share one byte sequence.
+///
+/// The kind, unit states, roles and scopes are written as this module's own
+/// fixed tokens, not as the plot specification's serialized form, so a change
+/// to that wire form (a `FigureSpec` schema bump) refuses no saved figure. A
+/// new variant fails to compile here until it is given a token of its own.
 fn data_digest(figure: &FigureSpec) -> Option<Sha256Digest> {
     fn count(bytes: &mut Vec<u8>, value: usize) {
         bytes.extend_from_slice(&(value as u64).to_le_bytes());
     }
-    fn framed(bytes: &mut Vec<u8>, value: &impl Serialize) -> Option<()> {
-        let encoded = serde_json::to_vec(value).ok()?;
-        count(bytes, encoded.len());
-        bytes.extend_from_slice(&encoded);
-        Some(())
+    fn framed(bytes: &mut Vec<u8>, token: &[u8]) {
+        count(bytes, token.len());
+        bytes.extend_from_slice(token);
+    }
+    fn unit(bytes: &mut Vec<u8>, state: &UnitState) {
+        match state {
+            UnitState::Known { unit } => {
+                framed(bytes, b"known");
+                framed(bytes, unit.as_str().as_bytes());
+            }
+            UnitState::Unreported => framed(bytes, b"unreported"),
+            UnitState::Dimensionless => framed(bytes, b"dimensionless"),
+        }
     }
 
     let mut bytes = Vec::new();
     count(&mut bytes, figure.panels().len());
     for panel in figure.panels() {
-        framed(&mut bytes, &panel.kind())?;
-        framed(&mut bytes, &panel.x_axis().unit)?;
-        framed(&mut bytes, &panel.y_axis().unit)?;
+        framed(
+            &mut bytes,
+            match panel.kind() {
+                PlotKind::Spectrum { representation } => match representation {
+                    SpectrumRepresentation::Centroid => b"spectrum/centroid",
+                    SpectrumRepresentation::Profile => b"spectrum/profile",
+                    SpectrumRepresentation::Unreported => b"spectrum/unreported",
+                },
+                PlotKind::Chromatogram => b"chromatogram",
+            },
+        );
+        unit(&mut bytes, &panel.x_axis().unit);
+        unit(&mut bytes, &panel.y_axis().unit);
         count(&mut bytes, panel.series().len());
         for series in panel.series() {
-            framed(&mut bytes, series.id())?;
-            framed(&mut bytes, &series.role())?;
-            framed(&mut bytes, &series.scope())?;
+            framed(&mut bytes, series.id().as_str().as_bytes());
+            framed(
+                &mut bytes,
+                match series.role() {
+                    StyleRole::Measurement => b"measurement",
+                    StyleRole::SecondaryMeasurement => b"secondary_measurement",
+                    StyleRole::Baseline => b"baseline",
+                },
+            );
+            match series.scope() {
+                DataScope::FullSource => framed(&mut bytes, b"full_source"),
+                DataScope::Reduced {
+                    source_point_count,
+                    rule,
+                } => {
+                    framed(&mut bytes, b"reduced");
+                    count(&mut bytes, source_point_count);
+                    framed(
+                        &mut bytes,
+                        match rule {
+                            ReductionRule::MinMaxPerColumn => b"min_max_per_column",
+                            ReductionRule::ExtremePerSignPerColumn => {
+                                b"extreme_per_sign_per_column"
+                            }
+                        },
+                    );
+                }
+            }
             bytes.push(u8::from(series.marks_samples()));
             count(&mut bytes, series.x().len());
             for value in series.x().iter().chain(series.y()) {

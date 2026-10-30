@@ -152,6 +152,13 @@ patterns); and each marker's position. Every length is written before what it
 counts. It is what the figure is *of*; the size, theme, titles and caption
 wording are not in it.
 
+The kind, unit states, roles and scopes are written as fixed tokens this module
+owns (`spectrum/profile`, `unreported`, `measurement`, `full_source`, ...),
+not as the plot specification's serialized form. A change to that wire form, a
+`FigureSpec` schema bump such as ADR 0048's, therefore refuses no saved figure;
+a new variant of one of those types fails to compile until it is given a token
+of its own, and an existing token never changes.
+
 The source baseline proves the bytes are the same. This proves the reading is.
 A reader or builder that came to read the same bytes differently — other
 values, another precision, a representation or a unit it now declares — would
@@ -209,8 +216,9 @@ that is the intended trade.
   Locators are the project document's. Digests are 64 upper-case hexadecimal
   characters, as the project document writes them.
 - **Integrity.** `documentSha256` is SHA-256 over the document's compact
-  serialization with that field empty. Any edit to what the document says is
-  refused as `saved_figure_digest_mismatch`; reformatting is not an edit. This
+  serialization with that field empty. Any edit that leaves the document
+  well-formed and in bounds is refused as `saved_figure_digest_mismatch`;
+  reformatting is not an edit. This
   is integrity against a damaged or hand-edited file, **not authenticity**:
   anyone can recompute it.
 
@@ -281,7 +289,8 @@ artifact and a target; that belongs with decision 8.
   same `FigureSpec` and the same SVG bytes; the goldens prove it for every
   figure kind. A later renderer may draw the same specification differently, as
   the golden documents were deliberately regenerated for the publication
-  figure. The data digest is what stays fixed.
+  figure. The data digest is what stays fixed while the reader and the
+  builders read the same data from the same bytes (decision 4).
 - **Anonymity.** Unlike an exported figure, a saved figure names its source: a
   relative path, or the absolute path of a source outside its folder, and that
   file's digest. Sharing the document shares where the data was.
@@ -299,9 +308,18 @@ artifact and a target; that belongs with decision 8.
   refused with a reason a user can act on.
 - The figure builders stay the only authors of a figure; the saved figure adds
   no second one.
-- `fixtures/saved-figure-golden/linked-full-run.msfigure` pins the wire shape.
-  A change to it is a format change and needs a new `formatVersion` unless old
-  documents still read.
+- `fixtures/saved-figure-golden/linked-full-run.msfigure` pins the wire shape
+  and the two digests. Two kinds of change move it, and they are handled
+  differently:
+  - **A wire-shape change** (a field, a name, a spelling, the digest's own
+    token or framing) is a format change: once the interface has shipped, it
+    needs a new `formatVersion` unless old documents still read.
+  - **A reader or builder change** that reads the same bytes as other data
+    changes only `dataSha256` (and with it `documentSha256`). Old documents
+    of that data are refused as `saved_figure_figure_changed`, the trade
+    decision 4 accepts, and the version is not raised. The fixture is
+    regenerated and this ADR gets a dated note naming the change that moved
+    it.
 - A reader change that alters the data read from a file makes earlier saved
   figures of that file refuse to reopen. Nothing can have been saved before the
   interface exists, which lands after PR #175, so no document from the
@@ -331,7 +349,10 @@ source file and a real document in its own temporary folder:
   unknown field at five depths and a missing field are refused; eighteen
   out-of-bounds values are refused even when resealed; a resealed m/z window
   wider than the spectrum or reaching past either end is refused through the
-  export's resolver; an oversized document is refused unread;
+  export's resolver; a resealed retention-time range reaching past either end
+  of the run is refused for a chromatogram and a linked figure; a truncated
+  table regenerates no chromatogram; a reader answering another spectrum than
+  the one asked for is refused; an oversized document is refused unread;
 - a second save to the same name replaces nothing; a misnamed destination is
   refused before the source is read; a figure the source no longer regenerates
   is not saved; the linked export's range and identity rules hold;

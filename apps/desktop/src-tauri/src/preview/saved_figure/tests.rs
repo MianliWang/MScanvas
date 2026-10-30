@@ -130,6 +130,8 @@ struct Reader {
     rows: Arc<Vec<TableRowFacts>>,
     spectra: Vec<SelectedSpectrumResult>,
     refuses: bool,
+    /// Whether the table is one the preview shows truncated.
+    truncated: bool,
     /// Whether each read reads the handle it is given to its end, as a real
     /// reader does, and checks it holds the bytes that were measured.
     reads_source: bool,
@@ -141,6 +143,7 @@ impl Reader {
             rows: golden_rows(),
             spectra: vec![golden_spectrum(), selected_scan()],
             refuses: false,
+            truncated: false,
             reads_source: false,
         }
     }
@@ -163,7 +166,7 @@ impl FigureSourceReader for Reader {
         self.read(source)?;
         Ok(SourceTable {
             rows: Arc::clone(&self.rows),
-            truncated: false,
+            truncated: self.truncated,
         })
     }
 
@@ -1263,6 +1266,104 @@ fn a_resealed_m_z_window_the_spectrum_does_not_hold_is_refused() {
             "{low}..{high}",
         );
     }
+}
+
+/// A retention-time range the run does not hold is refused on reopening,
+/// through the chromatogram's own resolver, for a chromatogram and a linked
+/// figure alike, even in a resealed document.
+#[test]
+fn a_resealed_retention_time_range_the_run_does_not_hold_is_refused() {
+    let reader = Reader::golden();
+    let folder = Folder::with_source("rt-window");
+    let chromatogram = cases()
+        .into_iter()
+        .find(|case| case.name == "chromatogram-full")
+        .expect("the chromatogram case");
+    let saved = [
+        save_case(&folder, "chromatogram.msfigure", &chromatogram, &reader).expect("saved"),
+        save_case(&folder, "linked.msfigure", &linked_case(), &reader).expect("saved"),
+    ];
+    // The run spans retention times 9 to 13.
+    for document in &saved {
+        for (low, high) in [("8", "13"), ("9", "14")] {
+            let mut wire = wire_of(document);
+            if let WireFigure::Chromatogram {
+                retention_time_range,
+                ..
+            }
+            | WireFigure::Linked {
+                retention_time_range,
+                ..
+            } = &mut wire.figure
+            {
+                *retention_time_range = WireRange::Current {
+                    low: decimal(low),
+                    high: decimal(high),
+                };
+            }
+            let path = folder.write("edited.msfigure", &seal(wire).expect("sealed"));
+            assert_eq!(
+                reopen(&path, &reader).map(|_| ()),
+                Err(ReopenRefusal::Regeneration(
+                    RegenerationRefusal::RangeOutsideSource
+                )),
+                "{}: {low}..{high}",
+                document.display(),
+            );
+        }
+    }
+}
+
+/// A table the preview shows truncated has no chromatogram, here as on screen.
+#[test]
+fn a_truncated_table_regenerates_no_chromatogram() {
+    let folder = Folder::with_source("truncated");
+    let document = save_case(
+        &folder,
+        "figure.msfigure",
+        &linked_case(),
+        &Reader::golden(),
+    )
+    .expect("saved");
+    let truncated = Reader {
+        truncated: true,
+        ..Reader::golden()
+    };
+    assert_eq!(
+        reopen(&document, &truncated).map(|_| ()),
+        Err(ReopenRefusal::Regeneration(
+            RegenerationRefusal::NoChromatogram
+        )),
+    );
+}
+
+/// A reader that answers with a spectrum other than the one asked for is
+/// refused, rather than drawn under the saved index.
+#[test]
+fn a_reader_answering_another_spectrum_is_refused() {
+    struct Misindexed;
+    impl FigureSourceReader for Misindexed {
+        fn spectrum_table(&self, source: &File) -> Result<SourceTable, PreviewErrorDto> {
+            Reader::golden().spectrum_table(source)
+        }
+        fn spectrum(&self, _: &File, _: u64) -> Result<SelectedSpectrumResult, PreviewErrorDto> {
+            Ok(selected_scan())
+        }
+    }
+    let folder = Folder::with_source("misindexed");
+    let document = save_case(
+        &folder,
+        "figure.msfigure",
+        &spectrum_case(),
+        &Reader::golden(),
+    )
+    .expect("saved");
+    assert_eq!(
+        reopen(&document, &Misindexed).map(|_| ()),
+        Err(ReopenRefusal::Regeneration(
+            RegenerationRefusal::WrongSpectrum
+        )),
+    );
 }
 
 /// A source in the view cache is refused before anything is written: it is a

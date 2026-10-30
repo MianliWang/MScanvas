@@ -232,7 +232,11 @@ titles and the raster DPI, and the source's locator, byte length and SHA-256.
 Reopening refuses the source unless its bytes are the recorded ones,
 regenerates through `export::figure_spec`, `chromatogram::figure_spec` or
 `linked_figure_spec` and then `publication_figure`, and refuses a figure whose
-data digest differs from the saved one. No interface reaches it yet. See
+data digest differs from the saved one. That digest writes the plot kind, unit
+states, roles and scopes as the saved figure's own fixed tokens, not as this
+model's serialized form, so a `FigureSpec` schema bump refuses no saved figure;
+a new variant of one of those types needs a token in `saved_figure.rs` before
+it compiles. No interface reaches it yet. See
 [ADR 0062](adr/0062-saved-figurespec.md).
 
 ## Still open

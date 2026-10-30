@@ -19,6 +19,14 @@ the test's fixed reader supplies the spectrum table and the scan. The
 `dataSha256` is the digest of the data the linked golden figure draws, and
 `documentSha256` seals the rest.
 
-Regenerating it means saving that case and writing the result. A change here
-is a change to the saved-figure format: it needs a new `formatVersion` unless
-the old documents still read.
+Regenerating it means saving that case and writing the result. What a change
+here means depends on what moved (ADR 0062, Consequences):
+
+- **The wire shape** (a field, a name, a spelling, or the data digest's own
+  tokens or framing): a change to the saved-figure format. Once the interface
+  has shipped it needs a new `formatVersion` unless the old documents still
+  read.
+- **Only `dataSha256` and `documentSha256`**, because the reader or a builder
+  now reads the test's rows or spectra as other data: no new version. Old
+  documents of that data are refused as decision 4 intends; ADR 0062 gets a
+  dated note naming the change.
