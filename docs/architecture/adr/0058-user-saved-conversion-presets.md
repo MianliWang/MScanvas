@@ -130,8 +130,8 @@ every listing. The intent is stored as the JSON value the user saved.
   (ADR 0055's dependency note of 2026-10-29), answering the builder's refusal
   code. Nothing else in the store changes.
 - A preset saved as a stable id then lists as `notExpressible`, by design, not
-  migrated silently. No shipped build writes presets before that, so no user
-  data is lost.
+  migrated silently. It is kept unchanged, listed as unusable, and can still be
+  renamed or deleted; nothing rewrites it to fit.
 - The installed build's availability is not checked here. It stays with the
   configuration authority at plan time.
 
