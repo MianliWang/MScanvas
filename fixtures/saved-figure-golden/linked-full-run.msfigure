@@ -1,0 +1,39 @@
+{
+  "format": "mscanvas_saved_figure",
+  "formatVersion": 1,
+  "figure": {
+    "kind": "linked",
+    "spectrumIndex": 2,
+    "retentionTimeRange": {
+      "scope": "full"
+    },
+    "traces": {
+      "tic": true,
+      "bpc": true
+    }
+  },
+  "settings": {
+    "theme": "light",
+    "size": {
+      "unit": "pixels",
+      "width": 1200,
+      "height": 640
+    },
+    "title": null,
+    "xAxisTitle": null,
+    "yAxisTitle": null,
+    "rasterDpi": 300
+  },
+  "source": {
+    "locator": {
+      "kind": "projectRelative",
+      "path": "run.mzML"
+    },
+    "baseline": {
+      "byteLength": 70,
+      "sha256": "5EB5AD0B1DEE79C55E7478BBDF06A0D70A08936B9A8CF3484184FDBB22BF2503"
+    }
+  },
+  "dataSha256": "98C37DA674605C97B2492CA0517B5300742347FAA0406B64DAFC78F7892F7D60",
+  "documentSha256": "4D560228A4CB75886E83DF9AB90FC1E9E35ADDAD1828B633A0DC7E5FE28CC0E6"
+}
