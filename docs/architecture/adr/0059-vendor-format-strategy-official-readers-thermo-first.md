@@ -310,3 +310,21 @@ Law:
   Binding evidence to the build's digest (ADR 0055) matters more, not less.
 - **Help and release text** may say why a vendor format is unsupported, and
   name the vendor's own export where one exists.
+
+> **2026-10-30: the condition for "MS2 and up" is met.** Decision 2 kept
+> `peakPicking vendor msLevel=2-` in the advanced tier "until a public Orbitrap
+> profile-MS2 file is measured". The
+> [evidence](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md) now measures one:
+>
+> - the file is source 3c, a CC0 Q Exactive data-independent run from PRIDE
+>   `PXD066799`;
+> - on the verified 3.0.26013 build, `msLevel=2-` centroided all 23,676 of its
+>   Orbitrap profile MS2 spectra;
+> - it left the 474 profile MS1 spectra bit-identical (cases `TQ0` to `TQ2`).
+>
+> This lifts the measurement gate on "MS2 and up". It also closes the Orbitrap
+> profile-MS2 gap in "MS1 and up"'s claim, for that model. Turning "MS2 and up"
+> into a verified row is a follow-up code change, not part of this note. Other
+> Orbitrap models and data-dependent profile MS2 remain unmeasured. Whether
+> the row's source domain is the whole Thermo RAW family is settled with that
+> change, as it was for "MS1 and up".
