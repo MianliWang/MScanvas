@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import type { DestinationPolicy, WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { isRefused, openNextConversion, waitUntilOffered } from "../support/conversion";
-import { revealTauriRoster } from "../support/tauriPanel";
+import { clearRosterList, revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(HERE, "..", "..");
@@ -116,12 +116,8 @@ runNative("M6.6 real native destination and conflict proof (requires authorized 
     scenario += 1;
     await browser.setWindowSize(1366, 768);
     await showRoster();
-    const clear = browser.$("button=Clear list");
-    if (await clear.isExisting()) {
-      await reveal("#workbench-roster .roster-head");
-      await clear.click();
-      await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
-    }
+    // Clear list is the roster footer's list-menu item (direction A 2.1).
+    await clearRosterList();
   });
 
   afterEach(async () => {

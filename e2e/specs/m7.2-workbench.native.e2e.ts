@@ -69,9 +69,30 @@ async function point(selector: string) {
   return browser.execute(selector => { const box = document.querySelector(selector)!.getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; }, selector);
 }
 const row = (handle: string) => `${ROW}[data-handle="${handle}"]`;
+/** Refused controls stay enabled with aria-disabled (spec 1.4): offered means that attribute is gone. */
+async function waitUntilOffered(selector: string) {
+  await browser.$(selector).waitForExist();
+  await browser.waitUntil(async () => (await browser.$(selector).getAttribute("aria-disabled")) !== "true", { timeoutMsg: `${selector} was never offered` });
+}
+/** New group is the roster footer's list-menu item (direction A 2.1). */
+async function newGroup(name: string) {
+  await browser.$("[data-roster-list-menu]").click(); await browser.$("[data-roster-new-group]").click();
+  await browser.$("#organization-group-name").setValue(name); await browser.$("button=Save group").click();
+  await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+}
+/** The spectrum's figure settings live in the figure dialog; its drafts are the workspace's, so they outlive it. */
+const SPECTRUM_WIDTH = '.figure-export-dialog input[id$="-widthPx"]';
+async function inSpectrumFigure<T>(act: () => Promise<T>): Promise<T> {
+  await browser.$('.spectrum-panel .figure-quick-actions button[aria-label="Export figure"]').click();
+  await browser.$(SPECTRUM_WIDTH).waitForDisplayed({ timeout: 60_000 });
+  try { return await act(); } finally {
+    await browser.$('.figure-export-dialog button[aria-label="Return to viewer"]').click();
+    await browser.$(".figure-export-dialog").waitForExist({ reverse: true });
+  }
+}
 async function add(file: string) {
   const before = await browser.$$(ROW).map(row => row.getAttribute("data-handle"));
-  await browser.$(ADD).waitForEnabled();
+  await waitUntilOffered(ADD);
   const [result] = await Promise.all([helper("choose-workspace-files", ["-Action", "choose", "-Path", file, "-TimeoutSeconds", "35"]), browser.$(ADD).click()]);
   expect(result.closed).toBe(true); expect(result.entered).toBe(true);
   await browser.waitUntil(async () => (await browser.$$(ROW).length) === before.length + 1);
@@ -172,15 +193,15 @@ describe("M7.2 affected final native workbench paths", function () {
     expect(trace.some(item => item.phase === "surface" && item.surface === "conversion" && item.time >= read.startTime && item.time < read.responseEnd && item.conversionBadge === false)).toBe(true);
     await browser.$(".workbench-home").click();
     await browser.$('.spectrum-table [role="row"][aria-rowindex="2"]').click();
-    await browser.$('.spectrum-panel input[id$="-widthPx"]').waitForDisplayed({ timeout: 60_000 });
-    await browser.$('.spectrum-panel input[id$="-widthPx"]').setValue("0640");
+    await inSpectrumFigure(() => browser.$(SPECTRUM_WIDTH).setValue("0640"));
     const before = await calls();
     await settings("zh-CN", "compact"); await capture("02-native-zh-retained-evidence");
     await browser.$(".workbench-navigation button:nth-child(2)").click(); await browser.$(".workbench-home").click();
-    expect(await browser.$('.spectrum-panel input[id$="-widthPx"]').getValue()).toBe("0640");
     expect(await browser.$(`${row(firstHandle)}.is-active`).isExisting()).toBe(true);
     expect(await calls()).toEqual(before);
+    // Read after the call check: reopening the dialog asks for a preview.
     await settings("en", "comfortable");
+    expect(await inSpectrumFigure(() => browser.$(SPECTRUM_WIDTH).getValue())).toBe("0640");
   });
   it("review regression: exposes loaded details and announces real in-group keyboard targets", async () => {
     const normalViewport = viewport;
@@ -213,19 +234,20 @@ describe("M7.2 affected final native workbench paths", function () {
       await browser.keys("Enter");
       await browser.$('.grouped-roster[data-drag-active="true"]').waitForExist({ reverse: true });
       expect(await browser.$$(ROW).map(node => node.getAttribute("data-handle"))).toEqual([secondHandle, firstHandle]);
-      await browser.$(language === "en" ? "button=Undo organization" : "button=撤销组织操作").click();
+      // Undo is an icon button in the roster footer, named by its label.
+      await browser.$(`button[aria-label="${language === "en" ? "Undo organization" : "撤销组织操作"}"]`).click();
       expect(await browser.$$(ROW).map(node => node.getAttribute("data-handle"))).toEqual([firstHandle, secondHandle]);
     }
     await settings("en", "comfortable");
     expect(await calls()).toEqual(before);
     expect(await browser.$(`${row(firstHandle)}.is-active`).isExisting()).toBe(true);
-    expect(await browser.$('.spectrum-panel input[id$="-widthPx"]').getValue()).toBe("0640");
+    expect(await inSpectrumFigure(() => browser.$(SPECTRUM_WIDTH).getValue())).toBe("0640");
   });
   it("moves two real native acquisitions locally and accepts an actual Explorer file/folder drop into ungrouped", async () => {
     rawHandle = await add(join(INPUTS, "retained/M72-retained.raw"));
     await browser.performActions([{ type: "key", id: "native-selection", actions: [{ type: "keyDown", value: "\uE009" }] }]);
     await browser.$(row(firstHandle)).click(); await browser.releaseActions();
-    await browser.$("button=New group").click(); await browser.$("#organization-group-name").setValue("Native group"); await browser.$("button=Save group").click();
+    await newGroup("Native group");
     const before = await calls(), source = await point(`${row(firstHandle)} .row-drag-handle`);
     await browser.performActions([{ type: "pointer", id: "native-organization", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", ...source, origin: "viewport", duration: 0 }, { type: "pointerDown", button: 0 }, { type: "pointerMove", x: source.x + 12, y: source.y + 8, origin: "viewport", duration: 180 }] }]);
     await browser.$('.grouped-roster[data-drag-active="true"]').waitForExist(); await capture("03-native-drag-pickup");
@@ -259,7 +281,7 @@ describe("M7.2 affected final native workbench paths", function () {
     const before = await calls();
     const [result] = await Promise.all([helper("choose-workspace-files", ["-Action", "escape", "-TimeoutSeconds", "35"]), browser.$(ADD).click()]);
     expect(result.closed).toBe(true);
-    await browser.$(ADD).waitForEnabled();
+    await waitUntilOffered(ADD);
     // No click, focus() or foreground helper after cancellation.
     await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches(".roster-head [data-add-files]") === true));
     expect(metrics().foregroundProcessId).toBe(processId);
@@ -267,10 +289,7 @@ describe("M7.2 affected final native workbench paths", function () {
     expect((await calls()).slice(before.length).filter(call => call.command === "open_mzml_preview")).toEqual([]);
   });
   it("restores native menu focus after moving a real acquisition into a collapsed group", async () => {
-    await browser.$("button=New group").click();
-    await browser.$("#organization-group-name").setValue("Native menu target");
-    await browser.$("button=Save group").click();
-    await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+    await newGroup("Native menu target");
     const groupId = await browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>(".roster-group-header"))
       .find(element => element.querySelector(".group-disclosure")?.textContent?.includes("Native menu target"))?.dataset.groupId);
     if (groupId === undefined) throw Error("Native menu destination was not created.");
@@ -291,10 +310,7 @@ describe("M7.2 affected final native workbench paths", function () {
     await capture("review-native-collapsed-menu-recovered");
   });
   it("restores native group-menu focus after dissolving a populated group", async () => {
-    await browser.$("button=New group").click();
-    await browser.$("#organization-group-name").setValue("Native dissolve target");
-    await browser.$("button=Save group").click();
-    await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+    await newGroup("Native dissolve target");
     const groupId = await browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>(".roster-group-header"))
       .find(element => element.querySelector(".group-disclosure")?.textContent?.includes("Native dissolve target"))?.dataset.groupId);
     if (groupId === undefined) throw Error("Native dissolve target was not created.");
@@ -306,7 +322,8 @@ describe("M7.2 affected final native workbench paths", function () {
     await capture("review-native-group-dissolve-before");
     await browser.$(`${group} .row-menu-trigger`).click(); await browser.keys(["End", "Enter"]);
     await browser.$(group).waitForExist({ reverse: true });
-    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-new-group]") === true));
+    // Dissolving hands the keyboard to the list menu that holds New group (direction A 2.1).
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true));
     expect(await browser.$(row(firstHandle)).getAttribute("data-group")).toBe("ungrouped");
     expect(await browser.$(`${row(firstHandle)} input[type="checkbox"]`).isSelected()).toBe(membership);
     expect(await calls()).toEqual(before); expect(await previewReads()).toEqual(beforeReads);

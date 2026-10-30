@@ -5,7 +5,9 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, 
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FigurePreviewRequest, WorkspaceConversionUpdate, WorkspaceRoster } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { UI_RESOURCES } from "../../apps/desktop/src/features/preferences/i18n";
 import { openNextConversion } from "../support/conversion";
+import { choosePlotMenuItem, figureActions, openPlotMenu, plotMenuItem, plotMenuTrigger } from "../support/figure";
 import { nativeResourceOrigins } from "../support/nativeResourceOrigins";
 import { inspectNativePng, matchesNativePreviewDigest } from "../support/m74NativeFixture";
 import { installM74PreviewBlobObserver } from "../support/m74PreviewBlobObserver";
@@ -14,6 +16,10 @@ import type { ObservedPreviewBlob } from "../support/m74PreviewBlobObserver";
 const HERE = dirname(fileURLToPath(import.meta.url)), REPO = resolve(HERE, "../..");
 const PANEL = ".conversion-panel", CONVERT = PANEL + " button.conversion-start", RESULT = PANEL + " .conversion-running";
 const ROWS = ".grouped-roster [data-handle]", FIGURE = '[role="dialog"].figure-export-dialog';
+const CHROMATOGRAM = ".chromatogram-panel", en = UI_RESOURCES.en;
+/** The roster footer's list menu (direction A 2.1); Clear's confirmation gives the keyboard back to it. */
+const LIST_MENU = "#workbench-roster [data-roster-list-menu]";
+const listMenu = () => browser.$(LIST_MENU);
 const input = process.env.MSCANVAS_M74_INPUT_ROOT;
 const evidence: unknown[] = [], sources = new Map<string, string>();
 let output = "", processId = 0, dpi = 0, lastOutput = "";
@@ -64,10 +70,10 @@ async function remember(selector: string, name: string | null = null) {
 }
 async function naturalReturn(label: string, replacementConvert = false) {
   try {
-    await browser.waitUntil(async () => metrics().foregroundProcessId === processId && await browser.execute(replacement => {
-      const target = replacement ? document.querySelector(".conversion-plan button.primary-button") : Reflect.get(window, "__m74PickerTrigger");
+    await browser.waitUntil(async () => metrics().foregroundProcessId === processId && await browser.execute((replacement, convert) => {
+      const target = replacement ? document.querySelector(convert) : Reflect.get(window, "__m74PickerTrigger");
       return document.hasFocus() && document.activeElement === target;
-    }, replacementConvert), { timeout: 15_000, interval: 500, timeoutMsg: "The native picker did not return naturally to its initiating action." });
+    }, replacementConvert, CONVERT), { timeout: 15_000, interval: 500, timeoutMsg: "The native picker did not return naturally to its initiating action." });
   } finally { record({ kind: "natural picker return", label, replacementConvert, owned: metrics(), focus: await browser.execute(() => ({ focused: document.hasFocus(), element: document.activeElement?.outerHTML })) }); }
 }
 async function activeClearAction(name: "Remove non-running" | "Cancel and clear") {
@@ -195,13 +201,29 @@ async function selectOnly(paths: string[]) {
       Reflect.deleteProperty(window, "__m74StopMembershipTrace"); return stop();
     }) });
   }
-  await conversion(); await browser.$(CONVERT).waitForEnabled({ timeout: 60_000 });
+  await conversion(); await offered(CONVERT);
 }
 async function clearIdle() {
   expect((await state()).status).not.toBe("running");
   await workbench(); await showRoster();
-  if ((await roster()).datasets.length) { await browser.$("button=Clear list").click(); await browser.waitUntil(async () => (await roster()).datasets.length === 0); }
+  if ((await roster()).datasets.length) { await clearList(); await browser.waitUntil(async () => (await roster()).datasets.length === 0); }
 }
+/** Clear list is the roster's list-menu item while the list has rows. */
+async function clearList() {
+  await reveal(LIST_MENU); await listMenu().click();
+  await browser.$('[role="menu"] [data-roster-clear]').click();
+}
+/** A plot head's Export… (named "Export figure"), which opens the figure dialog. */
+async function exportFigure(panel: string) {
+  await reveal(figureActions(panel)); await browser.$(`${figureActions(panel)} button[aria-label="${en.figureExportTitle}"]`).click();
+  await browser.$(FIGURE).waitForDisplayed();
+}
+/** Convert and other refusable actions stay enabled with aria-disabled (spec 1.4): offered means that attribute is gone. */
+async function offered(selector: string) {
+  await browser.$(selector).waitForExist({ timeout: 60_000 });
+  await browser.waitUntil(async () => (await browser.$(selector).getAttribute("aria-disabled")) !== "true", { timeout: 60_000, timeoutMsg: selector + " was never offered" });
+}
+async function returnToViewer() { await browser.$(FIGURE).$(`button[aria-label="${en.figureExportReturn}"]`).click(); }
 function source(name: string, original: string) {
   const path = join(output, "sources", name); mkdirSync(dirname(path), { recursive: true }); copyFileSync(original, path); sources.set(path, digest(path)); return path;
 }
@@ -254,7 +276,15 @@ async function terminal() {
 }
 async function save(selector: string, name: string, title: string, path: string, cancel = false) {
   await reveal(selector); await remember(selector + " button", name);
-  const [result] = await Promise.all([helper("save-dialog", ["-Title", title, "-Action", cancel ? "cancel" : "save", "-Path", path, "-TimeoutSeconds", "35"]), browser.$(selector).$("button=" + name).click()]);
+  await saveBy(() => browser.$(selector).$("button=" + name).click(), title, path, cancel);
+}
+/** A save started from a plot's ⋯ menu item: the keyboard comes back to the ⋯ trigger. */
+async function saveFromMenu(panel: string, item: string, title: string, path: string, cancel = false) {
+  await remember(plotMenuTrigger(panel)); await openPlotMenu(panel);
+  await saveBy(() => browser.$(plotMenuItem(item)).click(), title, path, cancel);
+}
+async function saveBy(press: () => Promise<unknown>, title: string, path: string, cancel: boolean) {
+  const [result] = await Promise.all([helper("save-dialog", ["-Title", title, "-Action", cancel ? "cancel" : "save", "-Path", path, "-TimeoutSeconds", "35"]), press()]);
   expect(result.found).toBe(true); expect(result.invoked).toBe(true); await naturalReturn(basename(path));
   if (cancel) expect(existsSync(path)).toBe(false); else { await browser.waitUntil(() => existsSync(path)); record({ kind: "real export", name: basename(path), bytes: readFileSync(path).length, sha256: digest(path) }); }
 }
@@ -287,7 +317,8 @@ async function scope(panel: string, name: "Current range" | "Full spectrum" | "F
 }
 async function edit(axis: "rt" | "mz", low: string, high: string) {
   const panel = axis === "rt" ? ".chromatogram-panel" : ".spectrum-panel";
-  const details = browser.$(panel + " .plot-range-editor"); if (await details.getAttribute("open") === null) await details.$("summary").click();
+  // Set range… is the plot's ⋯ menu's first item (direction A); it opens the form in place.
+  if (!(await browser.$("#plot-range-" + axis + "-editor").isExisting())) await choosePlotMenuItem(panel, "Set range…");
   await browser.$("#plot-range-" + axis + "-low").setValue(low); await browser.$("#plot-range-" + axis + "-high").setValue(high);
   await browser.$(panel + " .plot-range-form button[type=submit]").click();
 }
@@ -366,7 +397,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     record({ kind: "explicit local diagnostics", bytes: Buffer.byteLength(diagnosticText), sha256: digest(diagnostics), schema: diagnostic.schema, version: diagnostic.version });
     await browser.$(PANEL + " .conversion-adoption button").click(); await browser.waitUntil(async () => (await roster()).datasets.length === 3);
     expect(await browser.$(PANEL + " .conversion-adoption-summary").getText()).toContain("1 added");
-    await browser.$('input[name="conversion-conflict-policy"][value="skip"]').click(); await browser.$(CONVERT).waitForEnabled();
+    await browser.$('input[name="conversion-conflict-policy"][value="skip"]').click(); await offered(CONVERT);
     await start(folder); const skipped = await terminal(); expect(skipped.queue.skippedCount).toBe(2); expect(digest(occupied)).toBe(occupiedHash);
     record({ kind: "pre-existing target preserved", name: basename(occupied), sha256: occupiedHash });
   });
@@ -380,25 +411,30 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       await add(member); await naturalReturn("active Clear input " + basename(member));
     }
     await selectOnly(members);
-    await browser.$('input[name="conversion-conflict-policy"][value="fail"]').click(); await browser.$(CONVERT).waitForEnabled();
+    await browser.$('input[name="conversion-conflict-policy"][value="fail"]').click(); await offered(CONVERT);
     await start(destination("active-clear")); await browser.waitUntil(async () => (await state()).status === "running");
     await showRoster(); const before = (await calls()).filter(call => call.command === "execute_workspace_clear").length;
     const running = await state();
     if (running.status !== "running") throw Error("The eight-member Clear scenario needs an actual running queue.");
     expect(running.queue.items.map(item => item.fileName).sort()).toEqual(members.map(member => basename(member)).sort());
     record({ kind: "active Clear exact queue membership", state: running });
-    await browser.$("button=Clear list").click(); await browser.$('[role="dialog"]').$('button=Return').waitForDisplayed();
+    await clearList(); await browser.$('[role="dialog"]').$('button=Return').waitForDisplayed();
     expect(await browser.execute(() => document.activeElement?.textContent)).toBe("Return"); await browser.$('[role="dialog"]').$('button=Return').click();
-    await browser.$('[role="dialog"]').waitForExist({ reverse: true }); await expect(browser.$("button=Clear list")).toBeFocused();
-    await browser.$("button=Clear list").click(); await browser.keys("Escape");
+    await browser.$('[role="dialog"]').waitForExist({ reverse: true }); await expect(listMenu()).toBeFocused();
+    await clearList(); await browser.keys("Escape");
     await browser.$('[role="dialog"]').waitForExist({ reverse: true });
-    await expect(browser.$("button=Clear list")).toBeFocused();
+    await expect(listMenu()).toBeFocused();
     expect((await calls()).filter(call => call.command === "execute_workspace_clear")).toHaveLength(before);
-    await browser.$("button=Clear list").click(); await browser.$('[role="dialog"]').$('button=Remove non-running').waitForEnabled();
+    // Refused rather than disabled while pending (spec 1.4), so offered means not aria-disabled.
+    const dialogOffered = async (name: string) => {
+      const action = browser.$('[role="dialog"]').$("button=" + name); await action.waitForExist();
+      await browser.waitUntil(async () => (await action.getAttribute("aria-disabled")) !== "true");
+    };
+    await clearList(); await dialogOffered("Remove non-running");
     await activeClearAction("Remove non-running");
-    await expect(browser.$("button=Clear list")).toBeFocused();
+    await expect(listMenu()).toBeFocused();
     expect((await roster()).datasets.map(row => row.fileName).sort()).toEqual(members.map(member => basename(member)).sort());
-    expect((await state()).status).toBe("running"); await browser.$("button=Clear list").click(); await browser.$('[role="dialog"]').$('button=Cancel and clear').waitForEnabled();
+    expect((await state()).status).toBe("running"); await clearList(); await dialogOffered("Cancel and clear");
     await activeClearAction("Cancel and clear");
     await browser.waitUntil(async () => (await roster()).datasets.length === 0, { timeout: 60_000 });
     const update = await read<WorkspaceConversionUpdate>("get_workspace_conversion_state"); expect(update.backendQuarantined).toBe(false);
@@ -434,7 +470,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       await browser.$("button=Clean owned temporary output").click(); await browser.$("button=Review a new plan").waitForDisplayed();
       expect(existsSync(dirname(dirname(staged)))).toBe(false);
       expect(await browser.execute(() => document.activeElement?.textContent)).toBe("Review a new plan"); await capture("03-native-cleaned-replan-" + topology);
-      await browser.$("button=Review a new plan").click(); await browser.$(CONVERT).waitForEnabled();
+      await browser.$("button=Review a new plan").click(); await offered(CONVERT);
       await start(sciex ? destination("recovered-set") : folder);
       const next = await terminal(); expect(next.queue.finalizedCount).toBe(1); expect(next.operationId).not.toBe(failed.operationId);
       for (const member of publishedBeforeCleanup) expect(digest(member.path)).toBe(member.sha256);
@@ -445,7 +481,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
     await browser.execute(installM74PreviewBlobObserver);
     try {
       await clearIdle();
-      expect(await browser.$("button=Preview linked figure").isExisting()).toBe(false);
+      expect(await browser.$(plotMenuTrigger(CHROMATOGRAM)).isExisting()).toBe(false);
       const path = source("M74-linked-entry-12-scans.mzML", join(input!, "synthetic-12-scans.mzML"));
       await workbench(); await showRoster(); await remember("button", "Add files…");
       await add(path); await naturalReturn("linked-entry input picker");
@@ -453,24 +489,32 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(loadedRoster.datasets).toHaveLength(1);
       expect(loadedRoster.datasets[0]).toMatchObject({ fileName: basename(path), sourceKind: "mzml" });
       await browser.$(ROWS).click(); await browser.$(".spectrum-table-panel").waitForDisplayed(); await workbench();
-      await browser.$("#chromatogram-export-toggle").click();
-      const entrySelector = "#chromatogram-export-panel > button", entry = browser.$(entrySelector);
+      // The linked figure is the chromatogram's ⋯ menu item "Linked figure…"
+      // (direction A). Refused, it stays in the menu with its reason printed
+      // inside it, and the dialog it opens returns the keyboard to the trigger.
+      const more = plotMenuTrigger(CHROMATOGRAM), entry = browser.$(plotMenuItem(en.figurePreviewLinked));
       const previewCalls = async () => (await calls()).filter(call => call.command === "preview_figure");
       const blocked = async (reason: string, phase: string) => {
-        expect(await entry.isEnabled()).toBe(false);
-        expect(await entry.getAttribute("aria-describedby")).toBe("chromatogram-linked-unavailable");
-        expect(await browser.$("#chromatogram-linked-unavailable").getText()).toBe(reason);
-        await reveal(entrySelector); await entry.click();
+        await openPlotMenu(CHROMATOGRAM);
+        expect(await entry.getAttribute("aria-disabled")).toBe("true");
+        expect(await entry.$(".plot-menu-reason").getText()).toBe(reason);
+        await entry.click();
         expect(await browser.$(FIGURE).isExisting()).toBe(false);
         record({ kind: "linked preview entry refused in viewer", phase, reason, entry: await entry.getHTML(), previewCalls: await previewCalls() });
         await capture("linked-entry-" + phase);
+        await browser.keys("Escape");
       };
-      await blocked("Select a scan and wait for its spectrum to load.", "no-spectrum");
+      const openLinked = async () => {
+        await openPlotMenu(CHROMATOGRAM);
+        await browser.waitUntil(async () => (await entry.getAttribute("aria-disabled")) !== "true", { timeoutMsg: "Linked figure… was never offered" });
+        await entry.click();
+      };
+      await blocked(en.linkedNoSpectrum, "no-spectrum");
       expect(await previewCalls()).toHaveLength(0);
       await reveal('.spectrum-table-panel [data-source-index="1"]');
       await browser.$('.spectrum-table-panel [data-source-index="1"]').click();
       await browser.waitUntil(async () => String(await browser.$("#selected-spectrum-summary").getProperty("textContent")).startsWith("Spectrum 1,"));
-      await entry.waitForEnabled(); await reveal(entrySelector); await entry.click();
+      await openLinked();
       const first = await preview(), firstRequest = JSON.parse(first.request.requestJson) as FigurePreviewRequest;
       expect(firstRequest.source).toMatchObject({ kind: "linked", traces: { tic: true, bpc: false } });
       if (firstRequest.source.kind !== "linked") throw Error("The actual preview is not linked.");
@@ -479,23 +523,25 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(first.svg).toContain("spectrum index 1");
       expect(first.svg).toContain("&quot;Selected scan&quot; at 60.");
       await capture("linked-entry-selected-source");
-      await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
+      await returnToViewer();
       const beforeNoTrace = (await previewCalls()).length;
-      await browser.$("label=TIC").scrollIntoView({ block: "center" }); await browser.$("label=TIC").click();
-      await blocked("Show at least one trace to export the linked figure.", "no-trace");
+      // The traces are toggle buttons in the plot head (direction A).
+      const trace = (name: string) => browser.$(`${CHROMATOGRAM} .plot-traces`).$("button=" + name);
+      await trace("TIC").scrollIntoView({ block: "center" }); await trace("TIC").click();
+      await blocked(en.linkedNoTrace, "no-trace");
       expect(await previewCalls()).toHaveLength(beforeNoTrace);
-      await browser.$("label=BPC").scrollIntoView({ block: "center" }); await browser.$("label=BPC").click();
-      await entry.waitForEnabled(); await reveal(entrySelector); await entry.click();
+      await trace("BPC").scrollIntoView({ block: "center" }); await trace("BPC").click();
+      await openLinked();
       const restored = await preview(), restoredRequest = JSON.parse(restored.request.requestJson) as FigurePreviewRequest;
       expect(restoredRequest.source).toMatchObject({ kind: "linked", chromatogramToken: firstRequest.source.chromatogramToken,
         spectrumToken: firstRequest.source.spectrumToken, traces: { tic: false, bpc: true } });
       expect(restored.svg).toContain("spectrum index 1");
       expect(restored.svg).toContain("&quot;Selected scan&quot; at 60.");
-      await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
+      await returnToViewer();
       await reveal('.spectrum-table-panel [data-source-index="2"]');
       await browser.$('.spectrum-table-panel [data-source-index="2"]').click();
       await browser.waitUntil(async () => String(await browser.$("#selected-spectrum-summary").getProperty("textContent")).startsWith("Spectrum 2,"));
-      await entry.waitForEnabled(); await reveal(entrySelector); await entry.click();
+      await openLinked();
       const next = await preview(), nextRequest = JSON.parse(next.request.requestJson) as FigurePreviewRequest;
       expect(nextRequest.source).toMatchObject({ kind: "linked", chromatogramToken: firstRequest.source.chromatogramToken, traces: { tic: false, bpc: true } });
       if (nextRequest.source.kind !== "linked") throw Error("The replacement preview is not linked.");
@@ -517,8 +563,8 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       record({ kind: "linked entry actual saved consumer and cancelled picker", fileName: basename(saved),
         bytes: statSync(saved).size, sha256: savedHash, previewSpecId: next.specId, previewBytesEqual: true });
       await capture("linked-entry-restored-source");
-      await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
-      await browser.waitUntil(async () => browser.execute(css => document.hasFocus() && document.activeElement === document.querySelector(css), entrySelector));
+      await returnToViewer();
+      await browser.waitUntil(async () => browser.execute(css => document.hasFocus() && document.activeElement === document.querySelector(css), more));
     } finally {
       const observer = await browser.execute(() => (Reflect.get(window, "__m74StopPreviewBlobs") as () => {
         created: number; revoked: number; overflow: boolean; captureFailed: boolean; wrappersUnchanged: boolean; restored: boolean;
@@ -535,7 +581,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       await browser.$(ROWS).click(); await browser.$(".spectrum-table-panel").waitForDisplayed(); await workbench();
       await browser.$('.spectrum-table-panel [data-source-index="1"]').click();
       await browser.waitUntil(async () => String(await browser.$("#selected-spectrum-summary").getProperty("textContent")).startsWith("Spectrum 1,"));
-      await edit("mz", "200", "550"); await pendingSpectrumBand(); await browser.$('.spectrum-panel').$('button=Export figure').click();
+      await edit("mz", "200", "550"); await pendingSpectrumBand(); await exportFigure(".spectrum-panel");
       await scope(FIGURE, "Current range"); await preview();
       await browser.$(FIGURE + ' input[id$="-widthPx"]').setValue("900"); await browser.$(FIGURE + ' input[id$="-heightPx"]').setValue("600");
       await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); const current = await preview();
@@ -551,42 +597,41 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(readFileSync(join(output, "spectrum-invalid-png-dpi.svg"), "utf8")).toBe(current.svg);
       await browser.$(FIGURE + ' input[id$="-pngDpi"]').setValue("150"); await preview();
       await save(FIGURE, "Export PNG…", "Export spectrum figure", join(output, "cancelled-dialog.png"), true);
-      await capture("04-native-preview-and-saved-content"); await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
+      await capture("04-native-preview-and-saved-content");
 
+      // Data is the dialog's Data group, scoped by the same Range control.
       const dataPanel = ".spectrum-panel";
-      await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
-      const csv = join(output, "spectrum-current.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", csv);
+      const csv = join(output, "spectrum-current.csv"); await save(FIGURE, "Export CSV…", "Export spectrum data", csv);
       const data = (path: string, separator: string) => readFileSync(path, "utf8").split(/\r?\n/u).filter(line => line && !line.startsWith("#")).slice(1).map(line => line.split(separator).map(Number));
       expect(data(csv, ",").map(row => row[0])).toEqual([200, 250, 300, 350, 400, 450, 500, 550]);
-      expect(await browser.$(dataPanel).getText()).toContain("Zoom to selection");
-      const tsv = join(output, "spectrum-current.tsv"); await save(dataPanel, "Export TSV…", "Export spectrum data", tsv); expect(data(tsv, "\t")).toEqual(data(csv, ","));
-      await scope(dataPanel, "Full spectrum"); const fullCsv = join(output, "spectrum-full.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", fullCsv);
+      const tsv = join(output, "spectrum-current.tsv"); await save(FIGURE, "Export TSV…", "Export spectrum data", tsv); expect(data(tsv, "\t")).toEqual(data(csv, ","));
+      await scope(FIGURE, "Full spectrum"); const fullCsv = join(output, "spectrum-full.csv"); await save(FIGURE, "Export CSV…", "Export spectrum data", fullCsv);
       expect(data(fullCsv, ",")).toHaveLength(12);
-      await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
-      await save(dataPanel + " .figure-quick-group", "Quick PNG", "Export spectrum figure", join(output, "cancelled-quick.png"), true);
-      const before = await calls(); await browser.$(dataPanel + ' .figure-quick-actions').$('button=Copy plot').click();
+      await returnToViewer();
+      expect(await browser.$(dataPanel).getText()).toContain("Zoom to selection");
+      // Quick PNG and Copy plot act without the dialog, from the plot's ⋯ menu.
+      await saveFromMenu(dataPanel, en.figureQuickPng, "Export spectrum figure", join(output, "cancelled-quick.png"), true);
+      const before = await calls(); await choosePlotMenuItem(dataPanel, en.viewerCopy);
       await browser.waitUntil(async () => (await calls()).filter(call => call.command === "copy_selected_spectrum_plot").length > before.filter(call => call.command === "copy_selected_spectrum_plot").length);
       await browser.waitUntil(async () => !(await browser.$(dataPanel).getText()).includes("Copying plot"));
       const clipboard = await helper("read-clipboard-image", [], false);
       expect(clipboard).toMatchObject({ present: true, width: 900, height: 600 }); expect(Number(clipboard.distinct)).toBeGreaterThan(1); record({ kind: "clipboard dimensions and sampled colors only", clipboard });
       expect((await calls()).filter(call => call.command === "begin_selected_spectrum_export")).toHaveLength(before.filter(call => call.command === "begin_selected_spectrum_export").length);
 
-      await edit("mz", "225", "240"); await browser.$(dataPanel).$('button=Export figure').click(); await scope(FIGURE, "Current range"); const empty = await preview();
+      await edit("mz", "225", "240"); await exportFigure(dataPanel); await scope(FIGURE, "Current range"); const empty = await preview();
       expect(await browser.$(FIGURE).getText()).toContain("empty spectrum figure");
       const emptySvg = join(output, "spectrum-empty-current.svg"); await save(FIGURE, "Export SVG…", "Export spectrum figure", emptySvg); expect(readFileSync(emptySvg, "utf8")).toBe(empty.svg);
-      await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click(); await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
-      const emptyCsv = join(output, "spectrum-empty-current.csv"); await save(dataPanel, "Export CSV…", "Export spectrum data", emptyCsv); expect(data(emptyCsv, ",")).toHaveLength(0);
-      await browser.$(dataPanel + " .spectrum-export-disclosure summary").click();
+      const emptyCsv = join(output, "spectrum-empty-current.csv"); await save(FIGURE, "Export CSV…", "Export spectrum data", emptyCsv); expect(data(emptyCsv, ",")).toHaveLength(0);
+      await returnToViewer();
 
       await edit("rt", "60", "180");
-      await browser.$('.chromatogram-panel').$('button=Export figure').click(); await scope(FIGURE, "Current range"); const chrom = await preview();
+      await exportFigure(CHROMATOGRAM); await scope(FIGURE, "Current range"); const chrom = await preview();
       const chromSvg = join(output, "chromatogram-current.svg"); await save(FIGURE, "Export SVG…", "Export chromatogram figure", chromSvg); expect(readFileSync(chromSvg, "utf8")).toBe(chrom.svg);
-      expect(await browser.$(FIGURE).getText()).toContain("Full run"); await browser.$(FIGURE).$('button[aria-label="Return to viewer"]').click();
-      await browser.$("#chromatogram-export-toggle").click();
-      const rtCsv = join(output, "chromatogram-current.csv"); await save(".chromatogram-panel", "Export CSV…", "Export chromatogram data", rtCsv);
+      const rtCsv = join(output, "chromatogram-current.csv"); await save(FIGURE, "Export CSV…", "Export chromatogram data", rtCsv);
       expect(data(rtCsv, ",").map(row => row[0])).toEqual([1, 2, 3]);
       expect(data(rtCsv, ",").map(row => row[3])).toEqual([60, 120, 180]);
-      await browser.$('.chromatogram-panel').$('button=Preview linked figure').click(); const linked = await preview();
+      expect(await browser.$(FIGURE).getText()).toContain("Full run"); await returnToViewer();
+      await choosePlotMenuItem(CHROMATOGRAM, en.figurePreviewLinked); const linked = await preview();
       expect(await browser.$(FIGURE).getText()).toContain("Full run"); expect(await browser.$(FIGURE).$("button=Export CSV…").isExisting()).toBe(false);
       const linkedSvg = join(output, "linked-current.svg"); await save(FIGURE, "Export SVG…", "Export linked figure", linkedSvg); expect(readFileSync(linkedSvg, "utf8")).toBe(linked.svg);
       await scope(FIGURE, "Full run"); const linkedFull = await preview(); const linkedFullSvg = join(output, "linked-full.svg");

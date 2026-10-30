@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 
 import type { WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { openNextConversion, waitUntilOffered } from "../support/conversion";
-import { revealTauriRoster } from "../support/tauriPanel";
+import { clearRosterList, revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(HERE, "..", "..");
@@ -132,13 +132,8 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
       timeout: 180_000, timeoutMsg: "A previous scenario's queue never settled.",
     });
     await showRoster();
-    const clear = browser.$("button=Clear list");
-    if (await clear.isExisting()) {
-      await reveal("#workbench-roster .roster-head");
-      await clear.waitForClickable({ timeout: 30_000 });
-      await clear.click();
-      await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
-    }
+    // Clear list is the roster footer's list-menu item (direction A 2.1).
+    await clearRosterList();
   });
 
   afterEach(async () => {
@@ -208,7 +203,8 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     await showRoster();
     const before = await browser.$$(ROWS).length;
     const addButton = browser.$("button=Add files…");
-    await addButton.waitForEnabled({ timeout: 60_000 });
+    // Refused rather than disabled while the roster is busy (spec 1.4).
+    await browser.waitUntil(async () => (await addButton.getAttribute("aria-disabled")) !== "true", { timeout: 60_000, timeoutMsg: "Add files… was never offered" });
     await browser.waitUntil(async () => {
       await reveal("#workbench-roster .roster-head");
       return addButton.isClickable();

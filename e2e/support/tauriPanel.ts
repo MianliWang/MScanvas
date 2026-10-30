@@ -38,7 +38,13 @@ export function focusApplicationWindow(): void {
   );
 }
 
-export const EXPORT_BLOCK = ".spectrum-panel .spectrum-export";
+/**
+ * The spectrum's figure dialog (rebuild spec 3.4): its footer holds Copy plot,
+ * Export SVG… and Export PNG…, its Data group Export CSV… and Export TSV…. The
+ * inline export block and its disclosure are gone; Quick PNG and Copy plot are
+ * also on the plot's ⋯ menu.
+ */
+export const EXPORT_BLOCK = ".figure-export-dialog";
 export const STATUS = ".spectrum-panel .spectrum-export-status";
 
 /**
@@ -205,6 +211,26 @@ export async function revealTauriRoster(): Promise<void> {
   await roster.waitForDisplayed({ timeout: 60_000 });
 }
 
+/**
+ * Clears the roster through its footer's list menu (direction A 2.1) and waits
+ * for it to empty. A list with no rows has no menu, so there is nothing to do.
+ */
+export async function clearRosterList(): Promise<void> {
+  const menu = browser.$("#workbench-roster [data-roster-list-menu]");
+  if (!(await menu.isExisting())) return;
+  await menu.scrollIntoView({ block: "nearest" });
+  await menu.click();
+  // Refused rather than disabled while the roster is busy (spec 1.4).
+  const item = browser.$('[role="menu"] [data-roster-clear]');
+  await item.waitForDisplayed({ timeout: 30_000 });
+  await browser.waitUntil(async () => (await item.getAttribute("aria-disabled")) !== "true", {
+    timeout: 30_000,
+    timeoutMsg: "Clear list was never offered",
+  });
+  await item.click();
+  await browser.waitUntil(async () => (await browser.$$(".grouped-roster [data-handle]").length) === 0);
+}
+
 /** Opens one mzML row once, then waits for its linked viewer to be visible. */
 export async function openTauriPreview(handle: string): Promise<void> {
   const row = `.grouped-roster [role="row"][data-handle="${handle}"]`;
@@ -222,22 +248,53 @@ export async function openTauriPreview(handle: string): Promise<void> {
   });
 }
 
-/** Drives the shipped interface to a loaded spectrum and its export controls. */
+/**
+ * Drives the shipped interface to a loaded spectrum and its export controls:
+ * the spectrum head's Export… opens the figure dialog, which holds them. The
+ * dialog is presentation only and keeps the selected spectrum and its token.
+ */
 export async function selectFirstSpectrum(): Promise<void> {
   const firstSpectrum = 'div.spectrum-table-row[data-row-position="0"]';
   await openTauriPreview(MZML_ROW.handle);
   await browser.$(firstSpectrum).scrollIntoView({ block: "center" });
   await browser.$(firstSpectrum).click();
-  await browser.$("#selected-spectrum-summary").waitForDisplayed({ timeout: 60_000 });
-  // PM9.3 keeps export controls behind their own disclosure. Opening it is
-  // presentation only and preserves the selected spectrum and export token.
-  const disclosure = browser.$(".spectrum-panel .spectrum-export-disclosure");
-  if ((await disclosure.getAttribute("open")) === null) {
-    const summary = browser.$(".spectrum-panel .spectrum-export-disclosure > summary");
-    await summary.scrollIntoView({ block: "nearest" });
-    await summary.click();
-  }
+  // Exists, never displayed: the summary is the plot's visually hidden label.
+  await browser.$("#selected-spectrum-summary").waitForExist({ timeout: 60_000 });
+  await openSpectrumFigureDialog();
+}
+
+/** Opens the spectrum's figure dialog from its head's Export…, as a person does. */
+export async function openSpectrumFigureDialog(): Promise<void> {
+  const entry = browser.$(".spectrum-panel .figure-quick-actions > button:first-child");
+  await entry.waitForDisplayed({ timeout: 60_000 });
+  await entry.scrollIntoView({ block: "nearest" });
+  await entry.click();
   await browser.$(EXPORT_BLOCK).waitForDisplayed({ timeout: 30_000 });
+}
+
+/**
+ * Presses one of the open figure dialog's actions by its words, once it is
+ * offered: Copy plot, Export SVG… and Export PNG… are refused, not disabled,
+ * until the dialog's preview of the current settings is drawn.
+ */
+export async function pressDialogAction(label: string): Promise<void> {
+  const action = browser.$(EXPORT_BLOCK).$(`button=${label}`);
+  await action.waitForDisplayed({ timeout: 30_000 });
+  await browser.waitUntil(async () => (await action.getAttribute("aria-disabled")) !== "true", {
+    timeout: 60_000,
+    timeoutMsg: `${label} was never offered`,
+  });
+  await action.click();
+}
+
+/**
+ * Dismisses the spectrum's last export message so the next outcome is a new
+ * one. Its icon button sits in the plot's status line, behind the open modal
+ * dialog, so it is pressed by script rather than by a pointer the dialog's
+ * overlay would intercept.
+ */
+export async function dismissExportMessage(): Promise<void> {
+  await browser.execute(() => document.querySelector<HTMLButtonElement>(".spectrum-panel .plot-status-line > button")?.click());
 }
 
 /** Sets the figure fields and theme the way a person would, through React. */
@@ -254,24 +311,25 @@ export async function chooseFigure(values: {
   // says nothing about what the test was doing.
   await browser.execute(
     (fields: (string | null)[]) => {
-      const panel = document.querySelector(".spectrum-panel");
-      if (panel === null) throw new Error("the spectrum panel is missing");
-      // SettingField places labels beside their inputs. Use the stable panel
-      // ids, shared across locales, rather than the retired wrapping labels.
-      const ids = ["spectrum-widthPx", "spectrum-heightPx", "spectrum-pngDpi"];
+      // The fields live in the figure dialog since the rebuild (spec 3.4).
+      const panel = document.querySelector(".figure-export-dialog");
+      if (panel === null) throw new Error("the figure dialog is not open");
+      // Ids end in the field name, after the dialog's own prefix, in every locale.
+      const ids = ["widthPx", "heightPx", "pngDpi"];
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       if (setter === undefined) throw new Error("the native input value setter is missing");
       fields.slice(0, 3).forEach((value, index) => {
         if (value === null) return;
-        const input = panel.querySelector(`#${ids[index]}`);
+        const input = panel.querySelector(`input[id$="-${ids[index]}"]`);
         if (!(input instanceof HTMLInputElement)) throw new Error(`the figure field ${ids[index]} is missing`);
         setter.call(input, value);
         input.dispatchEvent(new Event("input", { bubbles: true }));
       });
+      // The theme is a segmented control: Light, then Dark.
       const theme = fields[3];
       if (theme !== null && theme !== undefined) {
-        const chosen = [...panel.querySelectorAll<HTMLInputElement>('.spectrum-figure-settings input[type="radio"]')]
-          .find(input => input.value === theme);
+        const options = [...panel.querySelectorAll<HTMLButtonElement>('.spectrum-figure-field-theme [role="radio"]')];
+        const chosen = options[theme === "light" ? 0 : theme === "dark" ? 1 : -1];
         if (chosen === undefined) throw new Error(`the spectrum figure theme ${theme} is missing`);
         chosen.click();
       }

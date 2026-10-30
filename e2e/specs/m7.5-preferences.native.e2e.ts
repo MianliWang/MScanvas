@@ -733,7 +733,8 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
 
     await browser.$(`button=${zh.conversionTask}`).click();
     await browser.$(PANEL).waitForDisplayed();
-    await browser.$(CONVERT).waitForEnabled();
+    // Refused rather than disabled until a plan is reviewed (spec 1.4).
+    await browser.waitUntil(async () => (await browser.$(CONVERT).getAttribute("aria-disabled")) !== "true");
     const into = join(output, "converted"); mkdirSync(into, { recursive: true });
     const [destination] = await Promise.all([
       helper("choose-conversion-folder", ["-Action", "choose", "-Path", into, "-TimeoutSeconds", "35"]),
@@ -771,21 +772,18 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(opened.locale).toBe("zh-CN");
     expect(opened.bodyText).toContain(zh.viewerData);
 
-    // The data exports are behind the panel's own disclosure, so they have to
-    // be opened before they can be used -- in the DOM but `hidden` is exactly
-    // the state a driver refuses to click.
-    const disclosure = "section.spectrum-panel details.spectrum-export-disclosure";
-    await browser.$(`${disclosure} summary`).click();
-    await browser.waitUntil(() => browser.execute(css => document.querySelector<HTMLDetailsElement>(css)?.open === true, disclosure),
-      { timeout: 15_000, timeoutMsg: "The spectrum export disclosure did not open." });
+    // The data exports are the spectrum figure dialog's Data group since the
+    // rebuild (spec 3.4): the plot head's Export… opens it.
+    const dialog = ".figure-export-dialog";
+    await browser.$("section.spectrum-panel .figure-quick-actions > button:first-child").click();
+    await browser.$(dialog).waitForDisplayed({ timeout: 15_000, timeoutMsg: "The spectrum figure dialog did not open." });
 
     const csv = join(output, "M75-spectrum.csv");
     const label = zh.viewerExportFormat.replace("{{name}}", "CSV");
-    // The spectrum's own data export. Scoped, because the chromatogram panel
-    // labels its exports from the same resource.
+    // The spectrum's own data export, from the dialog the spectrum opened.
     const [exported] = await Promise.all([
       helper("save-dialog", ["-Title", "Export spectrum data", "-Action", "save", "-Path", csv, "-TimeoutSeconds", "35"]),
-      browser.$("section.spectrum-panel").$(`button=${label}`).click(),
+      browser.$(dialog).$(`button=${label}`).click(),
     ]);
     expect(exported.found).toBe(true); expect(exported.invoked).toBe(true);
     await browser.waitUntil(() => existsSync(csv), { timeout: 60_000 });
