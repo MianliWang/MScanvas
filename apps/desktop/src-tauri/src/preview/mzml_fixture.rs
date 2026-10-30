@@ -3,8 +3,9 @@
 //!
 //! Since ADR 0056 the spectrum table and the selected spectrum are read by the
 //! project's own reader, so a fixture is a document rather than canned
-//! `msaccess` text. Arrays are little-endian and uncompressed; nothing here
-//! reads a document, and nothing here is reachable from a shipped build.
+//! `msaccess` text. Arrays are little-endian and uncompressed; only the
+//! test-only [`native_spectrum`] reads a document, and nothing here is
+//! reachable from a shipped build.
 
 /// One stored array: its binary data type and its little-endian bytes.
 pub(crate) struct FixtureArray {
@@ -180,6 +181,33 @@ pub(crate) fn document(spectra: &[FixtureSpectrum]) -> String {
 </mzML>
 "#,
         spectra.len()
+    )
+}
+
+/// One spectrum read by the production reader from an in-memory document
+/// that declares this representation and these array units: index 0,
+/// `scan=1`, retention time 0.5 with no unit declared.
+#[cfg(test)]
+pub(crate) fn native_spectrum(
+    representation: &'static str,
+    units: (Option<&'static str>, Option<&'static str>),
+    points: &[(f64, f64)],
+) -> mscanvas_proteowizard::SelectedSpectrumResult {
+    use mscanvas_proteowizard::{
+        MzmlScanLimits, SelectedSpectrumResult, read_selected_spectrum_from,
+        read_spectrum_table_from,
+    };
+    use std::io::Cursor;
+
+    let mut fixture = FixtureSpectrum::new("scan=1", 1, 0.5, points[1], 1_010.0, points);
+    fixture.representation = Some(representation);
+    (fixture.mz_unit, fixture.intensity_unit) = units;
+    let text = document(&[fixture]);
+    let table = read_spectrum_table_from(Cursor::new(text.as_bytes()), MzmlScanLimits::default())
+        .expect("the document opens");
+    SelectedSpectrumResult::from_native(
+        read_selected_spectrum_from(Cursor::new(text.as_bytes()), &table, 0)
+            .expect("the spectrum decodes"),
     )
 }
 

@@ -997,6 +997,9 @@ pub(super) fn linked_figure_spec(
                 source.scan_count(),
                 spectrum.identity().index(),
                 spectrum.mz_values().len(),
+                // Units per panel: the two intensities are different
+                // measurements, and the chromatogram's never has a unit, so a
+                // single "intensity" would lend it the spectrum's.
                 match (
                     source.declared_unit_name(),
                     declared_accession(spectrum.mz_unit()),
@@ -1006,7 +1009,8 @@ pub(super) fn linked_figure_spec(
                         format!("Retention time, m/z and intensity units {UNREPORTED}")
                     }
                     (time, mz, intensity) => format!(
-                        "Units as the file declares them: retention time {}, m/z {}, intensity {}",
+                        "Units as the file declares them. Upper panel: retention time {}, \
+                         intensity {UNREPORTED}. Lower panel: m/z {}, intensity {}",
                         time.unwrap_or(UNREPORTED),
                         mz.unwrap_or(UNREPORTED),
                         intensity.unwrap_or(UNREPORTED),
@@ -2116,6 +2120,54 @@ mod tests {
                 "nothing says a retention time names a scan: {description}",
             );
         }
+    }
+
+    /// The linked caption gives each panel its own units, so the spectrum's
+    /// intensity unit is never read as the chromatogram's, which has none. A
+    /// figure that declares nothing keeps the sentence it always had.
+    #[test]
+    fn the_linked_caption_gives_each_panel_its_own_units() {
+        use super::super::mzml_fixture::native_spectrum;
+
+        let undeclared = ordinary();
+        let figure = linked(&undeclared, &selected(1), full(&undeclared), both());
+        let caption = figure.caption().expect("a caption").as_str();
+        assert!(
+            caption.ends_with(
+                "never narrowed to the chromatogram range. Retention time, m/z and intensity \
+                 units unreported."
+            ),
+            "{caption}"
+        );
+
+        let source = source(&run_in(RetentionTimeUnitState::Minute, &[0.5, 1.5]));
+        let spectrum = native_spectrum(
+            "MS:1000128",
+            (Some("MS:1000040"), Some("MS:1000131")),
+            &[(100.0, 0.0), (101.0, 1_000.0), (102.0, 10.0)],
+        );
+        let description = described(&mscanvas_plot_spec::svg::render(&linked(
+            &source,
+            &spectrum,
+            full(&source),
+            both(),
+        )));
+        assert!(
+            description.contains(
+                "Units as the file declares them. Upper panel: retention time minutes, intensity \
+                 unreported. Lower panel: m/z MS:1000040, intensity MS:1000131."
+            ),
+            "{description}"
+        );
+        // The renderer's own disclosure for the upper panel's intensity axis.
+        assert!(
+            description.contains("The source file reports no unit for the Intensity axis"),
+            "{description}"
+        );
+        let (before_lower, _) = description
+            .split_once("Lower panel:")
+            .expect("the caption names the lower panel");
+        assert!(!before_lower.contains("MS:1000131"), "{description}");
     }
 
     /// A peak outside the window does not scale the linked figure's top panel.

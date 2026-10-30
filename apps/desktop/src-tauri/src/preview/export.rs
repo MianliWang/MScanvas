@@ -1911,8 +1911,8 @@ fn spectrum_caption(spectrum: &SelectedSpectrumResult, range: ResolvedSpectrumRa
                 spectrum.representation(),
                 SpectrumRepresentationState::Profile
             ) {
-                "the profile trace is cut at each edge, at a height interpolated between the two \
-                 measured samples either side of it."
+                "where the profile trace crosses an edge between two measured samples, it is cut \
+                 there at the height interpolated between them."
             } else {
                 "nothing is interpolated at either edge."
             },
@@ -6092,31 +6092,7 @@ mod tests {
         );
     }
 
-    /// One spectrum read by the production reader from an in-memory document
-    /// that declares this representation and these array units.
-    fn native_spectrum(
-        representation: &'static str,
-        units: (Option<&'static str>, Option<&'static str>),
-        points: &[(f64, f64)],
-    ) -> SelectedSpectrumResult {
-        use super::super::mzml_fixture::{FixtureSpectrum, document};
-        use mscanvas_proteowizard::{
-            MzmlScanLimits, read_selected_spectrum_from, read_spectrum_table_from,
-        };
-        use std::io::Cursor;
-
-        let mut fixture = FixtureSpectrum::new("scan=1", 1, 0.5, points[1], 1_010.0, points);
-        fixture.representation = Some(representation);
-        (fixture.mz_unit, fixture.intensity_unit) = units;
-        let text = document(&[fixture]);
-        let table =
-            read_spectrum_table_from(Cursor::new(text.as_bytes()), MzmlScanLimits::default())
-                .expect("the document opens");
-        SelectedSpectrumResult::from_native(
-            read_selected_spectrum_from(Cursor::new(text.as_bytes()), &table, 0)
-                .expect("the spectrum decodes"),
-        )
-    }
+    use super::super::mzml_fixture::native_spectrum;
 
     /// A profile peak whose flanks fall between samples.
     const PEAK: [(f64, f64); 4] = [(100.0, 0.0), (101.0, 1_000.0), (102.0, 10.0), (103.0, 0.0)];
@@ -6152,7 +6128,7 @@ mod tests {
         .expect("specifiable");
         let caption = ranged.caption().expect("a caption").as_str();
         assert!(
-            caption.contains("cut at each edge, at a height interpolated"),
+            caption.contains("it is cut there at the height interpolated between them"),
             "{caption}"
         );
         assert!(!caption.contains("nothing is interpolated"), "{caption}");
