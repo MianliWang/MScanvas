@@ -7,8 +7,15 @@ scopes: `peakPicking vendor msLevel=1-` and `peakPicking vendor msLevel=2-`.**
 `EVIDENCE_BLOCKED`, with no lawful vendor acquisition. [M6.10 S1](M6_10_EVIDENCE_GATED_SIDE_ROUTES.md#s1--the-vendor-picker-reached-at-last-and-what-it-changed)
 reached the vendor picker on a Thermo file. That file was already centroided, so
 what the algorithm computes stayed blocked. This record supplies the missing
-input: two public Thermo RAW files in profile mode. It measures both scopes the
-product's centroid presets need (CNV-005).
+input: public Thermo RAW files in profile mode, two at first and a third (3c)
+added later the same day. It measures both scopes the product's centroid presets
+need (CNV-005).
+
+**MS2+ verdict on 3.0.26013 (added 2026-10-30): measured on Orbitrap profile
+MS2.** 3c is a Q Exactive run whose MS2 is Orbitrap profile. Under
+`peakPicking vendor msLevel=2-` all 23,676 of its profile MS2 spectra came out
+centroid, and its 474 profile MS1 spectra came out bit-identical. Before 3c,
+`2-` on profile MS2 rested on 14 ion-trap spectra.
 
 **This record admits nothing and changes no code.** It proposes two verified rows
 and the output checks they need. The rows belong to the branch that owns the intent
@@ -31,7 +38,8 @@ committed. This record names no absolute path:
 | `<work>` | the directory holding the verified copy of a source |
 | `<outdir>` | a per-case output directory, created new and empty |
 
-All runs took place from 2026-10-30T00:29Z to 00:38Z (UTC).
+The 3a and 3b runs took place from 2026-10-30T00:29Z to 00:38Z (UTC). The 3c
+runs took place from 05:09Z to 05:13Z the same day.
 
 ## Measured ProteoWizard build
 
@@ -42,28 +50,70 @@ All runs took place from 2026-10-30T00:29Z to 00:38Z (UTC).
 | `msconvert.exe` bytes | `12,687,872` |
 | **`msconvert.exe` SHA-256** | **`9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD`** |
 | Thermo reader | the build's bundled `ThermoFisher.CommonCore.RawFileReader`; no EULA prompt appeared and none was accepted |
+| `msaccess.exe` SHA-256 (3c's `run_summary` only) | `85681b205569a9850f47d079749e04ba45f4b0c64e363d4a2c5c67c3c67ed1f4` |
 
-The runner checked this digest before every case. Each case's record also carries
-the digest taken after it ran, and every one matches. M6.2, M6.10 and
-`EVIDENCED_PROVIDER_BUILDS` bind the same executable.
+The runner checked the `msconvert.exe` digest before every case. Each case's record
+also carries the `msconvert.exe` digest taken after it ran, and every one matches.
+M6.2, M6.10 and `EVIDENCED_PROVIDER_BUILDS` bind the same executable.
+
+The runner pins only `msconvert.exe`, so the `run_summary` record's after-run
+digest is `msconvert.exe`'s too. `msaccess.exe` was hashed separately with
+PowerShell `Get-FileHash`, and again on 2026-10-30 at the same value and
+`12,898,816` bytes. That is the `msaccess.exe` M5 and M6.10 bind.
 
 ## Sources
 
-Both files were downloaded and verified before any run, under the same release.
-Each case read a byte-identical copy in `<work>`. Afterwards, both the copies and
-the downloaded originals re-hashed unchanged.
+Each file was downloaded and verified before any of its runs, under the same
+release. Each case read a byte-identical copy in `<work>`. Afterwards, the copies
+and the downloaded originals re-hashed unchanged.
 
-| | 3a: LTQ Velos | 3b: Orbitrap Exploris 480 |
-| --- | --- | --- |
-| File | `090701-LTQVelos-unittest-01.raw` | `BBM_506_P110_31_MIA_004_30.raw` |
-| Origin | ProteoWizard repository, `pwiz/data/vendor_readers/Thermo/Reader_Thermo_Test.data.tar.bz2` at commit `4f92fe97ba0278a22486729d7ab658bba42a700a` | PRIDE `PXD081190`, `https://ftp.pride.ebi.ac.uk/pride/data/archive/2026/07/PXD081190/BBM_506_P110_31_MIA_004_30.raw` |
-| Licence | ships in the Apache-2.0 ProteoWizard repository with no separate data licence | CC0 (PRIDE project record) |
-| Bytes | `2,086,041` | `275,621,692` |
-| SHA-256 | `d457de3466d06bc91d39396afc6589ac87e3be1f909eea2c537b639e8675d2d6` | `94f989f64261387ffde97f89248f69a8a78b613f9297b3d594b44b52164392e4`. This is the first observation: PRIDE publishes no checksum |
-| Integrity anchor | archive SHA-256 `167e84a90d6e68009b1c35ce23f542678810241a9e76f7240da9b19de0394836`; its git blob SHA-1 `f95653188a722c61c1891a532a8db2f03e384595` equals the one GitHub publishes at the pinned commit | size equals the PRIDE API and HTTP `Content-Length`; `msaccess` counts equal the converted census |
-| Instrument | LTQ Velos, radial ejection linear ion trap, nanoESI, serial `LTQ30123`, Xcalibur 2.6.0, acquired 2009-07-02 | Orbitrap Exploris 480, serial `MA10373C`, acquired 2021-11-03 |
-| Control census | 85 spectra; MS1 29 profile + 15 centroid; MS2 14 profile + 14 centroid; MS3 13 centroid; 4 chromatograms | 43,878 spectra; MS1 2,748 profile; MS2 41,130 centroid; 2 chromatograms |
-| Profile points per spectrum | MS1 500–20,399 (median 20,399); MS2 8,759–13,739 (median 10,199) | MS1 653–23,308 (median 9,200) |
+| | 3a: LTQ Velos | 3b: Orbitrap Exploris 480 | 3c: Q Exactive |
+| --- | --- | --- | --- |
+| File | `090701-LTQVelos-unittest-01.raw` | `BBM_506_P110_31_MIA_004_30.raw` | `QE004766.raw` |
+| Origin | ProteoWizard repository, `pwiz/data/vendor_readers/Thermo/Reader_Thermo_Test.data.tar.bz2` at commit `4f92fe97ba0278a22486729d7ab658bba42a700a` | PRIDE `PXD081190`, `https://ftp.pride.ebi.ac.uk/pride/data/archive/2026/07/PXD081190/BBM_506_P110_31_MIA_004_30.raw` | PRIDE `PXD066799`, `https://ftp.pride.ebi.ac.uk/pride/data/archive/2026/06/PXD066799/QE004766.raw` |
+| Licence | ships in the Apache-2.0 ProteoWizard repository with no separate data licence | CC0 (PRIDE project record) | CC0 (PRIDE project record) |
+| Bytes | `2,086,041` | `275,621,692` | `224,196,132` |
+| SHA-256 | `d457de3466d06bc91d39396afc6589ac87e3be1f909eea2c537b639e8675d2d6` | `94f989f64261387ffde97f89248f69a8a78b613f9297b3d594b44b52164392e4`. This is the first observation: PRIDE publishes no checksum | `3acbee9194e382c0841faa19085c6de2bf26009678e3c51ecfed2ef4a1f97698`. First observation, as for 3b |
+| Integrity anchor | archive SHA-256 `167e84a90d6e68009b1c35ce23f542678810241a9e76f7240da9b19de0394836`; its git blob SHA-1 `f95653188a722c61c1891a532a8db2f03e384595` equals the one GitHub publishes at the pinned commit | size equals the PRIDE API and HTTP `Content-Length`; `msaccess` counts equal the converted census | the same two checks as 3b |
+| Instrument | LTQ Velos, radial ejection linear ion trap, nanoESI, serial `LTQ30123`, Xcalibur 2.6.0, acquired 2009-07-02 | Orbitrap Exploris 480, serial `MA10373C`, acquired 2021-11-03 | Q Exactive (`MS:1001911`), quadrupole + Orbitrap, nanoESI, serial `Exactive Series slot #367`, Xcalibur 2.9, acquired 2025-04-15; data-independent acquisition, 50 isolation windows, HCD |
+| Control census | 85 spectra; MS1 29 profile + 15 centroid; MS2 14 profile + 14 centroid; MS3 13 centroid; 4 chromatograms | 43,878 spectra; MS1 2,748 profile; MS2 41,130 centroid; 2 chromatograms | 24,150 spectra; MS1 474 profile; MS2 23,676 profile; 1 chromatogram |
+| Profile points per spectrum | MS1 500–20,399 (median 20,399); MS2 8,759–13,739 (median 10,199) | MS1 653–23,308 (median 9,200) | MS1 1,538–47,863 (median 19,557.5); MS2 47–29,366 (median 612) |
+
+**3c passed a gate before its treatments ran.** It was chosen to measure
+`msLevel=2-` on Orbitrap profile MS2, so its control `TQ0` had to show two things.
+Every MS2 spectrum had to declare `MS:1000128`. The instrument configuration had to
+carry `MS:1000484`. Both held:
+
+- the file has one instrument configuration, `IC1`: quadrupole (`MS:1000081`)
+  and orbitrap (`MS:1000484`);
+- every spectrum resolves to `IC1`;
+- all 23,676 MS2 and all 474 MS1 spectra declare profile.
+
+The filter strings (`FTMS + p NSI Full ms2 406.0000@hcd26.00 [200.0000-1280.0000]`
+and so on) agree, but they were not the witness (fact 1 below). `msaccess`
+`run_summary` on the copy also reports 474 MS1 and 23,676 MS2.
+
+**How 3c was chosen.** Only one RAW file was downloaded for 3c. Other candidates
+were screened first from public metadata, without downloading a RAW file:
+
+- **ProteoWizard's Thermo test directory**, at the same pinned commit, holds six
+  more RAW files, each with reference mzMLs of one to three spectra:
+  - three of them hold one `FTMS + p` MS2 spectrum (`BSA-FT-HCD`, `BSA-FT-ETD`,
+    `IsolationMzOffset-ReportedMassOffset`). Their references declare the generic
+    "Thermo Electron instrument model" and an FT-ICR analyzer (`MS:1000079`), not
+    `MS:1000484`, and they hold no MS1 spectrum;
+  - the other three hold only centroid or ion-trap spectra (`FT-HCD-MSX`,
+    `IT-HCD-SPS`, `source_cid_test_3scans`).
+- **mzdata's `small.RAW`.** Its published conversion `small.mzML` shows ion-trap
+  centroid MS2 (`ITMS + c`). ThermoRawFileParser's `small2.RAW` has no published
+  conversion and was not screened.
+- **PRIDE `PXD000001`** (LTQ Orbitrap Velos). Two byte ranges of its deposited
+  mzXML show Orbitrap MS2 with `centroided="1"`.
+- **A PRIDE search** for protocols that state profile-mode MS2, keeping each
+  project's smallest RAW file. It led to `PXD066799`, whose protocol states
+  profile mode for both the overview and the MS2 scans. `PXD082922` (Orbitrap
+  Exploris 480, targeted MS2 in profile, 72,943,536 bytes, CC0) was the next
+  candidate. It was not downloaded.
 
 **3a also ships ProteoWizard's own expected outputs.** They are used below as an
 independent reference, not as a gate:
@@ -92,6 +142,9 @@ out-of-scope spectra compare bit for bit with the control.
 | `TE0` | 3b | *(none)*: the control |
 | `TE1` | 3b | `peakPicking vendor msLevel=1-` |
 | `TE2` | 3b | `peakPicking vendor msLevel=2-` |
+| `TQ0` | 3c | *(none)*: the control, and the gate |
+| `TQ1` | 3c | `peakPicking vendor msLevel=1-` |
+| `TQ2` | 3c | `peakPicking vendor msLevel=2-` |
 
 Full argv, for example `TV1`:
 
@@ -109,14 +162,18 @@ Full argv, for example `TV1`:
   every case;
 - the memory gate printed `ADMITTED` before each run (30.6 to 32.2 GiB free, 49% to
   52% used) and before the 3b analysis (27.5 GiB free, 57% used);
-- the three 3b conversions ran one at a time.
+- the three 3b conversions ran one at a time;
+- for 3c, the memory gate printed `ADMITTED` before each run (18.7 to 21.1 GiB
+  free, 67% to 71% used) and before the analysis (19.8 GiB free, 69% used). Its
+  conversions and its `msaccess` run ran one at a time.
 
 **Inspection.** A streaming reader (`iterparse`, each element cleared after use)
 reused the repository's own strict decoder from
 [`scripts/msconvert_evidence.py`](../../scripts/msconvert_evidence.py):
 `_decode_array`, `role_defects`, `array_defects` and `declared_length`. That is
 the decoder M6.10 corrected, which refuses rather than rounds. The full-tree
-`inspect` command was not used on 3b, whose control output is about 529 MB.
+`inspect` command was not used on 3b, whose control output is about 529 MB, or
+on 3c (about 624 MB).
 
 Each treatment was paired with its control **by position**, and the pair had to
 agree on native ID and MS level. The comparison was:
@@ -131,7 +188,11 @@ The tools are kept with the outputs, outside the repository:
 | --- | --- |
 | `thermo_run.py` | `3DA6B23AEB5E8CA4222FE32B75EF0929ABE1FBC97A0D1477838E83ADED47B743` |
 | `thermo_analyze.py` | `72CAECC93D8B3686F5ED807E4266D2BF86350331D9E6EB86DCEB451ADDBEF784` |
-| `scripts/msconvert_evidence.py` at this record's base | `EAE13380B11F824C3D90504E9187FE6204BB73B7F213618E0F5FABED9989BCEB` |
+| `scripts/msconvert_evidence.py` at this record's base | `EAE13380B11F824C3D90504E9187FE6204BB73B7F213618E0F5FABED9989BCEB`, unchanged at 3c's base `01c23d9` |
+| `ms2_run.py` (3c's runner: `thermo_run.py` with 3c's paths and digest, case ids `TQ0`–`TQ2`, and an `msaccess` `run_summary` step; same argv shape) | `07A3C13E653783E0F1773AE6DB954D28C709C9C7ADEE6FEB5DEF890AE665F2EE` |
+| `ms2_gate.py` (3c's gate census: representation per MS level and the analyzer of each spectrum's instrument configuration) | `47D9388A6346638E8A20749C85D817B90198BD933E6863B62484B38AC5E7969C` |
+
+3c's analysis ran the same `thermo_analyze.py`, unchanged.
 
 ## Run ledger
 
@@ -147,6 +208,14 @@ Every case exited `0` with empty stderr. Each `<outdir>` held exactly one entry,
 | `TE1` | 00:30:51 | 0 | 51,816 ms | 284,183,742 | `4727d25e277d98850afde73847953e6b0dab0390e1414cb2627cd2630e540983` | `84329612ada545870f1d166ec00e9442d296115c0bbb4113b4a85796910d9c4d` |
 | `TE2` | 00:31:45 | 0 | 55,552 ms | 528,766,478 | `e5332f65aca0678637582aaf4db47c524fca1d3de36816d8382ba8066ec508c8` | `f3a2aedd1c48cf6158af2828a2876c3158134e3ab34f54826c9fb6ee1a05b4b4` |
 | `TV3` | 00:37:45 | 0 | 1,178 ms | 957,491 | `fdcfcd4589015ef72ad5e3b75c36e9d7de21ebfd3fcf5fa0a9f005142734cf76` | `088802c3ee96e37f3c5fb6639c01bc95a7732b5054660b92c6f2e46d6dbe4000` |
+| `TQ0` | 05:09:17 | 0 | 61,277 ms | 624,390,646 | `2346c0af07e8be7a63fb01c455b390595949bcb383f28edbb0eada43050ede0d` | `3a287713578dd1e0ed209ad48f99c735db550c5125b1acfbc5027dac7db8cddf` |
+| `TQ1` | 05:11:45 | 0 | 31,600 ms | 162,117,857 | `23e88051106ddf0bd423f2ff0118c86ed9055188b670f40ec17e0e6aaa1a75ec` | `12b2f856ef0eeab50d1eae1a48240a6a1a03aee27d6b736518b2fb8d16089670` |
+| `TQ2` | 05:12:27 | 0 | 45,072 ms | 249,849,541 | `ee2b37d15cbefd16496c4db95da31cc90028cf8b1eba70a522542e8c7b19396c` | `6b55f1a845d5b3aed8b8115a95717bf6a204f1dcde5cd584716a50de38b52f7c` |
+
+3c also ran `["msaccess.exe", "<work>/QE004766.raw", "-x", "run_summary"]` at
+05:11:06. It exited `0` after 27,420 ms with empty stderr and wrote no file. Its
+stdout was 778 bytes, SHA-256
+`95bad4a22f88d5882bf48ce61f4b4d0a9458cd5b14e9b8384b0511a0fc24455e`.
 
 These outputs embed the source path (`sourceFile/@location`), so their digests
 identify these runs and are not portable. stdout echoes the argv's paths, so its
@@ -156,14 +225,14 @@ digests are not portable either.
 
 ### What the output says was done
 
-All four vendor outputs (`TV1`, `TV2`, `TE1`, `TE2`) add the same
+All six vendor outputs (`TV1`, `TV2`, `TE1`, `TE2`, `TQ1`, `TQ2`) add the same
 `processingMethod` (order 1, software `pwiz`) to the control's
 `Conversion to mzML`:
 
 | Case | `cvParam` | `userParam`s |
 | --- | --- | --- |
-| `TV1`, `TE1` (`msLevel=1-`) | `MS:1000035` peak picking | `Thermo/Xcalibur peak picking` |
-| `TV2`, `TE2` (`msLevel=2-`) | `MS:1000035` peak picking | `Thermo/Xcalibur peak picking`; `ms levels` = `2-` |
+| `TV1`, `TE1`, `TQ1` (`msLevel=1-`) | `MS:1000035` peak picking | `Thermo/Xcalibur peak picking` |
+| `TV2`, `TE2`, `TQ2` (`msLevel=2-`) | `MS:1000035` peak picking | `Thermo/Xcalibur peak picking`; `ms levels` = `2-` |
 
 - **The vendor algorithm ran, and nothing was substituted.** The name is the
   string `mzml.rs` already classifies as `ProcessingAlgorithm::VendorPeakPicking`,
@@ -181,10 +250,10 @@ All four vendor outputs (`TV1`, `TV2`, `TE1`, `TE2`) add the same
 
 In every vendor output these match the control:
 
-- the spectrum count (85 for 3a, 43,878 for 3b);
+- the spectrum count (85 for 3a, 43,878 for 3b, 24,150 for 3c);
 - `spectrumList/@count`;
 - the native ID and MS level at every position;
-- the chromatograms (4 for 3a, 2 for 3b), by decoded bytes.
+- the chromatograms (4 for 3a, 2 for 3b, 1 for 3c), by decoded bytes.
 
 The strict decoder reported no defect in any output: no malformed array, no
 length disagreement and no missing role.
@@ -210,8 +279,12 @@ means the decoded m/z and intensity values are bit-identical to the control's.
 | | MS2 centroid (41,130) | centroid 41,130/41,130 | identical 41,130/41,130 | unchanged |
 | `TE2` `2-` | MS1 profile (2,748) | **profile 2,748/2,748** | **identical 2,748/2,748** | unchanged |
 | | MS2 centroid (41,130) | centroid 41,130/41,130 | identical 41,130/41,130 | unchanged |
+| `TQ1` `1-` | MS1 profile (474) | **centroid 474/474** | changed | 1,538 / 19,557.5 / 47,863 → 106 / 1,435 / 3,507 |
+| | MS2 profile (23,676) | **centroid 23,676/23,676** | changed | 47 / 612 / 29,366 → 3 / 44 / 2,117 |
+| `TQ2` `2-` | MS1 profile (474) | **profile 474/474** | **identical 474/474** | unchanged |
+| | MS2 profile (23,676) | **centroid 23,676/23,676** | identical to `TQ1`'s MS2, all 23,676 | 47 / 612 / 29,366 → 3 / 44 / 2,117 |
 
-- **No in-scope spectrum is left in profile.** None of the four vendor outputs
+- **No in-scope spectrum is left in profile.** None of the six vendor outputs
   carries a single `MS:1000128` term inside its scope.
 - **Out-of-scope spectra are left exactly as the reader gives them.** That
   includes 3a's 15 MS1 spectra the instrument had already centroided.
@@ -269,24 +342,40 @@ range.
 most intense centroid and the most intense profile sample can be different peaks.
 For 3a the reference agreement above is the evidence, not these checks.
 
+#### 3c: the same checks on Orbitrap MS1 and MS2
+
+There is no reference file for 3c either. The two 3b checks were run on `TQ1`
+against `TQ0`, and they hold for Orbitrap MS2 as they do for MS1:
+
+| Bucket | Most intense centroid within one profile interval of the most intense sample | Its intensity ÷ the highest profile sample (min–max, median) |
+| --- | --- | --- |
+| MS1 (474) | 463 of 474 | 1.000–1.068, median 1.029 |
+| MS2 (23,676) | 22,984 of 23,676 | 1.000–1.112, median 1.018 |
+
+In the remaining spectra (11 MS1, 692 MS2), the most intense centroid lies more
+than one interval away, as in 3b. The intensity ranges above include them.
+`TQ2`'s MS2 arrays are bit-identical to `TQ1`'s, so the checks hold for both.
+
 ### Facts that shape the output checks
 
 1. **The scan filter string is not a representation witness.** In `TV1` and
    `TE1`, all 43 and 2,748 centroided spectra still carry a Thermo filter string
    with `+ p`, which means profile (for example `FTMS + p ESI Full ms …`). Yet
-   their representation term is `MS:1000127`.
+   their representation term is `MS:1000127`. The same holds for all 24,150
+   spectra of `TQ1`, MS2 included (`FTMS + p NSI Full ms2 …`).
 2. **The algorithm record is per run, not per spectrum.** See "What the output
    says was done". A check that reads it per spectrum cannot tell a picked
    spectrum from an out-of-scope one.
 3. **An out-of-scope spectrum can be profile or centroid.** 3a's MS1 under `2-`
    had both, as the reader delivered them.
 4. **Point counts change by design.** The medians fall from 20,399 to 1,489
-   (3a MS1), from 10,199 to 128.5 (3a MS2) and from 9,200 to 627 (3b MS1).
+   (3a MS1), from 10,199 to 128.5 (3a MS2) and from 9,200 to 627 (3b MS1). For
+   3c they fall from 19,557.5 to 1,435 (MS1) and from 612 to 44 (MS2).
 
 ## What the evidence supports
 
-On the verified build, for Thermo RAW from an LTQ Velos and an Orbitrap Exploris
-480, the evidence supports these claims:
+On the verified build, for Thermo RAW from an LTQ Velos, an Orbitrap Exploris
+480 and a Q Exactive, the evidence supports these claims:
 
 - `peakPicking vendor msLevel=1-` and `peakPicking vendor msLevel=2-` run the
   Thermo vendor picker and name it.
@@ -294,6 +383,10 @@ On the verified build, for Thermo RAW from an LTQ Velos and an Orbitrap Exploris
 - They leave every out-of-scope spectrum and every chromatogram bit-identical.
 - They keep the spectrum population exactly.
 - On 3a the result equals ProteoWizard's own reference.
+
+**Verdict for MS2+ on 3.0.26013:** `peakPicking vendor msLevel=2-` is measured
+on profile MS2 from both analyzers. On the ion trap that is 3a's 14 spectra. On
+the Orbitrap it is 3c's 23,676 spectra, from a Q Exactive.
 
 M6.2 found the MS-level scope "unreachable in combination with any admitted
 algorithm". It is now reachable **for Thermo RAW**, because the vendor picker can
@@ -311,13 +404,19 @@ addressed. Neither runs on Thermo RAW, and none of these cases ran them.
 
 ## What it does not support
 
-- **Other Thermo instruments or analyzers.** Not measured: Q Exactive, the
-  Orbitrap Tribrid line, Astral, TSQ/SRM data, files with more than one
-  controller (UV, PDA), and FAIMS.
-- **Orbitrap profile MS2.** 3b's MS2 was acquired centroided, so `msLevel=2-`
-  acting on profile MS2 is evidenced on ion-trap data only (3a, 14 spectra). On
-  the Orbitrap, `2-` is evidenced only as leaving MS1 alone and passing centroid
-  MS2 through.
+- **Other Thermo instruments or analyzers.** Not measured: Q Exactive models
+  other than the original Q Exactive (3c), the Orbitrap Tribrid line, Astral,
+  TSQ/SRM data, files with more than one controller (UV, PDA), and FAIMS.
+- **Orbitrap profile MS2 beyond one Q Exactive data-independent run.** 3b's MS2
+  was acquired centroided. Before 3c, `msLevel=2-` acting on profile MS2 was
+  evidenced on ion-trap data only (3a, 14 spectra). 3c adds 23,676 Orbitrap
+  profile MS2 spectra, but they come from one instrument model and one
+  data-independent method. Data-dependent Orbitrap profile MS2 and other Orbitrap
+  models were not measured.
+- **Profile MS3 and above.** 3a's MS3 spectra are all centroid, and 3b and 3c
+  hold none, so neither scope was measured acting on a profile MS3+ spectrum.
+  If a scope left one in profile, the proposed representation check would fail
+  closed.
 - **Other builds or RawFileReader versions.** The 3a reference agreement spans
   builds 3.0.18248 and 3.0.26013, but transfer is still not claimed.
 - **Other vendor readers.** Nothing was measured on Shimadzu LCD or SCIEX WIFF.
@@ -344,8 +443,8 @@ executable SHA-256 `9BB6F5D5…90BD`.
 
 | Proposed row | Format | Spectrum chain | Population | Precision | Compression | Source domain | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Thermo RAW: vendor centroiding, MS1+ | mzML | `[PeakPickingVendor { ms_levels: Some(1-) }]` | All (no filter) | m/z 64, intensity 32 (no flag) | zlib | `MeasuredOn(&[ThermoRawFile])` | `TV1`, `TE1`; reference agreement on 3a |
-| Thermo RAW: vendor centroiding, MS2+ | mzML | `[PeakPickingVendor { ms_levels: Some(2-) }]` | All (no filter) | m/z 64, intensity 32 (no flag) | zlib | `MeasuredOn(&[ThermoRawFile])` | `TV2`, `TE2` |
+| Thermo RAW: vendor centroiding, MS1+ | mzML | `[PeakPickingVendor { ms_levels: Some(1-) }]` | All (no filter) | m/z 64, intensity 32 (no flag) | zlib | `MeasuredOn(&[ThermoRawFile])` | `TV1`, `TE1`, `TQ1`; reference agreement on 3a |
+| Thermo RAW: vendor centroiding, MS2+ | mzML | `[PeakPickingVendor { ms_levels: Some(2-) }]` | All (no filter) | m/z 64, intensity 32 (no flag) | zlib | `MeasuredOn(&[ThermoRawFile])` | `TV2`, `TE2`, `TQ2` |
 
 They lower, after the source, to:
 
@@ -359,14 +458,16 @@ Each `--filter` value is one argv element.
 **The source domain is coarser than the evidence, and that is a decision this
 record does not settle.** `MeasuredOn(&[ThermoRawFile])` covers every Thermo RAW
 file, including every instrument listed under "What it does not support". The
-evidence covers two instrument models.
+evidence covers three instrument models.
 
 - **The argument for the family domain** is CNV-D2's own reasoning. Peak picking
   is decided by the reader, and the same bundled RawFileReader decides it for
   every Thermo instrument.
 - **The argument against it is sharpest for MS2+.** Its only profile-MS2 evidence
   is 14 ion-trap spectra. Orbitrap (FTMS) profile MS2 is common on Q
-  Exactive-class methods, and it was not measured.
+  Exactive-class methods, and it was not measured. *2026-10-30: 3c measured it,
+  on 23,676 spectra from a Q Exactive. MS2+ is now left with the gap MS1+ also
+  has: the models listed under "What it does not support".*
 
 The owner or the integration branch chooses one of two options:
 
@@ -374,11 +475,14 @@ The owner or the integration branch chooses one of two options:
 - verify MS1+ now and keep MS2+ in the advanced tier, labelled, until a public
   FTMS profile-MS2 file is measured.
 
+The owner chose the second option (ADR 0059, decision 2). 3c is the public FTMS
+profile-MS2 file that option waited for.
+
 **Citing these cases needs a validator change.**
 `validate_the_admitted_intent_table_cites_measurements_that_support_it` resolves
 a row's evidence against the M6.2 ledger in `scripts/msconvert_evidence.py`. It
-does not know the case ids `TV1`, `TE1`, `TV2` and `TE2`, so the change that adds
-the rows must extend it.
+does not know the case ids `TV1`, `TE1`, `TQ1`, `TV2`, `TE2` and `TQ2`, so the
+change that adds the rows must extend it.
 
 **The MS1+ row is CNV-005's "MS1+MS2" centroid choice, and the MS2+ row is its
 "MS2" choice.** Both are verified-catalog rows, not user-saved presets in
@@ -402,7 +506,8 @@ lower `None` to an explicit `msLevel=1-` and reuse this row.
 
 Today's contract cannot accept these rows. `UnscopedDefaultCentroiding` refuses
 `VendorPeakPicking` as unrequested. Its representation rule also requires every
-spectrum to be centroid, which would refuse the correct `TV2` and `TE2` outputs.
+spectrum to be centroid, which would refuse the correct `TV2`, `TE2` and `TQ2`
+outputs.
 
 Each of the following needs its own intent or chain-step handling:
 
@@ -455,4 +560,14 @@ When the rows land, the change that adds them should also update:
   release, on 3a only, because the integration branch's type admits
   `ms_levels: None`. It was not repeated on 3b.
 - **The 3b digest is a first observation.** PRIDE publishes no checksum, so it is
-  corroborated, not proven.
+  corroborated, not proven. The same holds for 3c.
+- **3c came later, from a separate session under the same release.** Its runner
+  `ms2_run.py` is derived from `thermo_run.py`, which was left unedited, so the
+  recorded `thermo_run.py` digest stays valid. 3c has no `peakPicking vendor`
+  case without `msLevel=`, like 3b. It has no reference output either, so the
+  3b sanity checks stand in for one.
+- **3c's screening downloaded public text, never a RAW file.** That text was six
+  reference mzMLs from ProteoWizard's test directory, mzdata's `small.mzML`, and
+  two byte ranges (3 MB and 2 MB) of `PXD000001`'s mzXML. They were read as data,
+  are kept outside the repository with the outputs, and no ProteoWizard program
+  ran on them.
