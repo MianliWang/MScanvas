@@ -401,13 +401,15 @@ writer and Rust's ownership of files.
 - The WebDriver session-open flake needs one captured failure log.
 - Security alerts (enabled 2026-10-27), triaged 2026-10-28 — none reaches the
   beta-1 installer:
-  - npm alerts are build and test tooling (vite, undici, serialize-javascript
-    and others); #133 closes the vite ones, and the rest are rechecked after
-    each dependency batch;
+  - npm alerts are build and test tooling; the undici, serialize-javascript
+    and source-map-js ones were fixed on 2026-10-30, and extract-zip has no
+    fix before WebdriverIO 10 (see the security fixes in
+    [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md));
   - Pillow is in the development-only targeted-MS1 runtime lock
     (`experiments/m9_0/runtime/requirements-cp313-win_amd64.lock.txt`), is not
-    imported by project code and is not shipped; update it when that runtime
-    is next provisioned and before any release ships the runtime;
+    imported by project code and is not shipped; bumping it changes the pinned
+    runtime manifest digest, so update it when that runtime is next provisioned
+    and before any release ships the runtime;
   - `glib` (Rust) is not in the Windows dependency tree; it follows the cargo
     batch.
 - The real targeted-MS1 engine qualification and, before any release ships the

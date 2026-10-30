@@ -15,3 +15,12 @@ allowBuilds:
   # peer of Vite -- declared, never installed -- so granting it is a decision
   # this suite forces rather than one it inherits.
   esbuild: true
+# Security overrides for test tooling only; see "Security fixes" in
+# docs/development/DEPENDENCY_POLICY.md. Each is scoped to the vulnerable major
+# its parent still declares; remove it once that parent declares a fixed range.
+overrides:
+  # webdriver@9 declares ^6.27.0, but `pnpm update` keeps 6.28.0.
+  "undici@6": ">=6.29.1 <7"
+  # mocha@10 declares ^6.0.2 and no 6.x is fixed. 7.0.0 only raised the Node
+  # floor to 20, and mocha loads it only in parallel mode, which no suite uses.
+  "serialize-javascript@6": "7.1.3"
