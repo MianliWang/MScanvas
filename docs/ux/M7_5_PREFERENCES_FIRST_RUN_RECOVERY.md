@@ -270,8 +270,8 @@ was always shown.
 
 *Added after beta 1 (2026-10-29).* Before this, a folder chosen through
 **Choose folder…** lasted for the session only, as ADR 0005 decided, and every
-launch searched automatically. This reverses that rule and needs the owner's
-acceptance and an ADR 0005 amendment; it is a draft until then.
+launch searched automatically. This reverses that rule; the owner accepted it
+on 2026-10-30, and ADR 0005 records the amendment.
 
 **Remembering.** `choose_backend_installation` uses the chosen folder exactly as
 before. When that reading is `available` with origin `chosen`, the command then
@@ -318,8 +318,8 @@ beside `release`:
 
 `location` is the first installation path the webview receives. ADR 0005 and
 the preview DTOs said none crosses; the status indicator's tooltip names the
-folder, so the exception is this one field, on a usable reading only. It needs
-the same acceptance as the rest of this section.
+folder, so the exception is this one field, on a usable reading only. The
+owner accepted it with the rest of this section on 2026-10-30.
 
 **Limits.** Beta 1 reads a schema-1 record that holds `backendFolder` as
 `malformed`, because it refuses unknown fields: going back to beta 1 after a

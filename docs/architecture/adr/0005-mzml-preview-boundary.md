@@ -16,6 +16,10 @@
   this ADR says about reading mzML is unchanged.
 - Amended: 2026-10-29 ([ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md))
   — the one-backend-process rule, by a note at that rule below.
+- Amended: 2026-10-30 (owner decision) — a usable chosen ProteoWizard folder
+  is remembered across launches, and a usable reading names its installation
+  folder to the webview as display text, by a note at the installation rule
+  below.
 
 ## Context
 
@@ -73,6 +77,19 @@ is rather than removed in a slice that is about something else.
   beside the new one, and every banner state offers the way back — including
   the state where the call itself failed, which is precisely the state that
   cannot say which installation was in use.
+
+  > **Amended 2026-10-30 by owner decision.** The owner accepted remembering a
+  > chosen folder, which reverses "for the session only" and "never written
+  > to disk" above. A folder whose reading is usable is written to the UI
+  > preference record; each launch checks it again through the same discovery
+  > before anything runs on it, a folder that no longer works is reported and
+  > the session searches automatically, and **Forget** clears it. The owner
+  > also accepted one exception to "the webview names no path in either
+  > direction": a usable backend reading carries `location`, the installation
+  > folder as bounded display text for the status indicator. No command takes
+  > a path, and the quarantine echo, diagnostics and project documents carry
+  > none. The design is recorded in
+  > [M7.5 preferences](../../ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md#remembered-proteowizard-folder-after-beta-1).
 - **File acceptance is decided in Rust** — extension, canonical resolution, and
   regular-file posture including symlink and reparse-point rejection — so a
   frontend defect cannot widen what the backend will open. On Windows all of it
