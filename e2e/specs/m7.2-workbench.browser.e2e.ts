@@ -285,7 +285,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       const retry = browser.$(language === "en" ? "button=Try reading it again" : "button=重试读取列表");
       await retry.waitForDisplayed();
       expect(await browser.$("#dataset-roster-matches").isExisting()).toBe(false);
-      expect(await browser.$("[data-add-files]").isEnabled()).toBe(true);
+      expect(await browser.$("[data-add-files]").getAttribute("aria-disabled")).toBe(null);
       expect(await browser.$('[data-live-region="search"]').getProperty("textContent")).toBe("");
       await capture(`review-capacity-${language}-failed`);
       await setInvokeResult("get_workspace_roster", { capacity: 1024, datasets: [] });
@@ -551,7 +551,12 @@ describe("M7.2 workbench shell and grouped roster", () => {
       { type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" },
     ] }]);
     await browser.releaseActions();
-    expect(await browser.$(".roster-selection-context").getText()).toBe("0 checked · 200 highlighted");
+    // The footer counts the checked rows; the highlight heads the list menu.
+    expect(await browser.$(".roster-selection-context").getText()).toBe("0 checked");
+    await browser.$("[data-roster-list-menu]").click();
+    expect(await browser.$(".roster-menu-context").getText()).toBe("200 highlighted");
+    await browser.keys("Escape");
+    await browser.$(".roster-menu-context").waitForExist({ reverse: true });
     expect(await browser.$$(".grouped-roster [data-handle]").length).toBeLessThan(80);
     const before = await ipcCalls();
     await startDrag(`${row("wide-0")} .row-drag-handle`);

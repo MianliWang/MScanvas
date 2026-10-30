@@ -1,10 +1,10 @@
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { useReducer } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { blurAsABrowserWould as blurTheWayABrowserWould } from "../../test/browserFocus";
-import { chooseRosterAction, rosterAction, rosterActionRefused, rosterListMenu } from "../../test/rosterActions";
+import { chooseRosterAction, closeRosterListMenu, rosterAction, rosterActionRefused, rosterListMenu } from "../../test/rosterActions";
 import type { SelectedFile } from "./contracts";
 import { DatasetRoster } from "./DatasetRoster";
 import {
@@ -288,13 +288,18 @@ describe("looking at the roster through a search and a sort", () => {
     expect(screen.queryByRole("combobox", { name: "Execution order" })).toBeNull();
   });
 
-  it("retains highlighted rows hidden by search and names their hidden count", () => {
+  it("retains highlighted rows hidden by search and names their hidden count", async () => {
     render(<Harness />);
     fireEvent.click(rows()[2] as HTMLElement, { ctrlKey: true });
     type("qc_pool");
     expect(screen.queryByRole("row", { name: /Blank_03\.mzML/ })).toBeNull();
     expect(rows()).toHaveLength(3);
-    expect(screen.getByText("0 checked · 1 highlighted · 1 hidden")).toBeVisible();
+    // The footer counts the checked rows; the highlight, and the part of it the
+    // search hides, head the list menu whose actions they are about.
+    expect(document.getElementById("roster-selection-count")).toHaveTextContent(/^0\s+checked$/);
+    await rosterAction("removeHighlighted");
+    expect(document.querySelector(".roster-menu-context")).toHaveTextContent(/^1\s+highlighted · 1\s+hidden$/);
+    await closeRosterListMenu();
     fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
     expect(selectedNames()).toEqual(["Blank_03.mzML"]);
   });
@@ -511,7 +516,7 @@ describe("native drop roster accessibility", () => {
     expect(
       screen.getByText("Clear also prevents the pending import from adding files."),
     ).toBeInTheDocument();
-    expect(clear).toBeEnabled();
+    expect(clear).not.toHaveAttribute("aria-disabled");
     fireEvent.click(clear);
     expect(onClearList).toHaveBeenCalledTimes(1);
   });
@@ -1104,8 +1109,8 @@ describe("the workspace roster as an accessible list", () => {
   it("keeps its actions under stable accessible names", async () => {
     render(<Harness />);
 
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     expect(await rosterActionRefused("removeHighlighted")).toBe(true);
     expect(await rosterActionRefused("clearList")).toBe(false);
     expect(await rosterActionRefused("newGroup")).toBe(false);
@@ -1119,7 +1124,7 @@ describe("the workspace roster as an accessible list", () => {
 
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(screen.getByText("No acquisitions yet")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
     // No second Add action hiding in the empty state: one action, one place.
     expect(screen.getAllByRole("button", { name: "Add files…" })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
@@ -1136,10 +1141,10 @@ describe("the workspace roster as an accessible list", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     const clear = screen.getByRole("button", { name: "Clear list" });
-    expect(clear).toBeEnabled();
+    expect(clear).not.toHaveAttribute("aria-disabled");
     expect(clear).toHaveAccessibleDescription(
       "Clear also prevents the pending import from adding files.",
     );
@@ -1538,13 +1543,60 @@ describe("the two ways of adding acquisitions", () => {
         .map((button) => button.getAttribute("aria-label") ?? button.textContent);
     expect(names(".roster-head")).toEqual(["Add files…", "Add mzML folder…"]);
     // One footer row: the list menu, then Convert.
-    expect(names(".roster-foot")).toEqual(["List actions", "Convert 0 checked…"]);
+    expect(names(".roster-foot")).toEqual(["List actions", "Convert…"]);
     await rosterAction("removeHighlighted");
     expect(screen.getAllByRole("menuitem").map((item) => item.firstChild?.textContent)).toEqual(
-      ["Remove highlighted", "Clear list", "New group"],
+      ["Remove highlighted", "Move to group…", "Clear list", "New group"],
     );
     // Secondary unless the first run asks for the one primary.
     expect(document.querySelector("[data-add-files]")).toHaveClass("ui-button--secondary");
+  });
+
+  it("refuses the adding actions while the workspace waits, and keeps them focusable", () => {
+    const onAddFiles = vi.fn();
+    const onAddFolder = vi.fn();
+    render(<Harness canAddFiles={false} canAddFolder={false} onAddFiles={onAddFiles} onAddFolder={onAddFolder} />);
+
+    for (const name of ["Add files…", "Add mzML folder…"]) {
+      const control = screen.getByRole("button", { name });
+      // Refused, never natively disabled: a Tab stop that names the shell's
+      // visible reason and swallows the press.
+      expect(control).not.toBeDisabled();
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      expect(control.getAttribute("aria-describedby")).toContain("shell-status-busy");
+      control.focus();
+      expect(control).toHaveFocus();
+      fireEvent.click(control);
+    }
+    expect(onAddFiles).not.toHaveBeenCalled();
+    expect(onAddFolder).not.toHaveBeenCalled();
+  });
+
+  it("moves the highlighted rows into a group from the list menu (the drag's menu route)", async () => {
+    render(<Harness />);
+
+    // Nothing highlighted: refused, reachable, and it says why.
+    const refused = await rosterAction("moveToGroupMenu");
+    expect(refused).toHaveAttribute("aria-disabled", "true");
+    expect(refused).toHaveAccessibleDescription("No rows highlighted");
+    await closeRosterListMenu();
+
+    await chooseRosterAction("newGroup");
+    fireEvent.change(screen.getByRole("textbox", { name: "Group name" }), { target: { value: "Blanks" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save group" }));
+    fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("row", { name: /Blank_03\.mzML/ }), { ctrlKey: true });
+
+    const move = await rosterAction("moveToGroupMenu");
+    expect(move).not.toHaveAttribute("aria-disabled");
+    expect(move).toHaveAttribute("aria-haspopup", "menu");
+    await act(async () => { fireEvent.keyDown(move, { key: "ArrowRight" }); });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Blanks" }));
+    await waitFor(() => {
+      const group = document.querySelector<HTMLElement>('.roster-group-header:not([data-group-id="ungrouped"])');
+      const moved = [...document.querySelectorAll<HTMLElement>(`[data-group="${group?.dataset.groupId ?? "none"}"]`)];
+      expect(moved.map((row) => row.dataset.handle)).toEqual(["file-0", "file-2"]);
+    });
   });
 
   it("keeps the folder action's name while an import runs, and marks it busy", async () => {
@@ -1555,7 +1607,7 @@ describe("the two ways of adding acquisitions", () => {
     render(<Harness canAddFiles={false} canAddFolder={false} canMutate={false} folderBusy />);
 
     const folder = screen.getByRole("button", { name: "Add mzML folder…" });
-    expect(folder).toBeDisabled();
+    expect(folder).toHaveAttribute("aria-disabled", "true");
     expect(folder).toHaveAttribute("aria-busy", "true");
     expect(screen.queryByText(/Scanning folder/)).toBeNull();
     // No percentage anywhere: nothing has counted the tree, so there is no
@@ -1563,7 +1615,7 @@ describe("the two ways of adding acquisitions", () => {
     expect(folder.textContent).not.toMatch(/\d/);
     // And the region the import is about to change says it is not settled.
     expect(screen.getByRole("region", { name: "Acquisitions" })).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     expect(await rosterActionRefused("removeHighlighted")).toBe(true);
     expect(await rosterActionRefused("clearList")).toBe(true);
   });
@@ -1584,8 +1636,8 @@ describe("the two ways of adding acquisitions", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     expect(await rosterActionRefused("clearList")).toBe(false);
     // `Remove selected` still needs a selected row, which is its own condition
     // and not this one.
@@ -1712,7 +1764,7 @@ describe("the roster footer", () => {
     const onConvertChecked = vi.fn();
     render(<Harness onConvertChecked={onConvertChecked} />);
 
-    const convert = screen.getByRole("button", { name: "Convert 0 checked…" });
+    const convert = screen.getByRole("button", { name: "Convert…" });
     const count = document.getElementById("roster-selection-count");
     expect(count).toHaveTextContent("0 checked");
     expect(count).toBeVisible();
@@ -1730,7 +1782,7 @@ describe("the roster footer", () => {
 
     check(/QC_pool_01\.mzML/);
     check(/Blank_03\.mzML/);
-    const convert = screen.getByRole("button", { name: "Convert 2 checked…" });
+    const convert = screen.getByRole("button", { name: "Convert…" });
     expect(convert).not.toHaveAttribute("aria-disabled");
     expect(document.getElementById("roster-selection-count")).toHaveTextContent("2 checked");
     fireEvent.click(convert);

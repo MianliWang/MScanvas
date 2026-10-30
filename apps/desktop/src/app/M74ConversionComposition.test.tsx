@@ -75,10 +75,10 @@ describe("M7.4 bilingual conversion composition", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(clear).not.toBeInTheDocument();
     if (timing === "after") {
-      expect(add).toBeDisabled();
+      expect(add).toHaveAttribute("aria-disabled", "true");
       await act(async () => unlock());
     }
-    await waitFor(() => expect(add).toBeEnabled());
+    await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
     expect(add).toHaveFocus();
     expect(execute).toHaveBeenCalledExactlyOnceWith("clear-final", "cancelAndClear");
     expect(api.beginRequests()).toEqual([]);
@@ -101,7 +101,7 @@ describe("M7.4 bilingual conversion composition", () => {
     await waitFor(() => expect(remove).not.toHaveAttribute("aria-disabled"));
     remove.focus(); fireEvent.click(remove);
     await waitFor(() => expect(clear).toHaveFocus());
-    expect(screen.getByRole("button", { name: en.addFiles })).toBeDisabled();
+    expect(screen.getByRole("button", { name: en.addFiles })).toHaveAttribute("aria-disabled", "true");
     expect(execute).toHaveBeenCalledExactlyOnceWith("clear-outsider", "removeNonRunning");
   });
 
@@ -143,7 +143,7 @@ describe("M7.4 bilingual conversion composition", () => {
       poll();
     });
     const add = screen.getByRole("button", { name: en.addFiles });
-    expect(add).toBeEnabled(); expect(add).not.toHaveFocus();
+    expect(add).not.toHaveAttribute("aria-disabled"); expect(add).not.toHaveFocus();
     expect(document.activeElement).toBe(destination === "retained" ? chosen : document.body);
     chosen.remove();
   });

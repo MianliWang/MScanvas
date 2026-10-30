@@ -3,7 +3,7 @@ import { act, fireEvent, screen } from "@testing-library/react";
 import { UI_RESOURCES } from "../features/preferences/i18n";
 
 type Words = (typeof UI_RESOURCES)["en"] | (typeof UI_RESOURCES)["zh-CN"];
-type Action = "removeHighlighted" | "clearList" | "newGroup";
+type Action = "removeHighlighted" | "moveToGroupMenu" | "clearList" | "newGroup";
 
 /** The roster footer's list menu trigger, where its items give the keyboard back. */
 export function rosterListMenu(words: Words = UI_RESOURCES.en): HTMLElement {

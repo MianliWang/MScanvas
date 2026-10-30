@@ -69,9 +69,9 @@
 /* One workspace card per surface (spec 1.2): white, one border, radius 9,
    columns separated by rules rather than gaps. */
 .workbench-shell .workspace-layout { grid-area: content; position: relative; display: grid; gap: 0; margin: 12px 16px; padding: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); }
-.workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 280px minmax(0, 1fr); grid-template-areas: "roster main"; }
+.workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 264px minmax(0, 1fr); grid-template-areas: "roster main"; }
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }
-.workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 280px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
+.workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 264px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
 .workbench-shell .workspace-sidebar { grid-area: roster; display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--color-border); background: #fbfcfe; }
 /* Each region positions its own out-of-flow accessible text, so none of it is
    placed against the shell below the window (PM9 L22). Each region stays the
@@ -93,8 +93,8 @@
 .roster-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .roster-title h2 { margin: 0; color: var(--color-text-primary); font-size: 13px; font-weight: 650; line-height: 1.4; }
 .roster-count-tag { margin-left: auto; padding: 0 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-/* Two actions on one row at the 280 px column in either language (owner
-   review); a longer label wraps rather than clips. */
+/* Two text-only actions on one row at the 264 px column in either language
+   (direction A 2.1); a longer label wraps rather than clips. */
 .roster-acquire { display: flex; flex-wrap: wrap; gap: 4px; }
 .roster-acquire > .ui-button { padding-inline: 8px; }
 /* v5.11 `.search`: the icon inside the field, the clear action at its edge.
@@ -140,18 +140,18 @@
 .organization-notice { flex: 0 0 auto; margin: 0; padding: 5px 12px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.4; }
 .organization-notice:empty { padding: 0; }
 .roster-empty { padding: 16px 10px; font-size: 13px; }
-/* v5.11 `.roster-foot`, one row (owner review): the count, Undo, the list
-   menu, then Convert. The count wraps inside its own space; the controls never do.
-   Where even its narrowest shape does not fit beside them (a long count, Undo
-   shown), the controls move together to the row under it rather than overlap it. */
-.roster-foot { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-height: 52px; padding: 8px 12px; border-top: 1px solid var(--color-border); background: var(--color-surface); }
+/* Direction A 2.1: one 48 px row at every width and in both languages -- the
+   checked count, Undo, the list menu, then Convert. The controls never wrap or
+   shrink; only the count gives way, by an ellipsis it never needs short of
+   four-digit counts beside Undo (its whole text is its title). */
+.roster-foot { flex: none; display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; height: 48px; padding: 0 12px; border-top: 1px solid var(--color-border); background: var(--color-surface); }
 .roster-foot > .ui-button { flex: none; }
-.roster-foot-actions { flex: none; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.roster-foot-actions { flex: none; display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .roster-foot-actions > .ui-button { flex: none; }
-/* Each count stays with its word, in either language: the resources join them
-   with a no-break space, and `keep-all` keeps CJK words whole, so the line
-   breaks only at the separators (PM9 UI-16). */
-.roster-selection-context { flex: 1 1 0; min-width: min-content; margin: 0; color: var(--color-text-secondary); font-size: 11px; line-height: 1.35; font-variant-numeric: tabular-nums; word-break: keep-all; }
+.roster-selection-context { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 1.35; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.roster-menu .roster-menu-context { padding: 4px 9px 6px; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.roster-menu [role="menuitem"][aria-haspopup="menu"] { display: flex; align-items: center; justify-content: space-between; }
+.roster-menu [role="menuitem"][aria-haspopup="menu"]::after { content: "›"; padding-left: 12px; color: var(--color-text-secondary); }
 .roster-menu { z-index: 100; min-width: 170px; max-width: min(340px, calc(100vw - 24px)); max-height: min(420px, var(--radix-dropdown-menu-content-available-height)); overflow: auto; padding: 5px; border: 1px solid var(--color-border); border-radius: 8px; background: white; color: var(--color-text-primary); box-shadow: 0 6px 20px rgb(23 35 55 / 0.14); font-family: var(--font-ui); font-size: 13px; }
 .roster-menu [role="menuitem"] { padding: 7px 9px; min-height: 32px; border-radius: 4px; overflow-wrap: anywhere; cursor: pointer; }
 .roster-menu [data-highlighted] { background: var(--color-surface-selected); }

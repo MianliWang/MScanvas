@@ -26,8 +26,12 @@ interface Props {
   readonly onKeyDown: KeyboardEventHandler<HTMLDivElement>;
   readonly onRowPress: (event: MouseEvent<HTMLElement>, handle: string) => void;
   readonly empty: ReactNode;
-  /** The roster footer, given the `New group` action this list owns and where its dialog returns the keyboard. */
-  readonly footer: (newGroup: (returnTo: HTMLElement | null) => void) => ReactNode;
+  /**
+   * The roster footer, given the two organization actions this list owns: `New
+   * group` (with where its dialog returns the keyboard) and moving a row's
+   * payload -- the highlighted rows when it is one of them -- into a group.
+   */
+  readonly footer: (newGroup: (returnTo: HTMLElement | null) => void, moveTo: (source: string, groupId: string) => void) => ReactNode;
 }
 const noticeKeys = {
   changed: "organizationChanged", undone: "organizationUndone", cancelled: "organizationCancelled",
@@ -201,7 +205,7 @@ export function GroupedRosterList(props: Props) {
     </p>
     {/* A row or group menu whose own trigger has left the document returns
         focus to the footer's list menu (`data-roster-list-menu`). */}
-    {props.footer(returnTo => setEditing({ id: null, name: "", returnTo }))}
+    {props.footer(returnTo => setEditing({ id: null, name: "", returnTo }), moveTo)}
     <DragOverlay dropAnimation={null} style={{ pointerEvents: "none", display: "flex", justifyContent: "flex-end", alignItems: "center" }}><span className="roster-drag-overlay" aria-hidden="true">{t("dragCount", { count: payload.current?.handles.length ?? 0 })}</span></DragOverlay>
     {editing !== null ? <GroupNameDialog name={editing.name} rename={editing.id !== null} returnTo={editing.returnTo} onClose={() => setEditing(null)} onSave={name => {
       dispatch({ type: "organization", action: editing.id === null ? { type: "create", name } : { type: "rename", groupId: editing.id, name } }); setEditing(null);
