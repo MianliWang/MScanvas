@@ -200,7 +200,9 @@ its end was recorded.
   a second instance starting at the same moment cannot interleave.
 - An owner that finished in the meantime is seen to have finished.
 - A list reports a gone owner's run as interrupted even before a start has
-  written that down.
+  written that down. It does the same for a run of its own session that is
+  not the run being recorded: one whose end could not be written, or whose
+  worker left without a terminal answer.
 
 **What the record then says:**
 
@@ -242,6 +244,11 @@ and of G16, cross-session staging ownership, unchanged.
   says how many it kept.
 - **Source data:** neither Clear nor Off touches a source acquisition or an
   output.
+- **What they cannot reach:** a write that crashed between creating its
+  private sibling and publishing it can leave that sibling
+  (`.mscanvas-run-history-*`), which holds a whole record, paths included.
+  Neither Clear nor Off removes it, because a sibling another instance is
+  writing looks the same; see the consequences.
 
 *Recommendation:* history is on by default, as workspace restore is in ADR
 0061. *Alternative:* off until the user turns it on, with a first-run choice.

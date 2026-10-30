@@ -597,7 +597,8 @@ impl ConversionHistory {
             active.record.ended_at_ms = Some(now_ms());
         }
         lane.problem = publish(directory, &active.record).err();
-        drop(lane);
+        // Under the lane, so no run of this session can start while it runs:
+        // this session has nothing in progress to keep.
         if ended {
             prune(directory, self.owner_id());
         }
@@ -756,9 +757,22 @@ impl ConversionHistory {
 
     /// The state a reader should be told: a `running` record whose owner is
     /// gone is interrupted, whether or not a start has said so on disk yet.
+    /// So is one of this session's own that is not the run it is recording --
+    /// a run whose end could not be written, or whose worker left without one.
     fn state_now(&self, directory: &Path, record: &RunRecord) -> RunState {
-        if record.state != RunState::Running || Some(record.owner.as_str()) == self.owner_id() {
+        if record.state != RunState::Running {
             return record.state;
+        }
+        if Some(record.owner.as_str()) == self.owner_id() {
+            return match &self.locked().active {
+                Some(active)
+                    if active.record.run_id == record.run_id
+                        && active.record.state == RunState::Running =>
+                {
+                    RunState::Running
+                }
+                _ => RunState::Interrupted,
+            };
         }
         match owner_liveness(directory, &record.owner) {
             Liveness::Dead(_) => RunState::Interrupted,
@@ -964,8 +978,9 @@ fn run_entries(directory: &Path) -> Vec<(String, u64)> {
     entries
 }
 
-/// Keeps the newest runs within both bounds. A run still being written is
-/// never removed, whichever instance writes it.
+/// Keeps the newest runs within both bounds. A run another instance is still
+/// writing is never removed. Called only while this session is recording
+/// nothing, so a `running` run of its own is one whose end was never written.
 fn prune(directory: &Path, own: Option<&str>) {
     let entries = run_entries(directory);
     let mut count = entries.len();
@@ -977,8 +992,8 @@ fn prune(directory: &Path, own: Option<&str>) {
         let path = directory.join(&name);
         if let Ok(Some(record)) = read_record(&path)
             && record.state == RunState::Running
-            && (Some(record.owner.as_str()) == own
-                || !matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_)))
+            && Some(record.owner.as_str()) != own
+            && !matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_))
         {
             continue;
         }

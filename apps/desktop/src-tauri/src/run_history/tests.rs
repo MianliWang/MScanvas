@@ -197,6 +197,34 @@ fn a_retry_pass_reopens_the_same_run() {
 }
 
 #[test]
+fn a_run_of_this_session_whose_end_was_never_written_is_not_shown_as_running() {
+    let scratch = Scratch::new("history-own-unended");
+    let history = open(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    // Its worker left without a terminal answer, and the next queue began.
+    history.begin(2, start(1), progress(RunState::Running, &["running"]));
+
+    let listed = runs(&history);
+    let states: Vec<RunState> = listed.iter().map(|run| run.state).collect();
+    assert_eq!(states.len(), 2);
+    assert_eq!(
+        states
+            .iter()
+            .filter(|state| **state == RunState::Running)
+            .count(),
+        1,
+        "only the run being recorded is running: {states:?}"
+    );
+    assert!(states.contains(&RunState::Interrupted));
+    assert_eq!(
+        history.clear(),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 1
+        }
+    );
+}
+
+#[test]
 fn two_instances_append_without_dropping_each_others_runs() {
     let scratch = Scratch::new("history-two-writers");
     let first = Arc::new(open(&scratch));
