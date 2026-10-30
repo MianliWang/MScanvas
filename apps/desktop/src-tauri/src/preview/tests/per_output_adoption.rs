@@ -230,6 +230,20 @@ fn an_output_of_a_queue_still_under_way_is_refused_until_it_settles() {
 
     let ids = output_ids(&service, 0);
     assert_eq!(ids.len(), 2, "the finalized set's outputs are on the wire");
+    // The wire shape ADR 0052 decision 3 reads: the item-level signals already
+    // say adoptable, and only the queue count says not yet.
+    let running = service.conversion_state();
+    let queue = queue_of(&running);
+    assert_eq!(queue.adoptable_output_count, 0);
+    assert_eq!(
+        queue.items[0].adoption,
+        ConversionItemAdoptionDto::NotRequested
+    );
+    assert!(
+        item_set_report(&queue.items[0])
+            .expect("the finalized set's report")
+            .complete_set_adoptable
+    );
     let roster = service.roster();
     let refused = adopt_one(&service, operation, &ids[0]).expect_err("the queue is running");
     assert_eq!(refused.kind, "outputs_not_adoptable");

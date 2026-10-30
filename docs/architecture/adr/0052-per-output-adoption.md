@@ -80,10 +80,15 @@ of a queue that still offers others, so the interface shows this refusal from
 the per-output command with the per-output "not added" sentence instead.
 
 The interface offers a per-output Add only where Rust says the item's outputs
-are adoptable: the item is `finalized` and its `adoption.kind` is not
+are adoptable: the queue is terminal (its `adoptableOutputCount` is above
+zero), the item is `finalized` and its `adoption.kind` is not
 `nothingToAdopt` (for a set, `completeSetAdoptable` says the same). Every
-output of such an item is offered. `finalizedOutputs` alone never decides it,
-because it also lists the outputs refused above.
+output of such an item is offered. The item-level signals do not look at the
+queue: while it is running or stopping, a finalized item already reads
+`notRequested`, and a complete set already carries `completeSetAdoptable`, so
+only the queue count tells a settled queue from one still under way.
+`finalizedOutputs` alone never decides it, because it also lists the outputs
+refused above.
 
 ### 4. A complete SCIEX set is adopted member by member
 
