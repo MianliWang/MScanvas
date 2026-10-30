@@ -339,7 +339,7 @@ free-text option.
     and releases it; a root that cannot be admitted fails the launch. Each
     tool call opens its roots again by their launch paths, compares each
     identity with the recorded one and refuses on a difference
-    (`rootChanged`), then holds them until the call is terminal, and a `run`
+    (`rootReplaced`), then holds them until the call is terminal, and a `run`
     until the run is. An idle adapter holds no root.
 - **By kind of path:**
   - **source:** acceptance as the picker's files get it, then containment on
@@ -353,7 +353,8 @@ free-text option.
     existing file, a source included), the other characters Windows will not
     put in a name, surrounding whitespace, a trailing dot, and the reserved
     device names, `CONIN$`, `CONOUT$` and the superscript port numbers
-    included. The file is created relative to the held parent with
+    included. The CLI reuses the predicate and reports its own code,
+    `fileNameUnusable`, not the desktop's folder message. The file is created relative to the held parent with
     `NtCreateFile`, `FILE_CREATE`, `OBJ_DONT_REPARSE` and
     `FILE_NON_DIRECTORY_FILE`: the file variant of `create_child_object`. An
     existing name is refused, nothing follows a link, and the parent cannot be
@@ -716,7 +717,11 @@ free-text option.
      re-export cannot be wider than its item. #161 edits `selection.rs`, but
      not near that line;
    - `destination_policy.rs`, for the extracted walk, name check and file
-     creation of decisions 1 and 4. No lane in flight edits it;
+     creation of decisions 1 and 4, which become `pub(crate)`, with
+     `admit_and_hold`. No lane in flight edits it;
+   - one `pub(crate) use destination_policy::{…}` in `preview/mod.rs`,
+     because the module is private to `preview`. This re-export is legal,
+     since its items are `pub(crate)` themselves. #175 edits that file;
    - its "no launch" test uses `idle_provider::NoProcess` as it is.
 2. **CLI slice 2:** the run lock and its holder record in both processes, and
    the desktop's refusal while the lock is held. It comes before any
@@ -758,8 +763,8 @@ measured need appears.
   junction inside a root that points outside it, a reparse point at the file
   itself, and, under `--root <dir>`, a file in the sibling `<dir>-x`. A plan
   or report name with `:`, a device name (`CONIN$` included) or a trailing
-  dot is refused by `SubfolderName::parse`'s own refusal, and so is a `\\?\`
-  prefix. A non-UTF-8 path and an unknown flag each exit 2 with a usage
+  dot exits 1 with `fileNameUnusable`, decided by `SubfolderName::parse`'s
+  predicate, and a `\\?\` prefix is refused. A non-UTF-8 path and an unknown flag each exit 2 with a usage
   document.
 - Containment calls the walk the destination policy calls: the destination
   policy's existing row-2 tests pass unchanged on the extracted form.
@@ -855,7 +860,7 @@ measured need appears.
 - While the adapter is idle, with no call in progress, each root and the
   folders above it can be renamed. A root renamed away and replaced by
   another folder of the same name between two calls is refused with
-  `rootChanged`.
+  `rootReplaced`.
 - No result in the test suite contains an absolute path.
 - Closing stdin during a call cancels it, and the adapter exits.
 
