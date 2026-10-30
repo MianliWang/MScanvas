@@ -1,10 +1,11 @@
 //! Deterministic tests for the semantic contract and its SVG renderer.
 
 use crate::spec::{
-    AxisSpec, Caption, DataScope, DecodeError, Domain, FigureSize, FigureSpec, FigureTheme,
-    IntervalRole, IntervalSpec, Label, MAX_LABEL_CHARS, MIN_FIGURE_CHROME_HEIGHT, MIN_FIGURE_WIDTH,
-    MIN_PANEL_HEIGHT, Marker, PanelSpec, PlotKind, ReductionRule, SCHEMA_VERSION, SeriesSpec,
-    SpecError, SpectrumRepresentation, StyleRole, UnitState,
+    AxisSpec, Caption, DEFAULT_LINE_PT, DEFAULT_TEXT_PT, DOUBLE_COLUMN_WIDTH_MM, DataScope,
+    DecodeError, Domain, FigureSize, FigureSpec, FigureTheme, IntervalRole, IntervalSpec, Label,
+    MAX_LABEL_CHARS, MIN_FIGURE_CHROME_HEIGHT, MIN_FIGURE_WIDTH, MIN_PANEL_HEIGHT, Marker,
+    PanelSpec, PlotKind, PrintSize, ReductionRule, SCHEMA_VERSION, SINGLE_COLUMN_WIDTH_MM,
+    SeriesSpec, SpecError, SpectrumRepresentation, StyleRole, UnitState,
 };
 use crate::svg;
 
@@ -71,6 +72,61 @@ fn description_of(document: &str) -> String {
         .and_then(|rest| rest.split("</desc>").next())
         .expect("the document carries a description")
         .to_owned()
+}
+
+/// How wide the renderer measures `text` at `size`.
+fn measured(text: &str, size: f64) -> f64 {
+    crate::metrics::text_width(text, size, false)
+}
+
+/// Every drawn `<text>` element after the description, as its x, its baseline,
+/// its opening tag and its words.
+fn drawn_texts(document: &str) -> Vec<(f64, f64, String, String)> {
+    let body = document.split("</desc>").nth(1).unwrap_or_default();
+    body.split("<text ")
+        .skip(1)
+        .filter_map(|chunk| {
+            let (head, rest) = chunk.split_once('>')?;
+            let words = rest.split_once("</text>")?.0;
+            let read = |name: &str| -> Option<f64> {
+                head.split(name).nth(1)?.split('"').next()?.parse().ok()
+            };
+            Some((
+                read("x=\"")?,
+                read(" y=\"")?,
+                head.to_owned(),
+                words.to_owned(),
+            ))
+        })
+        .collect()
+}
+
+/// The plotting area's left and right edges, read from the first panel's zero
+/// rule: the first line that is not a gridline.
+fn plot_edges(document: &str) -> (f64, f64) {
+    let rule = document
+        .split("<line ")
+        .skip(1)
+        .find(|chunk| !chunk.contains("stroke-opacity"))
+        .expect("a panel draws its zero rule");
+    let read = |name: &str| -> f64 {
+        rule.split(name)
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .and_then(|value| value.parse().ok())
+            .expect("a coordinate")
+    };
+    (read("x1=\""), read("x2=\""))
+}
+
+/// The value-axis labels: right-aligned text left of the plotting area.
+fn value_labels(document: &str) -> Vec<(f64, String)> {
+    let (left, _) = plot_edges(document);
+    drawn_texts(document)
+        .into_iter()
+        .filter(|(x, _, head, _)| head.contains("text-anchor=\"end\"") && *x < left)
+        .map(|(_, y, _, words)| (y, words))
+        .collect()
 }
 
 fn figure_of(panel: PanelSpec) -> FigureSpec {
@@ -718,8 +774,11 @@ fn an_unreported_unit_is_not_displayed_as_one() {
     .expect("a panel");
     let document = svg::render(&figure_of(panel));
 
-    assert!(document.contains(">Retention time<"));
-    assert!(!document.contains("Retention time ("), "no empty bracket");
+    assert!(
+        document.contains(">Retention time (unit not reported)<"),
+        "the absence is said where the unit would be: {document}",
+    );
+    assert!(!document.contains("Retention time ()"), "no empty bracket");
     assert!(!document.contains("min"), "and no invented unit");
 }
 
@@ -1319,16 +1378,22 @@ fn axis_ends_keep_enough_precision_to_stay_apart() {
     .expect("a window inside the domain");
 
     let document = svg::render(&figure_of(panel));
-    assert!(document.contains(">1000.100<"), "the low end: {document}");
-    assert!(document.contains(">1000.400<"), "the high end: {document}");
+    for tick in [">1000.1<", ">1000.2<", ">1000.3<", ">1000.4<"] {
+        assert!(document.contains(tick), "{tick} is a tick: {document}");
+    }
+    assert!(!document.contains(">1000<"), "no tick collapses to 1000");
 
     // And a wide axis gains no false precision from the same rule.
     let wide = svg::render(&figure_of(spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(vec![200.0, 2_000.0], vec![10.0, 20.0]),
     )));
-    assert!(wide.contains(">200<"), "a wide axis stays whole: {wide}");
-    assert!(wide.contains(">2000<"), "at both ends: {wide}");
+    assert!(wide.contains(">500<"), "a wide axis stays whole: {wide}");
+    assert!(wide.contains(">2000<"), "to its last tick: {wide}");
+    assert!(
+        !wide.contains(">500.0<"),
+        "with no decimals it lacks: {wide}"
+    );
 }
 
 /// A trace that reaches the window always draws something.
@@ -1443,11 +1508,19 @@ fn an_unreported_unit_is_disclosed_and_a_dimensionless_one_is_not() {
         "both unreported axes are named: {both}",
     );
 
-    // And the caption itself still carries no bracket for either state, which is
-    // the reason the sentence above has to exist.
+    // And the caption says the unit is unreported rather than showing one, and
+    // a dimensionless axis says nothing at all.
     assert!(
-        !both.contains("m/z ("),
-        "no invented unit reaches the caption"
+        both.contains(">m/z (unit not reported)<"),
+        "an unreported unit is said as one: {both}"
+    );
+    assert!(
+        one.contains(">m/z<") && !one.contains("m/z ("),
+        "a dimensionless axis carries no bracket: {one}"
+    );
+    assert!(
+        neither.contains(">Intensity (counts)<"),
+        "a reported unit is shown as reported: {neither}"
     );
 }
 
@@ -1473,16 +1546,21 @@ fn a_value_axis_prints_a_lower_end_that_is_not_zero() {
         zoomed.contains(">500<"),
         "the zoomed floor is shown: {zoomed}"
     );
+    assert!(
+        zoomed.contains(">2000<"),
+        "beside the round ticks above it: {zoomed}"
+    );
 
-    // A range that reaches zero says nothing extra: the line is the zero line.
+    // A range that reaches zero labels zero as the ordinary tick it is.
     let grounded = svg::render(&figure_of(spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(vec![100.0, 200.0], vec![10.0, 20.0]),
     )));
-    assert!(
-        !grounded.contains(">0<"),
-        "a zero floor needs no label: {grounded}",
-    );
+    let labels: Vec<String> = value_labels(&grounded)
+        .into_iter()
+        .map(|(_, words)| words)
+        .collect();
+    assert_eq!(labels.first().map(String::as_str), Some("0"), "{grounded}");
 }
 
 /// A domain whose ends are finite but whose width is not is refused.
@@ -1674,18 +1752,16 @@ fn a_trace_crossing_into_the_window_from_below_zero_is_disclosed() {
 /// and a label longer than the page fits on neither side of anything.
 #[test]
 fn every_marker_label_lies_inside_the_document() {
-    /// The same estimate the renderer uses: 0.6em at 11 units.
-    const CHARACTER: f64 = 6.6;
-
-    // Every `<tspan>` of every label, as (x, character count).
-    fn placed(document: &str) -> Vec<(f64, usize)> {
+    // Every `<tspan>` of every label, as (x, the width the renderer measures
+    // it at the largest size a label is drawn at).
+    fn placed(document: &str) -> Vec<(f64, f64)> {
         document
             .split("<tspan x=\"")
             .skip(1)
             .filter_map(|piece| {
                 let (x, rest) = piece.split_once('"')?;
                 let text = rest.split_once('>')?.1.split_once("</tspan>")?.0;
-                Some((x.parse::<f64>().ok()?, text.chars().count()))
+                Some((x.parse::<f64>().ok()?, measured(text, 11.0)))
             })
             .collect()
     }
@@ -1718,14 +1794,14 @@ fn every_marker_label_lies_inside_the_document() {
         let document = svg::render(&marked(width, &text));
         let lines = placed(&document);
         assert!(!lines.is_empty(), "labels are drawn at {width}");
-        for (x, characters) in lines {
+        for (x, extent) in lines {
             assert!(
                 x >= 0.0,
                 "a label started off the left edge at {width}: {x}"
             );
             assert!(
-                x + characters as f64 * CHARACTER <= width,
-                "a label ran off the right edge at {width}: {x} + {characters} characters",
+                x + extent <= width,
+                "a label ran off the right edge at {width}: {x} + {extent}",
             );
         }
         let rejoined: String = document
@@ -1773,19 +1849,20 @@ fn a_domain_narrower_than_the_readable_precision_still_resolves() {
     let document = svg::render(&figure_of(panel));
     assert!(
         document.contains(">1000.0000001<") && document.contains(">1000.0000004<"),
-        "both ends resolve: {document}",
+        "both ends of the window are ticks that resolve: {document}",
     );
 
-    // A single-valued domain is not a precision failure: its ends *are* the
-    // same number, and escalating would print digits it does not hold.
+    // A single-valued domain is not a precision failure: it is one number, and
+    // escalating would print digits it does not hold. It is labelled once,
+    // where its data is drawn.
     let flat = svg::render(&figure_of(spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(vec![500.0], vec![10.0]),
     )));
     assert_eq!(
         flat.matches(">500.000000<").count(),
-        2,
-        "one value, printed the same at both ends: {flat}",
+        1,
+        "one value, printed once: {flat}",
     );
 }
 
@@ -1858,8 +1935,8 @@ fn an_axis_below_every_decimal_place_falls_back_to_exponents() {
         SpectrumRepresentation::Centroid,
         series(vec![200.0, 2_000.0], vec![10.0, 20.0]),
     )));
-    assert!(ordinary.contains(">200<") && ordinary.contains(">2000<"));
-    assert!(!ordinary.contains("e2"), "no exponent for a plain axis");
+    assert!(ordinary.contains(">500<") && ordinary.contains(">2000<"));
+    assert!(!ordinary.contains("e2<"), "no exponent for a plain axis");
 }
 
 /// A windowed reduction reports the reduction and what the window shows.
@@ -1918,26 +1995,14 @@ fn a_windowed_reduction_reports_both_counts() {
     );
 }
 
-/// A marker label at the left edge does not land on the value-axis maximum.
+/// A marker label at the left edge keeps its place, clear of every axis label.
 ///
-/// Both are drawn at the same size a unit apart, so the pair was unreadable —
-/// and it costs the axis maximum, which no annotation should be able to do.
+/// The value-axis maximum used to be printed inside the plotting area, a unit
+/// from where a marker label at the left edge lands, and the pair was
+/// unreadable. Every axis label now sits outside the plotting area, so a label
+/// at the edge keeps the natural place every other label has.
 #[test]
 fn a_marker_label_does_not_land_on_the_value_axis_maximum() {
-    fn baseline(document: &str, needle: &str) -> f64 {
-        let line = document
-            .lines()
-            .find(|line| line.contains(needle))
-            .unwrap_or_else(|| panic!("{needle} is drawn"));
-        let after = line.split("y=\"").nth(1).expect("a y attribute");
-        after
-            .split('"')
-            .next()
-            .expect("a y value")
-            .parse()
-            .expect("a number")
-    }
-
     let panel = spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(vec![100.0, 200.0], vec![10.0, 20.0]),
@@ -1949,18 +2014,27 @@ fn a_marker_label_does_not_land_on_the_value_axis_maximum() {
     .expect("markers on a valid panel");
 
     let document = svg::render(&figure_of(panel));
-    let axis_maximum = baseline(&document, ">20.0<");
-    let at_edge = baseline(&document, ">injection<");
-    let clear = baseline(&document, ">midpoint<");
-
+    let at_edge = text_baseline(&document, "injection");
+    let clear = text_baseline(&document, "midpoint");
     assert!(
-        (at_edge - axis_maximum).abs() >= 11.0,
-        "the edge marker clears the axis maximum: {at_edge} vs {axis_maximum}",
+        (at_edge - clear).abs() < f64::EPSILON,
+        "the edge marker keeps its natural place: {at_edge} vs {clear}",
     );
+    let (left, _) = plot_edges(&document);
+    let labels = value_labels(&document);
+    assert!(labels.len() >= 2, "the value axis is labelled: {document}");
     assert!(
-        (clear - axis_maximum).abs() < 11.0,
-        "a marker with room keeps its natural place: {clear} vs {axis_maximum}",
+        labels.iter().any(|(_, words)| words == "20"),
+        "up to a tick at the data's top: {labels:?}",
     );
+    for (x, _, head, _) in drawn_texts(&document) {
+        if head.contains("text-anchor=\"end\"") && !head.contains("rotate") && x < left {
+            assert!(
+                x <= left - 4.0,
+                "a value label reached the plot: {x} vs {left}"
+            );
+        }
+    }
 }
 
 /// A joined trace refuses a reduction that keeps one extreme per sign.
@@ -2056,13 +2130,14 @@ fn a_joined_trace_refuses_a_per_sign_reduction() {
     }
 }
 
-/// Every laid-out string declares the width it is laid out in.
+/// Laid-out text is measured, and condensed only where it cannot fit.
 ///
-/// The document embeds no font, so the face is the viewer's choice and a
-/// per-character estimate is a prediction about someone else's machine. An
-/// explicit `textLength` turns it into an instruction, and the width it carries
-/// comes from an upper bound on a glyph rather than an average of one — so a
-/// line of `W`s cannot overflow what was reserved for it.
+/// Every string used to declare a `textLength` computed from one em a
+/// character -- nearly twice the real advance of most glyphs -- and
+/// `lengthAdjust="spacingAndGlyphs"` then stretched every label on the page to
+/// fill it. Text is now measured with the advances of the face the figure names
+/// first, drawn at that width with no declared length, and only a string that
+/// does not fit its room at the smallest size it may shrink to is condensed.
 #[test]
 fn laid_out_text_declares_its_own_width() {
     let long = "W".repeat(MAX_LABEL_CHARS);
@@ -2093,17 +2168,17 @@ fn laid_out_text_declares_its_own_width() {
         .expect("one panel is a figure"),
     );
 
-    // Every declared width fits the document, and the axis caption — which is
-    // centred rather than wrapped — is condensed into the space it has rather
-    // than running off both sides of it.
+    // The axis caption -- centred rather than wrapped -- cannot fit at any
+    // size, so it alone is condensed, into a width inside the document.
     let declared: Vec<f64> = document
         .split("textLength=\"")
         .skip(1)
         .filter_map(|piece| piece.split('"').next()?.parse::<f64>().ok())
         .collect();
-    assert!(
-        declared.len() >= 3,
-        "both captions and the label: {declared:?}"
+    assert_eq!(
+        declared.len(),
+        1,
+        "only the caption is condensed: {declared:?}"
     );
     for reserved in declared {
         assert!(
@@ -2116,16 +2191,20 @@ fn laid_out_text_declares_its_own_width() {
         "the width is honoured by condensing rather than by clipping",
     );
 
-    // And a caption short enough to fit keeps its natural width rather than
-    // being stretched across the axis.
+    // And a figure whose text fits declares no length anywhere: nothing on it
+    // is stretched or squeezed, and every string names the measured face.
     let ordinary = svg::render(&figure_of(spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(vec![100.0, 200.0], vec![10.0, 20.0]),
     )));
+    assert!(!ordinary.contains("textLength"), "{ordinary}");
+    assert!(!ordinary.contains("lengthAdjust"), "{ordinary}");
     assert!(
-        ordinary.contains("textLength=\"36.000\""),
-        "\"m/z\" is three characters at 12 units: {ordinary}",
+        ordinary.contains("font-family=\"Arial, 'Liberation Sans', Helvetica, sans-serif\""),
+        "{ordinary}"
     );
+    // "m/z" at 12 units is 1.61 em of Arial, not three em.
+    assert!((measured("m/z", 12.0) - 19.33).abs() < 0.01);
 }
 
 /// A character XML cannot carry is refused before it can break the document.
@@ -2179,44 +2258,42 @@ fn the_visible_title_is_laid_out_inside_the_document() {
             .with_title(Label::new(title).expect("a title")),
         )
     };
-    let declared_width = |document: &str| -> Option<f64> {
-        document
+    // The heading's x and font size, where one is drawn.
+    let heading = |document: &str| -> Option<(f64, f64, String)> {
+        let line = document
             .lines()
-            .find(|line| line.contains("font-weight="))?
-            .split("textLength=\"")
-            .nth(1)?
-            .split('"')
-            .next()?
-            .parse()
-            .ok()
+            .find(|line| line.contains("font-weight="))?;
+        let read = |name: &str| -> Option<f64> {
+            line.split(name).nth(1)?.split('"').next()?.parse().ok()
+        };
+        Some((read("x=\"")?, read("font-size=\"")?, line.to_owned()))
     };
+    let bold = |text: &str, size: f64| crate::metrics::text_width(text, size, true);
 
-    // A heading that fits is drawn, uncondensed, inside the document.
-    let document = render_titled("Enolase digest, 30 minute gradient", 900.0);
-    let declared = declared_width(&document).expect("the visible title is drawn");
-    assert!(
-        declared > 0.0 && 64.0 + declared <= 900.0,
-        "the title ends inside the document: 64 + {declared} of 900",
-    );
+    // A heading that fits is drawn at its full size, inside the document, at
+    // its measured width.
+    let words = "Enolase digest, 30 minute gradient";
+    let document = render_titled(words, 900.0);
+    let (x, size, line) = heading(&document).expect("the visible title is drawn");
+    assert!((size - 16.0).abs() < f64::EPSILON, "{line}");
+    assert!(x + bold(words, size) <= 900.0, "{line}");
+    assert!(!line.contains("textLength"), "and is not stretched: {line}");
 
-    // On the narrowest figure the contract accepts, the same heading has no
-    // room at any readable size, so it is shrunk only as far as the floor and
-    // then reported rather than squeezed.
-    let narrow = render_titled("Enolase digest, 30 minute gradient", width);
-    assert!(
-        declared_width(&narrow).is_none(),
-        "a 34-character heading does not fit 116 units legibly: {narrow}",
-    );
+    // On the narrowest figure the contract accepts, the same heading is shrunk
+    // to a size it fits at -- never condensed.
+    let narrow = render_titled(words, width);
+    let (x, size, line) = heading(&narrow).expect("a shorter heading is drawn smaller");
+    assert!((4.0..16.0).contains(&size), "{line}");
+    assert!(x + bold(words, size) <= width, "{line}");
+    assert!(!line.contains("textLength"), "{line}");
 
     // A heading too long for the figure to print legibly is not drawn as a
-    // heading at all. `lengthAdjust="spacingAndGlyphs"` would have squeezed
-    // 120 characters into 116 units -- under one unit a glyph at font-size 16,
-    // inside its declared box and completely unreadable.
+    // heading at all, rather than squeezed below reading size.
     let long = "W".repeat(MAX_LABEL_CHARS);
     let cramped = render_titled(&long, width);
     assert!(
-        declared_width(&cramped).is_none(),
-        "no illegible heading is drawn: {cramped}",
+        heading(&cramped).is_none(),
+        "no illegible heading is drawn: {cramped}"
     );
     assert!(
         description_of(&cramped).contains("too long to print legibly"),
@@ -2232,21 +2309,8 @@ fn the_visible_title_is_laid_out_inside_the_document() {
     // limit of the size rather than of the length.
     let roomy = render_titled(&long, 2400.0);
     assert!(
-        declared_width(&roomy).is_some(),
-        "a wide enough figure prints it: {roomy}",
-    );
-
-    // A title that fits keeps its natural width rather than being stretched.
-    let ordinary = svg::render(
-        &figure_of(spectrum_panel(
-            SpectrumRepresentation::Centroid,
-            series(vec![100.0, 200.0], vec![10.0, 20.0]),
-        ))
-        .with_title(Label::new("Enolase").expect("a title")),
-    );
-    assert!(
-        ordinary.contains("textLength=\"112.000\""),
-        "seven characters at 16 units: {ordinary}",
+        heading(&roomy).is_some(),
+        "a wide enough figure prints it: {roomy}"
     );
 }
 
@@ -2343,6 +2407,10 @@ fn an_enormous_axis_end_is_stated_as_an_exponent_and_fits() {
     assert!(document.contains(">1e307<"), "the low end: {document}");
     assert!(document.contains(">2e307<"), "the high end: {document}");
     assert!(
+        document.contains(">1.5e307<"),
+        "and a round tick between: {document}"
+    );
+    assert!(
         !document.contains("0000000000000000000"),
         "no endpoint is written out in full: {document}",
     );
@@ -2388,27 +2456,14 @@ fn a_decoded_label_is_checked_like_a_constructed_one() {
     assert!(serde_json::from_str::<Caption>(r#""Figure 1.\nReplicate A.""#).is_ok());
 }
 
-/// The smallest panel the contract accepts still shows both of its value ends.
+/// The smallest panel the contract accepts still labels its value axis legibly.
 ///
-/// A panel is not drawable at any height. The renderer prints the top and the
-/// bottom of the value range inside the plotting area, and below some height
-/// those two lines of text are closer together than they are tall — so a figure
-/// the contract accepted rendered its own axis unreadable.
+/// A panel is not drawable at any height. Below some height two value labels
+/// are closer together than they are tall -- so a figure the contract accepted
+/// would render its own axis unreadable. A panel this small takes fewer round
+/// ticks rather than overlapping ones.
 #[test]
 fn the_smallest_accepted_panel_keeps_its_value_ends_apart() {
-    fn baseline(document: &str, needle: &str) -> f64 {
-        let line = document
-            .lines()
-            .find(|line| line.contains(needle))
-            .unwrap_or_else(|| panic!("{needle} is drawn: {document}"));
-        line.split("y=\"")
-            .nth(1)
-            .and_then(|piece| piece.split('"').next())
-            .expect("a y value")
-            .parse()
-            .expect("a number")
-    }
-
     // Eight panels at exactly the floor, each with a value range reaching below
     // zero so both ends are printed.
     let panel = || {
@@ -2435,12 +2490,21 @@ fn the_smallest_accepted_panel_keeps_its_value_ends_apart() {
         .expect("eight panels at the floor"),
     );
 
-    let high = baseline(&document, ">90<");
-    let low = baseline(&document, ">-40<");
+    let mut baselines: Vec<f64> = value_labels(&document)
+        .into_iter()
+        .map(|(y, _)| y)
+        .collect();
     assert!(
-        (low - high) >= 11.0,
-        "the two value ends are at least a line apart: {high} and {low}",
+        baselines.len() >= panels as usize * 2,
+        "every panel is labelled"
     );
+    baselines.sort_by(f64::total_cmp);
+    for pair in baselines.windows(2) {
+        assert!(
+            pair[1] - pair[0] >= 11.0,
+            "value labels are at least a line apart: {pair:?}",
+        );
+    }
 }
 
 /// Two markers at one position do not draw one label over the other.
@@ -2671,23 +2735,22 @@ fn a_crowded_label_shrinks_and_is_never_drawn_over_another() {
         "nothing was elided to make room",
     );
 
-    // Room for neither at any size. A label is bounded by the plotting area
-    // rather than by the page -- left of the frame is the value axis's own
-    // rotated caption -- and a maximum-length label does not fit the smallest
-    // panel the contract accepts at any size it may shrink to. Neither is
-    // drawn, and the figure says so in words, naming both.
+    // Room for one at most. A label is bounded by the plotting area rather
+    // than by the page -- left of the frame is the value axis's own rotated
+    // caption -- and two maximum-length labels do not fit one under the other
+    // on the smallest panel the contract accepts at any size they may shrink
+    // to. Whichever is not drawn is not stacked on the other, and the figure
+    // says so in words, naming it.
     let cramped = figure(MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT);
+    let drawn = marker_baselines(&cramped).len();
+    let reported = cramped
+        .matches("whose label the figure is too small to place")
+        .count();
+    assert!(drawn <= 1, "neither is stacked on the other: {cramped}");
     assert_eq!(
-        marker_baselines(&cramped).len(),
-        0,
-        "neither is stacked on the other: {cramped}",
-    );
-    assert_eq!(
-        cramped
-            .matches("whose label the figure is too small to place")
-            .count(),
+        drawn + reported,
         2,
-        "and the description says so, once for each: {cramped}",
+        "and every label not drawn is named, once: {cramped}",
     );
     assert!(
         cramped.contains(&long),
@@ -2779,13 +2842,14 @@ fn a_marker_label_stays_inside_its_own_panel() {
         .expect("three panels"),
     );
 
-    // The plotting band of each panel, from the renderer's own arithmetic.
-    let usable = height - 40.0 - 56.0;
+    // The plotting band of each panel, from the renderer's own arithmetic: an
+    // untitled figure has a 12-unit gutter above its panels and 8 below.
+    let usable = height - 12.0 - 8.0;
     let each = usable / f64::from(panels);
     let bands: Vec<(f64, f64)> = (0..panels)
         .map(|index| {
-            let top = 40.0 + each * f64::from(index);
-            (top + 8.0, 40.0 + each * f64::from(index + 1) - 34.0)
+            let top = 12.0 + each * f64::from(index);
+            (top + 8.0, 12.0 + each * f64::from(index + 1) - 34.0)
         })
         .collect();
 
@@ -4307,7 +4371,9 @@ fn every_drawn_marker_is_recoverable_from_the_description() {
     // A marker whose label the page had no room for is disclosed once, with its
     // position and its label, and with the reason -- not as one sentence naming
     // it and another placing it, which is how the two could disagree.
-    let long = "m".repeat(MAX_LABEL_CHARS);
+    // Two maximum-length labels on the smallest figure: the first takes the
+    // room there is, and the second has none left at any size.
+    let long = "W".repeat(MAX_LABEL_CHARS);
     let cramped = description_of(&svg::render(
         &FigureSpec::new(
             FigureTheme::Light,
@@ -4322,6 +4388,7 @@ fn every_drawn_marker_is_recoverable_from_the_description() {
                     series(vec![100.0, 200.0], vec![10.0, 20.0]),
                 )
                 .with_markers(vec![
+                    Marker::new(120.0, Some(label(&long))).expect("a marker"),
                     Marker::new(150.0, Some(label(&long))).expect("a marker"),
                 ])
                 .expect("markers on a valid panel"),
@@ -4914,21 +4981,20 @@ fn a_marker_label_stays_inside_the_plotting_area() {
     );
 
     // The renderer's own gutters for this figure.
-    let (frame_left, frame_right) = (64.0, MIN_FIGURE_WIDTH - 20.0);
+    let (frame_left, frame_right) = plot_edges(&document);
     let mut lines = 0;
     for piece in document.split("<tspan").skip(1) {
-        let Some(head) = piece.split('>').next() else {
+        let Some((head, rest)) = piece.split_once('>') else {
             continue;
         };
-        let read = |name: &str| {
-            head.split(name)
-                .nth(1)
-                .and_then(|rest| rest.split('"').next())
-                .and_then(|value| value.parse::<f64>().ok())
-                .unwrap_or_else(|| panic!("{name} on {head}"))
-        };
-        let left = read("x=\"");
-        let width = read("textLength=\"");
+        let words = rest.split("</tspan>").next().unwrap_or_default();
+        let left = head
+            .split("x=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or_else(|| panic!("x on {head}"));
+        let width = measured(words, 11.0);
         lines += 1;
         assert!(
             left >= frame_left,
@@ -6058,9 +6124,13 @@ fn the_renderer_scales_to_the_visible_value_window() {
         .split("</desc>")
         .nth(1)
         .expect("a document has a body after its description");
+    let labels: Vec<f64> = value_labels(&document)
+        .into_iter()
+        .filter_map(|(_, words)| words.parse::<f64>().ok())
+        .collect();
     assert!(
-        drawn.contains(">120</text>"),
-        "the value axis ends at the window"
+        labels.iter().all(|value| *value <= 126.0) && labels.contains(&100.0),
+        "the value axis is labelled across the window: {labels:?}"
     );
     assert!(
         !drawn.contains("9000000"),
@@ -6260,9 +6330,12 @@ fn text_baseline(document: &str, words: &str) -> f64 {
         .split("</desc>")
         .nth(1)
         .expect("a document has a body after its description");
+    // The words alone, or the words as an axis title with its unit after them.
     let element = body
         .split("<text")
-        .find(|chunk| chunk.contains(&format!(">{words}<")))
+        .find(|chunk| {
+            chunk.contains(&format!(">{words}<")) || chunk.contains(&format!(">{words} ("))
+        })
         .unwrap_or_else(|| panic!("the drawing says {words:?}"));
     let start = element
         .find(" y=\"")
@@ -6426,9 +6499,9 @@ fn both_linked_panels_keep_a_plotting_area() {
     let size = FigureSize::new(1_200.0, 260.0).expect("the two-panel minimum");
     let document = svg::render(&linked_figure(size, FigureTheme::Light));
 
-    // The chromatogram's own domain ends, and the spectrum's.
-    let top_low = text_baseline(&document, "10.00");
-    let bottom_low = text_baseline(&document, "100");
+    // A domain tick only the chromatogram has, and one only the spectrum has.
+    let top_low = text_baseline(&document, "13");
+    let bottom_low = text_baseline(&document, "400");
     assert!(
         top_low < bottom_low,
         "the panels print their own axes in order: {top_low} then {bottom_low}",
@@ -6548,8 +6621,9 @@ fn the_schema_version_records_the_extended_shape() {
     // Not an accident of a constant: a document carrying either new field is
     // exactly what a version 1 reader cannot decode, and the version is what
     // says so. Three since M9.2 added sample marks and intervals, which a
-    // version 2 reader cannot decode either.
-    assert_eq!(SCHEMA_VERSION, 3);
+    // version 2 reader cannot decode either; four since a figure may be printed
+    // and carry its own axis titles, which a version 3 reader cannot.
+    assert_eq!(SCHEMA_VERSION, 4);
 
     let json = FigureSpec::new(
         FigureTheme::Light,
@@ -6577,7 +6651,7 @@ fn the_schema_version_records_the_extended_shape() {
     .to_json()
     .expect("a figure serializes");
 
-    assert!(json.contains("\"schema_version\":3"));
+    assert!(json.contains("\"schema_version\":4"));
     assert!(json.contains("secondary_measurement"));
     assert!(json.contains("visible_value_domain"));
 
@@ -6724,7 +6798,9 @@ fn each_interval_role_is_drawn_in_its_own_way_under_the_traces() {
     assert_eq!(document.matches("fill-opacity=\"0.16\"").count(), 1);
     assert_eq!(
         document
-            .matches("fill=\"none\" stroke=\"#5c5c5c\" stroke-width=\"1\" stroke-dasharray=\"2 2\"")
+            .matches(
+                "fill=\"none\" stroke=\"#5c5c5c\" stroke-width=\"1.000\" stroke-dasharray=\"2 2\""
+            )
             .count(),
         1
     );
@@ -6805,7 +6881,9 @@ fn a_zero_width_selected_interval_is_one_rule_rather_than_a_widened_band() {
     ]);
     let document = svg::render(&figure_of(panel));
     assert!(!document.contains("fill-opacity"));
-    assert!(document.contains("stroke=\"#1f4e9c\" stroke-width=\"1\" stroke-dasharray=\"none\""));
+    assert!(
+        document.contains("stroke=\"#1f4e9c\" stroke-width=\"1.000\" stroke-dasharray=\"none\"")
+    );
 }
 
 #[test]
@@ -6858,4 +6936,340 @@ fn a_figure_without_marks_or_intervals_writes_nothing_new() {
     assert!(!document.contains("fill-opacity"));
     assert!(!description_of(&document).contains("Intervals"));
     assert!(!description_of(&document).contains("marked as well as joined"));
+}
+
+// ------------------------------------------------- the publication figure
+
+/// The spectrum the publication tests draw: zero to ninety.
+fn publication_panel() -> PanelSpec {
+    spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(
+            vec![100.5, 200.25, 300.0, 400.125, 500.0],
+            vec![10.0, 90.0, 0.0, 45.5, 22.25],
+        ),
+    )
+}
+
+fn single_column(height_mm: f64) -> FigureSize {
+    FigureSize::printed(
+        PrintSize::new(
+            SINGLE_COLUMN_WIDTH_MM,
+            height_mm,
+            DEFAULT_TEXT_PT,
+            DEFAULT_LINE_PT,
+        )
+        .expect("a printed size"),
+    )
+    .expect("a single column fits its text")
+}
+
+/// The axes read like a scientific plot: round ticks, outside labels, light
+/// gridlines and room above the tallest value.
+#[test]
+fn the_axes_carry_round_ticks_outside_labels_gridlines_and_headroom() {
+    let document = svg::render(&figure_of(publication_panel()));
+
+    // Round ticks on both axes, four to six each, with trimmed decimals.
+    let values: Vec<String> = value_labels(&document)
+        .into_iter()
+        .map(|(_, words)| words)
+        .collect();
+    assert_eq!(values, ["0", "20", "40", "60", "80"], "{document}");
+    for tick in [">200<", ">300<", ">400<", ">500<"] {
+        assert!(document.contains(tick), "{tick}: {document}");
+    }
+    assert!(
+        !document.contains(">100.5<"),
+        "the domain ends are not ticks"
+    );
+
+    // Every value label is left of the plotting area.
+    let (left, right) = plot_edges(&document);
+    for (x, _, head, _) in drawn_texts(&document) {
+        if head.contains("text-anchor=\"end\"") && !head.contains("rotate") && x < left {
+            assert!(x < left - 4.0, "{head}");
+        }
+    }
+
+    // One light gridline for each tick above the zero line, across the plot.
+    let grid: Vec<&str> = document
+        .lines()
+        .filter(|line| line.contains("stroke-opacity"))
+        .collect();
+    assert_eq!(grid.len(), 4, "{grid:?}");
+    assert!(
+        grid.iter()
+            .all(|line| line.contains(&format!("x2=\"{right:.3}\"")))
+    );
+
+    // The tallest stick stops short of the top of the plotting area.
+    let path = path_data(&document);
+    let tops: Vec<f64> = path
+        .split('V')
+        .skip(1)
+        .filter_map(|piece| piece.split('M').next()?.parse().ok())
+        .collect();
+    let tallest = tops.iter().copied().fold(f64::INFINITY, f64::min);
+    let plot_top = document
+        .lines()
+        .find(|line| {
+            line.contains(&format!("x1=\"{left:.3}\"")) && line.contains("x2=\"") && {
+                let x2 = line
+                    .split("x2=\"")
+                    .nth(1)
+                    .and_then(|rest| rest.split('"').next());
+                x2 == Some(&format!("{left:.3}"))
+            }
+        })
+        .and_then(|line| {
+            line.split("y1=\"")
+                .nth(1)?
+                .split('"')
+                .next()?
+                .parse::<f64>()
+                .ok()
+        })
+        .expect("the value axis line");
+    assert!(
+        tallest > plot_top + 5.0,
+        "headroom above the maximum: {tallest} vs {plot_top}"
+    );
+}
+
+/// Headroom never moves the zero line a stick is measured from.
+#[test]
+fn headroom_does_not_cross_zero() {
+    let zoomed = svg::render(&figure_of(
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Retention time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 30.0),
+            domain(500.0, 9_000.0),
+            vec![series(vec![1.0, 2.0], vec![600.0, 8_000.0])],
+        )
+        .expect("a zoomed trace"),
+    ));
+    // The rule at the floor is the range's own end, and says so.
+    assert!(zoomed.contains(">500<"), "{zoomed}");
+    assert!(
+        description_of(&zoomed).contains("Zero is outside the value range shown"),
+        "{zoomed}"
+    );
+
+    // A stick panel's zero line is the bottom of its plotting area.
+    let sticks = svg::render(&figure_of(publication_panel()));
+    let path = path_data(&sticks);
+    let zero: f64 = path
+        .split_once(' ')
+        .and_then(|(_, rest)| rest.split('V').next())
+        .and_then(|value| value.parse().ok())
+        .expect("a stick starts at the zero line");
+    let labels = value_labels(&sticks);
+    let (zero_label_y, _) = labels
+        .iter()
+        .find(|(_, words)| words == "0")
+        .expect("zero is labelled");
+    assert!((zero_label_y - zero - 11.0 * 0.36).abs() < 0.01, "{sticks}");
+}
+
+/// A printed figure is written at its physical size, with its text in points.
+#[test]
+fn a_printed_figure_states_millimetres_and_sets_its_text_in_points() {
+    let size = single_column(60.0);
+    let print = size.print().expect("a printed size");
+    assert!((print.width_mm() - 85.0).abs() < f64::EPSILON);
+    assert!((size.line_width() - DEFAULT_LINE_PT * 11.0 / DEFAULT_TEXT_PT).abs() < 1e-12);
+
+    let figure = FigureSpec::new(FigureTheme::Light, size, vec![publication_panel()])
+        .expect("a printed figure");
+    let document = svg::render(&figure);
+    assert!(
+        document.contains("width=\"85.000mm\" height=\"60.000mm\""),
+        "{document}"
+    );
+    // 85 mm is 240.94 pt; at 7 pt text, 11 figure units are 7 pt, so the
+    // drawing is 378.6 units wide.
+    let units = 85.0 / 25.4 * 72.0 * 11.0 / 7.0;
+    assert!(
+        document.contains(&format!("viewBox=\"0 0 {units:.3} ")),
+        "{units}: {document}"
+    );
+    // Tick labels at 11 units are the chosen 7 pt once the viewBox is mapped
+    // onto 85 mm, and every line is the chosen weight.
+    assert!(document.contains("font-size=\"11.000\""));
+    let weight = format!("stroke-width=\"{:.3}\"", 0.75 * 11.0 / 7.0);
+    assert!(document.contains(&weight), "{weight}: {document}");
+    assert!(!document.contains("stroke-width=\"1.000\""), "{document}");
+
+    // A pixel figure is unchanged in kind: unitless pixels, one-unit lines.
+    let pixels = svg::render(&figure_of(publication_panel()));
+    assert!(pixels.contains("width=\"900.000\" height=\"500.000\""));
+    assert!(pixels.contains("stroke-width=\"1.000\""));
+}
+
+/// The journal presets fit, and a size the text cannot fit is refused.
+#[test]
+fn printed_sizes_are_bounded_and_refuse_text_too_large_for_the_paper() {
+    for (width, height) in [
+        (SINGLE_COLUMN_WIDTH_MM, 60.0),
+        (DOUBLE_COLUMN_WIDTH_MM, 110.0),
+    ] {
+        let size = FigureSize::printed(
+            PrintSize::new(width, height, DEFAULT_TEXT_PT, DEFAULT_LINE_PT).expect("a size"),
+        )
+        .expect("a journal preset is a figure");
+        FigureSpec::new(FigureTheme::Light, size, vec![publication_panel()]).expect("drawable");
+    }
+    // Two panels in a single column at the default type.
+    FigureSpec::new(
+        FigureTheme::Light,
+        single_column(70.0),
+        vec![publication_panel(), publication_panel()],
+    )
+    .expect("a linked figure fits one column");
+
+    assert_eq!(
+        PrintSize::new(10.0, 60.0, 7.0, 0.75).unwrap_err(),
+        SpecError::FigureSizeOutOfRange
+    );
+    assert_eq!(
+        PrintSize::new(85.0, 60.0, 3.0, 0.75).unwrap_err(),
+        SpecError::TypographyOutOfRange
+    );
+    assert_eq!(
+        PrintSize::new(85.0, 60.0, 7.0, f64::NAN).unwrap_err(),
+        SpecError::TypographyOutOfRange
+    );
+    // 24 pt text on a 30 mm figure leaves fewer units than any panel needs.
+    assert_eq!(
+        FigureSize::printed(PrintSize::new(30.0, 30.0, 24.0, 1.0).expect("in range")).unwrap_err(),
+        SpecError::FigureSizeOutOfRange
+    );
+}
+
+/// An edited title replaces the words, never the unit state.
+#[test]
+fn edited_axis_titles_replace_the_label_and_keep_the_unit_state() {
+    let panel = || {
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(
+                label("Retention time"),
+                UnitState::Known { unit: label("min") },
+            ),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(0.0, 10.0),
+            vec![series(vec![0.0, 10.0], vec![1.0, 2.0])],
+        )
+        .expect("a panel")
+    };
+    // None is the default.
+    let plain = svg::render(&figure_of(panel()));
+    assert!(plain.contains(">Retention time (min)<"), "{plain}");
+    assert!(plain.contains(">Intensity (unit not reported)<"), "{plain}");
+
+    let edited = figure_of(panel())
+        .with_axis_titles(Some(label("Elution time")), Some(label("Signal")))
+        .expect("one panel has one of each axis");
+    let document = svg::render(&edited);
+    assert!(document.contains(">Elution time (min)<"), "{document}");
+    assert!(
+        document.contains(">Signal (unit not reported)<"),
+        "{document}"
+    );
+    assert!(!document.contains(">Retention time"), "{document}");
+    // The description still names the source's own axis.
+    assert!(
+        description_of(&document).contains("no unit for the Intensity axis"),
+        "{document}"
+    );
+
+    // One value-axis title over panels that are both intensity is one title;
+    // one domain-axis title over retention time and m/z is not.
+    let linked = FigureSpec::new(
+        FigureTheme::Light,
+        FigureSize::new(900.0, 500.0).expect("a size"),
+        vec![panel(), publication_panel()],
+    )
+    .expect("two panels");
+    linked
+        .clone()
+        .with_axis_titles(None, Some(label("Signal")))
+        .expect("both value axes are intensity");
+    assert_eq!(
+        linked
+            .with_axis_titles(Some(label("Time")), None)
+            .unwrap_err(),
+        SpecError::AxisTitleAmbiguous
+    );
+}
+
+/// The new fields round-trip, and a decoded printed size is held to its paper.
+#[test]
+fn a_printed_titled_figure_round_trips_and_a_forged_size_is_refused() {
+    let figure = FigureSpec::new(
+        FigureTheme::Light,
+        single_column(60.0),
+        vec![publication_panel()],
+    )
+    .expect("a printed figure")
+    .with_axis_titles(Some(label("m/z")), Some(label("Abundance")))
+    .expect("titles");
+    let json = figure.to_json().expect("encodes");
+    assert!(json.contains("\"width_mm\":85.0"), "{json}");
+    assert!(json.contains("\"y_axis_title\":\"Abundance\""), "{json}");
+    let decoded = FigureSpec::from_json(&json).expect("decodes");
+    assert_eq!(decoded, figure);
+    assert_eq!(svg::render(&decoded), svg::render(&figure));
+
+    // Units that disagree with their paper would draw one figure and label it
+    // another size.
+    let forged = json.replace("\"width_mm\":85.0", "\"width_mm\":86.0");
+    assert_ne!(forged, json);
+    assert_eq!(
+        FigureSpec::from_json(&forged).unwrap_err(),
+        DecodeError::Spec(SpecError::FigureSizeOutOfRange)
+    );
+
+    // And a schema 3 shape, with neither field, still decodes as a pixel figure.
+    let bare = figure_of(publication_panel()).to_json().expect("encodes");
+    let older = bare
+        .replace(",\"print\":null", "")
+        .replace(",\"x_axis_title\":null,\"y_axis_title\":null", "");
+    assert_ne!(older, bare);
+    let decoded = FigureSpec::from_json(&older).expect("absent fields default");
+    assert!(decoded.size().print().is_none());
+    assert!(decoded.x_axis_title().is_none());
+}
+
+/// Every string is measured in the face the figure names, and none stretched.
+#[test]
+fn no_string_on_an_ordinary_figure_is_stretched() {
+    for figure in [
+        figure_of(publication_panel()).with_title(label("Spectrum 7")),
+        FigureSpec::new(
+            FigureTheme::Dark,
+            single_column(60.0),
+            vec![publication_panel()],
+        )
+        .expect("a printed figure"),
+        linked_figure(
+            FigureSize::new(1_200.0, 640.0).expect("a size"),
+            FigureTheme::Light,
+        ),
+    ] {
+        let document = svg::render(&figure);
+        assert!(!document.contains("textLength"), "{document}");
+        assert!(!document.contains("sans-serif\" font-size") || document.contains("Arial"));
+        assert_eq!(
+            document.matches("<text ").count(),
+            document
+                .matches("Arial, 'Liberation Sans', Helvetica, sans-serif")
+                .count(),
+            "every text element names the measured face: {document}"
+        );
+    }
 }
