@@ -472,8 +472,15 @@ Still refused, as before:
 
 - overwrite and automatic rename;
 - a free-text argument box;
-- any default or preset that inserts a picker. The "no additional
-  centroiding" lock of CNV-D2 is unchanged.
+- a default or an MSCanvas-authored preset that inserts a picker. The "no
+  additional centroiding" lock of CNV-D2 is unchanged.
+
+  > **Amended 2026-10-29 by [ADR 0058](0058-user-saved-conversion-presets.md).**
+  > This read "any default or preset that inserts a picker". It now reads: no
+  > default or MSCanvas-authored preset inserts a picker. Presets are
+  > user-saved only and MSCanvas ships none. A user-saved preset may hold a
+  > picker step the user wrote, and applying it shows the step's lossy effect
+  > in the plan summary.
 
 ### 8. What runs, and how an option becomes verified
 
@@ -552,6 +559,14 @@ Each later in its own slice:
 - **"Converted" read as "correct".** The label stays on the item outcome and
   in diagnostics. Whether an adopted mzML layer keeps the label after adoption
   is decided in slice 2.
+
+  > **Decided by the owner, 2026-10-29.** The "not verified by MSCanvas" flag
+  > is carried into an adopted output's provenance, in the session and in the
+  > project document, not only into the queue outcome and diagnostics. The
+  > project document's schema bump this needs is accepted. Beta 1 writes
+  > schema 4 (`project/record.rs`), which refuses every other version today, so
+  > the slice that bumps it states what the new build does with a schema-4
+  > document.
 - **A larger settings surface.** It cuts against the owner's direction to
   remove secondary explanations. It is collapsed by default, with one label
   and no prose.
@@ -565,6 +580,14 @@ Each later in its own slice:
 
 **No dependency is added by this ADR.** `-g` and any HDF5 check wait for their
 own decisions.
+
+> **Amended 2026-10-29 by the owner's approval.** `serde` becomes a direct
+> dependency of `crates/proteowizard`. It is already a workspace dependency and
+> in `Cargo.lock`, so no package is added. The ADR 0044 wire deserializes into
+> the crate's unvalidated parts (format and encoding, both chains, switches),
+> and the structured intent's validating constructor (`StructuredIntent::new`
+> in draft PR #150) checks them, so a deserialized value is never an intent
+> until that constructor accepts it.
 
 ## Owner decision on the build gate, 2026-10-29
 
