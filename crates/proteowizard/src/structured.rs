@@ -31,6 +31,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::num::{NonZeroU8, NonZeroU64};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::capability::{CapabilityRequirementError, InstalledHelpCapabilities, OptionArgument};
@@ -39,19 +40,47 @@ use crate::chain::{
     StructuredIntentError,
 };
 use crate::command::OpenFormat;
+use crate::conversion::{
+    AdvancedOutputChecks, IntensityNumpress as JudgedNumpress, RequestedChanges,
+    RequestedMzmlEncoding,
+};
 use crate::conversion_run::ConversionSourceKind;
 use crate::intent::{
-    AdmittedIntent, CompressionIntent, ConversionIntent, OutputFormat, ProcessingIntent,
+    AdmittedIntent, CompressionIntent, ConversionIntent, NumericPrecision, OutputFormat,
+    ProcessingIntent, SpectrumPopulation,
 };
 
 /// The executable every measured setting is bound to (ADR 0043 contract 3).
 const VERIFIED_MSCONVERT_SHA256: &str =
     "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// On the wire, the number of bits: `32` or `64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
 pub enum Precision {
     Bits32,
     Bits64,
+}
+
+impl TryFrom<u8> for Precision {
+    type Error = StructuredIntentError;
+
+    fn try_from(bits: u8) -> Result<Self, Self::Error> {
+        match bits {
+            32 => Ok(Self::Bits32),
+            64 => Ok(Self::Bits64),
+            _ => Err(StructuredIntentError::OutOfRange),
+        }
+    }
+}
+
+impl From<Precision> for u8 {
+    fn from(precision: Precision) -> Self {
+        match precision {
+            Precision::Bits32 => 32,
+            Precision::Bits64 => 64,
+        }
+    }
 }
 
 impl Precision {
@@ -73,8 +102,15 @@ impl Precision {
 }
 
 /// Linear numpress's one tolerance. The build zeroes the relative tolerance
-/// when an absolute one is given, so the two never coexist.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// when an absolute one is given, so the two never coexist. On the wire,
+/// `{ "kind": "relative", "value": 2e-9 }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "lowercase",
+    deny_unknown_fields
+)]
 pub enum LinearTolerance {
     /// `--numpressLinear=<t>`.
     Relative(Positive),
@@ -82,24 +118,39 @@ pub enum LinearTolerance {
     Absolute(Positive),
 }
 
-/// The m/z array; linear numpress encodes retention time with it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The m/z array; linear numpress encodes retention time with it. On the wire,
+/// `{ "encoding": "plain", "bits": 64 }` or
+/// `{ "encoding": "numpress_linear", "tolerance": { ... } }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "encoding", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MzArray {
-    Plain(Precision),
+    Plain {
+        bits: Precision,
+    },
     /// Fixed at 64 bits, so an array stored without numpress keeps every bit.
-    NumpressLinear(LinearTolerance),
+    NumpressLinear {
+        tolerance: LinearTolerance,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "encoding", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IntensityArray {
-    Plain(Precision),
+    Plain {
+        bits: Precision,
+    },
     /// Fixed at 64 bits.
     NumpressPic,
     /// Fixed at 64 bits; the relative tolerance is above 0.
-    NumpressSlof(Positive),
+    NumpressSlof {
+        tolerance: Positive,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// On the wire, the build's own number: `0` off, `-1` integers only, or the
+/// mantissa bits to drop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "i8", into = "i8")]
 pub enum Truncation {
     Off,
     /// `-1`: integers only.
@@ -107,7 +158,36 @@ pub enum Truncation {
     DropMantissaBits(NonZeroU8),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl TryFrom<i8> for Truncation {
+    type Error = StructuredIntentError;
+
+    fn try_from(value: i8) -> Result<Self, Self::Error> {
+        match value {
+            -1 => Ok(Self::IntegersOnly),
+            0 => Ok(Self::Off),
+            bits => u8::try_from(bits)
+                .ok()
+                .and_then(NonZeroU8::new)
+                .map(Self::DropMantissaBits)
+                .ok_or(StructuredIntentError::OutOfRange),
+        }
+    }
+}
+
+impl From<Truncation> for i8 {
+    fn from(truncation: Truncation) -> Self {
+        match truncation {
+            Truncation::Off => 0,
+            Truncation::IntegersOnly => -1,
+            // At most 52 after `StructuredIntent::new`; saturating keeps an
+            // unvalidated value from wrapping into a different meaning.
+            Truncation::DropMantissaBits(bits) => i8::try_from(bits.get()).unwrap_or(i8::MAX),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Prediction {
     None,
     Delta,
@@ -116,27 +196,32 @@ pub enum Prediction {
 
 /// An mzMLb array without numpress: the only writer that reads truncation and
 /// prediction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MzMlbPlainArray {
+    #[serde(rename = "bits")]
     pub precision: Precision,
     pub truncation: Truncation,
     pub prediction: Prediction,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "encoding", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MzMlbMzArray {
     Plain(MzMlbPlainArray),
-    NumpressLinear(LinearTolerance),
+    NumpressLinear { tolerance: LinearTolerance },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "encoding", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MzMlbIntensityArray {
     Plain(MzMlbPlainArray),
     NumpressPic,
-    NumpressSlof(Positive),
+    NumpressSlof { tolerance: Positive },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MzMlEncoding {
     pub mz: MzArray,
     pub intensity: IntensityArray,
@@ -146,15 +231,18 @@ pub struct MzMlEncoding {
 }
 
 /// mzXML's `<peaks>` hold pairs at one global precision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MzXmlEncoding {
+    #[serde(rename = "bits")]
     pub precision: Precision,
     pub zlib: bool,
     pub index: bool,
 }
 
 /// No `index`: the mzMLb writer writes its index whatever `--noindex` says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MzMlbEncoding {
     pub mz: MzMlbMzArray,
     pub intensity: MzMlbIntensityArray,
@@ -165,16 +253,22 @@ pub struct MzMlbEncoding {
     pub compression_level: Option<u8>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// On the wire, `{ "format": "mz5", "mzBits": 64, "intensityBits": 32, "zlib": true }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Mz5Encoding {
+    #[serde(rename = "mzBits")]
     pub mz: Precision,
+    #[serde(rename = "intensityBits")]
     pub intensity: Precision,
     pub zlib: bool,
 }
 
 /// A format and the encoding options its writer reads (ADR 0055 decision 4's
-/// table). The text formats read none, so they carry none.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// table). The text formats read none, so they carry none. On the wire,
+/// `{ "format": "mzml", "mz": ..., "intensity": ..., "zlib": true, "index": true }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "format", rename_all = "lowercase", deny_unknown_fields)]
 pub enum OutputEncoding {
     MzMl(MzMlEncoding),
     MzXml(MzXmlEncoding),
@@ -206,8 +300,10 @@ impl OutputEncoding {
 }
 
 /// A reader or writer switch. Lowered in this declaration order, whatever
-/// order a caller added them in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// order a caller added them in. On the wire, the option's own name:
+/// `"simAsSpectra"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Switch {
     SimAsSpectra,
     SrmAsSpectra,
@@ -312,13 +408,61 @@ impl SourceBlock {
     }
 }
 
+/// The most steps one chain may hold: a bound on what one request can make
+/// Rust lower and check, not a measured limit of the provider.
+pub const MAX_CHAIN_STEPS: usize = 64;
+
 /// One conversion's complete product semantics, beyond the nine rows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// On the wire (ADR 0044 as amended by ADR 0055):
+/// `{ "output": {...}, "spectrumFilters": [...], "chromatogramFilters": [...],
+/// "switches": ["simAsSpectra"] }`. Deserializing goes through
+/// [`StructuredIntentParts`] and [`StructuredIntent::new`], so a value that
+/// deserializes is one decision 4 admits; what serializes back is the
+/// canonical form, with integer sets merged and switches in their own order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "StructuredIntentParts")]
 pub struct StructuredIntent {
     output: OutputEncoding,
+    #[serde(rename = "spectrumFilters")]
     spectrum_chain: Vec<SpectrumStep>,
+    #[serde(rename = "chromatogramFilters")]
     chromatogram_chain: Vec<ChromatogramStep>,
     switches: BTreeSet<Switch>,
+}
+
+/// A [`StructuredIntent`]'s parts, each value already valid on its own, before
+/// decision 4's rules across them have been checked.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StructuredIntentParts {
+    pub output: OutputEncoding,
+    pub spectrum_filters: Vec<SpectrumStep>,
+    pub chromatogram_filters: Vec<ChromatogramStep>,
+    pub switches: Vec<Switch>,
+}
+
+impl TryFrom<StructuredIntentParts> for StructuredIntent {
+    type Error = StructuredIntentError;
+
+    fn try_from(parts: StructuredIntentParts) -> Result<Self, Self::Error> {
+        Self::new(
+            parts.output,
+            parts.spectrum_filters,
+            parts.chromatogram_filters,
+            parts.switches,
+        )
+    }
+}
+
+/// The checks an advanced intent's output is judged by (ADR 0055 ground
+/// rule 1). Only [`StructuredIntent::integrity_route`] makes one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntegrityRoute {
+    /// The row whose population and processing the judgement reads. Private to
+    /// the judgement: it is not what ran, and never reported as an intent.
+    pub(crate) judged_as: ConversionIntent,
+    pub(crate) checks: AdvancedOutputChecks,
 }
 
 impl StructuredIntent {
@@ -329,6 +473,9 @@ impl StructuredIntent {
         chromatogram_chain: Vec<ChromatogramStep>,
         switches: impl IntoIterator<Item = Switch>,
     ) -> Result<Self, StructuredIntentError> {
+        if spectrum_chain.len() > MAX_CHAIN_STEPS || chromatogram_chain.len() > MAX_CHAIN_STEPS {
+            return Err(StructuredIntentError::ChainTooLong);
+        }
         validate_output(&output)?;
         for (position, step) in spectrum_chain.iter().enumerate() {
             step.validate()?;
@@ -386,16 +533,8 @@ impl StructuredIntent {
         source: ConversionSourceKind,
         capabilities: &InstalledHelpCapabilities,
     ) -> Result<Tier, SourceBlock> {
-        for step in &self.spectrum_chain {
-            match (step, source) {
-                (SpectrumStep::PeakPickingVendor { .. }, ConversionSourceKind::MzmlFile) => {
-                    return Err(SourceBlock::VendorPickerOnMzmlSource);
-                }
-                (SpectrumStep::PeakPickingDefault, ConversionSourceKind::ThermoRawFile) => {
-                    return Err(SourceBlock::DefaultPickerOnThermoRaw);
-                }
-                _ => {}
-            }
+        if let Some(block) = self.source_block(source) {
+            return Err(block);
         }
         let verified_build = capabilities
             .executable_sha256()
@@ -409,6 +548,154 @@ impl StructuredIntent {
                     && capabilities.require_conversion_intent(row).is_ok()
             })
             .map_or(Tier::Advanced, Tier::Verified))
+    }
+
+    /// Decision 7's source-dependent refusal, if this source has one.
+    #[must_use]
+    pub fn source_block(&self, source: ConversionSourceKind) -> Option<SourceBlock> {
+        self.spectrum_chain
+            .iter()
+            .find_map(|step| match (step, source) {
+                (SpectrumStep::PeakPickingVendor { .. }, ConversionSourceKind::MzmlFile) => {
+                    Some(SourceBlock::VendorPickerOnMzmlSource)
+                }
+                (SpectrumStep::PeakPickingDefault, ConversionSourceKind::ThermoRawFile) => {
+                    Some(SourceBlock::DefaultPickerOnThermoRaw)
+                }
+                _ => None,
+            })
+    }
+
+    /// The checks this intent's output can be judged by on this source, or
+    /// `None` where MSCanvas has none yet. ADR 0055 ground rule 1: `None` is
+    /// refused (`IntentNotCheckable`), never run unchecked.
+    ///
+    /// `None` today for:
+    /// - every format but mzML: the two-run route (decision 6) is not wired
+    ///   into a run yet;
+    /// - a source that produces an output set (SCIEX): its members are judged
+    ///   by the set lifecycle, which has no advanced checks;
+    /// - the vendor picker: the processing check refuses vendor picking it did
+    ///   not attribute to a known name, so the run would be a certain failure.
+    #[must_use]
+    pub fn integrity_route(&self, source: ConversionSourceKind) -> Option<IntegrityRoute> {
+        let OutputEncoding::MzMl(encoding) = self.output else {
+            return None;
+        };
+        if source.produces_output_set()
+            || self
+                .spectrum_chain
+                .iter()
+                .any(|step| matches!(step, SpectrumStep::PeakPickingVendor { .. }))
+        {
+            return None;
+        }
+        let picks = self
+            .spectrum_chain
+            .iter()
+            .any(|step| matches!(step, SpectrumStep::PeakPickingDefault));
+        let judged_as = ConversionIntent::ADMITTED
+            .iter()
+            .map(AdmittedIntent::intent)
+            .find(|row| {
+                row.population() == SpectrumPopulation::All
+                    && row.processing()
+                        == if picks {
+                            ProcessingIntent::UnscopedDefaultCentroiding
+                        } else {
+                            ProcessingIntent::NoAdditionalCentroiding
+                        }
+            })?;
+        Some(IntegrityRoute {
+            judged_as,
+            checks: AdvancedOutputChecks {
+                encoding: requested_mzml_encoding(encoding)?,
+                changes: self.requested_changes(),
+            },
+        })
+    }
+
+    /// What the chains and switches asked to change, which the judgement
+    /// reports unverified rather than failing (decision 5).
+    ///
+    /// ponytail: per step class, erring towards "changed": a property wrongly
+    /// marked changed is reported unverified, never falsely claimed. Replace
+    /// with per-step effects when decision 5.1's `effects()` lands.
+    fn requested_changes(&self) -> RequestedChanges {
+        let mut changes = RequestedChanges::default();
+        for step in &self.spectrum_chain {
+            match step {
+                // Selection: removes spectra and nothing else.
+                SpectrumStep::Index { .. }
+                | SpectrumStep::Id { .. }
+                | SpectrumStep::MsLevel { .. }
+                | SpectrumStep::ChargeState { .. }
+                | SpectrumStep::ScanNumber { .. }
+                | SpectrumStep::ScanEvent { .. }
+                | SpectrumStep::ScanTime { .. }
+                | SpectrumStep::MzPrecursors { .. }
+                | SpectrumStep::IsolationWindows { .. }
+                | SpectrumStep::IsolationWidth { .. }
+                | SpectrumStep::DefaultArrayLength { .. }
+                | SpectrumStep::MzPresent { .. }
+                | SpectrumStep::ThermoScanFilter { .. }
+                | SpectrumStep::Activation { .. }
+                | SpectrumStep::CollisionEnergy { .. }
+                | SpectrumStep::Analyzer { .. }
+                | SpectrumStep::Polarity { .. }
+                | SpectrumStep::StripIt => changes.spectrum_count = true,
+                // Point removal within a spectrum.
+                SpectrumStep::PeakPickingDefault
+                | SpectrumStep::PeakPickingVendor { .. }
+                | SpectrumStep::Threshold { .. }
+                | SpectrumStep::MzWindow { .. }
+                | SpectrumStep::ZeroSamples { .. }
+                | SpectrumStep::Ms2Denoise { .. }
+                | SpectrumStep::Ms2Deisotope { .. }
+                | SpectrumStep::EtdFilter { .. } => changes.spectrum_array_lengths = true,
+                // Values, metadata, order or derived spectra: everything.
+                SpectrumStep::PrecursorRecalculation
+                | SpectrumStep::LockmassRefiner(_)
+                | SpectrumStep::PrecursorRefine
+                | SpectrumStep::SortByScanTime
+                | SpectrumStep::MetadataFixer
+                | SpectrumStep::TitleMaker { .. }
+                | SpectrumStep::ScanSumming { .. }
+                | SpectrumStep::MzShift { .. }
+                | SpectrumStep::Demultiplex(_)
+                | SpectrumStep::ChargeStatePredictor(_)
+                | SpectrumStep::Turbocharger(_) => {
+                    changes.spectrum_count = true;
+                    changes.spectrum_array_lengths = true;
+                    changes.array_values = true;
+                }
+            }
+        }
+        if !self.chromatogram_chain.is_empty() {
+            changes.chromatogram_count = true;
+            changes.array_values |= self
+                .chromatogram_chain
+                .iter()
+                .any(|step| matches!(step, ChromatogramStep::LockmassRefiner(_)));
+        }
+        for switch in self.switches() {
+            match switch {
+                Switch::SimAsSpectra | Switch::SrmAsSpectra => {
+                    changes.spectrum_count = true;
+                    changes.chromatogram_count = true;
+                }
+                Switch::CombineIonMobilitySpectra
+                | Switch::DdaProcessing
+                | Switch::IgnoreCalibrationScans
+                | Switch::AcceptZeroLengthSpectra => changes.spectrum_count = true,
+                Switch::IgnoreMissingZeroSamples => changes.spectrum_array_lengths = true,
+                Switch::IgnoreUnknownInstrumentError
+                | Switch::SingleThreaded
+                | Switch::StripLocationFromSourceFiles
+                | Switch::StripVersionFromSoftware => {}
+            }
+        }
+        changes
     }
 
     /// The argv this intent lowers to, between the source and `--outdir`.
@@ -533,11 +820,12 @@ fn validate_output(output: &OutputEncoding) -> Result<(), StructuredIntentError>
     let plain = [
         match encoding.mz {
             MzMlbMzArray::Plain(array) => Some(array),
-            MzMlbMzArray::NumpressLinear(_) => None,
+            MzMlbMzArray::NumpressLinear { tolerance: _ } => None,
         },
         match encoding.intensity {
             MzMlbIntensityArray::Plain(array) => Some(array),
-            MzMlbIntensityArray::NumpressPic | MzMlbIntensityArray::NumpressSlof(_) => None,
+            MzMlbIntensityArray::NumpressPic
+            | MzMlbIntensityArray::NumpressSlof { tolerance: _ } => None,
         },
     ];
     for array in plain.into_iter().flatten() {
@@ -578,7 +866,7 @@ fn encode(argv: &mut Argv, output: &OutputEncoding) {
             argv.zlib(encoding.zlib);
             let (mz_plain, mz, linear) = match encoding.mz {
                 MzMlbMzArray::Plain(array) => (Some(array), array.precision, None),
-                MzMlbMzArray::NumpressLinear(tolerance) => {
+                MzMlbMzArray::NumpressLinear { tolerance } => {
                     (None, Precision::Bits64, Some(tolerance))
                 }
             };
@@ -587,7 +875,7 @@ fn encode(argv: &mut Argv, output: &OutputEncoding) {
                 MzMlbIntensityArray::NumpressPic => {
                     (None, Precision::Bits64, Some(IntensityNumpress::Pic))
                 }
-                MzMlbIntensityArray::NumpressSlof(tolerance) => (
+                MzMlbIntensityArray::NumpressSlof { tolerance } => (
                     None,
                     Precision::Bits64,
                     Some(IntensityNumpress::Slof(tolerance)),
@@ -647,19 +935,54 @@ enum IntensityNumpress {
 
 const fn mz_role(array: MzArray) -> (Precision, Option<LinearTolerance>) {
     match array {
-        MzArray::Plain(precision) => (precision, None),
-        MzArray::NumpressLinear(tolerance) => (Precision::Bits64, Some(tolerance)),
+        MzArray::Plain { bits: precision } => (precision, None),
+        MzArray::NumpressLinear { tolerance } => (Precision::Bits64, Some(tolerance)),
     }
 }
 
 const fn intensity_role(array: IntensityArray) -> (Precision, Option<IntensityNumpress>) {
     match array {
-        IntensityArray::Plain(precision) => (precision, None),
+        IntensityArray::Plain { bits: precision } => (precision, None),
         IntensityArray::NumpressPic => (Precision::Bits64, Some(IntensityNumpress::Pic)),
-        IntensityArray::NumpressSlof(tolerance) => {
+        IntensityArray::NumpressSlof { tolerance } => {
             (Precision::Bits64, Some(IntensityNumpress::Slof(tolerance)))
         }
     }
+}
+
+/// What decision 5's term table expects of an mzML output with this encoding:
+/// the same roles and widths [`encode`] spells.
+fn requested_mzml_encoding(encoding: MzMlEncoding) -> Option<RequestedMzmlEncoding> {
+    use Precision::{Bits32, Bits64};
+    let (mz, linear) = mz_role(encoding.mz);
+    let (intensity, intensity_numpress) = intensity_role(encoding.intensity);
+    let precision = match (mz, intensity) {
+        (Bits64, Bits32) => NumericPrecision::Mz64Intensity32,
+        (Bits64, Bits64) => NumericPrecision::Mz64Intensity64,
+        (Bits32, Bits32) => NumericPrecision::Mz32Intensity32,
+        (Bits32, Bits64) => NumericPrecision::Mz32Intensity64,
+    };
+    let compression = if encoding.zlib {
+        CompressionIntent::Zlib
+    } else {
+        CompressionIntent::NoCompression
+    };
+    let mut requested = RequestedMzmlEncoding::new(precision, compression);
+    if linear.is_some() {
+        requested = requested.with_numpress_linear()?;
+    }
+    requested = match intensity_numpress {
+        None => requested,
+        Some(IntensityNumpress::Pic) => requested.with_intensity_numpress(JudgedNumpress::Pic)?,
+        Some(IntensityNumpress::Slof(_)) => {
+            requested.with_intensity_numpress(JudgedNumpress::Slof)?
+        }
+    };
+    Some(if encoding.index {
+        requested
+    } else {
+        requested.without_index()
+    })
 }
 
 fn numpress(
@@ -700,12 +1023,18 @@ impl From<ConversionIntent> for StructuredIntent {
             }
         }
         if let Some(level) = row.population().retained_ms_level() {
-            spectrum_chain.push(SpectrumStep::MsLevel(crate::chain::IntSet::single(level)));
+            spectrum_chain.push(SpectrumStep::MsLevel {
+                levels: crate::chain::IntSet::single(level),
+            });
         }
         Self {
             output: OutputEncoding::MzMl(MzMlEncoding {
-                mz: MzArray::Plain(Precision::of_bits(precision.mz_bits())),
-                intensity: IntensityArray::Plain(Precision::of_bits(precision.intensity_bits())),
+                mz: MzArray::Plain {
+                    bits: Precision::of_bits(precision.mz_bits()),
+                },
+                intensity: IntensityArray::Plain {
+                    bits: Precision::of_bits(precision.intensity_bits()),
+                },
                 zlib: match row.compression() {
                     CompressionIntent::Zlib => true,
                     CompressionIntent::NoCompression => false,

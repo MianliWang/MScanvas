@@ -53,8 +53,8 @@ pub use capability::{
 };
 pub use chain::{
     ActivationType, AnalyzerKind, ChargeStatePredictor, ChromatogramStep, DeisotopeMethod,
-    Demultiplex, DemultiplexOptimization, FilterRequirement, Fraction, IntSet, Lockmass, MassUnit,
-    MzTolerance, MzToleranceUnit, NativeId, NonNegative, Orientation, Polarity, Positive,
+    Demultiplex, DemultiplexOptimization, FilterRequirement, Fraction, IntRange, IntSet, Lockmass,
+    MassUnit, MzTolerance, MzToleranceUnit, NativeId, NonNegative, Orientation, Polarity, Positive,
     PrecursorTarget, Real, ScanFilterMatch, ScanFilterText, SelectionMode, SpectrumStep,
     StructuredIntentError, ThresholdCriterion, TitleKeyword, TitleLiteral, TitlePart,
     TitleTemplate, Turbocharger, ZeroSampleMode,
@@ -143,7 +143,8 @@ pub use sciex_completeness::{
 pub use sciex_wiff::sciex_wiff_companion_path;
 pub use sha256::Sha256Error;
 pub use structured::{
-    IntensityArray, LinearTolerance, Lowering, Mz5Encoding, MzArray, MzMlEncoding, MzMlbEncoding,
-    MzMlbIntensityArray, MzMlbMzArray, MzMlbPlainArray, MzXmlEncoding, OutputEncoding, Precision,
-    Prediction, ProviderRequirement, SourceBlock, StructuredIntent, Switch, Tier, Truncation,
+    IntegrityRoute, IntensityArray, LinearTolerance, Lowering, MAX_CHAIN_STEPS, Mz5Encoding,
+    MzArray, MzMlEncoding, MzMlbEncoding, MzMlbIntensityArray, MzMlbMzArray, MzMlbPlainArray,
+    MzXmlEncoding, OutputEncoding, Precision, Prediction, ProviderRequirement, SourceBlock,
+    StructuredIntent, StructuredIntentParts, Switch, Tier, Truncation,
 };

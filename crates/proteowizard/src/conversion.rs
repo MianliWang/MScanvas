@@ -1167,6 +1167,7 @@ pub(crate) fn verify_mzml_conversion_retaining_output(
     output_directory: &Path,
     expected_file_name: &OsStr,
     intent: ConversionIntent,
+    advanced: Option<AdvancedOutputChecks>,
     limits: MzmlScanLimits,
 ) -> VerifiedConversion {
     let (file, output) = match open_and_inspect_output(
@@ -1180,7 +1181,7 @@ pub(crate) fn verify_mzml_conversion_retaining_output(
         Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
     };
 
-    match judge_against_source(source, output, intent) {
+    match judge_against_source_with(source, output, intent, advanced) {
         ConversionIntegrityOutcome::Valid(valid) => {
             VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
                 file,
@@ -1211,6 +1212,7 @@ pub(crate) fn verify_vendor_conversion_retaining_output(
     output_directory: &Path,
     expected_file_name: &OsStr,
     intent: ConversionIntent,
+    advanced: Option<AdvancedOutputChecks>,
     limits: MzmlScanLimits,
 ) -> VerifiedConversion {
     let (file, output) = match open_and_inspect_output(
@@ -1224,7 +1226,7 @@ pub(crate) fn verify_vendor_conversion_retaining_output(
         Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
     };
 
-    match judge_output_alone(source, output, intent) {
+    match judge_output_alone_with(source, output, intent, advanced) {
         ConversionIntegrityOutcome::Valid(valid) => {
             VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
                 file,

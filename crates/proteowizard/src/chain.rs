@@ -28,6 +28,7 @@
 use std::fmt;
 use std::num::NonZeroU32;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Why a value, a step or an intent could not be built.
@@ -62,9 +63,41 @@ pub enum StructuredIntentError {
     CompressionLevelZeroWithZlib,
     #[error("truncation drops more mantissa bits than the array's precision holds")]
     TruncationExceedsMantissa,
+    #[error("a chain holds more steps than one intent may")]
+    ChainTooLong,
+    #[error("a number is outside the values its field takes")]
+    OutOfRange,
 }
 
 impl StructuredIntentError {
+    const ALL: [Self; 15] = [
+        Self::NotFinite,
+        Self::NotPositive,
+        Self::Negative,
+        Self::NotAFraction,
+        Self::Empty,
+        Self::UnorderedRange,
+        Self::SetNotOneInterval,
+        Self::EmptyText,
+        Self::ForbiddenCharacter,
+        Self::VendorPickerNotFirst,
+        Self::CompressionLevelOutOfRange,
+        Self::CompressionLevelZeroWithZlib,
+        Self::TruncationExceedsMantissa,
+        Self::ChainTooLong,
+        Self::OutOfRange,
+    ];
+
+    /// The refusal a deserializer's message reports, where a value's own
+    /// constructor refused it during deserialization. A deserializer carries
+    /// the refusal only as text, prefixed by this type's own sentence.
+    #[must_use]
+    pub fn from_deserializer_message(message: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|error| message.starts_with(&error.to_string()))
+    }
+
     #[must_use]
     pub const fn stable_id(self) -> &'static str {
         match self {
@@ -81,6 +114,8 @@ impl StructuredIntentError {
             Self::CompressionLevelOutOfRange => "compression_level_out_of_range",
             Self::CompressionLevelZeroWithZlib => "compression_level_zero_with_zlib",
             Self::TruncationExceedsMantissa => "truncation_exceeds_mantissa",
+            Self::ChainTooLong => "chain_too_long",
+            Self::OutOfRange => "out_of_range",
         }
     }
 }
@@ -99,8 +134,25 @@ fn finite(value: f64) -> Result<f64, E> {
 macro_rules! real_newtype {
     ($(#[$meta:meta])* $name:ident, |$value:ident| $check:expr) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy)]
+        ///
+        /// On the wire, a JSON number; deserializing runs the constructor.
+        #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+        #[serde(try_from = "f64", into = "f64")]
         pub struct $name(f64);
+
+        impl TryFrom<f64> for $name {
+            type Error = StructuredIntentError;
+
+            fn try_from(value: f64) -> Result<Self, Self::Error> {
+                Self::new(value)
+            }
+        }
+
+        impl From<$name> for f64 {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
 
         impl $name {
             pub fn new(value: f64) -> Result<Self, StructuredIntentError> {
@@ -159,10 +211,39 @@ real_newtype!(
 /// merged, so one set has one value and one spelling. That is what lets the
 /// verified lookup compare structurally: `1-1` from a control is `1`, which is
 /// what the L1 row lowers to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// On the wire, `[{ "start": 1, "end": 2 }, { "start": 5, "end": null }]`;
+/// deserializing runs the constructor, so what serializes back is canonical.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "Vec<IntRange>", into = "Vec<IntRange>")]
 pub struct IntSet {
     /// `(start, None)` is open-ended: `start-`.
     intervals: Vec<(u32, Option<u32>)>,
+}
+
+/// One interval of an [`IntSet`] on the wire. `end: null` is open-ended.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntRange {
+    pub start: u32,
+    pub end: Option<u32>,
+}
+
+impl TryFrom<Vec<IntRange>> for IntSet {
+    type Error = StructuredIntentError;
+
+    fn try_from(ranges: Vec<IntRange>) -> Result<Self, Self::Error> {
+        Self::new(ranges.into_iter().map(|range| (range.start, range.end)))
+    }
+}
+
+impl From<IntSet> for Vec<IntRange> {
+    fn from(set: IntSet) -> Self {
+        set.intervals
+            .into_iter()
+            .map(|(start, end)| IntRange { start, end })
+            .collect()
+    }
 }
 
 impl IntSet {
@@ -254,8 +335,31 @@ fn one_line(text: String, forbidden: &[char]) -> Result<String, E> {
     Ok(text)
 }
 
+/// On the wire a text value is a JSON string, and deserializing runs its
+/// constructor.
+macro_rules! text_wire {
+    ($($name:ident),*) => {$(
+        impl TryFrom<String> for $name {
+            type Error = StructuredIntentError;
+
+            fn try_from(text: String) -> Result<Self, Self::Error> {
+                Self::new(text)
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
+    )*};
+}
+
+text_wire!(NativeId, ScanFilterText, TitleLiteral);
+
 /// One native ID for the `id` filter. `;` separates IDs there, so it is refused.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct NativeId(String);
 
 impl NativeId {
@@ -271,7 +375,8 @@ impl NativeId {
 
 /// The match string of `thermoScanFilter`, which the help says may contain
 /// spaces and which is the step's last argument.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct ScanFilterText(String);
 
 impl ScanFilterText {
@@ -290,7 +395,8 @@ impl ScanFilterText {
 /// No whitespace, and no `<` or `>`, which would make a keyword the user did
 /// not choose. ponytail: whitespace is refused because nothing read shows the
 /// filter consuming the rest of its argument; allow it when the source says so.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct TitleLiteral(String);
 
 impl TitleLiteral {
@@ -308,8 +414,9 @@ impl TitleLiteral {
     }
 }
 
-/// The keywords `titleMaker` recognizes (help lines 262-289).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The keywords `titleMaker` recognizes (help lines 262-289), on the wire as
+/// the help spells them without brackets: `"RunId"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TitleKeyword {
     RunId,
     Index,
@@ -357,14 +464,17 @@ impl TitleKeyword {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// On the wire, `{ "keyword": "RunId" }` or `{ "literal": "." }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub enum TitlePart {
     Keyword(TitleKeyword),
     Literal(TitleLiteral),
 }
 
 /// A `titleMaker` template: keywords and literal text, never a free string.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "Vec<TitlePart>", into = "Vec<TitlePart>")]
 pub struct TitleTemplate(Vec<TitlePart>);
 
 impl TitleTemplate {
@@ -381,6 +491,20 @@ impl TitleTemplate {
     }
 }
 
+impl TryFrom<Vec<TitlePart>> for TitleTemplate {
+    type Error = StructuredIntentError;
+
+    fn try_from(parts: Vec<TitlePart>) -> Result<Self, Self::Error> {
+        Self::new(parts)
+    }
+}
+
+impl From<TitleTemplate> for Vec<TitlePart> {
+    fn from(template: TitleTemplate) -> Self {
+        template.0
+    }
+}
+
 impl fmt::Display for TitleTemplate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for part in &self.0 {
@@ -394,7 +518,8 @@ impl fmt::Display for TitleTemplate {
 }
 
 /// `include` or `exclude`, the help's `mode=` for selecting filters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SelectionMode {
     Include,
     Exclude,
@@ -409,7 +534,8 @@ impl SelectionMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Orientation {
     MostIntense,
     LeastIntense,
@@ -425,7 +551,14 @@ impl Orientation {
 }
 
 /// A `threshold` type with the value that type takes (help lines 296-312).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// On the wire, `{ "type": "bpi_relative", "value": 0.75 }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum ThresholdCriterion {
     Count(NonZeroU32),
     CountAfterTies(NonZeroU32),
@@ -458,7 +591,8 @@ impl ThresholdCriterion {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MzToleranceUnit {
     Ppm,
     Mz,
@@ -466,7 +600,8 @@ pub enum MzToleranceUnit {
 
 /// An m/z tolerance, spelled as the help states it ("PPM or MZ") with no space,
 /// so it stays one token inside a `name=` value. Help-derived.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MzTolerance {
     pub value: Positive,
     pub unit: MzToleranceUnit,
@@ -483,7 +618,8 @@ impl fmt::Display for MzTolerance {
 }
 
 /// `ppm` or `Da`, as `mzShift` and `demultiplex` spell them ("10ppm or 1Da").
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MassUnit {
     Ppm,
     Da,
@@ -498,13 +634,20 @@ impl MassUnit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PrecursorTarget {
     Selected,
     Isolated,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum ZeroSampleMode {
     RemoveExtra,
     /// `addMissing`, or `addMissing=<n>` to cap the flanking zeros.
@@ -514,7 +657,13 @@ pub enum ZeroSampleMode {
 }
 
 /// `MS2Deisotope`'s methods, each with only its own fields (help lines 469-479).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum DeisotopeMethod {
     /// The Markey method at low resolution, with its default tolerance.
     Markey,
@@ -526,7 +675,8 @@ pub enum DeisotopeMethod {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ActivationType {
     Etd,
     Cid,
@@ -563,7 +713,8 @@ impl ActivationType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AnalyzerKind {
     Quad,
     Orbi,
@@ -584,19 +735,22 @@ impl AnalyzerKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Polarity {
     Positive,
     Negative,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ScanFilterMatch {
     Exact,
     Contains,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DemultiplexOptimization {
     None,
     OverlapOnly,
@@ -605,15 +759,19 @@ pub enum DemultiplexOptimization {
 /// `lockmassRefiner`'s three values, the same in both chains. All three are
 /// emitted: the help's defaults (`mzNegIons` = `mz`, `tol` = 1.0) are for the
 /// control to prefill, not for the lowering to assume.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Lockmass {
     pub mz: Positive,
+    #[serde(rename = "mzNegIons")]
     pub mz_negative_ions: Positive,
+    #[serde(rename = "tol")]
     pub tolerance: Positive,
 }
 
 /// The `demultiplex` parameters, every one emitted (help lines 495-499).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Demultiplex {
     pub mass_error: Positive,
     pub mass_error_unit: MassUnit,
@@ -630,7 +788,8 @@ pub struct Demultiplex {
 }
 
 /// The `chargeStatePredictor` parameters (help lines 504-524).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ChargeStatePredictor {
     pub override_existing_charge: bool,
     pub max_multiple_charge: u32,
@@ -642,12 +801,14 @@ pub struct ChargeStatePredictor {
 }
 
 /// The `turbocharger` parameters (help lines 526-542).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Turbocharger {
     pub min_charge: u32,
     pub max_charge: u32,
     pub precursors_before: u32,
     pub precursors_after: u32,
+    #[serde(rename = "halfIsoWidth")]
     pub half_isolation_width: Positive,
     pub default_min_charge: u32,
     pub default_max_charge: u32,
@@ -655,13 +816,30 @@ pub struct Turbocharger {
 }
 
 /// One `--filter` step, in the help's order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// On the wire, `{ "kind": "ms_level", "levels": [...] }`: the kind in snake
+/// case and the step's own fields in camel case beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum SpectrumStep {
-    Index(IntSet),
-    Id(Vec<NativeId>),
-    MsLevel(IntSet),
+    Index {
+        indices: IntSet,
+    },
+    Id {
+        ids: Vec<NativeId>,
+    },
+    MsLevel {
+        levels: IntSet,
+    },
     /// 0 means "no charge state" (help line 169).
-    ChargeState(IntSet),
+    ChargeState {
+        charges: IntSet,
+    },
     PrecursorRecalculation,
     LockmassRefiner(Lockmass),
     PrecursorRefine,
@@ -675,8 +853,12 @@ pub enum SpectrumStep {
     PeakPickingVendor {
         ms_levels: Option<IntSet>,
     },
-    ScanNumber(IntSet),
-    ScanEvent(IntSet),
+    ScanNumber {
+        scan_numbers: IntSet,
+    },
+    ScanEvent {
+        scan_events: IntSet,
+    },
     /// Emitted in seconds, as the help states the range.
     ScanTime {
         start_seconds: NonNegative,
@@ -685,7 +867,9 @@ pub enum SpectrumStep {
     SortByScanTime,
     StripIt,
     MetadataFixer,
-    TitleMaker(TitleTemplate),
+    TitleMaker {
+        template: TitleTemplate,
+    },
     Threshold {
         criterion: ThresholdCriterion,
         orientation: Orientation,
@@ -698,6 +882,7 @@ pub enum SpectrumStep {
     /// Drops MS1 unless 0.0 is listed (help).
     MzPrecursors {
         mzs: Vec<NonNegative>,
+        #[serde(rename = "mzTol")]
         tolerance: MzTolerance,
         target: PrecursorTarget,
         mode: SelectionMode,
@@ -705,35 +890,45 @@ pub enum SpectrumStep {
     /// Drops MS1 unless `[0,0]` is listed (help).
     IsolationWindows {
         windows: Vec<(NonNegative, NonNegative)>,
+        #[serde(rename = "mzTol")]
         tolerance: MzTolerance,
         mode: SelectionMode,
     },
     /// Drops MS1 unless 0.0 is listed (help).
     IsolationWidth {
         widths: Vec<NonNegative>,
+        #[serde(rename = "mzTol")]
         tolerance: MzTolerance,
         mode: SelectionMode,
     },
-    DefaultArrayLength(IntSet),
+    DefaultArrayLength {
+        peak_counts: IntSet,
+    },
     ZeroSamples {
         mode: ZeroSampleMode,
         ms_levels: Option<IntSet>,
     },
     MzPresent {
         mzs: Vec<NonNegative>,
+        #[serde(rename = "mzTol")]
         tolerance: MzTolerance,
         criterion: ThresholdCriterion,
         orientation: Orientation,
         mode: SelectionMode,
     },
     ScanSumming {
+        #[serde(rename = "precursorTol")]
         precursor_tolerance: Positive,
+        #[serde(rename = "scanTimeTolSeconds")]
         scan_time_tolerance_seconds: Positive,
+        #[serde(rename = "ionMobilityTol")]
         ion_mobility_tolerance: Positive,
     },
     ThermoScanFilter {
+        #[serde(rename = "match")]
         match_kind: ScanFilterMatch,
         mode: SelectionMode,
+        #[serde(rename = "filter")]
         text: ScanFilterText,
     },
     MzShift {
@@ -741,13 +936,17 @@ pub enum SpectrumStep {
         unit: MassUnit,
         ms_levels: IntSet,
     },
+    #[serde(rename = "ms2_denoise")]
     Ms2Denoise {
         peaks_in_window: NonZeroU32,
         /// 0 means the highest observed mass (help line 460).
         window_width_da: NonNegative,
         multicharge_fragment_relaxation: bool,
     },
-    Ms2Deisotope(DeisotopeMethod),
+    #[serde(rename = "ms2_deisotope")]
+    Ms2Deisotope {
+        method: DeisotopeMethod,
+    },
     EtdFilter {
         remove_precursor: bool,
         remove_charge_reduced: bool,
@@ -759,6 +958,8 @@ pub enum SpectrumStep {
     ChargeStatePredictor(ChargeStatePredictor),
     Turbocharger(Turbocharger),
     Activation {
+        /// `type` on the wire: `kind` is the step's own tag.
+        #[serde(rename = "type")]
         kind: ActivationType,
         mode: SelectionMode,
     },
@@ -769,14 +970,24 @@ pub enum SpectrumStep {
         accept_non_cid: bool,
         accept_missing_ce: bool,
     },
-    Analyzer(AnalyzerKind),
-    Polarity(Polarity),
+    Analyzer {
+        analyzer: AnalyzerKind,
+    },
+    Polarity {
+        polarity: Polarity,
+    },
 }
 
-/// One `--chromatogramFilter` step.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One `--chromatogramFilter` step, on the wire as a spectrum step is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum ChromatogramStep {
-    Index(IntSet),
+    Index { indices: IntSet },
     LockmassRefiner(Lockmass),
 }
 
@@ -861,7 +1072,7 @@ impl SpectrumStep {
     /// and public so a caller can attribute a refusal to the step it came from.
     pub fn validate(&self) -> Result<(), E> {
         match self {
-            Self::Id(ids) => non_empty(ids),
+            Self::Id { ids } => non_empty(ids),
             Self::PeakPickingVendor {
                 ms_levels: Some(levels),
             }
@@ -889,10 +1100,13 @@ impl SpectrumStep {
                     .try_for_each(|(low, high)| ordered(low.get(), high.get()))
             }
             Self::IsolationWidth { widths, .. } => non_empty(widths),
-            Self::Ms2Deisotope(DeisotopeMethod::Poisson {
-                min_charge,
-                max_charge,
-            }) => ordered(min_charge.get(), max_charge.get()),
+            Self::Ms2Deisotope {
+                method:
+                    DeisotopeMethod::Poisson {
+                        min_charge,
+                        max_charge,
+                    },
+            } => ordered(min_charge.get(), max_charge.get()),
             Self::ChargeStatePredictor(predictor) => {
                 ordered(predictor.min_multiple_charge, predictor.max_multiple_charge)
             }
@@ -908,13 +1122,13 @@ impl SpectrumStep {
     /// The one argv element this step contributes after `--filter`.
     pub(crate) fn lower(&self) -> LoweredFilter {
         match self {
-            Self::Index(set) => lowered("index", &[set.to_string()], &[]),
-            Self::Id(ids) => {
+            Self::Index { indices: set } => lowered("index", &[set.to_string()], &[]),
+            Self::Id { ids } => {
                 let joined: Vec<&str> = ids.iter().map(NativeId::as_str).collect();
                 lowered("id", &[joined.join(";")], &[])
             }
-            Self::MsLevel(set) => lowered("msLevel", &[set.to_string()], &[]),
-            Self::ChargeState(set) => lowered("chargeState", &[set.to_string()], &[]),
+            Self::MsLevel { levels: set } => lowered("msLevel", &[set.to_string()], &[]),
+            Self::ChargeState { charges: set } => lowered("chargeState", &[set.to_string()], &[]),
             Self::PrecursorRecalculation => lowered("precursorRecalculation", &[], &[]),
             Self::LockmassRefiner(values) => lockmass(values),
             Self::PrecursorRefine => lowered("precursorRefine", &[], &[]),
@@ -926,8 +1140,10 @@ impl SpectrumStep {
                     .collect();
                 lowered("peakPicking", &["vendor".to_owned()], &named)
             }
-            Self::ScanNumber(set) => lowered("scanNumber", &[set.to_string()], &[]),
-            Self::ScanEvent(set) => lowered("scanEvent", &[set.to_string()], &[]),
+            Self::ScanNumber { scan_numbers: set } => {
+                lowered("scanNumber", &[set.to_string()], &[])
+            }
+            Self::ScanEvent { scan_events: set } => lowered("scanEvent", &[set.to_string()], &[]),
             Self::ScanTime {
                 start_seconds,
                 end_seconds,
@@ -939,7 +1155,7 @@ impl SpectrumStep {
             Self::SortByScanTime => lowered("sortByScanTime", &[], &[]),
             Self::StripIt => lowered("stripIT", &[], &[]),
             Self::MetadataFixer => lowered("metadataFixer", &[], &[]),
-            Self::TitleMaker(template) => lowered("titleMaker", &[template.to_string()], &[]),
+            Self::TitleMaker { template } => lowered("titleMaker", &[template.to_string()], &[]),
             Self::Threshold {
                 criterion,
                 orientation,
@@ -1005,7 +1221,9 @@ impl SpectrumStep {
                     ("mode", mode.spelling().to_owned()),
                 ],
             ),
-            Self::DefaultArrayLength(set) => lowered("defaultArrayLength", &[set.to_string()], &[]),
+            Self::DefaultArrayLength { peak_counts: set } => {
+                lowered("defaultArrayLength", &[set.to_string()], &[])
+            }
             Self::ZeroSamples { mode, ms_levels } => {
                 let mut positionals = vec![match mode {
                     ZeroSampleMode::RemoveExtra => "removeExtra".to_owned(),
@@ -1088,7 +1306,7 @@ impl SpectrumStep {
                 ],
                 &[],
             ),
-            Self::Ms2Deisotope(method) => match method {
+            Self::Ms2Deisotope { method } => match method {
                 DeisotopeMethod::Markey => lowered("MS2Deisotope", &[], &[]),
                 DeisotopeMethod::MarkeyHighResolution { mz_tolerance } => lowered(
                     "MS2Deisotope",
@@ -1214,8 +1432,10 @@ impl SpectrumStep {
                     ("acceptMissingCE", accept_missing_ce.to_string()),
                 ],
             ),
-            Self::Analyzer(kind) => lowered("analyzer", &[kind.spelling().to_owned()], &[]),
-            Self::Polarity(polarity) => lowered(
+            Self::Analyzer { analyzer: kind } => {
+                lowered("analyzer", &[kind.spelling().to_owned()], &[])
+            }
+            Self::Polarity { polarity } => lowered(
                 "polarity",
                 &[match polarity {
                     Polarity::Positive => "positive",
@@ -1231,13 +1451,13 @@ impl SpectrumStep {
 impl ChromatogramStep {
     pub fn validate(&self) -> Result<(), E> {
         match self {
-            Self::Index(_) | Self::LockmassRefiner(_) => Ok(()),
+            Self::Index { indices: _ } | Self::LockmassRefiner(_) => Ok(()),
         }
     }
 
     pub(crate) fn lower(&self) -> LoweredFilter {
         match self {
-            Self::Index(set) => lowered("index", &[set.to_string()], &[]),
+            Self::Index { indices: set } => lowered("index", &[set.to_string()], &[]),
             Self::LockmassRefiner(values) => lockmass(values),
         }
     }
@@ -1333,7 +1553,7 @@ mod tests {
         ])
         .expect("template");
         assert_eq!(
-            SpectrumStep::TitleMaker(template).lower().argument,
+            SpectrumStep::TitleMaker { template }.lower().argument,
             "titleMaker <RunId>.<ScanNumber>.<ChargeState>"
         );
     }
@@ -1363,9 +1583,17 @@ mod tests {
             assert_eq!(step.validate(), Err(E::SetNotOneInterval), "{step:?}");
         }
         // As a step's whole argument, several intervals are the help's own form.
-        assert_eq!(SpectrumStep::ScanEvent(two.clone()).validate(), Ok(()));
         assert_eq!(
-            SpectrumStep::ScanEvent(two).lower().argument,
+            SpectrumStep::ScanEvent {
+                scan_events: two.clone()
+            }
+            .validate(),
+            Ok(())
+        );
+        assert_eq!(
+            SpectrumStep::ScanEvent { scan_events: two }
+                .lower()
+                .argument,
             "scanEvent 1 3"
         );
     }
@@ -1398,15 +1626,17 @@ mod tests {
                 accept_non_cid: true,
                 accept_missing_ce: false,
             },
-            SpectrumStep::Ms2Deisotope(DeisotopeMethod::Poisson {
-                min_charge: NonZeroU32::new(3).expect("3"),
-                max_charge: NonZeroU32::MIN,
-            }),
+            SpectrumStep::Ms2Deisotope {
+                method: DeisotopeMethod::Poisson {
+                    min_charge: NonZeroU32::new(3).expect("3"),
+                    max_charge: NonZeroU32::MIN,
+                },
+            },
         ] {
             assert_eq!(step.validate(), Err(E::UnorderedRange), "{step:?}");
         }
         for step in [
-            SpectrumStep::Id(Vec::new()),
+            SpectrumStep::Id { ids: Vec::new() },
             SpectrumStep::MzPrecursors {
                 mzs: Vec::new(),
                 tolerance,
@@ -1539,10 +1769,12 @@ mod tests {
                 "thermoScanFilter contains exclude ITMS + c NSI",
             ),
             (
-                SpectrumStep::Id(vec![
-                    NativeId::new("scan=1").expect("id"),
-                    NativeId::new("scan=7").expect("id"),
-                ]),
+                SpectrumStep::Id {
+                    ids: vec![
+                        NativeId::new("scan=1").expect("id"),
+                        NativeId::new("scan=7").expect("id"),
+                    ],
+                },
                 "id scan=1;scan=7",
             ),
             (
@@ -1558,9 +1790,11 @@ mod tests {
                 "mzPrecursors [0,123.4] mzTol=5PPM target=isolated mode=include",
             ),
             (
-                SpectrumStep::Ms2Deisotope(DeisotopeMethod::MarkeyHighResolution {
-                    mz_tolerance: p(0.01),
-                }),
+                SpectrumStep::Ms2Deisotope {
+                    method: DeisotopeMethod::MarkeyHighResolution {
+                        mz_tolerance: p(0.01),
+                    },
+                },
                 "MS2Deisotope hi_res mzTol=0.01",
             ),
             (
@@ -1571,7 +1805,12 @@ mod tests {
                 }),
                 "lockmassRefiner mz=556.2771 mzNegIons=554.2615 tol=1",
             ),
-            (SpectrumStep::Analyzer(AnalyzerKind::Ft), "analyzer FT"),
+            (
+                SpectrumStep::Analyzer {
+                    analyzer: AnalyzerKind::Ft,
+                },
+                "analyzer FT",
+            ),
             (SpectrumStep::StripIt, "stripIT"),
         ];
         for (step, expected) in cases {
@@ -1579,9 +1818,11 @@ mod tests {
             assert_eq!(step.lower().argument, expected);
         }
         assert_eq!(
-            ChromatogramStep::Index(set(&[(0, Some(4))]))
-                .lower()
-                .argument,
+            ChromatogramStep::Index {
+                indices: set(&[(0, Some(4))])
+            }
+            .lower()
+            .argument,
             "index 0-4"
         );
     }

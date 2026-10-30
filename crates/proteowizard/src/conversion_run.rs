@@ -57,13 +57,14 @@ use crate::cancellation::{CancellationObservation, ConversionCancellation};
 use crate::capability::{InstalledHelpCapabilities, Sha256Digest};
 use crate::command::{
     InputSpelling, OpenFormat, PlanError, SourceIdentity, build_msconvert_command_for_source,
+    build_structured_msconvert_command_for_source,
 };
 use crate::compound_file;
 use crate::conversion::{
-    ConversionIntegrityOutcome, ConversionSourceError, ConversionSourceFacts, SourceObjectFacts,
-    ValidConversion, ValidationMode, VerifiedConversion, capture_conversion_source,
-    conversion_output_file_name, verify_mzml_conversion_retaining_output,
-    verify_vendor_conversion_retaining_output,
+    AdvancedOutputChecks, ConversionIntegrityOutcome, ConversionSourceError, ConversionSourceFacts,
+    SourceObjectFacts, ValidConversion, ValidationMode, VerifiedConversion,
+    capture_conversion_source, conversion_output_file_name,
+    verify_mzml_conversion_retaining_output, verify_vendor_conversion_retaining_output,
 };
 use crate::diagnostics::{BackendTextExcerpt, Redactor};
 use crate::finalized_output::FinalizedOutput;
@@ -76,6 +77,7 @@ use crate::process::{
     LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner, Termination, TreeOwnership,
 };
 use crate::sciex_wiff;
+use crate::structured::{IntegrityRoute, StructuredIntent};
 
 /// Appended to the planned output file name to name the staging directory.
 ///
@@ -1118,6 +1120,13 @@ pub enum ConversionPlanError {
     /// staged or launched.
     #[error("the conversion intent's evidence was not measured on this source's family")]
     IntentNotEvidencedForSource,
+    /// ADR 0055 ground rule 1: an advanced intent whose output MSCanvas has no
+    /// checks for on this source. Refused rather than run unchecked.
+    #[error("no output checks exist for this conversion intent on this source")]
+    IntentNotCheckable,
+    /// ADR 0055 decision 7: a step this source's family refuses.
+    #[error("a conversion step is blocked for this source")]
+    StepBlockedForSource,
 }
 
 impl ConversionPlanError {
@@ -1131,6 +1140,8 @@ impl ConversionPlanError {
             Self::DestinationRootNotADirectory => "destination_root_not_a_directory",
             Self::SourceProducesAnOutputSet => "source_produces_an_output_set",
             Self::IntentNotEvidencedForSource => "intent_not_evidenced_for_source",
+            Self::IntentNotCheckable => "intent_not_checkable",
+            Self::StepBlockedForSource => "step_blocked_for_source",
         }
     }
 }
@@ -1158,7 +1169,48 @@ pub struct ConversionPlan {
     /// Not a compression policy any more, and not a format hard-coded further
     /// down: one product semantic, bound here, lowered into argv from here and
     /// compared against the output from here.
-    intent: ConversionIntent,
+    intent: PlannedIntent,
+}
+
+/// What a plan asks the provider to do: one verified row, or an advanced
+/// intent (ADR 0055) with the checks its output is judged by.
+#[derive(Clone, PartialEq)]
+enum PlannedIntent {
+    Row(ConversionIntent),
+    Advanced {
+        intent: StructuredIntent,
+        route: IntegrityRoute,
+    },
+}
+
+impl PlannedIntent {
+    /// The row the judgement reads population and processing from, and the
+    /// advanced checks, if any. For an advanced intent the row is the
+    /// judgement's private input, not what ran.
+    const fn judgement(&self) -> (ConversionIntent, Option<AdvancedOutputChecks>) {
+        match self {
+            Self::Row(intent) => (*intent, None),
+            Self::Advanced { route, .. } => (route.judged_as, Some(route.checks)),
+        }
+    }
+
+    const fn format(&self) -> OpenFormat {
+        match self {
+            Self::Row(row) => OpenFormat::of_intent(row.format()),
+            // An integrity route exists only for mzML output.
+            Self::Advanced { .. } => OpenFormat::MzMl,
+        }
+    }
+}
+
+impl fmt::Debug for PlannedIntent {
+    /// Opaque for an advanced intent: its text values are the user's own.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Row(intent) => intent.fmt(formatter),
+            Self::Advanced { .. } => formatter.write_str("<advanced-intent>"),
+        }
+    }
 }
 
 impl ConversionPlan {
@@ -1190,6 +1242,46 @@ impl ConversionPlan {
         if !intent.evidence_covers_source(source.kind()) {
             return Err(ConversionPlanError::IntentNotEvidencedForSource);
         }
+        Self::form(
+            source,
+            destination_root,
+            conflict,
+            PlannedIntent::Row(intent),
+        )
+    }
+
+    /// Plans one advanced conversion (ADR 0055): an intent outside the nine
+    /// rows, judged by the checks its integrity route names.
+    ///
+    /// Refused first where a step is blocked for this source (decision 7) and
+    /// where no output checks exist for it (ground rule 1), before anything is
+    /// derived, opened or canonicalized. Everything after is the row path's.
+    pub fn advanced(
+        source: ConversionSource,
+        destination_root: &Path,
+        conflict: ConflictPolicy,
+        intent: StructuredIntent,
+    ) -> Result<Self, ConversionPlanError> {
+        if intent.source_block(source.kind()).is_some() {
+            return Err(ConversionPlanError::StepBlockedForSource);
+        }
+        let route = intent
+            .integrity_route(source.kind())
+            .ok_or(ConversionPlanError::IntentNotCheckable)?;
+        Self::form(
+            source,
+            destination_root,
+            conflict,
+            PlannedIntent::Advanced { intent, route },
+        )
+    }
+
+    fn form(
+        source: ConversionSource,
+        destination_root: &Path,
+        conflict: ConflictPolicy,
+        intent: PlannedIntent,
+    ) -> Result<Self, ConversionPlanError> {
         // Before a name is derived at all, because for these families there is
         // no name to derive: the backend chooses one per sample, and measured
         // on the real build it does so even when the acquisition holds a single
@@ -1201,7 +1293,7 @@ impl ConversionPlan {
         // Derived from the intent rather than restated. The extension a plan
         // stages for and the format the argv asks for are one decision, and a
         // planner holding its own copy of it is how they come apart.
-        let format = OpenFormat::of_intent(intent.format());
+        let format = intent.format();
         let output_file_name = conversion_output_file_name(source.canonical_path(), format)
             .ok_or(ConversionPlanError::SourceHasNoConvertibleName)?;
         crate::command::validate_output_file_name(&output_file_name, format)
@@ -1255,7 +1347,7 @@ impl ConversionPlan {
     /// construction: [`ConversionIntent`] cannot name another one.
     #[must_use]
     pub const fn format(&self) -> OpenFormat {
-        OpenFormat::of_intent(self.intent.format())
+        self.intent.format()
     }
 
     #[must_use]
@@ -1268,9 +1360,24 @@ impl ConversionPlan {
     /// The one authority for that question: the command is lowered from it, the
     /// integrity comparison is made against it, and a retry runs the plan it is
     /// already bound to rather than rebuilding one from whatever is current.
+    ///
+    /// `None` for an advanced plan, which no row describes: see
+    /// [`Self::advanced_intent`].
     #[must_use]
-    pub const fn intent(&self) -> ConversionIntent {
-        self.intent
+    pub const fn intent(&self) -> Option<ConversionIntent> {
+        match self.intent {
+            PlannedIntent::Row(intent) => Some(intent),
+            PlannedIntent::Advanced { .. } => None,
+        }
+    }
+
+    /// The advanced intent this plan runs, if it is one.
+    #[must_use]
+    pub const fn advanced_intent(&self) -> Option<&StructuredIntent> {
+        match &self.intent {
+            PlannedIntent::Row(_) => None,
+            PlannedIntent::Advanced { intent, .. } => Some(intent),
+        }
     }
 
     /// The scan limits that judge both the source baseline and the output.
@@ -3615,14 +3722,26 @@ fn run_staged(
 ) -> StagedResult {
     let staging_directory = recovery.output_directory();
     let staging = staging_directory.as_path();
-    let command = match build_msconvert_command_for_source(
-        capabilities,
-        plan.source.canonical_path(),
-        staging,
-        plan.output_file_name(),
-        &plan.intent,
-        plan.source.kind().input_spelling(),
-    ) {
+    let built = match &plan.intent {
+        PlannedIntent::Row(intent) => build_msconvert_command_for_source(
+            capabilities,
+            plan.source.canonical_path(),
+            staging,
+            plan.output_file_name(),
+            intent,
+            plan.source.kind().input_spelling(),
+        ),
+        PlannedIntent::Advanced { intent, .. } => build_structured_msconvert_command_for_source(
+            capabilities,
+            plan.source.canonical_path(),
+            staging,
+            plan.output_file_name(),
+            intent,
+            plan.source.kind(),
+            plan.source.kind().input_spelling(),
+        ),
+    };
+    let command = match built {
         Ok(command) => command,
         // The command could not be built, so the provider was never invoked
         // and no identity was minted. The staging area exists and is observed
@@ -3826,19 +3945,22 @@ fn run_staged(
     // output turned out to contain: a source read as mzML is compared against,
     // and one that never was is validated on its output alone. Nothing here can
     // apply the comparison to a source it could not read that way.
+    let (judged_as, advanced) = plan.intent.judgement();
     let verified = match &plan.source.baseline {
         SourceBaseline::Mzml(facts) => verify_mzml_conversion_retaining_output(
             facts,
             staging,
             plan.output_file_name(),
-            plan.intent,
+            judged_as,
+            advanced,
             plan.scan_limits(),
         ),
         SourceBaseline::ObjectOnly(object) => verify_vendor_conversion_retaining_output(
             object,
             staging,
             plan.output_file_name(),
-            plan.intent,
+            judged_as,
+            advanced,
             plan.scan_limits(),
         ),
         // A bundle does not reach here: `ConversionPlan::to_mzml` refuses a
@@ -3851,7 +3973,8 @@ fn run_staged(
             &bundle.primary,
             staging,
             plan.output_file_name(),
-            plan.intent,
+            judged_as,
+            advanced,
             plan.scan_limits(),
         ),
     };

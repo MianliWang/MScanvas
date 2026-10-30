@@ -69,8 +69,12 @@ fn mzml(mz: MzArray, intensity: IntensityArray, zlib: bool, index: bool) -> Outp
 
 fn plain_mzml() -> OutputEncoding {
     mzml(
-        MzArray::Plain(Precision::Bits64),
-        IntensityArray::Plain(Precision::Bits32),
+        MzArray::Plain {
+            bits: Precision::Bits64,
+        },
+        IntensityArray::Plain {
+            bits: Precision::Bits32,
+        },
         true,
         true,
     )
@@ -125,12 +129,16 @@ fn a_row_reached_through_a_redundant_spelling_is_still_the_row() {
     let ms1 = IntSet::new([(1, Some(1)), (1, Some(1))]).expect("set");
     let intent = build(
         mzml(
-            MzArray::Plain(Precision::Bits64),
-            IntensityArray::Plain(Precision::Bits64),
+            MzArray::Plain {
+                bits: Precision::Bits64,
+            },
+            IntensityArray::Plain {
+                bits: Precision::Bits64,
+            },
             true,
             true,
         ),
-        vec![SpectrumStep::MsLevel(ms1)],
+        vec![SpectrumStep::MsLevel { levels: ms1 }],
     );
     let l1 = ConversionIntent::admitted(
         OutputFormat::MzMl,
@@ -150,8 +158,12 @@ fn an_intent_one_step_from_a_row_is_not_a_row() {
         StructuredIntent::new(plain_mzml(), Vec::new(), Vec::new(), [Switch::SimAsSpectra]),
         StructuredIntent::new(
             mzml(
-                MzArray::Plain(Precision::Bits64),
-                IntensityArray::Plain(Precision::Bits32),
+                MzArray::Plain {
+                    bits: Precision::Bits64,
+                },
+                IntensityArray::Plain {
+                    bits: Precision::Bits32,
+                },
                 true,
                 false,
             ),
@@ -161,21 +173,29 @@ fn an_intent_one_step_from_a_row_is_not_a_row() {
         ),
         StructuredIntent::new(
             plain_mzml(),
-            vec![SpectrumStep::MsLevel(IntSet::new([(1, None)]).expect("1-"))],
+            vec![SpectrumStep::MsLevel {
+                levels: IntSet::new([(1, None)]).expect("1-"),
+            }],
             Vec::new(),
             [],
         ),
         StructuredIntent::new(
             plain_mzml(),
             Vec::new(),
-            vec![ChromatogramStep::Index(IntSet::single(0))],
+            vec![ChromatogramStep::Index {
+                indices: IntSet::single(0),
+            }],
             [],
         ),
         // The 32/32 row with a picker is K12; without zlib it is no row.
         StructuredIntent::new(
             mzml(
-                MzArray::Plain(Precision::Bits32),
-                IntensityArray::Plain(Precision::Bits32),
+                MzArray::Plain {
+                    bits: Precision::Bits32,
+                },
+                IntensityArray::Plain {
+                    bits: Precision::Bits32,
+                },
                 false,
                 true,
             ),
@@ -196,14 +216,24 @@ fn the_vendor_picker_may_only_be_first() {
     assert!(
         StructuredIntent::new(
             plain_mzml(),
-            vec![vendor.clone(), SpectrumStep::MsLevel(IntSet::single(2))],
+            vec![
+                vendor.clone(),
+                SpectrumStep::MsLevel {
+                    levels: IntSet::single(2)
+                }
+            ],
             Vec::new(),
             [],
         )
         .is_ok()
     );
     for chain in [
-        vec![SpectrumStep::MsLevel(IntSet::single(2)), vendor.clone()],
+        vec![
+            SpectrumStep::MsLevel {
+                levels: IntSet::single(2),
+            },
+            vendor.clone(),
+        ],
         vec![vendor.clone(), vendor],
     ] {
         assert_eq!(
@@ -230,15 +260,21 @@ fn an_invalid_step_refuses_the_intent() {
 /// retention time keeps its 64-bit default; intensity is spelled per array.
 #[test]
 fn linear_numpress_never_emits_a_global_precision_switch() {
-    let linear = MzArray::NumpressLinear(LinearTolerance::Relative(p(2e-9)));
+    let linear = MzArray::NumpressLinear {
+        tolerance: LinearTolerance::Relative(p(2e-9)),
+    };
     let numpress = "--numpressLinear=0.000000002";
     for (intensity, expected) in [
         (
-            IntensityArray::Plain(Precision::Bits32),
+            IntensityArray::Plain {
+                bits: Precision::Bits32,
+            },
             vec!["--mzML", "--zlib", numpress],
         ),
         (
-            IntensityArray::Plain(Precision::Bits64),
+            IntensityArray::Plain {
+                bits: Precision::Bits64,
+            },
             vec!["--mzML", "--zlib", "--inten64", numpress],
         ),
         (
@@ -246,7 +282,7 @@ fn linear_numpress_never_emits_a_global_precision_switch() {
             vec!["--mzML", "--zlib", "--inten64", numpress, "--numpressPic"],
         ),
         (
-            IntensityArray::NumpressSlof(p(2e-4)),
+            IntensityArray::NumpressSlof { tolerance: p(2e-4) },
             vec![
                 "--mzML",
                 "--zlib",
@@ -267,7 +303,9 @@ fn linear_numpress_never_emits_a_global_precision_switch() {
 fn intensity_numpress_fixes_intensity_at_64_bits() {
     let tokens = direct(&build(
         mzml(
-            MzArray::Plain(Precision::Bits32),
+            MzArray::Plain {
+                bits: Precision::Bits32,
+            },
             IntensityArray::NumpressPic,
             true,
             true,
@@ -284,8 +322,12 @@ fn intensity_numpress_fixes_intensity_at_64_bits() {
 fn an_absolute_linear_tolerance_replaces_the_relative_one() {
     let tokens = direct(&build(
         mzml(
-            MzArray::NumpressLinear(LinearTolerance::Absolute(p(1e-4))),
-            IntensityArray::Plain(Precision::Bits32),
+            MzArray::NumpressLinear {
+                tolerance: LinearTolerance::Absolute(p(1e-4)),
+            },
+            IntensityArray::Plain {
+                bits: Precision::Bits32,
+            },
             false,
             false,
         ),
@@ -310,7 +352,7 @@ fn mzmlb(zlib: bool, compression_level: Option<u8>, truncation: Truncation) -> O
             truncation,
             prediction: Prediction::Delta,
         }),
-        intensity: MzMlbIntensityArray::NumpressSlof(p(2e-4)),
+        intensity: MzMlbIntensityArray::NumpressSlof { tolerance: p(2e-4) },
         zlib,
         chunk_size: NonZeroU64::new(1_048_576),
         compression_level,
@@ -389,7 +431,9 @@ fn every_other_format_is_written_from_a_private_mzml_intermediate() {
         let intent = StructuredIntent::new(
             output,
             vec![SpectrumStep::PeakPickingDefault],
-            vec![ChromatogramStep::Index(IntSet::single(0))],
+            vec![ChromatogramStep::Index {
+                indices: IntSet::single(0),
+            }],
             [Switch::StripVersionFromSoftware, Switch::SrmAsSpectra],
         )
         .expect("buildable");
@@ -580,10 +624,18 @@ fn one_of_every_spectrum_step() -> Vec<SpectrumStep> {
         SpectrumStep::PeakPickingVendor {
             ms_levels: Some(set(1, Some(2))),
         },
-        SpectrumStep::Index(set(0, Some(9))),
-        SpectrumStep::Id(vec![NativeId::new("scan=1").expect("id")]),
-        SpectrumStep::MsLevel(set(2, None)),
-        SpectrumStep::ChargeState(set(2, Some(4))),
+        SpectrumStep::Index {
+            indices: set(0, Some(9)),
+        },
+        SpectrumStep::Id {
+            ids: vec![NativeId::new("scan=1").expect("id")],
+        },
+        SpectrumStep::MsLevel {
+            levels: set(2, None),
+        },
+        SpectrumStep::ChargeState {
+            charges: set(2, Some(4)),
+        },
         SpectrumStep::PrecursorRecalculation,
         SpectrumStep::LockmassRefiner(Lockmass {
             mz: p(556.2771),
@@ -592,8 +644,12 @@ fn one_of_every_spectrum_step() -> Vec<SpectrumStep> {
         }),
         SpectrumStep::PrecursorRefine,
         SpectrumStep::PeakPickingDefault,
-        SpectrumStep::ScanNumber(set(1, Some(100))),
-        SpectrumStep::ScanEvent(set(1, Some(4))),
+        SpectrumStep::ScanNumber {
+            scan_numbers: set(1, Some(100)),
+        },
+        SpectrumStep::ScanEvent {
+            scan_events: set(1, Some(4)),
+        },
         SpectrumStep::ScanTime {
             start_seconds: n(60.0),
             end_seconds: n(119.99),
@@ -601,9 +657,10 @@ fn one_of_every_spectrum_step() -> Vec<SpectrumStep> {
         SpectrumStep::SortByScanTime,
         SpectrumStep::StripIt,
         SpectrumStep::MetadataFixer,
-        SpectrumStep::TitleMaker(
-            TitleTemplate::new(vec![TitlePart::Keyword(TitleKeyword::Index)]).expect("template"),
-        ),
+        SpectrumStep::TitleMaker {
+            template: TitleTemplate::new(vec![TitlePart::Keyword(TitleKeyword::Index)])
+                .expect("template"),
+        },
         SpectrumStep::Threshold {
             criterion: count,
             orientation: Orientation::MostIntense,
@@ -629,7 +686,9 @@ fn one_of_every_spectrum_step() -> Vec<SpectrumStep> {
             tolerance,
             mode: SelectionMode::Include,
         },
-        SpectrumStep::DefaultArrayLength(set(100, None)),
+        SpectrumStep::DefaultArrayLength {
+            peak_counts: set(100, None),
+        },
         SpectrumStep::ZeroSamples {
             mode: ZeroSampleMode::RemoveExtra,
             ms_levels: None,
@@ -661,7 +720,9 @@ fn one_of_every_spectrum_step() -> Vec<SpectrumStep> {
             window_width_da: n(30.0),
             multicharge_fragment_relaxation: true,
         },
-        SpectrumStep::Ms2Deisotope(DeisotopeMethod::Markey),
+        SpectrumStep::Ms2Deisotope {
+            method: DeisotopeMethod::Markey,
+        },
         SpectrumStep::EtdFilter {
             remove_precursor: true,
             remove_charge_reduced: true,
@@ -715,8 +776,12 @@ fn one_of_every_spectrum_step() -> Vec<SpectrumStep> {
             accept_non_cid: true,
             accept_missing_ce: false,
         },
-        SpectrumStep::Analyzer(AnalyzerKind::Orbi),
-        SpectrumStep::Polarity(Polarity::Positive),
+        SpectrumStep::Analyzer {
+            analyzer: AnalyzerKind::Orbi,
+        },
+        SpectrumStep::Polarity {
+            polarity: Polarity::Positive,
+        },
     ]
 }
 
@@ -741,14 +806,18 @@ fn every_emitted_option_is_declared_by_the_captured_help_as_emitted() {
     ];
     let mut outputs = every_other_format();
     outputs.push(mzml(
-        MzArray::NumpressLinear(LinearTolerance::Absolute(p(1e-4))),
+        MzArray::NumpressLinear {
+            tolerance: LinearTolerance::Absolute(p(1e-4)),
+        },
         IntensityArray::NumpressPic,
         false,
         false,
     ));
     outputs.push(mzml(
-        MzArray::NumpressLinear(LinearTolerance::Relative(p(2e-9))),
-        IntensityArray::NumpressSlof(p(2e-4)),
+        MzArray::NumpressLinear {
+            tolerance: LinearTolerance::Relative(p(2e-9)),
+        },
+        IntensityArray::NumpressSlof { tolerance: p(2e-4) },
         true,
         true,
     ));
@@ -773,7 +842,9 @@ fn every_emitted_option_is_declared_by_the_captured_help_as_emitted() {
         compression_level: None,
     }));
     outputs.push(OutputEncoding::MzMlb(MzMlbEncoding {
-        mz: MzMlbMzArray::NumpressLinear(LinearTolerance::Relative(p(2e-9))),
+        mz: MzMlbMzArray::NumpressLinear {
+            tolerance: LinearTolerance::Relative(p(2e-9)),
+        },
         intensity: MzMlbIntensityArray::Plain(MzMlbPlainArray {
             precision: Precision::Bits64,
             truncation: Truncation::DropMantissaBits(NonZeroU8::MIN),
@@ -788,7 +859,9 @@ fn every_emitted_option_is_declared_by_the_captured_help_as_emitted() {
         let intent = StructuredIntent::new(
             output,
             vec![SpectrumStep::PeakPickingDefault],
-            vec![ChromatogramStep::Index(IntSet::single(0))],
+            vec![ChromatogramStep::Index {
+                indices: IntSet::single(0),
+            }],
             every_switch,
         )
         .expect("buildable");
@@ -891,7 +964,9 @@ fn the_probe_confirms_these_filter_names_on_the_captured_help_and_not_these() {
     let chromatogram = StructuredIntent::new(
         plain_mzml(),
         Vec::new(),
-        vec![ChromatogramStep::Index(IntSet::single(0))],
+        vec![ChromatogramStep::Index {
+            indices: IntSet::single(0),
+        }],
         [],
     )
     .expect("buildable");

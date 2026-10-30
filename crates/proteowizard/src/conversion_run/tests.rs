@@ -17,6 +17,7 @@ use crate::conversion::{
 use crate::finalized_output::OutputDrift;
 use crate::intent::CompressionIntent;
 
+mod advanced;
 mod live_recovery;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -510,7 +511,10 @@ fn a_plan_derives_a_deterministic_mzml_name_and_fixes_every_other_decision() {
     );
     assert_eq!(plan.format(), OpenFormat::MzMl);
     assert_eq!(plan.conflict_policy(), ConflictPolicy::Fail);
-    assert_eq!(plan.intent().compression().stable_id(), "zlib");
+    assert_eq!(
+        plan.intent().expect("a row plan").compression().stable_id(),
+        "zlib"
+    );
     assert_eq!(plan.source().kind(), ConversionSourceKind::MzmlFile);
     // The plan judges its output with the same limits that read its source.
     assert_eq!(plan.scan_limits(), plan.source().scan_limits());
@@ -667,7 +671,10 @@ fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml()
     assert_eq!(argv[1], OsStr::new("--mzML"));
     // The compression the integrity contract is entitled to assume and the flag
     // the backend is actually given are two facts, and they must agree.
-    assert_eq!(plan.intent().compression(), CompressionIntent::Zlib);
+    assert_eq!(
+        plan.intent().expect("a row plan").compression(),
+        CompressionIntent::Zlib
+    );
     assert_eq!(argv[2], OsStr::new("--zlib"));
     assert_eq!(argv[3], OsStr::new("--outdir"));
     assert_eq!(
@@ -2214,6 +2221,7 @@ fn a_validated_output_describes_itself_without_a_path_or_a_handle() {
         &staging,
         OsStr::new("sample.mzML"),
         ConversionIntent::SHIPPED,
+        None,
         MzmlScanLimits::default(),
     ) {
         VerifiedConversion::Valid(validated) => validated,
@@ -4288,6 +4296,7 @@ fn an_output_whose_acquisition_no_longer_matches_is_refused() {
         &staging,
         OsStr::new("acquisition.mzML"),
         ConversionIntent::SHIPPED,
+        None,
         MzmlScanLimits::default(),
     );
 
