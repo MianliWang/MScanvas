@@ -68,8 +68,8 @@ export interface BackendAuthorityProjection {
  * fails there rather than arriving as an unlabelled control.
  *
  * Listing the *members* of a dimension is not listing the *combinations* of
- * them. A free cross-product of these is forty-eight; nine were measured, and
- * which nine is a question only the catalog answers.
+ * them. A free cross-product of these is seventy-two; ten were measured, and
+ * which ten is a question only the catalog answers.
  */
 /**
  * The one format the admitted table names, as an intent spells it.
@@ -80,7 +80,10 @@ export interface BackendAuthorityProjection {
  * standing for both would have to pick a spelling and misdescribe the other.
  */
 export type ConversionIntentFormat = "mzml";
-export type ConversionProcessing = "no_additional_centroiding" | "unscoped_default_centroiding";
+export type ConversionProcessing =
+  | "no_additional_centroiding"
+  | "unscoped_default_centroiding"
+  | "vendor_centroiding_from_ms1";
 export type ConversionSpectrumPopulation = "all" | "ms1_only" | "ms2_only";
 export type ConversionNumericPrecision =
   | "mz64_intensity32"

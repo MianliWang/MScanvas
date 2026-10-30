@@ -68,7 +68,7 @@ pub use conversion::{
     AdvancedOutputChecks, AdvisoryObservation, BinaryArrayMismatchKind, ConversionIntegrityOutcome,
     ConversionOutputInspection, ConversionOutputRejection, ConversionSourceError,
     ConversionSourceFacts, DocumentPart, DocumentSide, EncodingReport, IntegrityProperty,
-    IntensityNumpress, RequestedChanges, RequestedMzmlEncoding, RoleEncodingReport,
+    IntensityNumpress, PickerLevels, RequestedChanges, RequestedMzmlEncoding, RoleEncodingReport,
     SourceObjectFacts, ValidConversion, ValidationMode, capture_conversion_source,
     conversion_output_file_name, inspect_conversion_output, verify_mzml_conversion,
 };
@@ -115,8 +115,8 @@ pub use mzml::{
     ArrayEncoding, ArrayEncodingTally, ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet,
     EffectiveProcessing, MzmlChromatogramRecord, MzmlFacts, MzmlLimitKind, MzmlMalformedKind,
     MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord, NumericPrecisionMarker,
-    NumericPrecisionSet, ProcessingAlgorithm, ProcessingHistory, RepresentationMarker,
-    RetentionTimeUnitMarker, UnsafeXmlKind, inspect_file, inspect_reader,
+    NumericPrecisionSet, PickerScopeRecord, ProcessingAlgorithm, ProcessingHistory,
+    RepresentationMarker, RetentionTimeUnitMarker, UnsafeXmlKind, inspect_file, inspect_reader,
 };
 pub use output_inspect::{
     FinalOutputVerdict, IntermediateFacts, MzxmlEncoding, MzxmlPrecision, NonMzmlFormat,

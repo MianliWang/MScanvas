@@ -5,8 +5,8 @@
 //! switches. [`StructuredIntent::new`] enforces decision 4's rules, so an intent
 //! that exists can be lowered, and its lowering is deterministic.
 //!
-//! **The nine rows stay the verified subset.** [`ConversionIntent::ADMITTED`]
-//! is unchanged, and "is this verified?" is one lookup in it: an intent is
+//! **The admitted rows stay the verified subset.** "Is this verified?" is one
+//! lookup in [`ConversionIntent::ADMITTED`]: an intent is
 //! verified only where it equals a row's structured form and decision 1's other
 //! three conditions hold ([`StructuredIntent::tier`]). Every other buildable
 //! intent is advanced, labelled "not verified by MSCanvas".
@@ -41,7 +41,7 @@ use crate::chain::{
 };
 use crate::command::OpenFormat;
 use crate::conversion::{
-    AdvancedOutputChecks, IntensityNumpress as JudgedNumpress, RequestedChanges,
+    AdvancedOutputChecks, IntensityNumpress as JudgedNumpress, PickerLevels, RequestedChanges,
     RequestedMzmlEncoding,
 };
 use crate::conversion_run::ConversionSourceKind;
@@ -412,7 +412,7 @@ impl SourceBlock {
 /// Rust lower and check, not a measured limit of the provider.
 pub const MAX_CHAIN_STEPS: usize = 64;
 
-/// One conversion's complete product semantics, beyond the nine rows.
+/// One conversion's complete product semantics, beyond the admitted rows.
 ///
 /// On the wire (ADR 0044 as amended by ADR 0055):
 /// `{ "output": {...}, "spectrumFilters": [...], "chromatogramFilters": [...],
@@ -575,42 +575,52 @@ impl StructuredIntent {
     ///   into a run yet;
     /// - a source that produces an output set (SCIEX): its members are judged
     ///   by the set lifecycle, which has no advanced checks;
-    /// - the vendor picker: the processing check refuses vendor picking it did
-    ///   not attribute to a known name, so the run would be a certain failure.
+    /// - the vendor picker on any source but Thermo RAW: only the Thermo
+    ///   reader's picker name and scope record were measured (ADR 0059), so
+    ///   another reader's run would be a certain failure;
+    /// - the vendor picker beside the default one: each refuses the other.
+    ///
+    /// The vendor picker on Thermo RAW is judged as the vendor-picker row's
+    /// algorithm at the requested scope: the picker named, its `ms levels`
+    /// record as the verified build writes it, and every in-scope spectrum
+    /// centroid. Out-of-scope spectra are not judged.
     #[must_use]
     pub fn integrity_route(&self, source: ConversionSourceKind) -> Option<IntegrityRoute> {
         let OutputEncoding::MzMl(encoding) = self.output else {
             return None;
         };
-        if source.produces_output_set()
-            || self
-                .spectrum_chain
-                .iter()
-                .any(|step| matches!(step, SpectrumStep::PeakPickingVendor { .. }))
-        {
+        if source.produces_output_set() {
             return None;
         }
+        let vendor = self.spectrum_chain.iter().find_map(|step| match step {
+            SpectrumStep::PeakPickingVendor { ms_levels } => Some(ms_levels.as_ref()),
+            _ => None,
+        });
         let picks = self
             .spectrum_chain
             .iter()
             .any(|step| matches!(step, SpectrumStep::PeakPickingDefault));
+        let (processing, vendor_levels) = match (vendor, picks) {
+            (None, false) => (ProcessingIntent::NoAdditionalCentroiding, None),
+            (None, true) => (ProcessingIntent::UnscopedDefaultCentroiding, None),
+            (Some(levels), false) if source == ConversionSourceKind::ThermoRawFile => (
+                ProcessingIntent::VendorCentroidingFromMs1,
+                Some(picker_levels(levels)?),
+            ),
+            (Some(_), _) => return None,
+        };
         let judged_as = ConversionIntent::ADMITTED
             .iter()
             .map(AdmittedIntent::intent)
             .find(|row| {
-                row.population() == SpectrumPopulation::All
-                    && row.processing()
-                        == if picks {
-                            ProcessingIntent::UnscopedDefaultCentroiding
-                        } else {
-                            ProcessingIntent::NoAdditionalCentroiding
-                        }
+                row.population() == SpectrumPopulation::All && row.processing() == processing
             })?;
         Some(IntegrityRoute {
             judged_as,
             checks: AdvancedOutputChecks {
                 encoding: requested_mzml_encoding(encoding)?,
                 changes: self.requested_changes(),
+                vendor_levels,
             },
         })
     }
@@ -733,10 +743,11 @@ impl StructuredIntent {
     /// emits. Evidence of spelling only (M6.2's rule).
     ///
     /// By name, because the probe cannot yet read a full filter grammar: it
-    /// reads a declaration's first line only, drops one whose signature holds a
-    /// `.`, and skips the chromatogram section. ponytail: until it reads that
-    /// section, no chromatogram step is confirmed, so every intent with one is
-    /// refused here; read the section in the probe to lift it.
+    /// joins a wrapped declaration over three lines at most, drops one whose
+    /// signature holds a `.`, and skips the chromatogram section. ponytail:
+    /// until it reads that section, no chromatogram step is confirmed, so every
+    /// intent with one is refused here; read the section in the probe to lift
+    /// it.
     pub fn confirm_provider_requirements(
         &self,
         capabilities: &InstalledHelpCapabilities,
@@ -803,6 +814,22 @@ impl StructuredIntent {
         intermediate.extend(filters);
         output.extend(writing);
         vec![intermediate, output]
+    }
+}
+
+/// The levels a vendor step asks to centroid: every level where it names none
+/// (`TV3` measured that byte-identical to `msLevel=1-`), otherwise its one
+/// interval, which [`SpectrumStep::validate`] already requires.
+fn picker_levels(ms_levels: Option<&crate::chain::IntSet>) -> Option<PickerLevels> {
+    let Some(set) = ms_levels else {
+        return Some(PickerLevels::EVERY_LEVEL);
+    };
+    match set.intervals() {
+        [(first, last)] => Some(PickerLevels {
+            first: *first,
+            last: *last,
+        }),
+        _ => None,
     }
 }
 
@@ -1009,7 +1036,7 @@ fn numpress(
     }
 }
 
-/// The nine rows' structured forms. Every row is trivially valid, which a test
+/// The admitted rows' structured forms. Every row is trivially valid, which a test
 /// asserts by rebuilding each through [`StructuredIntent::new`].
 impl From<ConversionIntent> for StructuredIntent {
     fn from(row: ConversionIntent) -> Self {
@@ -1020,6 +1047,13 @@ impl From<ConversionIntent> for StructuredIntent {
             ProcessingIntent::NoAdditionalCentroiding => {}
             ProcessingIntent::UnscopedDefaultCentroiding => {
                 spectrum_chain.push(SpectrumStep::PeakPickingDefault);
+            }
+            ProcessingIntent::VendorCentroidingFromMs1 => {
+                spectrum_chain.push(SpectrumStep::PeakPickingVendor {
+                    ms_levels: Some(
+                        crate::chain::IntSet::new([(1, None)]).expect("1- is one interval"),
+                    ),
+                });
             }
         }
         if let Some(level) = row.population().retained_ms_level() {

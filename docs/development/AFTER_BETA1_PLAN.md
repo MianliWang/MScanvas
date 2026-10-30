@@ -57,7 +57,9 @@ changes may merge again, each with the owner's approval as before.
 - **Dependencies and Node 26:** after publication, in batches, before beta 2.
 - **Merging:** test-only and docs-only pull requests may be merged by the
   maintainer agent once every required check passes; product, dependency and
-  release changes still go to the owner.
+  release changes still go to the owner. *2026-10-29: product pull requests may
+  be merged too, once every required check passes and no review thread is
+  open. A dependency or release change keeps its own approval.*
 - **This plan** is tracked in the repository and updated as items complete.
 - **Feature design answers** (after the read-only briefs and their critiques):
   - folder/drop proposes **Thermo RAW and Shimadzu LCD only**; SCIEX stays
@@ -148,9 +150,55 @@ accepted):
   schema 4's promise; the owner decides which one stands;
 - the R0 real-file comparison for the reader (ADR 0056, decision 8): the PRIDE
   `PXD081190` download, an MS1 profile-mode file from the owner, and a
-  ProteoWizard hold release;
-- whether product pull requests may be merged without the owner;
+  ProteoWizard hold release. *R0 ran on 2026-10-29 on public files
+  ([PR #157](https://github.com/MianliWang/MScanvas/pull/157)) and did not
+  pass: the reader refused the `PXD081190` file, whose `<mzML>` has no
+  `version` attribute. Decision 2 below amends ADR 0056, and R0 runs again;*
+- whether product pull requests may be merged without the owner. *Answered
+  2026-10-29: they may (the merging bullet above);*
 - which demo direction the interface follows.
+
+**Owner decisions, 2026-10-30** (Thermo first, Bruker compatibility later when
+there is capacity, no decompilation, and every other point as recommended):
+
+1. **Vendor formats stay on the vendors' own readers**
+   ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md)).
+   Thermo comes first, and Bruker waits until there is capacity. MSCanvas does
+   not decompile or reverse engineer vendor software and writes no decoder of
+   its own for a vendor format. Vendor files go through the official vendor
+   readers, inside the user's own ProteoWizard `msconvert`. A Bruker TDF
+   preview through an existing permissively licensed open reader (timsrust or
+   mzdata) stays a later, separate decision.
+2. **mzML version from the schema location.** When `<mzML>` has no `version`
+   attribute, the reader takes the version from the xsd file name in that
+   element's `xsi:schemaLocation`, as ProteoWizard does. A stated version
+   that is not `1.1.x` is still refused
+   ([ADR 0056](../architecture/adr/0056-project-owned-mzml-reader-for-viewing.md),
+   decision 1).
+3. **The chosen ProteoWizard folder is remembered across launches**
+   ([PR #158](https://github.com/MianliWang/MScanvas/pull/158)). This reverses
+   ADR 0005's "for the session only, never written to disk", and the
+   installation's folder may be sent to the webview
+   ([ADR 0005](../architecture/adr/0005-mzml-preview-boundary.md)).
+4. **`tiff` is a direct production dependency** of the desktop crate, at
+   `=0.11.3` with only `lzw`
+   ([PR #159](https://github.com/MianliWang/MScanvas/pull/159)). It is already
+   in `Cargo.lock` through `image`, so no package is added
+   ([ADR 0030](../architecture/adr/0030-png-copy-plot-and-figure-settings.md),
+   dependencies).
+5. **One-click view RAW** is accepted. Selecting a Thermo RAW row to view
+   converts it with the verified defaults into an MSCanvas-owned cache, never
+   the user's destination and never overwriting, then opens the result. It is
+   designed and implemented later.
+6. **Thermo vendor centroiding.** "MS1 and up" (`peakPicking vendor
+   msLevel=1-`) becomes a verified row on the evidenced build. "MS2 and up"
+   stays in the advanced tier, labelled not verified, until a public Orbitrap
+   profile-MS2 file is measured
+   ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
+   [PR #162](https://github.com/MianliWang/MScanvas/pull/162)). *Implemented
+   2026-10-30 on `be/thermo-ms1`;
+   [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)
+   records how.*
 
 ## 3. Parallel execution rules
 
@@ -171,7 +219,8 @@ accepted):
   0051 folder/drop vendor ingestion, 0052 per-output adoption, 0053 PNG text
   metadata, 0054 spreadsheet CSV. 0055 is msconvert parity (option C), 0056
   the mzML reader for viewing, 0057 conversion capacity and viewing during
-  conversion, 0058 user-saved conversion presets.
+  conversion, 0058 user-saved conversion presets, 0059 the vendor format
+  strategy.
 
 ## 4. Pace and estimating basis
 
@@ -192,6 +241,14 @@ stretches came from memory admission, owner decisions and idle gaps. The
 estimates below count sessions and add the gates explicitly.
 
 ## 5. Phases and tracks
+
+**Vendor priority (2026-10-30,
+[ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md)):**
+Thermo RAW first: vendor centroiding's verified row, one-click view RAW and
+folder/drop. Bruker compatibility comes later, when there is capacity, by its
+own decision. Every vendor format stays on the official readers inside the
+user's ProteoWizard; no work decompiles vendor software or decodes a vendor
+format in-house.
 
 **Phase 0 — beta 1 (now; about one day of work plus one idle-desktop window).**
 Section 1.
@@ -442,9 +499,9 @@ None can be delivered by engineering alone; each waits for one input.
 | --- | --- | --- |
 | Folder/drop vendor files | Owner decision (given 2026-10-28 for Thermo and Shimadzu; section 6.1). SCIEX: a measurement that its derived companion cannot pair with a same-stem `.wiff2` | M–L |
 | XIC (VIEW-007) | A new scope record for a bounded project-owned mzML array decoder: a new candidate, not a repair of PX's refused one, rerunning all 77 rows; a written decision on reader work and dependency approval | L–XL |
-| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim | M–L |
-| Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader | M |
-| Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family) | XL |
+| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2)* | M–L |
+| Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
+| Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |
 
 ### 7.6 Refused or not adopted
 
@@ -494,7 +551,13 @@ None can be delivered by engineering alone; each waits for one input.
   truncation and prediction (section 2).
 - ADR 0056's re-measurement (R0): the PRIDE `PXD081190` download, an MS1
   profile-mode file the owner authorizes, and a ProteoWizard hold release.
-- Whether product pull requests may be merged without the owner.
+  *R0 ran on 2026-10-29 and did not pass; the owner amended ADR 0056's
+  decision 1 on 2026-10-30, and R0 runs again before slice 1 merges.*
+- *Answered 2026-10-29:* product pull requests may be merged without the
+  owner, once every required check passes and no review thread is open.
+- *Answered 2026-10-30* (section 2): the vendor format strategy (ADR 0059),
+  the mzML version rule, the remembered ProteoWizard folder, the `tiff`
+  dependency, one-click view RAW and Thermo vendor centroiding.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted.

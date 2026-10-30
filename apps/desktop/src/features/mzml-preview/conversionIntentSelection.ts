@@ -2,7 +2,7 @@
  * Which conversion semantic is selected, and what each control may offer.
  *
  * **This module holds no compatibility matrix, and that is its whole design.**
- * The nine combinations MSCanvas has measured live in one Rust table and reach
+ * The combinations MSCanvas has measured live in one Rust table and reach
  * this side as a catalog; everything here is a *lookup* in that catalog.
  * Nothing below enumerates a combination, composes one out of separately valid
  * values, or decides that two settings go together. Ask whether a combination
@@ -10,7 +10,7 @@
  * offer and the values come from the same list.
  *
  * The consequence is the property M6.3 established and M6.4 has to preserve: a
- * user cannot assemble one of the thirty-nine combinations the evidence does
+ * user cannot assemble one of the sixty-two combinations the evidence does
  * not admit, because there is no code path here that assembles one at all. A
  * choice is either a row of the catalog or it is refused with a reason.
  *

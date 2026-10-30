@@ -3866,6 +3866,7 @@ fn every_conversion_dimension_value_is_one_the_frontend_declares() {
     for processing in [
         ProcessingIntent::NoAdditionalCentroiding,
         ProcessingIntent::UnscopedDefaultCentroiding,
+        ProcessingIntent::VendorCentroidingFromMs1,
     ] {
         declared.push(("ConversionProcessing", processing.stable_id().to_owned()));
     }
@@ -7705,7 +7706,7 @@ impl ConvertingProvider<FakeConversionRunner> {
         )
     }
 
-    /// The same, on a build whose grammar admits every one of the nine rows.
+    /// The same, on a build whose grammar admits every admitted row.
     ///
     /// For the tests where a reader *chooses*: on the narrow build there is one
     /// available row, so a selection could not be wrong in a way anything could
@@ -16726,7 +16727,7 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
     let receipt = current_receipt(&service);
     let document = current_document(&service);
     // Every part of it is a real identity token -- this is one of the
-    // thirty-nine combinations the evidence never measured, composed out of
+    // sixty-two combinations the evidence never measured, composed out of
     // five values that are each perfectly valid on their own. A fixture with a
     // mistyped token would be refused for being unparseable and would prove
     // nothing about the table.
@@ -28855,7 +28856,7 @@ fn the_shipped_custom_folder_workflow_runs_through_the_new_authority() {
 fn a_non_shipped_intent_survives_source_relative_resolution() {
     let here = TestFile::new("m65-intent");
     let acquisition = here.thermo_raw("one.raw");
-    // A build whose grammar admits every one of the nine rows, because this
+    // A build whose grammar admits every admitted row, because this
     // test is about a *chosen* combination surviving resolution -- on the
     // narrow build there is one available row and the choice could not be seen.
     let service = PreviewService::new(Box::new(ConvertingProvider::offering_every_admitted_row()));
@@ -30747,32 +30748,86 @@ fn the_convertible_family_set_is_derived_and_holds_every_family() {
     }
 }
 
-/// No admitted combination that asks for centroiding is offered for any vendor
-/// family the visible workflow converts, and every one is for mzML.
+/// Every admitted combination that asks for centroiding is offered for exactly
+/// the one family it was measured on: the default picker for mzML, and the
+/// vendor picker for Thermo RAW (ADR 0059). No other vendor family is covered.
 ///
 /// The product-level statement of the repair, asked through the crate's own rule
-/// rather than through a list of rows: a centroiding row admitted for a vendor
+/// rather than through a list of rows: a centroiding row widened to another
 /// family later would fail here without anyone having to remember this test.
-/// The vendor families are the ones with no source comparison, so nothing here
-/// names one.
 #[test]
-fn no_centroiding_combination_is_evidenced_for_a_vendor_family_the_workflow_converts() {
-    use mscanvas_proteowizard::{ConversionIntent, ProcessingIntent};
+fn each_centroiding_combination_is_evidenced_only_for_the_family_it_was_measured_on() {
+    use mscanvas_proteowizard::{ConversionIntent, ConversionSourceKind, ProcessingIntent};
 
     for admitted in ConversionIntent::ADMITTED {
-        // Every processing that asks for a picker, not one variant by name, so
-        // a scoped MS-level preset added later is covered without an edit here.
-        if admitted.intent().processing() == ProcessingIntent::NoAdditionalCentroiding {
-            continue;
-        }
+        // Every processing that asks for a picker, by its measured family, so a
+        // picker row added later has to be given one here.
+        let measured_on = match admitted.intent().processing() {
+            ProcessingIntent::NoAdditionalCentroiding => continue,
+            ProcessingIntent::UnscopedDefaultCentroiding => ConversionSourceKind::MzmlFile,
+            ProcessingIntent::VendorCentroidingFromMs1 => ConversionSourceKind::ThermoRawFile,
+        };
         for kind in convertible_source_kinds() {
             assert_eq!(
                 admitted.intent().evidence_covers_source(kind),
-                kind.supports_source_comparison(),
+                kind == measured_on,
                 "{:?} is offered for {kind:?} against its evidence",
                 admitted.intent()
             );
         }
+    }
+}
+
+/// The vendor-centroiding row is verified on the evidenced build only. On a
+/// build that reports another release it converts Thermo RAW labelled with that
+/// release and as unverified settings (ADR 0055's relaxed gate); a build that
+/// reports none converts no Thermo RAW at all.
+#[test]
+fn the_vendor_centroiding_row_is_labelled_on_any_build_but_the_evidenced_one() {
+    use super::conversion::{settings_unverified, unverified_build_release};
+
+    let row = BoundIntent::Row(
+        ConversionIntent::admitted(
+            OutputFormat::MzMl,
+            ProcessingIntent::VendorCentroidingFromMs1,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity32,
+            CompressionIntent::Zlib,
+        )
+        .expect("TV1, TE1"),
+    );
+    let thermo = ConversionSourceKind::ThermoRawFile;
+
+    let evidenced = wide_conversion_capabilities();
+    assert!(row.require_on(&evidenced).is_ok());
+    assert!(row.refusal_for_source(thermo).is_none());
+    assert!(!settings_unverified(&row, thermo, &evidenced));
+    assert_eq!(unverified_build_release(&evidenced, thermo), None);
+
+    let other = capabilities_declaring(
+        BackendTool::MsConvert,
+        "3.0.26204",
+        None,
+        OTHER_EXECUTABLE_SHA256,
+        WIDE_MSCONVERT_HELP,
+    );
+    assert!(row.require_on(&other).is_ok());
+    assert!(settings_unverified(&row, thermo, &other));
+    assert_eq!(
+        unverified_build_release(&other, thermo).as_deref(),
+        Some("3.0.26204")
+    );
+
+    assert!(
+        !mscanvas_proteowizard::provider_build_admission(&capabilities_without_a_release(), thermo)
+            .admits()
+    );
+    for kind in [
+        ConversionSourceKind::MzmlFile,
+        ConversionSourceKind::ShimadzuLcdFile,
+        ConversionSourceKind::SciexWiffBundle,
+    ] {
+        assert!(row.refusal_for_source(kind).is_some(), "{kind:?}");
     }
 }
 

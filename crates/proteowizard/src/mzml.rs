@@ -60,6 +60,10 @@ const PEAK_PICKING: &[u8] = b"MS:1000035";
 /// request names something else, which is why the table below is not decoration.
 const DEFAULT_PICKER_NAME: &str = "local maximum peak picker";
 
+/// The `userParam` a scoped picker records its MS levels in (M6.2 `K4`, `K10`;
+/// Thermo vendor centroiding `TV2`, `TE2`).
+const PICKER_SCOPE_PARAMETER: &str = "ms levels";
+
 /// Implementation names this repository recognizes and has not admitted, each
 /// kept as its own identity.
 ///
@@ -244,6 +248,56 @@ impl ProcessingAlgorithm {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProcessingHistory {
     counts: [u16; 4],
+    /// What the vendor-picker method in this history recorded about its scope.
+    vendor_scope: PickerScopeRecord,
+}
+
+/// The MS levels a vendor-picker method says it was scoped to, read from its
+/// `ms levels` `userParam`.
+///
+/// Measured on the verified build (Thermo vendor centroiding evidence): the
+/// picker writes no such parameter for the default scope, `msLevel=1-`, and
+/// writes `2-` for `msLevel=2-`. It is the only witness of a scope the build
+/// discarded, because out-of-scope spectra may be profile or centroid. Bounded
+/// like the algorithm identity: one interval is retained, never the text.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PickerScopeRecord {
+    /// No `ms levels` parameter, or no vendor-picker method at all.
+    #[default]
+    NotRecorded,
+    /// One interval of levels; `last` is `None` for an open one (`2-`).
+    Interval { first: u32, last: Option<u32> },
+    /// A parameter that is not one interval, a repeated parameter, or two
+    /// vendor-picker methods in one history.
+    Unreadable,
+}
+
+impl PickerScopeRecord {
+    /// Reads `1`, `1-2` or `2-`, in ASCII digits, and nothing else.
+    fn parse(value: Option<&str>) -> Self {
+        let Some(text) = value else {
+            return Self::Unreadable;
+        };
+        let (first, last) = match text.split_once('-') {
+            Some((first, "")) => (first, None),
+            Some((first, last)) => (first, Some(last)),
+            None => (text, Some(text)),
+        };
+        let digits =
+            |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+        if !digits(first) || last.is_some_and(|last| !digits(last)) {
+            return Self::Unreadable;
+        }
+        match (
+            first.parse::<u32>(),
+            last.map(str::parse::<u32>).transpose(),
+        ) {
+            (Ok(first), Ok(last)) if last.is_none_or(|last| last >= first) => {
+                Self::Interval { first, last }
+            }
+            _ => Self::Unreadable,
+        }
+    }
 }
 
 impl ProcessingHistory {
@@ -274,13 +328,26 @@ impl ProcessingHistory {
     /// the source already carried is visible.
     #[must_use]
     pub const fn added_over(&self, inherited: Self) -> Self {
-        let mut added = Self { counts: [0; 4] };
+        let mut added = Self {
+            counts: [0; 4],
+            vendor_scope: PickerScopeRecord::NotRecorded,
+        };
         let mut index = 0;
         while index < self.counts.len() {
             added.counts[index] = self.counts[index].saturating_sub(inherited.counts[index]);
             index += 1;
         }
+        // The scope travels with an added vendor method, and only with one.
+        if added.count(ProcessingAlgorithm::VendorPeakPicking) > 0 {
+            added.vendor_scope = self.vendor_scope;
+        }
         added
+    }
+
+    /// The scope the vendor-picker method in this history recorded.
+    #[must_use]
+    pub const fn vendor_scope(&self) -> PickerScopeRecord {
+        self.vendor_scope
     }
 
     /// Whether a delta over [`ProcessingAlgorithm::Unrecognized`] can be trusted.
@@ -301,6 +368,16 @@ impl ProcessingHistory {
     }
 
     fn merge(&mut self, other: Self) {
+        let vendor = ProcessingAlgorithm::VendorPeakPicking;
+        if other.count(vendor) > 0 {
+            // A second vendor method is a second scope, and which one applies
+            // is not something this reading will choose.
+            self.vendor_scope = if self.count(vendor) == 0 {
+                other.vendor_scope
+            } else {
+                PickerScopeRecord::Unreadable
+            };
+        }
         for (slot, count) in self.counts.iter_mut().zip(other.counts) {
             *slot = slot.saturating_add(count);
         }
@@ -1271,13 +1348,15 @@ struct DataProcessingBuilder {
 
 /// One `processingMethod` element, while it is open.
 ///
-/// Two facts and no text. Whether the method is a peak-picking one is a CV
-/// accession; which algorithm it names is a free-text `userParam` that is
-/// classified on sight and then discarded.
+/// Three facts and no text. Whether the method is a peak-picking one is a CV
+/// accession; which algorithm it names, and the levels it says it was scoped
+/// to, are free-text `userParam`s classified on sight and then discarded.
 #[derive(Debug, Default)]
 struct ProcessingMethodBuilder {
     peak_picking: bool,
     named: ProcessingHistory,
+    /// `None` until an `ms levels` parameter is seen.
+    ms_levels: Option<PickerScopeRecord>,
 }
 
 impl ScanState {
@@ -1473,7 +1552,10 @@ impl ScanState {
                 Ok(Scope::Other)
             }
             b"userParam" if parent == Some(Scope::ProcessingMethod) => {
-                self.apply_processing_user_param(attributes.name.as_deref());
+                self.apply_processing_user_param(
+                    attributes.name.as_deref(),
+                    attributes.value.as_deref(),
+                );
                 Ok(Scope::Other)
             }
             _ => Ok(Scope::Other),
@@ -1623,13 +1705,23 @@ impl ScanState {
     /// matches no known picker is ignored rather than treated as an unknown
     /// algorithm. What decides `Unrecognized` is a peak-picking method that
     /// named *no* picker this evidence qualified, and that is decided at close.
-    fn apply_processing_user_param(&mut self, name: Option<&str>) {
+    ///
+    /// The `ms levels` parameter is read too, into a bounded interval: a second
+    /// one makes the method's scope unreadable rather than overwriting it.
+    fn apply_processing_user_param(&mut self, name: Option<&str>, value: Option<&str>) {
         let Some(name) = name else {
             return;
         };
         let Some(method) = self.processing_method.as_mut() else {
             return;
         };
+        if name == PICKER_SCOPE_PARAMETER {
+            method.ms_levels = Some(match method.ms_levels {
+                None => PickerScopeRecord::parse(value),
+                Some(_) => PickerScopeRecord::Unreadable,
+            });
+            return;
+        }
         let observed = if name == DEFAULT_PICKER_NAME {
             ProcessingAlgorithm::DefaultLocalMaximum
         } else if let Some((_, known)) = KNOWN_OTHER_PICKER_NAMES
@@ -1704,6 +1796,9 @@ impl ScanState {
         let mut observed = method.named;
         if observed.is_empty() {
             observed.record(ProcessingAlgorithm::Unrecognized);
+        }
+        if observed.count(ProcessingAlgorithm::VendorPeakPicking) > 0 {
+            observed.vendor_scope = method.ms_levels.unwrap_or_default();
         }
         // Attributed to the definition that holds it, never to the document. A
         // method inside a `dataProcessing` nothing references applies to no

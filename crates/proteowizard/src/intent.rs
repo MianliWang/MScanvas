@@ -5,9 +5,11 @@
 //! supported in combination.** M6.2 measured the installed `msconvert` across a
 //! finite case ledger, and what it produced is not a list of independent
 //! features — it is an *incomplete composition graph*. Nine of the forty-eight
-//! combinations a free cross-product of the five dimensions below would allow
-//! were actually measured. The other thirty-nine were not, and several of them
-//! are known to behave differently from what a reader would assume.
+//! combinations a free cross-product of its five dimensions allowed were
+//! actually measured; a tenth, the Thermo vendor picker, was measured later and
+//! widened the processing axis, so ten of seventy-two are rows today. The rest
+//! were not measured, and several of them are known to behave differently from
+//! what a reader would assume.
 //!
 //! So the dimensions are named as separate types, because they are separate
 //! product decisions and a reader needs to see them that way, and then
@@ -31,13 +33,16 @@
 //!   disposition terminal as `MZXML_REFUSED`**, and a refusal is not deleted
 //!   because nothing reaches it -- that is how a format returns without one. It
 //!   simply cannot be reached from an intent.
-//! - **No scoped centroiding is constructible**, and this is an entailment
-//!   rather than a preference. `msLevel=` is positional after the picker token
-//!   and is *silently discarded* without one; the installed grammar admits only
-//!   `cwt` or `vendor` as that token; `cwt` is `MEASURED_REJECTED` and `vendor`
-//!   is `EVIDENCE_BLOCKED`. The one admitted algorithm is the default picker,
-//!   which has no token. So "centroid MS2 only" cannot be expressed by any
-//!   admitted means, and this module offers no way to ask for it.
+//! - **One scoped centroiding is constructible, and only with the vendor
+//!   token.** `msLevel=` is positional after the picker token and is *silently
+//!   discarded* without one; the installed grammar admits only `cwt` or
+//!   `vendor` as that token, and `cwt` is `MEASURED_REJECTED`. The vendor
+//!   picker was measured on two public Thermo RAW acquisitions
+//!   ([evidence](../../../docs/spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
+//!   cases `TV1`, `TE1`), and the owner admitted `msLevel=1-` on 2026-10-30
+//!   (ADR 0059). So "centroid every level with the vendor algorithm" is a row,
+//!   for Thermo RAW alone; "centroid MS2 only" is still not a row, and reaches
+//!   the product only through the advanced tier, labelled.
 //! - **Per-array precision does not compose with processing.** Every measured
 //!   case that ran a filter carried the *global* `--32` or `--64`; `--mz32`,
 //!   `--mz64`, `--inten32` and `--inten64` appear only in cases that ran none.
@@ -56,9 +61,8 @@
 //! **writer**. Peak picking is decided by the **reader**, so each row also
 //! carries an [`EvidenceSourceDomain`], and
 //! [`ConversionIntent::evidence_covers_source`] is the one place it is asked.
-//! The two `UnscopedDefaultCentroiding` rows are admitted for mzML alone.
-//! Nothing was added to the table and nothing removed; what changed is that two
-//! of the nine now say which sources they were measured on.
+//! The two `UnscopedDefaultCentroiding` rows are admitted for mzML alone, and
+//! the `VendorCentroidingFromMs1` row for Thermo RAW alone.
 
 use std::ffi::OsString;
 
@@ -122,6 +126,14 @@ pub enum ProcessingIntent {
     /// the product should offer this combination for a vendor row was a product
     /// decision this type did not make, and now it is one this type carries.
     UnscopedDefaultCentroiding,
+    /// Centroiding by the **vendor** picker on every MS level, asked for as
+    /// `peakPicking vendor msLevel=1-`.
+    ///
+    /// Reader-sensitive like the default picker, and measured on Thermo RAW
+    /// only (`TV1`, `TE1`): its row's [`EvidenceSourceDomain`] is Thermo RAW
+    /// alone. On an mzML source the same argv runs another picker (M6.2), and
+    /// another vendor reader names its picker differently.
+    VendorCentroidingFromMs1,
 }
 
 impl ProcessingIntent {
@@ -130,6 +142,7 @@ impl ProcessingIntent {
         match self {
             Self::NoAdditionalCentroiding => "no_additional_centroiding",
             Self::UnscopedDefaultCentroiding => "unscoped_default_centroiding",
+            Self::VendorCentroidingFromMs1 => "vendor_centroiding_from_ms1",
         }
     }
 }
@@ -276,9 +289,9 @@ pub struct FilterInvocation {
     /// How many positional arguments follow the name in the emitted argument.
     /// `peakPicking` sends none; `msLevel 1` sends one.
     pub positional_arguments: usize,
-    /// The `name=` parameters the invocation supplies. Empty for every admitted
-    /// intent: the one scoped form the provider offers is the one M6.2 measured
-    /// silently discarding its scope.
+    /// The `name=` parameters the invocation supplies. Only the vendor picker
+    /// row supplies one (`msLevel=`): without a picker token M6.2 measured the
+    /// scope silently discarded, and with `vendor` it was measured honoured.
     pub named_arguments: &'static [&'static str],
 }
 
@@ -333,7 +346,7 @@ impl ConversionIntent {
     /// Every combination the M6.2 evidence admits, and nothing else.
     ///
     /// **This constant is the boundary.** A free cross-product of the five
-    /// dimensions would allow forty-eight combinations; nine were measured.
+    /// dimensions would allow seventy-two combinations; ten were measured.
     /// Each row below names the evidence case that measured it, so a reader can
     /// go and check, and so a row added without one is visibly different from a
     /// row that has one.
@@ -341,7 +354,7 @@ impl ConversionIntent {
     /// The order is the order the evidence record presents them in, which is
     /// also the order a reader meets them: the shipped posture first, then the
     /// dimensions varied one at a time from a fixed 64-bit baseline.
-    pub const ADMITTED: [AdmittedIntent; 9] = [
+    pub const ADMITTED: [AdmittedIntent; 10] = [
         // The posture the product ships today, measured with no flag at all.
         AdmittedIntent {
             intent: ConversionIntent {
@@ -450,6 +463,21 @@ impl ConversionIntent {
             // Reader-sensitive: measured on mzML sources only. M6.10 measured
             // that a vendor reader selects its own picker for this same argv.
             sources: EvidenceSourceDomain::MeasuredOn(&[ConversionSourceKind::MzmlFile]),
+        },
+        // Thermo vendor centroiding, every MS level, with the shipped encoding
+        // (no precision flag, zlib). Measured on an LTQ Velos and an Orbitrap
+        // Exploris 480; the domain is the family, on CNV-D2's argument that the
+        // same bundled reader picks for every Thermo instrument (ADR 0059).
+        AdmittedIntent {
+            intent: ConversionIntent {
+                format: OutputFormat::MzMl,
+                processing: ProcessingIntent::VendorCentroidingFromMs1,
+                population: SpectrumPopulation::All,
+                precision: NumericPrecision::Mz64Intensity32,
+                compression: CompressionIntent::Zlib,
+            },
+            evidence: "TV1, TE1",
+            sources: EvidenceSourceDomain::MeasuredOn(&[ConversionSourceKind::ThermoRawFile]),
         },
     ];
 
@@ -649,11 +677,11 @@ impl ConversionIntent {
         // the named grammar beside it: a build declaring `--filter` but not the
         // filter this intent names cannot run it.
         //
-        // Never an `msLevel=` argument inside the picker. The measured
-        // behaviour of `peakPicking msLevel=<set>` without a picker token is
-        // that the scope is silently discarded and *every* level is centroided,
-        // so the form is not merely unevidenced -- it is known to mean
-        // something other than it reads.
+        // Never an `msLevel=` argument without a picker token. The measured
+        // behaviour of `peakPicking msLevel=<set>` without one is that the
+        // scope is silently discarded and *every* level is centroided, so the
+        // form is not merely unevidenced -- it is known to mean something other
+        // than it reads.
         let processing = match self.processing {
             ProcessingIntent::NoAdditionalCentroiding => LoweredSegment {
                 features: &[],
@@ -669,6 +697,18 @@ impl ConversionIntent {
                     }),
                 ],
                 tokens: &["--filter", "peakPicking"],
+            },
+            // The scope with its picker token, which is what makes it honoured.
+            ProcessingIntent::VendorCentroidingFromMs1 => LoweredSegment {
+                features: &[
+                    ProviderFeature::FilterOption,
+                    ProviderFeature::Filter(FilterInvocation {
+                        name: "peakPicking",
+                        positional_arguments: 1,
+                        named_arguments: &["msLevel"],
+                    }),
+                ],
+                tokens: &["--filter", "peakPicking vendor msLevel=1-"],
             },
         };
         let population = match self.population {
@@ -717,7 +757,7 @@ impl ConversionIntent {
     /// [`Self::admitted`] answers from, and deliberately not by parsing.** A
     /// parser would have to split the identity into five values and look each
     /// one up in its own dimension, which is a second way to arrive at a
-    /// combination -- and a caller could then name one of the thirty-nine the
+    /// combination -- and a caller could then name one of the sixty-two the
     /// evidence never measured by supplying five individually valid parts. A
     /// scan over the admitted rows can only ever answer with a row.
     ///
@@ -767,9 +807,8 @@ pub struct AdmittedIntent {
 /// the contract to accept whichever algorithm a reader happens to use.
 ///
 /// Membership of [`ConversionIntent::ADMITTED`] therefore no longer asserts
-/// source applicability on its own. The nine measured combinations and the
-/// thirty-nine they exclude are unchanged; what changed is that two of the nine
-/// now say which sources they were measured on.
+/// source applicability on its own: the three centroiding rows say which
+/// sources they were measured on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceSourceDomain {
     /// The measured semantic is writer-side, so the measurement carries to
@@ -833,10 +872,21 @@ mod tests {
     /// Every dimension value, so the cross-product test below cannot silently
     /// stop covering one when a variant is added.
     const FORMATS: [OutputFormat; 1] = [OutputFormat::MzMl];
-    const PROCESSING: [ProcessingIntent; 2] = [
+    const PROCESSING: [ProcessingIntent; 3] = [
         ProcessingIntent::NoAdditionalCentroiding,
         ProcessingIntent::UnscopedDefaultCentroiding,
+        ProcessingIntent::VendorCentroidingFromMs1,
     ];
+
+    /// The one source family each picker row was measured on, or `None` for a
+    /// writer-side row.
+    const fn measured_family(processing: ProcessingIntent) -> Option<ConversionSourceKind> {
+        match processing {
+            ProcessingIntent::NoAdditionalCentroiding => None,
+            ProcessingIntent::UnscopedDefaultCentroiding => Some(ConversionSourceKind::MzmlFile),
+            ProcessingIntent::VendorCentroidingFromMs1 => Some(ConversionSourceKind::ThermoRawFile),
+        }
+    }
     const POPULATIONS: [SpectrumPopulation; 3] = [
         SpectrumPopulation::All,
         SpectrumPopulation::Ms1Only,
@@ -911,37 +961,37 @@ mod tests {
         );
     }
 
-    /// Every admitted row says which sources its measurement covers, and the two
-    /// reader-sensitive ones say `mzML` and nothing else.
+    /// Every admitted row says which sources its measurement covers: a
+    /// writer-side row every admitted family, a picker row the one family it
+    /// was measured on and nothing else.
     ///
-    /// The distinction this pins is the whole repair. M6.2 measured all nine
-    /// rows on generated mzML fixtures. For seven of them that generalizes,
-    /// because the semantic is decided by the writer. For the two centroiding
-    /// rows it does not, because the picker is chosen by the reader -- and M6.10
-    /// measured a vendor reader choosing its own.
+    /// The distinction this pins is the whole repair. M6.2 measured nine rows
+    /// on generated mzML fixtures. For seven of them that generalizes, because
+    /// the semantic is decided by the writer. For the default-picker rows it
+    /// does not, because the picker is chosen by the reader -- and M6.10
+    /// measured a vendor reader choosing its own. The vendor-picker row was
+    /// measured on Thermo RAW, so it covers Thermo RAW alone.
     #[test]
     fn each_admitted_row_states_the_sources_its_evidence_covers() {
         for admitted in ConversionIntent::ADMITTED {
-            // Keyed on *asking for a picker*, not on one variant's name. A
-            // scoped MS-level preset added later is reader-sensitive for the
-            // same reason, and would have to carry a measured domain rather
-            // than trip this test into demanding the writer-side one.
-            let reader_sensitive = !matches!(
-                admitted.intent().processing(),
-                ProcessingIntent::NoAdditionalCentroiding
-            );
-            match (reader_sensitive, admitted.sources()) {
-                (false, EvidenceSourceDomain::AnyAdmittedSource) => {}
-                (true, EvidenceSourceDomain::MeasuredOn(families)) => {
+            // Keyed on *asking for a picker*: a picker row added later is
+            // reader-sensitive for the same reason, and has to be given its
+            // measured family in `measured_family` before this passes.
+            match (
+                measured_family(admitted.intent().processing()),
+                admitted.sources(),
+            ) {
+                (None, EvidenceSourceDomain::AnyAdmittedSource) => {}
+                (Some(family), EvidenceSourceDomain::MeasuredOn(families)) => {
                     assert_eq!(
                         families,
-                        [ConversionSourceKind::MzmlFile],
+                        [family],
                         "a centroiding row claims a source family nobody measured it on: {:?}",
                         admitted.intent()
                     );
                 }
-                (reader_sensitive, domain) => panic!(
-                    "row {:?} is reader_sensitive={reader_sensitive} and carries {domain:?}",
+                (family, domain) => panic!(
+                    "row {:?} was measured on {family:?} and carries {domain:?}",
                     admitted.intent()
                 ),
             }
@@ -954,13 +1004,10 @@ mod tests {
     fn evidence_applicability_is_answered_per_row_and_per_source_family() {
         for admitted in ConversionIntent::ADMITTED {
             let intent = admitted.intent();
-            let centroiding = !matches!(
-                intent.processing(),
-                ProcessingIntent::NoAdditionalCentroiding
-            );
+            let family = measured_family(intent.processing());
             for kind in SOURCE_KINDS {
                 let covered = intent.evidence_covers_source(kind);
-                let expected = !centroiding || kind == ConversionSourceKind::MzmlFile;
+                let expected = family.is_none_or(|family| family == kind);
                 assert_eq!(
                     covered, expected,
                     "{intent:?} on {kind:?}: expected covered={expected}"
@@ -981,42 +1028,115 @@ mod tests {
         }
     }
 
-    /// The seven writer-side rows keep every family, and the two centroiding
-    /// rows keep exactly one. Counted rather than described, so a row that
-    /// changed sides is a failure rather than a re-reading.
+    /// The seven writer-side rows keep every family, the two default-picker
+    /// rows keep mzML alone and the vendor-picker row Thermo RAW alone. Counted
+    /// rather than described, so a row that changed sides is a failure rather
+    /// than a re-reading.
     #[test]
-    fn seven_rows_cover_every_family_and_two_cover_only_mzml() {
-        let (any, mzml_only): (Vec<&AdmittedIntent>, Vec<&AdmittedIntent>) =
+    fn seven_rows_cover_every_family_and_three_cover_one() {
+        let (any, one): (Vec<&AdmittedIntent>, Vec<&AdmittedIntent>) =
             ConversionIntent::ADMITTED.iter().partition(|admitted| {
                 SOURCE_KINDS
                     .iter()
                     .all(|kind| admitted.intent().evidence_covers_source(*kind))
             });
         assert_eq!(any.len(), 7, "writer-side rows");
-        assert_eq!(mzml_only.len(), 2, "reader-sensitive rows");
-        for admitted in mzml_only {
-            // *Only* mzML, asserted family by family. The partition above only
-            // establishes "misses at least one", so a row widened to mzML plus
-            // one vendor family would still land here and still look right.
-            for kind in SOURCE_KINDS {
+        assert_eq!(one.len(), 3, "reader-sensitive rows");
+        let mut per_family = [0_usize; SOURCE_KINDS.len()];
+        for admitted in one {
+            // *Only* one family, asserted family by family. The partition above
+            // only establishes "misses at least one", so a row widened to one
+            // more family would still land here and still look right.
+            let covered: Vec<ConversionSourceKind> = SOURCE_KINDS
+                .into_iter()
+                .filter(|kind| admitted.intent().evidence_covers_source(*kind))
+                .collect();
+            assert_eq!(
+                covered.len(),
+                1,
+                "a reader-sensitive row covers {covered:?}, more than it was measured on"
+            );
+            per_family[source_kind_index(covered[0])] += 1;
+        }
+        assert_eq!(
+            per_family[source_kind_index(ConversionSourceKind::MzmlFile)],
+            2
+        );
+        assert_eq!(
+            per_family[source_kind_index(ConversionSourceKind::ThermoRawFile)],
+            1
+        );
+    }
+
+    /// The vendor-picker row is the measured `TV1`/`TE1` argv after the source,
+    /// cites those cases, and covers Thermo RAW and nothing else -- not mzML,
+    /// where the same argv runs another picker, and not another vendor family,
+    /// whose reader names its picker differently.
+    #[test]
+    fn the_vendor_picker_row_is_the_measured_thermo_argv() {
+        let row = ConversionIntent::admitted(
+            OutputFormat::MzMl,
+            ProcessingIntent::VendorCentroidingFromMs1,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity32,
+            CompressionIntent::Zlib,
+        )
+        .expect("the vendor-picker row is admitted");
+        assert_eq!(
+            row.lower(),
+            [
+                "--mzML",
+                "--zlib",
+                "--filter",
+                "peakPicking vendor msLevel=1-"
+            ]
+            .map(OsString::from)
+            .to_vec()
+        );
+        assert_eq!(row.evidence(), "TV1, TE1");
+        for kind in SOURCE_KINDS {
+            assert_eq!(
+                row.evidence_covers_source(kind),
+                kind == ConversionSourceKind::ThermoRawFile,
+                "{kind:?}"
+            );
+        }
+        // Only the shipped encoding was measured with the vendor picker, and
+        // only over every spectrum.
+        for (format, processing, population, precision, compression) in cross_product() {
+            if processing == ProcessingIntent::VendorCentroidingFromMs1 {
                 assert_eq!(
-                    admitted.intent().evidence_covers_source(kind),
-                    kind == ConversionSourceKind::MzmlFile,
-                    "a reader-sensitive row covers {kind:?}, which nobody measured it on"
+                    ConversionIntent::admitted(
+                        format,
+                        processing,
+                        population,
+                        precision,
+                        compression
+                    )
+                    .is_some(),
+                    population == SpectrumPopulation::All
+                        && precision == NumericPrecision::Mz64Intensity32
+                        && compression == CompressionIntent::Zlib,
+                    "{population:?}/{precision:?}/{compression:?}"
                 );
             }
         }
+        // And the product's default is still the profile row.
+        assert_eq!(
+            ConversionIntent::SHIPPED.processing(),
+            ProcessingIntent::NoAdditionalCentroiding
+        );
     }
 
-    /// Adding the applicability field admitted no combination and excluded none.
+    /// Ten measured combinations, and the rest of the cross-product excluded.
     ///
-    /// The nine measured combinations and the thirty-nine the cross-product
-    /// excludes are M6.2's, and this repair is about *sources*, not about the
-    /// vocabulary. A field that quietly changed the table would be a different
-    /// change wearing this one's clothes.
+    /// Nine are M6.2's and one is the Thermo vendor evidence's. Source
+    /// qualification is about *sources*, not about the vocabulary, so a field
+    /// that quietly changed the table would be a different change wearing this
+    /// one's clothes.
     #[test]
     fn the_measured_vocabulary_is_unchanged_by_source_qualification() {
-        assert_eq!(ConversionIntent::ADMITTED.len(), 9);
+        assert_eq!(ConversionIntent::ADMITTED.len(), 10);
         let admitted_count = cross_product()
             .into_iter()
             .filter(|(format, processing, population, precision, compression)| {
@@ -1030,8 +1150,8 @@ mod tests {
                 .is_some()
             })
             .count();
-        assert_eq!(admitted_count, 9, "admitted combinations");
-        assert_eq!(cross_product().len() - admitted_count, 39, "excluded");
+        assert_eq!(admitted_count, 10, "admitted combinations");
+        assert_eq!(cross_product().len() - admitted_count, 62, "excluded");
     }
 
     fn cross_product() -> Vec<(
@@ -1062,8 +1182,8 @@ mod tests {
         // is. If a later change made every combination constructible, this is
         // the test that says so out loud.
         let total = cross_product().len();
-        assert_eq!(total, 48);
-        assert_eq!(ConversionIntent::ADMITTED.len(), 9);
+        assert_eq!(total, 72);
+        assert_eq!(ConversionIntent::ADMITTED.len(), 10);
     }
 
     #[test]
@@ -1128,7 +1248,7 @@ mod tests {
                 CompressionIntent::Zlib,
             )
             .is_none(),
-            "the fixture must name one of the thirty-nine"
+            "the fixture must name one of the sixty-two"
         );
         let unmeasured = format!(
             "{}+{}+{}+{}+{}",
@@ -1180,21 +1300,27 @@ mod tests {
             ms2_selection.processing(),
             ProcessingIntent::NoAdditionalCentroiding
         );
-        // And centroiding beside any population but `All` is not constructible.
-        for population in [SpectrumPopulation::Ms1Only, SpectrumPopulation::Ms2Only] {
-            for precision in PRECISIONS {
-                for compression in COMPRESSIONS {
-                    assert!(
-                        ConversionIntent::admitted(
-                            OutputFormat::MzMl,
-                            ProcessingIntent::UnscopedDefaultCentroiding,
-                            population,
-                            precision,
-                            compression,
-                        )
-                        .is_none(),
-                        "centroiding composed with {population:?} is not measured"
-                    );
+        // And centroiding beside any population but `All` is not constructible,
+        // with either picker.
+        for processing in [
+            ProcessingIntent::UnscopedDefaultCentroiding,
+            ProcessingIntent::VendorCentroidingFromMs1,
+        ] {
+            for population in [SpectrumPopulation::Ms1Only, SpectrumPopulation::Ms2Only] {
+                for precision in PRECISIONS {
+                    for compression in COMPRESSIONS {
+                        assert!(
+                            ConversionIntent::admitted(
+                                OutputFormat::MzMl,
+                                processing,
+                                population,
+                                precision,
+                                compression,
+                            )
+                            .is_none(),
+                            "{processing:?} composed with {population:?} is not measured"
+                        );
+                    }
                 }
             }
         }
@@ -1286,15 +1412,25 @@ mod tests {
                     let argument = argument.to_str().expect("every lowered token is UTF-8");
                     let mut words = argument.split(' ');
                     let named = words.next().expect("a filter names a grammar");
-                    let positional_arguments = words.count();
+                    // A `name=value` word is a named parameter, not a positional.
+                    let (parameters, positionals): (Vec<&str>, Vec<&str>) =
+                        words.partition(|word| word.contains('='));
+                    let parameter_names: Vec<&str> = parameters
+                        .iter()
+                        .map(|word| word.split('=').next().expect("a name"))
+                        .collect();
                     expected.push(ProviderFeature::Filter(FilterInvocation {
                         name: match named {
                             "peakPicking" => "peakPicking",
                             "msLevel" => "msLevel",
                             other => panic!("{other} reached argv with no requirement rule"),
                         },
-                        positional_arguments,
-                        named_arguments: &[],
+                        positional_arguments: positionals.len(),
+                        named_arguments: match parameter_names.as_slice() {
+                            [] => &[],
+                            ["msLevel"] => &["msLevel"],
+                            other => panic!("{other:?} reached argv with no requirement rule"),
+                        },
                     }));
                 } else if token.starts_with("--zlib") {
                     expected.push(ProviderFeature::ZlibOption);
@@ -1386,16 +1522,21 @@ mod tests {
         }
     }
 
+    /// A scope reaches a picker only with the `vendor` token. Without a token
+    /// M6.2 measured the scope silently ignored; with `vendor` the Thermo
+    /// evidence measured it honoured.
     #[test]
-    fn no_intent_ever_lowers_to_a_scoped_picker() {
+    fn no_intent_ever_lowers_to_a_scope_without_a_picker_token() {
         for admitted in &ConversionIntent::ADMITTED {
             for argument in admitted.intent.lower() {
                 let text = argument.to_string_lossy();
-                assert!(
-                    !(text.contains("peakPicking") && text.contains("msLevel")),
-                    "{:?} emitted a scoped picker, which the evidence says is silently ignored",
-                    admitted.intent
-                );
+                if text.starts_with("peakPicking") && text.contains("msLevel") {
+                    assert!(
+                        text.starts_with("peakPicking vendor "),
+                        "{:?} emitted {text}, a scope the evidence says is silently ignored",
+                        admitted.intent
+                    );
+                }
             }
         }
     }

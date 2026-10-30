@@ -127,7 +127,7 @@ pub(crate) enum RowAdmission {
 /// Every admitted combination, judged against this product's source evidence
 /// and then against one installation's grammar.
 ///
-/// Always all nine rows, in the order `ConversionIntent::ADMITTED` states them.
+/// Always every row, in the order `ConversionIntent::ADMITTED` states them.
 /// A catalog that omitted its unavailable rows could not answer the question
 /// Decision 7's one-axis edit asks -- *does a row for this combination exist at
 /// all, and if so is it available here?* -- and the answers are different
@@ -777,8 +777,8 @@ This filter performs centroiding on spectra with the selected <ms levels>.
 
     #[test]
     fn the_catalog_keeps_every_admitted_row_including_the_unavailable_ones() {
-        // A build lacking only the peak-picking grammar. Two admitted rows
-        // compose processing, and both are unavailable on it.
+        // A build lacking only the peak-picking grammar. Three admitted rows
+        // compose processing, and all are unavailable on it.
         let rows = catalog_of(&ConversionConfiguration::Ready {
             catalog: ConversionCatalog::of(&help_without("peakPicking [")),
         });
@@ -786,9 +786,9 @@ This filter performs centroiding on spectra with the selected <ms levels>.
 
         let centroided: Vec<_> = rows
             .iter()
-            .filter(|row| row.intent.processing == "unscoped_default_centroiding")
+            .filter(|row| row.intent.processing != "no_additional_centroiding")
             .collect();
-        assert_eq!(centroided.len(), 2);
+        assert_eq!(centroided.len(), 3);
         assert!(centroided.iter().all(|row| !row.available));
 
         // And the axis values those two rows use are not condemned with them.
@@ -853,7 +853,7 @@ This filter performs centroiding on spectra with the selected <ms levels>.
         let rows = catalog_of(&ConversionConfiguration::Ready {
             catalog: ConversionCatalog::of(&complete_help()),
         });
-        assert_eq!(rows.len(), 9);
+        assert_eq!(rows.len(), 10);
         assert!(
             ConversionIntent::admitted(
                 OutputFormat::MzMl,
@@ -863,7 +863,7 @@ This filter performs centroiding on spectra with the selected <ms levels>.
                 CompressionIntent::Zlib,
             )
             .is_none(),
-            "MS1 at 32/32 is one of the thirty-nine the evidence never measured"
+            "MS1 at 32/32 is one of the combinations the evidence never measured"
         );
     }
 }
