@@ -17,6 +17,11 @@ export interface SelectedSpectrumPanelProps {
   readonly onOpenFigure: () => void;
   readonly state: SpectrumState;
   readonly onRetry: () => void;
+  /**
+   * Why a scan cannot be chosen now, said once, in the empty spectrum, in
+   * place of the instruction to choose one (S4).
+   */
+  readonly selectionRefusal?: string | null;
   readonly viewport: SpectrumViewportState;
   readonly dispatchViewport: (event: SpectrumViewportEvent) => SpectrumViewportState;
   readonly readViewport: () => SpectrumViewportState;
@@ -146,7 +151,7 @@ function describe(state: SpectrumState, t: UiMessage): string {
 function renderBody(state: Exclude<SpectrumState, { readonly status: "unavailable" }>, onRetry: () => void, binding: SelectedSpectrumPanelProps,
   rangeEditor: ReturnType<typeof usePlotRangeEditor>, t: UiMessage) {
   switch (state.status) {
-    case "none": return <div className="empty-state"><span>{t("viewerChooseHelp")}</span></div>;
+    case "none": return <div className="empty-state"><span>{binding.selectionRefusal ?? t("viewerChooseHelp")}</span></div>;
     case "loading": return <div className="empty-state"><strong>{t("viewerSpectrumLoading", { index: formatCount(state.index) })}</strong></div>;
     case "failed": return <div className="empty-state"><strong>{ownedErrorMessage(state.error, t)}</strong>
       {ownedErrorDetail(state.error, t) === null ? null : <span>{ownedErrorDetail(state.error, t)}</span>}

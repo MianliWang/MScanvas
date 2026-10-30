@@ -268,10 +268,11 @@ describe("the backend banner, by screen reader", () => {
     expect(actions[0]).toHaveFocus();
   });
 
-  it("offers the offline help as a disclosure button, closed, with a named region", async () => {
+  it("offers the offline help as a disclosure button, closed, with a named region, in the status bar's details", async () => {
     mount();
     await screen.findByText(en.backendMissing);
-    const help = screen.getByRole("button", { name: en.backendHelpTitle });
+    fireEvent.click(document.querySelector<HTMLElement>("[data-backend-item]")!);
+    const help = await screen.findByRole("button", { name: en.backendHelpTitle });
     expect(help).toHaveAttribute("data-backend-help");
     expect(help).toHaveAttribute("aria-expanded", "false");
     const region = document.getElementById(help.getAttribute("aria-controls")!)!;

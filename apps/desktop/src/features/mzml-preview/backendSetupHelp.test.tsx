@@ -47,7 +47,7 @@ const helpRegion = () => document.getElementById(help()!.getAttribute("aria-cont
 const helpOpen = () => help()?.getAttribute("aria-expanded") === "true";
 
 describe("offline setup help", () => {
-  it("is reachable in every backend state, with no dataset and no backend", async () => {
+  it("is one press away in the status bar's details in every state a setup can fix, never in the notice", async () => {
     for (const availability of [
       unavailableBackend,
       chosenFolderWithoutTools,
@@ -57,10 +57,15 @@ describe("offline setup help", () => {
       const view = renderWorkspace(createFakePreviewApi({ availability }));
       await waitFor(() => expect(help()).not.toBeNull());
       const disclosure = help()!;
-      // With nothing to act on the banner is folded, and its help is one
-      // press away in the header (PM9 L10); in every other state it shows.
-      if (availability === availableBackend) {
-        await showBackendBanner();
+      // The notice stays one line (S7): its help is in the details the status
+      // bar's item opens.
+      expect(disclosure).not.toBeVisible();
+      await showBackendBanner();
+      // A quarantine's only way out is a restart: no setup help there.
+      if (availability === quarantinedBackend) {
+        expect(disclosure).not.toBeVisible();
+        view.unmount();
+        continue;
       }
       // Closed to begin with: it is help, not an interruption.
       expect(helpOpen()).toBe(false);

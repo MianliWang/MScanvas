@@ -1015,6 +1015,9 @@ export function PreviewWorkspace() {
                     />
                     <SelectedSpectrumPanel
                       onOpenFigure={() => openFigure("spectrum")}
+                      selectionRefusal={workspace.spectrumSelection.status !== "unavailable" ? null
+                        : workspace.spectrumSelection.reason === "backend-unavailable" ? t("viewerSelectNeedsBackend")
+                        : spectrumSelectionMessage(workspace.spectrumSelection.reason, t)}
                       dispatchViewport={workspace.dispatchSpectrumViewportEvent}
                       exportState={workspace.spectrumExport}
                       figureSettingsValidation={workspace.figureSettingsValidation}
@@ -1045,9 +1048,11 @@ export function PreviewWorkspace() {
               collapsed by `:empty` -- while a scan can be selected, because a
               working control with a sentence under it is a reason to doubt it.
             */}
+            {/* Heard and described, not seen: the empty spectrum says it on
+                screen, once (S4), and the tab row carries no sentence. */}
             <p
               aria-live="polite"
-              className="viewer-selection-notice"
+              className="viewer-selection-notice visually-hidden"
               data-live-region="spectrum-selection-availability"
               /*
                * The id only while there is something to point at. The element

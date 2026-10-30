@@ -142,7 +142,10 @@ export function BackendStatus({
   // Hidden from sight only in the one-line notice: the live region still reads
   // the whole verdict, and the popover shows it.
   const detail = mode === "notice" ? "visually-hidden" : undefined;
-  return (
+  return (<>
+    {/* The notice's line, held while it is open as the popover, so nothing
+        under it moves when the status bar's item opens it. */}
+    {open && shown.notice ? <div aria-hidden="true" className="backend-status-placeholder" /> : null}
     <div
       ref={root}
       id="backend-status"
@@ -225,7 +228,9 @@ export function BackendStatus({
           what no control says: that ProteoWizard is theirs to install, which
           folder to choose, the support
           target and what needs a backend. */}
-      <div className="backend-setup-help" hidden={mode === "hidden"}>
+      {/* Only in the popover (S7): the notice stays one line. And not for a
+          quarantine, whose only way out is a restart. */}
+      <div className="backend-setup-help" hidden={mode !== "popover" || banner.kind === "quarantined"}>
         <Disclosure
           variant="secondary"
           data-backend-help=""
@@ -241,5 +246,5 @@ export function BackendStatus({
         </Disclosure>
       </div>
     </div>
-  );
+  </>);
 }

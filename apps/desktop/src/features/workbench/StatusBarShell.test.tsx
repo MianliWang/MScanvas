@@ -145,7 +145,8 @@ describe("the status bar in the application shell", () => {
     const details = document.getElementById("backend-status")!;
     // Closed, the state is one line in the main area with its one fix.
     expect(details).toHaveAttribute("data-backend-mode", "notice");
-    expect(within(details).getAllByRole("button").map(control => control.textContent)).toEqual([en.backendChoose, en.backendHelpTitle]);
+    // One line and its one fix; the setup help is the details' (S7).
+    expect(within(details).getAllByRole("button").map(control => control.textContent)).toEqual([en.backendChoose]);
 
     await press(item);
     expect(item).toHaveAttribute("aria-expanded", "true");

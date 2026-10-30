@@ -232,6 +232,8 @@ button:disabled,
 .backend-status[data-backend-mode="notice"] .backend-status-reading { flex: 1 1 16em; }
 .backend-status[data-backend-mode="notice"] .backend-setup-help { display: contents; }
 .backend-status[data-backend-mode="notice"] .backend-setup-help-body { flex-basis: 100%; color: var(--color-text-secondary); }
+/* The notice's own height, kept while it is shown as the popover. */
+.backend-status-placeholder { flex: none; height: 44px; }
 
 /* The popover: over the status bar's first item, on the surface colour
    whatever the tone (the icon carries it), and it scrolls itself. */

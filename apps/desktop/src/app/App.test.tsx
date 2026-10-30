@@ -1268,11 +1268,11 @@ describe("native Explorer drop presentation", () => {
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
     expect(api.rosterReads()).toBe(1);
 
-    const retry = screen.getByRole("button", { name: "Try connecting again" });
+    const retry = screen.getByRole("button", { name: "Reconnect drop" });
     retry.focus();
     fireEvent.click(retry, { detail: 0 });
     expect(addFiles).toHaveFocus();
-    expect(screen.queryByRole("button", { name: "Try connecting again" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reconnect drop" })).toBeNull();
     // Nothing is said about a gesture that cannot work yet.
     expect(document.querySelector(".workspace-drop-hint")).toBeNull();
 
@@ -1286,7 +1286,7 @@ describe("native Explorer drop presentation", () => {
     // Live drop needs no permanent hint (W1): nothing is said about it once it
     // works, and no reconnect is offered.
     expect(document.querySelector(".workspace-drop-hint")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Try connecting again" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reconnect drop" })).toBeNull();
 
     act(() => {
       recoveredListener?.({ sequence: 1, state: { status: "hovering", itemCount: 1 } });
@@ -1327,7 +1327,7 @@ describe("native Explorer drop presentation", () => {
       },
     };
     renderApp(createFakePreviewApi({ availability: unavailableBackend }), transport);
-    const retry = await screen.findByRole("button", { name: "Try connecting again" });
+    const retry = await screen.findByRole("button", { name: "Reconnect drop" });
     const addFiles = screen.getByRole("button", { name: "Add files…" });
     const focusing = vi.spyOn(addFiles, "focus");
 
