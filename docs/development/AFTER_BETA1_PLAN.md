@@ -190,7 +190,8 @@ there is capacity, no decompilation, and every other point as recommended):
 6. **Thermo vendor centroiding.** "MS1 and up" (`peakPicking vendor
    msLevel=1-`) becomes a verified row on the evidenced build. "MS2 and up"
    stays in the advanced tier, labelled not verified, until a public Orbitrap
-   profile-MS2 file is measured
+   profile-MS2 file is measured (*one was on 2026-10-30: see
+   [section 7.5](#75-evidence-gated-items)*)
    ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
    [PR #162](https://github.com/MianliWang/MScanvas/pull/162)).
 
@@ -376,6 +377,11 @@ writer and Rust's ownership of files.
 - **Slices:** plot-spec accessor (`render_with_text`, SVG bytes unchanged);
   PNG chunks with golden tests per figure kind; records and native evidence.
   **Size S.**
+- **Status, 2026-10-30:** the accessor, the PNG chunks and their golden tests
+  are implemented
+  ([ADR 0053](../architecture/adr/0053-png-text-metadata.md), accepted), with
+  the changelog entry. Native evidence and the release-notes line are still
+  to come.
 
 ### 6.4 Spreadsheet CSV for the targeted results table (ADR 0054)
 
@@ -394,6 +400,12 @@ writer and Rust's ownership of files.
   The interface name is "spreadsheet CSV" / "电子表格 CSV", CSV only.
 - **Slices:** decisions and an as-stored golden guard; Rust; boundary and UI;
   rendered QA and records. **Size M** (raised from S–M by the critique).
+- **Status, 2026-10-30:**
+  [ADR 0054](../architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)
+  accepted; the as-stored golden guard and the Rust side (the closed word
+  `spreadsheetCsv`) are implemented on `be/spreadsheet-csv`. The webview
+  control follows after PR #164. The Excel, LibreOffice and WPS check is the
+  owner's and pending, so no help or release text claims formula protection.
 
 ## 7. Backlog
 
@@ -405,6 +417,18 @@ writer and Rust's ownership of files.
   the operation and its commands; the interface; export provenance). The
   interface slice waits on the owner's choice of interface direction. Native QA
   needs a bounded ProteoWizard hold release.
+  - Slice 1, the cache library, is in [PR #172](https://github.com/MianliWang/MScanvas/pull/172) (2026-10-30): the root
+    and its marker, the key, the manifest, verification, publishing, the pins,
+    eviction, Clear and the staging sweep, with Rust tests. No command, UI or
+    conversion yet; slice 2 is next.
+  - Left to slice 2: a chunked, cancellable hash of the RAW for Checking file
+    and Checking output; reading the volume's free space for `make_space`; the
+    1.5 GiB refusal before any work; the summary and Clear DTOs over `usage`
+    and `clear`; and codes for a check that could not be made
+    (`Lookup::Unreadable`) and for a damaged entry that could not be removed,
+    which decision 10's table does not list. An attempt that a sharing refusal
+    keeps from being removed after `view_cache_not_stored` stays until a later
+    session's sweep, because decision 6 leaves this process's attempts alone.
 - CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
@@ -425,9 +449,24 @@ writer and Rust's ownership of files.
   - owner decision, 2026-10-30: these 44 alerts (Pillow 41, extract-zip 2,
     glib 1) are not dismissed; they stay open and are fixed later as above (see
     [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md)).
-- `PM9.7-I2 … zh-CN-1366x768` (`e2e/specs/pm9.7-integrated.browser.e2e.ts:397`,
-  the scrolled-to-end check) is flaky in CI: it failed on `main` at `7c2c774`
-  and on PR #167 at `9f7b1be` with no frontend change, and passed on rerun.
+- The `PM9.7-I2 … zh-CN-1366x768` flake (the browser spec's scrolled-to-end
+  check, 2 px short in CI on `main` at `7c2c774` and on PRs #167 and #169;
+  reruns passed on #167 and #169, and the next push to `main` passed) is fixed
+  in the test, pending confirmation on Browser e2e 6/6. The case set the end
+  once, right after the selected spectrum reported its range. Under reduced
+  motion, which only the zh-CN cases emulate, `app.css` turns every style
+  change into a 0.01 ms transition, so a commit's layout can land a frame
+  later. Locally that was measured as 1 px: the spectrum summary's line goes
+  from 16.5 px to 19.5 px (11 px to 13 px font) and loses a 2 px margin a frame
+  after the end was set. The 2 px CI state was not captured; CI's failure
+  frame matches the local one except for the evidence column's scroll. The
+  case now waits for the spectrum's drawing, and both its scrolls set the end
+  again until it holds for five frames, whichever commit lands late. Left
+  open: that reduced-motion rule adds transitions where none are declared (a
+  question for the interface rebuild, where the summary no longer changes
+  class); the native I2 (`e2e/specs/pm9.7-integrated.native.e2e.ts`) still
+  sets the end once; the browser workflow keeps screenshots but not
+  `evidence.json`.
 - The real targeted-MS1 engine qualification and, before any release ships the
   runtime, its packaging, licence qualification and worker confinement.
 - Exported values are not the stored binary values: a spectrum is read through
@@ -508,7 +547,7 @@ None can be delivered by engineering alone; each waits for one input.
 | --- | --- | --- |
 | Folder/drop vendor files | Owner decision (given 2026-10-28 for Thermo and Shimadzu; section 6.1). SCIEX: a measurement that its derived companion cannot pair with a same-stem `.wiff2` | M–L |
 | XIC (VIEW-007) | A new scope record for a bounded project-owned mzML array decoder: a new candidate, not a repair of PX's refused one, rerunning all 77 rows; a written decision on reader work and dependency approval | L–XL |
-| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2)* | M–L |
+| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2). Later the same day a public Q Exactive profile-MS2 file (PRIDE `PXD066799`) was measured, so "MS2 and up" meets that condition; its verified row is a follow-up code change ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#consequences))* | M–L |
 | Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
 | Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |
 

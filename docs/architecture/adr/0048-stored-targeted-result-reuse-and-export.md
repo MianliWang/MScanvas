@@ -101,6 +101,8 @@ figure or table itself. Suggested names carry the result's short identifier and
 the target's plan position, never a label:
 `mscanvas-targeted-ms1-<artifact8>-target-<n>.svg|png` and
 `mscanvas-targeted-ms1-<artifact8>-results.csv|tsv`.
+[ADR 0054](0054-spreadsheet-csv-for-the-targeted-results-table.md) adds
+`mscanvas-targeted-ms1-<artifact8>-results-spreadsheet.csv`.
 
 **No clipboard copy for a stored result.** The clipboard write could not be
 exercised natively for this command in M9.2 (the native harness has no project
@@ -162,6 +164,8 @@ Rules:
 Values are written as stored. A spreadsheet may still interpret a field such as
 a label beginning with `=` as a formula; neutralizing it would alter the data,
 so it is not done, and the export's help says values may be reinterpreted.
+[ADR 0054](0054-spreadsheet-csv-for-the-targeted-results-table.md) adds an
+opt-in spreadsheet CSV beside this table; the CSV and TSV above are unchanged.
 
 ### 6. The interface says what the result depends on
 

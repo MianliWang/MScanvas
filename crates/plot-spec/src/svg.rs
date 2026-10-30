@@ -1524,6 +1524,29 @@ fn domain_labels(drawn: Domain, left: f64, right: f64, width: f64) -> Vec<AxisLa
 /// reads a clock, a locale, an environment variable or a random source.
 #[must_use]
 pub fn render(figure: &FigureSpec) -> String {
+    render_with_text(figure).svg
+}
+
+/// One rendered figure: its SVG document and the words of its accessible pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rendered {
+    /// The document [`render`] writes.
+    pub svg: String,
+    /// The text of the document's `<title>`, before XML escaping.
+    pub title: String,
+    /// The text of the document's `<desc>`, before XML escaping.
+    pub description: String,
+}
+
+/// Renders one figure, and hands back the title and description it wrote.
+///
+/// From the same call, so a saved PNG's text cannot disagree with the SVG it
+/// was drawn from (ADR 0053): the description depends on the layout -- a title
+/// too long to print says so there -- and a second derivation of it would be a
+/// second answer. The words are the ones an XML reader gets back from the
+/// document, with no entity left in them.
+#[must_use]
+pub fn render_with_text(figure: &FigureSpec) -> Rendered {
     let colours = palette(figure.theme);
     let width = figure.size.width();
     let height = figure.size.height();
@@ -1651,7 +1674,11 @@ pub fn render(figure: &FigureSpec) -> String {
 
     out.push_str(&body);
     out.push_str("</svg>\n");
-    out
+    Rendered {
+        svg: out,
+        title,
+        description,
+    }
 }
 
 /// The plotting area of every panel, in figure units.

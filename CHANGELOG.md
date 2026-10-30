@@ -4,7 +4,18 @@ All notable changes will be documented here once versioned releases begin.
 
 ## Unreleased
 
-Nothing yet.
+### Changed
+
+- **A saved PNG figure now carries the figure's title and description.** Every
+  PNG saved from a spectrum, a chromatogram, the linked figure or a stored
+  targeted result holds two uncompressed `iTXt` text chunks, `Title` and
+  `Description`, with exactly the words of the SVG's own `<title>` and
+  `<desc>`: the figure's title (for a stored targeted result, the target label
+  you typed and its outcome) and the description with its disclosures and any
+  caption. A stored targeted result's description names its result and plan
+  identifiers, as its SVG already does. No path, no handle and
+  no other key is written; the pixels and Copy plot are unchanged
+  ([ADR 0053](docs/architecture/adr/0053-png-text-metadata.md)).
 
 ## 0.1.0-beta.1 — 2026-10-28 (prerelease)
 
