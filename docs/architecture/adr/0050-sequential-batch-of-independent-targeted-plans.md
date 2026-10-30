@@ -181,3 +181,9 @@ shows two members' results together.
 > labels cost more, down to one such batch with 200-character CJK labels. The member that meets the bound has already run its worker. See the
 > [M9 closure](../../product/M9_CLOSURE.md#8-document-growth). The decision is
 > unchanged.
+
+> **2026-10-30.** A member whose new plan alone no longer fits is now refused
+> `oversized` before its worker starts, which is what the member meeting the
+> bound in that measurement now does; one whose plan fits but whose run and
+> result records do not is still refused after its worker ran. The decision is
+> unchanged.

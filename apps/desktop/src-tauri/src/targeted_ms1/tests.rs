@@ -1775,6 +1775,62 @@ fn a_run_whose_plan_cannot_fit_the_document_is_refused_before_its_worker_runs() 
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
 }
 
+/// The other side of that check: a plan that fits, with an attempt whose
+/// records do not, is measured after its worker ran and refused `oversized`
+/// with nothing recorded, published or left staged.
+#[test]
+fn a_run_whose_records_cannot_fit_after_its_attempt_is_refused_and_leaves_nothing() {
+    use crate::project::tests::{document_of, fill_to_just_short};
+    let length = |document: &record::ProjectDocument| {
+        record::serialize(document).expect("serializable").len() as u64
+    };
+    let scratch = Scratch::new("m9-size-after-attempt");
+    let (store, layer, document) = fake_project(&scratch);
+    let attempts = AtomicU64::new(0);
+    let ordered = std::sync::Mutex::new(None);
+    let executor = Fake::new(|order| {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        *ordered.lock().expect("ordered") = Some(order.artifact);
+        completed(order)
+    });
+    let reviewed = plan(&store, layer, one_target(), &executor);
+    // Room for the plan alone and the revision's growth, and less than
+    // padding's step more: not room for the run and result records too.
+    let mut with_plan = document_of(&store);
+    let without = length(&with_plan);
+    with_plan.plans.push(reviewed.clone());
+    let slack = length(&with_plan) - without + 64;
+    let unpad = fill_to_just_short(&store, slack);
+    let before = document_of(&store);
+    let dirty = store.describe().dirty;
+
+    assert_eq!(
+        run(&store, &reviewed, &executor),
+        Err(ProjectError::Oversized),
+        "{slack} bytes of room"
+    );
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "the plan fitted, so the worker ran"
+    );
+    assert_eq!(document_of(&store), before, "no run, result or plan stayed");
+    assert_eq!(store.describe().dirty, dirty);
+    let artifact = ordered
+        .lock()
+        .expect("ordered")
+        .take()
+        .expect("the attempt was given an artifact");
+    let results = payload::store_of(&document).expect("store");
+    assert!(!payload::result_directory(&results, artifact).exists());
+    assert!(!results.join(".staging").join(artifact.to_string()).exists());
+
+    // Control: with room for it, the same plan runs.
+    unpad(&store);
+    run(&store, &reviewed, &executor).expect("it runs once there is room");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
 // ---------------------------------------------------------------------------
 // The schema
 // ---------------------------------------------------------------------------

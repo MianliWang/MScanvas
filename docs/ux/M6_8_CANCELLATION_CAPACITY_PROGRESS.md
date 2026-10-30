@@ -912,6 +912,6 @@ and no native evidence is inherited across that.
   a retry may still reach those items and stranding them would change what a
   rerun converts. Owner: whichever slice next owns retry semantics. *Fixed
   2026-10-30: every queue-level refusal settles those items as `NotRun`, as a
-  stop does, and a retry still reruns only the retryable failures, as its label
+  stop does, and a retry now reruns only the retryable failures, as its label
   and the panel say; those items are converted by a new queue. What a rerun
   converts did change, deliberately (proposed, for the owner).*

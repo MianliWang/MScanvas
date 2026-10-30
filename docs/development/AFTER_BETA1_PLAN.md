@@ -539,8 +539,15 @@ writer and Rust's ownership of files.
   refusal leaves later items showing "Waiting".
   - *2026-10-30, fixed:* Save As claims the result-store name before it
     publishes the document, with an empty store when there is no result, so no
-    other writer can take it (every Save As to a new name now leaves a
-    `.payloads` folder; proposed, for the owner); the pre-copy refusal has a
+    other writer can take it (proposed, for the owner). So every new project's
+    first save, and every Save As to a new name, now creates
+    `<name>.mscanvas.payloads`, also for a project that never runs targeted
+    MS1; a document publish that fails after it leaves that empty folder, and
+    a retry to the same name is refused `destinationStoreExists` until the
+    folder is removed or another name is chosen. The next release's
+    `INSTALL_AND_SUPPORT.md` Projects row ("when the project holds stored
+    results") needs updating; the beta-1 text is right for beta-1. The
+    pre-copy refusal has a
     test that counts copies; a recoverable queue-level refusal settles the rows
     it kept from starting as Not run, as a stop does, and a retry reruns the
     failures only, as its label and the panel say; those rows are converted by

@@ -1440,6 +1440,50 @@ fn a_save_as_with_no_stored_result_reserves_the_result_store_name_before_the_doc
     store.save().expect("and it saves again where it was bound");
 }
 
+/// The cost of the reservation: a document publish that fails after it
+/// leaves the empty store, as one with results leaves its whole store, and
+/// the name stays this project's until someone removes the folder.
+#[test]
+fn a_save_as_with_no_stored_result_whose_document_fails_keeps_the_reserved_store() {
+    let scratch = Scratch::new("store-name-kept");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let destination = scratch.join("project.mscanvas");
+    let name = scratch.join("project.mscanvas.payloads");
+    let seams = super::SaveAsSeams {
+        copy_file: &super::payload::plain_copy,
+        before_document: &|| Err(ProjectError::NotPublished),
+    };
+
+    assert_eq!(
+        store.save_as_with(&destination, &seams),
+        Err(ProjectError::NotPublished)
+    );
+
+    assert!(!destination.exists(), "no document");
+    // Asked of another project first: asked of this one, `ensure_store` would
+    // make the store it is checking for.
+    assert_eq!(
+        super::payload::ensure_store(&name, record::ProjectId::new()),
+        Err(super::payload::StoreRefusal::NotOwned),
+        "the reserved store stayed"
+    );
+    assert_eq!(
+        super::payload::ensure_store(&name, document_of(&store).project_id),
+        Ok(())
+    );
+    // Nothing changed in the session: still unsaved, still unpublished.
+    assert!(store.describe().dirty);
+    assert_eq!(store.save(), Err(ProjectError::NotYetPublished));
+    // The same name is refused rather than merged; another name publishes.
+    assert_eq!(
+        store.save_as(&destination),
+        Err(ProjectError::DestinationStoreExists)
+    );
+    store
+        .save_as(&scratch.join("other.mscanvas"))
+        .expect("another name");
+}
+
 #[test]
 fn a_save_as_over_the_bound_document_is_not_refused_for_the_store_beside_it() {
     let scratch = Scratch::new("store-name-own");
@@ -2874,7 +2918,7 @@ fn live(_handle: &str) -> bool {
 }
 
 /// The open document, exactly as the store holds it.
-fn document_of(store: &ProjectStore) -> ProjectDocument {
+pub(crate) fn document_of(store: &ProjectStore) -> ProjectDocument {
     let session = store
         .session
         .lock()

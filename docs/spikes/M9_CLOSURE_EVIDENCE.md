@@ -109,6 +109,23 @@ Asserted, not only printed: the refused member's attempt ran; its state is
 recorded are exactly the 76 members before it; the saved document is under the
 bound and saves.
 
+*2026-10-30:* a new plan that alone no longer fits is now refused before its
+worker starts. The same test, on `fix/backend-defects-1030`, now prints the
+attempts of the halted batch and asserts that the refused member's attempt
+never ran (`halted_batch_attempts` equals `refused_member_index`); every other
+figure is unchanged:
+
+```text
+M9C_EVIDENCE size: empty_bytes=10324 first_batch_bytes=877436 per_member_bytes=54839
+whole_batches=4 refused_member_index=12 halted_batch_attempts=12 members_recorded=76
+final_bytes=4178120 bound_bytes=4194304 per_member_plan_bytes=48931
+per_member_run_bytes=4719 per_member_artifact_bytes=1189
+sizes=[10324, 887760, 1765190, 2642620, 3520050, 4178120]
+```
+
+A member refused after its attempt is covered by
+`targeted_ms1::tests::a_run_whose_records_cannot_fit_after_its_attempt_is_refused_and_leaves_nothing`.
+
 ## 5. The combined M9 scenario
 
 `targeted_ms1::tests::batch::a_batch_of_linked_and_copied_members_runs_one_worker_at_a_time_and_leaves_no_scratch`,

@@ -1121,9 +1121,10 @@ fn real_sized_facts(order: &AttemptOrder<'_>) -> AttemptEnd {
 /// run and result record in the document; its rows and evidence are beside
 /// it. Batches of 16 members over 200 targets are run and saved until a
 /// member meets the document bound, and what then happens is asserted: that
-/// member is refused `oversized` with nothing recorded -- before its attempt
-/// where its plan alone no longer fits, after it otherwise -- no later member
-/// starts, and the history already recorded stays whole and saveable.
+/// member's plan alone no longer fits, so it is refused `oversized` before its
+/// attempt with nothing recorded, no later member starts, and the history
+/// already recorded stays whole and saveable. A member refused after its
+/// attempt is the targeted tests' business, not this measurement's.
 #[test]
 #[ignore = "measures document growth: run with --ignored --nocapture"]
 fn measure_how_many_of_the_largest_batches_one_project_document_holds() {
@@ -1173,17 +1174,13 @@ fn measure_how_many_of_the_largest_batches_one_project_document_holds() {
     let first = sizes[1] - sizes[0];
     let bound = crate::project::record::MAX_DOCUMENT_BYTES;
 
-    // Where the bound is met: that member was refused and recorded nothing,
-    // its worker having run only if its plan alone still fitted; nothing after
-    // it started.
+    // Where the bound is met: that member was refused before its worker and
+    // recorded nothing; nothing after it started.
     let refused = members
         .iter()
         .position(|member| matches!(member.state, MemberState::Refused(ProjectError::Oversized)))
         .expect("a member meets the bound");
-    assert!(
-        attempts == refused || attempts == refused + 1,
-        "{attempts} attempts before and at member {refused}"
-    );
+    assert_eq!(attempts, refused, "the refused member's attempt never ran");
     assert!(members[refused + 1..].iter().all(|member| matches!(
         member.state,
         MemberState::NotStarted(Some(ProjectError::Oversized))

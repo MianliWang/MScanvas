@@ -330,6 +330,14 @@ append-only. Sharing one target list between plans (deduplication or reference
 normalization) is a future storage-model optimization (§13); closure did not
 add a shared target-list entity.
 
+*2026-10-30:* a member whose new plan alone no longer fits is now refused
+`oversized` before its worker starts; in the measurement above that is the
+fifth batch's thirteenth member (`halted_batch_attempts=12`,
+[evidence §4](../spikes/M9_CLOSURE_EVIDENCE.md#4-document-growth)). A member
+whose plan fits but whose run and result records do not is still refused after
+its worker ran, as described above
+([plan section 7.2](../development/AFTER_BETA1_PLAN.md#72-polish-and-limits)).
+
 ## 9. What is persisted, and what is not
 
 Checked in code and by a scan of a real run's saved documents and stores
