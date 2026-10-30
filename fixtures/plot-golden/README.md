@@ -45,3 +45,10 @@ writes the same bytes after it.
   detection, through `evidence_figure`, pinned in `targeted_ms1/tests.rs` by
   `pinned_figure()`. The test fixes the result and plan identifiers that a run
   would mint, because the caption names both.
+
+## Recoloured once
+
+All five were recoloured once, deliberately, when the light palette took the
+screen's data ink: measurement `#172337` and the dashed second series `#4b5b70`
+(previously `#1f4e9c` and `#9a4a00`). Only those two colour values changed; the
+`selected` role keeps `#1f4e9c`.

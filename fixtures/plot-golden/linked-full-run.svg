@@ -10,11 +10,11 @@
 <line x1="45.3530" y1="86.9735" x2="1180.0000" y2="86.9735" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
 <line x1="45.3530" y1="302.0000" x2="1180.0000" y2="302.0000" stroke="#333333" stroke-width="1.0000"/>
 <line x1="45.3530" y1="48.0000" x2="45.3530" y2="302.0000" stroke="#333333" stroke-width="1.0000"/>
-<path d="M45.3530 60.0952L329.0148 301.9976L612.6765 301.9973L896.3383 301.9970L1180.0000 301.9968" fill="none" stroke="#1f4e9c" stroke-width="1.0000"/>
-<path d="M45.3530 301.9997L329.0148 301.9995L612.6765 301.9992L896.3383 301.9989L1180.0000 301.9987" fill="none" stroke="#9a4a00" stroke-width="1.0000" stroke-dasharray="6 3"/>
-<line x1="1136.2808" y1="55.3333" x2="1154.2808" y2="55.3333" stroke="#1f4e9c" stroke-width="1.0000"/>
+<path d="M45.3530 60.0952L329.0148 301.9976L612.6765 301.9973L896.3383 301.9970L1180.0000 301.9968" fill="none" stroke="#172337" stroke-width="1.0000"/>
+<path d="M45.3530 301.9997L329.0148 301.9995L612.6765 301.9992L896.3383 301.9989L1180.0000 301.9987" fill="none" stroke="#4b5b70" stroke-width="1.0000" stroke-dasharray="6 3"/>
+<line x1="1136.2808" y1="55.3333" x2="1154.2808" y2="55.3333" stroke="#172337" stroke-width="1.0000"/>
 <text x="1176.0000" y="59.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">TIC</text>
-<line x1="1131.3823" y1="69.3333" x2="1149.3823" y2="69.3333" stroke="#9a4a00" stroke-width="1.0000" stroke-dasharray="6 3"/>
+<line x1="1131.3823" y1="69.3333" x2="1149.3823" y2="69.3333" stroke="#4b5b70" stroke-width="1.0000" stroke-dasharray="6 3"/>
 <text x="1176.0000" y="73.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">BPC</text>
 <line x1="612.6765" y1="48.0000" x2="612.6765" y2="302.0000" stroke="#b3261e" stroke-width="1.0000" stroke-dasharray="4 3"/>
 <text x="615.6765" y="60.0000" fill="#b3261e" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000"><tspan x="615.6765" y="60.0000" xml:space="preserve">Selected scan</tspan></text>
@@ -46,7 +46,7 @@
 <line x1="45.3530" y1="382.9735" x2="1180.0000" y2="382.9735" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
 <line x1="45.3530" y1="598.0000" x2="1180.0000" y2="598.0000" stroke="#333333" stroke-width="1.0000"/>
 <line x1="45.3530" y1="344.0000" x2="45.3530" y2="598.0000" stroke="#333333" stroke-width="1.0000"/>
-<path d="M45.3530 598.0000V571.1217M423.5687 598.0000V356.0952M801.7843 598.0000V477.0476M1180.0000 598.0000V538.8677" fill="none" stroke="#1f4e9c" stroke-width="1.0000"/>
+<path d="M45.3530 598.0000V571.1217M423.5687 598.0000V356.0952M801.7843 598.0000V477.0476M1180.0000 598.0000V538.8677" fill="none" stroke="#172337" stroke-width="1.0000"/>
 <line x1="41.3530" y1="598.0000" x2="45.3530" y2="598.0000" stroke="#333333" stroke-width="1.0000"/>
 <text x="39.3530" y="601.9600" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">0</text>
 <line x1="41.3530" y1="544.2434" x2="45.3530" y2="544.2434" stroke="#333333" stroke-width="1.0000"/>
