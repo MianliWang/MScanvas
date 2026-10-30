@@ -466,8 +466,14 @@ pub(super) fn dpi_of(pixels_per_metre: u32) -> u32 {
     (f64::from(pixels_per_metre) * METRES_PER_INCH).round() as u32
 }
 
-/// Encodes one raster as a PNG carrying the requested physical resolution.
-pub(super) fn encode_png(raster: &FigureRaster, dpi: u32) -> Result<Vec<u8>, RasterFailure> {
+/// Encodes one raster as a PNG carrying the requested physical resolution and
+/// the figure's own title and description.
+pub(super) fn encode_png(
+    raster: &FigureRaster,
+    dpi: u32,
+    title: &str,
+    description: &str,
+) -> Result<Vec<u8>, RasterFailure> {
     let mut bytes = Vec::new();
     {
         let mut encoder = Encoder::new(&mut bytes, raster.width, raster.height);
@@ -481,6 +487,15 @@ pub(super) fn encode_png(raster: &FigureRaster, dpi: u32) -> Result<Vec<u8>, Ras
             yppu: per_metre,
             unit: Unit::Meter,
         }));
+        // ADR 0053: the SVG's `<title>` and `<desc>`, as two `iTXt` chunks --
+        // UTF-8, because a target label may be Chinese, and uncompressed, which
+        // is what this convenience writes and what simple readers can read.
+        // Nothing else: no path, no handle, no provenance key.
+        for (keyword, text) in [("Title", title), ("Description", description)] {
+            encoder
+                .add_itxt_chunk(keyword.to_owned(), text.to_owned())
+                .map_err(|_| RasterFailure::NotEncodable)?;
+        }
         let mut writer = encoder
             .write_header()
             .map_err(|_| RasterFailure::NotEncodable)?;
@@ -489,6 +504,96 @@ pub(super) fn encode_png(raster: &FigureRaster, dpi: u32) -> Result<Vec<u8>, Ras
             .map_err(|_| RasterFailure::NotEncodable)?;
     }
     Ok(bytes)
+}
+
+/// Asserts what ADR 0053 requires of one saved PNG, against its figure.
+///
+/// The chunks are walked in the bytes rather than read through the decoder's
+/// text accessors, so the compression flags and the order are checked as
+/// written. The expected words are read back out of the SVG document and
+/// unescaped, so they are what an SVG reader gets rather than what the accessor
+/// under test returns. And the pixels are checked twice: decoded, against the
+/// `Copy plot` raster of the same document, and as bytes -- without its two
+/// text chunks the file is exactly what the encoder wrote before ADR 0053.
+#[cfg(test)]
+pub(crate) fn assert_png_carries_its_text(
+    png_bytes: &[u8],
+    figure: &mscanvas_plot_spec::FigureSpec,
+) {
+    let document = mscanvas_plot_spec::svg::render(figure);
+    let element = |name: &str| {
+        document
+            .split(&format!("<{name}>"))
+            .nth(1)
+            .and_then(|rest| rest.split(&format!("</{name}>")).next())
+            .expect("the document carries the element")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
+    };
+
+    let mut text = Vec::new();
+    let mut without_text = png_bytes[..8].to_vec();
+    let mut at = 8;
+    while at < png_bytes.len() {
+        let length = u32::from_be_bytes(png_bytes[at..at + 4].try_into().expect("a length"));
+        let end = at + 12 + length as usize;
+        let (kind, body) = (&png_bytes[at + 4..at + 8], &png_bytes[at + 8..end - 4]);
+        if matches!(kind, b"tEXt" | b"zTXt" | b"iTXt") {
+            assert_eq!(kind, b"iTXt", "only iTXt carries text");
+            let keyword = body.iter().position(|byte| *byte == 0).expect("a keyword");
+            assert_eq!(
+                body[keyword + 1..keyword + 5],
+                [0, 0, 0, 0],
+                "uncompressed, with no language tag and no translated keyword",
+            );
+            text.push((
+                String::from_utf8(body[..keyword].to_vec()).expect("a Latin-1 keyword"),
+                String::from_utf8(body[keyword + 5..].to_vec()).expect("UTF-8 text"),
+            ));
+        } else {
+            without_text.extend_from_slice(&png_bytes[at..end]);
+        }
+        at = end;
+    }
+    assert_eq!(
+        text,
+        [
+            ("Title".to_owned(), element("title")),
+            ("Description".to_owned(), element("desc")),
+        ],
+    );
+
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png_bytes))
+        .read_info()
+        .expect("the PNG parses");
+    let mut decoded = vec![0; reader.output_buffer_size().expect("a bounded image")];
+    let frame = reader.next_frame(&mut decoded).expect("the image decodes");
+    decoded.truncate(frame.buffer_size());
+    let per_metre = reader.info().pixel_dims.expect("pHYs is present").xppu;
+    let raster = rasterize(&document, frame.width, frame.height).expect("the figure rasterizes");
+    assert_eq!(
+        decoded,
+        raster.rgba(),
+        "the pixels are the Copy plot raster's"
+    );
+
+    let mut before = Vec::new();
+    {
+        let mut encoder = Encoder::new(&mut before, raster.width, raster.height);
+        encoder.set_color(ColorType::Rgba);
+        encoder.set_depth(BitDepth::Eight);
+        encoder.set_pixel_dims(Some(PixelDimensions {
+            xppu: per_metre,
+            yppu: per_metre,
+            unit: Unit::Meter,
+        }));
+        let mut writer = encoder.write_header().expect("a header");
+        writer.write_image_data(raster.rgba()).expect("the image");
+    }
+    assert_eq!(without_text, before, "only the two text chunks were added");
 }
 
 /// Encodes one raster as a TIFF carrying the requested physical resolution.
@@ -616,7 +721,7 @@ mod tests {
         let raster = rasterize(&document(120, 60, "#ffffff", "#000000"), 120, 60).expect("renders");
 
         for dpi in [MIN_PNG_DPI, 96, 150, DEFAULT_PNG_DPI, 600, MAX_PNG_DPI] {
-            let bytes = encode_png(&raster, dpi).expect("encodes");
+            let bytes = encode_png(&raster, dpi, "Title", "Description.").expect("encodes");
             let decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
             let reader = decoder.read_info().expect("the PNG parses");
             let info = reader.info();
@@ -642,7 +747,7 @@ mod tests {
     #[test]
     fn a_png_begins_with_the_png_signature() {
         let raster = rasterize(&document(64, 32, "#ffffff", "#000000"), 64, 32).expect("renders");
-        let bytes = encode_png(&raster, DEFAULT_PNG_DPI).expect("encodes");
+        let bytes = encode_png(&raster, DEFAULT_PNG_DPI, "Title", "Description.").expect("encodes");
 
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
     }

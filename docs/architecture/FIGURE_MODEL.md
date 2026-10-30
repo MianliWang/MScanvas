@@ -135,12 +135,14 @@ PNG, `Copy plot`, and the figure settings all three figure outputs share.
 | Second renderer | **none** — PNG is the vector figure on a pixel grid, and `Copy plot` is that path stopped one step earlier |
 | Width and height | the final dimensions: an SVG is authored at them, a PNG contains exactly that many pixels |
 | DPI | for a figure sized in pixels, metadata only, written to `pHYs` as `round(dpi / 0.0254)` pixels a metre; it reaches neither the SVG nor the data documents. A printed figure (schema 4, below) is the other reading: its DPI decides its pixel count |
+| Text chunks | since ADR 0053, a saved PNG carries two uncompressed `iTXt` chunks, `Title` and `Description`, holding the SVG's own `<title>` and `<desc>` text from the same `svg::render_with_text` call. No other key, no path; `Copy plot` carries none |
 | Raster bound | 32 megapixels, checked before allocation — a vector document can describe a figure a raster one cannot hold |
 | Typography | the machine's own fonts; no font is vendored or fetched, and a machine that resolves none refuses the raster formats and keeps SVG. Since schema 4 the family is named (below) and text is measured rather than stretched |
 | Clipboard | write-only, from Rust; the interface never receives an image and has no capability to read one |
 | Determinism | same bytes for the same figure **within one environment**; no cross-machine claim, because installed fonts decide glyphs |
 
-See [ADR 0030](adr/0030-png-copy-plot-and-figure-settings.md).
+See [ADR 0030](adr/0030-png-copy-plot-and-figure-settings.md) and
+[ADR 0053](adr/0053-png-text-metadata.md).
 
 ## The linked two-panel figure — M4.4
 
