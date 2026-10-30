@@ -410,8 +410,10 @@ writer and Rust's ownership of files.
     imported by project code and is not shipped; bumping it changes the pinned
     runtime manifest digest, so update it when that runtime is next provisioned
     and before any release ships the runtime;
-  - `glib` (Rust) is not in the Windows dependency tree; it follows the cargo
-    batch.
+  - `glib` (Rust) is only in Tauri's Linux GTK backend, not in the Windows
+    dependency tree; the fix needs gtk-rs 0.20 and the cargo batch keeps glib
+    0.18.5, so it is proposed to the owner for dismissal (see
+    [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md)).
 - The real targeted-MS1 engine qualification and, before any release ships the
   runtime, its packaging, licence qualification and worker confinement.
 - Exported values are not the stored binary values: a spectrum is read through

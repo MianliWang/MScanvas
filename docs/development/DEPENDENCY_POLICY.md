@@ -33,8 +33,9 @@ Windows-first runtime contract.
 
 A security fix takes the smallest change that clears an alert: a lockfile refresh
 inside the ranges the parents already declare, otherwise a pnpm `overrides` entry in
-`pnpm-workspace.yaml` scoped to the vulnerable major. An override is removed once its
-parent declares a fixed range. An alert with no fix inside the current toolchain is
+`pnpm-workspace.yaml` scoped to the vulnerable major. An override within the parent's
+major takes a range; one that crosses a major names the exact release that was verified
+and is moved by hand. An override is removed once its parent declares a fixed range. An alert with no fix inside the current toolchain is
 recorded here with its evidence and proposed dismissal reason; only the owner
 dismisses alerts.
 
@@ -55,13 +56,15 @@ Left open for the owner:
 - **extract-zip 2.0.1** (2 alerts, no patched version). Reached through
   `@wdio/utils@9.32.0` -> `@puppeteer/browsers@2.13.2`, both the last of their majors.
   `@puppeteer/browsers` 3.x drops it, but only `@wdio/utils` 10 declares 3.x, so the
-  fix is the WebdriverIO 10 migration. It unpacks the Chrome for Testing archive
+  fix is the WebdriverIO 10 migration. Unlike serialize-javascript, 3.x is not
+  overridden: it is a new API (ESM-only, Node >= 22.12) that `@wdio/utils` 9 calls into
+  directly and that no suite here has run against. It unpacks the Chrome for Testing archive
   WebdriverIO downloads over HTTPS during e2e setup and never reaches the installer.
   Proposed dismissal: `tolerable_risk`.
 - **glib 0.18.5** (1 alert). Only in Tauri's Linux GTK backend:
   `cargo tree -i glib --target x86_64-pc-windows-msvc` prints nothing, and MSCanvas
   builds and ships for Windows only. A fix needs Tauri's gtk-rs stack to reach 0.20.
-  Proposed dismissal: `vulnerable_code_not_actually_used`.
+  Proposed dismissal: `not_used`.
 - **Pillow 12.3.0** (41 alerts). It is in the targeted-MS1 runtime lock
   (`experiments/m9_0/runtime/requirements-cp313-win_amd64.lock.txt`) through
   matplotlib, which pyopenms requires. It is declared but not imported, and a release
@@ -73,4 +76,4 @@ Left open for the owner:
   is `pillow-13.0.0-cp313-cp313-win_amd64.whl`, SHA-256
   `9dda0788a9932776a75d8bcc020076edc308ce2508b51f6739a45e3158b3fc42` (PyPI),
   uploaded 2026-10-16. Proposed dismissal until that re-provisioning:
-  `vulnerable_code_not_actually_used`.
+  `not_used`.
