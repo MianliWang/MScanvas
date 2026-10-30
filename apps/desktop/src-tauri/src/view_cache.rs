@@ -40,17 +40,20 @@
 //! ## Names are held while they are used
 //!
 //! The root, `entries` and `staging` are held open for the cache's lifetime,
-//! and a directory being read or emptied is held while it is, every one of
-//! them without delete sharing. None of those names can then be renamed away
-//! and replaced by a link while a path through them is in use. Every handle is
-//! opened on the name itself (`FILE_FLAG_OPEN_REPARSE_POINT`) and checked to be
-//! a plain directory spelled on disk exactly as the cache spells it, or a plain
-//! file, before anything below it is touched, and a file is removed through
-//! such a handle, never by resolving its name again.
+//! an attempt's directory for the attempt's, and a directory being read or
+//! emptied while it is, every one of them without delete sharing. None of
+//! those names can then be renamed away and replaced by a link while a path
+//! through them is in use. Every handle is opened on the name itself
+//! (`FILE_FLAG_OPEN_REPARSE_POINT`) and checked to be a plain directory spelled
+//! on disk exactly as the cache spells it, or a plain file, before anything
+//! below it is touched, and a file is removed through such a handle, never by
+//! resolving its name again. An attempt's contents are the exception: they are
+//! removed by path once a scan found no link among them (see `remove_attempt`).
 //!
-//! ponytail: the three lifetime handles must share write access, because
-//! creating and publishing into them needs it, so one of them could be turned
-//! into a link in place while it is empty. Each operation re-checks them first;
+//! ponytail: the lifetime handles, an attempt's included, must share write
+//! access, because creating and publishing into them needs it, so one of them
+//! could be turned into a link in place while it is empty. Each operation
+//! re-checks them first;
 //! a same-user writer racing one operation is the residual. Handle-relative
 //! opens (`NtCreateFile` with a root directory, as `conversion_run/cleanup.rs`
 //! does) close it if that ever matters.
@@ -772,6 +775,10 @@ struct AttemptOwner {
 #[derive(Debug)]
 pub(crate) struct Attempt {
     path: PathBuf,
+    /// The directory, held for the attempt's life so its name cannot be
+    /// renamed away and replaced by a link while paths through it are used.
+    /// Released before the removal, which it would refuse.
+    held: Option<File>,
     identity: Option<(u64, [u8; 16])>,
     /// `entry.json` is staged beside the output, so a publish after an
     /// occupied place does not write it again.
@@ -797,10 +804,20 @@ impl Attempt {
     pub(crate) fn staged_output(&self) -> PathBuf {
         self.path.join(ATTEMPT_ENTRY).join(OUTPUT)
     }
+
+    /// Whether the held directory is still a plain one; see the module
+    /// documentation.
+    fn intact(&self) -> bool {
+        self.held.as_ref().is_some_and(|held| {
+            held.metadata()
+                .is_ok_and(|metadata| plain_directory(&metadata))
+        })
+    }
 }
 
 impl Drop for Attempt {
     fn drop(&mut self) {
+        drop(self.held.take());
         if !self.kept {
             let _ = remove_attempt(&self.path, self.identity);
         }
@@ -837,11 +854,11 @@ impl ViewCache {
         let name = uuid::Uuid::new_v4().to_string();
         let path = self.staging().join(&name);
         fs::create_dir(&path).ok()?;
-        let identity = open_directory(&path, 0, SHARE_READ | SHARE_WRITE | SHARE_DELETE)
-            .ok()
-            .and_then(|directory| local_document::object_identity_of(&directory));
+        let held = hold_directory(&path).ok();
+        let identity = held.as_ref().and_then(local_document::object_identity_of);
         let attempt = Attempt {
             path,
+            held,
             identity,
             manifest_staged: false,
             kept: false,
@@ -993,6 +1010,9 @@ impl ViewCache {
         if facts.output_byte_length > MAX_ENTRY_BYTES.min(self.cap_bytes) {
             return Err(StoreFailure::EntryTooLarge);
         }
+        if !self.intact() || !attempt.intact() {
+            return Err(StoreFailure::NotStored);
+        }
         let staged = attempt.path.join(ATTEMPT_ENTRY);
         // Held while it is read and written, so `entry` stays this plain
         // directory; released before the rename, which it would refuse.
@@ -1008,8 +1028,7 @@ impl ViewCache {
             .ok()
             .filter(local_document::is_ordinary_file)
             .map(|metadata| metadata.len());
-        if !self.intact()
-            || !bounded_line(&facts.provider_release)
+        if !bounded_line(&facts.provider_release)
             || !matches!(list_fixed(&staged, names), Listing::Fixed(found) if found.len() == names.len())
             || staged_length != Some(facts.output_byte_length)
         {
@@ -1092,6 +1111,8 @@ enum Removed {
 /// whole directory untouched. With `identity`, the directory must still be
 /// that object.
 fn remove_fixed(path: &Path, names: &[&str], identity: Option<(u64, [u8; 16])>) -> Removed {
+    #[cfg(test)]
+    tests::before_removal();
     let directory = match open_directory(path, DELETE, SHARE_READ) {
         Ok(directory) => directory,
         Err(error) => return removal_refusal(&error),
@@ -1154,6 +1175,8 @@ fn remove_fixed(path: &Path, names: &[&str], identity: Option<(u64, [u8; 16])>) 
 /// it points at is touched. Handle-relative removal, as `cleanup.rs` does it,
 /// closes that if it ever matters.
 fn remove_attempt(path: &Path, identity: Option<(u64, [u8; 16])>) -> Removed {
+    #[cfg(test)]
+    tests::before_removal();
     let directory = match open_directory(path, DELETE, SHARE_READ) {
         Ok(directory) => directory,
         Err(error) => return removal_refusal(&error),
@@ -1194,19 +1217,28 @@ fn remove_attempt(path: &Path, identity: Option<(u64, [u8; 16])>) -> Removed {
 
 /// Whether anything below `directory` is a link or other reparse point, or
 /// could not be listed. Never follows one: a listing's metadata is the
-/// name's own.
+/// name's own. A stack, not recursion, so no depth can overflow it.
 fn may_hold_a_reparse_point(directory: &Path) -> bool {
-    let Ok(children) = fs::read_dir(directory) else {
-        return true;
-    };
-    children.into_iter().any(|child| {
-        child
-            .and_then(|child| Ok((child.metadata()?, child.path())))
-            .map_or(true, |(metadata, path)| {
-                local_document::is_reparse_point(&metadata)
-                    || (metadata.is_dir() && may_hold_a_reparse_point(&path))
-            })
-    })
+    let mut pending = vec![directory.to_owned()];
+    while let Some(directory) = pending.pop() {
+        let Ok(children) = fs::read_dir(&directory) else {
+            return true;
+        };
+        for child in children {
+            let Ok((metadata, path)) =
+                child.and_then(|child| Ok((child.metadata()?, child.path())))
+            else {
+                return true;
+            };
+            if local_document::is_reparse_point(&metadata) {
+                return true;
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    false
 }
 
 fn removal_refusal(error: &io::Error) -> Removed {

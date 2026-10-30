@@ -219,6 +219,27 @@ fn abandoned(cache: &ViewCache) -> PathBuf {
     path
 }
 
+thread_local! {
+    /// What the next removal on this thread runs first, once. Thread-local
+    /// because tests run in parallel.
+    static BEFORE_REMOVAL: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Called by `remove_fixed` and `remove_attempt` before they open anything.
+pub(super) fn before_removal() {
+    if let Some(hook) = BEFORE_REMOVAL.with(|hook| hook.borrow_mut().take()) {
+        hook();
+    }
+}
+
+/// Puts another object in the place the next removal checked, the way another
+/// process could between that check and the removal. Installed right before
+/// the call under test: publishing and every dropped attempt remove too.
+fn on_next_removal(hook: impl FnOnce() + 'static) {
+    BEFORE_REMOVAL.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
 // ---------------------------------------------------------------------------
 // The key
 // ---------------------------------------------------------------------------
@@ -1223,6 +1244,89 @@ fn an_attempt_or_entry_that_is_no_longer_the_object_checked_is_not_removed() {
     assert_eq!(snapshot(&cache.root), before);
 }
 
+/// Another process removed a damaged entry and published a sound one in its
+/// place between this check and this removal: the sound one stays.
+#[test]
+fn a_damaged_entry_replaced_before_its_removal_is_not_removed() {
+    let scratch = Scratch::new("vc-damaged-replaced");
+    let cache = cache(&scratch);
+    let key = key(1);
+    let (place, sound, damaged) = (
+        entry(&cache, &key),
+        scratch.join("sound"),
+        scratch.join("damaged"),
+    );
+    published(&cache, &key, b"sound");
+    fs::rename(&place, &sound).expect("aside");
+    published(&cache, &key, b"sound");
+    fs::write(place.join(OUTPUT), b"SOUND").expect("damage");
+
+    on_next_removal(move || {
+        fs::rename(&place, &damaged).expect("removed by another process");
+        fs::rename(&sound, &place).expect("published by another process");
+    });
+    assert!(matches!(
+        verify(&cache, &key),
+        Lookup::Damaged { removed: false }
+    ));
+    assert_eq!(
+        fs::read(hit(&cache, &key).output()).expect("read"),
+        b"sound"
+    );
+}
+
+/// A gone owner's attempt whose name went to another directory between its
+/// check and its removal: that directory stays.
+#[test]
+fn an_attempt_replaced_before_its_removal_is_not_removed() {
+    let scratch = Scratch::new("vc-attempt-replaced");
+    let cache = cache(&scratch);
+    let checked = abandoned(&cache);
+    let (place, other, aside) = (
+        checked.clone(),
+        scratch.join("other"),
+        scratch.join("aside"),
+    );
+    fs::create_dir(&other).expect("dir");
+    fs::write(other.join("sentinel.txt"), b"keep me").expect("sentinel");
+
+    on_next_removal(move || {
+        fs::rename(&place, &aside).expect("aside");
+        fs::rename(&other, &place).expect("in its place");
+    });
+    assert_eq!(
+        cache.sweep_staging().expect("swept"),
+        Sweep {
+            unrecognized: 1,
+            ..Sweep::default()
+        }
+    );
+    assert_eq!(
+        fs::read(checked.join("sentinel.txt")).expect("kept"),
+        b"keep me"
+    );
+}
+
+/// The pin holds `view.mzML`, not the manifest. A damaged entry another handle
+/// has pinned is reported as damaged, and left exactly as found.
+#[test]
+fn a_damaged_entry_pinned_elsewhere_is_reported_and_left_as_found() {
+    let scratch = Scratch::new("vc-damaged-pinned");
+    let (viewer, checker) = (cache(&scratch), cache(&scratch));
+    let key = key(1);
+    published(&viewer, &key, b"viewed");
+    let pin = hit(&viewer, &key);
+    fs::write(entry(&viewer, &key).join(MANIFEST), b"{}").expect("rewrite");
+    let before = snapshot(&viewer.root);
+
+    assert!(matches!(
+        verify(&checker, &key),
+        Lookup::Damaged { removed: false }
+    ));
+    assert_eq!(snapshot(&viewer.root), before);
+    assert_eq!(fs::read(pin.output()).expect("pinned"), b"viewed");
+}
+
 #[test]
 fn an_entry_removal_that_stops_part_way_leaves_a_remainder_the_next_pass_removes() {
     let scratch = Scratch::new("vc-evict-part");
@@ -1362,6 +1466,38 @@ fn a_key_named_directory_with_anything_else_in_it_counts_toward_nothing() {
     assert_eq!(names(&foreign), ["notes.txt", OUTPUT]);
 }
 
+/// An attempt is held for its life. Were its name swapped for a link before
+/// the publish, the publish would write outside the cache and move what is
+/// there into `entries`.
+#[test]
+fn an_attempt_cannot_be_swapped_for_a_link_before_it_is_published() {
+    let scratch = Scratch::new("vc-attempt-held");
+    let cache = cache(&scratch);
+    // What the link would point at: an attempt's `entry` holding an output of
+    // the staged length, and a sentinel.
+    let elsewhere = scratch.join("outside");
+    fs::create_dir_all(elsewhere.join(ATTEMPT_ENTRY)).expect("outside");
+    fs::write(elsewhere.join(ATTEMPT_ENTRY).join(OUTPUT), b"THEIRS").expect("decoy");
+    fs::write(elsewhere.join("sentinel.txt"), b"keep me").expect("sentinel");
+    let before = snapshot(&elsewhere);
+
+    let attempt = cache.begin_attempt().expect("an attempt");
+    fs::write(attempt.staged_output(), b"ours!!").expect("stage");
+    let swapped = fs::rename(attempt.path(), scratch.join("aside")).is_ok();
+    if swapped {
+        junction(attempt.path(), &elsewhere);
+    }
+    let stored = cache.publish(attempt, &key(1), &facts(b"ours!!"));
+
+    assert_eq!(snapshot(&elsewhere), before);
+    assert!(!swapped, "the attempt's name is held");
+    assert!(matches!(stored, Ok(Stored::Published)));
+    assert_eq!(
+        fs::read(hit(&cache, &key(1)).output()).expect("read"),
+        b"ours!!"
+    );
+}
+
 #[test]
 fn a_kept_attempt_stays_with_its_marker_while_this_process_runs() {
     let scratch = Scratch::new("vc-attempt-keep");
@@ -1385,9 +1521,15 @@ fn a_kept_attempt_stays_with_its_marker_while_this_process_runs() {
 fn two_publishers_that_made_room_at_once_leave_the_cache_at_the_cap() {
     let scratch = Scratch::new("vc-cap-race");
     let (first, second) = (capped(&scratch, 30), capped(&scratch, 30));
+    // Every other entry was opened later than the one being published, as
+    // after the clock was set back, so only sparing that one keeps it.
+    let later = |cache: &ViewCache, key: &CacheKey, hours: u64| {
+        let time = SystemTime::now() + Duration::from_secs(hours * 3600);
+        assert!(set_directory_time(&entry(cache, key), time));
+    };
     for (index, key) in [key(1), key(2)].iter().enumerate() {
         published(&first, key, &[1; 10]);
-        age(&first, key, index as u64);
+        later(&first, key, index as u64 + 1);
     }
     // The second publisher makes room and publishes between the first one's
     // making room and its rename.
@@ -1395,12 +1537,13 @@ fn two_publishers_that_made_room_at_once_leave_the_cache_at_the_cap() {
     fs::write(attempt.staged_output(), [3; 10]).expect("stage");
     let stored = first.publish_with(attempt, &key(3), &facts(&[3; 10]), |from, to| {
         published(&second, &key(4), &[4; 10]);
+        later(&second, &key(4), 3);
         rename_no_replace(from, to)
     });
 
     assert!(matches!(stored, Ok(Stored::Published)));
     assert_eq!(first.usage().expect("listed").bytes, 30);
-    assert!(!entry(&first, &key(1)).exists(), "the oldest went");
+    assert!(!entry(&first, &key(1)).exists(), "the oldest other went");
     for kept in [key(2), key(3), key(4)] {
         assert!(entry(&first, &kept).exists(), "{}", kept.name());
     }
