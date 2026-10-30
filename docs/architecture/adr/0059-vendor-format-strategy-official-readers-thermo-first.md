@@ -142,7 +142,11 @@ The Thermo work the owner selected on 2026-10-30
   >     profile-MS2 measurement that would lift "MS2 and up" would also close
   >     it. *2026-10-30, later: that measurement was made (source 3c, cases
   >     `TQ0` to `TQ2`, [note under Consequences](#consequences)). This row now
-  >     also cites `TQ1`, and "MS2 and up" is verified (the next note).*
+  >     also cites `TQ1`, and "MS2 and up" is verified (the next note). It
+  >     narrows the gap to one Q Exactive data-independent run, and does not
+  >     close it: other Orbitrap models and data-dependent profile MS2 stay
+  >     unmeasured for both rows (the evidence's
+  >     [What it does not support](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md#what-it-does-not-support)).*
   > - **MS2 and up, and every other vendor scope, is advanced on Thermo RAW,
   >   labelled not verified.** *2026-10-30, later: MS2 and up no longer is;
   >   see the next note. Every other scope still is.* Before this change the code refused any vendor
@@ -186,9 +190,10 @@ The Thermo work the owner selected on 2026-10-30
   >   `--mzML --zlib --filter "peakPicking vendor msLevel=2-"`. It is verified
   >   only on the evidenced executable, as MS1 and up is, and labelled on any
   >   other build under the same relaxed gate.
-  > - **Its source domain is the Thermo RAW family**, as for MS1 and up. This
-  >   settles the question the Consequences note left to this change, on the
-  >   same CNV-D2 argument decision 6 accepted for MS1 and up.
+  > - **Its source domain is the Thermo RAW family**, not the three measured
+  >   instrument models (LTQ Velos, Orbitrap Exploris 480, Q Exactive), as for
+  >   MS1 and up. This settles the question the Consequences note left to this
+  >   change, on the same CNV-D2 argument decision 6 accepted for MS1 and up.
   > - **Its output check is MS1 and up's**, at scope `2-`: exactly one
   >   `Thermo/Xcalibur peak picking` method and no other picker, that method's
   >   `ms levels` record exactly `2-`, and every MS2-and-above spectrum
@@ -200,8 +205,16 @@ The Thermo work the owner selected on 2026-10-30
   >   profile MS1 spectra left bit-identical). Source 3b's MS2 was acquired
   >   centroided, so `TE2` shows MS1 left untouched and no profile MS2.
   > - **What was not measured:** other Orbitrap models, data-dependent profile
-  >   MS2, and profile MS3 and above. A profile MS3+ spectrum left in profile
-  >   would fail closed as `CentroidRepresentationMissing`.
+  >   MS2, and profile MS3 and above; nor the other instruments, controllers
+  >   and builds the evidence lists under
+  >   [What it does not support](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md#what-it-does-not-support).
+  >   A profile MS3+ spectrum left in profile would fail closed as
+  >   `CentroidRepresentationMissing`.
+  > - **Known limit:** a spectrum with no MS level (a UV or PDA controller, not
+  >   measured) is not judged under `2-`, and the requested processing is then
+  >   reported unverified rather than verified. Under `1-` the same spectrum
+  >   is judged in scope and fails closed if left in profile (the known limit
+  >   above).
   > - **Unchanged:** the default conversion stays profile, and nothing
   >   centroids unless the user picks it; every other vendor scope stays
   >   advanced and labelled; the blocks above stand.
