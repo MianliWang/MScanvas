@@ -113,7 +113,9 @@ accepted):
 2. **The "not verified by MSCanvas" flag survives adoption.** It is carried
    into an adopted output's provenance, in the session and in the project
    document, not only into the queue outcome and diagnostics. A project schema
-   bump is accepted (ADR 0055, risks).
+   bump is accepted (ADR 0055, risks). The schema-5 build on `be/integrate`
+   reads beta 1's schema-4 projects and writes schema 5 on the next explicit
+   Save; once it saves a project, beta 1 can no longer open it.
 3. **Conversion capacity and viewing during conversion**
    ([ADR 0057](../architecture/adr/0057-conversion-capacity-and-viewing-during-conversion.md)):
    - an open preview's selected spectra may be read natively during a

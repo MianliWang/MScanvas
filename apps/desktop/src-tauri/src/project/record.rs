@@ -24,20 +24,30 @@ use mscanvas_proteowizard::Sha256Digest;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// The only schema this build reads or writes.
+/// The only schema this build writes, and one of the two it reads.
 ///
-/// A document carrying anything else is refused as unsupported, not migrated.
 /// Schema 1 was the shape before layers existed, schema 2 the shape before a
 /// run could consume a layer and an artifact could hold a QC snapshot, and
 /// schema 3 the shape before a run could execute a reviewed recipe plan and an
 /// artifact could reference a result stored beside the document. None of them
-/// was published outside development. Schema 4, the shape before an input
-/// could carry the "not verified by MSCanvas" label of a conversion
-/// ([`NotVerifiedByMscanvas`]), was published in beta 1; it is refused like
-/// any other version, as the owner's decision of 2026-10-29 that bumps the
-/// schema leaves it, and nothing migrates. A later schema belongs to the build
-/// that wrote it.
+/// was published outside development, and a document carrying any of them is
+/// refused as unsupported, not migrated.
+///
+/// Schema 4 ([`PUBLISHED_SCHEMA_VERSION`]), the shape before an input could
+/// carry the "not verified by MSCanvas" label of a conversion
+/// ([`NotVerifiedByMscanvas`]), was published in beta 1 and is read: exactly,
+/// through its own types, and held in memory as this schema with no label on
+/// any input. Opening writes nothing; the next explicit Save writes this
+/// schema, which beta 1 refuses. A later schema belongs to the build that
+/// wrote it.
 pub const SCHEMA_VERSION: u32 = 5;
+
+/// The schema beta 1 published, which this build reads and never writes.
+///
+/// Frozen at beta 1's vocabulary. Its reader shares every closed vocabulary
+/// with schema 5, so a word added to one of them must also be refused on this
+/// path: a schema-4 document cannot hold a word beta 1 did not write.
+pub const PUBLISHED_SCHEMA_VERSION: u32 = 4;
 
 /// The largest project document this build will read.
 ///
@@ -1255,7 +1265,8 @@ pub enum DocumentProblem {
     /// Not JSON, not this shape, an unknown field, or a value outside its
     /// domain.
     Malformed,
-    /// Readable enough to find a `schemaVersion`, and it is not this one.
+    /// Readable enough to find a `schemaVersion`, and it is not one this build
+    /// reads.
     UnsupportedVersion,
     /// Longer than [`MAX_DOCUMENT_BYTES`], or over one of the count bounds.
     /// Never fully parsed, never partly loaded.
@@ -1316,6 +1327,10 @@ impl DocumentProblem {
 /// build as malformed, which is both untrue and the wrong thing to offer to
 /// replace.
 ///
+/// A schema-4 document is read through `SchemaFourDocument`, which refuses
+/// every schema-5 field as unknown (`malformed`), and is answered as schema 5
+/// with no label on any input. Every rule below then applies to it unchanged.
+///
 /// Nothing in here touches the filesystem. Validation is entirely structural,
 /// which is what lets the caller replace live state only after the whole
 /// document has been accepted.
@@ -1334,13 +1349,23 @@ pub fn parse(bytes: &[u8]) -> Result<ProjectDocument, DocumentProblem> {
 
     let probe: VersionProbe =
         serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?;
-    match probe.schema_version {
-        Some(SCHEMA_VERSION) => {}
+    let mut document: ProjectDocument = match probe.schema_version {
+        Some(SCHEMA_VERSION) => {
+            serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?
+        }
+        Some(PUBLISHED_SCHEMA_VERSION) => {
+            let published: SchemaFourDocument =
+                serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?;
+            // The same defence in depth as below, for the version this path
+            // reads.
+            if published.schema_version != PUBLISHED_SCHEMA_VERSION {
+                return Err(DocumentProblem::UnsupportedVersion);
+            }
+            published.upgraded()
+        }
         Some(_) => return Err(DocumentProblem::UnsupportedVersion),
         None => return Err(DocumentProblem::Malformed),
-    }
-    let mut document: ProjectDocument =
-        serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?;
+    };
     // One spelling for a digest, from here on.
     //
     // `valid_digest` accepts either case, because a hexadecimal digest written
@@ -1357,6 +1382,61 @@ pub fn parse(bytes: &[u8]) -> Result<ProjectDocument, DocumentProblem> {
     }
     validate(&document)?;
     Ok(document)
+}
+
+/// A schema-4 document exactly as beta 1 wrote it: [`ProjectDocument`] whose
+/// inputs cannot carry a label. Read by [`parse`] alone, and never written.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SchemaFourDocument {
+    schema_version: u32,
+    project_id: ProjectId,
+    revision: u64,
+    name: String,
+    inputs: Vec<SchemaFourInput>,
+    artifacts: Vec<ArtifactRecord>,
+    runs: Vec<RunRecord>,
+    layers: Vec<LayerRecord>,
+    plans: Vec<TargetedMs1Plan>,
+}
+
+/// A schema-4 input: [`InputRecord`] before `notVerifiedByMscanvas`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SchemaFourInput {
+    id: InputId,
+    label: String,
+    locator: Locator,
+    members: Vec<MemberRecord>,
+}
+
+impl SchemaFourDocument {
+    /// The same document as schema 5 holds it. No input gains a label: beta 1
+    /// recorded none, and an absent label means nothing is recorded, never
+    /// that a conversion was verified.
+    fn upgraded(self) -> ProjectDocument {
+        ProjectDocument {
+            schema_version: SCHEMA_VERSION,
+            project_id: self.project_id,
+            revision: self.revision,
+            name: self.name,
+            inputs: self
+                .inputs
+                .into_iter()
+                .map(|input| InputRecord {
+                    id: input.id,
+                    label: input.label,
+                    locator: input.locator,
+                    members: input.members,
+                    not_verified_by_mscanvas: None,
+                })
+                .collect(),
+            artifacts: self.artifacts,
+            runs: self.runs,
+            layers: self.layers,
+            plans: self.plans,
+        }
+    }
 }
 
 /// Rewrites every stored digest in the one spelling this build produces.

@@ -3525,22 +3525,44 @@ fn a_document_with_a_remembered_row_and_a_layer_serializes_no_session_fact() {
 }
 
 #[test]
-fn the_earlier_schemas_are_refused_rather_than_migrated() {
+fn the_unpublished_and_later_schemas_are_refused_and_schema_four_is_read() {
     assert_eq!(record::SCHEMA_VERSION, 5);
+    assert_eq!(record::PUBLISHED_SCHEMA_VERSION, 4);
     assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 5);
 
     // Schema 3 is M8's, and it was never published: M9.1 refuses it exactly as
-    // M8.5 refused schema 2. Schema 4 was published in beta 1 and is refused
-    // the same way (owner decision of 2026-10-29).
-    for earlier in [1, 2, 3, 4] {
+    // M8.5 refused schema 2. A later schema belongs to the build that wrote it.
+    for other in [0, 1, 2, 3, 6, 7, u32::MAX] {
         let mut document = valid_document();
-        document.schema_version = earlier;
+        document.schema_version = other;
         assert_eq!(
             refused(&document),
             DocumentProblem::UnsupportedVersion,
-            "schema {earlier}"
+            "schema {other}"
         );
     }
+
+    // Schema 4 was published in beta 1. It is read, and held as schema 5 with
+    // no label on any input.
+    let mut document = valid_document();
+    document.schema_version = 4;
+    let bytes = record::serialize(&document).expect("serialize");
+    let read = record::parse(&bytes).expect("schema 4 is read");
+    document.schema_version = 5;
+    assert_eq!(read, document);
+}
+
+#[test]
+fn a_document_without_a_version_is_malformed() {
+    let mut value = serde_json::to_value(valid_document()).expect("json");
+    value
+        .as_object_mut()
+        .expect("an object")
+        .remove("schemaVersion");
+    assert_eq!(
+        record::parse(&serde_json::to_vec(&value).expect("bytes")),
+        Err(DocumentProblem::Malformed)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4527,7 +4549,7 @@ fn the_size_measure_keeps_room_for_the_widest_revision() {
 }
 
 // ---------------------------------------------------------------------------
-// The canonical schema-5 document, and schema 4 refused
+// The canonical schema-5 document, and beta 1's schema 4 read
 // ---------------------------------------------------------------------------
 
 /// Schema 5 as this build writes it: schema 4 as frozen at the M9 closure,
@@ -4570,16 +4592,104 @@ fn the_canonical_schema_five_document_reads_and_writes_back_unchanged() {
     assert_eq!(document.inputs[1].not_verified_by_mscanvas, None);
 }
 
-/// Beta 1's schema-4 document, as frozen at the M9 closure, is refused as
-/// another version rather than read as malformed or migrated: the owner's
-/// schema bump of 2026-10-29 leaves the refusal of other versions unchanged.
+/// Beta 1's schema-4 document, as frozen at the M9 closure and unchanged since.
+const SCHEMA_FOUR: &str = include_str!("schema_4_canonical.json");
+
+/// The canonical schema-4 value with one edit, the way a later write would
+/// make it.
+fn schema_four_after(edit: impl FnOnce(&mut serde_json::Value)) -> serde_json::Value {
+    let mut value: serde_json::Value = serde_json::from_str(SCHEMA_FOUR).expect("json");
+    edit(&mut value);
+    value
+}
+
+/// Beta 1 published schema 4, which began its compatibility promise (M9
+/// closure, section 4). This build reads every word of it and holds it as
+/// schema 5 with no label on any input: nothing is dropped or rewritten but
+/// the version.
 #[test]
-fn the_canonical_schema_four_document_is_refused_as_another_version() {
-    const OLDER: &str = include_str!("schema_4_canonical.json");
-    assert_eq!(
-        record::parse(OLDER.as_bytes()),
-        Err(DocumentProblem::UnsupportedVersion)
+fn the_canonical_schema_four_document_is_read_as_schema_five_with_no_label() {
+    let document = record::parse(SCHEMA_FOUR.as_bytes()).expect("schema 4 is read");
+    assert_eq!(document.schema_version, record::SCHEMA_VERSION);
+    assert!(
+        document
+            .inputs
+            .iter()
+            .all(|input| input.not_verified_by_mscanvas.is_none())
     );
+    let written: serde_json::Value =
+        serde_json::from_slice(&record::serialize(&document).expect("written")).expect("json");
+    assert_eq!(
+        written,
+        schema_four_after(|value| value["schemaVersion"] = 5.into())
+    );
+}
+
+/// Opening writes nothing and leaves nothing unsaved, so a beta-1 project that
+/// is only looked at stays readable by beta 1. The next explicit Save writes
+/// schema 5, which beta 1 refuses, and changes nothing else but the revision.
+#[test]
+fn opening_a_schema_four_document_writes_nothing_and_its_save_writes_schema_five() {
+    let scratch = Scratch::new("schema-four");
+    let path = scratch.write("project.mscanvas", SCHEMA_FOUR.as_bytes());
+    let store = ProjectStore::new();
+    store.open_document(&path, false).expect("schema 4 opens");
+    assert_eq!(fs::read(&path).expect("read"), SCHEMA_FOUR.as_bytes());
+    assert_eq!(
+        fs::read_dir(scratch.directory()).expect("list").count(),
+        1,
+        "nothing written beside it"
+    );
+    let described = store.describe();
+    assert!(!described.dirty);
+    assert!(
+        described
+            .inputs
+            .iter()
+            .all(|input| input.not_verified_by_mscanvas.is_none())
+    );
+
+    store
+        .save()
+        .expect("an explicit Save over the schema-4 document");
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("read")).expect("json");
+    let expected = schema_four_after(|value| {
+        value["schemaVersion"] = 5.into();
+        let revision = value["revision"].as_u64().expect("a revision");
+        value["revision"] = (revision + 1).into();
+    });
+    assert_eq!(saved, expected);
+    let reread = record::parse(&fs::read(&path).expect("read")).expect("schema 5 is read");
+    assert_eq!(reread.schema_version, 5);
+}
+
+/// A schema-4 document is schema 4 exactly: a schema-5 field in one is refused
+/// as malformed, not read as a label beta 1 never wrote. `null` included,
+/// which the schema-5 reader would take as absent.
+#[test]
+fn a_schema_four_document_carrying_a_schema_five_field_is_refused_as_malformed() {
+    for label in [
+        serde_json::json!({ "unverifiedSettings": true, "unverifiedBuildRelease": null }),
+        serde_json::Value::Null,
+    ] {
+        let value = schema_four_after(|value| {
+            value["inputs"][0]["notVerifiedByMscanvas"] = label;
+        });
+        assert_eq!(
+            record::parse(&serde_json::to_vec(&value).expect("bytes")),
+            Err(DocumentProblem::Malformed)
+        );
+        // Positive control: the same edit is schema 5.
+        let mut value = value;
+        value["schemaVersion"] = 5.into();
+        record::parse(&serde_json::to_vec(&value).expect("bytes")).expect("schema 5");
+    }
+
+    let mut document = valid_document();
+    document.schema_version = 4;
+    document.inputs[0].not_verified_by_mscanvas = record::NotVerifiedByMscanvas::of(true, None);
+    assert_eq!(refused(&document), DocumentProblem::Malformed);
 }
 
 #[test]

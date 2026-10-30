@@ -568,6 +568,28 @@ Each later in its own slice:
   > the slice that bumps it states what the new build does with a schema-4
   > document.
 
+  > **What this build does with a schema-4 document, 2026-10-29.** Beta 1's
+  > publication began schema 4's compatibility promise
+  > ([M9 closure §4](../../product/M9_CLOSURE.md#4-schema-4--the-canonical-disposition)),
+  > so this build reads it:
+  >
+  > - The version probe admits 4 and 5. A schema-4 document is read through
+  >   its own exact types: unknown fields are refused, and a schema-5 field
+  >   in it (`notVerifiedByMscanvas`, even `null`) is `malformed`. Every
+  >   schema-4 rule still applies.
+  > - It is held in memory as schema 5 with no label on any input. Absent
+  >   means nothing is recorded, never verified; beta 1 ran only the measured
+  >   build and recorded no label.
+  > - Opening writes nothing and leaves the project with no unsaved changes.
+  >   Only an explicit Save writes, and it writes schema 5; nothing else in
+  >   the document is dropped or rewritten. Save As keeps its rules.
+  > - Schemas 1–3 and 6 or later stay `unsupportedVersion`; a document with
+  >   no version stays `malformed`.
+  >
+  > **The consequence: once this build saves a project, beta 1 can no longer
+  > open it.** Beta 1 refuses schema 5 as `unsupportedVersion`. A beta-1
+  > project that is only opened and closed stays readable by beta 1.
+
   > **Implemented on `be/integrate` (draft PR #161), 2026-10-29.**
   >
   > - **Session.** An adoption ticket carries the item report's label
@@ -580,10 +602,11 @@ Each later in its own slice:
   >   row this session adopted from a labelled conversion, whatever route
   >   registered it. Absent means nothing is recorded, never verified. A
   >   label with neither half set is refused as inconsistent.
-  > - **A schema-4 document is refused as `unsupportedVersion`**, like every
+  > - ~~**A schema-4 document is refused as `unsupportedVersion`**, like every
   >   other version, and nothing migrates. Beta 1's projects therefore do not
   >   open in this build. That is a release decision for the owner before
-  >   merge.
+  >   merge.~~ Superseded the same day: a schema-4 document is read, as the
+  >   note above states.
 - **A larger settings surface.** It cuts against the owner's direction to
   remove secondary explanations. It is collapsed by default, with one label
   and no prose.

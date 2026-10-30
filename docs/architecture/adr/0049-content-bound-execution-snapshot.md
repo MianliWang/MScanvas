@@ -104,6 +104,19 @@ records a copied view or that failure code, as it refuses any unknown word.
 That is acceptable only because schema 4 is unpublished. An unknown view is
 still refused by this build.
 
+> **Note, 2026-10-29: beta 1 published schema 4, which removes that reason.**
+> No document is affected: beta 1 already carries both words, and no M9.1 or
+> M9.2 build was published. What it adds is an obligation from here on.
+> Schema 4 is frozen at beta 1's vocabulary, so a word is never again added to
+> a published schema in place; a new word goes into a new or still-unpublished
+> schema. The schema-5 build on `be/integrate` reads schema 4 through its own
+> types but shares every closed vocabulary with schema 5 (`record.rs`,
+> `PUBLISHED_SCHEMA_VERSION`). No word has been added since beta 1, so nothing
+> needs refusing yet; the first word added to a shared vocabulary must also be
+> refused on that schema-4 path
+> ([ADR 0055](0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+> the note of 2026-10-29 on a schema-4 document).
+
 ### 5. Capacity: an observation, one rule, and the write's own answer
 
 Before a run exists, where the source is proven to be on another volume than

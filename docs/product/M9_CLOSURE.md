@@ -197,9 +197,16 @@ failure.
 which adds the "not verified by MSCanvas" label to an input (ADR 0055, owner
 decision 2). The canonical document is now `schema_5_canonical.json`, read and
 written back by
-`project::tests::the_canonical_schema_five_document_reads_and_writes_back_unchanged`;
-`schema_4_canonical.json` stays as the older document schema 5 refuses
-(`the_canonical_schema_four_document_is_refused_as_another_version`).
+`project::tests::the_canonical_schema_five_document_reads_and_writes_back_unchanged`.
+Beta 1 published schema 4, which began its promise below, so that build
+**reads** `schema_4_canonical.json` exactly as schema 4 and holds it as schema 5
+with no label on any input
+(`the_canonical_schema_four_document_is_read_as_schema_five_with_no_label`);
+opening writes nothing, and the next explicit Save writes schema 5, which beta 1
+can no longer open (ADR 0055, the note of 2026-10-29 on a schema-4 document).
+Schema 4's vocabulary is now frozen at beta 1's: a word added to a shared
+vocabulary later is a schema-5-or-later word and must be refused on the
+schema-4 read path (ADR 0049, decision 4 note).
 
 **Schema 4 is the current unpublished development schema, and its
 compatibility promise begins only if and when this source line is published.**
