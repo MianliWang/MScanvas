@@ -54,7 +54,7 @@
 //! reports the recipe unavailable: bundling and redistributing the runtime is a
 //! decision this milestone does not make.
 
-mod scratch;
+pub(crate) mod scratch;
 #[cfg(test)]
 mod tests;
 
@@ -814,7 +814,7 @@ fn snapshot(
     })
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     let mut file = fs::OpenOptions::new()
         .write(true)

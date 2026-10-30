@@ -79,8 +79,8 @@ is rather than removed in a slice that is about something else.
   cannot say which installation was in use.
 
   > **Amended 2026-10-30 by the owner's decision** (plan section 2, decision 3;
-  > implemented by draft [PR #158](https://github.com/MianliWang/MScanvas/pull/158),
-  > not yet merged). A chosen folder that reads as usable is remembered across
+  > implemented by [PR #158](https://github.com/MianliWang/MScanvas/pull/158),
+  > merged 2026-10-30 as `047eadc`). A chosen folder that reads as usable is remembered across
   > launches. It is written to the preference record and checked again at
   > startup by the existing discovery. If it no longer works there, the reason
   > is reported and discovery goes back to the automatic search, which is

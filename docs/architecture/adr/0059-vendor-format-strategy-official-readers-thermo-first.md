@@ -117,6 +117,7 @@ The Thermo work the owner selected on 2026-10-30
   becomes a verified row on the evidenced build.
   `peakPicking vendor msLevel=2-` ("MS2 and up") stays in the advanced tier,
   labelled not verified, until a public Orbitrap profile-MS2 file is measured
+  (*one was, later on 2026-10-30: see the [note under Consequences](#consequences)*)
   ([evidence](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)).
 
   > **Implemented 2026-10-30** (branch `be/thermo-ms1`, into `be/integrate`).
@@ -362,3 +363,21 @@ Law:
   Binding evidence to the build's digest (ADR 0055) matters more, not less.
 - **Help and release text** may say why a vendor format is unsupported, and
   name the vendor's own export where one exists.
+
+> **2026-10-30: the condition for "MS2 and up" is met.** Decision 2 kept
+> `peakPicking vendor msLevel=2-` in the advanced tier "until a public Orbitrap
+> profile-MS2 file is measured". The
+> [evidence](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md) now measures one:
+>
+> - the file is source 3c, a CC0 Q Exactive data-independent run from PRIDE
+>   `PXD066799`;
+> - on the verified 3.0.26013 build, `msLevel=2-` centroided all 23,676 of its
+>   Orbitrap profile MS2 spectra;
+> - it left the 474 profile MS1 spectra bit-identical (cases `TQ0` to `TQ2`).
+>
+> This lifts the measurement gate on "MS2 and up". "MS1 and up" also centroids
+> MS2, so its claim on Orbitrap profile MS2 is now measured too, for that
+> model. Turning "MS2 and up" into a verified row is a follow-up code change,
+> not part of this note. Other Orbitrap models and data-dependent profile MS2
+> remain unmeasured. Whether that row's source domain is the whole Thermo RAW
+> family, as the evidence proposes for both rows, is for that change to settle.

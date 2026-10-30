@@ -48,6 +48,45 @@ pub const TABLE_FORMAT_ID: &str = "mscanvas_targeted_ms1_results";
 /// The table's own schema version. Its column contract, frozen at 1.
 pub const TABLE_SCHEMA_VERSION: u32 = 1;
 
+/// The spreadsheet CSV's format (ADR 0054): the same table, with a byte-order
+/// mark and the declared text fields' formula triggers marked. Named apart so
+/// a reader knows from the first line that text was changed for spreadsheets.
+pub const SPREADSHEET_TABLE_FORMAT_ID: &str = "mscanvas_targeted_ms1_results_spreadsheet";
+
+/// The spreadsheet CSV's own schema version, independent of the table's.
+pub const SPREADSHEET_TABLE_SCHEMA_VERSION: u32 = 1;
+
+/// The columns whose text is the user's or the engine's, and the only ones the
+/// spreadsheet CSV may change. Not `formula`: a plain sum formula starts with
+/// an element symbol and can never start a trigger.
+pub const SPREADSHEET_TEXT_COLUMNS: [&str; 3] = ["label", "adduct", "model_status"];
+
+/// The preamble values that are the engine's report about itself.
+pub const SPREADSHEET_TEXT_PREAMBLE_KEYS: [&str; 3] =
+    ["engine_pyopenms", "engine_openms", "engine_openms_revision"];
+
+/// What makes a spreadsheet read a cell as a formula when it starts one.
+const FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+
+/// One declared text value as the spreadsheet CSV writes it: an apostrophe
+/// before a trigger that starts a cell. A cell starts at the value's start and
+/// right after a `;`, a line feed or a carriage return: a spreadsheet that
+/// splits on `;` starts a cell at the first and a record at the others, since
+/// to it the CSV field's quotes are text. A `"` right at a cell start is passed
+/// over, as such a reader may take it for a quote. Nothing is removed.
+fn spreadsheet_text(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 1);
+    let mut cell_start = true;
+    for character in value.chars() {
+        if cell_start && FORMULA_TRIGGERS.contains(&character) {
+            out.push('\'');
+        }
+        cell_start = matches!(character, ';' | '\n' | '\r') || (cell_start && character == '"');
+        out.push(character);
+    }
+    out
+}
+
 /// One stored result, whole and checked: what it was produced by, from what,
 /// and every row in plan order.
 ///
@@ -415,6 +454,8 @@ fn figure_caption(
 pub enum TableFormat {
     Csv,
     Tsv,
+    /// CSV for spreadsheets (ADR 0054). Opt-in; CSV and TSV never change.
+    SpreadsheetCsv,
 }
 
 impl TableFormat {
@@ -424,6 +465,7 @@ impl TableFormat {
         match format {
             "csv" => Some(Self::Csv),
             "tsv" => Some(Self::Tsv),
+            "spreadsheetCsv" => Some(Self::SpreadsheetCsv),
             _ => None,
         }
     }
@@ -433,12 +475,13 @@ impl TableFormat {
         match self {
             Self::Csv => "csv",
             Self::Tsv => "tsv",
+            Self::SpreadsheetCsv => "spreadsheetCsv",
         }
     }
 
     const fn delimiter(self) -> char {
         match self {
-            Self::Csv => ',',
+            Self::Csv | Self::SpreadsheetCsv => ',',
             Self::Tsv => '\t',
         }
     }
@@ -506,7 +549,7 @@ pub const TABLE_COLUMNS: [&str; 40] = [
 /// quoting, so a field it cannot carry is refused rather than altered.
 fn field(value: &str, format: TableFormat) -> Result<String, TableRefusal> {
     match format {
-        TableFormat::Csv => {
+        TableFormat::Csv | TableFormat::SpreadsheetCsv => {
             let needs_quotes = value.contains([',', '"', '\n', '\r'])
                 || value.starts_with(' ')
                 || value.ends_with(' ');
@@ -571,9 +614,18 @@ pub fn result_table(
     let report = attempt.and_then(|attempt| attempt.engine_report.as_ref());
     let source = execution.consumed_content.first();
     let text = |value: &str| value.to_owned();
+    let spreadsheet = format == TableFormat::SpreadsheetCsv;
+    let (format_id, schema_version) = if spreadsheet {
+        (
+            SPREADSHEET_TABLE_FORMAT_ID,
+            SPREADSHEET_TABLE_SCHEMA_VERSION,
+        )
+    } else {
+        (TABLE_FORMAT_ID, TABLE_SCHEMA_VERSION)
+    };
     let preamble: Vec<(&str, String)> = vec![
-        ("format", text(TABLE_FORMAT_ID)),
-        ("schema_version", TABLE_SCHEMA_VERSION.to_string()),
+        ("format", text(format_id)),
+        ("schema_version", schema_version.to_string()),
         ("recipe", text("targetedMs1")),
         (
             "recipe_version",
@@ -641,10 +693,19 @@ pub fn result_table(
     ];
 
     let mut out = String::with_capacity(4_096 + stored.rows.len() * 512);
+    if spreadsheet {
+        // So a spreadsheet opening the file by double-click reads UTF-8.
+        out.push('\u{FEFF}');
+    }
     for (key, value) in &preamble {
         // Every preamble line starts with `#`, the convention every reader of
         // this application's data documents already skips.
-        let rest = line(std::slice::from_ref(value), format)?;
+        let value = if spreadsheet && SPREADSHEET_TEXT_PREAMBLE_KEYS.contains(key) {
+            spreadsheet_text(value)
+        } else {
+            value.clone()
+        };
+        let rest = line(std::slice::from_ref(&value), format)?;
         out.push('#');
         out.push_str(key);
         out.push(format.delimiter());
@@ -659,7 +720,15 @@ pub fn result_table(
     )?);
 
     for (index, (definition, row)) in stored.plan.targets.iter().zip(&stored.rows).enumerate() {
-        out.push_str(&line(&row_fields(index, definition, row)?, format)?);
+        let mut fields = row_fields(index, definition, row)?;
+        if spreadsheet {
+            for (name, value) in TABLE_COLUMNS.iter().zip(&mut fields) {
+                if SPREADSHEET_TEXT_COLUMNS.contains(name) {
+                    *value = spreadsheet_text(value);
+                }
+            }
+        }
+        out.push_str(&line(&fields, format)?);
     }
     Ok((out, stored.rows.len()))
 }

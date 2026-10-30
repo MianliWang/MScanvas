@@ -1,0 +1,30 @@
+#format,mscanvas_targeted_ms1_results_spreadsheet
+#schema_version,1
+#recipe,targetedMs1
+#recipe_version,1
+#artifact_id,00000000-0000-4000-8000-0000000000a1
+#run_id,00000000-0000-4000-8000-0000000000b1
+#plan_sha256,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+#target_list_sha256,BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+#mz_half_width_ppm,5
+#expected_peak_width_s,6
+#source_byte_length,7
+#source_sha256,1111111111111111111111111111111111111111111111111111111111111111
+#adapter_sha256,CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+#engine_profile_sha256,DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+#runtime_manifest_sha256,EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+#engine_pyopenms,3.4.0
+#engine_openms,'@3.4.0
+#engine_openms_revision,'-dirty
+#payload_manifest_sha256,FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+#target_count,6
+#row_order,plan
+#retention_time_unit,s
+#intensity_unit,unreported
+target_id,target_position,label,formula,neutral_mass,planned_rt_s,planned_rt_half_width_s,outcome,failure_reason,adduct,mz_theoretical_m,mz_theoretical_m1,mz_window_m_low,mz_window_m_high,mz_window_m1_low,mz_window_m1_high,rt_window_low_s,rt_window_high_s,extracted_points,any_nonzero_point,signal_sum_m,signal_sum_m1,signal_max_m,signal_max_m1,edge_trace_count,candidate_count,feature_apex_rt_s,feature_left_s,feature_right_s,raw_area,model_status,model_area,model_fwhm_s,engine_intensity,engine_intensity_source,shared_with,suppressed_by,overlap_removed,overlap_winner,recovered_from_empty_selection
+00000000-0000-4000-8000-000000000001,1,"Caffeine, the ""one""",C8H10N4O2,,60,10,DETECTED_AMBIGUOUS,,[M+H]+,195.0877,196.0911,195.0867,195.0887,196.0901,196.0921,90,150,5,true,2900,290,2000,200,0,2,120,114,126,21000.5,0 (converged),20500.25,,20500.25,modelArea,,,,false,false
+00000000-0000-4000-8000-000000000002,2,"'=SUM(1,2)",C5H5N5,135.054495,40.5,10,FAILED,TARGET_ABSENT_FROM_ENGINE_LIBRARY,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,false,false
+00000000-0000-4000-8000-000000000003,3,咖啡因 · 标准品,C9H11NO3,,80,10,SHARED,,[M+H]+,195.0877,196.0911,195.0867,195.0887,196.0901,196.0921,90,150,5,true,2900,290,2000,200,0,1,120,114,126,-12.5,'-1 (did not converge),-3.25,4.5,20500.25,imputedFromRunRegression,00000000-0000-4000-8000-000000000004,,,false,false
+00000000-0000-4000-8000-000000000004,4,'+x;'-y;'@z;'=w,C8H10N4O2,,120,10,SHARED,,[M+H]+,195.0877,196.0911,195.0867,195.0887,196.0901,196.0921,90,150,5,true,2900,290,2000,200,0,1,120,114,126,-12.5,'-1 (did not converge),-3.25,4.5,20500.25,imputedFromRunRegression,00000000-0000-4000-8000-000000000003,,00000000-0000-4000-8000-000000000005;00000000-0000-4000-8000-000000000006,true,false
+00000000-0000-4000-8000-000000000005,5,'@home,C5H5N5,,125,10,SUPPRESSED_BY_OVERLAP,,[M+H]+,195.0877,196.0911,195.0867,195.0887,196.0901,196.0921,90,150,5,true,2900,290,2000,200,0,0,,,,,,,,,,,00000000-0000-4000-8000-000000000004,,false,false
+00000000-0000-4000-8000-000000000006,6,#hash first,C9H11NO3,0.5,300,10,NOT_DETECTED,,[M+H]+,195.0877,196.0911,195.0867,195.0887,196.0901,196.0921,90,150,5,true,2900,290,2000,200,0,0,,,,,,,,,,,,,false,true

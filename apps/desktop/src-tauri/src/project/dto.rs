@@ -793,7 +793,7 @@ pub enum TargetedTableExportDto {
     Cancelled,
     #[serde(rename_all = "camelCase")]
     Saved {
-        /// `csv` or `tsv`.
+        /// `csv`, `tsv` or `spreadsheetCsv` (ADR 0054).
         format: String,
         file_name: String,
         /// How many target rows the table holds.

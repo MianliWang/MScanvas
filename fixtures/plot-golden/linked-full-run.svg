@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200.0000" height="640.0000" viewBox="0 0 1200.0000 640.0000" role="img">
+<title>Selected spectrum in chromatographic context</title>
+<desc>Two panels. The upper panel is the chromatogram: Total ion current and base peak intensity over the full run, from 5 scans -- per-scan values projected from the loaded spectrum table, not a stored chromatogram record. Its one marker identifies spectrum index 2, and that scan is the lower panel: the complete selected spectrum, 4 points, never narrowed to the chromatogram range. Retention time, m/z and intensity units unreported. Panel 1 of 2, counting from the top. An ordered trace over the separation axis. Series: &quot;TIC&quot; is measured data, &quot;BPC&quot; is a second measured series. The source file reports no unit for the Retention time or the Intensity axis, so none is shown. One marker line is drawn on the Retention time axis: &quot;Selected scan&quot; at 11.00. Panel 2 of 2, counting from the top. The source file does not report whether these are profile samples or centroided peaks, so each mark is one measured point rather than a peak. Series: &quot;measurement&quot; is measured data. The source file reports no unit for the m/z or the Intensity axis, so none is shown.</desc>
+<rect x="0" y="0" width="1200.0000" height="640.0000" fill="#ffffff"/>
+<text x="45.3530" y="24.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="16.0000" font-weight="700" xml:space="preserve">Selected spectrum in chromatographic context</text>
+<line x1="45.3530" y1="248.2434" x2="1180.0000" y2="248.2434" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
+<line x1="45.3530" y1="194.4868" x2="1180.0000" y2="194.4868" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
+<line x1="45.3530" y1="140.7302" x2="1180.0000" y2="140.7302" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
+<line x1="45.3530" y1="86.9735" x2="1180.0000" y2="86.9735" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
+<line x1="45.3530" y1="302.0000" x2="1180.0000" y2="302.0000" stroke="#333333" stroke-width="1.0000"/>
+<line x1="45.3530" y1="48.0000" x2="45.3530" y2="302.0000" stroke="#333333" stroke-width="1.0000"/>
+<path d="M45.3530 60.0952L329.0148 301.9976L612.6765 301.9973L896.3383 301.9970L1180.0000 301.9968" fill="none" stroke="#1f4e9c" stroke-width="1.0000"/>
+<path d="M45.3530 301.9997L329.0148 301.9995L612.6765 301.9992L896.3383 301.9989L1180.0000 301.9987" fill="none" stroke="#9a4a00" stroke-width="1.0000" stroke-dasharray="6 3"/>
+<line x1="1136.2808" y1="55.3333" x2="1154.2808" y2="55.3333" stroke="#1f4e9c" stroke-width="1.0000"/>
+<text x="1176.0000" y="59.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">TIC</text>
+<line x1="1131.3823" y1="69.3333" x2="1149.3823" y2="69.3333" stroke="#9a4a00" stroke-width="1.0000" stroke-dasharray="6 3"/>
+<text x="1176.0000" y="73.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">BPC</text>
+<line x1="612.6765" y1="48.0000" x2="612.6765" y2="302.0000" stroke="#b3261e" stroke-width="1.0000" stroke-dasharray="4 3"/>
+<text x="615.6765" y="60.0000" fill="#b3261e" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000"><tspan x="615.6765" y="60.0000" xml:space="preserve">Selected scan</tspan></text>
+<line x1="41.3530" y1="302.0000" x2="45.3530" y2="302.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="305.9600" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">0</text>
+<line x1="41.3530" y1="248.2434" x2="45.3530" y2="248.2434" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="252.2034" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">2e6</text>
+<line x1="41.3530" y1="194.4868" x2="45.3530" y2="194.4868" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="198.4468" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">4e6</text>
+<line x1="41.3530" y1="140.7302" x2="45.3530" y2="140.7302" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="144.6902" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">6e6</text>
+<line x1="41.3530" y1="86.9735" x2="45.3530" y2="86.9735" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="90.9335" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">8e6</text>
+<line x1="45.3530" y1="302.0000" x2="45.3530" y2="306.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="45.3530" y="317.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="middle" xml:space="preserve">9</text>
+<line x1="329.0148" y1="302.0000" x2="329.0148" y2="306.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="329.0148" y="317.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="middle" xml:space="preserve">10</text>
+<line x1="612.6765" y1="302.0000" x2="612.6765" y2="306.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="612.6765" y="317.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="middle" xml:space="preserve">11</text>
+<line x1="896.3383" y1="302.0000" x2="896.3383" y2="306.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="896.3383" y="317.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="middle" xml:space="preserve">12</text>
+<line x1="1180.0000" y1="302.0000" x2="1180.0000" y2="306.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="1180.0000" y="317.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="middle" xml:space="preserve">13</text>
+<text x="612.6765" y="332.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="12.0000" text-anchor="middle" xml:space="preserve">Retention time (unit not reported)</text>
+<text x="14.0000" y="175.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="12.0000" text-anchor="middle" transform="rotate(-90 14.0000 175.0000)" xml:space="preserve">Intensity (unit not reported)</text>
+<line x1="45.3530" y1="544.2434" x2="1180.0000" y2="544.2434" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
+<line x1="45.3530" y1="490.4868" x2="1180.0000" y2="490.4868" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
+<line x1="45.3530" y1="436.7302" x2="1180.0000" y2="436.7302" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
+<line x1="45.3530" y1="382.9735" x2="1180.0000" y2="382.9735" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
+<line x1="45.3530" y1="598.0000" x2="1180.0000" y2="598.0000" stroke="#333333" stroke-width="1.0000"/>
+<line x1="45.3530" y1="344.0000" x2="45.3530" y2="598.0000" stroke="#333333" stroke-width="1.0000"/>
+<path d="M45.3530 598.0000V571.1217M423.5687 598.0000V356.0952M801.7843 598.0000V477.0476M1180.0000 598.0000V538.8677" fill="none" stroke="#1f4e9c" stroke-width="1.0000"/>
+<line x1="41.3530" y1="598.0000" x2="45.3530" y2="598.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="601.9600" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">0</text>
+<line x1="41.3530" y1="544.2434" x2="45.3530" y2="544.2434" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="548.2034" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">20</text>
+<line x1="41.3530" y1="490.4868" x2="45.3530" y2="490.4868" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="494.4468" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">40</text>
+<line x1="41.3530" y1="436.7302" x2="45.3530" y2="436.7302" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="440.6902" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">60</text>
+<line x1="41.3530" y1="382.9735" x2="45.3530" y2="382.9735" stroke="#333333" stroke-width="1.0000"/>
+<text x="39.3530" y="386.9335" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">80</text>
+<line x1="45.3530" y1="598.0000" x2="45.3530" y2="602.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="45.3530" y="613.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="middle" xml:space="preserve">100</text>
+<line x1="423.5687" y1="598.0000" x2="423.5687" y2="602.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="423.5687" y="613.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="middle" xml:space="preserve">200</text>
+<line x1="801.7843" y1="598.0000" x2="801.7843" y2="602.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="801.7843" y="613.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="middle" xml:space="preserve">300</text>
+<line x1="1180.0000" y1="598.0000" x2="1180.0000" y2="602.0000" stroke="#333333" stroke-width="1.0000"/>
+<text x="1180.0000" y="613.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="middle" xml:space="preserve">400</text>
+<text x="612.6765" y="628.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="12.0000" text-anchor="middle" xml:space="preserve">m/z (unit not reported)</text>
+<text x="14.0000" y="471.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="12.0000" text-anchor="middle" transform="rotate(-90 14.0000 471.0000)" xml:space="preserve">Intensity (unit not reported)</text>
+</svg>

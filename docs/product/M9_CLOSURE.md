@@ -317,6 +317,8 @@ Unchanged from M9.3.C1 and confirmed in the assembled code:
   drawn; CSV/TSV carry the `#` preamble; **PNG carries pixels and its DPI
   only** and is not self-describing. No drawn text says *experimental* or *not
   proof of absence* (§13).
+  *2026-10-30: since [ADR 0053](../architecture/adr/0053-png-text-metadata.md)
+  a saved PNG also carries the SVG's title and description as text.*
 - **Spreadsheet formula interpretation is a pre-release decision, not a closure
   repair.** The repository has no policy for spreadsheet-safe text export;
   values are written as stored (ADR 0048 §5), and a label beginning with `=`,
@@ -427,7 +429,7 @@ undelivered item out of M9 rather than leaving it implied:
 | Unreferenced results (published, never saved) are counted and not shown | invisible disk use | no | UI decision | UI/UX cleanup |
 | No clipboard copy of a stored result | use SVG/PNG export | no | a native harness with a stored-result project | UI/UX cleanup or release |
 | Native save dialogs for stored-result exports not natively qualified | write path tested in Rust; dialog mocked in the browser | no known defect | native harness run | installed qualification |
-| PNG is not self-describing | provenance travels with SVG/CSV only | no | a decision on PNG metadata | release |
+| PNG is not self-describing | provenance travels with SVG/CSV only | no | a decision on PNG metadata. *2026-10-30: decided by [ADR 0053](../architecture/adr/0053-png-text-metadata.md); a saved PNG carries the SVG's title and description, whose caption names the result and plan identifiers* | release |
 | No drawn figure text says *experimental* or *not proof of absence*; the title is the label and the outcome word | an exported figure shown alone can read more certain than the result is | no (the qualifiers are in the SVG `<desc>`, the report and the table's help) | a figure-caption design decision | UI/UX cleanup or release |
 | Spreadsheet formula interpretation of exported text | a spreadsheet may evaluate a label such as `=…` | **security/interoperability decision open** | release security review: keep raw, add a separate spreadsheet-safe export, or document | before public release |
 | History is append-only | nothing can be pruned; a full project stays full | no | history pruning design | later |
