@@ -180,7 +180,7 @@ describe("PM9.2: the roster's actions, quieter but all there (L9)", () => {
     expect(count).toBeVisible();
     expect(count.textContent).toMatch(/^0\u00a0checked/);
     expect(footer.querySelector("[data-roster-list-menu]")).toHaveAccessibleName(en.rosterListActions);
-    const convert = screen.getByRole("button", { name: "Convert 0 checked…" });
+    const convert = screen.getByRole("button", { name: en.rosterConvert });
     expect(convert).toHaveAttribute("aria-disabled", "true");
     expect(convert.getAttribute("aria-describedby")).toContain("roster-selection-count");
   });

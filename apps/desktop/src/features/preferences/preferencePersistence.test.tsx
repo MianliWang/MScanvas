@@ -146,7 +146,7 @@ describe("durable UI preferences", () => {
 
     // Something is loaded in this session, and then the session ends.
     const add = await screen.findByRole("button", { name: zh.addFiles });
-    await waitFor(() => expect(add).toBeEnabled());
+    await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
     fireEvent.click(add);
     await screen.findByRole("grid", { name: zh.scansTitle });
     view.unmount();

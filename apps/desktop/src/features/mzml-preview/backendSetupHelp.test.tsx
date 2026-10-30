@@ -122,11 +122,11 @@ describe("offline setup help", () => {
     // No dialog, no overlay, nothing modal: the help is a disclosure beside a
     // workspace that is already usable.
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(add).toBeEnabled();
+    expect(add).not.toHaveAttribute("aria-disabled");
 
     fireEvent.click(help()!);
     await waitFor(() => expect(helpOpen()).toBe(true));
-    expect(add).toBeEnabled();
+    expect(add).not.toHaveAttribute("aria-disabled");
     expect(screen.getByRole("treegrid", { name: en.rosterTitle })).toBeVisible();
     // Reading help is not a request. Nothing was probed and nothing was stored.
     expect(api.calls()).toEqual(calls);

@@ -1122,7 +1122,7 @@ describe("stopping a running conversion queue", () => {
     expect(await screen.findByRole("dialog")).toBeVisible();
     expect(api.calls()).not.toContain("clearWorkspace");
     fireEvent.click(screen.getByRole("button", { name: "Return" }));
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows no stale Stop for a queue that is already over", async () => {
@@ -1137,7 +1137,7 @@ describe("stopping a running conversion queue", () => {
     expect(api.stopRequests).toEqual([]);
     // A terminal queue holds nothing, so the workspace is the user's again.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
     });
     expect(await rosterActionRefused("clearList")).toBe(false);
   });

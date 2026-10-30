@@ -228,19 +228,29 @@ describe("the four control groups", () => {
     expect(onChoose).toHaveBeenCalledWith(FLAT_32);
   });
 
-  it("keep an unqualified value on screen, disabled, with its reason", () => {
+  it("keep an unqualified value on screen, refused, with its reason", () => {
     // Removing it would hide the shape of the evidence. That these dimensions
     // do not compose freely is a fact about what has been measured, and a
     // reader choosing conversion settings is entitled to see it.
+    const onChoose = vi.fn();
     render(<ConversionSettings
         configuration={view(ready())}
-        onChoose={vi.fn()}
+        onChoose={onChoose}
         refusalNoticeId={null}
       />);
     const control = within(groupFor("population")).getByLabelText("MS1 spectra only");
-    expect(control).toBeDisabled();
+    // Refused, never natively disabled (B4): it takes the keyboard, says why,
+    // and choosing it changes nothing.
+    expect(control).toHaveAttribute("aria-disabled", "true");
+    expect(control).not.toBeDisabled();
+    control.focus();
+    expect(control).toHaveFocus();
     const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
     expect(note?.textContent).toBe(en.cnvNotQualified);
+    fireEvent.click(control);
+    expect(onChoose).not.toHaveBeenCalled();
+    expect(within(groupFor("population")).getByLabelText("All spectra")).toBeChecked();
+    expect(control).not.toBeChecked();
   });
 
   it("says a refusal once for the form, however many groups it dims (review 9)", () => {
@@ -249,7 +259,7 @@ describe("the four control groups", () => {
         onChoose={vi.fn()}
         refusalNoticeId={null}
       />);
-    const refused = [...panel().querySelectorAll<HTMLInputElement>("input[type=radio]:disabled")];
+    const refused = [...panel().querySelectorAll<HTMLInputElement>('input[type=radio][aria-disabled="true"]')];
     const groups = new Set(refused.map((radio) => radio.closest("[data-axis]")));
     expect(groups.size).toBeGreaterThan(1);
     expect(screen.getAllByText(en.cnvNotQualified)).toHaveLength(1);
@@ -364,7 +374,7 @@ describe("a build that lacks only the peak-picking grammar", () => {
       const checked = within(groupFor(axis))
         .getAllByRole("radio")
         .find((radio) => (radio as HTMLInputElement).checked);
-      expect(checked).toBeEnabled();
+      expect(checked).not.toHaveAttribute("aria-disabled");
       const note = document.getElementById(checked?.getAttribute("aria-describedby") ?? "");
       // Basic view can omit a secondary explanation; it must never attach a
       // combination refusal to an available selected value.
@@ -378,7 +388,7 @@ describe("a build that lacks only the peak-picking grammar", () => {
     renderCentroided();
     expect(
       within(groupFor("processing")).getByLabelText("No additional centroiding"),
-    ).toBeEnabled();
+    ).not.toHaveAttribute("aria-disabled");
   });
 
   it("offers no explicit reset while an ordinary control is the way out", () => {
@@ -452,10 +462,10 @@ describe("compact settings over a retained intent", () => {
     expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("64-bit")).toBeChecked();
     // This pair has no admitted single-width transition. The advanced paired
     // precision axis still exposes the catalog's legitimate diagonal change.
-    expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("32-bit")).toBeDisabled();
+    expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("32-bit")).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
     expect(screen.getByLabelText("m/z 64-bit · intensity 64-bit")).toBeChecked();
-    expect(screen.getByLabelText("m/z 32-bit · intensity 32-bit")).toBeEnabled();
+    expect(screen.getByLabelText("m/z 32-bit · intensity 32-bit")).not.toHaveAttribute("aria-disabled");
     fireEvent.click(screen.getByRole("button", { name: "Change language" }));
     expect(screen.getByLabelText("m/z 64 位 · 强度 64 位")).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: "基本" }));

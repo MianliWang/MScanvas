@@ -298,22 +298,35 @@ button:disabled,
   flex: 1 1 60%;
 }
 
-/* Conversion & results (rebuild spec 5). Two columns, each its own scroll
-   owner: the form -- or, while a queue runs or has finished, its rows -- and a
-   300 px summary that ends in the action it describes. The surface fills what
-   the shell gives it; the columns scroll rather than the page. */
+/* Conversion & results (direction A 2.2-2.4). Flat: the form -- or, while a
+   queue runs or has finished, its rows -- on the left, and a tinted plan rail
+   on the right, divided by a hairline, no cards. The rail ends in the action
+   it describes, pinned to the bottom of whatever scrolls. Above 700 px of
+   window height each column scrolls itself; at 700 and below the whole page
+   scrolls as one and the rail's foot stays pinned to the window (review
+   issue 11), with no nested scroll areas. */
+.workbench-shell .workbench-conversion { padding: 0; scrollbar-gutter: auto; }
+
+/* The rail titles itself while a plan is on it; a running or finished queue's
+   status sentence is its title then, and this stays the panel's name only. */
+.conversion-panel:not([data-phase="plan"]) #conversion-panel-heading {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .workbench-conversion > .conversion-panel {
   flex: 1 1 0;
-  min-height: 320px;
+  min-height: 0;
 }
 
 .conversion-panel {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px 16px;
-  padding: 0 16px 16px;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 34%, 360px);
+  grid-template-rows: minmax(0, 1fr);
   font-size: 13px;
 }
 
@@ -331,8 +344,6 @@ button:disabled,
   justify-content: space-between;
   gap: 8px 16px;
 }
-
-.conversion-page-head { grid-column: 1 / -1; }
 
 .page-head-copy {
   display: flex;
@@ -359,10 +370,6 @@ button:disabled,
   overflow-wrap: anywhere;
 }
 
-@media (max-height: 720px) {
-  .conversion-page-head .page-head-copy { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
-}
-
 /* Positioned, so the visually hidden text inside each column is placed and
    clipped by that column rather than by the surface, where it gave the surface
    a scroll height of its own (PM9 L22). */
@@ -373,36 +380,75 @@ button:disabled,
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  gap: 16px;
   overflow: auto;
   overscroll-behavior: contain;
   scroll-padding-block: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 9px;
+}
+
+.conversion-main { gap: 16px; padding: 0 20px 24px; background: var(--color-surface); }
+.conversion-side { gap: 12px; padding: 12px 16px 0; border-left: 1px solid var(--color-border); background: var(--color-surface-subtle); }
+.conversion-side > * { flex: none; }
+/* The foot covers the rail's bottom while it scrolls, so a control the
+   keyboard reaches scrolls in above it rather than under it. */
+.conversion-side { scroll-padding-bottom: 96px; }
+
+/* The rail's foot: what refuses the action, then the action. Pinned to the
+   bottom of the rail's scroll, or of the page's in a short window, and at the
+   rail's end when there is room to spare. */
+.conversion-rail-foot {
+  position: sticky;
+  z-index: 1;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: auto -16px 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border);
   background: var(--color-surface);
 }
 
-.conversion-main { padding: 18px 20px 20px; }
-/* The sticky start block covers the column's foot (about 50 px in view, more
-   with the retry offer), so a control the keyboard reaches scrolls in above it
-   rather than under it. */
-.conversion-side { gap: 12px; padding: 16px; scroll-padding-bottom: 96px; }
+.conversion-rail-foot:not([data-start-offered]):not(:has(.notice)) { padding: 0; border-top: 0; }
 
-/* Below the two-column floor the summary goes under the form and the surface
-   scrolls as one column. Not reached at the 960 px minimum window. */
-@media (max-width: 900px) {
-  .conversion-panel { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+/* A short window: the page scrolls as one, so nothing nests a scroll, and the
+   rail -- stretched to the page's height -- keeps its foot pinned to the
+   window's bottom edge. */
+@media (max-height: 700px) {
   .workbench-conversion > .conversion-panel { flex: 1 0 auto; }
+  .conversion-panel { grid-template-rows: auto; }
   .conversion-main, .conversion-side { overflow: visible; }
+}
+
+/* Each column names its state in a 40 px head with a hairline under it
+   (direction A .cvhead). */
+.conversion-section-head,
+.conversion-column-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 40px;
+  margin: 0 -20px;
+  padding: 4px 20px;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .conversion-panel h2,
 .conversion-panel h3 {
   margin: 0;
   color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 650;
+  font-size: 16px;
+  font-weight: 600;
   line-height: 1.4;
+}
+
+.conversion-panel :is(.conversion-next-summary, .conversion-plan[role="group"]) h3,
+.conversion-panel .conversion-plan-summary h3 { font-size: 13px; }
+
+.conversion-count-tag {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .conversion-panel p { margin: 0; }
@@ -450,16 +496,6 @@ button:disabled,
 .conversion-wide-action { width: 100%; white-space: normal; }
 .conversion-start-actions { flex-direction: column; align-items: stretch; }
 .conversion-start-actions > .ui-button--sm { align-self: flex-start; }
-/* In the summary column the start stays in reach while the plan above it
-   scrolls (v5.11 keeps its summary in view). */
-.conversion-side .conversion-start-actions {
-  position: sticky;
-  bottom: -16px;
-  margin: 0 -16px -16px;
-  padding: 12px 16px 16px;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-surface);
-}
 
 .conversion-side-note,
 .conversion-plan-pending {
@@ -469,132 +505,160 @@ button:disabled,
   overflow-wrap: anywhere;
 }
 
-.conversion-field-label,
-.conversion-order > label {
+.conversion-field-label {
   color: var(--color-text-primary);
   font-size: 12px;
   font-weight: 600;
 }
 
-/* Settings: a heading row (title, the one format, Basic | Advanced), then the
-   axes two to a row as radio cards (v5.11 .field-grid / .radio-option). */
+/* Settings (direction A 2.2): the column head (title, Basic | Advanced), then
+   label and control rows -- a fixed label column, the control beside it, and
+   whatever a choice says about its data under the control. */
 .conversion-settings {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 14px;
-}
-
-.conversion-section-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
+  gap: 12px;
 }
 
 .conversion-section-head > h3 { margin-right: auto; }
-.conversion-format { color: var(--color-text-secondary); font-size: 12px; }
-.conversion-format strong { color: var(--color-text-primary); font-weight: 650; }
 
-.conversion-settings-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: 18px;
-}
-
-@media (max-width: 1100px) {
-  .conversion-settings-grid { grid-template-columns: minmax(0, 1fr); }
-}
-
-.conversion-setting,
-.conversion-destination,
-.conversion-conflict,
-.conversion-segments {
+.conversion-form {
+  --conversion-label-width: 152px;
   display: flex;
   min-width: 0;
   flex-direction: column;
+  gap: 12px;
+}
+
+.conversion-output-form { padding-top: 12px; border-top: 1px solid var(--color-border); }
+
+/* Each row is a two-column grid: the label in the first column, the control
+   and anything under it in the second. */
+.conversion-form-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: var(--conversion-label-width) minmax(0, 1fr);
+  align-items: start;
+  row-gap: 4px;
   margin: 0;
   padding: 0;
   border: 0;
-  gap: 6px;
 }
 
-.conversion-setting > legend,
-.conversion-destination > legend,
-.conversion-conflict > legend,
-.conversion-segments > legend {
-  margin-bottom: 6px;
-  padding: 0;
-  color: var(--color-text-primary);
-  font-size: 12px;
-  font-weight: 600;
+/* Floated, so a fieldset's legend is an ordinary grid item rather than the
+   fieldset's rendered legend. */
+.conversion-form-label {
+  float: left;
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+  padding: 6px 12px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
 }
 
-/* The destination and conflict sections are their own form sections. */
-.conversion-destination,
-.conversion-conflict { padding-top: 16px; border-top: 1px solid var(--color-border); }
-.conversion-destination > legend,
-.conversion-conflict > legend { float: left; width: 100%; margin-bottom: 10px; font-size: 13px; font-weight: 650; }
+.conversion-form-row > :not(.conversion-form-label) { grid-column: 2; justify-self: start; max-width: 100%; }
+.conversion-form-row > :is(.conversion-tiles, .conversion-setting-note, .conversion-subfolder, .conversion-radio-row) { justify-self: stretch; }
 
-.conversion-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 8px;
-  clear: both;
-}
-
-/* A radio card: the whole card is the label, so the target is the card. */
-.conversion-option,
-.conversion-setting-choice {
+/* A compact radio row (B7) where the options' names are too long for one
+   segmented track: whole options wrap, never a track broken across lines. */
+.conversion-radio-row {
   display: flex;
   min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-  padding: 9px 11px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  font-size: 12px;
+  flex-wrap: wrap;
+  gap: 0 16px;
 }
 
-.conversion-option { flex-direction: row; align-items: flex-start; gap: 8px; cursor: pointer; }
-.conversion-option > input,
-.conversion-setting-choice > label > input { flex: none; margin: 2px 0 0; }
+.conversion-radio-row > label {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.conversion-radio-row input { margin: 0; accent-color: var(--color-accent); }
+.conversion-format > strong { display: block; padding-top: 6px; font-size: 13px; font-weight: 600; }
+
+.conversion-tiles { display: grid; gap: 4px; }
+@media (min-width: 1200px) {
+  .conversion-setting[data-axis="precision"] .conversion-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.conversion-setting,
+.conversion-segments {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* A tile: the whole tile is the label, so the target is the tile (B7: kept
+   only where a choice carries its loss). */
+.conversion-setting-choice {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-surface);
+  font-size: 13px;
+}
+
+.conversion-setting-choice > label > input { flex: none; margin: 0; accent-color: var(--color-accent); }
 
 .conversion-setting-choice > label {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
+  min-height: 20px;
+  align-items: center;
   gap: 8px;
   cursor: pointer;
 }
 
-.conversion-option:has(input:checked),
 .conversion-setting-choice:has(input:checked) {
-  border-color: #9fbfeb;
+  border-color: var(--color-accent);
   background: var(--color-surface-selected);
 }
 
-/* A refused choice, marked by more than the browser's dimming. */
-.conversion-setting-choice[data-choice-state="unavailable"] { background: var(--color-surface-subtle); }
+.conversion-lossy {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 0 6px;
+  border: 1px solid var(--color-warning);
+  border-radius: 4px;
+  color: var(--color-warning);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+/* A refused choice, marked by more than one channel: a dashed edge and
+   secondary ink, and its reason is said once for the form. */
+.conversion-setting-choice[data-choice-state="unavailable"] { border-style: dashed; background: var(--color-surface-subtle); }
 .conversion-setting-choice[data-choice-state="unavailable"] > label {
   color: var(--color-text-secondary);
   cursor: not-allowed;
 }
 
-/* What a choice does to the data, and why it cannot be taken: indented under
-   its own control, as text rather than as a colour. */
+/* What a choice does to the data: under its own control, as text rather than
+   as a colour. */
 .conversion-setting-note {
   margin: 0;
-  padding-left: 21px;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
-.conversion-setting > .conversion-setting-note,
-.conversion-precision-fields + .conversion-setting-note { padding-left: 0; }
+.conversion-setting-choice > .conversion-setting-note { grid-column: 1 / -1; padding-left: 21px; }
 
 /* Why the dimmed choices are refused: once for the form, under the groups,
    on a line of its own that names what it is about. */
@@ -621,54 +685,66 @@ button:disabled,
 .conversion-settings-recovery { display: flex; }
 
 /* Precision in the basic view: two width pairs, each a segmented track over
-   native radios (an unavailable width stays visible and natively disabled). */
+   native radios (an unavailable width stays visible, refused, not disabled). */
 .conversion-precision-fields {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 18px;
+  gap: 8px 20px;
 }
 
-.conversion-segments > legend { float: left; margin: 0 8px 0 0; line-height: 34px; }
-.conversion-segments { flex-direction: row; align-items: center; }
+.conversion-segments { display: flex; flex-direction: row; align-items: center; }
+.conversion-segments > legend { float: left; margin: 0 8px 0 0; padding: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 32px; }
 
+/* Direction A `.seg`: one bordered 32 px track, hairlines between options,
+   the chosen one filled and underlined in the accent. Wraps rather than
+   overflows where the column is narrower than its options. */
 .conversion-segments-track {
   display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface-subtle);
+  max-width: 100%;
+  flex-wrap: wrap;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-surface);
 }
 
 .conversion-segment {
-  min-height: 28px;
-  padding: 4px 12px;
-  border-radius: 4px;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 20px;
-  white-space: nowrap;
+  position: relative;
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 10px;
+  border-left: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.3;
   cursor: pointer;
 }
 
+.conversion-segment:first-child { border-left: 0; }
+
 .conversion-segment:has(input:checked) {
-  background: var(--color-surface);
-  box-shadow: var(--shadow-segment-checked);
-  color: var(--color-accent-hover);
-  font-weight: 650;
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+  font-weight: 600;
 }
 
-.conversion-segment:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-.conversion-segment[data-choice-state="unavailable"] { opacity: 0.48; cursor: not-allowed; }
+.conversion-segment:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+/* Refused: secondary ink and struck through, two channels besides its reason. */
+.conversion-segment[data-choice-state="unavailable"] {
+  color: var(--color-text-secondary);
+  text-decoration: line-through;
+  cursor: not-allowed;
+}
 
 .conversion-subfolder {
   display: grid;
   min-width: 0;
   max-width: 360px;
-  gap: 6px;
-  margin-top: 10px;
-  font-size: 12px;
-  font-weight: 600;
+  gap: 4px;
+  margin-top: 8px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
 }
 
 .conversion-subfolder input,
@@ -679,19 +755,21 @@ button:disabled,
   min-height: 32px;
   padding: 4px 8px;
   border: 1px solid var(--color-border-strong);
-  border-radius: 5px;
+  border-radius: 4px;
   background: var(--color-surface);
-  font-weight: 400;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
 }
 
-/* The summary column. */
-.conversion-side > h2 { font-size: 14px; }
-.conversion-order { display: grid; min-width: 0; gap: 6px; }
-/* The scope pair spans the column, one segment per half. */
+.conversion-order > select { width: auto; max-width: 100%; }
+
+/* The plan rail. */
+/* The scope pair spans the rail, one segment per half. */
 .conversion-scope.conversion-segments { flex-direction: column; align-items: stretch; }
-.conversion-scope > legend { float: none; margin: 0 0 6px; line-height: 1.5; }
+.conversion-scope > legend { float: none; margin: 0 0 6px; color: var(--color-text-primary); font-size: 12px; font-weight: 600; line-height: 1.5; }
 .conversion-scope .conversion-segments-track { display: flex; }
-.conversion-scope .conversion-segment { flex: 1 1 0; min-width: 0; text-align: center; white-space: normal; }
+.conversion-scope .conversion-segment { flex: 1 1 0; min-width: 0; justify-content: center; text-align: center; white-space: normal; }
 .conversion-scope-counts { color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 .conversion-excluded-group { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 4px; }
@@ -715,13 +793,11 @@ button:disabled,
   list-style: none;
 }
 
-/* The plan list, in the 300 px column: number and name on one line, then the
-   family and the output name under it. Bounded so Convert stays near. */
+/* The plan list, in the rail: number and name on one line, then the family
+   and the output name under it. Rows are spaced by their own padding, never by
+   a gap or margin: a windowed list places rows by their measured boxes. */
 .conversion-plan-list,
 .conversion-requested-list {
-  max-height: 240px;
-  overflow: auto;
-  gap: 6px;
   font-size: 12px;
 }
 
@@ -732,7 +808,22 @@ button:disabled,
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0 6px;
+  padding: 3px 0;
 }
+
+/* A list past the window threshold (1,024 items at most, ADR 0057) is its own
+   scroll box, because the window is measured against it; a short list never
+   is. */
+.conversion-queue-list[data-windowed="true"],
+.conversion-requested-list[data-windowed="true"] {
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+}
+
+.conversion-plan-list[data-windowed="true"],
+.conversion-requested-list[data-windowed="true"] { max-height: 240px; }
+.conversion-run-list[data-windowed="true"] { max-height: max(320px, calc(100vh - 220px)); }
 
 /* Wide enough for the bound's two digits, so the names start at one place all
    the way down and item 10 does not shift the column that item 9 set. */
@@ -931,40 +1022,58 @@ button:disabled,
 .conversion-queue-residue { color: var(--color-warning); }
 
 /* The summary of a running or finished queue. */
-.conversion-run-status { font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.conversion-run-status { font-size: 16px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.conversion-panel[data-phase="finished"] .conversion-run-status { font-size: 14px; }
 .conversion-run-status:focus { outline: none; }
 .conversion-run-status:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-/* The same count the status sentence says, large (v5.11 .progress-num). It
-   follows the sentence in the document, so the sentence keeps its node. */
-.conversion-progress-num {
-  order: -1;
-  font-size: 27px;
-  font-weight: 650;
-  letter-spacing: -0.7px;
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Under the count: the share of items already settled, never a fraction of
-   the run in progress. Placed with the count, above the sentence. */
+/* Under the status sentence (direction A 2.3): an 8 px tinted track, filled by
+   the items already settled -- never by a fraction of the run in progress --
+   with the item in progress as its own indeterminate segment at the fill's
+   edge, a light stripe sweeping across it. With reduced motion the segment
+   stands still, hatched, so a queue with nothing done yet still reads as a
+   bar at work rather than a rule. */
 .conversion-progress-bar {
-  order: -1;
-  height: 4px;
+  position: relative;
+  height: 8px;
   overflow: hidden;
-  border-radius: 2px;
-  background: var(--color-surface-subtle);
-  box-shadow: inset 0 0 0 1px var(--color-border);
+  border-radius: 4px;
+  background: var(--color-chart-grid);
 }
 
-.conversion-progress-bar > span {
+.conversion-progress-bar > span:first-child {
   display: block;
   height: 100%;
   background: var(--color-accent);
-  transition: width var(--motion-fast) var(--motion-ease);
 }
 
-@media (prefers-reduced-motion: reduce) { .conversion-progress-bar > span { transition: none; } }
+.conversion-progress-current {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-accent) 45%, var(--color-chart-grid));
+}
+
+.conversion-progress-current::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.6), transparent);
+  content: "";
+  animation: conversion-progress-sweep 1.2s linear infinite;
+}
+
+@keyframes conversion-progress-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversion-progress-current::after {
+    background: repeating-linear-gradient(135deg, rgb(255 255 255 / 0.55) 0 3px, transparent 3px 7px);
+    animation: none;
+  }
+}
 
 /* What a stopped queue actually did, counted apart: the line that says how
    many files are in the folder. */
