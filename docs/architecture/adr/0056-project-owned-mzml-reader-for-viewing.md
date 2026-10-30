@@ -663,13 +663,15 @@ Slice 1 therefore meets this decision's merge condition.
    - Copy for the new refusals.
    - Rendered QA.
 
-> **2026-10-30: slice 2's Rust side is implemented** (branch
-> `be/reader-preview`); its webview commit is pending, and until it lands the
-> Rust and webview contracts disagree, so the two merge together. What the
-> implementation records:
+> **2026-10-30: slice 2's Rust side is implemented**; its webview commit is
+> pending, and until it lands the Rust and webview contracts disagree, so the
+> two merge together. What the implementation records:
 >
-> - **The `msaccess` operations stay in the crate.** The provider's open asks
->   only for metadata and the run summary, and the selected-spectrum operation,
+> - **The `msaccess` operations stay in the crate, pending owner
+>   ratification.** Decisions 5 and 9 say slice 2 removes them; this keeps them
+>   until the owner confirms the deviation or a follow-up removes them. The
+>   provider's open asks only for metadata and the run summary, and the
+>   selected-spectrum operation,
 >   `SELECTED_SPECTRUM_PRECISION` and the installation staleness check are
 >   removed from the desktop. The crate keeps `SpectrumTable` and
 >   `SpectrumByIndex` and their parsers, as it keeps `Tic`: capability evidence,
@@ -681,10 +683,22 @@ Slice 1 therefore meets this decision's merge condition.
 >   `SpectrumValueOrigin`, whose native variant carries the two arrays' stored
 >   widths. Each unit state keeps `msaccess`'s "not emitted" apart from a file's
 >   "not declared"; both reach the webview as not reported.
-> - **One reader refusal added.** A declared array unit that is not an accession
+> - **One reader refusal added, pending owner ratification**, because decision
+>   1's list is closed. A declared array unit that is not an accession
 >   (`PREFIX:ID`, ASCII letters and digits) refuses the spectrum
 >   (`unit_not_an_accession`): a unit reaches the CSV/TSV preamble and figure
 >   labels, which admit no quoting.
+> - **Figures.** The export maps a declared profile spectrum to a joined trace
+>   (decision 5), so its SVG, PNG, `Copy plot` and figure preview draw a line.
+>   A current range cuts the line at each edge at the interpolated height,
+>   and that height also sets the window's value scale, as the chromatogram's
+>   does. The caption states the declared representation and units. The
+>   screen draws sticks until slice 3. Centroid and undeclared spectra are
+>   unchanged.
+> - **Data-document values.** The spectrum documents (schemas 1 and 2) and the
+>   chromatogram document (schema 1) keep their fields. Their representation
+>   and unit fields now also carry the file's declared values. Whether that
+>   needs a new schema version is an open owner question.
 > - **Reconciliation is exact** (`TableRowFacts::contradicts`), including the
 >   retention-time unit.
 > - **Decision 4.** An open takes its ticket and drops every other dataset's
@@ -957,8 +971,20 @@ keeps today's row-capped state (decision 5). Two other ways:
   with the roster.
 - **[ADR 0028](0028-figure-renderer-and-semantic-specification.md).** A
   profile-spectrum mark joins the shared specification under its existing
-  rules (decision 9, slice 3), and no rule changes. If the mark changes the
-  saved specification's schema, slice 3 owns that step.
+  rules (the export from slice 2, the screen from slice 3), and no rule
+  changes. If the mark changes the saved specification's schema, slice 3 owns
+  that step.
+- **[ADR 0029](0029-first-visible-spectrum-figure-and-data-export.md).**
+  "Representation and units stay unreported" holds for a spectrum that
+  declares neither. A native spectrum's figure and data document carry the
+  representation and array units the file declares.
+- **[ADR 0034](0034-chromatogram-export-and-range-scope.md).** The
+  document's `#retention_time_unit` is `second` or `minute` where every row
+  declares that unit, and stays `unreported` where none does.
+- **[ADR 0040](0040-spectrum-range-export.md).** The product is no longer
+  only in the discrete branch. A spectrum the file declares profile takes the
+  established-profile branch, clipped with an interpolated boundary value.
+  Centroid and undeclared spectra stay discrete.
 - **[ADR 0044](0044-conversion-configuration-authority.md).** Not amended.
   `backendUsable` still gates every mzML read, native or not. The follow-up
   that admits native reads without a usable backend or during a conversion
