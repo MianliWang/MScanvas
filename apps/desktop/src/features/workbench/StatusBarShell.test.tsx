@@ -1,11 +1,12 @@
 /**
- * The header's Project menu, the status bar and the narrow-window drawers in
- * the real application composition.
+ * The header's three tabs, the status bar and the narrow-window drawers in the
+ * real application composition.
  *
  * `shellContext.test.ts` covers what each status item says. This drives the
- * shell around it: that an item only changes the surface, that the Project
- * menu acts with the Project surface's own actions and refusals, and that a
- * drawer is modal, folds on Esc and gives the keyboard back.
+ * shell around it: that an item only changes the surface, that Project is a tab
+ * like the other two, that ProteoWizard's details open from the bar and give
+ * the keyboard back, and that a drawer is modal, folds on Esc and gives the
+ * keyboard back.
  *
  * Controlled fakes stand in for Rust at the API boundary, as in the other shell
  * tests; nothing here reads a file or runs a provider.
@@ -94,14 +95,6 @@ function currentSurface(): string | null {
   return document.querySelector(".workbench-shell")?.getAttribute("data-surface") ?? null;
 }
 
-async function openProjectMenu() {
-  const trigger = await screen.findByRole("button", { name: en.projectSurface });
-  await act(async () => {
-    fireEvent.keyDown(trigger, { key: "Enter" });
-  });
-  return trigger;
-}
-
 describe("the status bar in the application shell", () => {
   it("says nothing about a project while none is open", async () => {
     renderShell(NO_PROJECT);
@@ -118,9 +111,9 @@ describe("the status bar in the application shell", () => {
     await press(statusItem("project"));
 
     expect(currentSurface()).toBe("project");
+    // The Project tab is the one current destination, as any tab would be.
     expect(screen.getByRole("button", { name: en.projectSurface })).toHaveAttribute("aria-current", "page");
-    // The tabs say nothing is selected while the Project surface shows.
-    expect(document.querySelector(".workbench-navigation [aria-current]")).toBeNull();
+    expect([...document.querySelectorAll(".workbench-navigation [aria-current]")].map(tab => tab.textContent)).toEqual([en.projectSurface]);
     // Navigation only: no project operation began, and nothing was re-read.
     expect(projects.calls).toEqual(before);
   });
@@ -135,58 +128,88 @@ describe("the status bar in the application shell", () => {
     await waitFor(() => expect(statusItem("project")).toBeInTheDocument());
     expect(screen.getAllByRole("button", { name: en.workbench })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: en.projectSurface })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: /^Conversion & results/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Conversion(\s|$)/ })).toHaveLength(1);
   });
 
-  it("states the backend item's colour in words too, and shows the banner from it", async () => {
+  it("says ProteoWizard's state in words and an icon, and opens its details from there", async () => {
     renderShell(NO_PROJECT);
     const item = await waitFor(() => {
       const found = document.querySelector<HTMLElement>("[data-backend-item]");
-      if (found === null || found.textContent !== en.backendStatusUnavailable) throw new Error("not read yet");
+      if (found === null || found.textContent !== en.backendStatusMissing) throw new Error("not read yet");
       return found;
     });
-    expect(item.querySelector("[data-tone]")).toHaveAttribute("data-tone", "unavailable");
-    // Nothing to fold: the banner has something to say, so this shows it.
-    expect(item).not.toHaveAttribute("data-backend-toggle");
+    // Not green: the label says it, and the icon repeats it.
+    expect(item.querySelector("[data-tone]")).toHaveAttribute("data-tone", "attention");
+    expect(item).toHaveAttribute("aria-controls", "backend-status");
+    expect(item).toHaveAttribute("aria-expanded", "false");
+    const details = document.getElementById("backend-status")!;
+    // Closed, the state is one line in the main area with its one fix.
+    expect(details).toHaveAttribute("data-backend-mode", "notice");
+    expect(within(details).getAllByRole("button").map(control => control.textContent)).toEqual([en.backendChoose, en.backendHelpTitle]);
+
     await press(item);
-    expect(document.querySelector("#backend-status")).toHaveFocus();
+    expect(item).toHaveAttribute("aria-expanded", "true");
+    expect(details).toHaveAttribute("data-backend-mode", "popover");
+    // The keyboard comes along, and every way out is there.
+    expect(details).toHaveFocus();
+    expect(within(details).getByRole("button", { name: en.backendRecheck })).toBeVisible();
+    expect(within(details).getByRole("button", { name: en.backendChoose })).toBeVisible();
+
+    // Esc closes it and hands the keyboard back to the item.
+    await act(async () => {
+      fireEvent.keyDown(details, { key: "Escape" });
+    });
+    expect(item).toHaveAttribute("aria-expanded", "false");
+    expect(item).toHaveFocus();
+    expect(details).toHaveAttribute("data-backend-mode", "notice");
+  });
+
+  it("closes ProteoWizard's details on a press outside them, and keeps them open on a press inside", async () => {
+    renderShell(NO_PROJECT);
+    const item = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-backend-item]");
+      if (found === null || found.textContent !== en.backendStatusMissing) throw new Error("not read yet");
+      return found;
+    });
+    await press(item);
+    const details = document.getElementById("backend-status")!;
+    fireEvent.pointerDown(within(details).getByRole("button", { name: en.backendHelpTitle }));
+    expect(item).toHaveAttribute("aria-expanded", "true");
+    await act(async () => {
+      fireEvent.pointerDown(document.getElementById("workbench-evidence")!);
+    });
+    expect(item).toHaveAttribute("aria-expanded", "false");
   });
 });
 
-describe("the Project menu", () => {
-  it("shows the Project surface from its first item", async () => {
+describe("the Project tab", () => {
+  it("shows the Project surface and asks nothing of the project", async () => {
     const projects = renderShell(capturedProject());
     await openProjectSurface();
     expect(currentSurface()).toBe("project");
     expect(projects.calls).toEqual(["getProjectState"]);
   });
 
-  it("keeps a refused action reachable, says why, and sends nothing", async () => {
-    const projects = renderShell(NO_PROJECT);
-    await openProjectMenu();
-    const save = await screen.findByRole("menuitem", { name: en.projectSave });
-    expect(save).toHaveAttribute("aria-disabled", "true");
-    expect(save).toHaveAccessibleDescription(en.projectNone);
-    await press(save);
-    // Still open on the refusal, still on the Workbench, nothing asked of Rust.
-    expect(screen.getByRole("menuitem", { name: en.projectSave })).toBeInTheDocument();
-    expect(currentSurface()).toBe("workbench");
-    expect(projects.calls).toEqual(["getProjectState"]);
-  });
-
-  it("acts with the Project surface's own action and shows that surface", async () => {
-    const projects = renderShell(NO_PROJECT);
-    await openProjectMenu();
-    await press(await screen.findByRole("menuitem", { name: en.projectNew }));
-    expect(currentSurface()).toBe("project");
-    await waitFor(() => expect(projects.calls).toContain("createProject"));
+  it("is a tab like the other two: no menu, no chevron, one style", async () => {
+    renderShell(NO_PROJECT);
+    const tab = await screen.findByRole("button", { name: en.projectSurface });
+    const tabs = [...document.querySelectorAll(".workbench-navigation > button")];
+    expect(tabs.map(control => control.textContent)).toEqual([en.workbench, en.conversionTask, en.projectSurface]);
+    expect(tabs).toContain(tab);
+    expect(tab).not.toHaveAttribute("aria-haspopup");
+    expect(tab.querySelector("svg")).toBeNull();
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 
   it("refuses the first run's Open project… while the project is busy, and says why", async () => {
     const projects = renderShell(NO_PROJECT);
     const release = projects.holdOnce("createProject");
-    await openProjectMenu();
-    await press(await screen.findByRole("menuitem", { name: en.projectNew }));
+    await openProjectSurface();
+    await press(within(document.getElementById("workbench-project")!).getByRole("button", { name: en.projectNew }));
+    // A project operation is under way: the Project tab carries a dot, and its
+    // name does not change.
+    await waitFor(() => expect(document.querySelector("[data-project-work-dot]")).not.toBeNull());
+    expect(screen.getByRole("button", { name: en.projectSurface })).toBeInTheDocument();
     await press(screen.getByRole("button", { name: en.home }));
     const open = within(document.getElementById("workbench-evidence")!).getByRole("button", { name: en.projectOpen });
     await waitFor(() => expect(open).toHaveAttribute("aria-disabled", "true"));

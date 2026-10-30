@@ -182,7 +182,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
   }
 
   async function showConversion(): Promise<void> {
-    await browser.$("button=Conversion & results").click();
+    await browser.$("button=Conversion").click();
     await browser.$("#workbench-conversion").waitForDisplayed();
   }
 

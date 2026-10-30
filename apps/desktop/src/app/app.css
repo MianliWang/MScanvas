@@ -202,15 +202,17 @@ button:disabled,
   color: var(--color-danger);
 }
 
-/* M7.5 installed-backend banner. The verdict, the build it names and the
-   recovery actions are separate elements now: one live region for what is
-   being claimed, and one row for what can be done about it. Both wrap, so a
-   long Chinese or English sentence reflows instead of pushing an action out of
-   reach at a narrow width. */
+/* ProteoWizard's details (BackendStatus.tsx). One element in two looks: a
+   one-line notice in the track while no usable backend stands, and a popover
+   over the status bar's item when opened from it. The verdict is one live
+   region; the actions and the setup help sit beside it. */
+.backend-status-icon { display: inline-flex; flex: none; color: var(--color-text-secondary); }
+.backend-status-icon[data-tone="ready"] { color: var(--color-success); }
+.backend-status-icon[data-tone="attention"] { color: var(--color-warning); }
+.backend-status-icon[data-tone="danger"] { color: var(--color-danger); }
 .backend-status-reading {
   display: flex;
   min-width: 0;
-  flex: 1 1 22em;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 2px 8px;
@@ -220,19 +222,45 @@ button:disabled,
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 12px;
-}
-
-/* The offline setup help. Its own row in the banner, closed to begin with, and
-   readable with no dataset, no backend and no network. Deliberately not a
-   dialog: nothing here gates the workspace. */
-.backend-setup-help {
-  flex-basis: 100%;
-  min-width: 0;
-  margin: 2px 0 0;
-  color: var(--color-text-secondary);
+  gap: 6px;
 }
 .backend-setup-help-body p { margin: 4px 0; max-width: 72ch; overflow-wrap: anywhere; }
+
+/* The notice: icon, verdict, its one action and the help on one line; the
+   help it opens drops below. */
+.backend-status[data-backend-mode="notice"] { align-items: center; padding: 6px 8px 6px 12px; }
+.backend-status[data-backend-mode="notice"] .backend-status-reading { flex: 1 1 16em; }
+.backend-status[data-backend-mode="notice"] .backend-setup-help { display: contents; }
+.backend-status[data-backend-mode="notice"] .backend-setup-help-body { flex-basis: 100%; color: var(--color-text-secondary); }
+
+/* The popover: over the status bar's first item, on the surface colour
+   whatever the tone (the icon carries it), and it scrolls itself. */
+#backend-status[data-backend-mode="popover"] {
+  position: fixed;
+  z-index: 40;
+  bottom: 34px;
+  left: 16px;
+  display: grid;
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px 10px;
+  overflow: auto;
+  padding: 14px 16px;
+  border-color: var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: 0 8px 24px rgb(23 35 55 / 0.18);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+#backend-status[data-backend-mode="popover"] .backend-status-icon { padding-top: 1px; }
+#backend-status[data-backend-mode="popover"] .backend-status-reading { flex-direction: column; align-items: stretch; gap: 4px; }
+#backend-status[data-backend-mode="popover"] .backend-status-reading > span { color: var(--color-text-secondary); }
+#backend-status[data-backend-mode="popover"] .backend-status-reading > strong { font-size: 14px; font-weight: 600; }
+#backend-status[data-backend-mode="popover"] :is(.backend-status-actions, .backend-setup-help) { grid-column: 1 / -1; min-width: 0; }
+#backend-status[data-backend-mode="popover"] .backend-setup-help-body { margin-top: 6px; color: var(--color-text-secondary); }
 
 .workspace-layout {
   display: grid;

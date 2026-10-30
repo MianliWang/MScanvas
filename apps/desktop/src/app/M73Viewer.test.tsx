@@ -217,7 +217,7 @@ describe("M7.3 through the delivered application", () => {
     from.focus(); fireEvent.change(from, { target: { value: "2e" } }); from.setSelectionRange(1, 1);
     fireEvent.compositionStart(from); fireEvent.keyDown(from, { key: "Enter", isComposing: true });
     expect(api.spectrumProjectionRequests).toHaveLength(1); fireEvent.compositionEnd(from);
-    const entry = screen.getByRole("button", { name: "Settings" }); entry.focus(); fireEvent.click(entry);
+    const entry = screen.getByRole("button", { name: "Settings…" }); entry.focus(); fireEvent.click(entry);
     const dialog = screen.getByRole("dialog");
     fireEvent.keyDown(plot, { key: "Enter" });
     fireEvent.click(within(dialog).getByRole("radio", { name: UI_RESOURCES.en.simplifiedChinese }));

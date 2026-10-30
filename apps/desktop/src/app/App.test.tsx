@@ -143,8 +143,12 @@ describe("mzML preview workspace", () => {
     // Not one read. Nothing about an unusable backend stops the user telling
     // MSCanvas which acquisitions this session is about.
     expect(api.openCount()).toBe(0);
-    // The evidence pane points at the banner rather than repeat it (PM9 UI-09).
-    expect(screen.getByText("Plots and scans can be read once the backend above is usable.")).toBeVisible();
+    // The evidence pane says what waits on ProteoWizard, once, and leaves the
+    // fix to the notice: no second button for it (PM9 UI-09, review issue 12).
+    const evidence = document.getElementById("workbench-evidence")!;
+    expect(within(evidence).getByText("Set up ProteoWizard to read plots and scans.")).toBeVisible();
+    expect(within(evidence).queryByRole("button")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Choose folder…" })).toHaveLength(1);
   });
 
   it("reports an available backend with the release the backend itself named", async () => {
@@ -365,8 +369,10 @@ describe("mzML preview workspace", () => {
     // for an unusable installation: nothing is wrong with ProteoWizard, and the
     // recovery is a restart of MSCanvas rather than a repair of it.
     expect(
-      await screen.findByText("MSCanvas cannot use the backend until it restarts"),
+      await screen.findByText("Restart MSCanvas to use ProteoWizard again"),
     ).toBeVisible();
+    // And nothing offered that a restart is the only fix for (review issue 3).
+    expect(document.querySelector("[data-backend-action]")).toBeNull();
     expect(
       screen.getByText(
         "MSCanvas could not confirm that a ProteoWizard process it started has ended. Restart MSCanvas before starting another preview or conversion.",
@@ -413,7 +419,10 @@ describe("mzML preview workspace", () => {
     // Curating is not reading, so it is not closed by a backend nobody can
     // describe: the user can still build the list this session is about.
     await waitFor(() => expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled());
-    // The recovery actions the banner offers stay live -- they are the way out.
+    // The recovery actions stay live -- they are the way out. The notice offers
+    // the one that fixes a failed check; the details offer the rest.
+    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+    await showBackendBanner();
     expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Choose folder…" })).toBeEnabled();
   });
@@ -498,6 +507,10 @@ describe("mzML preview workspace", () => {
     await screen.findByText("No ProteoWizard installation was found");
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
     await screen.findByText(/from the folder you chose/);
+    // A usable folder leaves no notice behind (S5); the way back is in the
+    // details, one press away in the status bar.
+    expect(document.getElementById("backend-status")).toHaveAttribute("data-backend-mode", "hidden");
+    await showBackendBanner();
 
     fireEvent.click(screen.getByRole("button", { name: "Search automatically" }));
 
@@ -514,6 +527,8 @@ describe("mzML preview workspace", () => {
       availability: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
     });
     renderApp(api);
+    await screen.findByText("MSCanvas could not check the backend");
+    await showBackendBanner();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Search automatically" })).toBeVisible();
@@ -538,8 +553,10 @@ describe("mzML preview workspace", () => {
     // backend is there after it has gone.
     expect(await screen.findByText("No ProteoWizard installation was found")).toBeVisible();
 
-    // And once it is back, the user can say so without restarting.
+    // And once it is back, the user can say so without restarting, from the
+    // ProteoWizard details in the status bar.
     installed = true;
+    await showBackendBanner();
     fireEvent.click(screen.getAllByRole("button", { name: "Check again" })[0] as HTMLElement);
     expect(await screen.findByText(/ProteoWizard is available/)).toBeVisible();
   });
@@ -1262,8 +1279,10 @@ describe("native Explorer drop presentation", () => {
     await waitFor(() => {
       expect(api.rosterReads()).toBe(2);
     });
-    // Live drop is said once, in the status bar, as how files arrive.
-    expect(document.querySelector(".workspace-drop-hint")).toHaveTextContent("Drop mzML files onto the window to add them");
+    // Live drop needs no permanent hint (W1): nothing is said about it once it
+    // works, and no reconnect is offered.
+    expect(document.querySelector(".workspace-drop-hint")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try connecting again" })).toBeNull();
 
     act(() => {
       recoveredListener?.({ sequence: 1, state: { status: "hovering", itemCount: 1 } });
@@ -1361,7 +1380,7 @@ function executionOrder(): HTMLSelectElement {
 
 /** Chooses an execution order where the reader does, then returns to the Workbench. */
 function chooseExecutionOrder(value: string): void {
-  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/u }));
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/u }));
   fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value } });
   fireEvent.click(screen.getByRole("button", { name: "Workbench" }));
 }
@@ -2796,7 +2815,8 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
     const escape = screen.getByRole("button", { name: "Clear list" });
-    const destination = screen.getByRole("button", { name: "Check again" });
+    // Any real control outside the roster: the ProteoWizard notice's one fix.
+    const destination = screen.getByRole("button", { name: "Choose folder…" });
     escape.focus();
     destination.focus();
     expect(destination).toHaveFocus();
@@ -2823,7 +2843,8 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
     const escape = screen.getByRole("button", { name: "Clear list" });
-    const destination = screen.getByRole("button", { name: "Check again" });
+    // Any real control outside the roster: the ProteoWizard notice's one fix.
+    const destination = screen.getByRole("button", { name: "Choose folder…" });
     escape.focus();
     destination.focus();
     expect(destination).toHaveFocus();

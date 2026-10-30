@@ -63,7 +63,7 @@ function renderWorkspace(api: PreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 const RUNNING: WorkspaceConversionState = {

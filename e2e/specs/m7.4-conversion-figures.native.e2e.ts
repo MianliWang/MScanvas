@@ -130,7 +130,7 @@ async function workbench() {
   expect(target.visible).toBe(true); expect(target.hit).toBe(true);
   await browser.$(".workbench-home").click();
 }
-async function conversion() { await browser.$("button=Conversion & results").click(); await browser.$(PANEL).waitForDisplayed(); }
+async function conversion() { await browser.$("button=Conversion").click(); await browser.$(PANEL).waitForDisplayed(); }
 async function add(path: string) {
   const before = (await roster()).datasets.length;
   await workbench(); await showRoster();

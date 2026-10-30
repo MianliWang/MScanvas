@@ -1,10 +1,8 @@
 /**
- * The header's Project menu (rebuild spec 1.1): Project is no longer a tab,
- * and its surface is the menu's first item.
+ * The header's Project tab (direction A): the third destination, pressed like
+ * Workbench and Conversion.
  */
 export async function showProjectSurface(): Promise<void> {
-  await browser.$("[data-project-menu]").click();
-  await browser.$('[data-project-menu-item="surface"]').waitForDisplayed();
-  await browser.$('[data-project-menu-item="surface"]').click();
-  await browser.$('[data-project-menu-item="surface"]').waitForExist({ reverse: true });
+  await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
+  await browser.$("#workbench-project").waitForDisplayed();
 }

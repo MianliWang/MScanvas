@@ -119,9 +119,14 @@ describe("keyboard focus across the native folder picker", () => {
 
     await screen.findByRole("button", { name: "Choose a different folder…" });
     expect(choose.isConnected).toBe(false);
-    const automatic = screen.getByRole("button", { name: "Search automatically" });
-    expect(automatic.dataset.backendAction).toBe("automatic");
+    // The notice offers one fix; the way back to automatic search is in the
+    // details, and the keyboard was not handed to it.
+    const automatic = document.querySelector<HTMLElement>('[data-backend-action="automatic"]')!;
+    expect(automatic).toHaveTextContent("Search automatically");
+    expect(automatic).not.toBeVisible();
     expect(automatic).not.toHaveFocus();
+    await showBackendBanner();
+    expect(screen.getByRole("button", { name: "Search automatically" })).toBe(automatic);
   });
 
   it("keeps the keyboard on the chooser when the picker itself failed", async () => {

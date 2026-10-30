@@ -82,9 +82,11 @@ describe("PM9.1 populated-state baseline (synthetic, controlled)", () => {
   it("renders the first-run state with a status bar that claims nothing", async () => {
     mount("empty");
     await screen.findByRole("button", { name: en.home });
-    // No project and no work: no item to show, only how files arrive.
+    // No project and no work: no item to show. Working drop needs no
+    // permanent hint (W1), so the bar says only what ProteoWizard is.
     expect(document.querySelector("[data-shell-context]")).toBeNull();
-    await waitFor(() => expect(document.querySelector(".workspace-drop-hint")?.textContent).toBe(en.shellDropHint));
+    await waitFor(() => expect(document.querySelector("[data-backend-item]")).toHaveTextContent(en.backendStatusMissing));
+    expect(document.querySelector(".workspace-drop-hint")).toBeNull();
   });
 
   it("keeps the roster exactly as it was across a trip to Conversion and back", async () => {

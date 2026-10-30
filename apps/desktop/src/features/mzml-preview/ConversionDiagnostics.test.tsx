@@ -59,7 +59,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 /** An item whose conversion failed for a reason the boundary named. */
@@ -515,7 +515,7 @@ describe("saving conversion diagnostics", () => {
           </PreviewApiProvider>
         </WorkspaceDropTransportProvider>,
       );
-      fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+      fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
       const panel = await screen.findByRole("region", { name: "Convert" });
 
       fireEvent.click(await within(panel).findByRole("button", { name: EXPORT_LABEL }));

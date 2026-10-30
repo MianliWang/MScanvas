@@ -28,7 +28,7 @@ function wrapper(api: ReturnType<typeof createFakePreviewApi>) {
 async function mount(count = 3, conversionPlan = async (request: ConversionPlanRequest) => plan(request)) {
   const api = createFakePreviewApi({ initialDatasets: [...Array.from({ length: count }, (_, index) => vendor(index + 1)), open], availability: availableBackend, conversionPlan });
   render(<App />, { wrapper: wrapper(api) });
-  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
   await waitFor(() => expect(document.querySelector('[data-handle="open"]')).not.toBeNull());
   return api;
 }
@@ -65,11 +65,11 @@ describe("M6.7 through the production conversion surface", () => {
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "open" } });
     fireEvent.click(screen.getByRole("button", { name: "Undo organization" }));
     fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings…" }));
     fireEvent.click(screen.getByRole("radio", { name: "Compact" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     expect(button()).not.toHaveAttribute("aria-disabled");
     expect(api.planRequests()).toEqual(before);
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-3"]);
@@ -164,7 +164,7 @@ describe("M6.7 through the production conversion surface", () => {
     const api = createFakePreviewApi({ initialDatasets: [vendor(1), vendor(2), open], availability: availableBackend,
       conversion: () => drain.promise });
     render(<App />, { wrapper: wrapper(api) });
-  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     await waitFor(() => expect(document.querySelector('[data-handle="raw-1"]')).not.toBeNull());
     select("raw-2"); await ready();
     const start = button();
@@ -173,11 +173,11 @@ describe("M6.7 through the production conversion surface", () => {
     expect(api.beginRequests()[0]?.handles).toEqual(["raw-2"]);
     await organizeRow("raw-2");
     fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings…" }));
     fireEvent.click(screen.getByRole("radio", { name: "Compact" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nothing" } });
     // The order belongs to the next plan's summary, which is not offered while
     // the bound queue runs, so no order control can reach that queue.
@@ -199,7 +199,7 @@ describe("M6.7 through the production conversion surface", () => {
       initialConversion: { status: "terminal", reason: "completed", operationId: "1", queue: bound } });
     const retryCall = vi.spyOn(api, "retryConversions");
     render(<App />, { wrapper: wrapper(api) });
-  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     await waitFor(() => expect(document.querySelector('[data-handle="raw-3"]')).not.toBeNull());
     fireEvent.click(await screen.findByRole("button", { name: "Start another conversion" }));
     scopeAll(); await ready();

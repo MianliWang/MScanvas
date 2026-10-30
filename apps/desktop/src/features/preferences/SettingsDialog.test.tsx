@@ -89,7 +89,7 @@ describe("session Settings in the real application composition", () => {
     // The normal saved state says nothing; only a problem earns a footer note.
     expect(dialog.querySelector("[data-storage-note]")).toBeEmptyDOMElement();
     press(dialog, zh.apply);
-    await waitFor(() => expect(screen.getByRole("button", { name: zh.settings })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: zh.settingsEntry })).toHaveFocus());
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.querySelector('[data-live-region="preferences"]')).toHaveTextContent(zh.applied);
 
@@ -126,7 +126,7 @@ describe("session Settings in the real application composition", () => {
     expect(backgroundEscape).not.toHaveBeenCalled();
     expect(document.documentElement.lang).toBe("en");
     expect(density()).toBe("comfortable");
-    await waitFor(() => expect(screen.getByRole("button", { name: en.settings })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: en.settingsEntry })).toHaveFocus());
     expect(within(openSettings()).getByRole("radio", { name: en.english })).toBeChecked();
   });
 
@@ -155,7 +155,7 @@ describe("session Settings in the real application composition", () => {
     later.blur();
     // Observe Radix's queued close notification, not a sleep or a forced return.
     await act(async () => closed);
-    expect(screen.getByRole("button", { name: en.settings })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: en.settingsEntry })).not.toHaveFocus();
   });
 
   it("starts a new app session at defaults without writing preference storage", async () => {
@@ -183,7 +183,7 @@ describe("session Settings in the real application composition", () => {
     mount();
     await act(async () => closed);
     expect(document.querySelector("[data-settings-return-target]")).not.toHaveFocus();
-    expect(screen.getByRole("button", { name: en.settings })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: en.settingsEntry })).not.toHaveFocus();
   });
 
   it("keeps an initialization resource failure reachable through validated recovery", async () => {
@@ -293,7 +293,7 @@ describe("session Settings in the real application composition", () => {
     press(dialog, zh.cancel);
     await act(async () => { await runtime.instance.changeLanguage("zh-CN"); });
     expect(document.documentElement.lang).toBe("en");
-    expect(screen.getByRole("button", { name: en.settings })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.settingsEntry })).toBeInTheDocument();
     expect(document.querySelector('.spectrum-panel')).toBe(spectrum);
     expect(api.requestedSpectra).toEqual([0]);
     expect(api.calls()).toEqual(calls);

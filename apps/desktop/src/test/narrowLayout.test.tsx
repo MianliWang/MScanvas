@@ -645,7 +645,7 @@ describe("the conversion queue at each checked window size", () => {
         </WorkspaceDropTransportProvider>,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+      fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
       await screen.findByText("Converting item 2 of 3…");
       // One list of items, not one per breakpoint.
       const lists = document.querySelectorAll(".conversion-queue-list");

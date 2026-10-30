@@ -69,7 +69,7 @@ describe("M7.4 through the delivered figure owner", () => {
     render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}><PreviewApiProvider value={api}><App /></PreviewApiProvider></WorkspaceDropTransportProvider>);
     const messages = UI_RESOURCES[locale];
     if (locale === "zh-CN") {
-      fireEvent.click(await screen.findByRole("button", { name: UI_RESOURCES.en.settings }));
+      fireEvent.click(await screen.findByRole("button", { name: UI_RESOURCES.en.settingsEntry }));
       const settings = screen.getByRole("dialog");
       fireEvent.click(within(settings).getByRole("radio", { name: UI_RESOURCES.en.simplifiedChinese }));
       fireEvent.click(within(settings).getByRole("button", { name: messages.apply }));
@@ -161,7 +161,7 @@ describe("M7.4 through the delivered figure owner", () => {
     const { api, panel } = await mount({ spectrumExport: async () => { throw { kind: "spectrum_not_written", summary: "Owned original summary", detail: "Owned original residue warning", retryable: true, context: { kind: "temporaryExportLeftBehind" } }; } });
     const messages = UI_RESOURCES[locale];
     if (locale === "zh-CN") {
-      fireEvent.click(screen.getByRole("button", { name: UI_RESOURCES.en.settings }));
+      fireEvent.click(screen.getByRole("button", { name: UI_RESOURCES.en.settingsEntry }));
       const settings = screen.getByRole("dialog");
       fireEvent.click(within(settings).getByRole("radio", { name: UI_RESOURCES.en.simplifiedChinese }));
       fireEvent.click(within(settings).getByRole("button", { name: messages.apply }));

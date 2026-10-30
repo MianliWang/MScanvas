@@ -44,7 +44,7 @@ function renderApp(api: FakePreviewApi) {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
   return view;
 }
 
@@ -167,7 +167,7 @@ describe("destination request and queue truth", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await pressConvert(panel, "Convert 1 eligible…");
-    const settings = screen.getByRole("button", { name: "Settings" });
+    const settings = screen.getByRole("button", { name: "Settings…" });
     settings.focus();
     settings.blur();
     await act(async () => picker.resolve({ status: "idle" }));
@@ -182,12 +182,12 @@ describe("destination request and queue truth", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await pressConvert(panel, "Convert 1 eligible…");
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings…" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     await act(async () => picker.resolve({ status: "idle" }));
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Settings" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Settings…" })).toHaveFocus());
     expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled");
   });
 
@@ -230,7 +230,7 @@ describe("destination request and queue truth", () => {
       fireEvent.focus(window);
       expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveFocus();
       vi.mocked(document.hasFocus).mockReturnValue(true);
-      const settings = screen.getByRole("button", { name: "Settings" });
+      const settings = screen.getByRole("button", { name: "Settings…" });
       if (laterIntent === "newer focus") { settings.focus(); settings.blur(); }
       if (laterIntent === "settings") fireEvent.click(settings);
       act(() => { for (const frame of frames.splice(0)) frame(16); });
