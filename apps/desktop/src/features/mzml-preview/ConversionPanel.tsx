@@ -1126,7 +1126,7 @@ function PlanSummary(props: PlanProps & {
 function RequestedList({ members }: { readonly members: ResolvedConversionScope["members"] }): ReactElement {
   const t = useUiMessages();
   const keys = useMemo(() => members.map((row) => row.handle), [members]);
-  const { listProps, rows } = useListWindow(keys, 24);
+  const { listProps, rows, spacer } = useListWindow(keys, 24);
   return (
     <ol aria-label={t("m74CnvRequestedOrder")} className="conversion-requested-list" {...listProps}>
       {rows.map(({ key, index, style, ref }) => {
@@ -1138,6 +1138,7 @@ function RequestedList({ members }: { readonly members: ResolvedConversionScope[
           </li>
         );
       })}
+      {spacer}
     </ol>
   );
 }
@@ -1146,7 +1147,7 @@ function RequestedList({ members }: { readonly members: ResolvedConversionScope[
 function PlanList({ items }: { readonly items: readonly ConversionQueuePlanItem[] }): ReactElement {
   const t = useUiMessages();
   const keys = useMemo(() => items.map((item) => item.datasetHandle), [items]);
-  const { listProps, rows } = useListWindow(keys, 44);
+  const { listProps, rows, spacer } = useListWindow(keys, 44);
   return (
     <ol aria-label={t("m74CnvReviewedOrder")} className="conversion-queue-list conversion-plan-list" {...listProps}>
       {rows.map(({ key, index, style, ref }) => {
@@ -1179,6 +1180,7 @@ function PlanList({ items }: { readonly items: readonly ConversionQueuePlanItem[
           </li>
         );
       })}
+      {spacer}
     </ol>
   );
 }
@@ -1796,7 +1798,7 @@ function RunList({ items, renderRow, follow = null }: {
   readonly follow?: string | null;
 }): ReactElement {
   const keys = useMemo(() => items.map((item) => item.datasetHandle), [items]);
-  const { listProps, rows, windowed, root, offsetOf } = useListWindow(keys, 64);
+  const { listProps, rows, spacer, windowed, root, offsetOf } = useListWindow(keys, 64);
   // A reader who scrolls the list takes it over; the running item no longer
   // pulls it back (direction A 2.3).
   const readerScrolled = useRef(false);
@@ -1813,14 +1815,20 @@ function RunList({ items, renderRow, follow = null }: {
   }, [root]);
   const placeOf = useRef(offsetOf);
   placeOf.current = offsetOf;
-  // Once per running item, when it changes, or when the list is first shown:
-  // a queue that started while Conversion was another tab's is followed the
-  // moment the tab shows it.
+  // Where the running item sits by the window's measurements: rows measured
+  // after a reveal move it, and the list follows it there.
+  const followTop = follow === null ? null : offsetOf(follow);
+  // When the running item changes, and when the list is shown: a queue that
+  // started while Conversion was another tab's is followed the moment the tab
+  // shows it. A windowed list is its own scroll box, so it follows again
+  // whenever its box changes (shown, or the window resized), until the reader
+  // scrolls it.
   useLayoutEffect(() => {
-    if (follow === null || readerScrolled.current) return;
+    if (follow === null) return;
     const element = root.current;
     if (element === null) return;
     const reveal = () => {
+      if (readerScrolled.current || element.clientHeight === 0) return;
       if (windowed) {
         const top = placeOf.current(follow);
         if (top !== null && (top < element.scrollTop || top > element.scrollTop + element.clientHeight - 64)) element.scrollTop = Math.max(0, top - 64);
@@ -1829,21 +1837,23 @@ function RunList({ items, renderRow, follow = null }: {
           ?.scrollIntoView?.({ block: "nearest" });
       }
     };
-    if (element.clientHeight > 0 || typeof ResizeObserver === "undefined") { reveal(); return; }
-    const shown = new ResizeObserver(() => {
-      if (element.clientHeight === 0) return;
-      shown.disconnect();
-      if (!readerScrolled.current) reveal();
+    reveal();
+    if (typeof ResizeObserver === "undefined" || (!windowed && element.clientHeight > 0)) return;
+    const resized = new ResizeObserver(() => {
+      reveal();
+      // A short list's box grows with its rows, so it is followed once, when shown.
+      if (!windowed && element.clientHeight > 0) resized.disconnect();
     });
-    shown.observe(element);
-    return () => shown.disconnect();
-  }, [follow, windowed, root]);
+    resized.observe(element);
+    return () => resized.disconnect();
+  }, [follow, followTop, windowed, root]);
   return (
     <ol className="conversion-queue-list conversion-run-list" {...listProps}>
       {rows.map((row) => {
         const item = items[row.index];
         return item === undefined ? null : renderRow(item, row.index, row);
       })}
+      {spacer}
     </ol>
   );
 }

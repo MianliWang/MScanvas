@@ -259,6 +259,17 @@ describe("the project surface", () => {
     expect(document.querySelector("[data-project-proposal]")).toBeNull();
   });
 
+  it("windows a long reference list, its rest one hidden spacer row", async () => {
+    const inputs = Array.from({ length: 120 }, (_, index) =>
+      projectInput({ id: `11111111-2222-4111-8111-${String(index).padStart(12, "0")}`, label: `run-${String(index)}.mzML` }));
+    mount(openProject({ inputs }));
+    await waitFor(() => expect(document.querySelector('.project-list[data-windowed="true"]')).not.toBeNull());
+    const list = document.querySelector<HTMLElement>('.project-list[data-windowed="true"]')!;
+    expect(list.querySelectorAll("[data-project-input]").length).toBeLessThan(inputs.length);
+    expect(list.style.paddingBottom).toBe("");
+    expect(list.querySelector(":scope > li.list-window-spacer:last-child")).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("shows a completed capture as a run linked to the artifact it produced", async () => {
     const input = projectInput({ verification: "matchingRecordedContent" });
     mount(

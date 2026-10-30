@@ -861,6 +861,10 @@ button:disabled,
 .conversion-plan-list[data-windowed="true"],
 .conversion-requested-list[data-windowed="true"] { max-height: 240px; }
 .conversion-run-list[data-windowed="true"] { max-height: max(320px, calc(100vh - 220px)); }
+/* The window's unrendered rest: its height and nothing else (useListWindow). */
+.conversion-queue-list > li.list-window-spacer,
+.conversion-requested-list > li.list-window-spacer,
+.project-list > li.list-window-spacer { flex: none; margin: 0; padding: 0; border: 0; }
 
 /* Wide enough for the bound's two digits, so the names start at one place all
    the way down and item 10 does not shift the column that item 9 set. */

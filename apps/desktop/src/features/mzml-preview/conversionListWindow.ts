@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type FocusEvent } from "react";
+import { createElement, useCallback, useMemo, useRef, useState, type CSSProperties, type FocusEvent } from "react";
 
 import { useRosterWindow } from "../workbench/useRosterWindow";
 
@@ -26,8 +26,11 @@ export interface ListWindowRow {
  * against its root's scroll. The row that holds the keyboard stays mounted,
  * so a wheel scroll never takes focus out from under a Skip or an Open.
  *
- * Rows are placed by a top margin over any gap and the list's bottom padding
- * over the rest, so the list's own children stay its `li`s.
+ * Rows are placed by a top margin over any gap, and `spacer` -- one hidden
+ * `li`, rendered after the rows -- holds the rest. Not the list's bottom
+ * padding: in a border-box scroll box, padding taller than `max-height` is the
+ * box's height, so the list grew to tens of thousands of pixels, stopped being
+ * a scroll box and mounted every row (rendered QA: 31,843 px under a 548 px cap).
  */
 export function useListWindow(keys: readonly string[], estimate: number) {
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
@@ -62,7 +65,10 @@ export function useListWindow(keys: readonly string[], estimate: number) {
       if (row !== null) setFocusedKey(row.dataset.windowKey ?? null);
     },
     "data-windowed": windowing.windowed,
-    style: rest > 0 ? { paddingBottom: rest } : undefined,
   };
-  return { listProps, rows, windowed: windowing.windowed, root, offsetOf: windowing.offsetOf };
+  /** Render after the rows, inside the list. */
+  const spacer = rest > 0
+    ? createElement("li", { "aria-hidden": true, className: "list-window-spacer", style: { height: rest } })
+    : null;
+  return { listProps, rows, spacer, windowed: windowing.windowed, root, offsetOf: windowing.offsetOf };
 }

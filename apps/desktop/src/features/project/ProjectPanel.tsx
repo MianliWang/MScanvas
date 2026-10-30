@@ -266,9 +266,10 @@ function WindowedProjectList<T>({ items, keyOf, renderRow }: {
   readonly renderRow: (item: T, row: ListWindowRow) => ReactElement;
 }) {
   const keys = useMemo(() => items.map(keyOf), [items]); // eslint-disable-line react-hooks/exhaustive-deps
-  const { listProps, rows } = useListWindow(keys, 96);
+  const { listProps, rows, spacer } = useListWindow(keys, 96);
   return <ul className="project-list" {...listProps}>
     {rows.map((row) => { const item = items[row.index]; return item === undefined ? null : renderRow(item, row); })}
+    {spacer}
   </ul>;
 }
 

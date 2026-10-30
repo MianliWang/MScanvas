@@ -74,6 +74,11 @@ function expectWindowed(list: Element | null) {
   expect(list).toHaveAttribute("data-windowed", "true");
   expect(items[0]).toHaveAttribute("aria-setsize", String(FULL));
   expect(items[0]).toHaveAttribute("aria-posinset", "1");
+  // The unmounted rest is one hidden spacer row, never the list's own bottom
+  // padding: padding taller than the list's cap is the box's height, and the
+  // list stopped being a scroll box (rendered QA: 31,843 px under 548 px).
+  expect((list as HTMLElement).style.paddingBottom).toBe("");
+  expect(list!.querySelector(":scope > li.list-window-spacer:last-child")).toHaveAttribute("aria-hidden", "true");
 }
 
 describe("conversion lists at the queue's full size", () => {
