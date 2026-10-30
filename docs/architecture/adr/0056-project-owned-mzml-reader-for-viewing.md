@@ -6,6 +6,10 @@ product crate (both already in `Cargo.lock`, so the lock gains no package).
 Proposed 2026-10-28.
 Amended 2026-10-30 by the owner: decision 1's version rule (a note there).
 Amended 2026-10-30 by ADR 0060: decision 4, the view cache's pin (a note there).
+Amended 2026-10-30 by the owner: decision 1's selected-spectrum refusals gain
+`unit_not_an_accession` (a note there), and decisions 5 and 9's removal of the
+two `msaccess` operations waits for decision 3's admission follow-up (the
+slice-2 note under decision 9).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -164,6 +168,20 @@ for:
   lengths;
 - a non-finite value (NaN or infinity), which today's parser also refuses;
 - a 64-bit integer value that `f64` cannot hold exactly (decision 5).
+
+> **Amended 2026-10-30 by the owner's decision**, ratifying what slice 2 added.
+> The list above stays as written and gains one entry, and is closed again with
+> it:
+>
+> - a declared array unit that is not an accession: the m/z or intensity
+>   term's `unitAccession` must be `PREFIX:ID`, ASCII letters and digits on
+>   each side of one colon (`unit_not_an_accession`). A unit reaches the
+>   CSV/TSV preamble and the figure's labels, which admit no quoting. An
+>   undeclared unit stays undeclared.
+>
+> The desktop answers it with the existing `spectrum_refused` kind, detail
+> `mz:unit_not_an_accession` or `intensity:unit_not_an_accession`, so it needs
+> no new error kind or webview resource.
 
 **It must not panic or abort on any input.** That is a requirement slice 1
 proves with its probes (decision 9). The spike did not establish it (see
@@ -678,27 +696,29 @@ Slice 1 therefore meets this decision's merge condition.
 > pending, and until it lands the Rust and webview contracts disagree, so the
 > two merge together. What the implementation records:
 >
-> - **The `msaccess` operations stay in the crate, pending owner
->   ratification.** Decisions 5 and 9 say slice 2 removes them; this keeps them
->   until the owner confirms the deviation or a follow-up removes them. The
->   provider's open asks only for metadata and the run summary, and the
->   selected-spectrum operation,
+> - **The `msaccess` operations stay in the crate, ratified by the owner on
+>   2026-10-30.** Decisions 5 and 9 say slice 2 removes them; the owner accepted
+>   keeping them. The provider's open asks only for metadata and the run
+>   summary, and the selected-spectrum operation,
 >   `SELECTED_SPECTRUM_PRECISION` and the installation staleness check are
 >   removed from the desktop. The crate keeps `SpectrumTable` and
 >   `SpectrumByIndex` and their parsers, as it keeps `Tic`: capability evidence,
 >   discovery and the M0 spike example use them. Availability is still judged
 >   against all four operations, because changing it is the admission change
->   decision 3 leaves to its follow-up.
+>   decision 3 leaves to its follow-up. **Condition for removal:** that
+>   follow-up removes the two operations and their parsers, in the change that
+>   stops judging availability against them. Until it lands, they stay and
+>   availability stays judged against all four.
 > - **Shared types.** The `msaccess`-only fields stay, optional, and a native row
 >   or spectrum leaves them unreported. Printed-text precision becomes
 >   `SpectrumValueOrigin`, whose native variant carries the two arrays' stored
 >   widths. Each unit state keeps `msaccess`'s "not emitted" apart from a file's
 >   "not declared"; both reach the webview as not reported.
-> - **One reader refusal added, pending owner ratification**, because decision
->   1's list is closed. A declared array unit that is not an accession
->   (`PREFIX:ID`, ASCII letters and digits) refuses the spectrum
->   (`unit_not_an_accession`): a unit reaches the CSV/TSV preamble and figure
->   labels, which admit no quoting.
+> - **One reader refusal added, ratified by the owner on 2026-10-30** as an
+>   amendment of decision 1's closed list (the note there). A declared array
+>   unit that is not an accession (`PREFIX:ID`, ASCII letters and digits)
+>   refuses the spectrum (`unit_not_an_accession`): a unit reaches the CSV/TSV
+>   preamble and figure labels, which admit no quoting.
 > - **Figures.** The export maps a declared profile spectrum to a joined trace
 >   (decision 5), so its SVG, PNG, `Copy plot` and figure preview draw a line.
 >   Where the line crosses a current range's edge between two samples, it is

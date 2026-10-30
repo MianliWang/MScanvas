@@ -429,6 +429,13 @@ writer and Rust's ownership of files.
     which decision 10's table does not list. An attempt that a sharing refusal
     keeps from being removed after `view_cache_not_stored` stays until a later
     session's sweep, because decision 6 leaves this process's attempts alone.
+- ADR 0056 decision 3's admission follow-up, not yet written: viewing mzML
+  without ProteoWizard changes Rust's admission, the webview's `canPreview` and
+  ADR 0044's `backendUsable` together, and stops judging `msaccess`
+  availability against the spectrum-table and selected-spectrum operations. In
+  the same change it removes those two operations and their parsers from
+  `crates/proteowizard`, which the owner ratified keeping until then
+  (2026-10-30).
 - CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
