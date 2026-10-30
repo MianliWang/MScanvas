@@ -136,9 +136,10 @@ The Thermo work the owner selected on 2026-10-30
   >   - Its verified claim on profile MS2 rests on ion-trap data only (`3a`,
   >     14 spectra). "MS1 and up" also centroids MS2, and Orbitrap (FTMS)
   >     profile MS2, common on Q Exactive-class methods, was not measured. This
-  >     is the gap that keeps "MS2 and up" advanced, and the row stays verified
-  >     across the family with it until a public Orbitrap profile-MS2 file is
-  >     measured.
+  >     is the gap that keeps "MS2 and up" advanced. Decision 6 verifies this
+  >     row across the family with the gap open; the public Orbitrap
+  >     profile-MS2 measurement that would lift "MS2 and up" would also close
+  >     it.
   > - **MS2 and up, and every other vendor scope, is advanced on Thermo RAW,
   >   labelled not verified.** Before this change the code refused any vendor
   >   picker as not checkable. Its output check knew only the default picker's
