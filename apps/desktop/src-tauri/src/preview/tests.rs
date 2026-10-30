@@ -26967,7 +26967,7 @@ fn export_spectrum_range(
 }
 
 #[test]
-fn a_current_range_data_export_writes_schema_two_over_the_committed_window() {
+fn a_current_range_data_export_writes_schema_four_over_the_committed_window() {
     let (file, service, spectrum) = a_ranged_spectrum("m53-current-csv");
     let destination = file.directory.join("range.csv");
 
@@ -27005,7 +27005,7 @@ fn a_current_range_data_export_writes_schema_two_over_the_committed_window() {
     assert_eq!(exported_point_count, 3);
 
     let document = fs::read_to_string(&destination).expect("the file exists");
-    assert!(document.contains("#schema_version,2\n"), "{document}");
+    assert!(document.contains("#schema_version,4\n"), "{document}");
     assert!(document.contains("#range_scope,current\n"), "{document}");
     assert!(document.contains("#source_point_count,5\n"), "{document}");
     assert!(document.contains("#exported_point_count,3\n"), "{document}");
@@ -27018,7 +27018,7 @@ fn a_current_range_data_export_writes_schema_two_over_the_committed_window() {
 }
 
 #[test]
-fn a_full_source_data_export_is_still_schema_one() {
+fn a_full_source_data_export_is_schema_three() {
     let (file, service, spectrum) = a_ranged_spectrum("m53-full-csv");
     let destination = file.directory.join("full.csv");
 
@@ -27056,11 +27056,11 @@ fn a_full_source_data_export_is_still_schema_one() {
     );
 
     let document = fs::read_to_string(&destination).expect("the file exists");
-    assert!(document.contains("#schema_version,1\n"), "{document}");
+    assert!(document.contains("#schema_version,3\n"), "{document}");
     assert!(document.contains("#point_count,5\n"), "{document}");
     assert!(
         !document.contains("#range_scope"),
-        "version 1 gains no field: {document}"
+        "the full-source document gains no field: {document}"
     );
 }
 
@@ -27137,7 +27137,7 @@ fn a_current_range_with_nothing_committed_covers_the_whole_admitted_domain() {
     );
     assert_eq!(exported_point_count, 5);
     let document = fs::read_to_string(&destination).expect("the file exists");
-    assert!(document.contains("#schema_version,2\n"), "{document}");
+    assert!(document.contains("#schema_version,4\n"), "{document}");
 }
 
 #[test]

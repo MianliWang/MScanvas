@@ -10,6 +10,8 @@ library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/1
 2026-10-30); nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
+Amended 2026-10-30 by ADR 0056 slice 2: the data documents' version numbers
+(a note under Exports).
 Related: [0005](0005-mzml-preview-boundary.md),
 [0006](0006-multi-dataset-workspace-boundary.md),
 [0011](0011-private-workspace-conversion-path.md),
@@ -801,6 +803,14 @@ source, and states the conversion.
     gets a version above 2. The chromatogram document takes the next version
     of its own sequence.
   - An export from an mzML row stays byte-identical to today.
+
+  > **2026-10-30: [ADR 0056](0056-project-owned-mzml-reader-for-viewing.md)
+  > slice 2 took spectrum versions 3 (full source) and 4 (range) and
+  > chromatogram version 2** for an mzML row's documents, whose representation
+  > and unit fields now carry the file's declared values. Each
+  > provenance-bearing spectrum kind therefore gets a version above 4, and the
+  > chromatogram's provenance-bearing document takes version 3. "Byte-identical
+  > to today" means identical to what an mzML row writes from that change on.
 - No export carries a cache path or the cache key.
 
 **The project document: the cached file stays a private viewing artifact.**

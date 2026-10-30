@@ -5,6 +5,8 @@
   selected-spectrum CSV/TSV only. FIG-001, FIG-002 and FIG-005 through FIG-008
   remain unimplemented
 - Date: 2026-08-21
+- Amended 2026-10-30 by ADR 0056 slice 2: the spectrum data document is
+  version 3 (a note under the version 1 schema)
 
 ## Context
 
@@ -178,6 +180,19 @@ derivations of each other. The rows are not read out of SVG coordinates and the
 figure is not drawn from the rows. A test asserts that both carry the same
 points, which is the assertion that would fail if either started reading the
 other.
+
+> **2026-10-30: version 1 is no longer written; the full-source document is
+> version 3.** Since [ADR 0056](0056-project-owned-mzml-reader-for-viewing.md)
+> slice 2 a spectrum is read by MSCanvas's own mzML reader. Its values are the
+> stored binary values, and `#representation`, `#mz_unit` and
+> `#intensity_unit` carry what the file declares (`centroid` or `profile`, a
+> unit accession) instead of the constant `unreported`. The keys and their
+> order are unchanged, but a reader of version 1 could not tell which posture
+> a file holds, so the document takes a new version. It is 3 rather than 2
+> because the range document of
+> [ADR 0040](0040-spectrum-range-export.md) shares this `#format` and its
+> version sequence, and moves from 2 to 4. A file written as version 1 still
+> means what this section says.
 
 ### Saving
 

@@ -2,6 +2,8 @@
 
 Status: accepted
 Date: 2026-08-29
+Amended 2026-10-30 by ADR 0056 slice 2: the documents are versions 3 and 4 (a
+note under the data schema).
 Related: [0028](0028-figure-renderer-and-semantic-specification.md),
 [0029](0029-first-visible-spectrum-figure-and-data-export.md),
 [0034](0034-chromatogram-export-and-range-scope.md),
@@ -198,6 +200,18 @@ The two documents share one writer and one record loop. The preambles differ
 because the questions differ; the records cannot, or a full document and a range
 document over the same observations could come to disagree about how a number is
 written.
+
+> **2026-10-30: versions 1 and 2 are no longer written; full source is version
+> 3 and the range is version 4.** Since
+> [ADR 0056](0056-project-owned-mzml-reader-for-viewing.md) slice 2 a spectrum
+> is read by MSCanvas's own mzML reader: its values are the stored binary
+> values, and `#representation`, `#mz_unit` and `#intensity_unit` carry what
+> the file declares instead of the constant `unreported`. Each document keeps
+> its keys and their order, but a reader could not tell which posture a file
+> holds. Writing the new posture under 1 and 2 would change what those
+> versions mean, which is what this section froze version 1 to prevent. So both
+> documents take the next unused versions of the shared sequence, and a file
+> written as version 1 or 2 still means what this section says.
 
 ## Source order, not m/z order
 

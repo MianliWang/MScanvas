@@ -2,6 +2,8 @@
 
 Status: accepted
 Date: 2026-08-24
+Amended 2026-10-30 by ADR 0056 slice 2: the data document is version 2 (a
+note under the version 1 schema).
 Related: [0028](0028-figure-renderer-and-semantic-specification.md),
 [0029](0029-first-visible-spectrum-figure-and-data-export.md),
 [0030](0030-png-copy-plot-and-figure-settings.md),
@@ -300,6 +302,17 @@ documents rather than trusting it. Numbers use Rust's shortest round-tripping
 form — locale independent, `.` as the decimal point, no thousands separator — and
 negative zero, subnormals and the largest finite double come back bit for bit.
 Lines end with `\n`.
+
+> **2026-10-30: version 1 is no longer written; the document is version 2.**
+> Since [ADR 0056](0056-project-owned-mzml-reader-for-viewing.md) slice 2 the
+> rows are the mzML file's own scan start time, total ion current and base peak
+> intensity values, read by MSCanvas's own reader. `#retention_time_unit` is
+> `second` or `minute` where every row declares that unit, and `unreported`
+> where none does, instead of the constant `unreported`; retention times are in
+> the declared unit and never converted. The keys and their order are
+> unchanged, but a reader of version 1 could not tell which posture a file
+> holds, so the document takes version 2. A file written as version 1 still
+> means what this section says.
 
 ### Row order
 

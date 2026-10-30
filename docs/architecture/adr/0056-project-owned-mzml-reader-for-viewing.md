@@ -728,11 +728,15 @@ Slice 1 therefore meets this decision's merge condition.
 >   panel its own units, because the chromatogram's intensity has none. The
 >   screen draws sticks until slice 3. Centroid and undeclared spectra are
 >   unchanged.
-> - **Data-document values.** The spectrum documents (schemas 1 and 2) and the
->   chromatogram document (schema 1) keep their fields. The spectrum's
->   representation and unit fields and the chromatogram's retention-time unit
->   now also carry the file's declared values. Whether that needs a new schema
->   version is an open owner question.
+> - **Data-document versions, decided by the owner on 2026-10-30.** The
+>   spectrum documents and the chromatogram document keep their keys. The
+>   spectrum's representation and unit fields and the chromatogram's
+>   retention-time unit now carry the file's declared values, and retention
+>   times are in the declared unit, never converted. A reader of the old
+>   versions could not tell which posture it holds, so each document takes a
+>   new version: spectrum full source 1 → 3 and range 2 → 4 (one version
+>   sequence for one `#format`), chromatogram 1 → 2. Versions 1 and 2 are no
+>   longer written. Dated notes in ADRs 0029, 0034, 0040 and 0060 record it.
 > - **Reconciliation is exact** (`TableRowFacts::contradicts`), including the
 >   retention-time unit.
 > - **Decision 4.** An open takes its ticket and drops every other dataset's
@@ -1011,14 +1015,17 @@ keeps today's row-capped state (decision 5). Two other ways:
 - **[ADR 0029](0029-first-visible-spectrum-figure-and-data-export.md).**
   "Representation and units stay unreported" holds for a spectrum that
   declares neither. A native spectrum's figure and data document carry the
-  representation and array units the file declares.
+  representation and array units the file declares. The full-source data
+  document is version 3 (a dated note there).
 - **[ADR 0034](0034-chromatogram-export-and-range-scope.md).** The
   document's `#retention_time_unit` is `second` or `minute` where every row
-  declares that unit, and stays `unreported` where none does.
+  declares that unit, and stays `unreported` where none does. The document is
+  version 2 (a dated note there).
 - **[ADR 0040](0040-spectrum-range-export.md).** The product is no longer
   only in the discrete branch. A spectrum the file declares profile takes the
   established-profile branch, clipped with an interpolated boundary value.
-  Centroid and undeclared spectra stay discrete.
+  Centroid and undeclared spectra stay discrete. The range data document is
+  version 4 (a dated note there).
 - **[ADR 0044](0044-conversion-configuration-authority.md).** Not amended.
   `backendUsable` still gates every mzML read, native or not. The follow-up
   that admits native reads without a usable backend or during a conversion

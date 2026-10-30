@@ -16,6 +16,11 @@ All notable changes will be documented here once versioned releases begin.
   identifiers, as its SVG already does. No path, no handle and
   no other key is written; the pixels and Copy plot are unchanged
   ([ADR 0053](docs/architecture/adr/0053-png-text-metadata.md)).
+- **Spectrum and chromatogram CSV/TSV files carry new schema versions**
+  (spectrum 3 full source and 4 range, chromatogram 2), because their
+  representation and unit fields now state what the mzML file declares and
+  retention times stay in the file's own unit
+  ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
 
 ## 0.1.0-beta.1 — 2026-10-28 (prerelease)
 

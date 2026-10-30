@@ -53,7 +53,16 @@ use super::service::TableRowFacts;
 pub(super) const CHROMATOGRAM_DATA_FORMAT_ID: &str = "mscanvas_chromatogram_export";
 
 /// The version of that document's schema.
-pub(super) const CHROMATOGRAM_DATA_SCHEMA_VERSION: u32 = 1;
+///
+/// **2, and version 1 is no longer written.** Version 1 (ADR 0034) was projected
+/// from `msaccess`'s scan table: rounded printed values, and a chromatogram
+/// only where no row stated a retention-time unit, so `retention_time_unit`
+/// could only be `unreported`. Since ADR 0056 slice 2 the rows are the file's
+/// own cvParam values, retention times stay in the unit the file declares and
+/// are never converted, and `retention_time_unit` is `second`, `minute` or
+/// `unreported`. The keys did not change, but a reader of version 1 cannot
+/// tell which of the two it holds.
+pub(super) const CHROMATOGRAM_DATA_SCHEMA_VERSION: u32 = 2;
 
 /// The value every unreported state is written as.
 const UNREPORTED: &str = "unreported";
@@ -633,14 +642,14 @@ impl ChromatogramSource {
 
 /// The document a chromatogram data export writes.
 ///
-/// # Schema, version 1
+/// # Schema, version 2
 ///
 /// A metadata preamble, then a header row, then one record per **source scan**
 /// inside the exported range:
 ///
 /// ```text
 /// #format,mscanvas_chromatogram_export
-/// #schema_version,1
+/// #schema_version,2
 /// #source,per_scan_spectrum_table
 /// #range_scope,full
 /// #source_scan_count,3
@@ -649,13 +658,17 @@ impl ChromatogramSource {
 /// #full_range_high,3
 /// #export_range_low,1
 /// #export_range_high,3
-/// #retention_time_unit,unreported
+/// #retention_time_unit,minute
 /// #intensity_unit,unreported
 /// #row_order,retention_time_then_table_position
 /// spectrum_index,scan_number,ms_level,retention_time,total_ion_current,base_peak_intensity
 /// 0,1,1,1,123,42
 /// 1,,2,2,456,120
 /// ```
+///
+/// Version 1's keys, in its order. `retention_time_unit` is `second` or
+/// `minute` when every row declares that unit, and `unreported` when none
+/// declares one; the retention times are in that unit, never converted.
 ///
 /// The preamble uses the same delimiter as the records, and every preamble line
 /// begins with `#`, so a reader that wants only the table can skip them without
@@ -1324,7 +1337,7 @@ mod tests {
             preamble(&document, "format", ','),
             CHROMATOGRAM_DATA_FORMAT_ID
         );
-        assert_eq!(preamble(&document, "schema_version", ','), "1");
+        assert_eq!(preamble(&document, "schema_version", ','), "2");
         assert_eq!(preamble(&document, "source", ','), SOURCE_DESCRIPTION);
         assert_eq!(preamble(&document, "range_scope", ','), "full");
         assert_eq!(preamble(&document, "source_scan_count", ','), "3");

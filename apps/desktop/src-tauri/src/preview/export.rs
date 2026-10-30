@@ -86,27 +86,34 @@ use super::selection::DatasetId;
 /// be able to say so, and splitting a joined field to find out would be a parse
 /// rule of its own.
 ///
-/// **Frozen at 1.** This is the document M4.1 shipped and its shape already
-/// means *the complete spectrum*: the same source writes the same bytes it
-/// always did, and a reader holding one of those files needs no new rule to
-/// read it. A range is expressed by [`SPECTRUM_DATA_CURRENT_SCHEMA_VERSION`]
-/// instead, because silently changing what version 1 means is the one thing a
-/// schema version exists to prevent.
-pub(super) const SPECTRUM_DATA_FULL_SCHEMA_VERSION: u32 = 1;
+/// **3, and versions 1 and 2 are no longer written.** The full-source and range
+/// documents share one `#format` and so one version sequence. Versions 1 (full
+/// source, ADR 0029) and 2 (range, ADR 0040) were read through `msaccess`:
+/// eight-decimal text, and a representation and units that could only be
+/// `unreported`. Since ADR 0056 slice 2 the values are the file's stored binary
+/// values, and the representation and unit fields carry what the file
+/// declares. The keys did not change, but a reader of version 1 cannot tell
+/// which of the two it holds, and silently changing what a version means is the
+/// one thing a schema version exists to prevent. So the same full-source shape
+/// takes the next unused version, 3, and the range document takes 4.
+pub(super) const SPECTRUM_DATA_FULL_SCHEMA_VERSION: u32 = 3;
 
 /// The version a **current-range** data document answers to.
 ///
-/// A separate version rather than an extra key on version 1. The two documents
-/// answer different questions -- one is the spectrum, the other is a window of
-/// it -- and a v1 reader meeting a `range_scope` it does not know would have to
-/// guess whether the rows it is holding are all of them. They are not, so it is
-/// told in the one field it is guaranteed to look at.
+/// A separate version rather than an extra key on the full-source one. The two
+/// documents answer different questions -- one is the spectrum, the other is a
+/// window of it -- and a full-source reader meeting a `range_scope` it does not
+/// know would have to guess whether the rows it is holding are all of them.
+/// They are not, so it is told in the one field it is guaranteed to look at.
 ///
-/// Version 2 is self-describing: it carries the resolved m/z bounds, the
-/// complete source point count and the exported point count as **separate**
-/// keys, so a reader can tell what was written from the file alone, with no
-/// interface, no viewport and no session to ask.
-pub(super) const SPECTRUM_DATA_CURRENT_SCHEMA_VERSION: u32 = 2;
+/// It is self-describing: it carries the resolved m/z bounds, the complete
+/// source point count and the exported point count as **separate** keys, so a
+/// reader can tell what was written from the file alone, with no interface, no
+/// viewport and no session to ask.
+///
+/// **4.** Version 2 was this shape read through `msaccess`; see
+/// [`SPECTRUM_DATA_FULL_SCHEMA_VERSION`] for why both moved.
+pub(super) const SPECTRUM_DATA_CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// What the data document calls itself.
 pub(super) const SPECTRUM_DATA_FORMAT_ID: &str = "mscanvas_spectrum_export";
@@ -2307,53 +2314,57 @@ pub(super) fn png_document(
 /// full-source document and a current-range one cannot come to disagree about
 /// how a measurement is written, in what order, or in what form.
 ///
-/// # Schema, version 1 -- the full source
+/// # Schema, version 3 -- the full source
 ///
 /// A metadata preamble, then a header row, then exactly one record per source
 /// point in source order:
 ///
 /// ```text
 /// #format,mscanvas_spectrum_export
-/// #schema_version,1
+/// #schema_version,3
 /// #spectrum_index,42
 /// #point_count,2
-/// #representation,unreported
-/// #mz_unit,unreported
-/// #intensity_unit,unreported
+/// #representation,centroid
+/// #mz_unit,MS:1000040
+/// #intensity_unit,MS:1000131
 /// mz,intensity
 /// 100.5,12
 /// 100.75,0
 /// ```
 ///
-/// Unchanged since M4.1 and deliberately frozen. Its shape already means *the
-/// complete spectrum*, so the same source writes the same bytes it always did.
+/// Version 1's keys, in its order. Its shape means *the complete spectrum*.
+/// `representation` is `centroid` or `profile` as the file declares it, each
+/// unit is the accession the array declares, and a state the file does not
+/// declare is `unreported`.
 ///
-/// # Schema, version 2 -- one committed m/z range
+/// # Schema, version 4 -- one committed m/z range
 ///
 /// The same document about a window of the same spectrum, and self-describing
 /// enough to be read with no interface, no viewport and no session to ask:
 ///
 /// ```text
 /// #format,mscanvas_spectrum_export
-/// #schema_version,2
+/// #schema_version,4
 /// #spectrum_index,42
 /// #range_scope,current
 /// #source_point_count,4
 /// #exported_point_count,2
 /// #range_low,100.5
 /// #range_high,100.75
-/// #representation,unreported
-/// #mz_unit,unreported
-/// #intensity_unit,unreported
+/// #representation,centroid
+/// #mz_unit,MS:1000040
+/// #intensity_unit,MS:1000131
 /// mz,intensity
 /// 100.5,12
 /// 100.75,0
 /// ```
 ///
-/// Two counts rather than one. `point_count` in version 1 is unambiguous
-/// because the two numbers are the same there; in a ranged document they are
-/// not, and a single key would leave a reader unable to tell whether the rows
-/// they hold are all the spectrum has.
+/// Version 2's keys, in its order, with the declared terms of version 3.
+///
+/// Two counts rather than one. `point_count` in the full-source document is
+/// unambiguous because the two numbers are the same there; in a ranged document
+/// they are not, and a single key would leave a reader unable to tell whether
+/// the rows they hold are all the spectrum has.
 ///
 /// `range_low` and `range_high` are the range **Rust resolved**, not the one the
 /// interface asked for -- so a file records the window it was actually taken
@@ -2729,9 +2740,9 @@ mod tests {
 
     // -------------------------------------------------------- the data files
 
-    /// The v1 preamble, exactly.
+    /// The full-source preamble, exactly.
     #[test]
-    fn the_data_document_carries_the_version_one_preamble() {
+    fn the_data_document_carries_the_full_source_preamble() {
         let document = data_document(
             &spectrum(42, vec![100.5], vec![12.0]),
             SpectrumExportFormat::Csv,
@@ -2742,7 +2753,7 @@ mod tests {
             preamble(&document),
             vec![
                 "#format,mscanvas_spectrum_export".to_owned(),
-                "#schema_version,1".to_owned(),
+                "#schema_version,3".to_owned(),
                 "#spectrum_index,42".to_owned(),
                 "#point_count,1".to_owned(),
                 "#representation,unreported".to_owned(),
@@ -2921,7 +2932,7 @@ mod tests {
             preamble(&document),
             vec![
                 "#format,mscanvas_spectrum_export".to_owned(),
-                "#schema_version,1".to_owned(),
+                "#schema_version,3".to_owned(),
                 "#spectrum_index,4".to_owned(),
                 "#point_count,0".to_owned(),
                 "#representation,unreported".to_owned(),
@@ -3518,7 +3529,8 @@ mod tests {
         // A size, a resolution and a theme are properties of a drawing. The
         // measurement is the same measurement whatever it is being drawn at,
         // and a byte of difference here would mean a figure setting had reached
-        // the data -- which is the one thing schema v1 must never depend on.
+        // the data -- which is the one thing a data document must never depend
+        // on.
         let source = spectrum(9, vec![100.5, 200.25, 300.0], vec![1.0, -2.0, 0.0]);
         let baseline_csv = data_document(
             &source,
@@ -5825,7 +5837,7 @@ mod tests {
             vec![(200.0, 1.0), (100.0, 2.0)],
             "in source order, which is not m/z order and is not made into one",
         );
-        assert_eq!(preamble_value(&document, "schema_version", ','), "1");
+        assert_eq!(preamble_value(&document, "schema_version", ','), "3");
     }
 
     /// A range document carries source observations in source order.
@@ -5996,7 +6008,7 @@ mod tests {
         assert_eq!(figure.panels()[0].visible_value_domain(), None);
     }
 
-    /// The current-range data document is schema 2, and says everything a
+    /// The current-range data document is schema 4, and says everything a
     /// reader needs with no interface to ask.
     #[test]
     fn the_current_range_document_carries_its_own_schema_and_both_counts() {
@@ -6010,7 +6022,7 @@ mod tests {
         .expect("a document");
         for (key, value) in [
             ("format", "mscanvas_spectrum_export"),
-            ("schema_version", "2"),
+            ("schema_version", "4"),
             ("spectrum_index", "42"),
             ("range_scope", "current"),
             ("source_point_count", "5"),
@@ -6025,20 +6037,20 @@ mod tests {
         }
         assert!(
             !document.contains("#point_count"),
-            "the ambiguous single count belongs to version 1 and is not carried into version 2",
+            "the ambiguous single count belongs to the full-source document only",
         );
     }
 
-    /// The full-source data document is schema 1, unchanged.
+    /// The full-source data document is schema 3, with version 1's keys.
     #[test]
-    fn the_full_source_document_stays_schema_one() {
+    fn the_full_source_document_is_schema_three_with_version_one_keys() {
         let document = data_document(
             &ranged_spectrum(),
             SpectrumExportFormat::Csv,
             ResolvedSpectrumRange::Full,
         )
         .expect("a document");
-        assert_eq!(preamble_value(&document, "schema_version", ','), "1");
+        assert_eq!(preamble_value(&document, "schema_version", ','), "3");
         assert_eq!(preamble_value(&document, "point_count", ','), "5");
         for absent in [
             "range_scope",
@@ -6048,7 +6060,7 @@ mod tests {
         ] {
             assert!(
                 !document.contains(&format!("#{absent}")),
-                "version 1 gains no field: #{absent}",
+                "the full-source document gains no field: #{absent}",
             );
         }
     }
