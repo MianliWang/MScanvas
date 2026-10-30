@@ -190,7 +190,8 @@ there is capacity, no decompilation, and every other point as recommended):
 6. **Thermo vendor centroiding.** "MS1 and up" (`peakPicking vendor
    msLevel=1-`) becomes a verified row on the evidenced build. "MS2 and up"
    stays in the advanced tier, labelled not verified, until a public Orbitrap
-   profile-MS2 file is measured
+   profile-MS2 file is measured (*one was on 2026-10-30: see
+   [section 7.5](#75-evidence-gated-items)*)
    ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
    [PR #162](https://github.com/MianliWang/MScanvas/pull/162)).
 

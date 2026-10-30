@@ -117,6 +117,7 @@ The Thermo work the owner selected on 2026-10-30
   becomes a verified row on the evidenced build.
   `peakPicking vendor msLevel=2-` ("MS2 and up") stays in the advanced tier,
   labelled not verified, until a public Orbitrap profile-MS2 file is measured
+  (*one was, later on 2026-10-30: see the [note under Consequences](#consequences)*)
   ([evidence](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)).
 - **One-click view RAW.** Selecting a Thermo RAW row to view converts it with
   the verified defaults into an MSCanvas-owned cache, never the user's
@@ -323,8 +324,8 @@ Law:
 > - it left the 474 profile MS1 spectra bit-identical (cases `TQ0` to `TQ2`).
 >
 > This lifts the measurement gate on "MS2 and up". "MS1 and up" also centroids
-> MS2, so its claim on Orbitrap profile MS2 is now measured too, for that model. Turning "MS2 and up"
-> into a verified row is a follow-up code change, not part of this note. Other
-> Orbitrap models and data-dependent profile MS2 remain unmeasured. Whether
-> the row's source domain is the whole Thermo RAW family is settled with that
-> change, as it was for "MS1 and up".
+> MS2, so its claim on Orbitrap profile MS2 is now measured too, for that
+> model. Turning "MS2 and up" into a verified row is a follow-up code change,
+> not part of this note. Other Orbitrap models and data-dependent profile MS2
+> remain unmeasured. Whether that row's source domain is the whole Thermo RAW
+> family, as the evidence proposes for both rows, is for that change to settle.

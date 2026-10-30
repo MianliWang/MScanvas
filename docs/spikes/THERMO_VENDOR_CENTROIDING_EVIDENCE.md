@@ -52,9 +52,14 @@ runs took place from 05:09Z to 05:13Z the same day.
 | Thermo reader | the build's bundled `ThermoFisher.CommonCore.RawFileReader`; no EULA prompt appeared and none was accepted |
 | `msaccess.exe` SHA-256 (3c's `run_summary` only) | `85681b205569a9850f47d079749e04ba45f4b0c64e363d4a2c5c67c3c67ed1f4` |
 
-The runner checked this digest before every case. Each case's record also carries
-the digest taken after it ran, and every one matches. M6.2, M6.10 and
-`EVIDENCED_PROVIDER_BUILDS` bind the same executable.
+The runner checked the `msconvert.exe` digest before every case. Each case's record
+also carries the `msconvert.exe` digest taken after it ran, and every one matches.
+M6.2, M6.10 and `EVIDENCED_PROVIDER_BUILDS` bind the same executable.
+
+The runner pins only `msconvert.exe`, so the `run_summary` record's after-run
+digest is `msconvert.exe`'s too. `msaccess.exe` was hashed separately with
+PowerShell `Get-FileHash`, and again on 2026-10-30 at the same value and
+`12,898,816` bytes. That is the `msaccess.exe` M5 and M6.10 bind.
 
 ## Sources
 
@@ -408,6 +413,10 @@ addressed. Neither runs on Thermo RAW, and none of these cases ran them.
   profile MS2 spectra, but they come from one instrument model and one
   data-independent method. Data-dependent Orbitrap profile MS2 and other Orbitrap
   models were not measured.
+- **Profile MS3 and above.** 3a's MS3 spectra are all centroid, and 3b and 3c
+  hold none, so neither scope was measured acting on a profile MS3+ spectrum.
+  If a scope left one in profile, the proposed representation check would fail
+  closed.
 - **Other builds or RawFileReader versions.** The 3a reference agreement spans
   builds 3.0.18248 and 3.0.26013, but transfer is still not claimed.
 - **Other vendor readers.** Nothing was measured on Shimadzu LCD or SCIEX WIFF.
@@ -497,7 +506,8 @@ lower `None` to an explicit `msLevel=1-` and reuse this row.
 
 Today's contract cannot accept these rows. `UnscopedDefaultCentroiding` refuses
 `VendorPeakPicking` as unrequested. Its representation rule also requires every
-spectrum to be centroid, which would refuse the correct `TV2` and `TE2` outputs.
+spectrum to be centroid, which would refuse the correct `TV2`, `TE2` and `TQ2`
+outputs.
 
 Each of the following needs its own intent or chain-step handling:
 
@@ -553,9 +563,9 @@ When the rows land, the change that adds them should also update:
   corroborated, not proven. The same holds for 3c.
 - **3c came later, from a separate session under the same release.** Its runner
   `ms2_run.py` is derived from `thermo_run.py`, which was left unedited, so the
-  recorded `thermo_run.py` digest stays valid. 3c has no `peakPicking vendor` case without
-  `msLevel=`, like 3b. It has no reference output either, so the 3b sanity checks
-  stand in for one.
+  recorded `thermo_run.py` digest stays valid. 3c has no `peakPicking vendor`
+  case without `msLevel=`, like 3b. It has no reference output either, so the
+  3b sanity checks stand in for one.
 - **3c's screening downloaded public text, never a RAW file.** That text was six
   reference mzMLs from ProteoWizard's test directory, mzdata's `small.mzML`, and
   two byte ranges (3 MB and 2 MB) of `PXD000001`'s mzXML. They were read as data,
