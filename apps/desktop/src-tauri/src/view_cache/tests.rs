@@ -124,11 +124,12 @@ fn junction(link: &Path, target: &Path) {
 
 /// A directory symbolic link, where this account may create one. Without the
 /// privilege (error 1314) that half of a test is skipped, and says so; the
-/// junction half never is.
+/// junction half never is. Under CI the link is required: libtest hides a
+/// passing test's output, so a skip there would pass unseen.
 fn symlink(link: &Path, target: &Path) -> bool {
     match std::os::windows::fs::symlink_dir(target, link) {
         Ok(()) => true,
-        Err(error) if error.raw_os_error() == Some(1314) => {
+        Err(error) if error.raw_os_error() == Some(1314) && std::env::var_os("CI").is_none() => {
             eprintln!("note: no symbolic-link privilege; the symlink case is skipped");
             false
         }
