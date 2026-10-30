@@ -18,5 +18,13 @@ and a label holding `;` before each of them, to show that CSV and TSV write
 such values exactly as stored. Every value is one TSV can carry: no tab and no
 line break.
 
+`results-spreadsheet.csv` is the spreadsheet CSV of the same result, pinned by
+`the_spreadsheet_csv_is_its_golden_document_after_one_byte_order_mark`. The
+file holds the text **after** the byte-order mark: the test asserts the mark
+separately (`EF BB BF`, once, first), so an editor that adds or strips one
+cannot change what is compared without the test failing. Against `results.csv`
+it differs in exactly the `#format` value and the apostrophes ADR 0054 adds to
+the declared text fields.
+
 Regenerating a fixture means writing what the test's call returns; there is no
 separate tool, because the test is the specification of what the file holds.

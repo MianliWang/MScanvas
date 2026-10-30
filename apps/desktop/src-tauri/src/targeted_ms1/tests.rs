@@ -4654,7 +4654,11 @@ fn a_real_result_is_read_after_reopen_and_save_as_with_neither_the_runtime_nor_t
     }
     assert!(drawn > 0, "at least one real target reached extraction");
     let stored = copied.stored_targeted_result(artifact).expect("stored");
-    for format in [TableFormat::Csv, TableFormat::Tsv] {
+    for format in [
+        TableFormat::Csv,
+        TableFormat::Tsv,
+        TableFormat::SpreadsheetCsv,
+    ] {
         let (table, count) = result_table(&stored, format).expect("a table");
         assert_eq!(count, plan.targets.len());
         assert_eq!(result_table(&stored, format).expect("again").0, table);
@@ -4663,6 +4667,7 @@ fn a_real_result_is_read_after_reopen_and_save_as_with_neither_the_runtime_nor_t
         let name = match format {
             TableFormat::Csv => "results.csv",
             TableFormat::Tsv => "results.tsv",
+            TableFormat::SpreadsheetCsv => "results-spreadsheet.csv",
         };
         fs::write(evidence_dir.join(name), &table).expect("table");
     }
@@ -5679,4 +5684,202 @@ fn the_csv_and_tsv_tables_are_byte_for_byte_what_they_were() {
         assert_eq!(table, golden, "{format:?}");
         assert!(!table.starts_with('\u{FEFF}'), "no byte-order mark");
     }
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0054: the spreadsheet CSV
+// ---------------------------------------------------------------------------
+
+const TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+
+/// The spreadsheet CSV, its byte-order mark checked and removed.
+fn spreadsheet(stored: &StoredResult) -> String {
+    let (table, count) = result_table(stored, TableFormat::SpreadsheetCsv).expect("a table");
+    assert_eq!(count, stored.rows.len());
+    assert!(
+        table.as_bytes().starts_with(b"\xEF\xBB\xBF"),
+        "a UTF-8 mark"
+    );
+    assert_eq!(table.matches('\u{FEFF}').count(), 1, "one mark, first");
+    table['\u{FEFF}'.len_utf8()..].to_owned()
+}
+
+#[test]
+fn the_spreadsheet_csv_is_its_golden_document_after_one_byte_order_mark() {
+    let table = spreadsheet(&golden_stored());
+    let golden =
+        include_str!("../../../../../fixtures/targeted-table-golden/results-spreadsheet.csv");
+    assert!(
+        !golden.starts_with('\u{FEFF}'),
+        "the fixture holds the text after the mark"
+    );
+    assert_eq!(table, golden);
+    assert!(
+        table.starts_with("#format,mscanvas_targeted_ms1_results_spreadsheet\n#schema_version,1\n")
+    );
+    // The labels that start a formula, before and after a `;`, and engine text.
+    for cell in [
+        "\"'=SUM(1,2)\"",
+        ",'+x;'-y;'@z;'=w,",
+        ",'@home,",
+        ",'-1 (did not converge),",
+        "#engine_openms,'@3.4.0\n",
+        "#engine_openms_revision,'-dirty\n",
+        ",咖啡因 · 标准品,",
+        ",#hash first,",
+    ] {
+        assert!(table.contains(cell), "{cell:?}");
+    }
+}
+
+#[test]
+fn the_wire_has_one_more_closed_word_and_no_other() {
+    assert_eq!(
+        TableFormat::from_wire("spreadsheetCsv"),
+        Some(TableFormat::SpreadsheetCsv)
+    );
+    for format in [
+        TableFormat::Csv,
+        TableFormat::Tsv,
+        TableFormat::SpreadsheetCsv,
+    ] {
+        assert_eq!(TableFormat::from_wire(format.stable_id()), Some(format));
+    }
+    for word in [
+        "spreadsheet",
+        "SpreadsheetCsv",
+        "spreadsheet_csv",
+        "xlsx",
+        "",
+    ] {
+        assert_eq!(TableFormat::from_wire(word), None, "{word}");
+    }
+}
+
+#[test]
+fn the_declared_fields_are_named_and_formula_is_not_one_of_them() {
+    assert_eq!(
+        output::SPREADSHEET_TEXT_COLUMNS,
+        ["label", "adduct", "model_status"]
+    );
+    assert_eq!(
+        output::SPREADSHEET_TEXT_PREAMBLE_KEYS,
+        ["engine_pyopenms", "engine_openms", "engine_openms_revision"]
+    );
+    assert!(!output::SPREADSHEET_TEXT_COLUMNS.contains(&"formula"));
+    // The reason: a stored formula never starts a trigger.
+    for trigger in TRIGGERS {
+        assert!(!record::plain_formula(&format!("{trigger}C8H10N4O2")));
+    }
+}
+
+#[test]
+fn every_trigger_is_marked_at_the_start_of_a_declared_field_and_after_each_semicolon() {
+    let mut stored = golden_stored();
+    for t in TRIGGERS {
+        stored.plan.targets[5].label = format!("{t}a;{t}b;c{t};;{t}");
+        stored.rows[0]
+            .feature
+            .as_mut()
+            .expect("a feature")
+            .model_status = format!("{t}1 (x)");
+        stored.rows[0].ion.as_mut().expect("an ion").adduct = format!("{t}[M+H]+");
+        if let Some(report) = stored
+            .execution
+            .attempt
+            .as_mut()
+            .and_then(|attempt| attempt.engine_report.as_mut())
+        {
+            report.pyopenms = format!("{t}3");
+        }
+        // CSV quotes a field holding a carriage return, and quoting comes after
+        // the mark: `"'\r…"`, never `'"\r…"`.
+        let cell = |value: String| {
+            if t == '\r' {
+                format!("\"{value}\"")
+            } else {
+                value
+            }
+        };
+        let table = spreadsheet(&stored);
+        for expected in [
+            format!(",{},", cell(format!("'{t}a;'{t}b;c{t};;'{t}"))),
+            format!(",{},", cell(format!("'{t}1 (x)"))),
+            format!(",{},", cell(format!("'{t}[M+H]+"))),
+            format!("#engine_pyopenms,{}\n", cell(format!("'{t}3"))),
+        ] {
+            assert!(table.contains(&expected), "{t:?}: {expected:?}");
+        }
+        // The plain CSV writes every one of them as stored.
+        let (csv, _) = result_table(&stored, TableFormat::Csv).expect("a table");
+        assert!(!csv.contains('\''), "{t:?}");
+        assert!(csv.contains(&format!(",{},", cell(format!("{t}a;{t}b;c{t};;{t}")))));
+    }
+}
+
+#[test]
+fn non_ascii_text_is_kept_and_marked_only_where_a_trigger_starts_a_cell() {
+    let mut stored = golden_stored();
+    stored.plan.targets[0].label = "=咖啡因;-标准品;Ünïcode".to_owned();
+    stored.plan.targets[5].label = "咖啡因;标准品".to_owned();
+    let table = spreadsheet(&stored);
+    assert!(table.contains(",'=咖啡因;'-标准品;Ünïcode,"));
+    assert!(table.contains(",咖啡因;标准品,"));
+    assert!(
+        table.contains(",咖啡因 · 标准品,"),
+        "the golden label, unchanged"
+    );
+}
+
+#[test]
+fn numbers_formula_and_code_owned_fields_are_never_altered() {
+    let mut stored = golden_stored();
+    // Labels a plain split on `,` can read: no quoted field anywhere.
+    stored.plan.targets[0].label = "-caffeine".to_owned();
+    stored.plan.targets[1].label = "=SUM(1)".to_owned();
+    let marked = spreadsheet(&stored);
+    let (csv, _) = result_table(&stored, TableFormat::Csv).expect("a table");
+    assert!(
+        !csv.contains('"') && !marked.contains('"'),
+        "nothing quoted"
+    );
+    assert!(!csv.contains('\''), "so every apostrophe below is a mark");
+    let (marked_lines, csv_lines): (Vec<&str>, Vec<&str>) =
+        (marked.lines().collect(), csv.lines().collect());
+    assert_eq!(marked_lines.len(), csv_lines.len());
+
+    let declared = |name: &str| output::SPREADSHEET_TEXT_COLUMNS.contains(&name);
+    for (marked_line, csv_line) in marked_lines.iter().zip(&csv_lines) {
+        if let Some(rest) = csv_line.strip_prefix('#') {
+            let (key, value) = rest.split_once(',').expect("a preamble line");
+            let marked_value = marked_line
+                .strip_prefix(&format!("#{key},"))
+                .expect("the same key, in the same place");
+            match key {
+                "format" => assert_eq!(marked_value, "mscanvas_targeted_ms1_results_spreadsheet"),
+                _ if output::SPREADSHEET_TEXT_PREAMBLE_KEYS.contains(&key) => {
+                    assert_eq!(marked_value.replace('\'', ""), value, "{key}");
+                }
+                _ => assert_eq!(marked_value, value, "{key}"),
+            }
+            continue;
+        }
+        let marked_cells: Vec<&str> = marked_line.split(',').collect();
+        let csv_cells: Vec<&str> = csv_line.split(',').collect();
+        assert_eq!(marked_cells.len(), TABLE_COLUMNS.len());
+        for ((name, marked_cell), csv_cell) in
+            TABLE_COLUMNS.iter().zip(&marked_cells).zip(&csv_cells)
+        {
+            if declared(name) {
+                assert_eq!(marked_cell.replace('\'', ""), *csv_cell, "{name}");
+            } else {
+                assert_eq!(marked_cell, csv_cell, "{name} is never altered");
+            }
+        }
+    }
+    // The negative numbers, and the label and engine text beside them.
+    assert!(marked.contains(",'-1 (did not converge),-3.25,4.5,20500.25,"));
+    assert!(marked.contains(",114,126,-12.5,"));
+    assert!(marked.contains(",'-caffeine,C8H10N4O2,"));
+    assert!(marked.contains(",'=SUM(1),C5H5N5,135.054495,40.5,10,FAILED,"));
 }
