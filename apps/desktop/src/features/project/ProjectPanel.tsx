@@ -1459,13 +1459,15 @@ export function ProjectPanel({
                           data-project-inspect-artifact={record?.id}
                           data-artifact-kind={record?.kind}
                           data-project-inspect-run={record === null ? run.id : undefined}
-                          onClick={() =>
-                            showDetails(
-                              record === null
-                                ? { kind: "run", id: run.id }
-                                : { kind: "artifact", id: record.id },
-                            )
-                          }
+                          onClick={() => {
+                            if (record === null) showDetails({ kind: "run", id: run.id });
+                            // A report is shown in this region, above the
+                            // lists, and is the answer the press asked for:
+                            // the lineage beside it is not opened over it.
+                            else if (record.qcSnapshot !== null || record.kind === "targetedMs1ResultV1")
+                              session.inspect({ kind: "artifact", id: record.id });
+                            else showDetails({ kind: "artifact", id: record.id });
+                          }}
                         >
                           {t("projectDetails")}
                         </Button>

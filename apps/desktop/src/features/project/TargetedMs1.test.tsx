@@ -538,6 +538,23 @@ describe("a stored result", () => {
     return api;
   }
 
+  it("opens a stored result in the main region and folds no Details over it", async () => {
+    const reveal = vi.fn();
+    mount(targetedProject(), "en", () => undefined, reveal);
+    await screen.findByText(en.projectReferences);
+    const control = query(`[data-project-inspect-artifact="${ARTIFACT}"]`);
+    expect(control.textContent).toBe(en.projectDetails);
+
+    // The report is the answer to the press, and it is drawn here; at one
+    // column Details would be a drawer over it, so it is not asked for. Its
+    // lineage stays one press away, beside the report.
+    await press(control);
+    expect(query(`[data-targeted-report="${ARTIFACT}"]`)).toBeTruthy();
+    expect(control.getAttribute("aria-current")).toBe("true");
+    expect(reveal).not.toHaveBeenCalled();
+    expect(query("[data-project-inspect-hint]")).toBeTruthy();
+  });
+
   it("reads one bounded page of rows and says each outcome in words", async () => {
     const api = await inspectResult();
     const report = query(`[data-targeted-report="${ARTIFACT}"]`);
