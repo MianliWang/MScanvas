@@ -35,7 +35,7 @@
     expect(dead_code, reason = "wired by the saved-figure interface slice")
 )]
 
-use std::path::Path;
+use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
 use mscanvas_plot_spec::spec::{
@@ -722,27 +722,42 @@ fn seal(mut wire: WireDocument) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// The digest of the data a figure draws: every series' name and coordinates
-/// and every marker's position, panel by panel, in order.
+/// The digest of the data a figure draws and of what the source said about it,
+/// panel by panel, in order: each panel's kind (for a spectrum, the
+/// representation the file stated) and the unit state of both axes; each
+/// series' name, role, scope, sample marks and coordinates; and each marker's
+/// position.
 ///
 /// What the figure is *of*, and nothing about how it is presented: the size,
 /// the theme, the titles and the wording of the caption are not in it. Two
 /// regenerations from the same bytes by the same reader agree on it; a reader
-/// or builder that came to read the same bytes differently does not, and that
-/// is the difference reopening refuses. Every length is written before what it
-/// counts, so no two figures share one byte sequence.
+/// or builder that came to read the same bytes differently -- other values,
+/// another representation, a unit it now declares -- does not, and that is the
+/// difference reopening refuses. Every length is written before what it counts,
+/// so no two figures share one byte sequence.
 fn data_digest(figure: &FigureSpec) -> Option<Sha256Digest> {
-    let mut bytes = Vec::new();
-    let count = |bytes: &mut Vec<u8>, value: usize| {
+    fn count(bytes: &mut Vec<u8>, value: usize) {
         bytes.extend_from_slice(&(value as u64).to_le_bytes());
-    };
+    }
+    fn framed(bytes: &mut Vec<u8>, value: &impl Serialize) -> Option<()> {
+        let encoded = serde_json::to_vec(value).ok()?;
+        count(bytes, encoded.len());
+        bytes.extend_from_slice(&encoded);
+        Some(())
+    }
+
+    let mut bytes = Vec::new();
     count(&mut bytes, figure.panels().len());
     for panel in figure.panels() {
+        framed(&mut bytes, &panel.kind())?;
+        framed(&mut bytes, &panel.x_axis().unit)?;
+        framed(&mut bytes, &panel.y_axis().unit)?;
         count(&mut bytes, panel.series().len());
         for series in panel.series() {
-            let id = series.id().as_str().as_bytes();
-            count(&mut bytes, id.len());
-            bytes.extend_from_slice(id);
+            framed(&mut bytes, series.id())?;
+            framed(&mut bytes, &series.role())?;
+            framed(&mut bytes, &series.scope())?;
+            bytes.push(u8::from(series.marks_samples()));
             count(&mut bytes, series.x().len());
             for value in series.x().iter().chain(series.y()) {
                 bytes.extend_from_slice(&value.to_bits().to_le_bytes());
@@ -896,7 +911,12 @@ fn read_chromatogram(
         .map_err(RegenerationRefusal::SourceNotRead)?;
     // The eligibility the viewer and the export apply, through their own
     // constructor.
+    //
+    // Read through `into_iter` so this line reads the same whether the
+    // constructor answers an `Option` or a `Result` with its reason.
     ChromatogramSource::from_rows(&table.rows, table.truncated)
+        .into_iter()
+        .next()
         .ok_or(RegenerationRefusal::NoChromatogram)
 }
 
@@ -1068,12 +1088,20 @@ pub(super) fn save(
     let directory = destination
         .parent()
         .ok_or_else(|| SaveRefusal::Write(spectrum_destination_unusable()))?;
-    let locator = locator_for(source, directory);
-    validate_locator(&locator).map_err(|_| SaveRefusal::SourceNotReferencable)?;
 
     // Held while the figure is regenerated, so the bytes measured are the
     // bytes read: nothing can write, rename or delete the source meanwhile.
     let held = hold_member(source, &Cancellation::default()).map_err(SaveRefusal::of_source)?;
+
+    // Both sides in one spelling before one is made relative to the other: the
+    // preview keeps its datasets' canonical, verbatim paths, and a save dialog
+    // answers in the form a person typed. A folder that cannot be resolved is
+    // the destination's fault, not the source's.
+    let folder = canonical_user_form(directory)
+        .ok_or_else(|| SaveRefusal::Write(spectrum_destination_unusable()))?;
+    let named = canonical_user_form(source).ok_or(SaveRefusal::SourceNotReferencable)?;
+    let locator = locator_for(&named, &folder);
+    validate_locator(&locator).map_err(|_| SaveRefusal::SourceNotReferencable)?;
     let figure = regenerate(kind, &settings, source, reader).map_err(SaveRefusal::Regeneration)?;
     let baseline = ContentBaseline::observed(held.byte_length, held.digest);
     drop(held);
@@ -1091,6 +1119,35 @@ pub(super) fn save(
     };
     let bytes = document.to_bytes().ok_or(SaveRefusal::DigestUnavailable)?;
     write_named(destination, SAVED_FIGURE_DIALOG, &bytes).map_err(SaveRefusal::Write)
+}
+
+/// A path canonicalized and then written as a person writes it, or `None` where
+/// it cannot be canonicalized.
+///
+/// Canonical so that two spellings of one place -- a short 8.3 name, a
+/// verbatim prefix -- compare as one; in the person's form because the
+/// project's locator rule refuses the verbatim one.
+fn canonical_user_form(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path)
+        .ok()
+        .map(|path| user_form(&path))
+}
+
+/// A verbatim drive path, `\\?\C:\data\run.mzML`, as `C:\data\run.mzML`.
+///
+/// Every other path is returned unchanged -- a verbatim network path among
+/// them, which the locator rule then refuses, because a saved figure names a
+/// local file.
+fn user_form(path: &Path) -> PathBuf {
+    let mut components = path.components();
+    if let Some(Component::Prefix(prefix)) = components.next()
+        && let Prefix::VerbatimDisk(letter) = prefix.kind()
+    {
+        let mut plain = PathBuf::from(format!("{}:{}", char::from(letter), MAIN_SEPARATOR));
+        plain.extend(components.filter(|component| !matches!(component, Component::RootDir)));
+        return plain;
+    }
+    path.to_path_buf()
 }
 
 /// One reopened figure: the document, and the figure regenerated from it.

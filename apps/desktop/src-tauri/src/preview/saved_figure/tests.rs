@@ -130,6 +130,9 @@ struct Reader {
     rows: Arc<Vec<TableRowFacts>>,
     spectra: Vec<SelectedSpectrumResult>,
     refuses: bool,
+    /// Whether each read opens the source and reads it whole, as a real
+    /// reader does, while the save or the reopen still holds it.
+    opens_source: bool,
 }
 
 impl Reader {
@@ -138,15 +141,28 @@ impl Reader {
             rows: golden_rows(),
             spectra: vec![golden_spectrum(), selected_scan()],
             refuses: false,
+            opens_source: false,
         }
+    }
+
+    fn read(&self, source: &Path) -> Result<(), PreviewErrorDto> {
+        if self.refuses {
+            return Err(dataset_not_previewable());
+        }
+        if self.opens_source {
+            // `std::fs::read` opens with `File::open`, as the mzML reader does.
+            assert_eq!(
+                std::fs::read(source).expect("a held source can still be read"),
+                SOURCE,
+            );
+        }
+        Ok(())
     }
 }
 
 impl FigureSourceReader for Reader {
-    fn spectrum_table(&self, _source: &Path) -> Result<SourceTable, PreviewErrorDto> {
-        if self.refuses {
-            return Err(dataset_not_previewable());
-        }
+    fn spectrum_table(&self, source: &Path) -> Result<SourceTable, PreviewErrorDto> {
+        self.read(source)?;
         Ok(SourceTable {
             rows: Arc::clone(&self.rows),
             truncated: false,
@@ -155,12 +171,10 @@ impl FigureSourceReader for Reader {
 
     fn spectrum(
         &self,
-        _source: &Path,
+        source: &Path,
         index: u64,
     ) -> Result<SelectedSpectrumResult, PreviewErrorDto> {
-        if self.refuses {
-            return Err(dataset_not_previewable());
-        }
+        self.read(source)?;
         self.spectra
             .iter()
             .find(|spectrum| spectrum.identity().index() == index)
@@ -641,13 +655,80 @@ fn a_source_elsewhere_is_named_absolutely() {
     )
     .expect("saved");
     let reopened = reopen(&destination, &reader).expect("reopened");
+    let Locator::LocalAbsolute { path } = reopened.document().locator() else {
+        panic!("an absolute locator: {:?}", reopened.document().locator());
+    };
+    assert_eq!(
+        path,
+        &user_form(&std::fs::canonicalize(data.source()).expect("canonical")),
+    );
+    assert!(!path.to_string_lossy().starts_with(r"\\"), "{path:?}");
+    assert_eq!(render(reopened.figure()), SPECTRUM_GOLDEN);
+}
+
+/// The preview holds its datasets' canonical, verbatim paths. A source named
+/// that way is still recorded relative to a document beside it, and never in
+/// the verbatim form the locator rule refuses.
+#[test]
+fn a_verbatim_source_path_is_recorded_as_a_person_writes_it() {
+    let reader = Reader::golden();
+    let folder = Folder::with_source("verbatim");
+    let verbatim = std::fs::canonicalize(folder.source()).expect("canonical");
+    let destination = folder.path("figure.msfigure");
+    let case = linked_case();
+    save(
+        case.kind,
+        pixels(),
+        &verbatim,
+        &case.shown,
+        &reader,
+        &destination,
+    )
+    .expect("saved");
+    let reopened = reopen(&destination, &reader).expect("reopened");
     assert_eq!(
         reopened.document().locator(),
-        &Locator::LocalAbsolute {
-            path: data.source()
+        &Locator::ProjectRelative {
+            path: SOURCE_NAME.to_owned()
         },
     );
-    assert_eq!(render(reopened.figure()), SPECTRUM_GOLDEN);
+}
+
+/// The spelling rule itself.
+#[cfg(windows)]
+#[test]
+fn a_verbatim_drive_path_is_written_without_its_prefix() {
+    for (given, expected) in [
+        (r"\\?\C:\data\run.mzML", r"C:\data\run.mzML"),
+        (r"\\?\D:\", r"D:\"),
+        (r"C:\data\run.mzML", r"C:\data\run.mzML"),
+        // A network path stays what it is, and the locator rule refuses it.
+        (
+            r"\\?\UNC\server\share\run.mzML",
+            r"\\?\UNC\server\share\run.mzML",
+        ),
+        (r"\\server\share\run.mzML", r"\\server\share\run.mzML"),
+    ] {
+        assert_eq!(
+            user_form(Path::new(given)),
+            PathBuf::from(expected),
+            "{given}"
+        );
+    }
+}
+
+/// A real reader opens the source while a save or a reopen holds it: the hold
+/// withholds writing and deleting, not reading.
+#[test]
+fn a_held_source_can_still_be_read() {
+    let reader = Reader {
+        opens_source: true,
+        ..Reader::golden()
+    };
+    let folder = Folder::with_source("held");
+    let document = save_case(&folder, "figure.msfigure", &linked_case(), &reader).expect("saved");
+    let reopened = reopen(&document, &reader).expect("reopened");
+    assert_eq!(render(reopened.figure()), LINKED_GOLDEN);
 }
 
 // ------------------------------------------------------------------ the document

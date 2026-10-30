@@ -133,27 +133,37 @@ slice maps them to `PreviewErrorDto` codes and gives each its localized words.
 
 ### 4. The data digest: the same science, or a refusal
 
-`dataSha256` is SHA-256 over every panel's series names and coordinates (the
-`f64` bit patterns) and every marker's position, each length written before
-what it counts. It is what the figure is *of*; the size, theme, titles and
-caption wording are not in it.
+`dataSha256` is SHA-256 over, panel by panel: the panel's kind (for a
+spectrum, the representation the file stated) and both axes' unit states; each
+series' name, role, scope, sample marks and coordinates (the `f64` bit
+patterns); and each marker's position. Every length is written before what it
+counts. It is what the figure is *of*; the size, theme, titles and caption
+wording are not in it.
 
 The source baseline proves the bytes are the same. This proves the reading is.
-A reader or builder that came to read the same bytes differently — a parser
-change, a different precision — would otherwise draw a different figure from an
-unchanged file and present it as the saved one. The cost is that such a
-document is refused by a later build rather than silently redrawn; that is the
-intended trade.
+A reader or builder that came to read the same bytes differently — other
+values, another precision, a representation or a unit it now declares — would
+otherwise draw a different figure from an unchanged file and present it as the
+saved one. The project-owned mzML reader (PR #175) is such a change: it states
+declared representations and units the `msaccess` reading did not. The cost is
+that such a document is refused by a later build rather than silently redrawn;
+that is the intended trade.
 
 ### 5. Saving proves the document before writing it
 
 `save` takes the figure the user is looking at. In order:
 
 1. A destination not named `*.msfigure` is refused before anything is read.
-2. The locator must validate: a network or device path, or a component that is
-   not an ordinary name, is refused (`saved_figure_source_not_referencable`),
+2. The source is held and measured as on reopening; a missing or unreadable
+   source is refused with its reason.
+3. The locator is made from the source and the document's folder, both
+   canonicalized and written as a person writes them: the preview keeps its
+   datasets' canonical, verbatim paths (`\\?\C:\...`), a save dialog answers in
+   the typed form, and the project's locator rule refuses the verbatim one. A
+   source under the folder is relative to it; any other is absolute. A locator
+   that does not validate — a network path, or a component that is not an
+   ordinary name — is refused (`saved_figure_source_not_referencable`),
    because a document naming one could never be reopened.
-3. The source is held and measured as on reopening.
 4. The figure is regenerated from it and must equal the figure on screen
    (`saved_figure_not_the_shown_figure` otherwise). The retained preview was
    read when it was opened; if the file changed since, the document would
@@ -284,7 +294,8 @@ source file and a real document in its own temporary folder:
 - a changed source (same length and longer) and a missing source are refused;
 - the same bytes read as other data are refused; a reader's refusal is carried;
 - a relative locator survives moving the folder; an outside source is named
-  absolutely;
+  absolutely; a canonical, verbatim source path is recorded in the typed form,
+  relative where it can be; a held source can still be opened and read;
 - edits to the theme, the spectrum index, the traces or the digest are refused;
   a newer, older, foreign or non-JSON document is refused as what it is; an
   unknown field at five depths and a missing field are refused; eighteen
