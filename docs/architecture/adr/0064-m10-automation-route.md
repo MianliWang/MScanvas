@@ -158,10 +158,18 @@ still moving (#161).
   new export, and `preview` stays private.
 - Each subcommand is a thin adapter, as a Tauri command is: parse typed argv,
   call the service, print the answer. No subcommand reuses a rule under a
-  second spelling. What the CLI adds is listed here, each a rule of its own, so
-  a review can test the implementation against this list:
-  - root containment proved on the held handle, and the rules for
-    destination, plan and report paths (decision 4);
+  second spelling. What the CLI adds is listed here, so a review can test the
+  implementation against this list; an item that reuses an existing rule
+  names it:
+  - allowed roots, and how long a root is held (decision 4). Containment under
+    a root is not a new rule: it is the destination policy's ancestry walk
+    (`destination_is_within`), extracted once in `destination_policy.rs` so
+    that it starts from a held handle, and called by the destination policy
+    and the CLI alike;
+  - plan and report files, created new (decision 4). Their names pass
+    `SubfolderName::parse`, and they are created as `create_child_object`
+    creates a folder, by a file variant of it in the same module: two
+    extractions, not two new rules;
   - plan documents, and the per-item digest comparison when an item runs
     (decision 5);
   - `validate`'s re-check of outputs by name, against a digest-bound report
@@ -196,11 +204,15 @@ still moving (#161).
   fake backend is therefore a unit test of the `cli` module. It calls the
   function behind the binary's `main` with typed argv, a fake provider in
   place of the discovered one and a run lock bound to a temporary directory
-  (decision 6), and checks the document and the exit code. The fake becomes
-  reachable to those tests as a `cfg(test)`, `pub(crate)` module. The shipped
-  binary gets no provider or lock-directory injection point, for the reason
-  the desktop's manifest gives for `test-support`: a seam that can forge a
-  backend in a shipped build forges it anywhere.
+  (decision 6), and checks the document and the exit code. Slice 1 needs no
+  working fake: its "no launch" case uses the existing `cfg(test)`,
+  `pub(crate)` double `idle_provider::NoProcess`, which fails a test that
+  starts a process. The working `FakeProvider` lives in `preview/tests.rs`;
+  slice 3 moves it into a `cfg(test)`, `pub(crate)` module of its own, as
+  `idle_provider` is, after #161 and #175 merge, because both edit that
+  file. The shipped binary gets no provider or lock-directory injection
+  point, for the reason the desktop's manifest gives for `test-support`: a
+  seam that can forge a backend in a shipped build forges it anywhere.
   - What this gives up: no test runs `mscanvas.exe` against a fake backend,
     and no test runs it where it would take the run lock, because the built
     binary binds the real profile.
@@ -290,39 +302,63 @@ free-text option.
   Every source, destination, plan and report path must resolve under one of
   them, or it is refused (`pathOutsideRoots`). The MCP adapter's own store is
   the one exception, below.
-- **Containment is a new rule, proved on the held handle.** The picker's
-  acceptance (ADR 0005) opens only the last component without following a
-  link and takes its canonical path from a separate resolution of the name
-  (`selection.rs`), so a junction in a middle directory is followed and not
-  noticed. Containment therefore compares the final path of the handle the
-  CLI holds with the final path of a handle on the root:
-  - **the volume:** the two handles' 64-bit volume serials, which the object
-    identity already reads, must be equal. A volume mounted in a folder inside
-    a root is another volume, and is refused;
-  - **the path:** both final paths are read with `GetFinalPathNameByHandleW`
-    and `FILE_NAME_NORMALIZED | VOLUME_NAME_NONE`, the flags `view_cache.rs`'s
-    `on_disk_name` uses. That function keeps only the last component, so this
-    is a precedent, not a reuse. The root's components must be a prefix of the
-    file's, compared component by component and ordinally. Both strings come
-    from the file system's own names for the two objects, so no case folding
-    is needed. A string prefix is not used: it would accept `D:\data-x\a.raw`
-    under `D:\data`;
-  - **the root itself:** its handle is opened once, at start, and held for the
-    life of the process without `FILE_SHARE_DELETE`, so the root cannot be
-    renamed or replaced while the process runs;
-  - a handle whose final path or volume serial cannot be read is refused.
-
-  By kind of path:
+- **Containment reuses the destination policy's rule.** The question "is this
+  object at or under that directory" is already answered once, for CNV-003's
+  row 2, by `destination_is_within`: "an ancestry walk compared by object
+  identity at each step, not a string prefix", which ADR 0043 requires. The
+  CLI asks the same question, so it calls the same walk. The walk is
+  extracted once in `destination_policy.rs` so that it takes its start from a
+  held handle, and the destination policy calls the extracted form. No lane
+  in flight edits that file.
+  - **Where the walk starts:** the identity of the handle the CLI holds, and
+    that handle's own final path (`GetFinalPathNameByHandleW`, as
+    `std::fs::canonicalize` reads one). Not the canonical path the picker's
+    acceptance takes from a separate resolution of the name (ADR 0005,
+    `selection.rs`), which can name another object than the one held. A
+    junction in a middle directory is resolved in that final path, so a
+    junction inside a root that points outside it starts the walk outside,
+    and it never meets the root.
+  - **What it must meet:** the root's identity, read from the root's held
+    handle. Identity is the volume serial and the file id, so a sibling
+    `D:\data-x` never matches `D:\data`.
+  - **Failure:** as in the destination policy, an identity that cannot be read
+    at any step refuses (`pathOutsideRoots`), and so does a walk that ends at
+    the top of its volume.
+- **A root is held for one operation, not for the life of the process.** A
+  root is admitted and held as a destination root is (`admit_and_hold`, ADR
+  0009): not followed if it is a link, held without `FILE_SHARE_DELETE`, and
+  held before it is judged. The hold is released when the operation is
+  terminal. ADR 0009 states the cost
+  of such a hold: "Windows refuses to rename any *ancestor* of a held
+  directory", so for as long as the hold lasts the user cannot rename or
+  remove the root or any folder above it. That is why the hold lasts one
+  operation:
+  - **the CLI:** one invocation is one operation, so it holds its roots from
+    argv parsing to exit, and a `run` holds them to the end of the run;
+  - **the MCP adapter:** at launch it opens each root, records its identity
+    and releases it; a root that cannot be admitted fails the launch. Each
+    tool call opens its roots again by their launch paths, compares each
+    identity with the recorded one and refuses on a difference
+    (`rootChanged`), then holds them until the call is terminal, and a `run`
+    until the run is. An idle adapter holds no root.
+- **By kind of path:**
   - **source:** acceptance as the picker's files get it, then containment on
     the accepted file's handle;
-  - **destination (`--out`):** a directory opened without following a reparse
-    point, its identity read from the handle, then containment;
-  - **plan and report files, created new:** the parent directory passes the
-    destination rule; the last component refuses `:` (an NTFS alternate data
-    stream would attach to an existing file, a source included), reserved
-    device names (`CON`, `NUL`, `COM1` and the rest) and a trailing dot or
-    space. After creation the new handle's final path is checked again, and a
-    file that fails is removed: it is the file this process just created.
+  - **destination (`--out`):** admitted by `admit_and_hold`, as the queue's
+    destination is, then containment on the held destination;
+  - **plan and report files, created new:** the parent directory is admitted
+    and held by `admit_and_hold`, as a destination is, and passes
+    containment. The last component passes `SubfolderName::parse`, which
+    already refuses `:` (an NTFS alternate data stream would attach to an
+    existing file, a source included), the other characters Windows will not
+    put in a name, surrounding whitespace, a trailing dot, and the reserved
+    device names, `CONIN$`, `CONOUT$` and the superscript port numbers
+    included. The file is created relative to the held parent with
+    `NtCreateFile`, `FILE_CREATE`, `OBJ_DONT_REPARSE` and
+    `FILE_NON_DIRECTORY_FILE`: the file variant of `create_child_object`. An
+    existing name is refused, nothing follows a link, and the parent cannot be
+    replaced while it is held, so nothing has to be checked or removed after
+    creation;
   - **every argv path:** a `\\?\` or `\\.\` prefix and a drive-relative path
     (`C:x`) are refused. A relative path resolves against the working
     directory before any check.
@@ -338,8 +374,9 @@ free-text option.
   - a folder in the application-local directory, bound the way the run lock's
     directory is bound (decision 6), so tests and the `e2e` build never write
     the real profile;
-  - each file is named by its own digest and written create-new. No tool call
-    names a path in it; a tool names a plan or report by digest only;
+  - each file is named by its own digest and created new as plan and report
+    files are, relative to the held store folder. No tool call names a path
+    in it; a tool names a plan or report by digest only;
   - the adapter never deletes from it. When it holds the cap's number of
     files, a new plan is refused (`planStoreFull`). A result holds no
     absolute path, so the store's location is documented for the person to
@@ -350,7 +387,7 @@ free-text option.
 - **`plan` writes a plan document, create-new.** It never relies on stdout
   redirection, because Windows PowerShell 5.1's `>` writes UTF-16. The
   document holds:
-  - the MSCanvas version and the roots;
+  - the MSCanvas version, and each root's canonical path and identity;
   - per item: the canonical source path, family, object identity (volume
     serial and file id), length and SHA-256, and the derived output names
     where the plan knows them. A SCIEX item's names come from the backend, as
@@ -370,22 +407,32 @@ free-text option.
 - **`run --plan <file> --approve <sha256>`** reads the plan file once, through
   a deny-write handle, into memory; the digest and the parse are of those same
   bytes. It refuses unless the digest equals the approved one
-  (`planNotApproved`). Then, holding the run lock (decision 6), it re-derives
+  (`planNotApproved`). It refuses a plan written by another MSCanvas version
+  (`buildChanged`), because the lowering, the tiers and the labels belong to
+  the version, and roots that are not the plan's roots, the same set by
+  canonical path and identity (`rootsChanged`); a plan is never re-judged
+  under other roots. Then, holding the run lock (decision 6), it re-derives
   the plan in its own process:
   1. accept every source again and hash it, one acquisition at a time, through
      deny-write handles (`lock_against_replacement`) released after each
      acquisition. A bundle's members are locked together, as the desktop's
      SCIEX paths do (`service.rs`), and every member is compared: identity,
      name and digest;
-  2. discover the installation again and read its configuration;
+  2. discover the installation again, from the same source it was planned
+     with (decision 6), and read its configuration;
   3. plan again with the same intent, destination and policy;
   4. compare the result with the approved plan, field by field.
 
   Any difference refuses before a staging directory exists, with the first
-  drift's code (`sourceChanged`, `providerChanged`, `intentNotAdmitted`,
-  `destinationChanged`). Then each item runs, one at a time, through the ADR
-  0011 coordinator. Under Fail an item whose output name is taken is not
-  converted and the run exits 3; under Skip it is skipped.
+  drift's code. Every field has one: a source or companion
+  (`sourceChanged`); the provider's release, revision or `msconvert` SHA-256
+  (`providerChanged`); an intent the installation no longer admits
+  (`intentNotAdmitted`); the destination or the conflict policy
+  (`destinationChanged`); any other field, such as a tier, a lossy statement,
+  an option token or a derived output name (`planChanged`). Then each item
+  runs, one at a time, through the ADR 0011 coordinator. Under Fail an item
+  whose output name is taken is not converted and the run exits 3; under
+  Skip it is skipped.
 - **Each item is bound again when it runs.** The comparison above happens
   once, but a run of up to 1,024 items can take hours, and the workspace
   lease shares writes on purpose (`selection.rs`, `FILE_SHARE_ALL`). For a
@@ -404,12 +451,17 @@ free-text option.
 
   A difference refuses that item with `sourceChanged` before its staging
   exists; earlier items keep their outcomes, and the run exits 3. The check
-  costs no extra read.
+  costs no extra read. The CLI cannot make it from outside: it sits in the
+  queue's item runner in `service.rs`, right after `open_conversion_source`.
+  A queue item gains an optional expected binding, which the desktop's queue
+  leaves empty (decision 9, CLI slice 4).
 - **What approval means.** It binds "what was reviewed is what runs". It does
   not authenticate a person: anyone who can read a plan can compute its
-  digest. For the CLI that is the right meaning, because the shell's user is
-  the person. For an agent host it is not enough (decision 7, open
-  question 2).
+  digest, and `plan` prints it. For a person typing at their own terminal
+  that is the right meaning, because the shell's user is the person. When an
+  agent drives the CLI, the agent is the shell's user, and `--approve` is not
+  a boundary against it (decision 6, "An agent with a shell"). For an agent
+  the boundary is the MCP adapter's approval (decision 7, open question 2).
 - **Bound to bytes.** Each source, every member of a bundle included, is
   hashed at plan, before the run and again as its item runs. An identity-only
   binding is cheaper, but a file an instrument is still writing keeps its
@@ -445,7 +497,18 @@ free-text option.
     with no `-c/--config` and no free-text argument (ADR 0055, decision 2);
   - the installation is found by discovery or named with
     `--proteowizard <folder>`. A named folder that is unusable is refused,
-    never replaced by discovery.
+    never replaced by discovery. `run` re-derives through the same source the
+    plan was made with, and a different `msconvert` refuses as
+    `providerChanged`;
+  - the MCP adapter takes the installation as it takes its roots: from its
+    launch configuration (`mscanvas mcp --proteowizard <folder>`) or from
+    discovery, fixed for the life of the process. No tool input has an
+    installation field, and one that appears is refused as an unknown field.
+    `intents` and `plan` start a capability probe without an approval, so an
+    agent that could name the folder would choose which executable the
+    adapter starts. The desktop keeps the same rule: "choosing a file or an
+    installation is a request to show a picker, not a path the webview
+    names" (`preview/mod.rs`).
 - **No network.** The CLI and the adapter open no socket, listen on nothing,
   check for no update and send no telemetry. The MCP adapter uses the stdio
   transport only. An MCP host sends tool results to its model provider, which
@@ -546,19 +609,24 @@ free-text option.
     `run`, through the CLI and through the adapter, is a native item under its
     own release.
 - **An agent with a shell.** A host that also gives an agent an unrestricted
-  shell lets it run `msconvert` itself, or `mscanvas run --approve` with a
-  digest it computed. No MSCanvas design changes that. The boundary MSCanvas
-  offers an agent is the MCP adapter, and the skill tells an agent to use only
-  the adapter or the CLI (decision 8).
+  shell lets it run `msconvert` itself, or `mscanvas run --approve` with the
+  digest `plan` printed. No MSCanvas design changes that, and the CLI does not
+  claim to. The boundary MSCanvas offers an agent is the MCP adapter's `run`.
+  The skill asks an agent never to run `mscanvas run` itself, but that is
+  guidance, not a boundary (decision 8).
 
 ### 7. The MCP adapter sits on the CLI's schemas
 
 - **Same binary.** `mscanvas mcp --root <label>=<dir> …` runs the adapter over
   the stdio transport (newline-delimited JSON-RPC 2.0). One protocol revision
   is pinned, and recorded when the slice starts.
-- **A fixed tool list, one tool per subcommand:** `inspect`, `intents`, `plan`
-  and `validate`, and `run` only from the second MCP slice.
-  - Each tool's input takes its subcommand's arguments, and its result
+- **A fixed tool list, one tool per subcommand:** `inspect`, `intents` and
+  `plan`, and `run` and `validate` only from the second MCP slice. `validate`
+  names a report in the adapter's store, and only the adapter's `run` writes
+  one there.
+  - Each tool's input takes its subcommand's arguments, except the roots and
+    the installation, which come from the launch configuration only (decisions
+    4 and 6), and plan and report paths, which are digests. Its result
     (`structuredContent`, with the same JSON as text) is its subcommand's
     document, with one difference: every path is root-relative (below), and
     roots appear by label only. The adapter's schemas therefore have ids of
@@ -611,23 +679,45 @@ free-text option.
   `intents`, `plan` or `run`, which start ProteoWizard (discovery's probe
   runs `msconvert --help`), against the hold.
 - **What it does.** It walks an agent through inspect → intents → plan → show
-  the person the summary and digest → wait for the person's approval → run →
-  validate, using only the CLI's subcommands or the adapter's tools. It never
-  calls `msconvert`, never edits a plan file, never computes an approval
-  digest on the person's behalf, and reports every refusal as the CLI wrote
-  it. Its text says that inside this repository only the fake providers are
-  used, and that `intents`, `plan` and `run` against a real installation need
-  a recorded hold release.
-- **A skill is guidance, not a boundary.** Every rule it states is enforced by
-  the CLI, so an agent that ignores the skill gets the CLI's refusals.
+  the person the summary and digest → the person approves and runs →
+  validate. The agent never runs a plan itself:
+  - until MCP slice 2, the skill hands the person the `mscanvas run --plan …
+    --approve …` line to type in their own terminal, and waits;
+  - once the adapter's `run` exists, an agent on the adapter runs through it,
+    behind its approval (decision 7). An agent with only a shell keeps the
+    first path.
+
+  It never calls `msconvert`, never edits a plan file, never computes or
+  passes an approval digest on the person's behalf, and reports every
+  refusal as the CLI wrote it. Its text says that inside this repository only
+  the fake providers are used, and that `intents`, `plan` and `run` against a
+  real installation need a recorded hold release.
+- **A skill is guidance, not a boundary.** What it states falls in two kinds:
+  - **enforced by the CLI and the adapter**, so an agent that ignores the
+    skill gets their refusals: roots, the plan digest binding, drift, the
+    per-item binding, create-new and never overwrite, the run lock, and, on
+    the adapter, the approval of `run`;
+  - **guidance only**, which nothing enforces for an agent with a shell:
+    waiting for the person, not running `mscanvas run` itself, not computing
+    a digest, and not calling `msconvert`. Decision 6 says why.
 - **Its examples use the repository's fixtures,** and its checks run against
   the fake providers, never a real installation.
 
 ### 9. Order and dependencies
 
 1. **CLI slice 1:** the package, `inspect`, the envelope, exit codes, roots and
-   schemas. It needs nothing open and can start now; its only overlap with
-   other lanes is one line in `lib.rs` and one in the workspace's members.
+   schemas. It needs nothing open and can start now. What it touches outside
+   the new package:
+   - one line in `lib.rs` (the `cli` module) and one in the workspace's
+     members; #161 also edits `lib.rs`;
+   - one line in `selection.rs`: `accept_workspace_file` widens from
+     `pub(super)` to `pub(crate)`, because the `cli` module sits outside
+     `preview`. A `pub(crate) use` in `preview/mod.rs` cannot do it, since a
+     re-export cannot be wider than its item. #161 edits `selection.rs`, but
+     not near that line;
+   - `destination_policy.rs`, for the extracted walk, name check and file
+     creation of decisions 1 and 4. No lane in flight edits it;
+   - its "no launch" test uses `idle_provider::NoProcess` as it is.
 2. **CLI slice 2:** the run lock and its holder record in both processes, and
    the desktop's refusal while the lock is held. It comes before any
    subcommand that starts a probe, so `main` never holds a CLI that can start
@@ -636,12 +726,18 @@ free-text option.
    #175 also rewrite, and the desktop's refusal text is a webview resource
    coordinated with the UI lane that owns `apps/desktop/src/`.
 3. **CLI slice 3:** `intents` and `plan`. It waits for #161 to merge, because
-   the structured intent, its tier and the capacity are there.
+   the structured intent, its tier and the capacity are there, and for #175,
+   because it moves `FakeProvider` out of `preview/tests.rs`, which both
+   edit (decision 1).
 4. **CLI slice 4:** `run` with the per-item binding, `validate`, the backend's
-   detachment from the console in the shared crate, and Ctrl+C.
-5. **The skill.**
-6. **MCP slice 1:** the read-only tools and `plan`.
-7. **MCP slice 2:** `run` with approval, after open question 2.
+   detachment from the console in the shared crate, and Ctrl+C. The
+   per-item binding edits the queue's item runner in `service.rs`, which #161
+   and #175 rewrite, so it also lands after both (decision 5).
+5. **The skill.** Until MCP slice 2, its run step is the person's own
+   terminal (decision 8).
+6. **MCP slice 1:** `inspect`, `intents` and `plan`.
+7. **MCP slice 2:** `run` with approval, after open question 2, and
+   `validate`.
 8. **Closure:** schemas declared stable at version 1, native qualification
    under a hold release, and the distribution decision (open question 4).
 
@@ -661,10 +757,14 @@ measured need appears.
 - Refusals: a file outside the roots exits 1 with `pathOutsideRoots`; so do a
   junction inside a root that points outside it, a reparse point at the file
   itself, and, under `--root <dir>`, a file in the sibling `<dir>-x`. A plan
-  or report name with `:`, a device name or a trailing dot is refused, and so
-  is a `\\?\` prefix. A non-UTF-8 path and an unknown flag each exit 2 with a
-  usage document.
-- While a bound root is held, renaming it fails.
+  or report name with `:`, a device name (`CONIN$` included) or a trailing
+  dot is refused by `SubfolderName::parse`'s own refusal, and so is a `\\?\`
+  prefix. A non-UTF-8 path and an unknown flag each exit 2 with a usage
+  document.
+- Containment calls the walk the destination policy calls: the destination
+  policy's existing row-2 tests pass unchanged on the extracted form.
+- While an invocation holds a root, renaming the root or a folder above it
+  fails; once the invocation has exited, the rename succeeds.
 - Every test runs with stdin closed, and none waits for input. The built
   binary is run as a process for the cases decision 1 lists; the rest are
   unit tests of the `cli` module.
@@ -690,8 +790,9 @@ measured need appears.
 
 - `intents` lists the rows, tiers and availability the desktop's
   configuration read gives for the same fake build.
-- `plan` writes create-new and refuses a plan path that exists. The printed
-  digest equals the SHA-256 of the written bytes.
+- `plan` writes create-new and refuses a plan path that exists, and a link
+  standing at that name is refused, not followed. The printed digest equals
+  the SHA-256 of the written bytes.
 - A missing `--intent` exits 2. A vendor file on a build without a measured
   row follows ADR 0055's build gate: labelled, with SCIEX refused. An advanced
   intent labels every item, and a blocked combination is refused.
@@ -704,7 +805,9 @@ measured need appears.
 - A wrong digest exits 1; no staging directory exists and no process was
   started.
 - Each drift kind is refused before staging, one test per kind, on the fake
-  provider.
+  provider: `buildChanged`, `rootsChanged`, `sourceChanged`,
+  `providerChanged`, `intentNotAdmitted`, `destinationChanged` and
+  `planChanged`.
 - Per-item binding: on the fake provider, the second item's source is
   rewritten in place, keeping its identity, after the run has started. That
   item is refused with `sourceChanged` and no staging; the first item's
@@ -732,6 +835,8 @@ measured need appears.
 
 - Every command in the skill appears in the CLI's golden tests, and the skill
   names no `msconvert` option.
+- `mscanvas run` appears in the skill only as a line the agent hands the
+  person to run in their own terminal, never as a step the agent runs.
 - The skill's file is not under `.agents/skills/`, and its text states the
   hold rule.
 
@@ -745,6 +850,12 @@ measured need appears.
   nothing.
 - An absolute path, or a path that leaves its root, is refused, with the same
   cases as CLI slice 1.
+- A tool input with an installation field, or any other field its schema
+  does not name, is refused as an unknown field, and nothing is probed.
+- While the adapter is idle, with no call in progress, each root and the
+  folders above it can be renamed. A root renamed away and replaced by
+  another folder of the same name between two calls is refused with
+  `rootChanged`.
 - No result in the test suite contains an absolute path.
 - Closing stdin during a call cancels it, and the adapter exits.
 
@@ -752,6 +863,8 @@ measured need appears.
 
 - A client without elicitation is refused with `approvalUnavailable`; a
   declined approval runs nothing; an accepted one behaves as the CLI's `run`.
+- `validate` names a report in the store by digest and exits as the CLI's
+  `validate` does; a digest the store does not hold is refused.
 
 ## Out of scope
 
@@ -856,7 +969,9 @@ owner's answers and the hold-release window more than by implementation.
      Clients without elicitation are refused.
    - **An approval record:** the person writes it with `mscanvas approve` in
      their own terminal. It works with any client and does not trust it, and
-     adds a small store and a step outside the agent's session.
+     adds a small store and a step outside the agent's session. Like the CLI's
+     `--approve`, it is no boundary against an agent that also has a shell,
+     which could run `mscanvas approve` itself (decision 6).
    - **The host's tool confirmation:** not recommended, because the agent
      writes the call that is confirmed, and hosts can approve automatically.
 3. **The cross-process run lock.** While a CLI run holds it, the desktop
