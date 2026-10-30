@@ -29,7 +29,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use flate2::{Decompress, FlushDecompress, Status};
 use quick_xml::NsReader;
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::{Namespace, NamespaceResolver, PrefixDeclaration, ResolveResult};
 use thiserror::Error;
 
@@ -760,7 +760,7 @@ fn drive<R: BufRead>(
                 if !is_predefined_reference(&name) {
                     return Err(MzmlScanError::Unsafe(UnsafeXmlKind::UndeclaredEntity).into());
                 }
-                pass.reference()?;
+                pass.reference(&reference)?;
             }
             Event::DocType(_) => {
                 return Err(MzmlScanError::Unsafe(UnsafeXmlKind::DoctypeDeclaration).into());
@@ -1233,7 +1233,6 @@ impl<'t> Pass<'t> {
                 }
             }
             El::Precursor if self.stack.ends_with(&[El::Spectrum, El::PrecursorList]) => {
-                let decoding = self.decoding();
                 if let Some(spectrum) = self.spectrum.as_mut() {
                     spectrum.precursor_count += 1;
                     if spectrum.precursor_count > MAX_PRECURSORS_PER_SPECTRUM {
@@ -1242,19 +1241,16 @@ impl<'t> Pass<'t> {
                         )
                         .into());
                     }
-                    // A table row keeps the first precursor; a selected
-                    // spectrum keeps them all.
-                    if decoding || spectrum.precursors.is_empty() {
-                        spectrum.precursors.push(PrecursorParse::default());
-                    }
+                    // Both passes read every precursor, so the table refuses
+                    // what a selected read would; a row keeps only the first.
+                    spectrum.precursors.push(PrecursorParse::default());
                 }
             }
             El::SelectedIon if self.stack.ends_with(&SPECTRUM_SELECTED_ION[..4]) => {
-                let decoding = self.decoding();
                 if let Some(precursor) = self
                     .spectrum
                     .as_mut()
-                    .and_then(|spectrum| current_precursor(spectrum, decoding))
+                    .and_then(|spectrum| spectrum.precursors.last_mut())
                 {
                     precursor.selected_ions += 1;
                 }
@@ -1355,12 +1351,7 @@ impl<'t> Pass<'t> {
     }
 
     fn target(&mut self) -> Option<Target<'_>> {
-        terms_target(
-            &self.stack,
-            &mut self.group,
-            &mut self.spectrum,
-            self.selecting.is_some(),
-        )
+        terms_target(&self.stack, &mut self.group, &mut self.spectrum)
     }
 
     fn cv_param(&mut self, attributes: &CapturedAttributes<'_>) -> Result<(), Fail> {
@@ -1392,12 +1383,7 @@ impl<'t> Pass<'t> {
             .groups
             .get(reference)
             .ok_or(Fail::Open(MzmlOpenError::UndefinedParamGroup))?;
-        match terms_target(
-            &self.stack,
-            &mut self.group,
-            &mut self.spectrum,
-            self.selecting.is_some(),
-        ) {
+        match terms_target(&self.stack, &mut self.group, &mut self.spectrum) {
             // A group referring to a group is not mzML.
             Some(Target::Group(_)) => Err(malformed(MzmlMalformedKind::NotWellFormed)),
             Some(target) => target.add(group),
@@ -1450,14 +1436,20 @@ impl<'t> Pass<'t> {
         Ok(())
     }
 
-    /// A character or entity reference inside a decoded payload is not base64.
-    fn reference(&mut self) -> Result<(), Fail> {
+    /// A character reference inside a decoded payload is the character it
+    /// names, and joins the payload like any other text, under the same bound.
+    /// A predefined entity names `&`, `<`, `>`, `"` or `'`, none of which is
+    /// base64.
+    fn reference(&mut self, reference: &BytesRef<'_>) -> Result<(), Fail> {
         if self.stack.last() != Some(&El::Binary) {
             return Ok(());
         }
-        match self.open_array().and_then(|array| array.prepared) {
-            Some(prepared) => Err(array_fail(prepared.role, ArrayProblem::CorruptBase64)),
-            None => Ok(()),
+        let Some(prepared) = self.open_array().and_then(|array| array.prepared) else {
+            return Ok(());
+        };
+        match reference.resolve_char_ref() {
+            Ok(Some(character)) => self.text(character.encode_utf8(&mut [0; 4]).as_bytes()),
+            _ => Err(array_fail(prepared.role, ArrayProblem::CorruptBase64)),
         }
     }
 
@@ -1605,7 +1597,6 @@ fn terms_target<'a>(
     stack: &[El],
     group: &'a mut Option<(Option<String>, Vec<Stated>)>,
     spectrum: &'a mut Option<SpectrumParse>,
-    decoding: bool,
 ) -> Option<Target<'a>> {
     if stack.ends_with(&[El::ParamGroupList, El::ParamGroup]) {
         return group.as_mut().map(|(_, terms)| Target::Group(terms));
@@ -1615,7 +1606,7 @@ fn terms_target<'a>(
         return spectrum.array.as_mut().map(Target::Array);
     }
     if stack.ends_with(SPECTRUM_SELECTED_ION) {
-        let precursor = current_precursor(spectrum, decoding)?;
+        let precursor = spectrum.precursors.last_mut()?;
         // A precursor's values come from its first selected ion.
         return (precursor.selected_ions == 1).then_some(Target::Terms(&mut precursor.terms));
     }
@@ -1623,14 +1614,6 @@ fn terms_target<'a>(
         return Some(Target::Terms(&mut spectrum.scan_terms));
     }
     (stack.last() == Some(&El::Spectrum)).then_some(Target::Terms(&mut spectrum.terms))
-}
-
-fn current_precursor(spectrum: &mut SpectrumParse, decoding: bool) -> Option<&mut PrecursorParse> {
-    // The table keeps only the first precursor, so a later one has no slot.
-    if !decoding && spectrum.precursor_count > 1 {
-        return None;
-    }
-    spectrum.precursors.last_mut()
 }
 
 /// Validates one array's terms and checks the caps, in ADR 0056's order,
@@ -1901,11 +1884,10 @@ fn spectrum_row(spectrum: &mut SpectrumParse) -> Result<MzmlSpectrumRow, Fail> {
             .ok_or_else(|| missing(value))
             .and_then(|stated| finite(&stated.value))
     };
-    let first_precursor = spectrum
-        .precursors
-        .first()
-        .map(precursor_values)
-        .transpose()?;
+    // Every precursor's values are checked; the row keeps the first.
+    let mut precursors = spectrum.precursors.iter().map(precursor_values);
+    let first_precursor = precursors.next().transpose()?;
+    precursors.try_for_each(|precursor| precursor.map(drop))?;
 
     Ok(MzmlSpectrumRow {
         identity: SpectrumIdentity::from_native_identifier(index, id),

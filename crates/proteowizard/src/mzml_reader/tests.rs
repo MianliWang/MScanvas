@@ -719,7 +719,10 @@ fn corrupt_base64_and_zlib_are_refused() {
     trailing.extend_from_slice(b"extra");
     let cases = [
         (b64(&good).replace('A', "*"), ArrayProblem::CorruptBase64),
-        ("QUJD&#65;".to_owned(), ArrayProblem::CorruptBase64),
+        // A predefined entity, or a character reference to a non-base64
+        // character, is refused like the character itself.
+        (format!("{}&amp;", b64(&good)), ArrayProblem::CorruptBase64),
+        (format!("&#42;{}", b64(&good)), ArrayProblem::CorruptBase64),
         (b64(&good[..good.len() / 2]), ArrayProblem::CorruptZlib),
         (b64(&header), ArrayProblem::CorruptZlib),
         (b64(&checksum), ArrayProblem::CorruptZlib),
@@ -745,6 +748,26 @@ fn base64_with_line_breaks_decodes() {
         .map(|chunk| format!("{}\r\n  ", String::from_utf8_lossy(chunk)))
         .collect();
     let mz = array(&[term(F64), term(ZLIB), mz_term()], &wrapped);
+    let spectrum = ms1(0, &[mz, intensity_array(&[1.0, 2.0, 3.0])]);
+    let read = selected(&document(&[spectrum]), 0).expect("decodes");
+    assert_eq!(read.mz().values(), [1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn character_references_in_a_payload_are_their_characters() {
+    let encoded = b64(&zlib(&le_f64(&[1.0, 2.0, 3.0])));
+    // Every base64 character as a decimal or hexadecimal reference, with line
+    // breaks and tabs serialized as references between them.
+    let referenced: String = encoded
+        .chars()
+        .enumerate()
+        .map(|(position, character)| match position % 3 {
+            0 => format!("&#{};&#10;", u32::from(character)),
+            1 => format!("&#x{:X};&#x9;", u32::from(character)),
+            _ => character.to_string(),
+        })
+        .collect();
+    let mz = array(&[term(F64), term(ZLIB), mz_term()], &referenced);
     let spectrum = ms1(0, &[mz, intensity_array(&[1.0, 2.0, 3.0])]);
     let read = selected(&document(&[spectrum]), 0).expect("decodes");
     assert_eq!(read.mz().values(), [1.0, 2.0, 3.0]);
@@ -1059,6 +1082,32 @@ fn a_stated_version_or_an_unclear_schema_location_is_refused() {
     assert_eq!(
         table(&entity).expect_err("refused"),
         MzmlOpenError::Scan(MzmlScanError::Unsafe(UnsafeXmlKind::UndeclaredEntity))
+    );
+}
+
+#[test]
+fn the_table_judges_every_precursor_but_keeps_the_first() {
+    // ms2's second precursor states only m/z 512.25.
+    let later = cvu("MS:1000744", "selected ion m/z", "512.25", "MS:1000040");
+    assert_eq!(base().matches(&later).count(), 1);
+    let conflicting = base().replace(
+        &later,
+        &format!(
+            "{later}{}",
+            cvu("MS:1000744", "selected ion m/z", "513", "MS:1000040")
+        ),
+    );
+    assert_eq!(
+        table(&conflicting).expect_err("refused"),
+        MzmlOpenError::ConflictingTerm
+    );
+    let non_finite = base().replace(
+        &later,
+        &cvu("MS:1000744", "selected ion m/z", "NaN", "MS:1000040"),
+    );
+    assert_eq!(
+        table(&non_finite).expect_err("refused"),
+        MzmlOpenError::Scan(MzmlScanError::Malformed(MzmlMalformedKind::NonFiniteNumber))
     );
 }
 
