@@ -1897,6 +1897,7 @@ export type IntSetWire = readonly { readonly start: number; readonly end: number
 export type SelectionModeWire = "include" | "exclude";
 export type OrientationWire = "most_intense" | "least_intense";
 export type MzToleranceWire = { readonly value: number; readonly unit: "ppm" | "mz" };
+/** `count` and `count_after_ties` take a positive integer; the others a fraction from 0 to 1, or `absolute` any value from 0. */
 export type ThresholdCriterionWire = {
   readonly type: "count" | "count_after_ties" | "absolute" | "bpi_relative" | "tic_relative" | "tic_cutoff";
   readonly value: number;

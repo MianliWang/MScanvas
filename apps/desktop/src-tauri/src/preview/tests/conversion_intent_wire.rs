@@ -236,3 +236,141 @@ fn an_advanced_mzml_conversion_runs_is_labelled_and_is_not_offered_for_adoption(
         "an advanced output is not adopted until its provenance carries the label"
     );
 }
+
+/// Every step kind, switch and encoding shape `contracts.ts` declares, in
+/// canonical form: each deserializes, builds, and serializes back unchanged.
+#[test]
+fn every_wire_shape_the_frontend_declares_round_trips_unchanged() {
+    let set = json!([{ "start": 1, "end": 2 }, { "start": 5, "end": null }]);
+    let one = json!([{ "start": 2, "end": null }]);
+    let tolerance = json!({ "value": 10.0, "unit": "ppm" });
+    let lockmass = json!({ "mz": 556.2771, "mzNegIons": 554.2615, "tol": 1.0 });
+    let mut lockmass_step = lockmass.clone();
+    lockmass_step["kind"] = json!("lockmass_refiner");
+    let spectrum_filters = json!([
+        { "kind": "index", "indices": set },
+        { "kind": "id", "ids": ["controllerType=0 controllerNumber=1 scan=1"] },
+        { "kind": "ms_level", "levels": set },
+        { "kind": "charge_state", "charges": set },
+        { "kind": "precursor_recalculation" },
+        lockmass_step,
+        { "kind": "precursor_refine" },
+        { "kind": "peak_picking_default" },
+        { "kind": "scan_number", "scanNumbers": set },
+        { "kind": "scan_event", "scanEvents": set },
+        { "kind": "scan_time", "startSeconds": 1.0, "endSeconds": 2.5 },
+        { "kind": "sort_by_scan_time" },
+        { "kind": "strip_it" },
+        { "kind": "metadata_fixer" },
+        { "kind": "title_maker", "template": [{ "keyword": "RunId" }, { "literal": "." }] },
+        {
+            "kind": "threshold",
+            "criterion": { "type": "bpi_relative", "value": 0.75 },
+            "orientation": "most_intense",
+            "msLevels": one
+        },
+        { "kind": "mz_window", "low": 100.0, "high": 200.0 },
+        {
+            "kind": "mz_precursors", "mzs": [0.0, 123.4], "mzTol": tolerance,
+            "target": "isolated", "mode": "include"
+        },
+        {
+            "kind": "isolation_windows", "windows": [[0.0, 0.0], [400.0, 425.0]],
+            "mzTol": tolerance, "mode": "exclude"
+        },
+        { "kind": "isolation_width", "widths": [2.0], "mzTol": tolerance, "mode": "include" },
+        { "kind": "default_array_length", "peakCounts": set },
+        {
+            "kind": "zero_samples",
+            "mode": { "kind": "add_missing", "flankingZeroCount": 5 },
+            "msLevels": null
+        },
+        { "kind": "zero_samples", "mode": { "kind": "remove_extra" }, "msLevels": one },
+        {
+            "kind": "mz_present", "mzs": [100.0], "mzTol": tolerance,
+            "criterion": { "type": "count", "value": 10 }, "orientation": "least_intense",
+            "mode": "exclude"
+        },
+        { "kind": "scan_summing", "precursorTol": 0.05, "scanTimeTolSeconds": 10.0, "ionMobilityTol": 0.01 },
+        { "kind": "thermo_scan_filter", "match": "contains", "mode": "exclude", "filter": "ITMS + c NSI" },
+        { "kind": "mz_shift", "shift": -5.0, "unit": "ppm", "msLevels": one },
+        { "kind": "ms2_denoise", "peaksInWindow": 6, "windowWidthDa": 30.0, "multichargeFragmentRelaxation": true },
+        { "kind": "ms2_deisotope", "method": { "kind": "markey" } },
+        { "kind": "ms2_deisotope", "method": { "kind": "markey_high_resolution", "mzTolerance": 0.01 } },
+        { "kind": "ms2_deisotope", "method": { "kind": "poisson", "minCharge": 1, "maxCharge": 3 } },
+        {
+            "kind": "etd_filter", "removePrecursor": true, "removeChargeReduced": true,
+            "removeNeutralLoss": true, "blanketRemoval": false,
+            "matchingTolerance": { "value": 0.5, "unit": "mz" }
+        },
+        {
+            "kind": "demultiplex", "massError": 10.0, "massErrorUnit": "ppm", "nnlsMaxIter": 50,
+            "nnlsEps": 1e-10, "noWeighting": false, "demuxBlockExtra": 0.0, "variableFill": false,
+            "noSumNormalize": false, "optimization": "overlap_only", "interpolateRt": true,
+            "minWindowSize": 0.2, "removeNonOverlappingEdges": false
+        },
+        {
+            "kind": "charge_state_predictor", "overrideExistingCharge": false, "maxMultipleCharge": 3,
+            "minMultipleCharge": 2, "singleChargeFractionTic": 0.9, "maxKnownCharge": 0, "makeMs2": false
+        },
+        {
+            "kind": "turbocharger", "minCharge": 1, "maxCharge": 8, "precursorsBefore": 2,
+            "precursorsAfter": 0, "halfIsoWidth": 1.25, "defaultMinCharge": 0,
+            "defaultMaxCharge": 0, "useVendorPeaks": false
+        },
+        { "kind": "activation", "type": "hcd", "mode": "include" },
+        {
+            "kind": "collision_energy", "low": 20.0, "high": 30.0, "mode": "include",
+            "acceptNonCid": true, "acceptMissingCe": false
+        },
+        { "kind": "analyzer", "analyzer": "orbi" },
+        { "kind": "polarity", "polarity": "positive" }
+    ]);
+    let mut chromatogram_lockmass = lockmass;
+    chromatogram_lockmass["kind"] = json!("lockmass_refiner");
+    let switches = json!([
+        "simAsSpectra",
+        "srmAsSpectra",
+        "combineIonMobilitySpectra",
+        "ddaProcessing",
+        "ignoreCalibrationScans",
+        "acceptZeroLengthSpectra",
+        "ignoreMissingZeroSamples",
+        "ignoreUnknownInstrumentError",
+        "singleThreaded",
+        "stripLocationFromSourceFiles",
+        "stripVersionFromSoftware"
+    ]);
+    let plain = |bits: u8| json!({ "encoding": "plain", "bits": bits });
+    let linear = json!({ "encoding": "numpress_linear", "tolerance": { "kind": "absolute", "value": 1e-4 } });
+    let outputs = [
+        json!({ "format": "mzml", "mz": linear, "intensity": { "encoding": "numpress_slof", "tolerance": 2e-4 }, "zlib": true, "index": false }),
+        json!({ "format": "mzml", "mz": plain(32), "intensity": { "encoding": "numpress_pic" }, "zlib": false, "index": true }),
+        json!({ "format": "mzxml", "bits": 32, "zlib": true, "index": true }),
+        json!({
+            "format": "mzmlb",
+            "mz": { "encoding": "plain", "bits": 64, "truncation": -1, "prediction": "delta" },
+            "intensity": { "encoding": "plain", "bits": 32, "truncation": 7, "prediction": "none" },
+            "zlib": false, "chunkSize": 1_048_576, "compressionLevel": 0
+        }),
+        json!({ "format": "mzmlb", "mz": linear, "intensity": { "encoding": "numpress_pic" }, "zlib": true, "chunkSize": null, "compressionLevel": null }),
+        json!({ "format": "mz5", "mzBits": 64, "intensityBits": 32, "zlib": true }),
+        json!({ "format": "mgf" }),
+        json!({ "format": "text" }),
+        json!({ "format": "ms1" }),
+        json!({ "format": "cms1" }),
+        json!({ "format": "ms2" }),
+        json!({ "format": "cms2" }),
+    ];
+    for output in outputs {
+        let wire = json!({
+            "output": output,
+            "spectrumFilters": spectrum_filters,
+            "chromatogramFilters": [{ "kind": "index", "indices": set }, chromatogram_lockmass],
+            "switches": switches
+        });
+        let intent: mscanvas_proteowizard::StructuredIntent =
+            serde_json::from_value(wire.clone()).unwrap_or_else(|error| panic!("{error}: {wire}"));
+        assert_eq!(serde_json::to_value(&intent).expect("serialize"), wire);
+    }
+}
