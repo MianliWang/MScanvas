@@ -437,9 +437,24 @@ writer and Rust's ownership of files.
   - owner decision, 2026-10-30: these 44 alerts (Pillow 41, extract-zip 2,
     glib 1) are not dismissed; they stay open and are fixed later as above (see
     [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md)).
-- `PM9.7-I2 … zh-CN-1366x768` (`e2e/specs/pm9.7-integrated.browser.e2e.ts:397`,
-  the scrolled-to-end check) is flaky in CI: it failed on `main` at `7c2c774`
-  and on PR #167 at `9f7b1be` with no frontend change, and passed on rerun.
+- The `PM9.7-I2 … zh-CN-1366x768` flake (the browser spec's scrolled-to-end
+  check, 2 px short in CI on `main` at `7c2c774` and on PRs #167 and #169;
+  reruns passed on #167 and #169, and the next push to `main` passed) is fixed
+  in the test, pending confirmation on Browser e2e 6/6. The case set the end
+  once, right after the selected spectrum reported its range. Under reduced
+  motion, which only the zh-CN cases emulate, `app.css` turns every style
+  change into a 0.01 ms transition, so a commit's layout can land a frame
+  later. Locally that was measured as 1 px: the spectrum summary's line goes
+  from 16.5 px to 19.5 px (11 px to 13 px font) and loses a 2 px margin a frame
+  after the end was set. The 2 px CI state was not captured; CI's failure
+  frame matches the local one except for the evidence column's scroll. The
+  case now waits for the spectrum's drawing, and both its scrolls set the end
+  again until it holds for five frames, whichever commit lands late. Left
+  open: that reduced-motion rule adds transitions where none are declared (a
+  question for the interface rebuild, where the summary no longer changes
+  class); the native I2 (`e2e/specs/pm9.7-integrated.native.e2e.ts`) still
+  sets the end once; the browser workflow keeps screenshots but not
+  `evidence.json`.
 - The real targeted-MS1 engine qualification and, before any release ships the
   runtime, its packaging, licence qualification and worker confinement.
 - Exported values are not the stored binary values: a spectrum is read through
