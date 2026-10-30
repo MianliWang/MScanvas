@@ -24,7 +24,7 @@ and manuscripts.
 
 PNG has a standard place for those words. The specification's text chunks hold
 keyword and value pairs, and `Title` and `Description` are two of its
-predefined keywords. Image viewers, file managers and metadata tools read them.
+predefined keywords.
 
 The owner selected the feature on 2026-10-28, as part of the post-beta-1 work,
 and accepted the recommended design defaults.
