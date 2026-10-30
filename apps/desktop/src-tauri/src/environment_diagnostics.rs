@@ -10,16 +10,20 @@
 //! stable id the repository defines (a backend failure kind, a preference
 //! problem, a boundary error kind), never text a person or a file supplied.
 //! Shape and redaction are the second line: every value must also match its
-//! own shape and come back unchanged from the redactor, or it is replaced whole
-//! by `<withheld>`. A code-shaped name, such as a file stem without its
-//! extension, would pass that second line, so a change that routes supplied
-//! text into a code field breaks the first. The ProteoWizard folder is never
+//! own shape, come back unchanged from the profile redactor and not hold the
+//! account name as a whole token, or it is replaced whole by `<withheld>`. The
+//! account name is not matched as a substring: a user named `lab` would lose
+//! `available`, and which lines were withheld would spell the name out. A
+//! code-shaped name, such as a file stem without its extension, would pass
+//! that second line, so a change that routes supplied text into a code field
+//! breaks the first. The ProteoWizard folder is never
 //! written: ADR 0005 keeps the installation path out of diagnostics, so only
 //! the known root it sits under is named.
 //!
 //! [ADR 0063]: ../../../../docs/architecture/adr/0063-copy-diagnostics.md
 
 use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -234,18 +238,42 @@ pub(crate) fn summary(service: &PreviewService, preferences: &UiPreferenceStore)
         recent_errors,
         dropped_errors,
     };
-    render(&facts, &KnownRoots::of_process(), &process_redactor())
+    render(
+        &facts,
+        &KnownRoots::of_process(),
+        &Redactor::new(),
+        &account_names(std::env::var_os),
+    )
 }
 
-/// The profile paths `Redactor::new` knows, and the account name.
-fn process_redactor() -> Redactor {
-    let mut redactor = Redactor::new();
-    for variable in ["USERNAME", "USER"] {
-        if let Some(name) = std::env::var_os(variable) {
-            redactor.add_literal(&name.to_string_lossy(), "<user-name>");
-        }
-    }
-    redactor
+/// The account name, from the variables that hold it. `var` is
+/// `std::env::var_os` outside tests.
+pub(crate) fn account_names(var: impl Fn(&'static str) -> Option<OsString>) -> Vec<String> {
+    ["USERNAME", "USER"]
+        .into_iter()
+        .filter_map(var)
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// Whether `value` holds `account` as a whole token: the whole value, or a run
+/// with the value's edge or `_`, `.`, `-` or a space on each side, compared
+/// without ASCII case. Never as a substring (ADR 0063, decision 3).
+fn names_account(value: &str, account: &str) -> bool {
+    let value = value.as_bytes();
+    let account = account.as_bytes();
+    let bounds =
+        |byte: Option<&u8>| byte.is_none_or(|byte| matches!(byte, b'_' | b'.' | b'-' | b' '));
+    !account.is_empty()
+        && value
+            .windows(account.len())
+            .enumerate()
+            .any(|(start, window)| {
+                window.eq_ignore_ascii_case(account)
+                    && bounds(start.checked_sub(1).and_then(|before| value.get(before)))
+                    && bounds(value.get(start + account.len()))
+            })
 }
 
 /// Windows version, build and edition, from the registry key `winver` reads.
@@ -315,11 +343,22 @@ fn windows_facts() -> (Option<String>, Option<String>, Option<String>) {
 }
 
 /// Writes the summary. Pure: the same facts give the same text.
-pub(crate) fn render(facts: &Facts, roots: &KnownRoots, redactor: &Redactor) -> String {
+pub(crate) fn render(
+    facts: &Facts,
+    roots: &KnownRoots,
+    redactor: &Redactor,
+    accounts: &[String],
+) -> String {
     let shown = |value: Option<&str>, shape: fn(&str) -> bool| -> String {
         match value {
             None => UNKNOWN.to_owned(),
-            Some(value) if shape(value) && redactor.redact(value) == value => value.to_owned(),
+            Some(value)
+                if shape(value)
+                    && redactor.redact(value) == value
+                    && !accounts.iter().any(|account| names_account(value, account)) =>
+            {
+                value.to_owned()
+            }
             Some(_) => WITHHELD.to_owned(),
         }
     };

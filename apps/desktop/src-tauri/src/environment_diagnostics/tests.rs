@@ -1,11 +1,12 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use mscanvas_proteowizard::{PreviewOperation, Redactor, Sha256Digest};
 
 use super::{
-    Backend, Facts, KnownRoots, RECENT_ERROR_CAPACITY, RecentError, RecentErrors, recent_errors,
-    render, summary,
+    Backend, Facts, KnownRoots, RECENT_ERROR_CAPACITY, RecentError, RecentErrors, account_names,
+    recent_errors, render, summary,
 };
 use crate::preferences::UiPreferenceStore;
 use crate::preview::InstallationIdentity;
@@ -47,9 +48,17 @@ fn roots() -> KnownRoots {
 }
 
 fn redactor() -> Redactor {
-    let mut redactor = Redactor::default().with_path(Path::new(PROFILE), "<user-profile>");
-    redactor.add_literal(USER, "<user-name>");
-    redactor
+    Redactor::default().with_path(Path::new(PROFILE), "<user-profile>")
+}
+
+/// The account names the production lookup finds when `USERNAME` holds
+/// `account`, as on Windows.
+fn accounts_of(account: &str) -> Vec<String> {
+    account_names(|name: &str| (name == "USERNAME").then(|| OsString::from(account)))
+}
+
+fn accounts() -> Vec<String> {
+    accounts_of(USER)
 }
 
 fn ordinary() -> Facts {
@@ -141,7 +150,10 @@ Held: 2 (at most 32; older dropped: 3)
 - 2026-10-30T07:50:00Z conversion_destination_refused
 - 2026-10-30T07:55:00Z preview_worker_unavailable (repeated until 2026-10-30T07:56:30Z)
 ";
-    assert_eq!(render(&ordinary(), &roots(), &redactor()), expected);
+    assert_eq!(
+        render(&ordinary(), &roots(), &redactor(), &accounts()),
+        expected
+    );
 }
 
 /// The real collection path, over a provider that fails the test if anything
@@ -174,7 +186,7 @@ fn an_unchecked_backend_says_so_rather_than_guessing() {
         },
         ..ordinary()
     };
-    let text = render(&facts, &roots(), &redactor());
+    let text = render(&facts, &roots(), &redactor(), &accounts());
     for line in [
         "Checked this session: no",
         "Quarantined: yes",
@@ -195,7 +207,7 @@ fn a_saved_language_is_none_only_when_nothing_is_saved() {
             ui_preferences: outcome.to_owned(),
             ..ordinary()
         };
-        let text = render(&facts, &roots(), &redactor());
+        let text = render(&facts, &roots(), &redactor(), &accounts());
         assert!(
             text.contains(&format!("Saved UI language: {expected}\n")),
             "{outcome} should read {expected}:\n{text}"
@@ -208,9 +220,10 @@ fn a_saved_language_is_none_only_when_nothing_is_saved() {
 /// variable, alone and combined, and none of them reaches the text.
 #[test]
 fn planted_identifiers_never_appear_whatever_field_they_are_planted_in() {
-    // A value here that is code-shaped carries the user name, which the
-    // redactor knows. A code field would show a code-shaped name the redactor
-    // does not know, such as `PlantedSample042`: code fields rely on their
+    // A value here that is code-shaped carries the user name as a token, which
+    // the account check finds through the production lookup. A code field
+    // would show a code-shaped name nothing knows, such as
+    // `PlantedSample042`: code fields rely on their
     // source, a stable id the repository defines, and shape and redaction are
     // only the second line. The folder is never written, so it also gets
     // code-shaped and installer-looking names.
@@ -281,7 +294,7 @@ fn planted_identifiers_never_appear_whatever_field_they_are_planted_in() {
                 }],
                 dropped_errors: 0,
             };
-            let text = render(&facts, &roots(), &redactor()).to_lowercase();
+            let text = render(&facts, &roots(), &redactor(), &accounts()).to_lowercase();
             for sentinel in SENTINELS {
                 assert!(
                     !text.contains(sentinel),
@@ -289,6 +302,96 @@ fn planted_identifiers_never_appear_whatever_field_they_are_planted_in() {
                 );
             }
         }
+    }
+}
+
+/// The account name withholds a value only where it is a whole token. As a
+/// substring, a shared workstation's `lab` would withhold `available`, and
+/// which lines were withheld would spell the name out (ADR 0063, decision 3).
+#[test]
+fn an_account_name_withholds_only_a_value_it_is_a_whole_token_of() {
+    assert_eq!(
+        account_names(|name: &str| Some(OsString::from(name.to_lowercase()))),
+        ["username", "user"],
+        "both variables that name the account are read"
+    );
+    let state = |value: &str| Facts {
+        backend: Backend {
+            state: Some(value.to_owned()),
+            ..ordinary().backend
+        },
+        ..ordinary()
+    };
+    let cases = [
+        // Inside a word: kept.
+        ("lab", state("available"), "State: available"),
+        ("lab", state("unavailable"), "State: unavailable"),
+        (
+            "LAB",
+            Facts {
+                ui_preferences: "unavailable".to_owned(),
+                ..ordinary()
+            },
+            "UI preferences: unavailable",
+        ),
+        (
+            "lab",
+            Facts {
+                recent_errors: vec![RecentError {
+                    code: "preview_worker_unavailable".to_owned(),
+                    first: NOW,
+                    last: NOW,
+                }],
+                ..ordinary()
+            },
+            "- 2026-10-30T08:00:00Z preview_worker_unavailable",
+        ),
+        (
+            "en",
+            Facts {
+                backend: Backend {
+                    origin: Some("chosen".to_owned()),
+                    ..ordinary().backend
+                },
+                ..ordinary()
+            },
+            "Origin: chosen",
+        ),
+        (
+            "en",
+            Facts {
+                saved_ui_language: None,
+                ui_preferences: "absent".to_owned(),
+                ..ordinary()
+            },
+            "UI preferences: absent",
+        ),
+        // The whole value, or a token between delimiters, even when the name
+        // holds a delimiter itself: withheld.
+        (
+            "en",
+            Facts {
+                saved_ui_language: Some("en".to_owned()),
+                ..ordinary()
+            },
+            "Saved UI language: <withheld>",
+        ),
+        ("lab", state("lab_unavailable"), "State: <withheld>"),
+        (
+            "wang.lab",
+            Facts {
+                app_version: "0.1.0-wang.lab".to_owned(),
+                ..ordinary()
+            },
+            "Version: <withheld>",
+        ),
+    ];
+    for (account, facts, line) in cases {
+        let text = render(&facts, &roots(), &redactor(), &accounts_of(account));
+        assert!(
+            text.contains(&format!("{line}\n")),
+            "{account}: {line} is missing:\n{text}"
+        );
     }
 }
 
@@ -346,7 +449,7 @@ fn a_folder_is_named_only_by_the_known_root_it_sits_under() {
             },
             ..ordinary()
         };
-        let text = render(&facts, &roots(), &redactor());
+        let text = render(&facts, &roots(), &redactor(), &accounts());
         assert!(
             text.contains(&format!("Folder: {expected}\n")),
             "{folder} should read {expected}:\n{text}"
@@ -393,7 +496,7 @@ fn the_largest_summary_every_shape_admits_stays_within_its_bound() {
             .collect(),
         dropped_errors: u64::MAX,
     };
-    let text = render(&facts, &roots(), &Redactor::default());
+    let text = render(&facts, &roots(), &Redactor::default(), &[]);
     assert!(
         !text.contains("<withheld>"),
         "every value here is admitted, so the bound is measured at its largest:\n{text}"

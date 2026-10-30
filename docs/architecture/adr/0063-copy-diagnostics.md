@@ -38,7 +38,7 @@ redacted ProteoWizard text; this summary holds no backend text at all.
 | — | `Format`, `Created` | this layout's number; the clock, as RFC 3339 UTC | fixed |
 | Application | `Version` | the package version | starts with a digit; digits, letters, `.`, `-`, `+`; at most 32 |
 | Application | `Build profile` | `release` or `debug` | code |
-| Application | `Build commit` | `GITHUB_SHA` at compile time, which GitHub Actions sets for every CI and release build; a pull-request build records its merge commit | 40 hex digits, else `unknown` |
+| Application | `Build commit` | `GITHUB_SHA` at compile time, which GitHub Actions sets for every CI and release build; a pull-request build records its merge commit | 40 hex digits; `unknown` when absent, `<withheld>` when malformed |
 | Application | `Saved UI language` | the preference record's locale, `none` when nothing is saved, or `unknown` when the record could not be read or used | `en` or `zh-CN` |
 | Application | `UI preferences`, `UI preferences problem` | the preference store's read outcome and its owned problem code | code |
 | System | `Windows version`, `Windows build`, `Windows edition` | `DisplayVersion`, `CurrentBuildNumber`.`UBR` and `EditionID` under `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, what `winver` reads. `ProductName` is not read: it says "Windows 10" on Windows 11 | letters and digits, at most 8; digits and dots; letters and digits, at most 32 |
@@ -72,12 +72,17 @@ folder.
 
 ### 2. What never goes in
 
-No file name of the user's data and nothing from the workspace, a project or a
-conversion; no full path, and nothing under the profile other than as a
-placeholder; no environment variable; no user name; no ProteoWizard help text,
+No file name of the user's data and no name, path or count from the workspace,
+a project or a conversion; no full path, and nothing under the profile other
+than as a placeholder; no runtime environment variable (the version and the
+build commit are compile-time values); no user name; no ProteoWizard help text,
 and no error summary or detail. Only those environment variables are read that
 locate the profile, the local application data and Program Files, or that name
 the account, and they are used only to recognise and redact.
+
+The recent error codes of decision 5 do say something about the user's work: a
+code can name the input's vendor (`sciex_companion_missing`) or a feature that
+was used (`targeted_evidence_absent`), and its times say when.
 
 ### 3. Every value comes from an owned source, then passes its shape and the redactor, or is withheld whole
 
@@ -88,11 +93,22 @@ file supplied. As of 2026-10-30 every source of a code field and every
 `PreviewErrorDto::new` kind is such an id.
 
 The second line is shape and redaction. Each value must match its own shape
-from the table, and must come back unchanged from a redactor that knows the
-profile path and the account name. A value that fails either is replaced whole
-by `<withheld>`; nothing is partly rewritten. Withholding is the safe failure: a
-user named `en` loses the language line, and nothing worse. The second line
-alone does not stop a code-shaped name the redactor does not know, such as a
+from the table, must come back unchanged from a redactor that knows the profile
+path, and must not hold the account name (`USERNAME` or `USER`) as a whole
+token: the whole value, or a run with the value's edge or `_`, `.`, `-` or a
+space on each side, compared without case. A value that fails any of these is
+replaced whole by `<withheld>`; nothing is partly rewritten.
+
+The account name is not matched as a substring. A shared workstation's `lab`
+would then withhold `available` and `unavailable` in every line that can hold
+them, and which lines were withheld would spell the name out. As a token it
+still withholds a value the name is part of: a user named `en` loses the
+language line `en`, `cn` loses `zh-CN`, and `jan` loses a January build date.
+The withheld line then says that the name is one of that line's tokens. This
+small side channel is accepted: showing the value instead would write the name
+whenever it really is there.
+
+The second line alone does not stop a code-shaped name nothing knows, such as a
 file stem without its extension, so a change that routes supplied text into a
 code field or an error kind breaks the first line, and must not be made.
 
@@ -120,7 +136,8 @@ elsewhere, `figure_preview_too_large`, now goes through it too. The ring holds
 entry with a first and a last time, so a retry loop or a failure projected
 again cannot push every other code out. A value that is not shaped like a code
 is kept as `unrecognized_code`. The ring lives for the process and is never
-written anywhere.
+written anywhere. A code can name the input's vendor (`sciex_*`) or a feature
+that was used (`targeted_*`), and its times say when (decision 2).
 
 It says what the native boundary *produced* this session, which is close to,
 but not exactly, what the interface showed: an error built and then discarded
@@ -202,8 +219,9 @@ capability and reads nothing. The release guide's
   posture, but needs a second command beside the read, or one read that also
   copies before the user has seen the text.
 - **Workspace contents by family** (how many mzML, Thermo RAW, Shimadzu or
-  SCIEX rows). Answers the guide's input-format question, but is workspace
-  state the summary otherwise avoids. Left for the owner.
+  SCIEX rows). Answers the guide's input-format question, but adds counts of
+  workspace contents. Part of it already shows through recent error codes
+  (`sciex_*`, `targeted_*`; decision 5). Left for the owner.
 
 ## Consequences
 
@@ -229,4 +247,6 @@ capability and reads nothing. The release guide's
 4. **The interface and the copy route (decision 10).** Recommended: a Settings
    button, a read-only preview and the platform text clipboard.
 5. **Workspace contents by family.** Recommended: leave out until a support case
-   needs it.
+   needs it. A recent error code can already name a vendor or a feature
+   (decision 5); a code allowlist or category for the ring is the alternative
+   if that is not acceptable.
