@@ -61,15 +61,18 @@ pub(super) const DIAGNOSTICS_FILE_NAME: &str = "mscanvas-conversion-diagnostics.
 /// would hand the user something no reader can open in exchange for hiding the
 /// fact that the bound was reached.
 ///
-/// **The rule (ADR 0057, decision 3): 128 KiB per diagnosed item, counting at
-/// least one.** One item may retain two 32 KiB excerpts; 128 KiB is those
-/// with room for the structure and the facts. At sixteen items it is the 2 MiB
-/// this bound used to be, and a full queue of 1,024 is 128 MiB. Excerpts that
-/// need heavy escaping can still exceed it, and the document is then refused
-/// whole.
+/// **The rule (ADR 0057, decision 3): the 2 MiB this bound always was, or
+/// 128 KiB per diagnosed item, whichever is larger.** The document holds the
+/// queue's counts and one entry per diagnosed item, and one item may retain two
+/// 32 KiB excerpts; 128 KiB is those with room for the structure and the
+/// facts. A queue of sixteen or fewer keeps exactly the 2 MiB it had, and a
+/// full queue of 1,024 is 128 MiB. Excerpts that need heavy escaping can still
+/// exceed it, and the document is then refused whole.
 pub(super) const fn max_diagnostic_export_bytes(items: usize) -> usize {
+    const FLOOR: usize = 2 * 1024 * 1024;
     const PER_ITEM: usize = 128 * 1024;
-    PER_ITEM * if items == 0 { 1 } else { items }
+    let scaled = PER_ITEM.saturating_mul(items);
+    if scaled > FLOOR { scaled } else { FLOOR }
 }
 
 /// The one sentence this feature must never be shipped without.

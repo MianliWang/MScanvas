@@ -18508,18 +18508,17 @@ impl ProcessRunner for VerboseFailingRunner {
 #[test]
 fn a_diagnostics_document_over_the_bound_is_refused_and_writes_nothing() {
     use super::diagnostics::max_diagnostic_export_bytes;
-    assert_eq!(
-        max_diagnostic_export_bytes(16),
-        2 * 1024 * 1024,
-        "sixteen items keep the 2 MiB they had"
-    );
+    for small in [0, 1, 16] {
+        assert_eq!(
+            max_diagnostic_export_bytes(small),
+            2 * 1024 * 1024,
+            "a queue of sixteen or fewer keeps the 2 MiB it had"
+        );
+    }
+    assert_eq!(max_diagnostic_export_bytes(17), 17 * 128 * 1024);
     assert_eq!(
         max_diagnostic_export_bytes(MAX_CONVERSION_QUEUE_ITEMS),
         128 * 1024 * 1024
-    );
-    assert_eq!(
-        max_diagnostic_export_bytes(0),
-        max_diagnostic_export_bytes(1)
     );
     let fixture = TestFile::new("diagnostics-bound");
     let destination = destination_root(&fixture, "out");
@@ -18527,10 +18526,10 @@ fn a_diagnostics_document_over_the_bound_is_refused_and_writes_nothing() {
         evidenced_capabilities(),
         VerboseFailingRunner,
     )));
-    // The bound is per diagnosed item (ADR 0057, decision 3), so two items
-    // whose excerpts double under escaping exceed it as sixteen did, without
-    // running a full queue of 1,024.
-    let count = 2;
+    // Past sixteen the bound is per diagnosed item (ADR 0057, decision 3), so
+    // seventeen items whose excerpts double under escaping exceed it, as
+    // sixteen exceeded the old 2 MiB, without running a full queue of 1,024.
+    let count = 17;
     let handles: Vec<String> = (0..count)
         .map(|index| {
             add_one_acquisition(&service, &fixture.thermo_raw(&format!("item-{index}.raw")))
