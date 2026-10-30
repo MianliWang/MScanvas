@@ -110,14 +110,19 @@ read polarity yet; branch `be/reader-meta` adds it.
 
 - **Both are binned alike, as stored.** A profile sample and a centroid peak
   are each one point with one intensity. Nothing converts one into the other.
-- **Why the greatest value.** A sum of profile samples in a fixed-width bin
-  grows with the number of samples a peak has in that bin, and that number
-  changes with m/z and with the instrument. Measured on the Orbitrap profile
-  file, the median spacing of adjacent samples is 0.0027 at m/z 400–500, 0.0073
-  at 800–900 and 0.0128 at 1200–1300: the same peak at m/z 450 has about 4.7
-  times as many samples as at 1250. On the LTQ Velos ion-trap file the spacing
-  is 0.0833 at every m/z. A sum would paint sampling density; the greatest
-  stored value is the same quantity for profile and centroid data.
+- **Why the greatest value.** A sum adds every stored point in the cell, so it
+  measures how the spectra were stored as much as the signal.
+  - Over the same 2,748 MS1 scans of one run, the profile file stores
+    24,766,275 points and its vendor-centroided conversion 1,724,215: about 14
+    profile samples per centroid. Where the centroided map adds one peak, a sum
+    over the profile map would add about 14 samples.
+  - Sampling also changes with m/z and with the instrument. On the Orbitrap
+    profile file the median spacing of adjacent samples is 0.0027 at m/z
+    400–500, 0.0073 at 800–900 and 0.0128 at 1200–1300, so a fixed-width cell
+    holds about 4.7 times as many samples at low m/z. On the LTQ Velos ion-trap
+    file the spacing is 0.0833 at every m/z.
+  - The greatest stored value is the height of the tallest sample or peak in
+    the cell, so the profile and centroided maps of one run stay comparable.
 - **The representation is stated, and a mix is not refused.** The result counts
   binned spectra as profile, centroid and not declared. The caption names the
   representation, or states the counts when they differ: the LTQ Velos
@@ -172,7 +177,8 @@ partial raster.
     lane, because a full pass takes seconds and would hold every selected
     spectrum behind it. Reads share no cursor (ADR 0056, decision 4), so this
     is safe. Bounding concurrent passes at one keeps memory at one raster and
-    one spectrum;
+    one spectrum. Accepting this amends ADR 0057's "at most one native read
+    runs at a time" for the map pass (open question 6);
   - admission is a native read's (ADR 0057): retained preview state and a
     usable backend, as today;
   - the file generation the open recorded is checked before the pass and after
@@ -221,8 +227,8 @@ no sum, XIC, summed spectrum, peak picking or feature detection.
 
 ## Evidence
 
-Release build of the example, single runs on a 14-core, 20-thread Windows
-machine,
+Release build of the example, two or three runs per Orbitrap file and one for
+the LTQ Velos file, on a 14-core, 20-thread Windows machine,
 2026-10-30, warm cache (each file was hashed just before its runs). Inputs are
 public and not committed; their provenance is recorded with the data under
 `D:\tmp\public-data\` (manifest items 2, 3a and the vendor-centroiding record's
@@ -230,7 +236,7 @@ case `TE1`). No ProteoWizard program ran.
 
 | | Orbitrap MS1 profile | Orbitrap MS1 vendor-centroided | LTQ Velos, mixed |
 | --- | --- | --- | --- |
-| File | PXD081190 RAW → mzML, 546,327,287 bytes, SHA-256 `82328655…de4fc3`, CC0 | [`TE1`](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md), 284,183,742 bytes, SHA-256 `4727d25e…540983`, CC0 | ProteoWizard test data, 5,060,221 bytes, SHA-256 `c72e2c8c…b63ec9` |
+| File | PXD081190 RAW → mzML, 546,327,287 bytes, SHA-256 `82328655…de4fc3`, CC0 | [`TE1`](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md), 284,183,742 bytes, SHA-256 `4727d25e…540983`, CC0 | `msconvert` output of ProteoWizard's LTQ Velos test RAW, 5,060,221 bytes, SHA-256 `c72e2c8c…b63ec9` |
 | Spectra, of which MS1 | 43,878; 2,748 profile | 43,878; 2,748 centroid | 85; 44 (29 profile, 15 centroid) |
 | Table pass (exists after the open) | 3,498–3,913 ms | 3,224 ms | 12 ms |
 | Full extent, 1,024 × 2,048 cells | 3,840–4,769 ms; 24,766,275 points; 726,465 cells hold a value | 626–937 ms; 1,724,215 points; 670,590 cells | 63 ms; 326,354 points; 43,894 cells |
@@ -247,9 +253,11 @@ case `TE1`). No ProteoWizard program ran.
 
 ## Alternatives
 
-- **Sum per cell.** It paints sampling density for profile data (decision 3).
-  It would be meaningful for centroid data only, and one rule for both is
-  simpler to state. Kept as an open question.
+- **Sum per cell.** It counts how the spectra were stored as much as the
+  signal: about 14 profile samples per centroid on the measured run, and more
+  samples per cell at low m/z (decision 3). It would mean something for
+  centroid data only, and one rule for both is simpler to state. Kept as an
+  open question.
 - **Mean per cell.** It depends on how many zero-intensity samples share the
   cell, which is again sampling.
 - **Sending arrays and binning in the webview.** Refused by AGENTS.md: a profile
@@ -291,3 +299,6 @@ case `TE1`). No ProteoWizard program ran.
 5. **Polarity after `be/reader-meta`:** one map per polarity, refusing a file
    where only some MS1 spectra declare one (recommended), or a map that admits
    undeclared spectra beside one declared polarity.
+6. **The map pass and ADR 0057's native-read lane:** the pass runs on its own
+   worker, one at a time, beside selected-spectrum reads (recommended; this
+   amends ADR 0057), or it takes the lane and selected spectra wait for it.
