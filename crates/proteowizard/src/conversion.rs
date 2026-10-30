@@ -2333,7 +2333,8 @@ const fn processing_preserves_spectrum_point_counts(processing: ProcessingIntent
         // The vendor picker shortened every in-scope profile spectrum, from a
         // median of 20,399 points to 1,489 on the ion trap (`TV1`).
         ProcessingIntent::UnscopedDefaultCentroiding
-        | ProcessingIntent::VendorCentroidingFromMs1 => false,
+        | ProcessingIntent::VendorCentroidingFromMs1
+        | ProcessingIntent::VendorCentroidingFromMs2 => false,
     }
 }
 
@@ -2822,7 +2823,7 @@ pub struct AdvancedOutputChecks {
     pub changes: RequestedChanges,
     /// The levels a vendor picker was asked to centroid, where it is judged as
     /// [`ProcessingIntent::VendorCentroidingFromMs1`]'s algorithm with another
-    /// scope. `None` is that row's own scope, every level.
+    /// scope. `None` is the judged row's own scope.
     pub vendor_levels: Option<PickerLevels>,
 }
 
@@ -2835,9 +2836,15 @@ pub struct PickerLevels {
 }
 
 impl PickerLevels {
-    /// `msLevel=1-`, the vendor-picker row's scope and the picker's default.
+    /// `msLevel=1-`, the MS1-and-above row's scope and the picker's default.
     pub const EVERY_LEVEL: Self = Self {
         first: 1,
+        last: None,
+    };
+
+    /// `msLevel=2-`, the MS2-and-above row's scope.
+    pub const FROM_MS2: Self = Self {
+        first: 2,
         last: None,
     };
 
@@ -3255,10 +3262,20 @@ fn check_requested_processing(
 ) -> Option<ConversionIntegrityOutcome> {
     let requested = intent.processing();
     match requested {
+        // A verified row arrives with no levels and is judged at its own
+        // scope; an advanced intent names the scope it asked for.
         ProcessingIntent::VendorCentroidingFromMs1 => check_vendor_centroiding(
             after,
             before,
+            requested,
             vendor_levels.unwrap_or(PickerLevels::EVERY_LEVEL),
+            report,
+        ),
+        ProcessingIntent::VendorCentroidingFromMs2 => check_vendor_centroiding(
+            after,
+            before,
+            requested,
+            vendor_levels.unwrap_or(PickerLevels::FROM_MS2),
             report,
         ),
         ProcessingIntent::NoAdditionalCentroiding => {
@@ -3377,9 +3394,9 @@ fn source_history_for(before: Option<&MzmlFacts>, position: usize) -> Option<Pro
     }
 }
 
-/// [`ProcessingIntent::VendorCentroidingFromMs1`]'s check, at the requested
-/// scope: the "Proposed output checks" of the Thermo vendor centroiding
-/// evidence.
+/// The vendor-picker rows' check, [`ProcessingIntent::VendorCentroidingFromMs1`]
+/// and [`ProcessingIntent::VendorCentroidingFromMs2`], at the requested scope:
+/// the "Proposed output checks" of the Thermo vendor centroiding evidence.
 ///
 /// Per spectrum, through its effective processing reference, as for the
 /// default picker:
@@ -3402,10 +3419,10 @@ fn source_history_for(before: Option<&MzmlFacts>, position: usize) -> Option<Pro
 fn check_vendor_centroiding(
     after: &MzmlFacts,
     before: Option<&MzmlFacts>,
+    requested: ProcessingIntent,
     levels: PickerLevels,
     report: &mut IntegrityReport,
 ) -> Option<ConversionIntegrityOutcome> {
-    let requested = ProcessingIntent::VendorCentroidingFromMs1;
     let mut established = true;
     for (position, output) in after.spectra().iter().enumerate() {
         if output.binary_array_count() == 0 {
@@ -6715,6 +6732,49 @@ mod tests {
                     .verified()
                     .contains(&IntegrityProperty::RequestedProcessing)
             );
+        }
+
+        /// The MS2-and-above row is judged as a verified row is, with no
+        /// advanced levels, so it carries its own scope: MS1 left in profile
+        /// with a `2-` record passes (`TV2`, `TE2`, `TQ2`), and the record the
+        /// MS1-and-above row writes does not.
+        #[cfg(windows)]
+        #[test]
+        fn the_ms2_row_is_judged_at_its_own_scope() {
+            let row = admitted(
+                ProcessingIntent::VendorCentroidingFromMs2,
+                SpectrumPopulation::All,
+                NumericPrecision::Mz64Intensity32,
+                CompressionIntent::Zlib,
+            );
+            let spectra = [SpectrumFixture::profile_ms1(15), SpectrumFixture::ms2(8)];
+            for (scope, expected) in [
+                (Some("2-"), None),
+                (
+                    None,
+                    Some(ConversionIntegrityOutcome::PickerScopeRecordMismatch {
+                        spectrum_index: 0,
+                    }),
+                ),
+            ] {
+                let output = output_document(&spectra, 1).replacen(
+                    "</dataProcessing>",
+                    &format!("{}</dataProcessing>", vendor_method(scope)),
+                    1,
+                );
+                let (_directory, facts, inspected) = staged(&source_document(&spectra, 1), &output);
+                let outcome = judge_output_alone_with(facts.object(), inspected, row, None);
+                match expected {
+                    None => assert!(
+                        outcome
+                            .valid()
+                            .expect("a faithful MS2+ row output passes")
+                            .verified()
+                            .contains(&IntegrityProperty::RequestedProcessing)
+                    ),
+                    Some(refusal) => assert_eq!(outcome, refusal, "{scope:?}"),
+                }
+            }
         }
     }
 }

@@ -1846,8 +1846,8 @@ M63_INTENT = "crates/proteowizard/src/intent.rs"
 #: How many combinations the five axes span, and how many the evidence admits.
 #: Stated here as well as in the module so a widened table has to be widened
 #: deliberately in two places rather than drifting in one.
-M63_CROSS_PRODUCT = 72
-M63_ADMITTED_ROWS = 10
+M63_CROSS_PRODUCT = 96
+M63_ADMITTED_ROWS = 11
 
 #: The frontend's hand transcription of the admitted table, one `intent(...)`
 #: call per row.
@@ -1864,10 +1864,14 @@ M63_FRONTEND_FIXTURE_ROW = re.compile(
 #: other is citing something that does not mean what it reads.
 M63_ADMITTED_PICKER_FILTER = "peakPicking"
 
-#: The one shape the vendor picker may take: the Thermo vendor centroiding
-#: evidence measured `msLevel=1-` (`TV1`, `TE1`), and the owner admitted that
-#: scope alone on 2026-10-30 (ADR 0059). `msLevel=2-` stays advanced.
-M63_VENDOR_PICKER_FILTER = "peakPicking vendor msLevel=1-"
+#: The two shapes the vendor picker may take, one per vendor-picker row: the
+#: Thermo vendor centroiding evidence measured `msLevel=1-` (`TV1`, `TE1`,
+#: `TQ1`) and `msLevel=2-` (`TV2`, `TE2`, `TQ2`), and the owner admitted both on
+#: 2026-10-30 (ADR 0059). Every other scope stays advanced.
+M63_VENDOR_PICKER_FILTERS: dict[str, str] = {
+    "VendorCentroidingFromMs1": "peakPicking vendor msLevel=1-",
+    "VendorCentroidingFromMs2": "peakPicking vendor msLevel=2-",
+}
 
 #: The record of the Thermo vendor centroiding measurements, outside M6.2's
 #: ledger, and the cases from it an admitted row may cite, with the argv the
@@ -1876,8 +1880,12 @@ M63_VENDOR_PICKER_FILTER = "peakPicking vendor msLevel=1-"
 #: that the record does not show run with that filter and exit 0.
 THERMO_VENDOR_EVIDENCE = "docs/spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md"
 THERMO_VENDOR_CASES: dict[str, tuple[str, ...]] = {
-    "TV1": ("--mzML", "--zlib", "--filter", M63_VENDOR_PICKER_FILTER),
-    "TE1": ("--mzML", "--zlib", "--filter", M63_VENDOR_PICKER_FILTER),
+    case: ("--mzML", "--zlib", "--filter", M63_VENDOR_PICKER_FILTERS[processing])
+    for processing, cases in (
+        ("VendorCentroidingFromMs1", ("TV1", "TE1", "TQ1")),
+        ("VendorCentroidingFromMs2", ("TV2", "TE2", "TQ2")),
+    )
+    for case in cases
 }
 
 #: The MS-level filter forms that mean "every level".
@@ -1967,6 +1975,7 @@ M63_INTENT_ROW = re.compile(
 M63_READER_SENSITIVE_DOMAINS: dict[str, str] = {
     "UnscopedDefaultCentroiding": "MeasuredOn(&[ConversionSourceKind::MzmlFile])",
     "VendorCentroidingFromMs1": "MeasuredOn(&[ConversionSourceKind::ThermoRawFile])",
+    "VendorCentroidingFromMs2": "MeasuredOn(&[ConversionSourceKind::ThermoRawFile])",
 }
 M63_WRITER_SIDE_DOMAIN = "AnyAdmittedSource"
 
@@ -2956,12 +2965,13 @@ def _validate_one_admitted_row_against_its_case(
                 "form: a picker token is rejected or blocked, and an `msLevel=` scope "
                 "without one is silently discarded while exiting 0"
             )
-    elif processing == "VendorCentroidingFromMs1":
-        if list(pickers) != [M63_VENDOR_PICKER_FILTER]:
+    elif processing in M63_VENDOR_PICKER_FILTERS:
+        wanted = M63_VENDOR_PICKER_FILTERS[processing]
+        if list(pickers) != [wanted]:
             refuse(
-                f"whose picker filters are {list(pickers)}, not "
-                f"[{M63_VENDOR_PICKER_FILTER!r}]. That is the one vendor-picker scope the "
-                "Thermo evidence admits; `msLevel=2-` stays advanced (ADR 0059)"
+                f"whose picker filters are {list(pickers)}, not [{wanted!r}]. That is the "
+                f"vendor-picker scope the Thermo evidence admits for {processing}; every "
+                "other scope stays advanced (ADR 0059)"
             )
     else:
         refuse(

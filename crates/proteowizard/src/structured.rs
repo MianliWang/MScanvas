@@ -580,7 +580,7 @@ impl StructuredIntent {
     ///   another reader's run would be a certain failure;
     /// - the vendor picker beside the default one: each refuses the other.
     ///
-    /// The vendor picker on Thermo RAW is judged as the vendor-picker row's
+    /// The vendor picker on Thermo RAW is judged as the MS1-and-above row's
     /// algorithm at the requested scope: the picker named, its `ms levels`
     /// record as the verified build writes it, and every in-scope spectrum
     /// centroid. Out-of-scope spectra are not judged.
@@ -1052,6 +1052,13 @@ impl From<ConversionIntent> for StructuredIntent {
                 spectrum_chain.push(SpectrumStep::PeakPickingVendor {
                     ms_levels: Some(
                         crate::chain::IntSet::new([(1, None)]).expect("1- is one interval"),
+                    ),
+                });
+            }
+            ProcessingIntent::VendorCentroidingFromMs2 => {
+                spectrum_chain.push(SpectrumStep::PeakPickingVendor {
+                    ms_levels: Some(
+                        crate::chain::IntSet::new([(2, None)]).expect("2- is one interval"),
                     ),
                 });
             }

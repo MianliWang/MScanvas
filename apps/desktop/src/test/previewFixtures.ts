@@ -196,8 +196,8 @@ export function settledAt(revision: number, receipt: number): BackendAuthorityPr
  *
  * Transcribed rather than derived, because a fixture that rebuilt the table
  * from axis values would be re-deriving the very boundary the table exists to
- * be — a free cross-product of the five axes is seventy-two combinations, and
- * ten were measured. `scripts/check_repo.py` holds the count to Rust's.
+ * be — a free cross-product of the five axes is ninety-six combinations, and
+ * eleven were measured. `scripts/check_repo.py` holds the count to Rust's.
  */
 export const admittedIntents: readonly ConversionIntentDescriptor[] = [
   intent("no_additional_centroiding", "all", "mz64_intensity32", "zlib"),
@@ -210,6 +210,7 @@ export const admittedIntents: readonly ConversionIntentDescriptor[] = [
   intent("unscoped_default_centroiding", "all", "mz64_intensity64", "zlib"),
   intent("unscoped_default_centroiding", "all", "mz32_intensity32", "zlib"),
   intent("vendor_centroiding_from_ms1", "all", "mz64_intensity32", "zlib"),
+  intent("vendor_centroiding_from_ms2", "all", "mz64_intensity32", "zlib"),
 ];
 
 /** The combination MSCanvas ships, which is the table's first row. */
@@ -293,8 +294,8 @@ export const completeCatalog: readonly ConversionCatalogRow[] = admittedIntents.
  * express every row.
  *
  * The seven writer-side rows run; the two default-picker rows are refused, and
- * refused for the *source evidence* rather than for the installation. The
- * Thermo vendor-picker row runs, because Thermo RAW is always a convertible
+ * refused for the *source evidence* rather than for the installation. The two
+ * Thermo vendor-picker rows run, because Thermo RAW is always a convertible
  * family; the plan refuses it for a selection with any other source. Derived
  * from the processing axis rather than listed by identity, so a row added to
  * the admitted table lands on the side its own semantic puts it on.

@@ -416,9 +416,9 @@ describe("the PR #95 blocker families, and what now prevents each", () => {
   });
 
   it("20. the admitted graph is a lookup, and cannot be widened from here (ledger row 1)", () => {
-    // Ten rows, and no code path that composes an eleventh. Every choice is a
+    // Eleven rows, and no code path that composes a twelfth. Every choice is a
     // row of the catalog or a refusal.
-    expect(admittedIntents).toHaveLength(10);
+    expect(admittedIntents).toHaveLength(11);
     expect(catalogRow(completeCatalog, "mzml+something+else+entirely+here")).toBeNull();
     expect(reselect(completeCatalog, shippedIntent.id, "mzml+invented+row+here+now")).toBe(
       shippedIntent.id,

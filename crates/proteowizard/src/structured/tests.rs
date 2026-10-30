@@ -628,14 +628,26 @@ fn vendor_row() -> ConversionIntent {
         NumericPrecision::Mz64Intensity32,
         CompressionIntent::Zlib,
     )
-    .expect("TV1, TE1")
+    .expect("TV1, TE1, TQ1")
 }
 
-/// ADR 0059, decision 2: Thermo vendor centroiding of every level is verified
-/// on the evidenced build and on Thermo RAW alone. MS2 and above, and the
-/// unscoped spelling, stay advanced; another build verifies nothing.
+fn vendor_ms2_row() -> ConversionIntent {
+    ConversionIntent::admitted(
+        OutputFormat::MzMl,
+        ProcessingIntent::VendorCentroidingFromMs2,
+        SpectrumPopulation::All,
+        NumericPrecision::Mz64Intensity32,
+        CompressionIntent::Zlib,
+    )
+    .expect("TV2, TE2, TQ2")
+}
+
+/// ADR 0059, decision 2: Thermo vendor centroiding of every level, and of MS2
+/// and above, is verified on the evidenced build and on Thermo RAW alone. Any
+/// other scope, and the unscoped spelling, stay advanced; another build
+/// verifies nothing.
 #[test]
-fn vendor_centroiding_is_verified_only_on_thermo_raw_from_ms1_on_the_evidenced_build() {
+fn vendor_centroiding_is_verified_only_on_thermo_raw_at_its_two_scopes_on_the_evidenced_build() {
     let verified = capabilities(REAL_HELP, verified_build());
     // The help wraps `msLevel=` onto the declaration's second line, and the
     // probe reads it there.
@@ -663,10 +675,26 @@ fn vendor_centroiding_is_verified_only_on_thermo_raw_from_ms1_on_the_evidenced_b
         vendor_from(1).tier(ConversionSourceKind::ThermoRawFile, &verified),
         Ok(Tier::Verified(vendor_row()))
     );
+    // And `msLevels: [{ start: 2, end: null }]` is the MS2-and-above row's,
+    // verified since source 3c measured Orbitrap profile MS2.
+    assert_eq!(vendor_from(2), StructuredIntent::from(vendor_ms2_row()));
+    assert_eq!(
+        direct(&vendor_from(2)),
+        [
+            "--mzML",
+            "--zlib",
+            "--filter",
+            "peakPicking vendor msLevel=2-"
+        ]
+    );
     assert_eq!(
         vendor_from(2).tier(ConversionSourceKind::ThermoRawFile, &verified),
+        Ok(Tier::Verified(vendor_ms2_row()))
+    );
+    assert_eq!(
+        vendor_from(3).tier(ConversionSourceKind::ThermoRawFile, &verified),
         Ok(Tier::Advanced),
-        "MS2 and above stays advanced until Orbitrap profile MS2 is measured"
+        "MS3 and above was never measured"
     );
     assert_eq!(
         vendor_with(None).tier(ConversionSourceKind::ThermoRawFile, &verified),
@@ -674,22 +702,28 @@ fn vendor_centroiding_is_verified_only_on_thermo_raw_from_ms1_on_the_evidenced_b
         "the unscoped spelling is not the row"
     );
     let other = capabilities(REAL_HELP, Sha256Digest::from_bytes([0xCD; 32]));
-    assert_eq!(
-        vendor_from(1).tier(ConversionSourceKind::ThermoRawFile, &other),
-        Ok(Tier::Advanced)
-    );
-
-    assert_eq!(
-        vendor_from(1).tier(ConversionSourceKind::MzmlFile, &verified),
-        Err(SourceBlock::VendorPickerOnMzmlSource)
-    );
+    for first in [1, 2] {
+        assert_eq!(
+            vendor_from(first).tier(ConversionSourceKind::ThermoRawFile, &other),
+            Ok(Tier::Advanced)
+        );
+        assert_eq!(
+            vendor_from(first).tier(ConversionSourceKind::MzmlFile, &verified),
+            Err(SourceBlock::VendorPickerOnMzmlSource)
+        );
+    }
     for kind in [
         ConversionSourceKind::ShimadzuLcdFile,
         ConversionSourceKind::SciexWiffBundle,
     ] {
-        assert!(!vendor_row().evidence_covers_source(kind), "{kind:?}");
-        assert_eq!(vendor_from(1).tier(kind, &verified), Ok(Tier::Advanced));
-        assert!(vendor_from(1).integrity_route(kind).is_none(), "{kind:?}");
+        for (first, row) in [(1, vendor_row()), (2, vendor_ms2_row())] {
+            assert!(!row.evidence_covers_source(kind), "{kind:?}");
+            assert_eq!(vendor_from(first).tier(kind, &verified), Ok(Tier::Advanced));
+            assert!(
+                vendor_from(first).integrity_route(kind).is_none(),
+                "{kind:?}"
+            );
+        }
     }
     assert_eq!(
         centroiding_row().tier(ConversionSourceKind::ThermoRawFile, &verified),

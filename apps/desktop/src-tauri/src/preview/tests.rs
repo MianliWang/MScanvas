@@ -4062,6 +4062,7 @@ fn every_conversion_dimension_value_is_one_the_frontend_declares() {
         ProcessingIntent::NoAdditionalCentroiding,
         ProcessingIntent::UnscopedDefaultCentroiding,
         ProcessingIntent::VendorCentroidingFromMs1,
+        ProcessingIntent::VendorCentroidingFromMs2,
     ] {
         declared.push(("ConversionProcessing", processing.stable_id().to_owned()));
     }
@@ -16928,7 +16929,7 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
     let receipt = current_receipt(&service);
     let document = current_document(&service);
     // Every part of it is a real identity token -- this is one of the
-    // sixty-two combinations the evidence never measured, composed out of
+    // eighty-five combinations the evidence never measured, composed out of
     // five values that are each perfectly valid on their own. A fixture with a
     // mistyped token would be refused for being unparseable and would prove
     // nothing about the table.
@@ -30966,7 +30967,8 @@ fn each_centroiding_combination_is_evidenced_only_for_the_family_it_was_measured
         let measured_on = match admitted.intent().processing() {
             ProcessingIntent::NoAdditionalCentroiding => continue,
             ProcessingIntent::UnscopedDefaultCentroiding => ConversionSourceKind::MzmlFile,
-            ProcessingIntent::VendorCentroidingFromMs1 => ConversionSourceKind::ThermoRawFile,
+            ProcessingIntent::VendorCentroidingFromMs1
+            | ProcessingIntent::VendorCentroidingFromMs2 => ConversionSourceKind::ThermoRawFile,
         };
         for kind in convertible_source_kinds() {
             assert_eq!(
@@ -30979,23 +30981,35 @@ fn each_centroiding_combination_is_evidenced_only_for_the_family_it_was_measured
     }
 }
 
-/// The vendor-centroiding row is verified on the evidenced build only. On a
-/// build that reports another release it converts Thermo RAW labelled with that
-/// release and as unverified settings (ADR 0055's relaxed gate); a build that
-/// reports none converts no Thermo RAW at all.
+/// Each vendor-centroiding row, MS1 and above and MS2 and above, is verified on
+/// the evidenced build only. On a build that reports another release it
+/// converts Thermo RAW labelled with that release and as unverified settings
+/// (ADR 0055's relaxed gate); a build that reports none converts no Thermo RAW
+/// at all.
 #[test]
-fn the_vendor_centroiding_row_is_labelled_on_any_build_but_the_evidenced_one() {
+fn the_vendor_centroiding_rows_are_labelled_on_any_build_but_the_evidenced_one() {
+    for processing in [
+        ProcessingIntent::VendorCentroidingFromMs1,
+        ProcessingIntent::VendorCentroidingFromMs2,
+    ] {
+        vendor_centroiding_row_is_labelled_on_any_build_but_the_evidenced_one(processing);
+    }
+}
+
+fn vendor_centroiding_row_is_labelled_on_any_build_but_the_evidenced_one(
+    processing: ProcessingIntent,
+) {
     use super::conversion::{settings_unverified, unverified_build_release};
 
     let row = BoundIntent::Row(
         ConversionIntent::admitted(
             OutputFormat::MzMl,
-            ProcessingIntent::VendorCentroidingFromMs1,
+            processing,
             SpectrumPopulation::All,
             NumericPrecision::Mz64Intensity32,
             CompressionIntent::Zlib,
         )
-        .expect("TV1, TE1"),
+        .expect("a vendor-centroiding row"),
     );
     let thermo = ConversionSourceKind::ThermoRawFile;
 

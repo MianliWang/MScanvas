@@ -777,7 +777,7 @@ This filter performs centroiding on spectra with the selected <ms levels>.
 
     #[test]
     fn the_catalog_keeps_every_admitted_row_including_the_unavailable_ones() {
-        // A build lacking only the peak-picking grammar. Three admitted rows
+        // A build lacking only the peak-picking grammar. Four admitted rows
         // compose processing, and all are unavailable on it.
         let rows = catalog_of(&ConversionConfiguration::Ready {
             catalog: ConversionCatalog::of(&help_without("peakPicking [")),
@@ -788,7 +788,7 @@ This filter performs centroiding on spectra with the selected <ms levels>.
             .iter()
             .filter(|row| row.intent.processing != "no_additional_centroiding")
             .collect();
-        assert_eq!(centroided.len(), 3);
+        assert_eq!(centroided.len(), 4);
         assert!(centroided.iter().all(|row| !row.available));
 
         // And the axis values those two rows use are not condemned with them.
@@ -853,7 +853,7 @@ This filter performs centroiding on spectra with the selected <ms levels>.
         let rows = catalog_of(&ConversionConfiguration::Ready {
             catalog: ConversionCatalog::of(&complete_help()),
         });
-        assert_eq!(rows.len(), 10);
+        assert_eq!(rows.len(), 11);
         assert!(
             ConversionIntent::admitted(
                 OutputFormat::MzMl,

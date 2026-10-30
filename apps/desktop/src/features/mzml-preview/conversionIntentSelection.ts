@@ -10,7 +10,7 @@
  * offer and the values come from the same list.
  *
  * The consequence is the property M6.3 established and M6.4 has to preserve: a
- * user cannot assemble one of the sixty-two combinations the evidence does
+ * user cannot assemble one of the eighty-five combinations the evidence does
  * not admit, because there is no code path here that assembles one at all. A
  * choice is either a row of the catalog or it is refused with a reason.
  *

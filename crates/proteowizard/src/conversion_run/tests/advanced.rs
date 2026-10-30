@@ -243,11 +243,22 @@ fn a_thermo_acquisition_converts_under_the_vendor_centroiding_row() {
     );
 }
 
-/// MS2 and above on Thermo RAW is an advanced intent with checks: an output
-/// carrying the scope record the build writes is finalized, and one without it
-/// -- a scope the build discarded -- is not.
+/// MS2 and above on Thermo RAW is the eleventh row (ADR 0059), and its scope
+/// record is checked whichever way it is planned: as the row, which carries no
+/// levels of its own and is judged at the row's scope, or as the structured
+/// intent the wire sends. An output carrying the record the build writes for
+/// `2-` is finalized, and one without it -- a scope the build discarded, or
+/// the MS1-and-above record -- is not.
 #[test]
-fn vendor_centroiding_from_ms2_is_advanced_and_its_scope_record_is_checked() {
+fn vendor_centroiding_from_ms2_is_a_row_and_its_scope_record_is_checked() {
+    let row = ConversionIntent::admitted(
+        crate::OutputFormat::MzMl,
+        crate::ProcessingIntent::VendorCentroidingFromMs2,
+        crate::SpectrumPopulation::All,
+        crate::NumericPrecision::Mz64Intensity32,
+        crate::CompressionIntent::Zlib,
+    )
+    .expect("TV2, TE2, TQ2");
     let from_ms2 = StructuredIntent::new(
         mzml(Precision::Bits64, Precision::Bits32),
         vec![SpectrumStep::PeakPickingVendor {
@@ -257,19 +268,28 @@ fn vendor_centroiding_from_ms2_is_advanced_and_its_scope_record_is_checked() {
         [],
     )
     .expect("a valid intent");
-    assert_eq!(from_ms2.verified_row(), None);
+    assert_eq!(from_ms2.verified_row(), Some(row));
 
-    for (scope, finalized) in [(Some("2-"), true), (None, false)] {
+    for (scope, finalized, as_row) in [
+        (Some("2-"), true, true),
+        (None, false, true),
+        (Some("2-"), true, false),
+        (None, false, false),
+    ] {
         let directory = TestDirectory::new();
         let root = directory.path().join("out");
         fs::create_dir(&root).expect("create destination root");
         let source = write_thermo_source(directory.path(), "acquisition.raw");
-        let plan = ConversionPlan::advanced(
-            open_thermo(&source),
-            &root,
-            ConflictPolicy::Fail,
-            from_ms2.clone(),
-        )
+        let plan = if as_row {
+            ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail, row)
+        } else {
+            ConversionPlan::advanced(
+                open_thermo(&source),
+                &root,
+                ConflictPolicy::Fail,
+                from_ms2.clone(),
+            )
+        }
         .expect("plan MS2 and above on Thermo RAW");
         // The fixture's spectra are MS1, out of scope: left as the reader gave
         // them and not judged.
@@ -282,7 +302,7 @@ fn vendor_centroiding_from_ms2_is_advanced_and_its_scope_record_is_checked() {
         assert_eq!(
             report.finalized().is_some(),
             finalized,
-            "{scope:?}: {:?}",
+            "{scope:?}, row {as_row}: {:?}",
             report.outcome()
         );
         if !finalized {

@@ -67,15 +67,16 @@ const CENTROIDED_32 = id("unscoped_default_centroiding", "all", "mz32_intensity3
 const FLAT_64 = id("no_additional_centroiding", "all", "mz64_intensity64", "zlib");
 const FLAT_32 = id("no_additional_centroiding", "all", "mz32_intensity32", "zlib");
 const VENDOR = id("vendor_centroiding_from_ms1", "all", "mz64_intensity32", "zlib");
+const VENDOR_MS2 = id("vendor_centroiding_from_ms2", "all", "mz64_intensity32", "zlib");
 
 /**
  * A build declaring everything except the peak-picking grammar.
  *
- * The case the whole surface is shaped around: exactly the three rows that
+ * The case the whole surface is shaped around: exactly the four rows that
  * compose processing are unavailable, and every value the default-picker rows
  * use appears in rows that run.
  */
-const NO_PEAK_PICKING = withoutRunning(CENTROIDED_64, CENTROIDED_32, VENDOR);
+const NO_PEAK_PICKING = withoutRunning(CENTROIDED_64, CENTROIDED_32, VENDOR, VENDOR_MS2);
 
 function intentOf(catalog: readonly ConversionCatalogRow[], intentId: string) {
   const row = catalogRow(catalog, intentId);
@@ -97,7 +98,7 @@ describe("one axis moves, and only that axis", () => {
   });
 
   it("refuses a combination the evidence never admitted", () => {
-    // MS1 at 32/32 is one of the sixty-two that were never measured. No
+    // MS1 at 32/32 is one of the eighty-five that were never measured. No
     // build changes that, and the refusal says so rather than blaming the one
     // installed.
     const state = choiceState(COMPLETE, intentOf(COMPLETE, FLAT_32), "population", "ms1_only");
@@ -239,6 +240,7 @@ describe("the axis vocabularies", () => {
       "no_additional_centroiding",
       "unscoped_default_centroiding",
       "vendor_centroiding_from_ms1",
+      "vendor_centroiding_from_ms2",
     ]);
     expect(axisChoices(COMPLETE, current, "population").map((c) => c.value)).toEqual([
       "all",

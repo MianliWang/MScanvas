@@ -6,10 +6,10 @@
 //! finite case ledger, and what it produced is not a list of independent
 //! features — it is an *incomplete composition graph*. Nine of the forty-eight
 //! combinations a free cross-product of its five dimensions allowed were
-//! actually measured; a tenth, the Thermo vendor picker, was measured later and
-//! widened the processing axis, so ten of seventy-two are rows today. The rest
-//! were not measured, and several of them are known to behave differently from
-//! what a reader would assume.
+//! actually measured; the Thermo vendor picker was measured later at two scopes
+//! and widened the processing axis twice, so eleven of ninety-six are rows
+//! today. The rest were not measured, and several of them are known to behave
+//! differently from what a reader would assume.
 //!
 //! So the dimensions are named as separate types, because they are separate
 //! product decisions and a reader needs to see them that way, and then
@@ -33,16 +33,18 @@
 //!   disposition terminal as `MZXML_REFUSED`**, and a refusal is not deleted
 //!   because nothing reaches it -- that is how a format returns without one. It
 //!   simply cannot be reached from an intent.
-//! - **One scoped centroiding is constructible, and only with the vendor
+//! - **Two scoped centroidings are constructible, and only with the vendor
 //!   token.** `msLevel=` is positional after the picker token and is *silently
 //!   discarded* without one; the installed grammar admits only `cwt` or
 //!   `vendor` as that token, and `cwt` is `MEASURED_REJECTED`. The vendor
-//!   picker was measured on two public Thermo RAW acquisitions
-//!   ([evidence](../../../docs/spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
-//!   cases `TV1`, `TE1`), and the owner admitted `msLevel=1-` on 2026-10-30
-//!   (ADR 0059). So "centroid every level with the vendor algorithm" is a row,
-//!   for Thermo RAW alone; "centroid MS2 only" is still not a row, and reaches
-//!   the product only through the advanced tier, labelled.
+//!   picker was measured on three public Thermo RAW acquisitions
+//!   ([evidence](../../../docs/spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)),
+//!   and the owner admitted `msLevel=1-` (cases `TV1`, `TE1`, `TQ1`) and then
+//!   `msLevel=2-` (cases `TV2`, `TE2`, `TQ2`) on 2026-10-30 (ADR 0059). So
+//!   "centroid every level" and "centroid MS2 and above" with the vendor
+//!   algorithm are rows, for Thermo RAW alone; every other scope, "centroid
+//!   MS2 only" among them, is still not a row, and reaches the product only
+//!   through the advanced tier, labelled.
 //! - **Per-array precision does not compose with processing.** Every measured
 //!   case that ran a filter carried the *global* `--32` or `--64`; `--mz32`,
 //!   `--mz64`, `--inten32` and `--inten64` appear only in cases that ran none.
@@ -62,7 +64,7 @@
 //! carries an [`EvidenceSourceDomain`], and
 //! [`ConversionIntent::evidence_covers_source`] is the one place it is asked.
 //! The two `UnscopedDefaultCentroiding` rows are admitted for mzML alone, and
-//! the `VendorCentroidingFromMs1` row for Thermo RAW alone.
+//! the two vendor-picker rows for Thermo RAW alone.
 
 use std::ffi::OsString;
 
@@ -130,10 +132,18 @@ pub enum ProcessingIntent {
     /// `peakPicking vendor msLevel=1-`.
     ///
     /// Reader-sensitive like the default picker, and measured on Thermo RAW
-    /// only (`TV1`, `TE1`): its row's [`EvidenceSourceDomain`] is Thermo RAW
-    /// alone. On an mzML source the same argv runs another picker (M6.2), and
-    /// another vendor reader names its picker differently.
+    /// only (`TV1`, `TE1`, `TQ1`): its row's [`EvidenceSourceDomain`] is Thermo
+    /// RAW alone. On an mzML source the same argv runs another picker (M6.2),
+    /// and another vendor reader names its picker differently.
     VendorCentroidingFromMs1,
+    /// Centroiding by the **vendor** picker on MS2 and above, asked for as
+    /// `peakPicking vendor msLevel=2-`. MS1 is left as the reader gives it.
+    ///
+    /// Measured on Thermo RAW only, like [`Self::VendorCentroidingFromMs1`]
+    /// (`TV2`, `TE2`, `TQ2`). Profile MS2 was measured on an ion trap (3a) and
+    /// on one Q Exactive data-independent run (3c); other Orbitrap models,
+    /// data-dependent profile MS2 and profile MS3 and above were not.
+    VendorCentroidingFromMs2,
 }
 
 impl ProcessingIntent {
@@ -143,6 +153,7 @@ impl ProcessingIntent {
             Self::NoAdditionalCentroiding => "no_additional_centroiding",
             Self::UnscopedDefaultCentroiding => "unscoped_default_centroiding",
             Self::VendorCentroidingFromMs1 => "vendor_centroiding_from_ms1",
+            Self::VendorCentroidingFromMs2 => "vendor_centroiding_from_ms2",
         }
     }
 }
@@ -326,6 +337,16 @@ const MS_LEVEL_INVOCATION: FilterInvocation = FilterInvocation {
     named_arguments: &[],
 };
 
+/// What a scoped vendor picker depends on, which both of its scopes share.
+const VENDOR_PICKER_FEATURES: &[ProviderFeature] = &[
+    ProviderFeature::FilterOption,
+    ProviderFeature::Filter(FilterInvocation {
+        name: "peakPicking",
+        positional_arguments: 1,
+        named_arguments: &["msLevel"],
+    }),
+];
+
 /// One conversion's complete product semantics.
 ///
 /// The fields are private and there is no public constructor that takes them.
@@ -346,7 +367,7 @@ impl ConversionIntent {
     /// Every combination the M6.2 evidence admits, and nothing else.
     ///
     /// **This constant is the boundary.** A free cross-product of the five
-    /// dimensions would allow seventy-two combinations; ten were measured.
+    /// dimensions would allow ninety-six combinations; eleven were measured.
     /// Each row below names the evidence case that measured it, so a reader can
     /// go and check, and so a row added without one is visibly different from a
     /// row that has one.
@@ -354,7 +375,7 @@ impl ConversionIntent {
     /// The order is the order the evidence record presents them in, which is
     /// also the order a reader meets them: the shipped posture first, then the
     /// dimensions varied one at a time from a fixed 64-bit baseline.
-    pub const ADMITTED: [AdmittedIntent; 10] = [
+    pub const ADMITTED: [AdmittedIntent; 11] = [
         // The posture the product ships today, measured with no flag at all.
         AdmittedIntent {
             intent: ConversionIntent {
@@ -464,10 +485,11 @@ impl ConversionIntent {
             // that a vendor reader selects its own picker for this same argv.
             sources: EvidenceSourceDomain::MeasuredOn(&[ConversionSourceKind::MzmlFile]),
         },
-        // Thermo vendor centroiding, every MS level, with the shipped encoding
-        // (no precision flag, zlib). Measured on an LTQ Velos and an Orbitrap
-        // Exploris 480; the domain is the family, on CNV-D2's argument that the
-        // same bundled reader picks for every Thermo instrument (ADR 0059).
+        // Thermo vendor centroiding, every MS level and then MS2 and above,
+        // with the shipped encoding (no precision flag, zlib). Measured on an
+        // LTQ Velos, an Orbitrap Exploris 480 and a Q Exactive; the domain is
+        // the family, on CNV-D2's argument that the same bundled reader picks
+        // for every Thermo instrument (ADR 0059).
         AdmittedIntent {
             intent: ConversionIntent {
                 format: OutputFormat::MzMl,
@@ -476,7 +498,18 @@ impl ConversionIntent {
                 precision: NumericPrecision::Mz64Intensity32,
                 compression: CompressionIntent::Zlib,
             },
-            evidence: "TV1, TE1",
+            evidence: "TV1, TE1, TQ1",
+            sources: EvidenceSourceDomain::MeasuredOn(&[ConversionSourceKind::ThermoRawFile]),
+        },
+        AdmittedIntent {
+            intent: ConversionIntent {
+                format: OutputFormat::MzMl,
+                processing: ProcessingIntent::VendorCentroidingFromMs2,
+                population: SpectrumPopulation::All,
+                precision: NumericPrecision::Mz64Intensity32,
+                compression: CompressionIntent::Zlib,
+            },
+            evidence: "TV2, TE2, TQ2",
             sources: EvidenceSourceDomain::MeasuredOn(&[ConversionSourceKind::ThermoRawFile]),
         },
     ];
@@ -700,15 +733,12 @@ impl ConversionIntent {
             },
             // The scope with its picker token, which is what makes it honoured.
             ProcessingIntent::VendorCentroidingFromMs1 => LoweredSegment {
-                features: &[
-                    ProviderFeature::FilterOption,
-                    ProviderFeature::Filter(FilterInvocation {
-                        name: "peakPicking",
-                        positional_arguments: 1,
-                        named_arguments: &["msLevel"],
-                    }),
-                ],
+                features: VENDOR_PICKER_FEATURES,
                 tokens: &["--filter", "peakPicking vendor msLevel=1-"],
+            },
+            ProcessingIntent::VendorCentroidingFromMs2 => LoweredSegment {
+                features: VENDOR_PICKER_FEATURES,
+                tokens: &["--filter", "peakPicking vendor msLevel=2-"],
             },
         };
         let population = match self.population {
@@ -757,7 +787,7 @@ impl ConversionIntent {
     /// [`Self::admitted`] answers from, and deliberately not by parsing.** A
     /// parser would have to split the identity into five values and look each
     /// one up in its own dimension, which is a second way to arrive at a
-    /// combination -- and a caller could then name one of the sixty-two the
+    /// combination -- and a caller could then name one of the eighty-five the
     /// evidence never measured by supplying five individually valid parts. A
     /// scan over the admitted rows can only ever answer with a row.
     ///
@@ -807,7 +837,7 @@ pub struct AdmittedIntent {
 /// the contract to accept whichever algorithm a reader happens to use.
 ///
 /// Membership of [`ConversionIntent::ADMITTED`] therefore no longer asserts
-/// source applicability on its own: the three centroiding rows say which
+/// source applicability on its own: the four centroiding rows say which
 /// sources they were measured on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceSourceDomain {
@@ -872,10 +902,11 @@ mod tests {
     /// Every dimension value, so the cross-product test below cannot silently
     /// stop covering one when a variant is added.
     const FORMATS: [OutputFormat; 1] = [OutputFormat::MzMl];
-    const PROCESSING: [ProcessingIntent; 3] = [
+    const PROCESSING: [ProcessingIntent; 4] = [
         ProcessingIntent::NoAdditionalCentroiding,
         ProcessingIntent::UnscopedDefaultCentroiding,
         ProcessingIntent::VendorCentroidingFromMs1,
+        ProcessingIntent::VendorCentroidingFromMs2,
     ];
 
     /// The one source family each picker row was measured on, or `None` for a
@@ -884,7 +915,10 @@ mod tests {
         match processing {
             ProcessingIntent::NoAdditionalCentroiding => None,
             ProcessingIntent::UnscopedDefaultCentroiding => Some(ConversionSourceKind::MzmlFile),
-            ProcessingIntent::VendorCentroidingFromMs1 => Some(ConversionSourceKind::ThermoRawFile),
+            ProcessingIntent::VendorCentroidingFromMs1
+            | ProcessingIntent::VendorCentroidingFromMs2 => {
+                Some(ConversionSourceKind::ThermoRawFile)
+            }
         }
     }
     const POPULATIONS: [SpectrumPopulation; 3] = [
@@ -969,8 +1003,8 @@ mod tests {
     /// on generated mzML fixtures. For seven of them that generalizes, because
     /// the semantic is decided by the writer. For the default-picker rows it
     /// does not, because the picker is chosen by the reader -- and M6.10
-    /// measured a vendor reader choosing its own. The vendor-picker row was
-    /// measured on Thermo RAW, so it covers Thermo RAW alone.
+    /// measured a vendor reader choosing its own. The vendor-picker rows were
+    /// measured on Thermo RAW, so they cover Thermo RAW alone.
     #[test]
     fn each_admitted_row_states_the_sources_its_evidence_covers() {
         for admitted in ConversionIntent::ADMITTED {
@@ -1029,11 +1063,11 @@ mod tests {
     }
 
     /// The seven writer-side rows keep every family, the two default-picker
-    /// rows keep mzML alone and the vendor-picker row Thermo RAW alone. Counted
-    /// rather than described, so a row that changed sides is a failure rather
-    /// than a re-reading.
+    /// rows keep mzML alone and the two vendor-picker rows Thermo RAW alone.
+    /// Counted rather than described, so a row that changed sides is a failure
+    /// rather than a re-reading.
     #[test]
-    fn seven_rows_cover_every_family_and_three_cover_one() {
+    fn seven_rows_cover_every_family_and_four_cover_one() {
         let (any, one): (Vec<&AdmittedIntent>, Vec<&AdmittedIntent>) =
             ConversionIntent::ADMITTED.iter().partition(|admitted| {
                 SOURCE_KINDS
@@ -1041,7 +1075,7 @@ mod tests {
                     .all(|kind| admitted.intent().evidence_covers_source(*kind))
             });
         assert_eq!(any.len(), 7, "writer-side rows");
-        assert_eq!(one.len(), 3, "reader-sensitive rows");
+        assert_eq!(one.len(), 4, "reader-sensitive rows");
         let mut per_family = [0_usize; SOURCE_KINDS.len()];
         for admitted in one {
             // *Only* one family, asserted family by family. The partition above
@@ -1064,47 +1098,59 @@ mod tests {
         );
         assert_eq!(
             per_family[source_kind_index(ConversionSourceKind::ThermoRawFile)],
-            1
+            2
         );
     }
 
-    /// The vendor-picker row is the measured `TV1`/`TE1` argv after the source,
-    /// cites those cases, and covers Thermo RAW and nothing else -- not mzML,
-    /// where the same argv runs another picker, and not another vendor family,
-    /// whose reader names its picker differently.
+    /// Each vendor-picker row is its measured argv after the source, cites
+    /// its cases, and covers Thermo RAW and nothing else -- not mzML, where the
+    /// same argv runs another picker, and not another vendor family, whose
+    /// reader names its picker differently.
     #[test]
-    fn the_vendor_picker_row_is_the_measured_thermo_argv() {
-        let row = ConversionIntent::admitted(
-            OutputFormat::MzMl,
-            ProcessingIntent::VendorCentroidingFromMs1,
-            SpectrumPopulation::All,
-            NumericPrecision::Mz64Intensity32,
-            CompressionIntent::Zlib,
-        )
-        .expect("the vendor-picker row is admitted");
-        assert_eq!(
-            row.lower(),
-            [
-                "--mzML",
-                "--zlib",
-                "--filter",
-                "peakPicking vendor msLevel=1-"
-            ]
-            .map(OsString::from)
-            .to_vec()
-        );
-        assert_eq!(row.evidence(), "TV1, TE1");
-        for kind in SOURCE_KINDS {
+    fn the_vendor_picker_rows_are_the_measured_thermo_argv() {
+        for (processing, filter, evidence) in [
+            (
+                ProcessingIntent::VendorCentroidingFromMs1,
+                "peakPicking vendor msLevel=1-",
+                "TV1, TE1, TQ1",
+            ),
+            (
+                ProcessingIntent::VendorCentroidingFromMs2,
+                "peakPicking vendor msLevel=2-",
+                "TV2, TE2, TQ2",
+            ),
+        ] {
+            let row = ConversionIntent::admitted(
+                OutputFormat::MzMl,
+                processing,
+                SpectrumPopulation::All,
+                NumericPrecision::Mz64Intensity32,
+                CompressionIntent::Zlib,
+            )
+            .expect("the vendor-picker row is admitted");
             assert_eq!(
-                row.evidence_covers_source(kind),
-                kind == ConversionSourceKind::ThermoRawFile,
-                "{kind:?}"
+                row.lower(),
+                ["--mzML", "--zlib", "--filter", filter]
+                    .map(OsString::from)
+                    .to_vec()
             );
+            assert_eq!(row.evidence(), evidence);
+            for kind in SOURCE_KINDS {
+                assert_eq!(
+                    row.evidence_covers_source(kind),
+                    kind == ConversionSourceKind::ThermoRawFile,
+                    "{kind:?}"
+                );
+            }
         }
         // Only the shipped encoding was measured with the vendor picker, and
         // only over every spectrum.
         for (format, processing, population, precision, compression) in cross_product() {
-            if processing == ProcessingIntent::VendorCentroidingFromMs1 {
+            if matches!(
+                processing,
+                ProcessingIntent::VendorCentroidingFromMs1
+                    | ProcessingIntent::VendorCentroidingFromMs2
+            ) {
                 assert_eq!(
                     ConversionIntent::admitted(
                         format,
@@ -1128,15 +1174,16 @@ mod tests {
         );
     }
 
-    /// Ten measured combinations, and the rest of the cross-product excluded.
+    /// Eleven measured combinations, and the rest of the cross-product
+    /// excluded.
     ///
-    /// Nine are M6.2's and one is the Thermo vendor evidence's. Source
+    /// Nine are M6.2's and two are the Thermo vendor evidence's. Source
     /// qualification is about *sources*, not about the vocabulary, so a field
     /// that quietly changed the table would be a different change wearing this
     /// one's clothes.
     #[test]
     fn the_measured_vocabulary_is_unchanged_by_source_qualification() {
-        assert_eq!(ConversionIntent::ADMITTED.len(), 10);
+        assert_eq!(ConversionIntent::ADMITTED.len(), 11);
         let admitted_count = cross_product()
             .into_iter()
             .filter(|(format, processing, population, precision, compression)| {
@@ -1150,8 +1197,8 @@ mod tests {
                 .is_some()
             })
             .count();
-        assert_eq!(admitted_count, 10, "admitted combinations");
-        assert_eq!(cross_product().len() - admitted_count, 62, "excluded");
+        assert_eq!(admitted_count, 11, "admitted combinations");
+        assert_eq!(cross_product().len() - admitted_count, 85, "excluded");
     }
 
     fn cross_product() -> Vec<(
@@ -1182,8 +1229,8 @@ mod tests {
         // is. If a later change made every combination constructible, this is
         // the test that says so out loud.
         let total = cross_product().len();
-        assert_eq!(total, 72);
-        assert_eq!(ConversionIntent::ADMITTED.len(), 10);
+        assert_eq!(total, 96);
+        assert_eq!(ConversionIntent::ADMITTED.len(), 11);
     }
 
     #[test]
@@ -1248,7 +1295,7 @@ mod tests {
                 CompressionIntent::Zlib,
             )
             .is_none(),
-            "the fixture must name one of the sixty-two"
+            "the fixture must name one of the eighty-five"
         );
         let unmeasured = format!(
             "{}+{}+{}+{}+{}",
@@ -1284,10 +1331,11 @@ mod tests {
     #[test]
     fn scoped_centroiding_cannot_be_named_at_all() {
         // Not "is refused" -- there is no value to refuse. The population and
-        // the processing intent are separate types, and nothing in
-        // `ProcessingIntent` carries an MS level, so "centroid MS2 only" has no
-        // spelling in this module. The closest constructible thing is the
-        // population filter, which selects spectra and picks no peaks.
+        // the processing intent are separate types, and `ProcessingIntent`
+        // names only the two measured vendor scopes, every level and MS2 and
+        // above, so "centroid MS2 only" has no spelling in this module. The
+        // closest constructible thing is the population filter, which selects
+        // spectra and picks no peaks.
         let ms2_selection = ConversionIntent::admitted(
             OutputFormat::MzMl,
             ProcessingIntent::NoAdditionalCentroiding,
@@ -1301,10 +1349,11 @@ mod tests {
             ProcessingIntent::NoAdditionalCentroiding
         );
         // And centroiding beside any population but `All` is not constructible,
-        // with either picker.
+        // with any picker.
         for processing in [
             ProcessingIntent::UnscopedDefaultCentroiding,
             ProcessingIntent::VendorCentroidingFromMs1,
+            ProcessingIntent::VendorCentroidingFromMs2,
         ] {
             for population in [SpectrumPopulation::Ms1Only, SpectrumPopulation::Ms2Only] {
                 for precision in PRECISIONS {
