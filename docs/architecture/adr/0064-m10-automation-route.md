@@ -121,7 +121,8 @@ share the code:
     crates; this is a second composition root, as `mscanvas-desktop` is one.
 
   A variant puts `src/bin/mscanvas.rs` in the desktop package itself. It is
-  not proposed. tauri-cli 2.11.4's embedded NSIS template copies a
+  not proposed. The Tauri CLI's embedded NSIS template (read in a local
+  2.11.4 install; `main` pins 2.12.4, not re-read) copies a
   `binaries` list beside the main executable ("Copy external binaries"), and
   the maintainer's unverified reading of the bundler is that it fills that
   list with every non-main binary target of the app package as well as with
