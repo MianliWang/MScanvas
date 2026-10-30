@@ -115,7 +115,10 @@ share the code:
   - the binary links Tauri's crates although it calls none of them; its size,
     and whether anything Tauri links needs WebView2 at load, are unmeasured;
   - whether the Tauri bundler would put the second binary into the installer
-    is unmeasured.
+    is unmeasured;
+  - with two binaries a bare `cargo run` is ambiguous, so the manifest sets
+    `default-run = "mscanvas-desktop"`, and slice 1 checks that the desktop
+    still launches in development.
 - **A2. Move first, then build.** The Tauri-free application layer (`preview/`,
   `project/` and what they need) moves into one shared library crate, leaving
   `mscanvas-desktop` as the Tauri composition root the proposal describes. The
@@ -154,9 +157,10 @@ still moving (#161).
 
   When the need comes, A2 is one mechanical move in a quiet window, with no
   change in behavior.
-- The `e2e` feature cannot reach the CLI: the `cli` module refuses to compile
-  with it, by the same kind of `compile_error!` barrier that keeps
-  `test-support` out of optimized builds.
+- The `e2e` feature gives the CLI nothing to reach: it only appends a webview
+  initialization script, and the CLI opens no webview. The CLI is built
+  without it, as the shipped desktop is. There is no compile-time barrier,
+  because the required `cargo clippy --all-features` run would trip it.
 
 ### 2. What the CLI exposes first
 
@@ -409,7 +413,7 @@ measured need appears.
 
 ## Acceptance criteria
 
-**CLI slice 1**
+### CLI slice 1
 
 - `inspect` on an mzML fixture prints one document and exits 0. Its facts
   equal what the desktop's acceptance and the native reader give for the same
@@ -421,8 +425,11 @@ measured need appears.
   with a usage document.
 - Every test runs with stdin closed, and none waits for input.
 - Every golden document matches its schema.
+- The desktop still launches in development, and until open question 4 is
+  answered the release-candidate installer still carries only
+  `mscanvas-desktop.exe` and `uninstall.exe`.
 
-**CLI slice 2**
+### CLI slice 2
 
 - `intents` lists the rows, tiers and availability the desktop's
   configuration read gives for the same fake build.
@@ -432,7 +439,7 @@ measured need appears.
   row follows ADR 0055's build gate: labelled, with SCIEX refused. An advanced
   intent labels every item.
 
-**CLI slice 3**
+### CLI slice 3
 
 - A wrong digest exits 1; no staging directory exists and no process was
   started.
@@ -448,19 +455,19 @@ measured need appears.
 - `validate` exits 0 on unchanged outputs, and 3 with `outputChanged` after
   one byte of an output changes.
 
-**Skill**
+### Skill
 
 - Every command in the skill appears in the CLI's golden tests, and the skill
   names no `msconvert` option.
 
-**MCP slice 1**
+### MCP slice 1
 
 - `tools/list` returns exactly the fixed tools, with schemas equal to the
   CLI's.
 - An absolute path, or a path that leaves its root, is refused.
 - No result in the test suite contains an absolute path.
 
-**MCP slice 2**
+### MCP slice 2
 
 - A client without elicitation is refused with `approvalUnavailable`; a
   declined approval runs nothing; an accepted one behaves as the CLI's `run`.
