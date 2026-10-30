@@ -194,6 +194,19 @@ impl InstallationIdentity {
         }
     }
 
+    /// The folder the resolved `msconvert` sits in, as display text for the
+    /// backend status indicator.
+    ///
+    /// The one place an installation path is written out, and only to the
+    /// webview, only for a reading that is usable: never to a diagnostics
+    /// export, a project document or a log. Bounded, and without the `\\?\`
+    /// prefix canonicalization adds, which names nothing a person would
+    /// recognise.
+    pub(crate) fn location(&self) -> Option<String> {
+        let folder = self.msconvert.path.parent()?.display().to_string();
+        Some(bounded_text(&displayed_folder(folder), MAX_LOCATION_CHARS))
+    }
+
     /// What a QC snapshot may record about the build that produced a preview.
     ///
     /// The preview runs `msaccess`, so the digest is `msaccess`'s -- the one
@@ -320,6 +333,22 @@ impl InstallationIdentity {
 impl fmt::Debug for InstallationIdentity {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("<opaque-installation>")
+    }
+}
+
+/// The longest installation folder the status indicator is given, in
+/// characters. Windows' classic path limit; a longer one is cut with an
+/// ellipsis rather than sent whole.
+const MAX_LOCATION_CHARS: usize = 260;
+
+/// A canonical Windows folder as a person would write it: `\\?\C:\x` as
+/// `C:\x`, and `\\?\UNC\server\share` as `\\server\share`.
+fn displayed_folder(folder: String) -> String {
+    match folder.strip_prefix(r"\\?\") {
+        Some(rest) => rest
+            .strip_prefix(r"UNC\")
+            .map_or_else(|| rest.to_owned(), |share| format!(r"\\{share}")),
+        None => folder,
     }
 }
 
@@ -502,6 +531,30 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn a_location_is_shown_as_a_person_would_write_it() {
+        assert_eq!(
+            displayed_folder(r"\\?\C:\Program Files\ProteoWizard".to_owned()),
+            r"C:\Program Files\ProteoWizard"
+        );
+        assert_eq!(
+            displayed_folder(r"\\?\UNC\server\share\pwiz".to_owned()),
+            r"\\server\share\pwiz"
+        );
+        assert_eq!(displayed_folder(r"D:\pwiz".to_owned()), r"D:\pwiz");
+        let identity = InstallationIdentity::for_test(
+            Path::new(r"C:\pwiz\msconvert.exe"),
+            Path::new(r"C:\pwiz\msaccess.exe"),
+            "3.0.26204",
+        );
+        assert_eq!(identity.location().as_deref(), Some(r"C:\pwiz"));
+        let deep = format!(r"C:\{}\msconvert.exe", "d".repeat(400));
+        let deep = InstallationIdentity::for_test(Path::new(&deep), Path::new(&deep), "3");
+        let shown = deep.location().expect("a location");
+        assert_eq!(shown.chars().count(), MAX_LOCATION_CHARS + 1);
+        assert!(shown.ends_with('…'));
     }
 
     #[test]

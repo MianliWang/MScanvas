@@ -3,14 +3,16 @@
 //! Every outcome is an enumerated tag with owned codes. No absolute path, no
 //! directory name, no OS message and no provider text crosses this boundary in
 //! either direction: the renderer learns what happened and what is stored, and
-//! nothing about where.
+//! nothing about where. That includes the remembered ProteoWizard folder, which
+//! the record holds and these payloads leave out: whether one is remembered is
+//! the backend reading's to say, and the reading carries no stored path.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use super::record::{AppearancePreferences, LayoutPreferences, UiPreferences};
 
 /// What a starting document is told about the stored record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(
     tag = "outcome",
     rename_all = "camelCase",
@@ -22,6 +24,7 @@ pub enum UiPreferenceReadDto {
     Absent { revision: u64 },
     /// A record this build accepts, whole.
     Loaded {
+        #[serde(serialize_with = "without_backend_folder")]
         preferences: UiPreferences,
         revision: u64,
     },
@@ -41,7 +44,7 @@ pub enum UiPreferenceReadDto {
 }
 
 /// What one commit did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(
     tag = "outcome",
     rename_all = "camelCase",
@@ -51,6 +54,7 @@ pub enum UiPreferenceSaveDto {
     /// Published, read back, and confirmed. `preferences` is that exact
     /// snapshot -- what a restart will find -- rather than what was requested.
     Saved {
+        #[serde(serialize_with = "without_backend_folder")]
         preferences: UiPreferences,
         revision: u64,
     },
@@ -76,6 +80,21 @@ pub enum UiPreferenceSaveDto {
         temporary_left_behind: bool,
         revision: u64,
     },
+}
+
+/// The record as the webview may see it: everything but the stored folder.
+///
+/// The folder is omitted when absent, so clearing it is the whole of leaving it
+/// out.
+fn without_backend_folder<S: Serializer>(
+    preferences: &UiPreferences,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    UiPreferences {
+        backend_folder: None,
+        ..preferences.clone()
+    }
+    .serialize(serializer)
 }
 
 /// One commit request: which half of the record, and whether an unusable

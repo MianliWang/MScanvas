@@ -9,12 +9,18 @@
 //! -- the location is decided in [`storage`] and the contents are decided by the
 //! types in [`record`].
 //!
+//! Rust itself also remembers one ProteoWizard folder here, through
+//! [`UiPreferenceStore::remember_backend_folder`], which no webview payload can
+//! reach. The command that calls it does so after the backend gate is released.
+//!
 //! ## What it deliberately is not
 //!
 //! Not a settings framework, not a key-value store, not a session snapshot and
 //! not a place to put anything scientific. It confers no authority: a record
-//! read from here cannot open a file, bind a backend, name a destination or
-//! restore an operation, because none of those things is representable in it.
+//! read from here cannot open a file, name a destination or restore an
+//! operation, because none of those things is representable in it. Nor does it
+//! bind a backend: a remembered ProteoWizard folder is only where the next
+//! launch's discovery starts, and that discovery decides whether it is usable.
 //!
 //! It also holds no lane anything else needs. This store's mutex is its own and
 //! is never taken while the conversion, process or roster locks are held, so a
@@ -42,6 +48,7 @@ pub mod storage;
 #[cfg(test)]
 mod tests;
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use dto::{UiPreferenceReadDto, UiPreferenceSaveDto, UiPreferenceWriteDto};
@@ -174,16 +181,77 @@ impl UiPreferenceStore {
     /// can silently overwrite a record this build does not understand.
     #[must_use]
     pub fn save(&self, request: &UiPreferenceWriteDto) -> UiPreferenceSaveDto {
-        let mut lane = self.locked();
-        let revision = lane.revision;
         if request.appearance.is_none() && request.layout.is_none() {
             return UiPreferenceSaveDto::Failed {
                 problem: "nothingToSave",
                 retryable: false,
                 temporary_left_behind: false,
-                revision,
+                revision: self.locked().revision,
             };
         }
+        self.commit(request.replace_unusable, |merged| {
+            if let Some(appearance) = request.appearance {
+                merged.appearance = appearance;
+            }
+            if let Some(layout) = request.layout {
+                merged.layout = layout;
+            }
+        })
+    }
+
+    /// The ProteoWizard folder a previous session remembered, if the stored
+    /// record holds a usable one.
+    ///
+    /// Read once at startup and never written: a record this build cannot use
+    /// remembers nothing it can act on, and is reported through [`Self::load`]
+    /// as it always was.
+    #[must_use]
+    pub fn remembered_backend_folder(&self) -> Option<PathBuf> {
+        let _lane = self.locked();
+        let RootBinding::Bound(root) = &self.binding else {
+            return None;
+        };
+        match storage::read(root) {
+            StoredRecord::Usable(preferences) => preferences.backend_folder.map(PathBuf::from),
+            StoredRecord::Absent | StoredRecord::Unusable(_) => None,
+        }
+    }
+
+    /// Remembers one ProteoWizard folder for the next launch, or forgets it.
+    ///
+    /// Rust-only: no webview payload carries a folder, so the only ways in are
+    /// a picker choice that read as usable and the explicit forget. The same
+    /// merge, publish and read-back as [`Self::save`], under the same lock, so
+    /// a layout or Settings commit and this one cannot overwrite each other.
+    /// An unusable stored record is never replaced from here.
+    #[must_use]
+    pub fn remember_backend_folder(&self, folder: Option<&Path>) -> UiPreferenceSaveDto {
+        let folder = match folder.map(Path::to_str) {
+            None => None,
+            // A folder that is not Unicode cannot be written into a JSON record
+            // as itself, and a lossy spelling would name some other folder.
+            Some(None) => {
+                return UiPreferenceSaveDto::Failed {
+                    problem: "folderNotStorable",
+                    retryable: false,
+                    temporary_left_behind: false,
+                    revision: self.locked().revision,
+                };
+            }
+            Some(Some(folder)) => Some(folder.to_owned()),
+        };
+        self.commit(false, |merged| merged.backend_folder = folder)
+    }
+
+    /// The shared body of every commit: merge onto what is stored, publish,
+    /// read back, and only then call it saved.
+    fn commit(
+        &self,
+        replace_unusable: bool,
+        apply: impl FnOnce(&mut UiPreferences),
+    ) -> UiPreferenceSaveDto {
+        let mut lane = self.locked();
+        let revision = lane.revision;
         let root = match &self.binding {
             RootBinding::Bound(root) => root,
             RootBinding::Unavailable(problem) => {
@@ -194,7 +262,7 @@ impl UiPreferenceStore {
             StoredRecord::Usable(stored) => stored,
             StoredRecord::Absent => UiPreferences::default(),
             StoredRecord::Unusable(problem) => {
-                if !request.replace_unusable {
+                if !replace_unusable {
                     return UiPreferenceSaveDto::StoredRecordUnusable {
                         problem: problem.stable_id(),
                         revision,
@@ -203,12 +271,7 @@ impl UiPreferenceStore {
                 UiPreferences::default()
             }
         };
-        if let Some(appearance) = request.appearance {
-            merged.appearance = appearance;
-        }
-        if let Some(layout) = request.layout {
-            merged.layout = layout;
-        }
+        apply(&mut merged);
         // The exact snapshot about to be published, judged by this build's own
         // reader before it is written. A record that would not survive being
         // read back is not one to hand to a user as saved.
@@ -232,7 +295,7 @@ impl UiPreferenceStore {
         // success, and what the interface promises the user is that this exact
         // record is what a restart will find -- so that is the thing to confirm
         // rather than infer.
-        if storage::read(root) != StoredRecord::Usable(merged) {
+        if storage::read(root) != StoredRecord::Usable(merged.clone()) {
             return UiPreferenceSaveDto::Failed {
                 problem: "notConfirmed",
                 retryable: true,
