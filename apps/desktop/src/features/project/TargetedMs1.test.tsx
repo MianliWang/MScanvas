@@ -269,8 +269,9 @@ describe("the setup", () => {
     expect(setup.className).toContain("targeted-setup");
 
     // jsdom lays nothing out, so the stylesheet is held to its word: the setup
-    // carries the accent bar and a heading in primary text above a section's
-    // quiet 13px, still below the page head's 24px h2.
+    // carries the accent bar; its heading is a section title in primary text,
+    // on the type scale's one section size (16px, V2), below the page head's
+    // 18px h2.
     const style = document.createElement("style");
     style.textContent = projectStyles;
     document.head.append(style);
@@ -282,11 +283,10 @@ describe("the setup", () => {
       expect(rule(".targeted-setup")?.style.getPropertyValue("box-shadow")).toContain(
         "var(--color-accent)",
       );
-      const setupHeading = rule(".targeted-setup > .project-section-head h3")?.style;
-      expect(setupHeading?.getPropertyValue("font-size")).toBe("14px");
-      expect(setupHeading?.getPropertyValue("color")).toBe("var(--color-text-primary)");
-      expect(rule(".project-section h3")?.style.getPropertyValue("font-size")).toBe("13px");
-      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("24px");
+      const sectionHeading = rule(".project-section h3")?.style;
+      expect(sectionHeading?.getPropertyValue("font-size")).toBe("16px");
+      expect(sectionHeading?.getPropertyValue("color")).toBe("var(--color-text-primary)");
+      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("18px");
     } finally {
       style.remove();
     }
@@ -558,17 +558,23 @@ describe("a stored result", () => {
     expect(within(report).getByText(en.targetedMeaning)).toBeTruthy();
     expect(query("[data-targeted-no-selection]").textContent).toBe(en.targetedChooseRow);
     // The history names the result by its outcome counts, in the report's own
-    // words, not by the stored label.
-    expect(query(`[data-project-artifact="${ARTIFACT}"]`).textContent).toContain(
-      `1 ${en.targetedOutcomeDetected} · 1 ${en.targetedOutcomeNotDetected}`,
-    );
+    // words, not by the stored label -- each count an item of its own.
+    expect(
+      [...query(`[data-project-artifact="${ARTIFACT}"]`).children].map((each) => each.textContent),
+    ).toEqual([`1 ${en.targetedOutcomeDetected}`, `1 ${en.targetedOutcomeNotDetected}`]);
   });
 
   it("draws the chosen target through the shared figure renderer, with every value in a table", async () => {
     const api = await inspectResult();
     await screen.findByText(en.targetedRowsCaption);
+    // The target's name is text; the row's one control is Details, named for
+    // the target it opens.
+    const row = query(`[data-targeted-row="${DETECTED}"]`);
+    expect(within(row).getByText("Caffeine").closest("button")).toBeNull();
+    expect(within(row).getAllByRole("button")).toHaveLength(1);
     const choose = query(`[data-targeted-choose="${DETECTED}"]`);
-    expect(choose.getAttribute("aria-label")).toBe("Show the evidence for Caffeine");
+    expect(choose.textContent).toBe(en.projectDetails);
+    expect(choose.getAttribute("aria-label")).toBe("Details for Caffeine");
     await press(choose);
     expect(choose.getAttribute("aria-pressed")).toBe("true");
     expect(api.readTargetedMs1Evidence).toHaveBeenCalledWith(ARTIFACT, DETECTED);
@@ -1251,9 +1257,9 @@ describe("rows the fixtures do not cover by default", () => {
       ],
     });
     await screen.findByText(en.projectReferences);
-    expect(query(`[data-project-artifact="${ARTIFACT}"]`).textContent).toContain(
-      `1 ${en.targetedOutcomeDetected} · 1 ${en.targetedOutcomeFailed}`,
-    );
+    expect(
+      [...query(`[data-project-artifact="${ARTIFACT}"]`).children].map((each) => each.textContent),
+    ).toEqual([`1 ${en.targetedOutcomeDetected}`, `1 ${en.targetedOutcomeFailed}`]);
     expect(query(`[data-project-artifact="${ARTIFACT}"]`).textContent).not.toContain(
       en.targetedOutcomeNotDetected,
     );
@@ -1510,8 +1516,12 @@ describe("the task as one path (PM9.5)", () => {
     expect(query("[data-targeted-run-block] [data-targeted-details-hint]")).toBeTruthy();
     expect(reveal).not.toHaveBeenCalled();
     // Inspecting anything else withdraws it: it names only this run's answer.
+    // (A row's Details asks the shell for the region -- that is its job, and
+    // this mount keeps it folded; what follows is about Show run alone.)
     await press(query(`[data-project-inspect-layer="${LAYER}"]`));
     expect(document.querySelector("[data-targeted-details-hint]")).toBeNull();
+    expect(reveal).toHaveBeenCalledTimes(1);
+    reveal.mockClear();
 
     const show = query(`[data-targeted-show-run="${RUN}"]`);
     show.focus();
@@ -1706,7 +1716,9 @@ describe("a stored result in its report and in the history (PM9.6)", () => {
     await opened();
     await press(query(`[data-project-inspect-layer="${LAYER}"]`));
     expect(document.querySelector("[data-targeted-report]")).toBeNull();
-    await press(query(`[data-project-inspect-run="${RUN}"]`));
+    // The run, reached from the layer it used, opens no report either.
+    await press(query(`#workbench-inspector [data-provenance-link="${RUN}"]`));
+    expect(details().querySelector("[data-provenance]")?.getAttribute("data-provenance")).toBe("run");
     expect(document.querySelector("[data-targeted-report]")).toBeNull();
   });
 

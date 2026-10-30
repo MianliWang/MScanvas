@@ -1929,9 +1929,9 @@ export function TargetedMs1Report({
         </h3>
       </div>
       <p className="qc-report-of">
-        {sourceName ?? t("provenanceRelatedGone")}
+        <span>{sourceName ?? t("provenanceRelatedGone")}</span>
         {recordedWhen === null ? null : (
-          <span className="qc-report-when"> · {t("qcReportRecorded", { when: recordedWhen })}</span>
+          <span className="qc-report-when">{t("qcReportRecorded", { when: recordedWhen })}</span>
         )}
       </p>
       <p className="targeted-experimental">{t("targetedExperimental")}</p>
@@ -2052,6 +2052,9 @@ export function TargetedMs1Report({
                   <th scope="col">{t("targetedColumnOutcome")}</th>
                   <th scope="col">{t("targetedColumnApex")}</th>
                   <th scope="col">{t("targetedColumnRawArea")}</th>
+                  <th scope="col">
+                    <span className="visually-hidden">{t("projectDetails")}</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -2062,23 +2065,9 @@ export function TargetedMs1Report({
                     data-targeted-row={row.targetId}
                     data-outcome={row.outcome}
                   >
-                    <th scope="row">
-                      <Button
-                        variant="quiet"
-                        size="sm"
-                        aria-pressed={row.targetId === chosen}
-                        aria-label={t("targetedShowEvidenceNamed", { name: nameOf(row.targetId) })}
-                        data-targeted-choose={row.targetId}
-                        onClick={() => {
-                          revealing.current = row.targetId;
-                          setChosen(row.targetId);
-                          // Pressed again: its evidence may already be in place.
-                          if (row.targetId === chosen) settle();
-                        }}
-                      >
-                        {nameOf(row.targetId)}
-                      </Button>
-                    </th>
+                    {/* The target's name is text; the row's one control,
+                        Details, is the last cell. */}
+                    <th scope="row">{nameOf(row.targetId)}</th>
                     <td>
                       <span aria-hidden="true" className="targeted-symbol">
                         {OUTCOME_SYMBOLS[row.outcome]}
@@ -2090,6 +2079,23 @@ export function TargetedMs1Report({
                     </td>
                     <td>{row.feature === null ? "—" : seconds(row.feature.apexRtS)}</td>
                     <td>{row.feature === null ? "—" : formatIntensity(row.feature.rawArea)}</td>
+                    <td className="targeted-row-action">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        aria-pressed={row.targetId === chosen}
+                        aria-label={t("projectDetailsFor", { name: nameOf(row.targetId) })}
+                        data-targeted-choose={row.targetId}
+                        onClick={() => {
+                          revealing.current = row.targetId;
+                          setChosen(row.targetId);
+                          // Pressed again: its evidence may already be in place.
+                          if (row.targetId === chosen) settle();
+                        }}
+                      >
+                        {t("projectDetails")}
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -2113,7 +2119,7 @@ export function TargetedMs1Report({
               <h4>
                 {nameOf(selectedRow.targetId)}
                 {formulaOf(selectedRow.targetId) === "" ? null : (
-                  <span className="qc-report-when"> · {formulaOf(selectedRow.targetId)}</span>
+                  <span className="qc-report-when">{formulaOf(selectedRow.targetId)}</span>
                 )}
               </h4>
               {selectedRow.ion === null ? (

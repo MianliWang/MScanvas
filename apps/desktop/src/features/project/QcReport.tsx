@@ -78,9 +78,9 @@ export function QcReport({ artifactId, snapshot, sourceName, recordedWhen }: QcR
         </h3>
       </div>
       <p className="qc-report-of" data-qc-report-source="">
-        {sourceName === null ? t("provenanceRelatedGone") : sourceName}
+        <span>{sourceName === null ? t("provenanceRelatedGone") : sourceName}</span>
         {recordedWhen === null ? null : (
-          <span className="qc-report-when"> · {t("qcReportRecorded", { when: recordedWhen })}</span>
+          <span className="qc-report-when">{t("qcReportRecorded", { when: recordedWhen })}</span>
         )}
       </p>
       <p className="project-note">{t("qcReportMeaning")}</p>

@@ -302,18 +302,19 @@ describe("the recorded report", () => {
 
     await press(captureControl());
 
-    // The new run and its record are in the history, named for what they are.
+    // The new record is in the history, named for what it is -- as text, and
+    // never by the action that made it, which is the layer's button.
     const run = query(`[data-project-run="${QC_RUN}"]`);
-    expect(within(run).getByText(en.projectOperationCaptureQc)).toBeTruthy();
+    expect(within(run).getByText(en.projectArtifactQcSummary).closest("button")).toBeNull();
+    expect(within(run).queryByText(en.projectOperationCaptureQc)).toBeNull();
     expect(within(run).getByText(`Layer ${LABEL}`)).toBeTruthy();
-    expect(
-      query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`).textContent,
-    ).toBe(en.projectArtifactQcSummary);
-    // Each history control's name contains what it shows.
-    const runControl = query(`[data-project-inspect-run="${QC_RUN}"]`);
-    expect(runControl.getAttribute("aria-label")).toContain(runControl.textContent ?? "-");
+    // Its one control is Details, on the record, and its name contains what
+    // it shows and which record it is.
     const recordControl = query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`);
+    expect(within(run).getAllByRole("button")).toEqual([recordControl]);
+    expect(recordControl.textContent).toBe(en.projectDetails);
     expect(recordControl.getAttribute("aria-label")).toContain(recordControl.textContent ?? "-");
+    expect(recordControl.getAttribute("aria-label")).toContain(en.projectArtifactQcSummary);
 
     const surface = report();
     expect(surface.getAttribute("data-qc-report")).toBe(QC_ARTIFACT);
@@ -381,7 +382,7 @@ describe("the recorded report", () => {
     await press(captureControl());
     // The reader moves on -- the keyboard and the selection both -- before the
     // answer arrives.
-    const reference = screen.getByRole("button", { name: `Show what ${LABEL} is related to` });
+    const reference = screen.getByRole("button", { name: `Details for ${LABEL}` });
     reference.focus();
     await press(reference);
     await act(async () => {
@@ -636,12 +637,13 @@ describe("in Simplified Chinese", () => {
     expect(control.textContent).toBe(zh.projectCaptureQc);
     expect(control.getAttribute("aria-label")).toBe(`记录 QC 摘要：${LABEL}`);
     expect(control.getAttribute("aria-label")).toContain(zh.projectCaptureQc);
-    // The history controls' names contain what they show in this locale too.
-    const runControl = query(`[data-project-inspect-run="${QC_RUN}"]`);
-    expect(runControl.textContent).toBe(zh.projectOperationCaptureQc);
-    expect(runControl.getAttribute("aria-label")).toContain(zh.projectOperationCaptureQc);
+    // The history control's name contains what it shows in this locale too,
+    // and says which record it opens.
     const recordControl = query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`);
+    expect(recordControl.textContent).toBe(zh.projectDetails);
+    expect(recordControl.getAttribute("aria-label")).toContain(zh.projectDetails);
     expect(recordControl.getAttribute("aria-label")).toContain(zh.projectArtifactQcSummary);
+    expect(within(query(`[data-project-run="${QC_RUN}"]`)).getByText(zh.projectArtifactQcSummary)).toBeTruthy();
 
     await press(query(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`));
     const surface = within(report());

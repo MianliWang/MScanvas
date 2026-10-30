@@ -208,9 +208,9 @@ describe("creating a layer from a reference", () => {
       expect(control.getAttribute("title")).toBe(en.projectLayerNeedsWorkbench);
       const reason = document.getElementById(control.getAttribute("aria-describedby") ?? "");
       expect(reason?.textContent).toBe(en.projectLayerNeedsWorkbench);
-      // Said right beside the control it explains, and the row leads with the
-      // actions that can be taken now (review 12).
-      expect(control.nextElementSibling).toBe(reason);
+      // Said directly under the actions it explains (B4), and the row leads
+      // with the actions that can be taken now (review 12).
+      expect(control.closest(".project-row-actions")?.nextElementSibling).toBe(reason);
       expect(control.closest(".project-row-actions")?.querySelector("button")).toHaveAttribute(
         "data-project-relink",
         id,
@@ -274,7 +274,7 @@ describe("creating a layer from a reference", () => {
     expect(api.createProjectLayer).not.toHaveBeenCalled();
     expect(describing()).toBe("layer");
     expect(
-      within(layerRow(LAYER)).getByRole("button", { name: `Show what the layer of ${LABEL} is related to` })
+      within(layerRow(LAYER)).getByRole("button", { name: `Details for the layer of ${LABEL}` })
         .getAttribute("aria-current"),
     ).toBe("true");
   });
@@ -313,12 +313,14 @@ describe("the layer list", () => {
     const row = layerRow(LAYER);
     expect(row.getAttribute("data-layer-availability")).toBe("attached");
     expect(row.getAttribute("data-layer-source")).toBe(INPUT);
-    // The name is the source's label. The layer's own identifier is on the
-    // element for anything reading it, and nowhere a person would read.
-    const label = within(row).getByRole("button", {
-      name: `Show what the layer of ${LABEL} is related to`,
+    // The name is the source's label, as text; the row's Details names the
+    // layer by it. The layer's own identifier is on the element for anything
+    // reading it, and nowhere a person would read.
+    expect(within(row).getByText(LABEL).closest("button")).toBeNull();
+    const control = within(row).getByRole("button", {
+      name: `Details for the layer of ${LABEL}`,
     });
-    expect(label.textContent).toBe(LABEL);
+    expect(control.textContent).toBe(en.projectDetails);
     expect(row.textContent).not.toContain(LAYER);
     // Two facts, two sentences: in the Workbench, and what the check found.
     expect(within(row).getByText(en.projectLayerAttached)).toBeTruthy();
@@ -333,7 +335,7 @@ describe("the layer list", () => {
     const before = [...api.calls];
 
     const label = within(layerRow(LAYER)).getByRole("button", {
-      name: `Show what the layer of ${LABEL} is related to`,
+      name: `Details for the layer of ${LABEL}`,
     });
     expect(label.getAttribute("aria-controls")).toBe("workbench-inspector");
     await press(label);
@@ -368,7 +370,7 @@ describe("the layer list", () => {
     expect(within(row).getByText(en.projectLayerDetached)).toBeTruthy();
     expect(row.querySelector("[data-project-layer-show-in-workbench]")).toBeNull();
 
-    await press(within(row).getByRole("button", { name: `Show what the layer of ${LABEL} is related to` }));
+    await press(within(row).getByRole("button", { name: `Details for the layer of ${LABEL}` }));
     expect(query("[data-provenance-availability]").getAttribute("data-provenance-availability")).toBe(
       "detached",
     );
@@ -424,7 +426,7 @@ describe("the layer list", () => {
       // that changed or went missing did not change what the layer is.
       await press(
         within(layerRow(LAYER)).getByRole("button", {
-          name: `Show what the layer of ${LABEL} is related to`,
+          name: `Details for the layer of ${LABEL}`,
         }),
       );
       const current = details().querySelector("[data-provenance-current]");
@@ -515,7 +517,7 @@ describe("the layer list", () => {
     expect(row.getAttribute("data-layer-availability")).toBe("detached");
     expect(within(row).getByText(en.provenanceRelatedGone)).toBeTruthy();
 
-    await press(within(row).getByRole("button", { name: /is related to/ }));
+    await press(within(row).getByRole("button", { name: /^Details for the layer of / }));
     expect(describing()).toBe("layer");
     expect(within(details()).getByRole("heading", { name: en.provenanceRelatedGone })).toBeTruthy();
     expect(details().querySelector(`[data-provenance-gone="${INPUT}"]`)).toBeTruthy();
@@ -529,7 +531,7 @@ describe("the layer list", () => {
     expectKeyboardReachable(layerControl(INPUT));
     const row = layerRow(LAYER);
     expectKeyboardReachable(
-      within(row).getByRole("button", { name: `Show what the layer of ${LABEL} is related to` }),
+      within(row).getByRole("button", { name: `Details for the layer of ${LABEL}` }),
     );
     expectKeyboardReachable(within(row).getByRole("button", { name: `Show in Workbench: ${LABEL}` }));
     expectKeyboardReachable(within(row).getByRole("button", { name: `Remove layer: ${LABEL}` }));
@@ -541,7 +543,7 @@ describe("a layer in Details", () => {
     await ready();
     await press(
       within(layerRow(LAYER)).getByRole("button", {
-        name: `Show what the layer of ${LABEL} is related to`,
+        name: `Details for the layer of ${LABEL}`,
       }),
     );
     await waitFor(() => expect(describing()).toBe("layer"));
@@ -598,7 +600,7 @@ describe("a layer in Details", () => {
   it("says a reference has no layer where none was created", async () => {
     mount(attached());
     await ready();
-    await press(screen.getByRole("button", { name: `Show what ${LABEL} is related to` }));
+    await press(screen.getByRole("button", { name: `Details for ${LABEL}` }));
 
     expect(details().querySelector("[data-provenance-no-layer]")).toBeTruthy();
     expect(within(details()).getByText(en.provenanceNoLayer)).toBeTruthy();
@@ -616,7 +618,7 @@ describe("a layer in Details", () => {
     const long = `${"very_".repeat(30)}long_acquisition_name.mzML`;
     mount(layered({ label: long }));
     await ready();
-    await press(within(layerRow(LAYER)).getByRole("button", { name: /is related to/ }));
+    await press(within(layerRow(LAYER)).getByRole("button", { name: /^Details for the layer of / }));
 
     // jsdom lays nothing out, so this holds the stylesheet to its word: the
     // heading and the row carry the classes whose rules break anywhere. The
@@ -655,7 +657,7 @@ describe("a layer in Details", () => {
     expect(within(row).getByText(zh.projectStateMatching)).toBeTruthy();
     expect(within(row).getByRole("button", { name: `移除图层：${LABEL}` })).toBeTruthy();
 
-    await press(within(row).getByRole("button", { name: `查看 ${LABEL} 的图层的关联` }));
+    await press(within(row).getByRole("button", { name: `${LABEL} 图层的详情` }));
     const region = within(details());
     expect(region.getByText(zh.provenanceKindLayer)).toBeTruthy();
     expect(region.getByText(zh.provenanceLayerAvailability)).toBeTruthy();

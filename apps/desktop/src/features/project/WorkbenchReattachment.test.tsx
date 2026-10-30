@@ -501,7 +501,7 @@ describe("adding a project reference to the Workbench", () => {
     await screen.findByText(en.projectReferences);
 
     const inspector = () => document.querySelector<HTMLElement>("#workbench-inspector")!;
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
     const relatedBefore = [...inspector().querySelectorAll("[data-provenance-link]")].map((node) =>
       node.getAttribute("data-provenance-link"),
     );

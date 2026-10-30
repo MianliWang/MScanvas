@@ -123,7 +123,7 @@ describe("provenance in the application shell", () => {
     expect(onProject.getAttribute("aria-disabled")).toBe("true");
     expect(onProject.getAttribute("title")).toBe(en.provenanceNothingSelected);
 
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
 
     // Now there is, and the region is reachable.
     await waitFor(() =>
@@ -137,7 +137,7 @@ describe("provenance in the application shell", () => {
     renderShell({ constrained: false, roomy: true });
     await openProjectSurface();
     await screen.findByText(en.projectReferences);
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
 
     // Roomy means the inspector is present without being asked for, so the
     // provenance is simply there.
@@ -154,11 +154,20 @@ describe("provenance in the application shell", () => {
     renderShell({ constrained: false, roomy: false });
     await openProjectSurface();
     await screen.findByText(en.projectReferences);
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
-
     expect(inspector().hidden).toBe(true);
-    // So the surface says where the answer went, and offers the shell's own
-    // control rather than a second mechanism of its own.
+
+    // The row's Details asks for the region, through the shell's own control,
+    // so the press shows its answer.
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
+    await waitFor(() => expect(inspector().hidden).toBe(false));
+    expect(within(inspector()).getByText(en.provenanceKindInput)).toBeTruthy();
+    expect(document.querySelector("[data-project-inspect-hint]")).toBeNull();
+
+    // Folded again by the header's control while the reference is still the
+    // one inspected: the surface says where the answer went, and offers the
+    // shell's own control rather than a second mechanism of its own.
+    await press(screen.getByRole("button", { name: en.inspectorToggle }));
+    await waitFor(() => expect(inspector().hidden).toBe(true));
     const hint = document.querySelector<HTMLElement>("[data-project-inspect-hint]");
     expect(hint).toBeTruthy();
     await press(within(hint!).getByRole("button", { name: en.provenanceShowDetails }));
@@ -171,11 +180,11 @@ describe("provenance in the application shell", () => {
     renderShell({ constrained: true, roomy: false });
     await openProjectSurface();
     await screen.findByText(en.projectReferences);
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
 
-    // One column: the project list has it, and the inspector is folded.
+    // One column: the project list has it, and the inspector is folded until
+    // a row's Details asks for it.
     expect(inspector().hidden).toBe(true);
-    await press(screen.getByRole("button", { name: en.inspectorToggle }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
 
     // Opened, the region is a drawer over the project list, which stays in
     // place behind it and takes no input until the drawer folds.
@@ -190,7 +199,7 @@ describe("provenance in the application shell", () => {
     await waitFor(() => expect(inspector().hidden).toBe(true));
     expect(document.querySelector("#workbench-project")).not.toHaveAttribute("inert");
     expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }),
+      screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }),
     );
   });
 
@@ -198,7 +207,7 @@ describe("provenance in the application shell", () => {
     const projects = renderShell({ constrained: false, roomy: true });
     await openProjectSurface();
     await screen.findByText(en.projectReferences);
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
     await waitFor(() => expect(inspector().hidden).toBe(false));
 
     const before = [...projects.calls];
