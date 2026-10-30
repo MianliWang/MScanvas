@@ -543,6 +543,28 @@ exactness, timing and memory:
 Before slice 1 merges, the product reader repeats that three-way comparison on
 the same files. The numbers are observations, not budgets (ADR 0005).
 
+**Result, 2026-10-29 (R0): not passed.** The
+[R0 record](../../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md) ran the product
+reader, mzdata 0.68.0 and the Python reference on public CC0 files, under the
+owner's bounded hold release of that day.
+
+- **The MS1 profile file is exact.** It is `msconvert`'s output for
+  `PXD081190`'s RAW: 546,327,287 bytes, 2,748 MS1 profile and 41,130 MS2
+  centroid spectra. All three readers agree bit for bit on all 87,756 arrays and
+  on every compared field. The largest array has 23,308 points, and every
+  spectrum states the values the table requires.
+- **The product refuses the `PXD081190` file at the open** (`not_mzml_1_1`).
+  Its `<mzML>` element has no `version` attribute, and decision 1 refuses that.
+  - mzdata and the reference read all 36,319 spectra, and `msaccess` opens the
+    file.
+  - With `version="1.1.0"` added to a copy, the product reads it exactly.
+  - Slice 1 therefore does not merge. Whether to read the version from
+    `xsi:schemaLocation`, as ProteoWizard does, is a decision-1 amendment for
+    the owner.
+- **`msaccess run_summary` prints seconds.** On both minute-declared files,
+  `MinRT` and `MaxRT` are the range in whole seconds, which settles decision 3's
+  "probably".
+
 ### 9. Delivery order
 
 1. **Reader library, no UI.**
