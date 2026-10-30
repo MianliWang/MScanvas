@@ -326,9 +326,10 @@ export async function statusText(panel = ".spectrum-panel"): Promise<string> {
  * for a saved, copied, cancelled or failed result and for nothing else.
  */
 export async function waitForOutcome(timeout = 120_000, panel = ".spectrum-panel"): Promise<string> {
-  // Spectrum's dismissal is beside its status; chromatogram's is inside it.
+  // The dismissal is an icon button since the rebuild, in the plot's status
+  // foot. Spectrum's is beside its status line; chromatogram's is inside it.
   // Both are terminal controls, with the linked-figure dismissal excluded.
-  const dismiss = `${panel} > button.link-button, ${panel} > .spectrum-export-status:not(.linked-figure-status) button.link-button`;
+  const dismiss = `${panel} .plot-status-line > button, ${panel} .spectrum-export-status:not(.linked-figure-status) button`;
   await browser.$(dismiss).waitForDisplayed({
     timeout,
     timeoutMsg: "the operation never reported a finished outcome",

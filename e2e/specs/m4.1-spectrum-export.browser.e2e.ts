@@ -153,9 +153,10 @@ async function exportButton(
  * would be demanding that a 640px-tall window show a plot and five actions at
  * once -- which it cannot, and which is why the panel scrolls.
  *
- * Since PM9.3 the scrolling is the evidence column's (`#workbench-evidence`)
- * and the panel is sized to its content (`workbench.css:157`), so its reach is
- * its own bottom edge -- which is still the edge a control must not pass.
+ * The panel is the dialog now: its own bottom edge, plus whatever it scrolls
+ * beyond it. Its box includes its 1px border and `scrollHeight` does not, so
+ * the box's edge is the floor -- top plus `scrollHeight` alone sits 2px above
+ * the dialog's own bottom.
  */
 async function panelReach(): Promise<number> {
   return browser.execute((css: string) => {
@@ -163,7 +164,8 @@ async function panelReach(): Promise<number> {
     if (node === null) {
       return 0;
     }
-    return node.getBoundingClientRect().top + node.scrollHeight;
+    const rect = node.getBoundingClientRect();
+    return Math.max(rect.bottom, rect.top + node.scrollHeight);
   }, PANEL);
 }
 
@@ -195,8 +197,15 @@ async function boxOfField(label: string): Promise<{
   );
 }
 
-/** One action's box, found by its label inside the spectrum panel. */
-async function boxOfControl(label: string): Promise<Box> {
+/**
+ * One action's box, found by its label inside the dialog, with the lowest
+ * point its own scroll owner can bring it to.
+ *
+ * The data actions sit in the dialog's options column, which scrolls on its
+ * own at a small window; the foot's actions are in no scroller, so theirs is
+ * the dialog's. `reach` is that owner's bottom plus what it scrolls beyond it.
+ */
+async function boxOfControl(label: string): Promise<Box & { readonly reach: number }> {
   return browser.execute(
     (panel: string, name: string) => {
       const node = [...document.querySelectorAll(`${panel} button`)].find(
@@ -205,6 +214,12 @@ async function boxOfControl(label: string): Promise<Box> {
       if (node === undefined) {
         throw new Error(`no button labelled ${name}`);
       }
+      let owner: Element | null = node.parentElement;
+      while (owner !== null && !owner.matches(panel) && !/auto|scroll/u.test(getComputedStyle(owner).overflowY)) {
+        owner = owner.parentElement;
+      }
+      const bounds = (owner ?? node).getBoundingClientRect();
+      const scrolled = owner === null ? 0 : owner.scrollHeight - owner.clientHeight;
       const rect = node.getBoundingClientRect();
       return {
         left: rect.left,
@@ -213,11 +228,12 @@ async function boxOfControl(label: string): Promise<Box> {
         bottom: rect.bottom,
         width: rect.width,
         height: rect.height,
+        reach: bounds.bottom + Math.max(0, scrolled) - (owner?.scrollTop ?? 0),
       };
     },
     PANEL,
     label,
-  ) as Promise<Box>;
+  ) as Promise<Box & { readonly reach: number }>;
 }
 
 /** Puts the keyboard on one control without activating it. */
@@ -292,7 +308,8 @@ describe("M4.1 selected-spectrum export, rendered", () => {
           expect(button.left).toBeGreaterThanOrEqual(panel.left - 0.5);
           expect(button.right).toBeLessThanOrEqual(panel.right + 0.5);
           expect(button.top).toBeGreaterThanOrEqual(panel.top - 0.5);
-          expect(button.bottom).toBeLessThanOrEqual(reach + 0.5);
+          // Within what its own scroll owner can bring into the dialog.
+          expect(button.bottom).toBeLessThanOrEqual(button.reach + 0.5);
           // A control with no area is a control nobody can press.
           expect(button.width).toBeGreaterThan(0);
           expect(button.height).toBeGreaterThan(0);
