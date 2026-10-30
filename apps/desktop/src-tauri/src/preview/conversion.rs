@@ -300,6 +300,7 @@ impl WorkspaceConversionReport {
             detailed_outcome: match run.outcome() {
                 ConversionRunOutcome::Failed(failure) => Some(failure.detailed_stable_id()),
                 ConversionRunOutcome::Finalized(_)
+                | ConversionRunOutcome::FinalizedFile(_)
                 | ConversionRunOutcome::SkippedExistingDestination => None,
             },
             // From the plan, which is where the name was decided, and only when
@@ -1035,7 +1036,11 @@ pub(super) enum OutcomeClass {
 
 const fn outcome_class(outcome: &ConversionRunOutcome) -> OutcomeClass {
     match outcome {
-        ConversionRunOutcome::Finalized(_) => OutcomeClass::Finalized,
+        // Not reachable here yet: an intent with a non-mzML format is refused
+        // before planning (`refusal_for_source`).
+        ConversionRunOutcome::Finalized(_) | ConversionRunOutcome::FinalizedFile(_) => {
+            OutcomeClass::Finalized
+        }
         ConversionRunOutcome::SkippedExistingDestination => OutcomeClass::Skipped,
         ConversionRunOutcome::Failed(_) => OutcomeClass::Failed,
     }
@@ -1059,9 +1064,9 @@ fn outcome_is_retryable(outcome: &ConversionRunOutcome) -> bool {
     match outcome {
         // Nothing to retry. A skipped item deliberately left a file alone, and
         // rerunning it would leave the same file alone again.
-        ConversionRunOutcome::Finalized(_) | ConversionRunOutcome::SkippedExistingDestination => {
-            false
-        }
+        ConversionRunOutcome::Finalized(_)
+        | ConversionRunOutcome::FinalizedFile(_)
+        | ConversionRunOutcome::SkippedExistingDestination => false,
         ConversionRunOutcome::Failed(failure) => match failure {
             // The one failure this repository has evidence for as transient.
             // The run could not pin the destination directory, and the crate's
@@ -1127,6 +1132,10 @@ fn outcome_is_retryable(outcome: &ConversionRunOutcome) -> bool {
             // re-serialization, so a rerun that differed only legally would be
             // judged the same way -- which argues against a retry, not for one.
             ConversionRunFailure::OutputRejected(_) => false,
+            // The same for a format written from the intermediate: the
+            // intermediate held nothing the format keeps, or the final file
+            // failed its checks, and a rerun would be judged the same way.
+            ConversionRunFailure::FormatCheckRefused(_) => false,
             // Every execution failure. The crate's own failure contract reaches
             // `AfterCorrection` for the launch, executable and source cases --
             // never `Retryable` -- and the three its catch-all calls retryable

@@ -19,6 +19,7 @@ use crate::intent::CompressionIntent;
 
 mod advanced;
 mod live_recovery;
+mod two_step;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 

@@ -56,14 +56,14 @@ use crate::attempt::{
 use crate::cancellation::{CancellationObservation, ConversionCancellation};
 use crate::capability::{InstalledHelpCapabilities, Sha256Digest};
 use crate::command::{
-    InputSpelling, OpenFormat, PlanError, SourceIdentity, build_msconvert_command_for_source,
-    build_structured_msconvert_command_for_source,
+    CommandSpec, InputSpelling, OpenFormat, PlanError, SourceIdentity,
+    build_msconvert_command_for_source, build_structured_msconvert_command_for_source,
 };
 use crate::compound_file;
 use crate::conversion::{
     AdvancedOutputChecks, ConversionIntegrityOutcome, ConversionSourceError, ConversionSourceFacts,
     SourceObjectFacts, ValidConversion, ValidationMode, VerifiedConversion,
-    capture_conversion_source, conversion_output_file_name,
+    capture_conversion_source, output_file_name_with_extension,
     verify_mzml_conversion_retaining_output, verify_vendor_conversion_retaining_output,
 };
 use crate::diagnostics::{BackendTextExcerpt, Redactor};
@@ -73,6 +73,7 @@ use crate::fs_guard::{
 };
 use crate::intent::ConversionIntent;
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
+use crate::output_inspect::{NonMzmlFormat, OutputCheckRefusal};
 use crate::process::{
     LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner, Termination, TreeOwnership,
 };
@@ -1163,6 +1164,9 @@ pub struct ConversionPlan {
     /// the root this plan accepted.
     destination_root_identity: SourceIdentity,
     output_file_name: OsString,
+    /// What run 1 of a two-run plan (ADR 0055 decision 6) writes in private
+    /// staging. `None` for a one-run plan.
+    intermediate_file_name: Option<OsString>,
     conflict: ConflictPolicy,
     /// What this conversion was asked to do, fixed when the plan was formed.
     ///
@@ -1194,11 +1198,28 @@ impl PlannedIntent {
         }
     }
 
+    /// The mzML the source run writes: the output itself, or for a format
+    /// written from an intermediate (ADR 0055 decision 6), the intermediate.
     const fn format(&self) -> OpenFormat {
         match self {
             Self::Row(row) => OpenFormat::of_intent(row.format()),
-            // An integrity route exists only for mzML output.
             Self::Advanced { .. } => OpenFormat::MzMl,
+        }
+    }
+
+    /// The format run 2 writes from the intermediate, and the intent whose
+    /// lowering it runs. `None` for a one-run plan.
+    const fn two_step(&self) -> Option<(NonMzmlFormat, &StructuredIntent)> {
+        match self {
+            Self::Advanced {
+                intent,
+                route:
+                    IntegrityRoute {
+                        target: Some(target),
+                        ..
+                    },
+            } => Some((*target, intent)),
+            Self::Row(_) | Self::Advanced { .. } => None,
         }
     }
 }
@@ -1256,6 +1277,11 @@ impl ConversionPlan {
     /// Refused first where a step is blocked for this source (decision 7) and
     /// where no output checks exist for it (ground rule 1), before anything is
     /// derived, opened or canonicalized. Everything after is the row path's.
+    ///
+    /// A format other than mzML is planned as decision 6's two runs: the
+    /// output name takes that format's extension, and the intermediate is named
+    /// as a direct mzML conversion of this source would be. mzXML is refused
+    /// (`IntentNotCheckable`).
     pub fn advanced(
         source: ConversionSource,
         destination_root: &Path,
@@ -1267,6 +1293,7 @@ impl ConversionPlan {
         }
         let route = intent
             .integrity_route(source.kind())
+            .or_else(|| intent.intermediate_route(source.kind()))
             .ok_or(ConversionPlanError::IntentNotCheckable)?;
         Self::form(
             source,
@@ -1293,11 +1320,24 @@ impl ConversionPlan {
         // Derived from the intent rather than restated. The extension a plan
         // stages for and the format the argv asks for are one decision, and a
         // planner holding its own copy of it is how they come apart.
-        let format = intent.format();
-        let output_file_name = conversion_output_file_name(source.canonical_path(), format)
+        let source_run = intent.format().extension();
+        let extension = intent
+            .two_step()
+            .map_or(source_run, |(target, _)| target.extension());
+        let output_file_name = output_file_name_with_extension(source.canonical_path(), extension)
             .ok_or(ConversionPlanError::SourceHasNoConvertibleName)?;
-        crate::command::validate_output_file_name(&output_file_name, format)
+        crate::command::validate_output_file_name(&output_file_name, extension)
             .map_err(|_| ConversionPlanError::UnsafeOutputFileName)?;
+        let intermediate_file_name = match intent.two_step() {
+            None => None,
+            Some(_) => {
+                let name = output_file_name_with_extension(source.canonical_path(), source_run)
+                    .ok_or(ConversionPlanError::SourceHasNoConvertibleName)?;
+                crate::command::validate_output_file_name(&name, source_run)
+                    .map_err(|_| ConversionPlanError::UnsafeOutputFileName)?;
+                Some(name)
+            }
+        };
         // The staging area is named after the output, so a name the plan would
         // otherwise accept can still be one this boundary cannot stage. Deciding
         // that here makes it a stated refusal rather than an opaque failure from
@@ -1325,6 +1365,7 @@ impl ConversionPlan {
             destination_root,
             destination_root_identity,
             output_file_name,
+            intermediate_file_name,
             conflict,
             intent,
         })
@@ -1744,6 +1785,11 @@ pub enum ConversionRunFailure {
     /// was discarded rather than finalized.
     #[error("the produced document failed the conversion-integrity contract")]
     OutputRejected(ConversionIntegrityOutcome),
+    /// ADR 0055 decision 6: a check of a format written from the intermediate
+    /// refused, before run 2 (the intermediate holds nothing the format keeps)
+    /// or after it (the final file). [`ConversionRunReport::step`] says which.
+    #[error("a check of the format written from the intermediate refused")]
+    FormatCheckRefused(OutputCheckRefusal),
     /// The destination was taken between validation and finalization. What
     /// arrived there was left exactly as it was.
     #[error("the destination was taken while the conversion was running")]
@@ -1793,6 +1839,7 @@ impl ConversionRunFailure {
             Self::BackendRejected { .. } => "backend_rejected",
             Self::BackendDidNotComplete => "backend_did_not_complete",
             Self::OutputRejected(_) => "output_rejected",
+            Self::FormatCheckRefused(_) => "format_check_refused",
             Self::DestinationAppearedDuringRun => "destination_appeared_during_run",
             Self::NotFinalized { .. } => "output_not_finalized",
             Self::SourceChangedBeforeRun => "source_changed_before_run",
@@ -1813,6 +1860,7 @@ impl ConversionRunFailure {
             Self::NotPlannable(error) => error.stable_id(),
             Self::Backend(failure) => failure.stable_id(),
             Self::OutputRejected(outcome) => outcome.stable_id(),
+            Self::FormatCheckRefused(refusal) => refusal.stable_id(),
             other => other.stable_id(),
         }
     }
@@ -1862,6 +1910,32 @@ impl ConversionRunFailure {
     }
 }
 
+/// Which of decision 6's two provider runs (ADR 0055) an attempt had reached
+/// when it settled, so a failure or a stop names its step.
+///
+/// Absent from a one-run conversion and from an attempt that settled before
+/// its first run was planned. The backend facts of a report are those of the
+/// last run that launched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversionStep {
+    /// Run 1, the source to the private mzML intermediate, and that
+    /// intermediate's checks.
+    Intermediate,
+    /// Run 2, the intermediate to the requested format, from the moment the
+    /// intermediate passed its checks to the final file's finalization.
+    Target,
+}
+
+impl ConversionStep {
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Intermediate => "intermediate",
+            Self::Target => "target",
+        }
+    }
+}
+
 /// What one planned conversion did.
 #[derive(Debug, PartialEq)]
 pub enum ConversionRunOutcome {
@@ -1871,6 +1945,13 @@ pub enum ConversionRunOutcome {
     /// name is an ordinary name once this returns, and only the retained object
     /// can later say whether it still means the file this describes.
     Finalized(Box<FinalizedOutput>),
+    /// A format other than mzML, written from the checked intermediate, passed
+    /// its checks and now holds its planned name (ADR 0055 decision 6).
+    ///
+    /// Its own member rather than [`Self::Finalized`], because it is not an
+    /// output the viewer can read: it is not adoptable and not previewable, and
+    /// it is always the advanced tier, "not verified by MSCanvas".
+    FinalizedFile(Box<FinalizedFile>),
     /// The planned destination name was already taken and the plan asked for it
     /// to be skipped. This says the name is occupied, not that a valid
     /// conversion holds it: what is there is deliberately not inspected, because
@@ -1885,6 +1966,7 @@ impl ConversionRunOutcome {
     pub const fn stable_id(&self) -> &'static str {
         match self {
             Self::Finalized(_) => "finalized",
+            Self::FinalizedFile(_) => "finalized_file",
             Self::SkippedExistingDestination => "skipped_existing_destination",
             Self::Failed(failure) => failure.stable_id(),
         }
@@ -2237,6 +2319,7 @@ pub struct ConversionRunReport {
     /// two entirely different reasons: nothing was launched, or something was
     /// launched and the boundary could not report on it.
     process: ProcessAttemptOutcome,
+    step: Option<ConversionStep>,
 }
 
 impl ConversionRunReport {
@@ -2249,12 +2332,28 @@ impl ConversionRunReport {
         match &self.outcome {
             ConversionRunOutcome::Failed(failure) => failure.leaves_an_owned_process_unaccounted(),
             ConversionRunOutcome::Finalized(_)
+            | ConversionRunOutcome::FinalizedFile(_)
             | ConversionRunOutcome::SkippedExistingDestination => false,
         }
     }
 
     pub const fn outcome(&self) -> &ConversionRunOutcome {
         &self.outcome
+    }
+
+    /// Which of decision 6's two runs the attempt had reached when it settled.
+    #[must_use]
+    pub const fn step(&self) -> Option<ConversionStep> {
+        self.step
+    }
+
+    /// The file written from the intermediate, where the attempt finalized one.
+    #[must_use]
+    pub fn finalized_file(&self) -> Option<&FinalizedFile> {
+        match &self.outcome {
+            ConversionRunOutcome::FinalizedFile(file) => Some(file),
+            _ => None,
+        }
     }
 
     /// The backend process facts, when a process ran at all.
@@ -2296,19 +2395,22 @@ impl ConversionRunReport {
     pub fn into_finalized_output(self) -> Option<FinalizedOutput> {
         match self.outcome {
             ConversionRunOutcome::Finalized(output) => Some(*output),
-            ConversionRunOutcome::SkippedExistingDestination | ConversionRunOutcome::Failed(_) => {
-                None
-            }
+            // Not adoptable: there is nothing the viewer could recognise.
+            ConversionRunOutcome::FinalizedFile(_)
+            | ConversionRunOutcome::SkippedExistingDestination
+            | ConversionRunOutcome::Failed(_) => None,
         }
     }
 
+    /// The finalized mzML output's judgement. `None` for a file written from
+    /// an intermediate: see [`Self::finalized_file`].
     #[must_use]
     pub const fn finalized(&self) -> Option<&ValidConversion> {
         match &self.outcome {
             ConversionRunOutcome::Finalized(output) => Some(output.valid()),
-            ConversionRunOutcome::SkippedExistingDestination | ConversionRunOutcome::Failed(_) => {
-                None
-            }
+            ConversionRunOutcome::FinalizedFile(_)
+            | ConversionRunOutcome::SkippedExistingDestination
+            | ConversionRunOutcome::Failed(_) => None,
         }
     }
 
@@ -2338,6 +2440,7 @@ impl ConversionRunReport {
             staged: StagedOutputEvidence::NotCreated,
             identity: None,
             process: ProcessAttemptOutcome::NotAttempted,
+            step: None,
         }
     }
 }
@@ -2657,9 +2760,16 @@ pub struct CancellationReport {
     /// What the execution boundary established about the process, read from
     /// the boundary rather than from whether `backend` is present.
     process: ProcessAttemptOutcome,
+    step: Option<ConversionStep>,
 }
 
 impl CancellationReport {
+    /// Which of decision 6's two runs the stop landed in.
+    #[must_use]
+    pub const fn step(&self) -> Option<ConversionStep> {
+        self.step
+    }
+
     /// When the request was observed relative to the attempt's own beginning.
     #[must_use]
     pub const fn observation(&self) -> CancellationObservation {
@@ -2744,9 +2854,16 @@ pub struct CancellationFailure {
     diagnostics: Option<BackendDiagnosticText>,
     identity: Option<OperationRunIdentity>,
     process: ProcessAttemptOutcome,
+    step: Option<ConversionStep>,
 }
 
 impl CancellationFailure {
+    /// Which of decision 6's two runs the unconfirmed stop landed in.
+    #[must_use]
+    pub const fn step(&self) -> Option<ConversionStep> {
+        self.step
+    }
+
     /// Why the request could not be confirmed. It keeps the process boundary's
     /// own typed reason rather than a cancellation-specific restatement of it.
     #[must_use]
@@ -3181,6 +3298,7 @@ pub fn run_conversion_cancellable(
             residue: None,
             identity: None,
             process: ProcessAttemptOutcome::NotAttempted,
+            step: None,
         });
     }
 
@@ -3218,6 +3336,7 @@ impl RunResult {
                 staged: report.staged,
                 identity: report.identity,
                 process: report.process,
+                step: report.step,
             },
             Self::CancellationFailed(failure) => ConversionRunReport {
                 outcome: ConversionRunOutcome::Failed(ConversionRunFailure::Backend(failure.cause)),
@@ -3227,6 +3346,7 @@ impl RunResult {
                 staged: failure.staged,
                 identity: failure.identity,
                 process: failure.process,
+                step: failure.step,
             },
         }
     }
@@ -3357,6 +3477,7 @@ fn run_admitted(
             residue: None,
             identity: None,
             process: ProcessAttemptOutcome::NotAttempted,
+            step: None,
         });
     }
 
@@ -3365,7 +3486,7 @@ fn run_admitted(
         Err(failure) => return settled_failure(failure),
     };
 
-    let staged = run_staged(
+    let (staged, step) = run_staged(
         plan,
         capabilities,
         runner,
@@ -3397,6 +3518,7 @@ fn run_admitted(
             staged,
             identity,
             process,
+            step,
         }),
         StagedResult::Cancelled {
             backend,
@@ -3414,6 +3536,7 @@ fn run_admitted(
             residue,
             identity,
             process,
+            step,
         }),
         StagedResult::CancellationFailed {
             cause,
@@ -3430,6 +3553,7 @@ fn run_admitted(
             diagnostics,
             identity,
             process,
+            step,
         }),
     }
 }
@@ -3651,6 +3775,32 @@ impl StagedResult {
             process,
         }
     }
+
+    /// A failure after a process exited 0, keeping what it said: the only
+    /// account of why its output was not published. `staging` is observed at
+    /// the phase named and is the base the backend text is redacted under.
+    fn failed_after_run(
+        failure: ConversionRunFailure,
+        output: &ProcessOutput,
+        plan: &ConversionPlan,
+        staging: &Path,
+        executable: &Path,
+        phase: StagedObservationPhase,
+        identity: Option<OperationRunIdentity>,
+    ) -> Self {
+        let backend = Some(BackendRunFacts::from(output));
+        Self::Settled {
+            outcome: ConversionRunOutcome::Failed(failure),
+            backend,
+            diagnostics: diagnostic_text(output, plan, staging, executable),
+            staged: StagedOutputEvidence::of(phase, observe_staged_content(staging)),
+            identity,
+            process: backend.map_or(
+                ProcessAttemptOutcome::Indeterminate,
+                ProcessAttemptOutcome::of,
+            ),
+        }
+    }
 }
 
 /// Every path this attempt knows, registered against the placeholder that
@@ -3711,6 +3861,17 @@ fn diagnostic_text(
     })
 }
 
+/// What every provider run of one attempt shares.
+#[derive(Clone, Copy)]
+struct RunContext<'a> {
+    plan: &'a ConversionPlan,
+    runner: &'a dyn ProcessRunner,
+    cancellation: Option<&'a ConversionCancellation>,
+    recovery: &'a StagingRecovery,
+}
+
+/// The staged half of a run: one provider run, or ADR 0055 decision 6's two.
+/// The step is `Some` exactly for a two-run plan.
 fn run_staged(
     plan: &ConversionPlan,
     capabilities: &InstalledHelpCapabilities,
@@ -3719,15 +3880,48 @@ fn run_staged(
     recovery: &StagingRecovery,
     destination_directory: &finalize::DestinationDirectory,
     after_validation: impl FnOnce(),
-) -> StagedResult {
+) -> (StagedResult, Option<ConversionStep>) {
+    let context = RunContext {
+        plan,
+        runner,
+        cancellation,
+        recovery,
+    };
     let staging_directory = recovery.output_directory();
-    let staging = staging_directory.as_path();
+    if let Some(two_step) = plan.intent.two_step() {
+        let (staged, step) = two_step::run(
+            context,
+            capabilities,
+            &staging_directory,
+            destination_directory,
+            two_step,
+            after_validation,
+        );
+        return (staged, Some(step));
+    }
+    let staged = run_direct(
+        context,
+        capabilities,
+        &staging_directory,
+        destination_directory,
+        after_validation,
+    );
+    (staged, None)
+}
+
+/// Builds the run that reads the source, writing `file_name` into `staging`.
+fn build_source_run(
+    plan: &ConversionPlan,
+    capabilities: &InstalledHelpCapabilities,
+    staging: &Path,
+    file_name: &OsStr,
+) -> Result<CommandSpec, Box<StagedResult>> {
     let built = match &plan.intent {
         PlannedIntent::Row(intent) => build_msconvert_command_for_source(
             capabilities,
             plan.source.canonical_path(),
             staging,
-            plan.output_file_name(),
+            file_name,
             intent,
             plan.source.kind().input_spelling(),
         ),
@@ -3735,47 +3929,55 @@ fn run_staged(
             capabilities,
             plan.source.canonical_path(),
             staging,
-            plan.output_file_name(),
+            file_name,
             intent,
             plan.source.kind(),
             plan.source.kind().input_spelling(),
         ),
     };
-    let command = match built {
-        Ok(command) => command,
+    match built {
+        Ok(command) => Ok(command),
         // The command could not be built, so the provider was never invoked
         // and no identity was minted. The staging area exists and is observed
         // all the same: this boundary reports what was there rather than
         // reasoning that nothing can have been.
-        Err(error) => {
-            return StagedResult::failed(
-                ConversionRunFailure::NotPlannable(error),
-                staging,
-                // The provider was never invoked, so the reading is stamped
-                // with the phase that says so rather than with one that names
-                // an execution.
-                StagedObservationPhase::ProviderNotInvoked,
-                None,
-                ProcessAttemptOutcome::NotAttempted,
-            );
-        }
-    };
+        Err(error) => Err(Box::new(StagedResult::failed(
+            ConversionRunFailure::NotPlannable(error),
+            staging,
+            // The provider was never invoked, so the reading is stamped
+            // with the phase that says so rather than with one that names
+            // an execution.
+            StagedObservationPhase::ProviderNotInvoked,
+            None,
+            ProcessAttemptOutcome::NotAttempted,
+        ))),
+    }
+}
 
-    // The one production runner stays the authority for child creation, the
-    // environment, job assignment, stream capture, the wait and process-tree
-    // teardown. This chooses which of its two entry points to use and nothing
-    // else; there is no second subprocess implementation here.
-    // Minted here, and here is the whole of the decision: the next statement
-    // hands the command to the process boundary. An identity taken after the
-    // run would be a name for a result rather than for an attempt, and one
-    // taken on first read would not exist for an attempt nobody looked at.
-    // Nothing above this line has one, which is what makes its absence a
-    // statement that the provider was never invoked.
-    let identity = Some(OperationRunIdentity::mint());
+/// Hands one command to the process boundary and returns its output where it
+/// exited 0. Every other ending is settled here, for both of decision 6's runs
+/// alike, with `staging` -- the run's own output directory -- observed.
+///
+/// The one production runner stays the authority for child creation, the
+/// environment, job assignment, stream capture, the wait and process-tree
+/// teardown. This chooses which of its two entry points to use and nothing
+/// else; there is no second subprocess implementation here.
+fn launch(
+    context: RunContext<'_>,
+    command: &CommandSpec,
+    staging: &Path,
+    identity: Option<OperationRunIdentity>,
+) -> Result<ProcessOutput, Box<StagedResult>> {
+    let RunContext {
+        plan,
+        runner,
+        cancellation,
+        recovery,
+    } = context;
     recovery.before_provider();
     let result = match cancellation {
-        Some(cancellation) => runner.run_cancellable(&command, cancellation.token()),
-        None => runner.run(&command),
+        Some(cancellation) => runner.run_cancellable(command, cancellation.token()),
+        None => runner.run(command),
     };
     recovery.after_provider(&result);
     let requested = cancellation.is_some_and(ConversionCancellation::is_requested);
@@ -3801,7 +4003,7 @@ fn run_staged(
             // Job that would not empty is not this: the boundary classifies that
             // as `NotTerminated` before it ever reaches here.
             if requested && matches!(cause, BackendExecutionFailure::NotTerminated) {
-                return StagedResult::CancellationFailed {
+                return Err(Box::new(StagedResult::CancellationFailed {
                     cause,
                     // The runner returned an error rather than a result, so
                     // there are no process facts and no captured streams to
@@ -3818,15 +4020,15 @@ fn run_staged(
                     // the absent facts is exactly the inference this variant
                     // exists to refuse.
                     process: ProcessAttemptOutcome::Indeterminate,
-                };
+                }));
             }
-            return StagedResult::failed(
+            return Err(Box::new(StagedResult::failed(
                 ConversionRunFailure::Backend(cause),
                 staging,
                 StagedObservationPhase::ProviderReturned,
                 identity,
                 ProcessAttemptOutcome::Indeterminate,
-            );
+            )));
         }
     };
     let backend = Some(BackendRunFacts::from(&output));
@@ -3840,7 +4042,7 @@ fn run_staged(
         // for is reporting a run that did not complete, which is the meaning
         // this boundary has always given it.
         if !requested {
-            return StagedResult::Settled {
+            return Err(Box::new(StagedResult::Settled {
                 outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete),
                 backend,
                 diagnostics: diagnostic_text(&output, plan, staging, &executable),
@@ -3857,7 +4059,7 @@ fn run_staged(
                     ProcessAttemptOutcome::Indeterminate,
                     ProcessAttemptOutcome::of,
                 ),
-            };
+            }));
         }
         let staged = StagedOutputEvidence::of(
             StagedObservationPhase::ProviderReturned,
@@ -3870,7 +4072,7 @@ fn run_staged(
         // Decided once, by the one origin, and then carried rather than
         // rediscovered by anything downstream.
         let owned_tree = OwnedTreeDisposition::of(&output);
-        return match output.termination {
+        return Err(Box::new(match output.termination {
             // No process was created, so there are no process facts to report
             // and no tree whose disappearance could be confirmed. The staging
             // area exists — the run made it before it asked — and is reported
@@ -3911,10 +4113,10 @@ fn run_staged(
                 identity,
                 process,
             },
-        };
+        }));
     }
     if !output.success() {
-        return StagedResult::Settled {
+        return Err(Box::new(StagedResult::Settled {
             outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected {
                 exit_code: output.exit_code,
             }),
@@ -3934,23 +4136,29 @@ fn run_staged(
                 ProcessAttemptOutcome::Indeterminate,
                 ProcessAttemptOutcome::of,
             ),
-        };
+        }));
     }
+    Ok(output)
+}
 
-    // Exit status is not evidence of a usable document. The judgement below is
-    // the only thing that may unlock the final name, and it hands back the very
-    // object it judged rather than a description of one.
-    //
-    // Which judgement runs is decided by what the source is, not by what the
-    // output turned out to contain: a source read as mzML is compared against,
-    // and one that never was is validated on its output alone. Nothing here can
-    // apply the comparison to a source it could not read that way.
+/// Judges what the run that reads the source staged as `file_name`: the mzML
+/// output, or decision 6's intermediate.
+///
+/// Exit status is not evidence of a usable document. The judgement below is
+/// the only thing that may unlock the final name, and it hands back the very
+/// object it judged rather than a description of one.
+///
+/// Which judgement runs is decided by what the source is, not by what the
+/// output turned out to contain: a source read as mzML is compared against,
+/// and one that never was is validated on its output alone. Nothing here can
+/// apply the comparison to a source it could not read that way.
+fn judge(plan: &ConversionPlan, staging: &Path, file_name: &OsStr) -> VerifiedConversion {
     let (judged_as, advanced) = plan.intent.judgement();
-    let verified = match &plan.source.baseline {
+    match &plan.source.baseline {
         SourceBaseline::Mzml(facts) => verify_mzml_conversion_retaining_output(
             facts,
             staging,
-            plan.output_file_name(),
+            file_name,
             judged_as,
             advanced,
             plan.scan_limits(),
@@ -3958,7 +4166,7 @@ fn run_staged(
         SourceBaseline::ObjectOnly(object) => verify_vendor_conversion_retaining_output(
             object,
             staging,
-            plan.output_file_name(),
+            file_name,
             judged_as,
             advanced,
             plan.scan_limits(),
@@ -3972,37 +4180,60 @@ fn run_staged(
         SourceBaseline::Bundle(bundle) => verify_vendor_conversion_retaining_output(
             &bundle.primary,
             staging,
-            plan.output_file_name(),
+            file_name,
             judged_as,
             advanced,
             plan.scan_limits(),
         ),
+    }
+}
+
+/// One provider run that writes mzML directly: the row path, and an advanced
+/// intent with mzML output.
+fn run_direct(
+    context: RunContext<'_>,
+    capabilities: &InstalledHelpCapabilities,
+    staging: &Path,
+    destination_directory: &finalize::DestinationDirectory,
+    after_validation: impl FnOnce(),
+) -> StagedResult {
+    let plan = context.plan;
+    let command = match build_source_run(plan, capabilities, staging, plan.output_file_name()) {
+        Ok(command) => command,
+        Err(failed) => return *failed,
     };
-    let validated = match verified {
+    // Minted here, and here is the whole of the decision: the next statement
+    // hands the command to the process boundary. An identity taken after the
+    // run would be a name for a result rather than for an attempt, and one
+    // taken on first read would not exist for an attempt nobody looked at.
+    // Nothing above this line has one, which is what makes its absence a
+    // statement that the provider was never invoked.
+    let identity = Some(OperationRunIdentity::mint());
+    let output = match launch(context, &command, staging, identity) {
+        Ok(output) => output,
+        Err(settled) => return *settled,
+    };
+    let backend = Some(BackendRunFacts::from(&output));
+    let executable = command.executable.clone();
+
+    let validated = match judge(plan, staging, plan.output_file_name()) {
         VerifiedConversion::Valid(validated) => validated,
         VerifiedConversion::Rejected(rejected) => {
-            return StagedResult::Settled {
-                outcome: ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(
-                    rejected,
-                )),
-                backend,
-                // The process exited cleanly and the document it produced did
-                // not pass. What it said on the way is the only account of why.
-                diagnostics: diagnostic_text(&output, plan, staging, &executable),
-                // Validation reads and removes nothing, so this sees what the
-                // backend actually left -- which for a refusal is the whole
-                // point: a document was staged, it was judged, and it is not
-                // being published.
-                staged: StagedOutputEvidence::of(
-                    StagedObservationPhase::OutputRefused,
-                    observe_staged_content(staging),
-                ),
+            // The process exited cleanly and the document it produced did not
+            // pass. What it said on the way is the only account of why.
+            // Validation reads and removes nothing, so the observation sees
+            // what the backend actually left -- which for a refusal is the
+            // whole point: a document was staged, it was judged, and it is not
+            // being published.
+            return StagedResult::failed_after_run(
+                ConversionRunFailure::OutputRejected(rejected),
+                &output,
+                plan,
+                staging,
+                &executable,
+                StagedObservationPhase::OutputRefused,
                 identity,
-                process: backend.map_or(
-                    ProcessAttemptOutcome::Indeterminate,
-                    ProcessAttemptOutcome::of,
-                ),
-            };
+            );
         }
     };
 
@@ -4041,25 +4272,26 @@ fn run_staged(
                 ProcessAttemptOutcome::of,
             ),
         },
-        Err(error) => StagedResult::Settled {
-            outcome: ConversionRunOutcome::Failed(match error.kind() {
-                io::ErrorKind::AlreadyExists => ConversionRunFailure::DestinationAppearedDuringRun,
-                kind => ConversionRunFailure::NotFinalized { kind },
-            }),
-            backend,
-            diagnostics: diagnostic_text(&output, plan, staging, &executable),
-            // A validated document exists and did not get its name. Observed
-            // after the rename was attempted, because that is when it is true.
-            staged: StagedOutputEvidence::of(
-                StagedObservationPhase::PublicationSettled,
-                observe_staged_content(staging),
-            ),
+        // A validated document exists and did not get its name. Observed after
+        // the rename was attempted, because that is when it is true.
+        Err(error) => StagedResult::failed_after_run(
+            not_published(&error),
+            &output,
+            plan,
+            staging,
+            &executable,
+            StagedObservationPhase::PublicationSettled,
             identity,
-            process: backend.map_or(
-                ProcessAttemptOutcome::Indeterminate,
-                ProcessAttemptOutcome::of,
-            ),
-        },
+        ),
+    }
+}
+
+/// Why a judged output did not take its final name. No-clobber: a name that
+/// appeared during the run is left exactly as it was.
+fn not_published(error: &io::Error) -> ConversionRunFailure {
+    match error.kind() {
+        io::ErrorKind::AlreadyExists => ConversionRunFailure::DestinationAppearedDuringRun,
+        kind => ConversionRunFailure::NotFinalized { kind },
     }
 }
 
@@ -4067,6 +4299,8 @@ pub(crate) mod artifact;
 mod cleanup;
 mod finalize;
 pub mod output_set;
+mod two_step;
+pub use two_step::FinalizedFile;
 
 /// The volume serial and file identity of an object, read through a handle the
 /// caller already holds.

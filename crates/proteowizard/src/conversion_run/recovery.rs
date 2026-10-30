@@ -168,6 +168,20 @@ impl StagingRecovery {
             .output_directory()
     }
 
+    /// Exclusively creates `name` inside the held output directory and hands
+    /// back its handle: run 2's private directory (ADR 0055 decision 6).
+    /// Teardown removes it with everything else under the output directory,
+    /// once the caller has released the handle.
+    pub(super) fn create_output_subdirectory(&self, name: &OsStr) -> io::Result<File> {
+        let state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let output = state.area.output.as_ref().ok_or(io::ErrorKind::NotFound)?;
+        cleanup::create_owned_directory(output, name)
+    }
+
     pub(super) fn before_provider(&self) {
         self.0
             .state

@@ -87,10 +87,11 @@ pub use conversion_run::{
     BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, BackendStream,
     CancellationFailure, CancellationReport, ConflictPolicy, ConversionAttempt, ConversionPlan,
     ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
-    ConversionSource, ConversionSourceKind, ConversionSourceRejection, OwnedTreeDisposition,
-    ProviderBuildAdmission, StagedContentObservation, StagingReclaimError, StagingRecovery,
-    StagingRecoveryObserver, StagingRecoveryStatus, StagingResidue, provider_build_admission,
-    provider_build_is_evidenced, run_conversion, run_conversion_cancellable,
+    ConversionSource, ConversionSourceKind, ConversionSourceRejection, ConversionStep,
+    FinalizedFile, OwnedTreeDisposition, ProviderBuildAdmission, StagedContentObservation,
+    StagingReclaimError, StagingRecovery, StagingRecoveryObserver, StagingRecoveryStatus,
+    StagingResidue, provider_build_admission, provider_build_is_evidenced, run_conversion,
+    run_conversion_cancellable,
 };
 pub use diagnostics::{
     BackendTextExcerpt, ExcerptSuppression, MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES, Redactor,
