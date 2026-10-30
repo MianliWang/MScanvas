@@ -312,7 +312,7 @@ async function viewer(locale: Locale, width: number, height: number): Promise<vo
   const row = `.grouped-roster [role="row"][data-handle="${MZML_ROW.handle}"]`;
   await reveal(row);
   await browser.$(row).click();
-  await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+  await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
   const scan = '.spectrum-table-row[data-row-position="0"]';
   await browser.$(scan).waitForExist({ timeout: 60_000 });
   await reveal(scan);

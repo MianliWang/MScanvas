@@ -8,7 +8,9 @@
  * `value_axis` and `project`), so a screen plot and its export frame the data
  * alike: the x axis is the drawn domain exactly, with no padding at either
  * end, and the value axis gains 5% of its span above the largest value and
- * below the deepest negative one, never across zero.
+ * below the deepest negative one, never across zero. Both value ranges hold
+ * zero before the headroom, as the figure's do (`chromatogram.rs` and
+ * `export.rs` `visible_value_extent`).
  */
 
 export interface AxisTick {
