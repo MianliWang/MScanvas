@@ -132,7 +132,8 @@ describe("spectrum table columns", () => {
 
     const headers = screen.getAllByRole("columnheader");
 
-    expect(headers.map((header) => header.textContent)).toEqual(COLUMN_LABELS);
+    // RT carries "(unit not reported)" on a second line (P11).
+    expect(headers.map((header) => header.textContent)).toEqual(COLUMN_LABELS.map(label => label === "RT" ? `RT${UI_RESOURCES.en.scanUnitNotReported}` : label));
     // One header set, not a visual copy alongside an announced one.
     expect(headers).toHaveLength(COLUMN_LABELS.length);
     expect(screen.getAllByText("RT")).toHaveLength(1);
@@ -149,7 +150,7 @@ describe("spectrum table columns", () => {
     const order = () => [...container.querySelectorAll("[data-source-index]")].map((row) => row.getAttribute("data-source-index"));
     const headers = () => screen.getAllByRole("columnheader");
     expect(headers().map((header) => header.textContent)).toEqual([
-      "Index", "Scan", "Identifier", "MS level", "Retention time", "Base peak m/z",
+      "Index", "Scan", "Identifier", "MS level", `Retention time${UI_RESOURCES.en.scanUnitNotReported}`, "Base peak m/z",
       "Base peak intensity", "Total ion current", "Precursor m/z",
     ]);
     expect(screen.getByRole("grid", { name: "Scans" })).toHaveAttribute("aria-colcount", "9");

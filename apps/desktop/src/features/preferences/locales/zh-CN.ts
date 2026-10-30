@@ -445,6 +445,8 @@ export const zhCN = {
   viewerSpectrumLoading: "正在载入质谱 {{index}}",
   viewerSpectrumIndex: "质谱 {{index}}",
   viewerRepresentationNotReported: "未报告表示形式",
+  viewerCursorLabel: "扫描 {{scan}}，RT {{rt}}",
+  scanUnitNotReported: "（未报告单位）",
   figureSourceSpectrum: "质谱，扫描 {{scan}}，{{name}}",
   figureSourceSpectrumIndex: "质谱 {{index}}，{{name}}",
   figureSourceChromatogram: "色谱图，{{name}}",

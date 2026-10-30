@@ -390,7 +390,10 @@ export const SpectrumTable = memo(function SpectrumTable({
                   {/* The name starts with what the header shows, so it can be spoken. */}
                   <button aria-label={short === full ? undefined : t("scanColumnName", { short, full })} className="scan-sort-button"
                     onClick={() => view.sortBy(column.sort)} title={full} type="button">
-                    <span className="scan-sort-label">{short}</span>
+                    {/* The file reports no RT unit, and none is assumed (P11). */}
+                    <span className="scan-sort-label">{short}{column.sort === "retentionTime"
+                      // Seen, not re-read: the column's name stays its sort name.
+                      ? <span aria-hidden="true" className="scan-sort-unit">{t("scanUnitNotReported")}</span> : null}</span>
                     <svg aria-hidden="true" viewBox="0 0 12 12" width="10" height="10"
                       data-direction={view.options.sort?.key === column.sort ? view.options.sort.direction : "none"}>
                       <path d={view.options.sort?.key !== column.sort ? "M3 4 6 1 9 4 M3 8 6 11 9 8" :

@@ -174,6 +174,7 @@ export interface MessageParameters {
   readonly figureSourceChromatogram: { readonly name: string };
   readonly cnvChangedCount: { readonly count: number };
   readonly m74CnvElapsed: { readonly time: string };
+  readonly viewerCursorLabel: { readonly scan: string; readonly rt: string };
   readonly viewerSpectrumAbsent: { readonly index: string };
   readonly viewerSpectrumFailed: { readonly index: string };
   readonly viewerSpectrumSummary: { readonly index: string; readonly level: string; readonly count: number };

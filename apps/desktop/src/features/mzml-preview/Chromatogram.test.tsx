@@ -730,14 +730,16 @@ describe("choosing a scan", () => {
     expect(state()).toBe(before);
   });
 
-  it("draws the selected scan as a rule and a glyph, not a colour", () => {
+  it("draws the selected scan as a full-height rule labelled with its scan and RT, not a colour (P7)", () => {
     renderChromatogram();
     send({ type: "selection-committed", index: 20, retentionTime: 20 * 0.0125 });
 
     const marker = document.querySelector("g.chromatogram-selected");
     expect(marker?.querySelector("line")).not.toBeNull();
-    expect(marker?.querySelector("rect")).not.toBeNull();
-    expect(screen.getByText(/Selected index 20, scan 21, MS1/u)).toBeVisible();
+    expect(marker?.querySelector("rect")).toBeNull();
+    expect(document.querySelector(".chromatogram-cursor-label")).toHaveTextContent("Scan 21, RT 0.2500");
+    // Still the plot's description, for a reader who focuses it.
+    expect(screen.getByText(/Selected index 20, scan 21, MS1/u)).toBeInTheDocument();
   });
 
   it("keeps the marker where the scan is under the range on screen now", () => {
@@ -760,9 +762,9 @@ describe("choosing a scan", () => {
     // 0.25 falls at the middle of a 0.2-0.3 range, which is the middle of the
     // drawing area: 64 + 924 / 2.
     expect(Number(after)).toBeCloseTo(526, 0);
-    expect(document.querySelector("g.chromatogram-selected rect")?.getAttribute("x")).toBe(
-      String(Number(after) - 4.5),
-    );
+    // The label moves with its rule.
+    expect(parseFloat(document.querySelector<HTMLElement>(".chromatogram-cursor-label")?.style.left ?? ""))
+      .toBeCloseTo((Number(after) / 1000) * 100, 2);
   });
 
   it("draws no marker while nothing is selected", () => {

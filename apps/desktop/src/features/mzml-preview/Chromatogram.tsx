@@ -197,6 +197,15 @@ export const Chromatogram = memo(function Chromatogram({
               </Button>
             ))}
           </div>
+          {/* The range on screen, in the head beside the controls it refuses
+              (P4): the visible reason for a refused Fit all and −. */}
+          {domain === null ? null : (() => {
+            const range = t("viewerShowing", { low: domain.low.toFixed(4), high: domain.high.toFixed(4) }) + (showingFullRange ? t("viewerFullRange") : "");
+            return <span className="plot-range chromatogram-axis-caption chromatogram-range" id={AXIS_CAPTION_ID} title={range}>{range}</span>;
+          })()}
+          {/* An export's result, on the head's line beside its tools, never
+              over the plot's data. */}
+          {exportTools ? exportStatus : null}
           <Toolbar className="plot-tools" label={t("plotChromatogramTools")} roving>
             {VIEWPORT_CONTROLS.map(({ action, icon }) => {
               const label = t(action === "reset" ? "viewerReset" : action === "zoom-in" ? "viewerZoomIn" : "viewerZoomOut");
@@ -226,7 +235,6 @@ export const Chromatogram = memo(function Chromatogram({
             selected={interaction.selection?.index ?? null}
             selectionAvailability={selectionAvailability}
             traces={traces}
-            showingFullRange={showingFullRange}
             rangeEditing={rangeEditor.editing}
             onRangeEditorClose={rangeEditor.close}
           />
@@ -243,8 +251,6 @@ export const Chromatogram = memo(function Chromatogram({
           </div>
         )}
       </div>
-      {/* Only where there are figure actions to report on. */}
-      {model.status === "ready" && exportTools ? exportStatus : null}
     </section>
   );
 })
@@ -269,7 +275,6 @@ interface PlotProps {
   readonly traces: TraceVisibility;
   readonly selected: number | null;
   readonly hover: number | null;
-  readonly showingFullRange: boolean;
   readonly dispatch: (event: ViewerEvent) => ViewerInteractionState;
   readonly readInteraction: () => ViewerInteractionState;
   readonly onSelect: (index: number) => void;
@@ -284,7 +289,6 @@ function ChromatogramPlot({
   traces,
   selected,
   hover,
-  showingFullRange,
   dispatch,
   readInteraction,
   onSelect,
@@ -548,19 +552,13 @@ function ChromatogramPlot({
             ) : null}
             {selectedPoint === null ? null : (
               <g className="chromatogram-selected">
-                {/* A rule and a glyph, not a colour change. Which scan is
-                    selected has to be readable without seeing colour. */}
+                {/* A full-height rule, labelled with its scan and RT below
+                    (P7): which scan is selected is readable without colour. */}
                 <line
                   x1={scale.x(selectedPoint.retentionTime)}
                   x2={scale.x(selectedPoint.retentionTime)}
                   y1={PADDING_TOP}
                   y2={BASELINE_Y}
-                />
-                <rect
-                  height={9}
-                  width={9}
-                  x={scale.x(selectedPoint.retentionTime) - 4.5}
-                  y={PADDING_TOP - 1}
                 />
               </g>
             )}
@@ -581,23 +579,30 @@ function ChromatogramPlot({
         </svg>
         <div aria-hidden="true" className="plot-y-ticks chromatogram-y-ticks" />
         <div aria-hidden="true" className="plot-x-ticks" />
+        {/* The selected scan's own label at the top of its rule (P7), HTML
+            placed by percentage like the ticks, so the stretch never distorts it. */}
+        {selectedPoint === null ? null : (() => {
+          const at = (scale.x(selectedPoint.retentionTime) / PLOT_WIDTH) * 100;
+          return <span aria-hidden="true" className="chromatogram-cursor-label" data-side={at > 60 ? "left" : "right"}
+            style={{ left: `${at.toFixed(3)}%` }}>
+            {t("viewerCursorLabel", { scan: selectedPoint.scanNumber === null ? formatCount(selectedPoint.spectrumIndex) : formatCount(selectedPoint.scanNumber),
+              rt: selectedPoint.retentionTime.toFixed(4) })}
+          </span>;
+        })()}
         <PlotRangeActions port={inputPort} editing={rangeEditing} onClose={onRangeEditorClose} />
       </div>
-      {/* One line under the ticks: what range is on screen and which scan is
-          selected or hovered, then the position title at the right. */}
+      {/* One line under the ticks: the hovered scan while the pointer or the
+          keyboard is on the plot, then the position title at the right. */}
       <div className="plot-foot">
         <p className="plot-readout">
-          <span className="chromatogram-axis-caption chromatogram-range" id={AXIS_CAPTION_ID}>
-            {t("viewerShowing", { low: domain.low.toFixed(4), high: domain.high.toFixed(4) }) +
-              (showingFullRange ? t("viewerFullRange") : "")}
-          </span>
           {/* Not a live region. Which scan the pointer is over changes on most
               pointer frames at a full-run zoom, and a region that announced each
               of them would be noise rather than feedback. It is the plot's
               accessible description instead, so a reader who focuses the plot is
-              told what is selected. With nothing selected or hovered it is unseen,
-              but still read as that description. */}
-          <span className="chromatogram-readout" id="chromatogram-readout" data-idle={hoveredPoint === null && selectedPoint === null ? "" : undefined}>
+              told what is selected. It shows while the pointer is over the plot
+              or the plot holds the keyboard (P9: each fact once on screen). */}
+          <span className="chromatogram-readout" id="chromatogram-readout" data-hover={hoveredPoint === null ? undefined : ""}
+            data-idle={hoveredPoint === null && selectedPoint === null ? "" : undefined}>
             {hoveredPoint === null
               ? selectedPoint === null ? t("viewerNoSelection") : describeScan(selectedPoint, t("viewerSelected"), t)
               : describeScan(hoveredPoint, t("viewerHover"), t)}

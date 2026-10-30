@@ -80,6 +80,19 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
       {/* The plot's accessible name, in one sentence. */}
       {spectrum === null ? null : <p className="visually-hidden" id="selected-spectrum-summary">{t("viewerSpectrumSummary", {
         index: formatCount(spectrum.index), level: formatCount(spectrum.msLevel), count: spectrum.pointCount })}</p>}
+      {/* An export's result, on the head's line beside its tools, never over
+          the plot's data. Mounted always, so its status is heard. */}
+      <div className="plot-status">
+        <div className="plot-status-line">
+          <p className="spectrum-export-status" role="status">
+            {describeSpectrumExport(exportState, t)}
+            {exportState.status === "failed" && exportState.error.detail !== null ?
+              <span className="notice-detail">{ownedErrorDetail(exportState.error, t)}</span> : null}
+          </p>
+          {["saved", "copied", "cancelled", "failed"].includes(exportState.status) ?
+            <IconButton icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={props.onDismissExport} size="sm" /> : null}
+        </div>
+      </div>
       {spectrum === null ? null : <Toolbar className="plot-tools" label={t("plotSpectrumTools")} roving>
         {spectrum.pointCount === 0 ? null : <>
           <SpectrumZoomControls dispatch={props.dispatchViewport} readState={props.readViewport} state={props.viewport} />
@@ -97,17 +110,6 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
     </div>
     {/* An absent spectrum has no body: the head's line already says it is not in this run. */}
     {state.status === "unavailable" ? null : <div className="spectrum-body">{renderBody(state, props.onRetry, props, rangeEditor, t)}</div>}
-    <div className="plot-status">
-      <div className="plot-status-line">
-        <p className="spectrum-export-status" role="status">
-          {describeSpectrumExport(exportState, t)}
-          {exportState.status === "failed" && exportState.error.detail !== null ?
-            <span className="notice-detail">{ownedErrorDetail(exportState.error, t)}</span> : null}
-        </p>
-        {["saved", "copied", "cancelled", "failed"].includes(exportState.status) ?
-          <IconButton icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={props.onDismissExport} size="sm" /> : null}
-      </div>
-    </div>
   </section>;
 });
 

@@ -302,6 +302,16 @@
 .workbench-shell .plot-foot :is(.chromatogram-axis-caption, .chromatogram-readout, .spectrum-viewport-range) { margin: 0; font-size: 11px; line-height: 16px; }
 .workbench-shell .plot-foot .spectrum-viewport-range { display: block; overflow: hidden; text-overflow: ellipsis; }
 .plot-foot .chromatogram-readout[data-idle] { display: none; }
+/* The readout is the plot's description always, and on screen only while the
+   pointer or the keyboard is on the plot (P9: the table row and the spectrum
+   head already say what is selected). */
+.plot-foot .chromatogram-readout:not([data-hover]) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.chromatogram-panel:has(.chromatogram-svg:focus-visible) .plot-foot .chromatogram-readout { position: static; width: auto; height: auto; overflow: hidden; clip-path: none; }
+/* The range on screen, in the plot head beside Fit all (P4). */
+.plot-head .plot-range { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* The selected scan's label at the top of its accent rule (P7). */
+.chromatogram-cursor-label { position: absolute; grid-column: 2; grid-row: 2; top: 2px; margin-left: 4px; padding: 0 4px; border-radius: 3px; background: rgb(255 255 255 / 0.88); color: var(--color-accent-hover); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 16px; white-space: nowrap; pointer-events: none; }
+.chromatogram-cursor-label[data-side="left"] { margin-left: -4px; transform: translateX(-100%); }
 /* The range editor and a pending band's two actions, over the drawing's top
    right: opening them never moves the plot. */
 .plot-range-actions { position: absolute; z-index: 2; top: 16px; right: 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 6px; max-width: calc(100% - 32px); pointer-events: none; }
@@ -321,7 +331,11 @@
 /* What the last export did, over the drawing's bottom right corner (the range
    actions have the top right): a result never takes height from the plot.
    Empty at rest. */
-.plot-status { position: absolute; z-index: 3; bottom: 36px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: min(70%, 460px); color: var(--color-text-primary); font-size: 12px; pointer-events: none; }
+/* On the plot head's line, never over the data: it takes the space the range
+   and the facts give up, and empties to nothing. */
+.plot-status { display: flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: 45%; color: var(--color-text-primary); font-size: 12px; }
+.plot-status .spectrum-export-status, .plot-status .spectrum-export-message { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plot-status-line { min-width: 0; }
 .plot-status > * { pointer-events: auto; }
 .plot-status .spectrum-export-status, .plot-status .spectrum-export-message { margin: 0; font-size: 12px; }
 .plot-status .spectrum-export-message { display: flex; flex-wrap: nowrap; align-items: center; gap: 0 6px; }
@@ -353,6 +367,9 @@
 .spectrum-table-panel[data-layout="full"] .spectrum-table-cell:nth-child(3) .scan-sort-button { justify-content: flex-start; }
 .scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 100%; min-width: 0; min-height: 28px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .scan-sort-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* RT over "(unit not reported)": a second header line, never an assumed unit (P11). */
+.scan-sort-label:has(.scan-sort-unit) { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
+.scan-sort-unit { color: var(--color-text-secondary); font-size: 9.5px; font-weight: 400; white-space: nowrap; }
 .spectrum-table-cell:first-child .scan-sort-button { justify-content: flex-start; }
 .scan-sort-button svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; transition: opacity 120ms; }
 .scan-sort-button svg[data-direction="none"] { opacity: .65; }

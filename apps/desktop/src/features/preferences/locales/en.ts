@@ -445,6 +445,8 @@ export const en = {
   viewerSpectrumLoading: "Loading spectrum {{index}}",
   viewerSpectrumIndex: "Spectrum {{index}}",
   viewerRepresentationNotReported: "Representation not reported",
+  viewerCursorLabel: "Scan {{scan}}, RT {{rt}}",
+  scanUnitNotReported: "(unit not reported)",
   figureSourceSpectrum: "Spectrum, scan {{scan}}, {{name}}",
   figureSourceSpectrumIndex: "Spectrum {{index}}, {{name}}",
   figureSourceChromatogram: "Chromatogram, {{name}}",
