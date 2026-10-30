@@ -10,7 +10,7 @@
 <line x1="40.000" y1="132.392" x2="1180.000" y2="132.392" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
 <line x1="40.000" y1="598.000" x2="1180.000" y2="598.000" stroke="#333333" stroke-width="1.000"/>
 <line x1="40.000" y1="48.000" x2="40.000" y2="598.000" stroke="#333333" stroke-width="1.000"/>
-<path d="M40.000 598.000V539.799M324.643 598.000V74.190M607.287 598.000L611.287 598.000M895.000 598.000V333.185M1180.000 598.000V468.503" fill="none" stroke="#1f4e9c" stroke-width="1.000"/>
+<path d="M40.000 598.000V539.799M324.643 598.000V74.190M607.287 598.000L611.287 598.000M895.000 598.000V333.185M1180.000 598.000V468.503" fill="none" stroke="#172337" stroke-width="1.000"/>
 <line x1="36.000" y1="598.000" x2="40.000" y2="598.000" stroke="#333333" stroke-width="1.000"/>
 <text x="34.000" y="601.960" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">0</text>
 <line x1="36.000" y1="481.598" x2="40.000" y2="481.598" stroke="#333333" stroke-width="1.000"/>

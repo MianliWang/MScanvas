@@ -220,20 +220,21 @@ const fn palette(theme: FigureTheme) -> Palette {
             background: "#ffffff",
             axis: "#333333",
             text: "#111111",
-            measurement: "#1f4e9c",
+            // The screen's data ink (`--color-chart-line`), so a plot and its
+            // export draw one colour (F1): data is ink, and the accent is kept
+            // for the screen's selected-scan cursor alone (P7).
+            measurement: "#172337",
+            // The screen's BPC (`--color-chart-secondary`), 6.93:1 against
+            // this background. It is told apart from the measurement by its
+            // dash rather than by hue alone, so a monochrome print and a
+            // colour-blind reader still see two series (P6).
+            secondary_measurement: "#4b5b70",
             // 3.45:1 against this background. A baseline is a reference line a
             // reader measures against rather than decoration, so it is a
             // graphical object WCAG asks for 3:1 on -- and it is drawn one unit
             // wide, which is where a low-contrast hairline stops being visible
             // at all once a figure is scaled down or printed. The grey it
             // replaced managed 2.81:1. A test holds every role to the floor.
-            // 6.26:1 against this background, and a different hue family
-            // from the measurement blue rather than a second shade of it --
-            // blue against amber is the pair that survives the common colour
-            // vision deficiencies. It is also drawn dashed, because a figure
-            // that can only be read in colour cannot be read in a monochrome
-            // print, and this role exists to be told apart.
-            secondary_measurement: "#9a4a00",
             baseline: "#8a8a8a",
             marker: "#b3261e",
             selected: "#1f4e9c",

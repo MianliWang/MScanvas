@@ -24,13 +24,17 @@
   --color-focus: #1769e0;
   --color-success: #177245;
   --color-success-soft: #ddf4e8;
-  --color-warning: #9a6500;
+  /* 5.40:1 on --color-warning-soft; #9a6500 was 4.41:1 (GOALS V6, A1). */
+  --color-warning: #875900;
   --color-warning-soft: #fff1ca;
   --color-danger: #b42318;
   --color-danger-soft: #fee4e2;
   --color-chart-grid: #e3e8ef;
-  --color-chart-line: #1769e0;
-  --color-chart-secondary: #7c3aed;
+  /* Data is ink and BPC a dashed secondary ink (GOALS V6, P6); the accent is
+     the selected-scan cursor's alone (P7). The export palette matches
+     (crates/plot-spec svg.rs, F1). */
+  --color-chart-line: #172337;
+  --color-chart-secondary: #4b5b70;
 
   --radius-input: 5px;
   --radius-sm: 6px;

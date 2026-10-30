@@ -10,11 +10,11 @@
 <line x1="45.3530" y1="132.3915" x2="1180.0000" y2="132.3915" stroke="#333333" stroke-width="1.0000" stroke-opacity="0.18"/>
 <line x1="45.3530" y1="598.0000" x2="1180.0000" y2="598.0000" stroke="#333333" stroke-width="1.0000"/>
 <line x1="45.3530" y1="48.0000" x2="45.3530" y2="598.0000" stroke="#333333" stroke-width="1.0000"/>
-<path d="M45.3530 74.1905L329.0148 597.9948L612.6765 597.9942L896.3383 597.9936L1180.0000 597.9930" fill="none" stroke="#1f4e9c" stroke-width="1.0000"/>
-<path d="M45.3530 597.9994L329.0148 597.9988L612.6765 597.9983L896.3383 597.9977L1180.0000 597.9971" fill="none" stroke="#9a4a00" stroke-width="1.0000" stroke-dasharray="6 3"/>
-<line x1="1136.2808" y1="55.3333" x2="1154.2808" y2="55.3333" stroke="#1f4e9c" stroke-width="1.0000"/>
+<path d="M45.3530 74.1905L329.0148 597.9948L612.6765 597.9942L896.3383 597.9936L1180.0000 597.9930" fill="none" stroke="#172337" stroke-width="1.0000"/>
+<path d="M45.3530 597.9994L329.0148 597.9988L612.6765 597.9983L896.3383 597.9977L1180.0000 597.9971" fill="none" stroke="#4b5b70" stroke-width="1.0000" stroke-dasharray="6 3"/>
+<line x1="1136.2808" y1="55.3333" x2="1154.2808" y2="55.3333" stroke="#172337" stroke-width="1.0000"/>
 <text x="1176.0000" y="59.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">TIC</text>
-<line x1="1131.3823" y1="69.3333" x2="1149.3823" y2="69.3333" stroke="#9a4a00" stroke-width="1.0000" stroke-dasharray="6 3"/>
+<line x1="1131.3823" y1="69.3333" x2="1149.3823" y2="69.3333" stroke="#4b5b70" stroke-width="1.0000" stroke-dasharray="6 3"/>
 <text x="1176.0000" y="73.0000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">BPC</text>
 <line x1="41.3530" y1="598.0000" x2="45.3530" y2="598.0000" stroke="#333333" stroke-width="1.0000"/>
 <text x="39.3530" y="601.9600" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.0000" text-anchor="end" xml:space="preserve">0</text>
