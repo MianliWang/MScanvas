@@ -529,8 +529,8 @@ adapter, reusing the desktop's domain contracts (AUT-001…003). Starts with the
 M10.0 route decision.
 
 *2026-10-30: the route is proposed in
-[ADR 0064](../architecture/adr/0064-m10-automation-route.md): a second binary,
-`mscanvas`, in the desktop package that drives the same application operations
+[ADR 0064](../architecture/adr/0064-m10-automation-route.md): a small CLI
+package, `mscanvas`, over the desktop library, driving the same operations
 (inspect, intents, plan, run an approved plan, validate), then one skill, then
 an MCP adapter in the same binary; the plan and run slices wait for PR #161.*
 
@@ -618,4 +618,4 @@ None can be delivered by engineering alone; each waits for one input.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted. *Drafted 2026-10-30 as
   [ADR 0064](../architecture/adr/0064-m10-automation-route.md), proposed; its
-  five open questions are the owner's.*
+  six open questions are the owner's.*

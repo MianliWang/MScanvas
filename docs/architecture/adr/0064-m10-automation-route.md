@@ -85,7 +85,8 @@ approved-plan execution and machine-readable reports, and names the executable
   `preview/drop_ingestion.rs` (window drop events) and four `PreviewService`
   methods: three clipboard copies and the drop channel. Otherwise the service
   is an ordinary Rust value built from a `PreviewProvider`. `preview` is a
-  private module; the library exports only `run()`.
+  private module; the library exports only `run()`. Its crate types already
+  include `rlib`, so another package can link it.
 - **In flight.** Draft PR #161 (`be/integrate`) adds ADR 0055's structured
   intent (`crates/proteowizard/src/structured.rs`, with its tier and its
   lowering), the 1,024 capacity of ADR 0057, preset storage (ADR 0058) and
@@ -108,17 +109,25 @@ shut.
 **A. A separate CLI binary over shared Rust code.** There are three ways to
 share the code:
 
-- **A1. A second binary target in the desktop package.**
-  `src/bin/mscanvas.rs` drives the same `PreviewService` operations the Tauri
-  commands drive, through one public entry the library adds. Every rule is
-  reused as it is, and no file moves. The costs:
+- **A1. A small CLI package over the desktop library.** A workspace package,
+  `apps/cli` (package `mscanvas-cli`, binary `mscanvas`), links
+  `mscanvas_desktop_lib` and drives the same `PreviewService` operations the
+  Tauri commands drive, through one public module the library adds. Every rule
+  is reused as it is, and no file moves. The costs:
   - the binary links Tauri's crates although it calls none of them; its size,
     and whether anything Tauri links needs WebView2 at load, are unmeasured;
-  - whether the Tauri bundler would put the second binary into the installer
-    is unmeasured;
-  - with two binaries a bare `cargo run` is ambiguous, so the manifest sets
-    `default-run = "mscanvas-desktop"`, and slice 1 checks that the desktop
-    still launches in development.
+  - one more workspace member, a path package in `Cargo.lock` and no
+    third-party dependency. The proposal's "no crate per noun" is about domain
+    crates; this is a second composition root, as `mscanvas-desktop` is one.
+
+  A variant puts `src/bin/mscanvas.rs` in the desktop package itself. It is
+  not proposed. tauri-cli 2.11.4's embedded NSIS template copies a
+  `binaries` list beside the main executable ("Copy external binaries"), and
+  the maintainer's unverified reading of the bundler is that it fills that
+  list with every non-main binary target of the app package as well as with
+  `externalBin`. The CLI would then ship before open question 4 is answered.
+  Two binaries in one package also make a bare `cargo run` ambiguous
+  (`default-run`). A separate package is invisible to the bundler.
 - **A2. Move first, then build.** The Tauri-free application layer (`preview/`,
   `project/` and what they need) moves into one shared library crate, leaving
   `mscanvas-desktop` as the Tauri composition root the proposal describes. The
@@ -143,13 +152,22 @@ still moving (#161).
 
 ### 1. The route: A1 now, A2 only on a measured need
 
-- The CLI is a second binary target, `mscanvas`, in the desktop package. The
-  library gains one public module, `cli`, as its only new export, and
-  `preview` stays private.
+- The CLI is the package `mscanvas-cli` in `apps/cli`, binary `mscanvas`, over
+  the desktop library. The library gains one public module, `cli`, as its only
+  new export, and `preview` stays private.
 - Each subcommand is a thin adapter, as a Tauri command is: parse typed argv,
-  call the service, print the answer. No subcommand holds a rule a Tauri
-  command lacks. The only additions are reading paths from argv (decision 4)
-  and reading and writing plan documents (decision 5).
+  call the service, print the answer. No subcommand reuses a rule under a
+  second spelling. What the CLI adds is listed here, each a rule of its own, so
+  a review can test the implementation against this list:
+  - root containment proved on the held handle, and the rules for
+    destination, plan and report paths (decision 4);
+  - plan documents, and the per-item digest comparison when an item runs
+    (decision 5);
+  - `validate`'s re-check of outputs by name, against a digest-bound report
+    (decision 5);
+  - the cross-process run lock and its holder record (decision 6);
+  - cancellation from the console, and from a closed stdin for the adapter
+    (decisions 6 and 7).
 - A2 waits for a measured need:
   - the CLI binary's size or a load-time dependency that matters;
   - a CLI on another operating system;
@@ -157,10 +175,14 @@ still moving (#161).
 
   When the need comes, A2 is one mechanical move in a quiet window, with no
   change in behavior.
-- The `e2e` feature gives the CLI nothing to reach: it only appends a webview
-  initialization script, and the CLI opens no webview. The CLI is built
-  without it, as the shipped desktop is. There is no compile-time barrier,
-  because the required `cargo clippy --all-features` run would trip it.
+- **The `e2e` feature.** It compiles in the webview boundary script, the QA
+  preference root (`UiPreferenceStore::bind`) and the seeded spectrum and
+  chromatogram (`preview::seed_spectrum_for_e2e` and the service methods
+  behind it). All of them are reached only from `run()`'s setup and from
+  `bind`, and the CLI calls neither. The CLI is built without the feature, as
+  the shipped desktop is. There is no compile-time barrier, because the
+  required `cargo clippy --all-features` run would trip it; instead a test
+  checks that the `cli` module names no `e2e`-gated item.
 
 ### 2. What the CLI exposes first
 
@@ -173,7 +195,7 @@ free-text option.
 | `intents` | The configuration read for the installation: each admitted row with its stable id, summary, lossy statement, tier and availability | Yes: discovery's capability probe |
 | `plan` | Builds a plan document (decision 5) and writes it create-new | Yes: the capability probe |
 | `run` | Runs one approved plan, one item at a time | Yes |
-| `validate` | Re-checks a run report's finalized outputs: the same bytes (`FinalizedOutput` drift), and the output-only mzML checks against the plan's intent | Never |
+| `validate` | Re-checks a run report's finalized outputs by name: length and SHA-256 against a report bound by its digest, and the output-only mzML checks against the plan's intent (decision 5) | Never |
 | `help` | Usage text | Never |
 
 - **The intent is named, never defaulted.** `plan --intent <stable-id>` names
@@ -196,8 +218,9 @@ free-text option.
 
 ### 3. Output, exit codes and no prompts
 
-- **stdout carries exactly one JSON document per invocation.** It is UTF-8
-  without a byte-order mark, LF, ending in a newline:
+- **stdout carries exactly one JSON document per invocation**, except under
+  `mcp`, whose stdout is the JSON-RPC stream (decision 7). The document is
+  UTF-8 without a byte-order mark, LF, ending in a newline:
   `{ "schema": "mscanvas.cli.<subcommand>", "schemaVersion": 1, "outcome":
   "ok" | "refused" | "failed" | "cancelled", … }`. A refusal or failure is a
   document too, with a stable `code` and a repository-authored English
@@ -211,10 +234,10 @@ free-text option.
   | Code | Meaning |
   | --- | --- |
   | 0 | Done as asked: every file inspected; the plan written; every item finalized, or skipped as the plan allowed; every output unchanged and passing |
-  | 1 | Refused before anything changed, with a typed code: a path outside the roots, drift, a digest that was not approved, the build, the run lock, capacity |
-  | 2 | Usage: an unknown subcommand or flag, a missing or repeated flag, a path that is not valid UTF-8, an input document of an unknown schema or with an unknown field |
+  | 1 | Refused before anything changed, with a typed code: a path outside the roots, drift, a digest that was not approved, the build, the run lock, capacity. `inspect` with several files exits 1 when any one is refused, and its document still lists every file's own result |
+  | 2 | Usage: an unknown subcommand or flag, a missing or repeated flag, a path that is not valid UTF-8, an input document of an unknown schema or with an unknown field. Nothing is inspected or run |
   | 3 | Ran, and something failed: an item was not finalized (the others keep their outcomes), or `validate` found a changed output or a failed check |
-  | 4 | Cancelled: Ctrl+C or the console closed |
+  | 4 | Cancelled: Ctrl+C or Ctrl+Break, or the adapter's client went away or cancelled. Closing the console is best effort (decision 6) |
   | 5 | Internal error: a defect, said so in the document |
 
 - **Schemas.** Each document and version gets one checked-in JSON Schema file
@@ -235,10 +258,29 @@ free-text option.
 
 - **Every subcommand that names a file takes one or more `--root <dir>`.**
   Every source, destination, plan and report path must resolve under one of
-  them. Resolution uses the handle-based acceptance the picker's files get: a
-  regular file, no reparse point or symlink, identity read from the handle
-  (ADR 0005). A path that leaves every root, by `..` or through a reparse
-  point, is refused (`pathOutsideRoots`).
+  them, or it is refused (`pathOutsideRoots`).
+- **Containment is a new rule, proved on the held handle.** The picker's
+  acceptance (ADR 0005) opens only the last component without following a
+  link and takes its canonical path from a separate resolution of the name
+  (`selection.rs`), so a junction in a middle directory is followed and not
+  noticed. Containment therefore compares the full final path of the handle
+  the CLI holds (`GetFinalPathNameByHandleW`, normalized, with the volume)
+  with the final path of a handle on the root. `view_cache.rs`'s
+  `on_disk_name` calls the same API for the last component only, so this is a
+  precedent, not a reuse. By kind of path:
+  - **source:** acceptance as the picker's files get it, then containment on
+    the accepted file's handle;
+  - **destination (`--out`):** a directory opened without following a reparse
+    point, its identity read from the handle, then containment;
+  - **plan and report files, created new:** the parent directory passes the
+    destination rule; the last component refuses `:` (an NTFS alternate data
+    stream would attach to an existing file, a source included), reserved
+    device names (`CON`, `NUL`, `COM1` and the rest) and a trailing dot or
+    space. After creation the new handle's final path is checked again, and a
+    file that fails is removed: it is the file this process just created.
+  - **every argv path:** a `\\?\` or `\\.\` prefix and a drive-relative path
+    (`C:x`) are refused. A relative path resolves against the working
+    directory before any check.
 - **Roots are fixed for the life of the process.** The CLI takes them from
   argv, and the MCP adapter from its launch configuration (decision 7).
   Nothing in a tool call or a document can add one.
@@ -253,7 +295,9 @@ free-text option.
   document holds:
   - the MSCanvas version and the roots;
   - per item: the canonical source path, family, object identity (volume
-    serial and file id), length and SHA-256, and the derived output names;
+    serial and file id), length and SHA-256, and the derived output names
+    where the plan knows them. A SCIEX item's names come from the backend, as
+    in the desktop's queue, and are recorded as not known until run;
   - the intent (a stable id, or the structured intent after #161), its tier
     per item and its lossy statements;
   - the provider's release, revision and `msconvert` SHA-256;
@@ -262,10 +306,13 @@ free-text option.
 
   stdout prints the summary and the plan's digest: the SHA-256 of the file's
   exact bytes.
-- **`run --plan <file> --approve <sha256>`** refuses unless the file's digest
-  equals the approved one (`planNotApproved`). Then it re-derives the plan in
-  its own process:
-  1. accept every source again and hash it through the pinned handle;
+- **`run --plan <file> --approve <sha256>`** reads the plan file once, through
+  a deny-write handle, into memory; the digest and the parse are of those same
+  bytes. It refuses unless the digest equals the approved one
+  (`planNotApproved`). Then, holding the run lock (decision 6), it re-derives
+  the plan in its own process:
+  1. accept every source again and hash it, one source at a time, through a
+     deny-write handle (`lock_against_replacement`), released after each;
   2. discover the installation again and read its configuration;
   3. plan again with the same intent, destination and policy;
   4. compare the result with the approved plan, field by field.
@@ -275,18 +322,39 @@ free-text option.
   `destinationChanged`). Then each item runs, one at a time, through the ADR
   0011 coordinator. Under Fail an item whose output name is taken is not
   converted and the run exits 3; under Skip it is skipped.
+- **Each item is bound again when it runs.** The comparison above happens
+  once, but a run of up to 1,024 items can take hours, and the workspace
+  lease shares writes on purpose (`selection.rs`, `FILE_SHARE_ALL`). The
+  coordinator's own revalidation compares identity only, and an identity
+  survives an in-place rewrite. So after `lock_against_replacement` and
+  `open_conversion_source`, the item's length and SHA-256, which the
+  conversion source has just computed under that deny-write handle
+  (`ConversionSource::byte_length`, `sha256`), are compared with the plan's. A
+  difference refuses that item with `sourceChanged` before its staging
+  exists; earlier items keep their outcomes, and the run exits 3. The check
+  costs no extra read.
 - **What approval means.** It binds "what was reviewed is what runs". It does
   not authenticate a person: anyone who can read a plan can compute its
   digest. For the CLI that is the right meaning, because the shell's user is
   the person. For an agent host it is not enough (decision 7, open
   question 2).
-- **Bound to bytes.** Each source is read twice, at plan and at run. An
-  identity-only binding is cheaper, but a file an instrument is still writing
-  keeps its identity; ADR 0049 binds a run to bytes for that reason.
+- **Bound to bytes.** Each source is hashed at plan, before the run and again
+  as its item runs. An identity-only binding is cheaper, but a file an
+  instrument is still writing keeps its identity; ADR 0049 binds a run to
+  bytes for that reason.
 - **The run report.** Each item is finalized (output names, length, SHA-256,
   checks passed, the not-verified flag), skipped, failed (a typed code and no
   backend text), cancelled, or not started. The report is always printed, and
-  also written create-new when `--report <file>` is given.
+  also written create-new when `--report <file>` is given; the result and the
+  last progress event carry the written report's SHA-256.
+- **`validate --report <file> --report-digest <sha256>`** is a new rule, not
+  `FinalizedOutput`'s drift check: that is a session-scoped object that does
+  not survive the process (`finalized_output.rs`). It reads the report like a
+  plan, once and through a deny-write handle, and refuses it unless its digest
+  matches (`reportNotApproved`), so rewriting an output and its report
+  together is caught. Then it opens each finalized output by name with a
+  deny-write handle and compares length and SHA-256 with the report. The file
+  id is reported but not required, because a file system may reissue one.
 - **No adoption.** The CLI adds nothing to a workspace or a project. A
   finalized output is a file in the destination, which the desktop opens like
   any mzML.
@@ -321,20 +389,47 @@ free-text option.
   backend gate today, so a CLI run beside an open desktop could start two
   backend processes, which ADR 0057 does not allow before its throughput
   measurement. Decision:
-  - a per-user run-lock file in the application-local directory, opened with
-    no sharing (`share_mode(0)`, from the standard library), is held by
-    whichever process starts `msconvert` or `msaccess`;
-  - the CLI refuses with `backendBusy` instead of waiting;
-  - the desktop takes the same lock around its backend gate, in the run slice
-    (open question 3);
-  - the directory is the one Tauri resolves for `org.mscanvas.desktop`. The CLI
-    computes it from `LOCALAPPDATA`, and a test pins that the two agree.
-- **Cancellation.** Ctrl+C and console close reach a handler registered with
+  - a per-user run-lock file, opened with no sharing (`share_mode(0)`, from
+    the standard library);
+  - **where:** one function both processes call resolves the directory, as
+    `SHGetKnownFolderPath(FOLDERID_LocalAppData)` plus `org.mscanvas.desktop`.
+    The desktop takes the lock through this function too, not through Tauri's
+    resolver, so no environment variable and no host that trims the
+    environment can split the two. The `windows` crate's `Win32_UI_Shell` and
+    `Win32_System_Com` features are already on. A directory that cannot be
+    resolved refuses (`runLockUnavailable`);
+  - **how long:** each side holds it from before the first ProteoWizard
+    process an operation would start, discovery's probe included, until that
+    operation is terminal. A CLI `run` takes it before re-derivation and holds
+    it to the end of the run; the desktop's queue holds it until the queue is
+    terminal; `intents` and `plan` hold it for the probe. Neither side can take
+    it between two of the other's items;
+  - the CLI refuses with `backendBusy` instead of waiting, before any probe;
+  - **the holder record:** beside the lock, the holder writes its kind
+    (`cli`, `mcp` or `desktop`), PID, process creation time (a PID alone is
+    reused) and start time. A refused process reads it to say who holds the
+    lock. The record is a description; the lock, which the system releases
+    when its holder dies, is the only authority;
+  - the desktop's side, and what it does while the lock is held, come in CLI
+    slice 3 (open question 3).
+- **Cancellation.** Ctrl+C and Ctrl+Break reach a handler registered with
   `SetConsoleCtrlHandler`, declared the way the crate already declares its
   `kernel32` functions, so no dependency changes. The handler maps to the
-  queue's stop. If the process is killed instead, the job object ends the
-  backend with it, and the existing staging recovery reclaims what is left on
-  the next run.
+  queue's stop, and the run exits 4 with its staging reclaimed. Closing the
+  console is best effort: Windows ends the process soon after the handler
+  returns from `CTRL_CLOSE_EVENT`, so an orderly stop is not promised there.
+- **A killed run leaves its staging.** If the process is killed, or the
+  console closes first, the job object ends the backend with it. What is left
+  is the item's staging directory, `<output name>.mscanvas-staging` in the
+  destination folder, with MSCanvas's owner marker inside. Nothing reclaims it
+  today: the desktop's recovery reclaims only records of its own session
+  (`staging_recovery.rs`; `StagingRecovery` is "an opaque live-session
+  record"), and a later run of that item refuses at the name
+  (`StagingTargetExists`). The crate's `ConversionPlan::reclaim_staging_area`
+  removes a marked staging area for one plan, but only when its caller
+  asserts that no run of that plan is in flight. Whether `run` offers that,
+  under the run lock, is open question 6. Until then the result names the
+  folder, and the user deletes it.
 - **The ProteoWizard hold.**
   - In the product: `inspect` and `validate` never start a process. `intents`,
     `plan` and `run` start ProteoWizard exactly as the desktop does.
@@ -364,30 +459,46 @@ free-text option.
     ABI.
 - **One implementation.** The adapter calls the same in-process functions as
   the subcommands. It does not start the CLI.
+- **A client that goes away cancels.** The adapter has no window, and a run
+  can be long. End of input on stdin, or a failed write to stdout, takes the
+  Ctrl+C path: the work in progress is cancelled, the run lock is released,
+  and the adapter exits. Nothing keeps running for a client that is gone.
 - **Paths are root-relative.** A file is `{ "root": "<label>", "path":
   "<relative path>" }` in both directions. A result never holds an absolute
   path, because results reach the host's model provider. A plan made through
   the adapter is stored by the adapter in the application-local directory,
   named by its digest; the agent receives the digest and the summary.
-- **`run`, second MCP slice.** It runs only a plan the person approved
-  outside the agent's control. Recommended: MCP elicitation. The adapter asks
-  the client to show the plan's summary and digest, in text the adapter wrote,
-  not the agent, and runs only on the person's accept. A client that does not
-  declare elicitation is refused (`approvalUnavailable`) and nothing runs.
-  The alternatives are open question 2.
+- **`run`, second MCP slice.** It runs a plan only after an approval the
+  agent cannot give by calling a tool. Recommended: MCP elicitation. The
+  adapter asks the client to show the plan's summary and digest, in text the
+  adapter wrote, not the agent, and runs only on an accept. A client that does
+  not declare elicitation is refused (`approvalUnavailable`) and nothing runs.
+  - What this buys is narrow. The approval text is the adapter's, and no tool
+    call can satisfy it.
+  - What it does not buy: the accept comes from the client, and the adapter
+    cannot tell whether a person or a client policy gave it, just as it cannot
+    tell for the host's tool confirmation. Every option in open question 2
+    trusts the client except an approval record the person writes outside it.
 - **No SDK.** The adapter is written over `serde_json`: `initialize`,
   `tools/list`, `tools/call`, cancellation and progress notifications. An MCP
   SDK crate would be a new dependency and is not proposed.
 
 ### 8. Skills sit on the CLI
 
-- **One skill, `mscanvas-automation`,** in `.agents/skills/` beside the
-  development skills, and copyable as a user skill. It walks an agent through
-  inspect → intents → plan → show the person the summary and digest → wait for
-  the person's approval → run → validate, using only the CLI's subcommands or
-  the adapter's tools. It never calls `msconvert`, never edits a plan file,
-  never computes an approval digest on the person's behalf, and reports every
-  refusal as the CLI wrote it.
+- **One skill, `mscanvas-automation`,** kept outside `.agents/skills/`, beside
+  the CLI's package (`apps/cli/skills/`), and copyable as a user skill. This
+  repository's development agents load `.agents/skills/*`. A product skill
+  there could be triggered during development and lead an agent to
+  `intents`, `plan` or `run`, which start ProteoWizard (discovery's probe
+  runs `msconvert --help`), against the hold.
+- **What it does.** It walks an agent through inspect → intents → plan → show
+  the person the summary and digest → wait for the person's approval → run →
+  validate, using only the CLI's subcommands or the adapter's tools. It never
+  calls `msconvert`, never edits a plan file, never computes an approval
+  digest on the person's behalf, and reports every refusal as the CLI wrote
+  it. Its text says that inside this repository only the fake providers are
+  used, and that `intents`, `plan` and `run` against a real installation need
+  a recorded hold release.
 - **A skill is guidance, not a boundary.** Every rule it states is enforced by
   the CLI, so an agent that ignores the skill gets the CLI's refusals.
 - **Its examples use the repository's fixtures,** and its checks run against
@@ -395,13 +506,15 @@ free-text option.
 
 ### 9. Order and dependencies
 
-1. **CLI slice 1:** the binary, `inspect`, the envelope, exit codes, roots and
+1. **CLI slice 1:** the package, `inspect`, the envelope, exit codes, roots and
    schemas. It needs nothing open and can start now; its only overlap with
-   other lanes is one line in `lib.rs`.
+   other lanes is one line in `lib.rs` and one in the workspace's members.
 2. **CLI slice 2:** `intents` and `plan`. It waits for #161 to merge, because
    the structured intent, its tier and the capacity are there.
-3. **CLI slice 3:** `run`, `validate`, the cross-process run lock in both
-   processes, and Ctrl+C.
+3. **CLI slice 3:** `run` with the per-item binding, `validate`, the run lock
+   and its record in both processes, the desktop's refusal while the lock is
+   held, and Ctrl+C. The desktop's refusal text is a webview resource,
+   coordinated with the UI lane that owns `apps/desktop/src/`.
 4. **The skill.**
 5. **MCP slice 1:** the read-only tools and `plan`.
 6. **MCP slice 2:** `run` with approval, after open question 2.
@@ -420,11 +533,15 @@ measured need appears.
   fixture.
 - `inspect` on a vendor fixture reports family and length, and the fake
   provider records no launch.
-- Refusals: a file outside the roots exits 1 with `pathOutsideRoots`; a
-  reparse point is refused; a non-UTF-8 path and an unknown flag each exit 2
-  with a usage document.
+- `inspect` on two files, one of them refused, exits 1 and lists both results.
+- Refusals: a file outside the roots exits 1 with `pathOutsideRoots`; so do a
+  junction inside a root that points outside it, and a reparse point at the
+  file itself. A plan or report name with `:`, a device name or a trailing dot
+  is refused, and so is a `\\?\` prefix. A non-UTF-8 path and an unknown flag
+  each exit 2 with a usage document.
 - Every test runs with stdin closed, and none waits for input.
 - Every golden document matches its schema.
+- A test fails if the `cli` module names an `e2e`-gated item.
 - The desktop still launches in development, and until open question 4 is
   answered the release-candidate installer still carries only
   `mscanvas-desktop.exe` and `uninstall.exe`.
@@ -445,27 +562,42 @@ measured need appears.
   started.
 - Each drift kind is refused before staging, one test per kind, on the fake
   provider.
+- Per-item binding: on the fake provider, the second item's source is
+  rewritten in place, keeping its identity, after the run has started. That
+  item is refused with `sourceChanged` and no staging; the first item's
+  outcome is unchanged; the run exits 3.
 - A taken output name: under Fail the item is not converted and the run exits
   3; under Skip it is skipped. The existing file's bytes are unchanged in
   every test.
-- A run lock held by another process exits 1 with `backendBusy`, and nothing
-  starts.
+- A run lock held by a child process exits 1 with `backendBusy`, names the
+  holder from its record, and starts no probe. A lock directory that cannot
+  be resolved refuses with `runLockUnavailable`.
 - Ctrl+C during a fake run exits 4, the item is cancelled and its staging is
   reclaimed.
+- A killed fake run leaves `<output name>.mscanvas-staging` with its marker,
+  and the next run refuses that item with `StagingTargetExists`.
 - `validate` exits 0 on unchanged outputs, and 3 with `outputChanged` after
-  one byte of an output changes.
+  one byte of an output changes. A report changed by one byte is refused with
+  `reportNotApproved`.
+- While a CLI run holds the lock, the desktop refuses to start a conversion
+  or any other ProteoWizard process, names the holder, and is checked in the
+  rendered app.
 
 ### Skill
 
 - Every command in the skill appears in the CLI's golden tests, and the skill
   names no `msconvert` option.
+- The skill's file is not under `.agents/skills/`, and its text states the
+  hold rule.
 
 ### MCP slice 1
 
 - `tools/list` returns exactly the fixed tools, with schemas equal to the
   CLI's.
-- An absolute path, or a path that leaves its root, is refused.
+- An absolute path, or a path that leaves its root, is refused, with the same
+  cases as CLI slice 1.
 - No result in the test suite contains an absolute path.
+- Closing stdin during a call cancels it, and the adapter exits.
 
 ### MCP slice 2
 
@@ -485,7 +617,8 @@ measured need appears.
 - A generic plugin or tool ABI, and dynamically registered MCP tools.
 - Any ProteoWizard run in CI.
 - CLI builds for macOS or Linux.
-- Any desktop behaviour change other than the cross-process run lock.
+- Any desktop behaviour change other than the cross-process run lock and its
+  refusal.
 
 ## Estimates
 
@@ -509,6 +642,7 @@ owner's answers and the hold-release window more than by implementation.
   every file three open lanes are editing and delivers nothing a user can use.
 - **A3.** It writes acceptance, the configuration authority, the destination
   policy and the coordinator's order a second time, which ADR 0011 forbids.
+- **A second binary target inside the desktop package** (Options, A1).
 - **B, a desktop-hosted server.** A listening socket can be reached by any
   local process, and through DNS rebinding by a web page, so it needs a token
   scheme. Automation would need a running window. The installed check found
@@ -525,8 +659,10 @@ owner's answers and the hold-release window more than by implementation.
   a new dependency. The closed subcommand set is small enough to parse from
   `args_os` by hand.
 - **Roots for the MCP adapter only.** That is two rules for one command layer.
-- **The MCP host's tool confirmation as approval.** A host can be set to
-  approve tools automatically, and the adapter cannot tell.
+- **The MCP host's tool confirmation as approval.** It trusts the client, as
+  elicitation does, and less narrowly: the confirmed text is the agent's own
+  tool call, and the call itself is the approval, so a host set to approve
+  tools automatically turns every call into a run.
 - **MCP's `roots/list` as the allowed roots.** A client may change them during
   a session, and they say where the agent works, not where MSCanvas may write.
 - **Identity-only source binding,** and **printing the plan for redirection**
@@ -535,13 +671,14 @@ owner's answers and the hold-release window more than by implementation.
 ## Consequences
 
 - Automation reuses every rule the desktop enforces, because it calls the same
-  operations, and the desktop's behaviour does not change except for the run
-  lock.
+  operations, and adds only the rules decision 1 lists. The desktop's
+  behaviour does not change except for the run lock and its refusal.
 - The CLI carries Tauri's crates until A2. That is a size cost, not a
   capability: the CLI calls no Tauri code.
-- A person can convert headless, reproducibly, with machine-readable results,
-  and an agent can prepare plans without being able to run one the person did
-  not approve.
+- A person can convert headless, reproducibly, with machine-readable results.
+  An agent that has no shell and works through the adapter, on a client that
+  honours elicitation, can prepare plans without being able to run one the
+  client did not accept. That is not proof a person accepted it (decision 7).
 - The schemas become a compatibility promise at M10's closure, and they cost
   a version bump to change after that.
 
@@ -559,22 +696,32 @@ owner's answers and the hold-release window more than by implementation.
 
 ## Open questions for the owner
 
-1. **The route.** A1 now, A2 only on a measured need, in decision 9's order?
-   Recommended: yes.
-2. **How a person approves a run that an agent asks for through MCP.**
-   - **Elicitation (recommended):** the adapter asks the client to show the
-     plan, and runs only on the person's accept. Clients without elicitation
-     are refused.
+1. **The route.** A1, a small CLI package over the desktop library, now, and
+   A2 only on a measured need, in decision 9's order? Recommended: yes.
+2. **How a person approves a run that an agent asks for through MCP.** Every
+   option but the second trusts the client to have asked a person.
+   - **Elicitation (recommended):** the adapter writes the approval text and
+     no tool call can satisfy it; it does not prove a person answered.
+     Clients without elicitation are refused.
    - **An approval record:** the person writes it with `mscanvas approve` in
-     their own terminal. It works with any client, and adds a small store.
-   - **The host's tool confirmation:** not recommended, because hosts can
-     approve automatically.
+     their own terminal. It works with any client and does not trust it, and
+     adds a small store and a step outside the agent's session.
+   - **The host's tool confirmation:** not recommended, because the agent
+     writes the call that is confirmed, and hosts can approve automatically.
 3. **The cross-process run lock.** While a CLI run holds it, the desktop
-   refuses to start a preview or a conversion and says why (recommended). The
-   alternative is to have the desktop wait.
+   refuses operations that would start ProteoWizard and names the holder
+   (recommended). Viewing an mzML does not start ProteoWizard once #175's
+   native reader is the preview's, so it is not refused. The alternative is to
+   have the desktop wait.
 4. **Distribution at M10's closure.** Recommended: the installer carries
    `mscanvas.exe` beside `mscanvas-desktop.exe`, documents where it is, and
    does not change the user's PATH. This is a release change.
 5. **Roots for the CLI.** Recommended: required for every subcommand that
    names a file, as for the adapter. The alternative drops them for the CLI,
    whose user names files directly.
+6. **A staging directory a killed run left behind.** Recommended: `run
+   --reclaim-staging` removes, for its own plan's items only and while it
+   holds the run lock, a staging directory that carries MSCanvas's marker,
+   and reports each removal. Without the flag the item refuses
+   (`StagingTargetExists`) and the result names the folder. The alternative
+   is manual deletion only.
