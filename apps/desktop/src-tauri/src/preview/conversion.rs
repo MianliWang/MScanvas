@@ -169,7 +169,9 @@ impl BoundIntent {
     }
 
     /// The format an output is written in. An advanced intent reaches a plan
-    /// only with mzML output, which is the only route with checks.
+    /// here only with mzML output: `refusal_for_source` refuses every other
+    /// format before planning, although the crate can write them from an
+    /// intermediate (ADR 0055 decision 6).
     const fn format(&self) -> OpenFormat {
         match self {
             Self::Row(row) => OpenFormat::of_intent(row.format()),

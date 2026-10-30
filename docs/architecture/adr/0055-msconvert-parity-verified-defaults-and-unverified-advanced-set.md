@@ -460,18 +460,28 @@ previewable**, because the viewer reads mzML only, and the queue item says so.
 >   it for an adoptable mzML output; it carries the intermediate's judgement.
 >   It is always advanced, "not verified by MSCanvas": no verified row writes
 >   another format.
-> - **Steps.** Every report names the step it settled in (`intermediate`,
->   `target`). A refused decision-6 check is `format_check_refused`, detailed
->   by the check's own identifier. A stop is answered during run 1, between
->   the runs and during run 2; between the runs, what it states about the
->   attempt's processes is what run 1's own ending established.
+> - **Steps.** Every report of an attempt that reached run 1 names the step
+>   it settled in (`intermediate`, `target`); one settled before run 1 (a
+>   taken name, a stop before anything ran) names none. A refused decision-6
+>   check is `format_check_refused`, detailed by the check's own identifier,
+>   so an intermediate with no records the format keeps reports
+>   `output_contains_no_records` under `output_rejected` when decision 5
+>   refuses it and under `format_check_refused` when decision 6 does. A stop
+>   is answered during run 1, between the runs and during run 2; between the
+>   runs, what it states about the attempt's processes is what run 1's own
+>   ending established, and the staged reading is run 1's directory at
+>   `provider_returned`. Run 2 is never launched while run 1's owned tree is
+>   not confirmed gone: the attempt fails `backend_not_terminated` and the
+>   staging area is kept.
 > - **Not built:**
 >   - mzXML stays refused (`intent_not_checkable`). Its comparison exists in
 >     the output inspectors but is not wired into a run;
 >   - a SCIEX output set's 1 + N runs;
 >   - the desktop, which still refuses every format but mzML before planning.
->     The queue's output name, the not-adoptable label and two-phase progress
->     are interface work;
+>     The queue's output name and the not-adoptable label are interface work.
+>     Two-phase progress also needs a step signal the crate does not yet give
+>     while a run is live: the step is reported only once the attempt
+>     settles;
 >   - a measurement on the real build, which needs a bounded release of the
 >     ProteoWizard hold.
 

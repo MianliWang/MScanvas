@@ -172,6 +172,9 @@ fn every_format_is_written_from_a_checked_intermediate_and_finalized_as_a_file()
     for (output, format) in every_format() {
         let fixture = Fixture::new(&two_level_source());
         let plan = fixture.plan(output, ConflictPolicy::Fail);
+        // Run 1 writes mzML; the plan names the format it finalizes.
+        assert_eq!(plan.format(), OpenFormat::MzMl);
+        assert_eq!(plan.two_step_target(), Some(format));
         let requested = plan.advanced_intent().expect("an advanced plan").clone();
         // Never a verified row: every such output is "not verified by MSCanvas".
         assert_eq!(
@@ -334,12 +337,28 @@ fn a_final_file_that_fails_its_checks_is_never_finalized() {
     let no_ions = writes(b"MASS=Monoisotopic\n".to_vec());
     let not_hdf5 = writes(b"not an hdf5 file".to_vec());
     let empty = writes(Vec::new());
-    let cases: [(&Act, OutputEncoding, &str); 5] = [
+    // The unmeasured naming (ADR 0055's note): a build that appends `.txt`
+    // after a `.txt` it did not strip, or spells the extension in another
+    // case, wrote a name nothing planned, and it fails closed.
+    let doubled = |spec: &CommandSpec| -> Result<i32, ProcessError> {
+        let mut name = staged_destination(spec).into_os_string();
+        name.push(".txt");
+        fs::write(name, written(NonMzmlFormat::Text)).expect("write");
+        Ok(0)
+    };
+    let lower_case = |spec: &CommandSpec| -> Result<i32, ProcessError> {
+        let destination = staged_destination(spec).with_extension("mzmlb");
+        fs::write(destination, written(NonMzmlFormat::MzMlb)).expect("write");
+        Ok(0)
+    };
+    let cases: [(&Act, OutputEncoding, &str); 7] = [
         (&no_ions, OutputEncoding::Mgf, "output_contains_no_records"),
         (&not_hdf5, every_format()[6].0, "output_signature_mismatch"),
         (&empty, OutputEncoding::Text, "zero_byte_output"),
         (&extra, OutputEncoding::Mgf, "unexpected_output"),
         (&failing, OutputEncoding::Ms2, "backend_rejected"),
+        (&doubled, OutputEncoding::Text, "unexpected_output_name"),
+        (&lower_case, every_format()[7].0, "unexpected_output_name"),
     ];
     for (act, output, detail) in cases {
         let fixture = Fixture::new(&two_level_source());
@@ -494,6 +513,21 @@ fn a_stop_is_answered_in_each_step_and_names_it() {
         assert!(report.owned_tree().confirms_a_terminated_tree());
         assert!(report.backend_was_run());
         assert_eq!(report.residue(), None);
+        // Read where a provider had returned: run 1's directory, holding the
+        // intermediate, when the stop settled between the runs.
+        let staged = report.staged_content();
+        assert_eq!(
+            staged.phase(),
+            Some(StagedObservationPhase::ProviderReturned),
+            "{stopped_in:?}"
+        );
+        if first_ending == Termination::Exited && !requests_in_run_two {
+            assert!(
+                staged
+                    .observation()
+                    .is_some_and(|observed| observed.non_empty_file_observed())
+            );
+        }
         assert_eq!(
             runner.second.calls(),
             usize::from(requests_in_run_two),
@@ -504,6 +538,127 @@ fn a_stop_is_answered_in_each_step_and_names_it() {
         assert_eq!(
             observer.retained().map(|recovery| recovery.status()),
             Some(StagingRecoveryStatus::Cleaned)
+        );
+    }
+}
+
+#[test]
+fn a_stop_that_beats_run_two_to_its_launch_reports_run_one_as_the_launched_tree() {
+    let fixture = Fixture::new(&two_level_source());
+    let cancellation = ConversionCancellation::new();
+    let request = cancellation.request_handle();
+    let first = writes(intermediate_of(&two_level_source()).into_bytes());
+    // Requested as run 2 is handed over, and the runner reports that nothing
+    // started: run 2 created nothing, and run 1 did launch.
+    let second = |_: &CommandSpec| -> Result<i32, ProcessError> {
+        request.request();
+        Ok(0)
+    };
+    let runner = TwoRuns {
+        first: FakeRunner::new(&first),
+        second: FakeRunner::new(&second).reporting(Termination::NotStarted),
+    };
+    let attempt = run_conversion_cancellable(
+        &fixture.plan(OutputEncoding::Mgf, ConflictPolicy::Fail),
+        &capabilities_from(CAPTURED_HELP),
+        &runner,
+        cancellation,
+    );
+    let ConversionAttempt::Cancelled(report) = attempt else {
+        panic!("{attempt:?}");
+    };
+    assert_eq!(report.step(), Some(ConversionStep::Target));
+    assert!(report.owned_tree().confirms_a_terminated_tree());
+    assert!(report.backend_was_run());
+    // Run 2's directory, which no provider was handed.
+    assert_eq!(
+        report.staged_content().phase(),
+        Some(StagedObservationPhase::ProviderNotInvoked)
+    );
+    assert_eq!(report.residue(), None);
+    assert!(fixture.root_entries().is_empty());
+}
+
+#[test]
+fn run_two_never_launches_while_run_one_leaves_its_tree_unconfirmed() {
+    let fixture = Fixture::new(&two_level_source());
+    let cancellation = ConversionCancellation::new();
+    let observer = cancellation.recovery_observer();
+    let first = writes(intermediate_of(&two_level_source()).into_bytes());
+    let second = writes(written(NonMzmlFormat::Mgf));
+    let runner = TwoRuns {
+        first: FakeRunner::new(&first).leaving_a_process(),
+        second: FakeRunner::new(&second),
+    };
+    let attempt = run_conversion_cancellable(
+        &fixture.plan(OutputEncoding::Mgf, ConflictPolicy::Fail),
+        &capabilities_from(CAPTURED_HELP),
+        &runner,
+        cancellation,
+    );
+    let ConversionAttempt::Completed(report) = attempt else {
+        panic!("{attempt:?}");
+    };
+    assert_eq!(
+        report.outcome(),
+        &ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+            BackendExecutionFailure::NotTerminated
+        ))
+    );
+    assert!(report.leaves_an_owned_process_unaccounted());
+    assert_eq!(runner.second.calls(), 0);
+    assert_eq!(report.step(), Some(ConversionStep::Target));
+    assert_eq!(
+        report.staged_content().phase(),
+        Some(StagedObservationPhase::ProviderReturned)
+    );
+    // Unconfirmed process disposition refuses cleanup.
+    assert_eq!(
+        report.residue(),
+        Some(StagingResidue::NotRemoved {
+            kind: io::ErrorKind::WouldBlock
+        })
+    );
+    assert_eq!(
+        observer.retained().map(|recovery| recovery.status()),
+        Some(StagingRecoveryStatus::ProcessUnconfirmed)
+    );
+}
+
+#[test]
+fn a_later_confirmed_run_never_clears_an_earlier_unconfirmed_one() {
+    let directory = TestDirectory::new();
+    let recovery = StagingRecovery::create(directory.path().join("area"), None)
+        .expect("create a staging area");
+    recovery.before_provider();
+    recovery.after_provider(&Err(ProcessError::Terminate {
+        detail: String::new(),
+    }));
+    recovery.before_provider();
+    recovery.after_provider(&Ok(ProcessOutput::cancelled_before_launch()));
+    assert_eq!(
+        recovery.discard(),
+        Some(StagingResidue::NotRemoved {
+            kind: io::ErrorKind::WouldBlock
+        })
+    );
+    assert_eq!(recovery.status(), StagingRecoveryStatus::ProcessUnconfirmed);
+}
+
+#[test]
+fn an_intermediate_that_cannot_be_held_is_never_called_the_users_source() {
+    for failure in [
+        ConversionRunFailure::SourceNotRechecked {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        ConversionRunFailure::SourceChangedBeforeRun,
+        ConversionRunFailure::SourceNotRehashed,
+    ] {
+        let restated = crate::conversion_run::two_step::intermediate_not_held(failure);
+        assert_eq!(restated.stable_id(), "output_rejected");
+        assert!(
+            !restated.detailed_stable_id().starts_with("source_"),
+            "{restated:?}"
         );
     }
 }

@@ -172,7 +172,7 @@ fn run_intermediate(
         });
     let mut pinned = match pinned {
         Ok(pinned) => pinned,
-        Err(failure) => return Err(refuse(failure)),
+        Err(failure) => return Err(refuse(intermediate_not_held(failure))),
     };
     let kept = pinned
         .seek(SeekFrom::Start(0))
@@ -194,6 +194,20 @@ fn run_intermediate(
         output,
         identity,
     })
+}
+
+/// The pin's failures speak of the user's source; here the object is run 1's
+/// intermediate, so they are restated as what they are: an output that could
+/// not be held, rehashed or recognised as the one just judged.
+pub(super) fn intermediate_not_held(failure: ConversionRunFailure) -> ConversionRunFailure {
+    let rejection = match failure {
+        ConversionRunFailure::SourceNotRechecked { kind } => {
+            ConversionOutputRejection::DirectoryInspectionFailed { kind }
+        }
+        ConversionRunFailure::SourceNotRehashed => ConversionOutputRejection::NotHashed,
+        _ => ConversionOutputRejection::ChangedDuringInspection,
+    };
+    ConversionRunFailure::OutputRejected(rejection.into())
 }
 
 /// Run 2 and the final file's checks, then its finalization under the planned
@@ -219,7 +233,23 @@ fn run_target(
         .cancellation
         .is_some_and(ConversionCancellation::is_requested)
     {
-        return stopped_before_target(&first, staging, identity);
+        return stopped_before_target(
+            &first,
+            staging,
+            StagedObservationPhase::ProviderReturned,
+            identity,
+        );
+    }
+    // No further backend work while run 1's own tree is not confirmed gone:
+    // the one state `OwnedTreeDisposition::Unconfirmed` forbids it in.
+    if !OwnedTreeDisposition::of(&first).no_owned_process_survives() {
+        return failed_before_target(
+            ConversionRunFailure::Backend(BackendExecutionFailure::NotTerminated),
+            &first,
+            staging,
+            StagedObservationPhase::ProviderReturned,
+            identity,
+        );
     }
     let _directory = match context
         .recovery
@@ -231,6 +261,7 @@ fn run_target(
                 ConversionRunFailure::StagingNotCreated { kind: error.kind() },
                 &first,
                 staging,
+                StagedObservationPhase::ProviderReturned,
                 identity,
             );
         }
@@ -249,6 +280,7 @@ fn run_target(
                 ConversionRunFailure::NotPlannable(error),
                 &first,
                 &target_staging,
+                StagedObservationPhase::ProviderNotInvoked,
                 identity,
             );
         }
@@ -266,7 +298,12 @@ fn run_target(
                 }
             ) =>
         {
-            return stopped_before_target(&first, &target_staging, identity);
+            return stopped_before_target(
+                &first,
+                &target_staging,
+                StagedObservationPhase::ProviderNotInvoked,
+                identity,
+            );
         }
         Err(settled) => return *settled,
     };
@@ -368,11 +405,14 @@ fn inspect_target(
 
 /// A failure after run 1 and before run 2 launched. The facts are run 1's,
 /// the last run that launched; no backend text is kept, because nothing the
-/// backend did is the reason.
+/// backend did is the reason. `observed` is read at `phase`: run 1's directory
+/// at `ProviderReturned`, run 2's, which no provider saw, at
+/// `ProviderNotInvoked`.
 fn failed_before_target(
     failure: ConversionRunFailure,
     first: &ProcessOutput,
     observed: &Path,
+    phase: StagedObservationPhase,
     identity: Option<OperationRunIdentity>,
 ) -> StagedResult {
     let backend = Some(BackendRunFacts::from(first));
@@ -380,10 +420,7 @@ fn failed_before_target(
         outcome: ConversionRunOutcome::Failed(failure),
         backend,
         diagnostics: None,
-        staged: StagedOutputEvidence::of(
-            StagedObservationPhase::ProviderNotInvoked,
-            observe_staged_content(observed),
-        ),
+        staged: StagedOutputEvidence::of(phase, observe_staged_content(observed)),
         identity,
         process: backend.map_or(
             ProcessAttemptOutcome::Indeterminate,
@@ -397,18 +434,16 @@ fn failed_before_target(
 /// Never `NoneLaunched`: run 1 launched. What the stop can say about the
 /// attempt's processes is what run 1's own ending established, decided by the
 /// one origin; where that does not establish that none survives, the stop is
-/// unconfirmed.
+/// unconfirmed. `observed` is read at `phase`, as in [`failed_before_target`].
 fn stopped_before_target(
     first: &ProcessOutput,
     observed: &Path,
+    phase: StagedObservationPhase,
     identity: Option<OperationRunIdentity>,
 ) -> StagedResult {
     let backend = Some(BackendRunFacts::from(first));
     let owned_tree = OwnedTreeDisposition::of(first);
-    let staged = StagedOutputEvidence::of(
-        StagedObservationPhase::ProviderNotInvoked,
-        observe_staged_content(observed),
-    );
+    let staged = StagedOutputEvidence::of(phase, observe_staged_content(observed));
     let process = backend.map_or(
         ProcessAttemptOutcome::Indeterminate,
         ProcessAttemptOutcome::of,

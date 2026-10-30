@@ -204,6 +204,9 @@ struct FakeRunner<'a> {
     /// wrote files without announcing them would not be standing in for the
     /// measured one -- it would be standing in for an injector.
     declared: Vec<&'a str>,
+    /// What the owned Job counted when the run ended. `Some(0)` by default,
+    /// which with ownership established before execution confirms the tree.
+    final_active_processes: Option<u32>,
 }
 
 impl<'a> FakeRunner<'a> {
@@ -217,7 +220,15 @@ impl<'a> FakeRunner<'a> {
             stderr_truncated: false,
             stderr: "",
             declared: Vec::new(),
+            final_active_processes: Some(0),
         }
+    }
+
+    /// A runner whose owned Job still counted a process when it ended, so its
+    /// tree is not confirmed gone.
+    const fn leaving_a_process(mut self) -> Self {
+        self.final_active_processes = Some(1);
+        self
     }
 
     /// A runner that announces exactly these output basenames, in the line
@@ -286,7 +297,7 @@ impl ProcessRunner for FakeRunner<'_> {
             elapsed: Duration::from_millis(7),
             termination: self.termination,
             max_active_processes: Some(1),
-            final_active_processes: Some(0),
+            final_active_processes: self.final_active_processes,
             peak_job_memory_bytes: Some(1_024),
             total_owned_processes: Some(1),
             tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,

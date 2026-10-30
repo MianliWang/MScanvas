@@ -1382,13 +1382,23 @@ impl ConversionPlan {
         &self.source
     }
 
-    /// The only output format a plan can carry.
-    ///
-    /// Still one format, and now for a stated reason rather than by
-    /// construction: [`ConversionIntent`] cannot name another one.
+    /// The format the run that reads the source writes: the output's own, or
+    /// for a plan written from an intermediate (ADR 0055 decision 6), the
+    /// intermediate's mzML. [`Self::two_step_target`] names that plan's output.
     #[must_use]
     pub const fn format(&self) -> OpenFormat {
         self.intent.format()
+    }
+
+    /// The format of the file a plan written from an intermediate finalizes
+    /// (ADR 0055 decision 6); `None` for a plan whose output is the mzML run 1
+    /// writes.
+    #[must_use]
+    pub const fn two_step_target(&self) -> Option<NonMzmlFormat> {
+        match self.intent.two_step() {
+            Some((target, _)) => Some(target),
+            None => None,
+        }
     }
 
     #[must_use]
@@ -1531,6 +1541,7 @@ impl fmt::Debug for ConversionPlan {
             .debug_struct("ConversionPlan")
             .field("source", &self.source)
             .field("format", &self.format())
+            .field("two_step_target", &self.two_step_target())
             .field("conflict", &self.conflict)
             .field("intent", &self.intent)
             .finish_non_exhaustive()
@@ -1887,6 +1898,10 @@ impl ConversionRunFailure {
     /// Job, or an environment refused before one existed, has no owned tree to
     /// be uncertain about and classifies elsewhere. Each of the four is a
     /// process this run owned whose end nothing observed.
+    ///
+    /// ADR 0055 decision 6 settles on the same failure, from outside the
+    /// process boundary, when run 1 exited 0 with its owned tree not confirmed
+    /// gone: run 2 is not launched, and the uncertainty is run 1's.
     ///
     /// **`NotAwaited` is not included, and what makes that safe is an
     /// observation rather than an argument.** It once was an argument, and the
