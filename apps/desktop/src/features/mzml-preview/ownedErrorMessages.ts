@@ -77,6 +77,7 @@ const MESSAGE = {
   view_cache_not_stored: "errViewCacheNotStored",
   view_cache_entry_lost: "errViewCacheEntryLost",
   view_cache_entry_unavailable: "errViewCacheEntryUnavailable",
+  view_cache_unreadable: "errViewCacheUnreadable",
   source_requires_bundle_handoff: "errSourceRequiresBundle",
   source_identity_unavailable: "errSourceIdentityUnavailable",
   source_not_inspectable: "errSourceNotInspectable",

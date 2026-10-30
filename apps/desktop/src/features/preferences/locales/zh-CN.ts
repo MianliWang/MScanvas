@@ -1035,6 +1035,7 @@ export const zhCN = {
   errViewCacheNotStored: "转换后的副本无法存入查看缓存，未添加任何内容。",
   errViewCacheEntryLost: "转换后的副本在检查之前已从查看缓存中移除。",
   errViewCacheEntryUnavailable: "此文件的缓存副本暂时无法检查或移除。请重试。",
+  errViewCacheUnreadable: "暂时无法读取查看缓存。请重试。",
   errSourceRequiresBundle: "该采集包含多个文件，必须作为一个整体打开。",
   errSourceIdentityUnavailable: "在此平台上 MSCanvas 无法将该文件绑定到一次转换。",
   errSourceNotInspectable: "MSCanvas 无法确认该文件仍是它打开的那一个，因此没有读取它。",

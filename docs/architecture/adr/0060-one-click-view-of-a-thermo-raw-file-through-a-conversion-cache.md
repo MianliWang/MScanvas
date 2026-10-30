@@ -1173,15 +1173,21 @@ it says so; the decisions stand otherwise.
    `be/integrate` (PR #161) has reshaped `ConversionPlan`. That PR also makes
    `plan_conversion` take a bound intent, so the view's call to it, with
    `SHIPPED`, is adapted when the second of the two merges.
-4. **Hashing.** Checking file is the conversion crate's own admission
+4. **Hashing. A miss reads the RAW in full four times.** Checking file is the
+   conversion crate's own admission
    (`ConversionSource::open_thermo_raw_file_reporting`), read in chunks with
    Cancel asked before each, so its digest is the key's and the run's baseline
-   and the bind does not hash the RAW again (decision 7). The run's own pin
-   still rehashes the RAW in one read before `msconvert` starts, inside
-   Converting, with no progress and with Cancel answered after it. That is a
-   known ceiling. Checking output reads the output
+   and the bind does not hash the RAW again (decision 7). Inside Converting,
+   the run reads it twice more, each in one read with no progress and with
+   Cancel answered only after it: its pin rehashes it before `msconvert`
+   starts, and its post-run judgement (`revalidate_source`) rehashes it after.
+   Checking output then reads the output
    (`FinalizedOutput::still_matches_reporting`) and the RAW again under one
-   bar.
+   bar, which also covers the time between that judgement and the publish.
+   Decision 7 meant the post-run read to be Checking output's own. A
+   reporting, cancellable form of the crate's post-run revalidation would
+   remove one read; it waits until PR #161 has reshaped the crate's run. Until
+   then this is a known ceiling: up to 1.5 GiB read twice with no bar.
 5. **The key's intent line** is `ConversionIntent::SHIPPED.stable_id()`. Once
    PR #161 merges, it becomes the structured intent's canonical serialization,
    and the key's version line changes (decision 7).
@@ -1208,7 +1214,64 @@ it says so; the decisions stand otherwise.
    read of that preview, a spectrum's included, goes to the pinned entry. The
    next open of any row ends that preview and its pin. Follow-up: when the
    native reader of PR #175 replaces these reads, its table and spectrum reads
-   of a viewed row take the entry's path too, never the RAW's.
+   of a viewed row take the entry's path too, never the RAW's. A textual
+   merge with PR #175 conflicts in the open and spectrum paths of
+   `preview/service.rs`, and also leaves three lines outside those hunks that
+   the second of the two to merge must change: the table read
+   `read_spectrum_table(file.path(), …)` reads the pinned entry for a viewed
+   row, and `qc_producer_identified` and `qc_snapshot_token` are both
+   conditioned on `!viewed`. The viewed open must still pass #175's
+   cross-dataset supersession check, withholding only the run-summary token.
+   `a_miss_converts_the_verified_default_publishes_once_and_opens_the_entry_not_the_raw`
+   fails if any of the three is left: a native read of the RAW fails the
+   open, and the test asserts no token and no producer.
+8. **After review (2026-10-30).** The items marked as pending await the
+   owner's confirmation; the rest follow decisions above.
+   - **The wire, beyond decision 12.** `running` also carries
+     `cachedCopyDamaged` (decision 8's notice). `failed` carries
+     `neededBytes` and `freeBytes` for `view_cache_no_space`, and null for
+     every other code. `ready` carries `openable`, true only while the row
+     holds the operation's pin: an open, a superseded or failed open, the
+     row's removal, Clear workspace and the next View each make it false.
+     `open_raw_view` answers `raw_view_not_ready` (not retryable) for an
+     operation that is not `ready` and `openable`.
+   - **`view_cache_unreadable`, retryable (pending).** The cache's folders
+     could not be listed (the summary's `unreadable`), or the free space on
+     its volume could not be read. It never claims the disk is full. That
+     answers View, its eviction and Clear view cache alike.
+     `view_cache_entry_unavailable` stays for one entry that could not be
+     checked or removed, including the entry this operation just published,
+     which then stays for the next View to check.
+   - **Cancel and the end of the work (pending).** Once the work has reached
+     a pinned entry, the operation settles under the slot lock. A Cancel
+     accepted before that ends it `cancelled`, with its `stored`, and
+     releases the pin. A Cancel after it is a late press, and the operation
+     ends `ready`.
+   - **An unconfirmed end of `msconvert`,** a cancellation that could not be
+     confirmed or a run that leaves its process unaccounted for, quarantines
+     the backend and keeps the attempt, marker and all, for a later
+     session's sweep, as targeted MS1 keeps its work area. A run's residue
+     alone does not keep it: the sweep would remove it the same way.
+   - **Failures the run itself finds.** A RAW that the run's pin or its
+     post-run judgement finds changed answers `raw_view_source_changed`
+     (retryable), and an output over the document limit answers
+     `view_cache_entry_too_large` (not retryable), as decision 10's table
+     says. Every other run failure answers the crate's failure identifier
+     (`stable_id`), which is what a queue item's `outcome` carries and what
+     the webview reads. The detailed identifier stays with Convert this
+     file…'s diagnostics.
+   - **The 1.5 GiB limit is also asked of the length Checking file finds,**
+     before its first chunk, so a RAW that grew after it was added is refused
+     without being read.
+   - **Retry of a terminal queue answers `raw_view_busy` while a view runs.**
+     With Begin's refusal, no queue runs beside a view, so Cancel and clear
+     has one holder to stop.
+   - **Clear view cache holds the workspace mutation gate (pending)** that
+     `begin_raw_view` takes the slot under, so no View begins between Clear's
+     check and its removal. A workspace mutation waits for a Clear meanwhile.
+   - **Dated notes** are written in ADR 0005, ADR 0006, ADR 0012, ADR 0056
+     decision 3 and ADR 0057 decision 2. ADR 0043 (CNV-D8) and ADR 0055 take
+     theirs with slice 3, whose interface shows the progress and the reuse.
 
 ## Alternatives rejected
 

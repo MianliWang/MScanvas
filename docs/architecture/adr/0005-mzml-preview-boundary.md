@@ -20,6 +20,12 @@
   — a chosen installation is remembered across launches, and its folder may be
   sent to the webview, by notes at the installation rule and in the
   consequences below.
+- Amended: 2026-10-30 ([ADR 0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+  slice 2) — M3.1's rule gains one route: a Thermo RAW row is previewable
+  through a ready view operation (`open_raw_view`), whose preview reads only
+  the pinned view-cache entry and never the RAW. `open_mzml_preview` and
+  `load_selected_spectrum` still answer `dataset_not_previewable` for a vendor
+  row with no such preview.
 
 ## Context
 

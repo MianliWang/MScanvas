@@ -248,6 +248,14 @@ neutral crate is a later mechanical change, not part of this decision.
 
 Vendor rows stay `dataset_not_previewable` (ADR 0005, M3.1).
 
+> **Amended 2026-10-30 by
+> [ADR 0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+> slice 2.** One exception: a Thermo RAW row opened through a ready view
+> operation (`open_raw_view`). Every read of that preview, the table and
+> spectra included, goes to the pinned cache entry and never to the RAW; the
+> pin stands in for the row file's `lock_against_replacement`, and the
+> generation check is made against the entry.
+
 **Why metadata and the run summary stay on `msaccess`:**
 
 - The metadata view is `msaccess`'s text for five sections: file description,

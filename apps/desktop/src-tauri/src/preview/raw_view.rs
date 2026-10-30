@@ -80,6 +80,10 @@ pub enum RawViewStateDto {
         intent_id: String,
         cache_hit: bool,
         unverified_build_release: Option<String>,
+        /// Whether `open_raw_view` would open it: the row still holds the
+        /// operation's pin. An open, a superseded or failed open, the row's
+        /// removal and Clear workspace each end that (decision 12).
+        openable: bool,
     },
     Failed {
         operation: u64,
@@ -183,6 +187,9 @@ pub(super) struct RawView {
     cancel: Arc<AtomicBool>,
     /// The conversion's request-only handle while `msconvert` may run.
     conversion: Option<CancellationRequest>,
+    /// The work reached a pinned entry with no Cancel before it, so a Cancel
+    /// now is a late press (decision 10).
+    settled: bool,
 }
 
 impl std::fmt::Debug for RawView {
@@ -217,6 +224,7 @@ impl RawView {
             started: Instant::now(),
             cancel: Arc::new(AtomicBool::new(false)),
             conversion: None,
+            settled: false,
         }
     }
 
@@ -236,7 +244,11 @@ impl RawView {
     /// Records Cancel. A running conversion is asked to end at once; the
     /// worker's own reads stop at the next chunk. Storing is not interrupted:
     /// the worker reads the flag again once it has finished (decision 10).
+    /// Once the operation has settled, Cancel changes nothing.
     pub(super) fn request_cancel(&self) {
+        if self.settled {
+            return;
+        }
         self.cancel.store(true, Ordering::Release);
         if let Some(conversion) = &self.conversion {
             conversion.request();
@@ -284,6 +296,14 @@ impl RawView {
         }
     }
 
+    /// Asked under the slot lock once the work has reached a pinned entry:
+    /// `false` when a Cancel was accepted first, which then ends the operation
+    /// `cancelled` (decision 10); otherwise every later Cancel is a late press.
+    pub(super) fn settle(&mut self) -> bool {
+        self.settled = !self.cancel.load(Ordering::Acquire);
+        self.settled
+    }
+
     pub(super) fn finish(&mut self, ended: Ended) {
         self.conversion = None;
         self.progress = match ended {
@@ -317,12 +337,14 @@ impl RawView {
                 unverified_build_release: None,
                 cached_copy_damaged: *cached_copy_damaged,
             },
-            Progress::Ready { cache_hit, .. } => RawViewStateDto::Ready {
+            // Whether the row still holds the pin is the service's to add.
+            Progress::Ready { cache_hit, opened } => RawViewStateDto::Ready {
                 operation,
                 handle,
                 intent_id,
                 cache_hit: *cache_hit,
                 unverified_build_release: None,
+                openable: !*opened,
             },
             Progress::Failed { error, space } => RawViewStateDto::Failed {
                 operation,
@@ -448,6 +470,39 @@ pub(super) fn view_cache_entry_lost() -> PreviewErrorDto {
     )
 }
 
+/// The cache's folders could not be listed, or the free space on its volume
+/// could not be read: nothing was removed, and nothing says the disk is full.
+pub(super) fn view_cache_unreadable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "view_cache_unreadable",
+        "The view cache could not be read just now. Try again.",
+        true,
+    )
+}
+
+/// What a failed run answers where decision 10 names its own code: the RAW
+/// changed while the run used it, or the output is over the 4 GiB document
+/// limit. `None` for every other failure, which is the conversion's own.
+pub(super) fn run_failure_error(
+    failure: &mscanvas_proteowizard::ConversionRunFailure,
+) -> Option<PreviewErrorDto> {
+    use mscanvas_proteowizard::{
+        BackendExecutionFailure, ConversionIntegrityOutcome as Integrity, ConversionRunFailure,
+        MzmlLimitKind,
+    };
+    match failure {
+        ConversionRunFailure::SourceChangedBeforeRun
+        | ConversionRunFailure::Backend(BackendExecutionFailure::SourceChanged)
+        | ConversionRunFailure::OutputRejected(Integrity::SourceChangedDuringConversion) => {
+            Some(raw_view_source_changed())
+        }
+        ConversionRunFailure::OutputRejected(Integrity::LimitExceeded {
+            kind: MzmlLimitKind::DocumentBytes,
+        }) => Some(view_cache_entry_too_large()),
+        _ => None,
+    }
+}
+
 /// The two cases slice 1 left open, ended before any conversion (dated note
 /// of 2026-10-30 in ADR 0060, recommended and pending the owner): the cached
 /// copy could not be checked, or a damaged one could not be removed. Neither
@@ -462,7 +517,48 @@ pub(super) fn view_cache_entry_unavailable() -> PreviewErrorDto {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_RAW_BYTES, bytes_needed_for};
+    use mscanvas_proteowizard::{
+        BackendExecutionFailure, ConversionIntegrityOutcome as Integrity, ConversionRunFailure,
+        MzmlLimitKind,
+    };
+
+    use super::{MAX_RAW_BYTES, bytes_needed_for, run_failure_error};
+
+    #[test]
+    fn a_run_that_found_the_raw_changed_or_the_output_too_large_answers_decision_10s_codes() {
+        let code = |failure: ConversionRunFailure| {
+            run_failure_error(&failure).map(|error| (error.kind, error.retryable))
+        };
+        for changed in [
+            ConversionRunFailure::SourceChangedBeforeRun,
+            ConversionRunFailure::Backend(BackendExecutionFailure::SourceChanged),
+            ConversionRunFailure::OutputRejected(Integrity::SourceChangedDuringConversion),
+        ] {
+            assert_eq!(
+                code(changed),
+                Some(("raw_view_source_changed".to_owned(), true))
+            );
+        }
+        assert_eq!(
+            code(ConversionRunFailure::OutputRejected(
+                Integrity::LimitExceeded {
+                    kind: MzmlLimitKind::DocumentBytes,
+                }
+            )),
+            Some(("view_cache_entry_too_large".to_owned(), false))
+        );
+        // Everything else is the conversion's own failure.
+        assert_eq!(
+            code(ConversionRunFailure::BackendRejected { exit_code: Some(1) }),
+            None
+        );
+        assert_eq!(
+            code(ConversionRunFailure::OutputRejected(
+                Integrity::MissingOutput
+            )),
+            None
+        );
+    }
 
     #[test]
     fn the_size_heuristic_and_the_space_rule_are_decision_9s_numbers() {

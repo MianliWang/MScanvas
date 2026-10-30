@@ -19,9 +19,10 @@ use super::super::raw_view::{
     Ended, MAX_RAW_BYTES, Progress, RawView, RawViewBeginRequestDto, RawViewOperationRequestDto,
     RawViewPhaseDto, RawViewStateDto, ViewCacheClearOutcomeDto, ViewCacheSummaryDto,
     bytes_needed_for, raw_view_busy, raw_view_not_ready, raw_view_source_changed,
-    raw_view_unsupported_source, view_cache_entry_lost, view_cache_entry_too_large,
-    view_cache_entry_unavailable, view_cache_entry_unrecognized, view_cache_no_space,
-    view_cache_not_stored, view_cache_root_unrecognized, view_cache_unavailable, view_intent_id,
+    raw_view_unsupported_source, run_failure_error, view_cache_entry_lost,
+    view_cache_entry_too_large, view_cache_entry_unavailable, view_cache_entry_unrecognized,
+    view_cache_no_space, view_cache_not_stored, view_cache_root_unrecognized,
+    view_cache_unavailable, view_cache_unreadable, view_intent_id,
 };
 use super::super::selection::open_thermo_raw_source_reporting;
 use super::*;
@@ -43,6 +44,9 @@ pub(super) struct RawViewSettings {
     /// Called as each phase begins, for the tests that act at a phase.
     #[cfg(test)]
     phase_hook: Option<Arc<dyn Fn(u64, RawViewPhaseDto) + Send + Sync>>,
+    /// Called once the work has ended and before the operation settles.
+    #[cfg(test)]
+    settle_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
 }
 
 impl Default for RawViewSettings {
@@ -52,8 +56,18 @@ impl Default for RawViewSettings {
             free_space: Arc::new(crate::local_document::available_bytes),
             #[cfg(test)]
             phase_hook: None,
+            #[cfg(test)]
+            settle_hook: None,
         }
     }
+}
+
+/// The pinned entry the work reached. `stored` says whether this operation
+/// published it, which a Cancel accepted just before the end reports.
+struct Reached {
+    cache_hit: bool,
+    stored: bool,
+    entry: VerifiedEntry,
 }
 
 /// How the work ended short of a pinned entry. `space` is a no-space
@@ -69,8 +83,8 @@ impl From<PreviewErrorDto> for Stop {
     }
 }
 
-fn no_space(space: Option<(u64, u64)>) -> Stop {
-    Stop::Failed(Box::new((view_cache_no_space(), space)))
+fn no_space(needed: u64, free: u64) -> Stop {
+    Stop::Failed(Box::new((view_cache_no_space(), Some((needed, free)))))
 }
 
 const fn cancelled(stored: bool) -> Stop {
@@ -81,7 +95,7 @@ fn root_refusal_error(refusal: RootRefusal) -> PreviewErrorDto {
     match refusal {
         RootRefusal::Unavailable => view_cache_unavailable(),
         RootRefusal::Unrecognized => view_cache_root_unrecognized(),
-        RootRefusal::Unreadable => view_cache_entry_unavailable(),
+        RootRefusal::Unreadable => view_cache_unreadable(),
     }
 }
 
@@ -134,6 +148,14 @@ impl PreviewService {
     }
 
     #[cfg(test)]
+    pub(in crate::preview) fn set_raw_view_settle_hook(
+        &self,
+        hook: impl Fn(u64) + Send + Sync + 'static,
+    ) {
+        self.raw_view_settings().settle_hook = Some(Arc::new(hook));
+    }
+
+    #[cfg(test)]
     pub(in crate::preview) fn raw_view_cancel_requested_for_test(&self) -> bool {
         self.conversion_slot()
             .view()
@@ -145,11 +167,27 @@ impl PreviewService {
         ViewCache::open(parent.as_deref())
     }
 
-    /// `get_raw_view_state`: the latest operation, or `idle`.
+    /// `get_raw_view_state`: the latest operation, or `idle`. A `ready` one is
+    /// `openable` only while its row holds its pin (decision 12), read after
+    /// the slot lock is released.
     pub fn raw_view_state(&self) -> RawViewStateDto {
-        self.conversion_slot()
-            .view()
-            .map_or(RawViewStateDto::Idle, RawView::to_dto)
+        let (mut state, dataset) = {
+            let slot = self.conversion_slot();
+            let view = slot.view();
+            (
+                view.map_or(RawViewStateDto::Idle, RawView::to_dto),
+                view.map(|view| view.dataset),
+            )
+        };
+        if let (RawViewStateDto::Ready { openable, .. }, Some(dataset)) = (&mut state, dataset) {
+            *openable = *openable
+                && self
+                    .workspace()
+                    .runtime
+                    .get(&dataset)
+                    .is_some_and(|row| row.ready_view.is_some());
+        }
+        state
     }
 
     /// `begin_raw_view`: the refusals of decision 4 that need no process, in
@@ -211,19 +249,45 @@ impl PreviewService {
     /// `cancel_raw_view`: bound to the exact operation. A late press is a
     /// no-op that answers the current state (decision 10).
     pub fn cancel_raw_view(&self, request: RawViewOperationRequestDto) -> RawViewStateDto {
-        let mut slot = self.conversion_slot();
-        if let Some(view) = slot.view_mut(request.operation)
-            && view.is_running()
         {
-            view.request_cancel();
+            let slot = self.conversion_slot();
+            if let Some(view) = slot
+                .view()
+                .filter(|view| view.operation == request.operation && view.is_running())
+            {
+                view.request_cancel();
+            }
         }
-        slot.view().map_or(RawViewStateDto::Idle, RawView::to_dto)
+        self.raw_view_state()
     }
 
     /// Runs one begun operation to its end, then releases the slot.
     pub fn run_raw_view(&self, operation: u64) {
-        let (ended, entry) = match self.raw_view_steps(operation) {
-            Ok((cache_hit, entry)) => (Ended::Ready { cache_hit }, Some(entry)),
+        let reached = self.raw_view_steps(operation);
+        #[cfg(test)]
+        {
+            let hook = self.raw_view_settings().settle_hook.clone();
+            if let Some(hook) = hook {
+                hook(operation);
+            }
+        }
+        let (ended, entry) = match reached {
+            // Decision 10: a Cancel accepted before this point ends the
+            // operation `cancelled` even though the work reached an entry, and
+            // the entry's pin is released; after it, a Cancel is a late press.
+            Ok(reached) => {
+                let settled = self
+                    .conversion_slot()
+                    .view_mut(operation)
+                    .is_some_and(RawView::settle);
+                if settled {
+                    let cache_hit = reached.cache_hit;
+                    (Ended::Ready { cache_hit }, Some(reached.entry))
+                } else {
+                    let stored = reached.stored;
+                    (Ended::Cancelled { stored }, None)
+                }
+            }
             Err(Stop::Failed(failure)) => {
                 let (error, space) = *failure;
                 (Ended::Failed(error, space), None)
@@ -231,7 +295,8 @@ impl PreviewService {
             Err(Stop::Cancelled { stored }) => (Ended::Cancelled { stored }, None),
         };
         // The pin goes to the row before the state says ready, so an open
-        // that reads `ready` finds it.
+        // that reads `ready` finds it. Settled first, so no Cancel lands
+        // between the two.
         if let Some(entry) = entry {
             let dataset = self.conversion_slot().view().map(|view| view.dataset);
             let mut workspace = self.workspace();
@@ -292,7 +357,7 @@ impl PreviewService {
         }
     }
 
-    fn raw_view_steps(&self, operation: u64) -> Result<(bool, VerifiedEntry), Stop> {
+    fn raw_view_steps(&self, operation: u64) -> Result<Reached, Stop> {
         let (id, cancel) = {
             let slot = self.conversion_slot();
             let view = slot
@@ -335,15 +400,26 @@ impl PreviewService {
             .map(|dataset| dataset.file().clone())
             .ok_or_else(unknown_dataset)?;
         let file = revalidate(&remembered)?;
-        let source =
-            open_thermo_raw_source_reporting(&file, &mut self.reading(operation, &cancel, 0, None))
-                .map_err(|error| {
-                    if stopped() {
-                        cancelled(false)
-                    } else {
-                        error.into()
-                    }
-                })?;
+        // Decision 9's limit, on the length the read finds, before the first
+        // chunk: a RAW that grew after it was added is not read whole first.
+        let too_large = std::cell::Cell::new(false);
+        let mut reading = self.reading(operation, &cancel, 0, None);
+        let admitted = open_thermo_raw_source_reporting(&file, &mut |read, total| {
+            if total > MAX_RAW_BYTES {
+                too_large.set(true);
+                return false;
+            }
+            reading(read, total)
+        });
+        let source = admitted.map_err(|error| {
+            if too_large.get() {
+                view_cache_entry_too_large().into()
+            } else if stopped() {
+                cancelled(false)
+            } else {
+                error.into()
+            }
+        })?;
         let raw_bytes = source.byte_length();
         if raw_bytes > MAX_RAW_BYTES {
             return Err(view_cache_entry_too_large().into());
@@ -359,7 +435,13 @@ impl PreviewService {
         // Checking cached copy.
         self.view_enter(operation, RawViewPhaseDto::CheckingCachedCopy);
         match cache.verify(&key, &mut self.reading(operation, &cancel, 0, None)) {
-            Lookup::Hit(entry) => return Ok((true, *entry)),
+            Lookup::Hit(entry) => {
+                return Ok(Reached {
+                    cache_hit: true,
+                    stored: false,
+                    entry: *entry,
+                });
+            }
             Lookup::Miss => {}
             Lookup::Damaged { removed: true } => {
                 if let Some(view) = self.conversion_slot().view_mut(operation) {
@@ -406,27 +488,35 @@ impl PreviewService {
             view.release_conversion();
         }
         drop(running);
+        // ADR 0015: a process whose end was not observed quarantines the
+        // backend for the session, and it may still write into the attempt, so
+        // the attempt stays for a later session's sweep (decision 10), as
+        // targeted MS1 keeps its work area.
         let finalized = match ran {
             ConversionAttempt::Completed(report) => {
-                if report.leaves_an_owned_process_unaccounted() {
-                    self.quarantine_backend();
-                }
                 if let ConversionRunOutcome::Failed(failure) = report.outcome() {
                     let retryable = super::super::conversion::run_is_retryable(
                         report.residue(),
                         report.outcome(),
                     );
-                    return Err(self.conversion_failed(&cache, failure.stable_id(), retryable));
+                    let stop = run_failure_error(failure).map_or_else(
+                        || self.conversion_failed(&cache, failure.stable_id(), retryable),
+                        Stop::from,
+                    );
+                    if report.leaves_an_owned_process_unaccounted() {
+                        self.quarantine_backend();
+                        attempt.keep();
+                    }
+                    return Err(stop);
                 }
                 report
                     .into_finalized_output()
                     .ok_or_else(view_cache_not_stored)?
             }
             ConversionAttempt::Cancelled(_) => return Err(cancelled(false)),
-            // ADR 0015: a termination that could not be confirmed quarantines
-            // the backend for the session.
             ConversionAttempt::CancellationFailed(_) => {
                 self.quarantine_backend();
+                attempt.keep();
                 return Err(cancelled(false));
             }
         };
@@ -491,7 +581,13 @@ impl PreviewService {
                     // verified and used, and this attempt is discarded.
                     self.view_enter(operation, RawViewPhaseDto::CheckingCachedCopy);
                     match cache.verify(&key, &mut self.reading(operation, &cancel, 0, None)) {
-                        Lookup::Hit(entry) => return Ok((false, *entry)),
+                        Lookup::Hit(entry) => {
+                            return Ok(Reached {
+                                cache_hit: false,
+                                stored: false,
+                                entry: *entry,
+                            });
+                        }
                         Lookup::Cancelled => return Err(cancelled(false)),
                         Lookup::Unrecognized => {
                             return Err(view_cache_entry_unrecognized().into());
@@ -524,9 +620,19 @@ impl PreviewService {
         // Checking cached copy, of the entry just published.
         self.view_enter(operation, RawViewPhaseDto::CheckingCachedCopy);
         match cache.verify(&key, &mut self.reading(operation, &cancel, 0, None)) {
-            Lookup::Hit(entry) => Ok((false, *entry)),
+            Lookup::Hit(entry) => Ok(Reached {
+                cache_hit: false,
+                stored: true,
+                entry: *entry,
+            }),
             Lookup::Cancelled => Err(cancelled(true)),
-            _ => Err(view_cache_entry_lost().into()),
+            Lookup::Miss | Lookup::Damaged { removed: true } => Err(view_cache_entry_lost().into()),
+            // Published and not checked just now: it stays, and the next View
+            // checks it again (slice 2 note 2).
+            Lookup::Damaged { removed: false } | Lookup::Unreadable => {
+                Err(view_cache_entry_unavailable().into())
+            }
+            Lookup::Unrecognized => Err(view_cache_entry_unrecognized().into()),
         }
     }
 
@@ -535,22 +641,25 @@ impl PreviewService {
     fn ensure_space(&self, cache: &ViewCache, raw_bytes: u64) -> Result<(), Stop> {
         let probe = Arc::clone(&self.raw_view_settings().free_space);
         let needed = bytes_needed_for(raw_bytes);
+        // Unknown free space is not too little of it: retryable, and no claim.
         let Some(free) = probe(cache.root()) else {
-            return Err(no_space(None));
+            return Err(view_cache_unreadable().into());
         };
         if free >= needed {
             return Ok(());
         }
         match cache.make_space(needed - free) {
             Ok(Some(_)) => {}
-            Ok(None) => return Err(no_space(Some((needed, free)))),
+            Ok(None) => return Err(no_space(needed, free)),
             Err(refusal) => return Err(root_refusal_error(refusal).into()),
         }
-        let free = probe(cache.root()).unwrap_or(0);
+        let Some(free) = probe(cache.root()) else {
+            return Err(view_cache_unreadable().into());
+        };
         if free >= needed {
             Ok(())
         } else {
-            Err(no_space(Some((needed, free))))
+            Err(no_space(needed, free))
         }
     }
 
@@ -633,6 +742,11 @@ impl PreviewService {
     /// `clear_view_cache`: every unpinned entry and every attempt whose owner
     /// is gone. Refused while a view runs (decision 9).
     pub fn clear_view_cache(&self) -> Result<ViewCacheClearOutcomeDto, PreviewErrorDto> {
+        // The gate `begin_raw_view` takes the slot under, so no View begins
+        // between this check and the removal.
+        // ponytail: held while entries are removed, so a workspace mutation
+        // waits for a Clear; a lock of the cache's own if that is ever slow.
+        let _gate = self.enter_workspace_mutation();
         if self.conversion_slot().view_is_running() {
             return Err(raw_view_busy());
         }

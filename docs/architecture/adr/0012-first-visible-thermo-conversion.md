@@ -173,6 +173,13 @@ before its paths are retained; and removing the converting row is refused while
 every other row stays removable. Search, sort, focus, selection and roster reads
 stay available throughout.
 
+*2026-10-30 ([ADR 0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)
+decision 5, slice 2):* a one-click view operation holds the same slot, from
+Checking file until it is terminal. While it does, every refusal above
+answers `raw_view_busy` instead of `conversion_busy`, and so do a queue's
+Begin and Retry and Clear view cache; the native drop callback still answers
+the queue's `conversion_busy` drop state until slice 3.
+
 The callback path reads a lock-free mirror of the slot's busy flag, because that
 path must never wait on a service mutex — the rule this service already keeps
 for the drop claim itself.

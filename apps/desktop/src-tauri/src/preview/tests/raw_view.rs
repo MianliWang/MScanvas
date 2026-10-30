@@ -195,6 +195,13 @@ fn ready(state: &RawViewStateDto) -> (u64, bool) {
     }
 }
 
+fn openable(state: &RawViewStateDto) -> bool {
+    match state {
+        RawViewStateDto::Ready { openable, .. } => *openable,
+        other => panic!("expected ready; got {other:?}"),
+    }
+}
+
 fn failed(state: &RawViewStateDto) -> (&str, bool) {
     match state {
         RawViewStateDto::Failed {
@@ -249,6 +256,7 @@ fn a_miss_converts_the_verified_default_publishes_once_and_opens_the_entry_not_t
     let state = session.view();
     let (operation, cache_hit) = ready(&state);
     assert!(!cache_hit);
+    assert!(openable(&state));
     assert_eq!(session.launches.load(Ordering::SeqCst), 1);
     let entry = session.the_entry();
     assert_eq!(entry_names(&entry), vec!["entry.json", "view.mzML"]);
@@ -314,6 +322,10 @@ fn a_miss_converts_the_verified_default_publishes_once_and_opens_the_entry_not_t
         .open(operation)
         .expect_err("a ready view opens once");
     assert_eq!(again.kind, "raw_view_not_ready");
+    assert!(
+        !openable(&session.service.raw_view_state()),
+        "an opened view no longer offers Open"
+    );
     assert_eq!(
         session.raw_facts(),
         before,
@@ -594,6 +606,11 @@ fn short_space_fails_after_checking_file_without_evicting_and_states_both_number
     assert_eq!(needed_bytes, Some(3 * raw_bytes + (2 << 30)));
     assert_eq!(session.launches.load(Ordering::SeqCst), 0);
     assert_eq!(session.staging(), Vec::<String>::new());
+
+    // Free space that cannot be read is not too little of it.
+    session.service.set_view_cache_free_space(|_| None);
+    assert_eq!(failed(&session.view()), ("view_cache_unreadable", true));
+    assert_eq!(session.launches.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -642,20 +659,51 @@ fn a_disk_that_fills_during_the_run_fails_as_the_conversion_and_states_the_free_
     assert_eq!(session.staging(), Vec::<String>::new());
 }
 
+fn rewrite_in_place(raw: &Path) {
+    let mut bytes = fs::read(raw).expect("the RAW");
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xFF;
+    fs::write(raw, bytes).expect("rewrite the RAW in place");
+}
+
 #[test]
-fn a_raw_rewritten_after_the_run_fails_with_raw_view_source_changed() {
-    let session = viewing("raw-view-changed");
-    let raw = session.raw.clone();
-    session.service.set_raw_view_phase_hook(move |_, phase| {
-        if phase == RawViewPhaseDto::CheckingOutput {
-            let mut bytes = fs::read(&raw).expect("the RAW");
-            let last = bytes.len() - 1;
-            bytes[last] ^= 0xFF;
-            fs::write(&raw, bytes).expect("rewrite the RAW in place");
-        }
-    });
-    assert_eq!(failed(&session.view()), ("raw_view_source_changed", true));
-    assert_eq!(session.entries(), Vec::<String>::new());
+fn a_raw_rewritten_before_or_after_the_run_fails_with_raw_view_source_changed() {
+    // Before the run, its own pin finds it; after, Checking output does.
+    for (phase, launches) in [
+        (RawViewPhaseDto::Converting, 0),
+        (RawViewPhaseDto::CheckingOutput, 1),
+    ] {
+        let session = viewing(&format!("raw-view-changed-{phase:?}"));
+        let raw = session.raw.clone();
+        session.service.set_raw_view_phase_hook(move |_, entered| {
+            if entered == phase {
+                rewrite_in_place(&raw);
+            }
+        });
+        assert_eq!(
+            failed(&session.view()),
+            ("raw_view_source_changed", true),
+            "{phase:?}"
+        );
+        assert_eq!(session.launches.load(Ordering::SeqCst), launches);
+        assert_eq!(session.entries(), Vec::<String>::new());
+        assert_eq!(session.staging(), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn a_raw_that_grew_past_the_limit_after_it_was_added_is_refused_at_its_first_chunk() {
+    let session = viewing("raw-view-grew");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&session.raw)
+        .and_then(|file| file.set_len(MAX_RAW_BYTES + 1))
+        .expect("the RAW grows after it was added");
+    assert_eq!(
+        failed(&session.view()),
+        ("view_cache_entry_too_large", false)
+    );
+    assert_eq!(session.launches.load(Ordering::SeqCst), 0);
     assert_eq!(session.staging(), Vec::<String>::new());
 }
 
@@ -754,6 +802,10 @@ fn pins_end_with_the_next_open_or_the_row_and_removing_the_row_deletes_nothing()
         .expect("the row goes");
     assert!(session.raw.is_file());
     assert_eq!(summary(&session.service), (1, 0));
+    assert!(
+        !openable(&session.service.raw_view_state()),
+        "the row's pin went with it"
+    );
     let cleared = session.service.clear_view_cache().expect("Clear runs");
     assert_eq!((cleared.removed, cleared.kept_in_use), (1, 0));
     assert_eq!(session.entries(), Vec::<String>::new());
@@ -909,6 +961,7 @@ fn a_superseded_open_ends_the_view_and_leaves_its_entry_for_the_next_view() {
         .expect_err("no preview to read");
     assert_eq!(refused.kind, "dataset_not_previewable");
     assert_eq!(summary(&session.service), (1, 0), "the pin ended with it");
+    assert!(!openable(&session.service.raw_view_state()));
     assert_eq!(
         session.open(operation).expect_err("opened once").kind,
         "raw_view_not_ready"
@@ -1053,6 +1106,245 @@ fn a_refused_publishing_rename_fails_not_stored_and_its_held_attempt_waits_for_a
     assert!(!ready(&session.view()).1);
     assert_eq!(session.entries().len(), 1);
     assert_eq!(session.staging().len(), 1, "left for a later session");
+}
+
+#[test]
+fn a_cancel_accepted_after_the_last_read_still_ends_cancelled_and_releases_the_pin() {
+    // Decision 10: Cancel always ends the operation `cancelled`, also when it
+    // lands after the work reached an entry and before the operation settled.
+    for hit in [false, true] {
+        let session = viewing(&format!("raw-view-settle-{hit}"));
+        if hit {
+            ready(&session.view());
+        }
+        let service = Arc::downgrade(&session.service);
+        session.service.set_raw_view_settle_hook(move |operation| {
+            if let Some(service) = service.upgrade() {
+                service.cancel_raw_view(RawViewOperationRequestDto { operation });
+            }
+        });
+        let state = session.view();
+        assert_eq!(cancelled_stored(&state), !hit, "stored only by a miss");
+        assert_eq!(
+            session
+                .open(operation_of(&state))
+                .expect_err("never opened")
+                .kind,
+            "raw_view_not_ready"
+        );
+        assert_eq!(summary(&session.service), (1, 0), "no pin is left");
+
+        // Once settled, a Cancel is a late press.
+        session.service.set_raw_view_settle_hook(|_| {});
+        let (operation, _) = ready(&session.view());
+        assert!(openable(
+            &session
+                .service
+                .cancel_raw_view(RawViewOperationRequestDto { operation })
+        ));
+        assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[test]
+fn retry_of_a_terminal_queue_answers_raw_view_busy_while_a_view_runs() {
+    let session = viewing("raw-view-retry");
+    let service = &session.service;
+    // Held open for writing, the item fails retryably and launches nothing.
+    let held = session.raws.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(service, &held);
+    let destination = destination_root(&session.raws, "out");
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(service, &[blocked], &destination);
+    assert_eq!(terminal_queue(&update).retryable_failed_count, 1);
+    drop(writer);
+
+    // A terminal queue leaves the slot to View, and then Retry waits for it.
+    let operation = session
+        .begin()
+        .expect("View begins beside a terminal queue");
+    assert_eq!(
+        service
+            .retry_conversion_queue(current_document(service))
+            .expect_err("no rerun beside a view")
+            .kind,
+        "raw_view_busy"
+    );
+    assert_eq!(session.launches.load(Ordering::SeqCst), 0);
+    service.run_raw_view(operation);
+    ready(&service.raw_view_state());
+    assert!(
+        service
+            .retry_conversion_queue(current_document(service))
+            .is_ok()
+    );
+}
+
+impl HasLaunchCount for StopAwareRunner {
+    fn launch_count(&self) -> Arc<AtomicUsize> {
+        self.launches()
+    }
+}
+
+impl Viewing {
+    /// ADR 0015 and decision 10: the backend is quarantined, and the attempt
+    /// stays, marker and all, for a later session's sweep.
+    fn assert_quarantined_with_the_attempt_kept(&self) {
+        assert_eq!(self.entries(), Vec::<String>::new(), "nothing published");
+        let attempts = self.staging();
+        assert_eq!(attempts.len(), 1, "the attempt stays");
+        assert!(
+            self.cache()
+                .join("staging")
+                .join(&attempts[0])
+                .join("owner.json")
+                .is_file()
+        );
+        assert_eq!(
+            self.begin().expect_err("quarantined").kind,
+            "backend_quarantined"
+        );
+    }
+}
+
+#[test]
+fn an_unconfirmed_end_of_msconvert_quarantines_the_backend_and_keeps_the_attempt() {
+    // A Cancel whose termination could not be confirmed.
+    let (runner, started, release) = StopAwareRunner::parked(StopEnding::Unterminated);
+    let session = viewing_with(
+        "raw-view-unterminated",
+        runner,
+        Arc::default(),
+        open_responses(),
+    );
+    let operation = session.begin().expect("View begins");
+    let worker = {
+        let service = Arc::clone(&session.service);
+        std::thread::spawn(move || service.run_raw_view(operation))
+    };
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("msconvert starts");
+    session
+        .service
+        .cancel_raw_view(RawViewOperationRequestDto { operation });
+    release.send(()).expect("release msconvert");
+    worker.join().expect("the worker ends");
+    assert!(!cancelled_stored(&session.service.raw_view_state()));
+    session.assert_quarantined_with_the_attempt_kept();
+
+    // A run that left its process unaccounted for, with no Cancel.
+    let runner = FakeConversionRunner::new(BackendAct::StrandAnOwnedProcess);
+    let arguments = runner.arguments();
+    let session = viewing_with("raw-view-stranded", runner, arguments, open_responses());
+    assert_eq!(failed(&session.view()), ("backend_execution_failed", false));
+    session.assert_quarantined_with_the_attempt_kept();
+}
+
+#[test]
+fn a_new_entry_that_cannot_be_checked_just_now_fails_unavailable_and_stays() {
+    let session = viewing("raw-view-new-unreadable");
+    let entries = session.cache().join("entries");
+    let held = Arc::new(Mutex::new(None));
+    let holder = Arc::clone(&held);
+    let seen = AtomicUsize::new(0);
+    session.service.set_raw_view_phase_hook(move |_, phase| {
+        // The second check is of the entry just published; something else
+        // holds it at that moment.
+        if phase == RawViewPhaseDto::CheckingCachedCopy && seen.fetch_add(1, Ordering::SeqCst) == 1
+        {
+            let names = entry_names(&entries);
+            *holder.lock().expect("held") = Some(hold_exclusively(&entries.join(&names[0])));
+        }
+    });
+    assert_eq!(
+        failed(&session.view()),
+        ("view_cache_entry_unavailable", true)
+    );
+    drop(held.lock().expect("held").take());
+    assert_eq!(session.entries().len(), 1, "published, and left");
+
+    session.service.set_raw_view_phase_hook(|_, _| {});
+    assert!(ready(&session.view()).1, "the next View checks it as a hit");
+    assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+}
+
+/// Runs `fill` once, as this view's Storing begins.
+fn when_storing(session: &Viewing, fill: impl Fn() + Send + Sync + 'static) {
+    let done = AtomicBool::new(false);
+    session.service.set_raw_view_phase_hook(move |_, phase| {
+        if phase == RawViewPhaseDto::Storing && !done.swap(true, Ordering::SeqCst) {
+            fill();
+        }
+    });
+}
+
+#[test]
+fn a_place_another_process_filled_first_is_never_overwritten() {
+    // Its key: every session here converts the same bytes with one build.
+    let probe = viewing("raw-view-occupied-key");
+    ready(&probe.view());
+    let key = probe.entries()[0].clone();
+
+    // A sound entry another session published first is used, and this
+    // operation's attempt is dropped.
+    let session = viewing("raw-view-occupied-sound");
+    let app_data = session.app_data.directory.clone();
+    let theirs = Arc::new(Mutex::new(Vec::new()));
+    let manifest = Arc::clone(&theirs);
+    let place = session.cache().join("entries").join(&key);
+    when_storing(&session, move || {
+        let other = viewing("raw-view-occupied-sound-other");
+        other.service.bind_view_cache(Some(app_data.clone()));
+        ready(&other.view());
+        *manifest.lock().expect("manifest") =
+            fs::read(place.join("entry.json")).expect("their manifest");
+    });
+    let (_, cache_hit) = ready(&session.view());
+    assert!(!cache_hit, "this operation converted");
+    assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+    assert_eq!(session.staging(), Vec::<String>::new());
+    assert_eq!(
+        fs::read(session.the_entry().join("entry.json")).expect("the manifest"),
+        *theirs.lock().expect("manifest"),
+        "the entry there is left as it was"
+    );
+
+    // A damaged one is removed, and this attempt is published in its place.
+    let session = viewing("raw-view-occupied-damaged");
+    let app_data = session.app_data.directory.clone();
+    let place = session.cache().join("entries").join(&key);
+    when_storing(&session, move || {
+        {
+            let other = viewing("raw-view-occupied-damaged-other");
+            other.service.bind_view_cache(Some(app_data.clone()));
+            ready(&other.view());
+        }
+        corrupt_output(&place);
+    });
+    let (_, cache_hit) = ready(&session.view());
+    assert!(!cache_hit);
+    assert_eq!(session.staging(), Vec::<String>::new());
+    session.service.set_raw_view_phase_hook(|_, _| {});
+    assert!(ready(&session.view()).1, "what it published verifies");
+    assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+
+    // Something MSCanvas did not make is left exactly as found.
+    let session = viewing("raw-view-occupied-foreign");
+    let foreign = session.cache().join("entries").join(&key);
+    let place = foreign.clone();
+    when_storing(&session, move || {
+        fs::write(&place, b"not MSCanvas's").expect("a file in the entry's place");
+    });
+    assert_eq!(
+        failed(&session.view()),
+        ("view_cache_entry_unrecognized", false)
+    );
+    assert_eq!(
+        fs::read(&foreign).expect("left as found"),
+        b"not MSCanvas's"
+    );
+    assert_eq!(session.staging(), Vec::<String>::new());
 }
 
 fn operation_of(state: &RawViewStateDto) -> u64 {

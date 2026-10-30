@@ -2655,6 +2655,12 @@ impl PreviewService {
         if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
+        // A terminal queue leaves the slot to a one-click view, and a rerun
+        // would then hold the backend beside it (ADR 0060 decision 5). Asked
+        // again under the slot lock below.
+        if self.conversion_slot().view_is_running() {
+            return Err(super::raw_view::raw_view_busy());
+        }
         // **Every object this pass will use, not one.** A source-relative
         // policy resolved per item, so "against the same folder" became
         // "against the same object for every identity the pass will use". The
@@ -2694,6 +2700,9 @@ impl PreviewService {
         // proved.
         if slot.terminal_bindings().as_ref() != Some(&stored) {
             return Err(queue_destination_changed());
+        }
+        if slot.view_is_running() {
+            return Err(slot.busy_refusal());
         }
         let Some(operation) = slot.begin_retry() else {
             return Err(invalid_conversion_reservation());

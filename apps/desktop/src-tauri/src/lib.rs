@@ -2656,7 +2656,8 @@ pub fn run() {
             }
             // The view cache lives beside the preferences, under the same
             // binding (ADR 0060 decision 6), so the `e2e` QA root applies to it
-            // too. No binding refuses View; nothing is created until a View.
+            // too. No binding refuses View. Nothing is created at startup: the
+            // first View, Settings summary or Clear makes the cache's folder.
             app.state::<SharedService>()
                 .bind_view_cache(app.state::<SharedPreferences>().sibling_directory().ok());
             // The project store starts with no project open and no path bound.

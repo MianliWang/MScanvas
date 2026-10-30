@@ -1065,6 +1065,7 @@ export const en = {
   errViewCacheNotStored: "The converted copy could not be stored in the view cache. Nothing was added.",
   errViewCacheEntryLost: "The converted copy was removed from the view cache before it could be checked.",
   errViewCacheEntryUnavailable: "The cached copy of this file could not be checked or removed just now. Try again.",
+  errViewCacheUnreadable: "The view cache could not be read just now. Try again.",
   errSourceRequiresBundle: "That acquisition is more than one file and must be opened as a bundle.",
   errSourceIdentityUnavailable: "MSCanvas cannot bind that file to a conversion on this platform.",
   errSourceNotInspectable: "MSCanvas could not confirm the file was still the one it opened, so it did not read it.",

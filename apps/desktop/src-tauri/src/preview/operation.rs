@@ -1626,6 +1626,8 @@ impl ConversionSlot {
     pub(super) fn request_clear_stop(&mut self) -> Result<StopAccepted, PreviewErrorDto> {
         // Clear treats a running view as active work (ADR 0060 decision 5):
         // Cancel and clear cancels it, and waits for its worker as for a queue.
+        // No queue is busy beside it: Begin and Retry refuse while a view
+        // runs, and a view begins only on a slot that is not busy.
         if let Some(view) = self.view.as_ref().filter(|view| view.is_running()) {
             view.request_cancel();
             return Ok(StopAccepted::AlreadyRequested);
