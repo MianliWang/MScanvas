@@ -1305,3 +1305,139 @@ fn no_truncation_or_byte_flip_panics() {
         mutated[position] = original;
     }
 }
+
+// ---------------------------------------------------------------------------
+// The shared result types (ADR 0056, slice 2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_shared_types_carry_the_native_values_and_the_file_s_own_terms() {
+    use crate::preview::{
+        RetentionTimeUnitState, SelectedSpectrumResult, SpectrumRepresentationState,
+        SpectrumTableRow, SpectrumValueOrigin, ValueUnitState,
+    };
+
+    let table = table(&base()).expect("opens");
+    let [ms1_row, ms2_row] = table.rows() else {
+        panic!("two rows");
+    };
+    let ms1_row = SpectrumTableRow::from_native(ms1_row);
+    assert_eq!(
+        ms1_row.retention_time().unit(),
+        RetentionTimeUnitState::Minute
+    );
+    assert_eq!(ms1_row.retention_time().value(), 5.9);
+    assert_eq!(ms1_row.base_peak_mz(), 445.12);
+    assert_eq!(ms1_row.base_peak_intensity(), 1200.5);
+    assert_eq!(ms1_row.total_ion_current(), 2400.25);
+    assert_eq!(ms1_row.precursor_mz(), None);
+    // Only `msaccess` prints these; a native row leaves them unreported.
+    assert_eq!(ms1_row.event(), None);
+    assert_eq!(ms1_row.mz_low(), None);
+    assert_eq!(ms1_row.charge(), None);
+    let ms2_row = SpectrumTableRow::from_native(ms2_row);
+    assert_eq!(
+        ms2_row.retention_time().unit(),
+        RetentionTimeUnitState::Second
+    );
+    assert_eq!(ms2_row.precursor_mz(), Some(445.3));
+
+    let ms1 = SelectedSpectrumResult::from_native(selected(&base(), 0).expect("decodes"));
+    assert_eq!(ms1.representation(), SpectrumRepresentationState::Profile);
+    assert_eq!(
+        ms1.mz_unit(),
+        &ValueUnitState::Declared("MS:1000040".to_owned())
+    );
+    assert_eq!(
+        ms1.intensity_unit(),
+        &ValueUnitState::Declared("MS:1000131".to_owned())
+    );
+    assert_eq!(ms1.retention_time().unit(), RetentionTimeUnitState::Minute);
+    assert_eq!(
+        ms1.value_origin(),
+        SpectrumValueOrigin::Stored {
+            mz: Some(BinaryDataType::Float64),
+            intensity: Some(BinaryDataType::Float32),
+        }
+    );
+    assert_eq!(ms1.mz_values(), [400.5, 445.12, 500.75]);
+    assert_eq!(ms1.intensity_values(), [10.0, 1200.5, 0.25]);
+    // The same terms as the row, and the stated range rather than the array's.
+    assert_eq!(ms1.base_peak_mz(), ms1_row.base_peak_mz());
+    assert_eq!(ms1.total_ion_current(), ms1_row.total_ion_current());
+    assert_eq!((ms1.mz_low(), ms1.mz_high()), (Some(400.5), Some(500.75)));
+
+    let ms2 = SelectedSpectrumResult::from_native(selected(&base(), 1).expect("decodes"));
+    assert_eq!(ms2.representation(), SpectrumRepresentationState::Centroid);
+    let precursors = ms2.precursors();
+    assert_eq!(precursors.len(), 2);
+    assert_eq!(
+        (
+            precursors[0].index(),
+            precursors[0].mz(),
+            precursors[0].intensity()
+        ),
+        (0, Some(445.3), Some(880.0))
+    );
+    // Unstated stays unstated, never zero.
+    assert_eq!(
+        (
+            precursors[1].index(),
+            precursors[1].mz(),
+            precursors[1].intensity()
+        ),
+        (1, Some(512.25), None)
+    );
+}
+
+#[test]
+fn what_a_spectrum_does_not_declare_stays_not_declared() {
+    use crate::preview::{
+        RetentionTimeUnitState, SelectedSpectrumResult, SpectrumRepresentationState, ValueUnitState,
+    };
+
+    let bare = ms1_default(0)
+        .replace(&cv("MS:1000128", "profile spectrum", ""), "")
+        .replace(&cv("MS:1000528", "lowest observed m/z", "400.5"), "")
+        .replace(&cv("MS:1000527", "highest observed m/z", "500.75"), "")
+        .replace(" unitAccession=\"UO:0000031\"", "")
+        .replace(" unitAccession=\"MS:1000040\"", "");
+    let spectrum =
+        SelectedSpectrumResult::from_native(selected(&document(&[bare]), 0).expect("decodes"));
+    assert_eq!(
+        spectrum.representation(),
+        SpectrumRepresentationState::NotDeclared
+    );
+    assert_eq!(
+        spectrum.retention_time().unit(),
+        RetentionTimeUnitState::NotDeclared
+    );
+    assert_eq!(spectrum.mz_unit(), &ValueUnitState::NotDeclared);
+    assert_eq!(
+        spectrum.intensity_unit(),
+        &ValueUnitState::Declared("MS:1000131".to_owned())
+    );
+    assert_eq!((spectrum.mz_low(), spectrum.mz_high()), (None, None));
+}
+
+#[test]
+fn a_unit_that_is_not_an_accession_is_refused_rather_than_carried() {
+    for unit in [
+        "MS:1000040,x",
+        "MS:1000040\nx",
+        "MS 1000040",
+        "MS:",
+        ":1000040",
+        "m/z",
+    ] {
+        let spectrum = ms1_default(0).replace(
+            "unitAccession=\"MS:1000040\"",
+            &format!("unitAccession=\"{}\"", unit.replace('\n', "&#10;")),
+        );
+        assert_eq!(
+            selected(&document(&[spectrum]), 0).expect_err("refused"),
+            refused(ArrayRole::Mz, ArrayProblem::UnitNotAnAccession),
+            "{unit:?}"
+        );
+    }
+}

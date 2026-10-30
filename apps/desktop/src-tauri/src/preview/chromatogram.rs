@@ -42,10 +42,10 @@ use mscanvas_plot_spec::spec::{
     SeriesSpec, SpecError, StyleRole, UnitState,
 };
 
-use mscanvas_proteowizard::SelectedSpectrumResult;
+use mscanvas_proteowizard::{RetentionTimeUnitState, SelectedSpectrumResult};
 
 use super::dialog::SaveDialogFacts;
-use super::export::spectrum_panel;
+use super::export::{declared_accession, known_unit, spectrum_panel};
 use super::figure::FigureRenderSettings;
 use super::service::TableRowFacts;
 
@@ -406,6 +406,43 @@ impl Trace {
     }
 }
 
+/// Why a run has no chromatogram, on screen or in export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NoChromatogram {
+    /// The webview received a prefix of the table, not the whole run.
+    Truncated,
+    /// The table has no rows.
+    Empty,
+    /// A retention time or an intensity is not a finite number.
+    NotFinite,
+    /// The rows state different retention-time units, or only some of them
+    /// state one. Nothing converts between seconds and minutes.
+    MixedRetentionTimeUnits,
+}
+
+/// Rows that state different retention-time units, or where only some state one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct MixedRetentionTimeUnits;
+
+/// The one retention-time unit every row states, or `None` for no rows.
+///
+/// One answer for the chromatogram and for the preview page's retention-time
+/// range, so the two cannot give different reasons for the same rows. A row
+/// that states no unit beside one that does is mixed, not a guess.
+pub(super) fn shared_retention_time_unit(
+    rows: &[TableRowFacts],
+) -> Result<Option<RetentionTimeUnitState>, MixedRetentionTimeUnits> {
+    let Some(first) = rows.first() else {
+        return Ok(None);
+    };
+    let unit = first.retention_time_unit();
+    if rows.iter().all(|row| row.retention_time_unit() == unit) {
+        Ok(Some(unit))
+    } else {
+        Err(MixedRetentionTimeUnits)
+    }
+}
+
 /// The complete scientific facts one chromatogram export draws from.
 ///
 /// Holds the retained rows by handle rather than by copy. A run of 36,319 scans
@@ -415,6 +452,8 @@ impl Trace {
 #[derive(Debug, Clone)]
 pub(super) struct ChromatogramSource {
     rows: Arc<Vec<TableRowFacts>>,
+    /// The one retention-time unit every row states.
+    unit: RetentionTimeUnitState,
     /// The order an export reads the rows in: retention time, then the row's
     /// own position in the table.
     ///
@@ -440,19 +479,25 @@ impl ChromatogramSource {
     ///
     /// The remaining refusals are the model's own, and are checked here for the
     /// same reason: a retention time that is not a number cannot be placed on
-    /// an axis or written as a coordinate, and a unit this build cannot name
-    /// cannot be honestly labelled in a figure or in a document header.
-    pub(super) fn from_rows(rows: &Arc<Vec<TableRowFacts>>, truncated: bool) -> Option<Self> {
-        if truncated || rows.is_empty() {
-            return None;
+    /// an axis or written as a coordinate, and rows that state different units,
+    /// or where only some state one, have no one axis to be placed on. Nothing
+    /// converts between seconds and minutes (ADR 0056).
+    pub(super) fn from_rows(
+        rows: &Arc<Vec<TableRowFacts>>,
+        truncated: bool,
+    ) -> Result<Self, NoChromatogram> {
+        if truncated {
+            return Err(NoChromatogram::Truncated);
         }
+        let unit = shared_retention_time_unit(rows)
+            .map_err(|MixedRetentionTimeUnits| NoChromatogram::MixedRetentionTimeUnits)?
+            .ok_or(NoChromatogram::Empty)?;
         for row in rows.iter() {
             if !row.retention_time().is_finite()
                 || !row.total_ion_current().is_finite()
                 || !row.base_peak_intensity().is_finite()
-                || row.retention_time_unit_known()
             {
-                return None;
+                return Err(NoChromatogram::NotFinite);
             }
         }
         let mut order: Vec<usize> = (0..rows.len()).collect();
@@ -465,11 +510,14 @@ impl ChromatogramSource {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(left.cmp(right))
         });
-        let low = rows[*order.first()?].retention_time();
-        let high = rows[*order.last()?].retention_time();
-        let full_domain = Domain::new(low, high).ok()?;
-        Some(Self {
+        let (Some(first), Some(last)) = (order.first(), order.last()) else {
+            return Err(NoChromatogram::Empty);
+        };
+        let full_domain = Domain::new(rows[*first].retention_time(), rows[*last].retention_time())
+            .map_err(|_| NoChromatogram::NotFinite)?;
+        Ok(Self {
             rows: Arc::clone(rows),
+            unit,
             order: Arc::new(order),
             full_domain,
         })
@@ -477,6 +525,35 @@ impl ChromatogramSource {
 
     pub(super) const fn full_domain(&self) -> Domain {
         self.full_domain
+    }
+
+    /// The axis unit, as the rows state it.
+    fn axis_unit(&self) -> Result<UnitState, SpecError> {
+        match self.unit {
+            RetentionTimeUnitState::Second => known_unit("s"),
+            RetentionTimeUnitState::Minute => known_unit("min"),
+            RetentionTimeUnitState::NotEmitted | RetentionTimeUnitState::NotDeclared => {
+                Ok(UnitState::Unreported)
+            }
+        }
+    }
+
+    /// The data document's word for that unit.
+    const fn unit_word(&self) -> &'static str {
+        match self.unit {
+            RetentionTimeUnitState::Second => "second",
+            RetentionTimeUnitState::Minute => "minute",
+            RetentionTimeUnitState::NotEmitted | RetentionTimeUnitState::NotDeclared => UNREPORTED,
+        }
+    }
+
+    /// The declared retention-time unit, in a caption's words.
+    pub(super) const fn declared_unit_name(&self) -> Option<&'static str> {
+        match self.unit {
+            RetentionTimeUnitState::Second => Some("seconds"),
+            RetentionTimeUnitState::Minute => Some("minutes"),
+            RetentionTimeUnitState::NotEmitted | RetentionTimeUnitState::NotDeclared => None,
+        }
     }
 
     /// The retained row this selected spectrum was read from, if it is one.
@@ -637,7 +714,7 @@ pub(super) fn data_document(
         ("full_range_high", source.full_domain().high().to_string()),
         ("export_range_low", resolved.domain().low().to_string()),
         ("export_range_high", resolved.domain().high().to_string()),
-        ("retention_time_unit", UNREPORTED.to_owned()),
+        ("retention_time_unit", source.unit_word().to_owned()),
         ("intensity_unit", UNREPORTED.to_owned()),
         ("row_order", ROW_ORDER.to_owned()),
     ] {
@@ -770,11 +847,17 @@ pub(super) fn figure_spec(
             .with_title(Label::new("Chromatogram")?)
             .with_caption(Caption::new(format!(
                 "{} over {}, from {} scans. Per-scan values projected from the loaded \
-                 spectrum table, not a stored chromatogram record. Retention time and intensity \
-                 units {UNREPORTED}.",
+                 spectrum table, not a stored chromatogram record. {}.",
                 traces.describe(),
                 scope_phrase(resolved),
                 source.scan_count(),
+                match source.declared_unit_name() {
+                    Some(unit) => format!(
+                        "Retention time in {unit}, as the file declares; intensity unit \
+                         {UNREPORTED}"
+                    ),
+                    None => format!("Retention time and intensity units {UNREPORTED}"),
+                },
             ))?),
     )
 }
@@ -834,10 +917,11 @@ pub(super) fn chromatogram_panel(
 
     let mut panel = PanelSpec::new(
         PlotKind::Chromatogram,
-        // Neither axis carries a unit, because nothing that crossed the backend
-        // boundary established one. A figure labelled "minutes" would state
-        // something the file did not.
-        AxisSpec::new(Label::new("Retention time")?, UnitState::Unreported),
+        // The retention-time axis carries the unit every row declares, and
+        // none where they declare none. The intensity axis carries none,
+        // because the table's terms establish none: a figure labelled with one
+        // would state something the file did not.
+        AxisSpec::new(Label::new("Retention time")?, source.axis_unit()?),
         AxisSpec::new(Label::new("Intensity")?, UnitState::Unreported),
         source.full_domain(),
         Domain::new(value_low, value_high)?,
@@ -907,13 +991,27 @@ pub(super) fn linked_figure_spec(
                  -- per-scan values projected from the loaded spectrum table, not a stored \
                  chromatogram record. Its one marker identifies spectrum index {}, and that \
                  scan is the lower panel: the complete selected spectrum, {} points, never \
-                 narrowed to the chromatogram range. Retention time, m/z and intensity units \
-                 {UNREPORTED}.",
+                 narrowed to the chromatogram range. {}.",
                 traces.describe(),
                 scope_phrase(resolved),
                 source.scan_count(),
                 spectrum.identity().index(),
                 spectrum.mz_values().len(),
+                match (
+                    source.declared_unit_name(),
+                    declared_accession(spectrum.mz_unit()),
+                    declared_accession(spectrum.intensity_unit()),
+                ) {
+                    (None, None, None) => {
+                        format!("Retention time, m/z and intensity units {UNREPORTED}")
+                    }
+                    (time, mz, intensity) => format!(
+                        "Units as the file declares them: retention time {}, m/z {}, intensity {}",
+                        time.unwrap_or(UNREPORTED),
+                        mz.unwrap_or(UNREPORTED),
+                        intensity.unwrap_or(UNREPORTED),
+                    ),
+                },
             ))?),
     )
 }
@@ -950,7 +1048,7 @@ mod tests {
                         *scan_number,
                         1,
                         *retention_time,
-                        false,
+                        RetentionTimeUnitState::NotDeclared,
                         *tic,
                         *bpc,
                     )
@@ -1020,42 +1118,103 @@ mod tests {
     fn a_truncated_table_is_not_exportable() {
         let rows = run(&[(0, Some(1), 1.0, 100.0, 40.0)]);
 
-        assert!(ChromatogramSource::from_rows(&rows, true).is_none());
-        assert!(ChromatogramSource::from_rows(&rows, false).is_some());
+        assert_eq!(
+            ChromatogramSource::from_rows(&rows, true).err(),
+            Some(NoChromatogram::Truncated)
+        );
+        assert!(ChromatogramSource::from_rows(&rows, false).is_ok());
     }
 
     /// The model's own refusals, reached from the same facts.
     #[test]
     fn a_run_the_model_refuses_is_not_exportable() {
-        assert!(ChromatogramSource::from_rows(&run(&[]), false).is_none());
-        assert!(
-            ChromatogramSource::from_rows(&run(&[(0, Some(1), f64::NAN, 100.0, 40.0)]), false)
-                .is_none(),
+        let refused =
+            |rows: &Arc<Vec<TableRowFacts>>| ChromatogramSource::from_rows(rows, false).err();
+        assert_eq!(refused(&run(&[])), Some(NoChromatogram::Empty));
+        assert_eq!(
+            refused(&run(&[(0, Some(1), f64::NAN, 100.0, 40.0)])),
+            Some(NoChromatogram::NotFinite),
             "a retention time that is not a number cannot be placed on an axis"
         );
-        assert!(
-            ChromatogramSource::from_rows(&run(&[(0, Some(1), 1.0, f64::INFINITY, 40.0)]), false)
-                .is_none()
+        assert_eq!(
+            refused(&run(&[(0, Some(1), 1.0, f64::INFINITY, 40.0)])),
+            Some(NoChromatogram::NotFinite)
         );
-        assert!(
-            ChromatogramSource::from_rows(
-                &run(&[(0, Some(1), 1.0, 100.0, f64::NEG_INFINITY)]),
-                false
-            )
-            .is_none()
+        assert_eq!(
+            refused(&run(&[(0, Some(1), 1.0, 100.0, f64::NEG_INFINITY)])),
+            Some(NoChromatogram::NotFinite)
         );
-        // A unit this build cannot name cannot be honestly labelled, in a figure
-        // or in a document header.
-        let claimed = Arc::new(vec![TableRowFacts::for_test(
-            0,
-            Some(1),
-            1,
-            1.0,
-            true,
-            100.0,
-            40.0,
-        )]);
-        assert!(ChromatogramSource::from_rows(&claimed, false).is_none());
+    }
+
+    /// One run in one declared unit.
+    fn run_in(unit: RetentionTimeUnitState, retention_times: &[f64]) -> Arc<Vec<TableRowFacts>> {
+        Arc::new(
+            (0_u64..)
+                .zip(retention_times)
+                .map(|(index, retention_time)| {
+                    TableRowFacts::for_test(index, None, 1, *retention_time, unit, 10.0, 5.0)
+                })
+                .collect(),
+        )
+    }
+
+    /// A run whose rows declare a unit keeps its chromatogram, with that unit on
+    /// the axis, in the document and in the caption (ADR 0056, decision 5).
+    #[test]
+    fn a_declared_unit_reaches_the_axis_the_document_and_the_caption() {
+        for (unit, word, label, phrase) in [
+            (RetentionTimeUnitState::Second, "second", "s", "seconds"),
+            (RetentionTimeUnitState::Minute, "minute", "min", "minutes"),
+        ] {
+            let source = source(&run_in(unit, &[1.5, 2.5]));
+            let (document, _) =
+                data_document(&source, full(&source), ChromatogramExportFormat::Csv).expect("csv");
+            assert_eq!(preamble(&document, "retention_time_unit", ','), word);
+            assert_eq!(preamble(&document, "intensity_unit", ','), UNREPORTED);
+
+            let figure = figure_spec(&source, full(&source), both(), settings()).expect("figure");
+            let json = figure.to_json().expect("json");
+            assert!(json.contains(&format!(r#""unit":"{label}""#)), "{json}");
+            assert!(
+                json.contains(&format!(
+                    "Retention time in {phrase}, as the file declares; intensity unit unreported."
+                )),
+                "{json}"
+            );
+            assert!(
+                svg_document(&source, full(&source), both(), settings())
+                    .expect("svg")
+                    .contains(&format!("Retention time ({label})"))
+            );
+        }
+    }
+
+    /// Rows with different units, or where only some declare one, have no
+    /// chromatogram, with that reason. Nothing converts seconds to minutes.
+    #[test]
+    fn mixed_or_partly_declared_units_give_no_chromatogram() {
+        let row = |index, unit| TableRowFacts::for_test(index, None, 1, 1.0, unit, 10.0, 5.0);
+        for rows in [
+            vec![
+                row(0, RetentionTimeUnitState::Second),
+                row(1, RetentionTimeUnitState::Minute),
+            ],
+            vec![
+                row(0, RetentionTimeUnitState::Minute),
+                row(1, RetentionTimeUnitState::NotDeclared),
+            ],
+        ] {
+            assert_eq!(
+                ChromatogramSource::from_rows(&Arc::new(rows), false).err(),
+                Some(NoChromatogram::MixedRetentionTimeUnits)
+            );
+        }
+        // Every row declaring none is one unit, unreported.
+        let none = run_in(RetentionTimeUnitState::NotDeclared, &[1.0, 2.0]);
+        let source = source(&none);
+        let (document, _) =
+            data_document(&source, full(&source), ChromatogramExportFormat::Tsv).expect("tsv");
+        assert_eq!(preamble(&document, "retention_time_unit", '\t'), UNREPORTED);
     }
 
     /// The export's order is the screen's: retention time, then table position.

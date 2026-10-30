@@ -61,8 +61,7 @@ use mscanvas_plot_spec::spec::{
     SpectrumRepresentation, StyleRole, UnitState, measurement_domains,
 };
 use mscanvas_proteowizard::{
-    RunSummaryResult, SelectedSpectrumResult, SpectrumRepresentationState,
-    UnitState as SourceUnitState,
+    RunSummaryResult, SelectedSpectrumResult, SpectrumRepresentationState, ValueUnitState,
 };
 
 use super::chromatogram::{
@@ -1055,6 +1054,18 @@ impl ScientificExportSlots {
         ticket
     }
 
+    /// Whether this ticket names the latest preview open.
+    ///
+    /// The one question this slot answers on its own, and only for a caller
+    /// that holds the workspace lock across the question and what it does with
+    /// the answer: an open's commit of its retained preview (ADR 0056, decision
+    /// 4). Every production ticket is taken under that lock too, so the answer
+    /// cannot go stale between the question and the write. Installing an export
+    /// still goes through the reconcilers below, which ask and act in one call.
+    pub(super) fn is_latest_preview_open(&self, ticket: PreviewOpenTicket) -> bool {
+        ticket == self.latest_preview_open
+    }
+
     /// Retains the run summary one *completed* open established, if that open
     /// is still the latest, and answers the name a QC capture may use for it.
     ///
@@ -1995,16 +2006,18 @@ fn visible_value_extent(spectrum: &SelectedSpectrumResult, window: Domain) -> (f
 /// non-decreasing, or which carries a value the contract will not accept, is
 /// refused here rather than drawn into a figure that misstates it.
 pub(super) fn spectrum_panel(spectrum: &SelectedSpectrumResult) -> Result<PanelSpec, SpecError> {
-    // Exhaustive, with no wildcard arm. Both of these enumerations carry one
-    // state today, and that is exactly why the match is written this way: a
-    // backend that starts emitting a real representation or a real unit must
+    // Exhaustive, with no wildcard arm, so a state added to the evidence must
     // arrive here as a compile error and be mapped from that evidence, rather
     // than falling into a default that happens to keep building.
     let representation = match spectrum.representation() {
-        SpectrumRepresentationState::NotEmitted => SpectrumRepresentation::Unreported,
+        SpectrumRepresentationState::Centroid => SpectrumRepresentation::Centroid,
+        SpectrumRepresentationState::Profile => SpectrumRepresentation::Profile,
+        SpectrumRepresentationState::NotEmitted | SpectrumRepresentationState::NotDeclared => {
+            SpectrumRepresentation::Unreported
+        }
     };
-    let unit = match spectrum.value_units() {
-        SourceUnitState::NotEmitted => UnitState::Unreported,
+    let axis_unit = |unit: &ValueUnitState| {
+        declared_accession(unit).map_or(Ok(UnitState::Unreported), known_unit)
     };
 
     // Asked of the borrowed arrays, before either is copied, and asked through
@@ -2027,18 +2040,42 @@ pub(super) fn spectrum_panel(spectrum: &SelectedSpectrumResult) -> Result<PanelS
 
     let panel = PanelSpec::new(
         PlotKind::Spectrum { representation },
-        // Both axes carry the same state because the backend reports one
-        // answer for the arrays rather than one per axis. Cloned rather than
-        // copied: an established unit is a `Label`, so the state owns a string
-        // in the case this build cannot reach yet.
-        AxisSpec::new(Label::new("m/z")?, unit.clone()),
-        AxisSpec::new(Label::new("Intensity")?, unit),
+        // Each axis carries the unit its own array declares, by accession.
+        AxisSpec::new(Label::new("m/z")?, axis_unit(spectrum.mz_unit())?),
+        AxisSpec::new(
+            Label::new("Intensity")?,
+            axis_unit(spectrum.intensity_unit())?,
+        ),
         domains.domain(),
         domains.value_domain(),
         vec![series],
     )?;
 
     Ok(panel)
+}
+
+/// The accession one array declares, or `None` where its unit is unreported.
+///
+/// Exhaustive for the reason [`spectrum_panel`] is. The reader admits only an
+/// accession of ASCII letters and digits, so it needs no quoting in a data
+/// document and is a valid figure label.
+pub(super) fn declared_accession(unit: &ValueUnitState) -> Option<&str> {
+    match unit {
+        ValueUnitState::Declared(accession) => Some(accession),
+        ValueUnitState::NotEmitted | ValueUnitState::NotDeclared => None,
+    }
+}
+
+/// A unit the file declared, as a figure axis states it.
+///
+/// # Errors
+///
+/// The label rule's refusal. Never a fallback to "unreported": the file did
+/// declare a unit, and a figure that dropped it would misstate the file.
+pub(super) fn known_unit(unit: &str) -> Result<UnitState, SpecError> {
+    Ok(UnitState::Known {
+        unit: Label::new(unit)?,
+    })
 }
 
 /// Renders one selected spectrum as the SVG document a user receives.
@@ -2268,14 +2305,16 @@ pub(super) fn png_document(
 ///
 /// **No quoting rule exists, because no field can need one.** Every preamble
 /// key is a fixed ASCII identifier, every preamble value is either an integer,
-/// a finite `f64` or one of this module's fixed state words, and every record
-/// field is a number. None of them can contain a delimiter, a quote or a line
-/// break, and a test asserts that over the whole document rather than trusting
-/// it.
+/// a finite `f64`, one of this module's fixed state words or a unit accession
+/// the reader admitted (ASCII letters and digits around one colon), and every
+/// record field is a number. None of them can contain a delimiter, a quote or a
+/// line break, and a test asserts that over the whole document rather than
+/// trusting it.
 ///
 /// Numbers are written with Rust's shortest round-tripping form: locale
 /// independent, `.` as the decimal point, no thousands separator, and exactly
-/// the `f64` the backend parsed comes back out of the file.
+/// the `f64` the source holds comes back out of the file. For a native mzML
+/// spectrum that is the stored value itself, widened exactly (ADR 0056).
 ///
 /// Lines end with `\n`. One ending, chosen rather than inherited from the host,
 /// so the same spectrum is the same bytes on every platform.
@@ -2286,11 +2325,14 @@ pub(super) fn data_document(
 ) -> Option<String> {
     let delimiter = format.delimiter()?;
     let representation = match spectrum.representation() {
-        SpectrumRepresentationState::NotEmitted => UNREPORTED,
+        SpectrumRepresentationState::Centroid => "centroid",
+        SpectrumRepresentationState::Profile => "profile",
+        SpectrumRepresentationState::NotEmitted | SpectrumRepresentationState::NotDeclared => {
+            UNREPORTED
+        }
     };
-    let unit = match spectrum.value_units() {
-        SourceUnitState::NotEmitted => UNREPORTED,
-    };
+    let mz_unit = declared_accession(spectrum.mz_unit()).unwrap_or(UNREPORTED);
+    let intensity_unit = declared_accession(spectrum.intensity_unit()).unwrap_or(UNREPORTED);
 
     let source_points = spectrum.mz_values().len();
     // Borrowed, never copied. The records this document writes are a run of the
@@ -2320,8 +2362,8 @@ pub(super) fn data_document(
             ("spectrum_index", index),
             ("point_count", source_points.to_string()),
             ("representation", representation.to_owned()),
-            ("mz_unit", unit.to_owned()),
-            ("intensity_unit", unit.to_owned()),
+            ("mz_unit", mz_unit.to_owned()),
+            ("intensity_unit", intensity_unit.to_owned()),
         ],
         Some(window) => vec![
             ("format", SPECTRUM_DATA_FORMAT_ID.to_owned()),
@@ -2336,8 +2378,8 @@ pub(super) fn data_document(
             ("range_low", window.low().to_string()),
             ("range_high", window.high().to_string()),
             ("representation", representation.to_owned()),
-            ("mz_unit", unit.to_owned()),
-            ("intensity_unit", unit.to_owned()),
+            ("mz_unit", mz_unit.to_owned()),
+            ("intensity_unit", intensity_unit.to_owned()),
         ],
     };
     for (key, value) in preamble {
@@ -3697,8 +3739,24 @@ mod tests {
     /// One exportable run, for the lane tests.
     fn seeded_chromatogram() -> ChromatogramSource {
         let rows = std::sync::Arc::new(vec![
-            super::super::service::TableRowFacts::for_test(0, Some(1), 1, 1.0, false, 100.0, 40.0),
-            super::super::service::TableRowFacts::for_test(1, Some(2), 1, 2.0, false, 300.0, 120.0),
+            super::super::service::TableRowFacts::for_test(
+                0,
+                Some(1),
+                1,
+                1.0,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
+                100.0,
+                40.0,
+            ),
+            super::super::service::TableRowFacts::for_test(
+                1,
+                Some(2),
+                1,
+                2.0,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
+                300.0,
+                120.0,
+            ),
         ]);
         ChromatogramSource::from_rows(&rows, false).expect("an exportable run")
     }
@@ -4167,13 +4225,21 @@ mod tests {
     /// A second exportable run, told apart from the first by how long it is.
     fn other_chromatogram() -> ChromatogramSource {
         let rows = std::sync::Arc::new(vec![
-            super::super::service::TableRowFacts::for_test(0, Some(1), 1, 10.0, false, 100.0, 40.0),
+            super::super::service::TableRowFacts::for_test(
+                0,
+                Some(1),
+                1,
+                10.0,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
+                100.0,
+                40.0,
+            ),
             super::super::service::TableRowFacts::for_test(
                 1,
                 Some(2),
                 1,
                 20.0,
-                false,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
                 300.0,
                 120.0,
             ),
@@ -4182,7 +4248,7 @@ mod tests {
                 Some(3),
                 1,
                 30.0,
-                false,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
                 500.0,
                 220.0,
             ),
@@ -4501,7 +4567,15 @@ mod tests {
 
     /// One retained row, named the way these tests read them.
     fn row(index: u64, scan: u64, retention_time: f64, tic: f64, bpi: f64) -> TableRowFacts {
-        TableRowFacts::for_test(index, Some(scan), 1, retention_time, false, tic, bpi)
+        TableRowFacts::for_test(
+            index,
+            Some(scan),
+            1,
+            retention_time,
+            mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
+            tic,
+            bpi,
+        )
     }
 
     /// A run of three scans at three distinct retention times.

@@ -56,7 +56,10 @@ fn the_admitted_domain_is_the_points_and_never_the_reported_pair() {
     let spectrum = spectrum(&[(120.0, 1.0), (880.0, 2.0)]);
 
     assert_eq!(admitted(&spectrum), (120.0, 880.0));
-    assert_eq!(admitted(&spectrum), (spectrum.mz_low(), spectrum.mz_high()));
+    assert_eq!(
+        (Some(admitted(&spectrum).0), Some(admitted(&spectrum).1)),
+        (spectrum.mz_low(), spectrum.mz_high())
+    );
 }
 
 #[test]
@@ -418,9 +421,9 @@ fn a_window_past_any_transfer_prefix_draws_the_retained_source() {
     // the complete domain while its data stopped there would show blank space
     // over peaks this session is holding.
     //
-    // Built directly rather than parsed, because the text bound refuses a
-    // spectrum this large before the transfer bound could apply -- see
-    // `the_transfer_bound_is_unreachable_because_the_text_bound_refuses_first`.
+    // Built directly rather than read, so the property is proved without a
+    // file. Since ADR 0056 such a spectrum is reachable through the service
+    // too: `a_spectrum_above_the_transfer_bound_crosses_as_a_prefix_and_exports_whole`.
     let count = MAX_SPECTRUM_POINTS + 5_000;
     let spectrum = ascending(count);
     let (low, high) = admitted(&spectrum);

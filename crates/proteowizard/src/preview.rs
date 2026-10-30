@@ -5,12 +5,22 @@
 //! manifest. It does not spawn a backend, mutate the filesystem, infer
 //! unsupported inputs from English diagnostics, or assign scientific meaning
 //! to values that the measured formatter did not describe.
+//!
+//! The spectrum-table row and the selected spectrum are also the shared result
+//! types of the project-owned mzML reader (ADR 0056): `from_native` builds
+//! each from what the reader read, so the product projects one type whichever
+//! reader produced it. Since ADR 0056 the product reads both natively; the
+//! `msaccess` parsers of them remain this crate's interface to that tool.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use thiserror::Error;
 
+use crate::mzml_reader::{
+    ArrayUnit, BinaryDataType, MzmlRepresentation, MzmlRetentionTime, MzmlSelectedSpectrum,
+    MzmlSpectrumRow, RetentionTimeUnit,
+};
 use crate::{PreviewOperation, ProcessOutput};
 
 /// The largest preview output this crate will interpret.
@@ -29,18 +39,25 @@ use crate::{PreviewOperation, ProcessOutput};
 /// an analyst is most likely to be looking for.
 pub const MAX_PREVIEW_TEXT_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Whether a unit was explicitly emitted by the preview formatter.
+/// What is known about the unit of one retention time. Nothing converts
+/// between seconds and minutes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnitState {
-    /// The formatter emitted a numeric value without a unit.
+pub enum RetentionTimeUnitState {
+    /// The `msaccess` formatter printed the value without a unit.
     NotEmitted,
+    /// The mzML file states the time without a unit (ADR 0056).
+    NotDeclared,
+    /// The mzML file declares seconds (UO:0000010).
+    Second,
+    /// The mzML file declares minutes (UO:0000031 or MS:1000038).
+    Minute,
 }
 
-/// Retention time as emitted by ProteoWizard, without an inferred unit.
+/// A retention time with what is known about its unit, never an inferred one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RetentionTime {
     value: f64,
-    unit: UnitState,
+    unit: RetentionTimeUnitState,
 }
 
 impl RetentionTime {
@@ -50,8 +67,41 @@ impl RetentionTime {
     }
 
     #[must_use]
-    pub const fn unit(self) -> UnitState {
+    pub const fn unit(self) -> RetentionTimeUnitState {
         self.unit
+    }
+
+    const fn native(time: MzmlRetentionTime) -> Self {
+        Self {
+            value: time.value(),
+            unit: match time.unit() {
+                RetentionTimeUnit::Second => RetentionTimeUnitState::Second,
+                RetentionTimeUnit::Minute => RetentionTimeUnitState::Minute,
+                RetentionTimeUnit::NotDeclared => RetentionTimeUnitState::NotDeclared,
+            },
+        }
+    }
+}
+
+/// What is known about the unit of one array's values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueUnitState {
+    /// The `msaccess` formatter printed the values without a unit.
+    NotEmitted,
+    /// The array's role term states no unit.
+    NotDeclared,
+    /// The accession of the unit the array's role term declares. The reader
+    /// admits only `PREFIX:ID` of ASCII letters and digits, so it needs no
+    /// quoting in a document or a label.
+    Declared(String),
+}
+
+impl ValueUnitState {
+    fn native(unit: ArrayUnit) -> Self {
+        match unit {
+            ArrayUnit::Declared(accession) => Self::Declared(accession),
+            ArrayUnit::NotDeclared => Self::NotDeclared,
+        }
     }
 }
 
@@ -425,16 +475,21 @@ pub enum SpectrumIdentityConflict {
     ScanNumber,
 }
 
-/// One exact row from `spectrum_table delimiter=tab`.
+/// One spectrum-table row: an exact row from `spectrum_table delimiter=tab`,
+/// or one native mzML row ([`Self::from_native`]).
+///
+/// The fields only `msaccess` prints -- event, analyzer, m/z range, charge and
+/// the three Thermo values -- have no product reader, and a native row leaves
+/// them unreported.
 #[derive(Clone, PartialEq)]
 pub struct SpectrumTableRow {
     identity: SpectrumIdentity,
-    event: String,
-    analyzer: String,
+    event: Option<String>,
+    analyzer: Option<String>,
     ms_level: u32,
     retention_time: RetentionTime,
-    mz_low: f64,
-    mz_high: f64,
+    mz_low: Option<f64>,
+    mz_high: Option<f64>,
     base_peak_mz: f64,
     base_peak_intensity: f64,
     total_ion_current: f64,
@@ -450,8 +505,8 @@ impl fmt::Debug for SpectrumTableRow {
         formatter
             .debug_struct("SpectrumTableRow")
             .field("identity", &self.identity)
-            .field("event_emitted", &!self.event.is_empty())
-            .field("analyzer_emitted", &!self.analyzer.is_empty())
+            .field("event_emitted", &self.event.is_some())
+            .field("analyzer_emitted", &self.analyzer.is_some())
             .field("ms_level", &self.ms_level)
             .field("retention_time_unit", &self.retention_time.unit)
             .field("charge_emitted", &self.charge.is_some())
@@ -467,19 +522,45 @@ impl fmt::Debug for SpectrumTableRow {
 }
 
 impl SpectrumTableRow {
+    /// One native row (ADR 0056): the identity, MS level, retention time with
+    /// its declared unit, base peak, total ion current, and the first
+    /// precursor's selected-ion m/z, all from the spectrum's own terms.
+    #[must_use]
+    pub fn from_native(row: &MzmlSpectrumRow) -> Self {
+        Self {
+            identity: row.identity().clone(),
+            event: None,
+            analyzer: None,
+            ms_level: row.ms_level(),
+            retention_time: RetentionTime::native(row.retention_time()),
+            mz_low: None,
+            mz_high: None,
+            base_peak_mz: row.base_peak_mz(),
+            base_peak_intensity: row.base_peak_intensity(),
+            total_ion_current: row.total_ion_current(),
+            charge: None,
+            precursor_mz: row
+                .first_precursor()
+                .and_then(|precursor| precursor.selected_ion_mz()),
+            thermo_mono_mz: None,
+            filter_string_mz: None,
+            ion_injection_time: None,
+        }
+    }
+
     #[must_use]
     pub const fn identity(&self) -> &SpectrumIdentity {
         &self.identity
     }
 
     #[must_use]
-    pub fn event(&self) -> &str {
-        &self.event
+    pub fn event(&self) -> Option<&str> {
+        self.event.as_deref()
     }
 
     #[must_use]
-    pub fn analyzer(&self) -> &str {
-        &self.analyzer
+    pub fn analyzer(&self) -> Option<&str> {
+        self.analyzer.as_deref()
     }
 
     #[must_use]
@@ -493,12 +574,12 @@ impl SpectrumTableRow {
     }
 
     #[must_use]
-    pub const fn mz_low(&self) -> f64 {
+    pub const fn mz_low(&self) -> Option<f64> {
         self.mz_low
     }
 
     #[must_use]
-    pub const fn mz_high(&self) -> f64 {
+    pub const fn mz_high(&self) -> Option<f64> {
         self.mz_high
     }
 
@@ -683,12 +764,15 @@ impl TicResult {
     }
 }
 
-/// One precursor record emitted by the binary formatter.
+/// One precursor of a selected spectrum. In mzML the selected ion and its
+/// intensity are both optional, so either value may be unstated, and an
+/// unstated value is never zero.
 #[derive(Clone, Copy, PartialEq)]
 pub struct SpectrumPrecursor {
+    /// The precursor's position in the spectrum's precursor list.
     index: u64,
-    mz: f64,
-    intensity: f64,
+    mz: Option<f64>,
+    intensity: Option<f64>,
 }
 
 impl fmt::Debug for SpectrumPrecursor {
@@ -707,14 +791,27 @@ impl SpectrumPrecursor {
     }
 
     #[must_use]
-    pub const fn mz(self) -> f64 {
+    pub const fn mz(self) -> Option<f64> {
         self.mz
     }
 
     #[must_use]
-    pub const fn intensity(self) -> f64 {
+    pub const fn intensity(self) -> Option<f64> {
         self.intensity
     }
+}
+
+/// What a selected spectrum's values were read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectrumValueOrigin {
+    /// Text `msaccess` printed, at this precision.
+    PrintedText(NumericPrecisionEvidence),
+    /// The stored binary values, widened exactly to `f64`, at these stored
+    /// widths. `None` for an array the spectrum omits at declared length zero.
+    Stored {
+        mz: Option<BinaryDataType>,
+        intensity: Option<BinaryDataType>,
+    },
 }
 
 /// Formatter precision requested and observed for selected-spectrum arrays.
@@ -736,7 +833,8 @@ impl NumericPrecisionEvidence {
     }
 }
 
-/// Selected-spectrum facts emitted by `binary index=... precision=...`.
+/// One selected spectrum: the facts `binary index=... precision=...` emits, or
+/// one native mzML spectrum ([`Self::from_native`]).
 #[derive(Clone, PartialEq)]
 pub struct SelectedSpectrumResult {
     identity: SpectrumIdentity,
@@ -748,13 +846,14 @@ pub struct SelectedSpectrumResult {
     mass_analyzer_type: Option<String>,
     scan_event: Option<String>,
     filter_string: Option<String>,
-    mz_low: f64,
-    mz_high: f64,
+    mz_low: Option<f64>,
+    mz_high: Option<f64>,
     base_peak_mz: f64,
     base_peak_intensity: f64,
     total_ion_current: f64,
-    precision: NumericPrecisionEvidence,
-    value_units: UnitState,
+    value_origin: SpectrumValueOrigin,
+    mz_unit: ValueUnitState,
+    intensity_unit: ValueUnitState,
     representation: SpectrumRepresentationState,
 }
 
@@ -773,8 +872,9 @@ impl fmt::Debug for SelectedSpectrumResult {
             )
             .field("scan_event_emitted", &self.scan_event.is_some())
             .field("filter_string_emitted", &self.filter_string.is_some())
-            .field("precision", &self.precision)
-            .field("value_units", &self.value_units)
+            .field("value_origin", &self.value_origin)
+            .field("mz_unit", &self.mz_unit)
+            .field("intensity_unit", &self.intensity_unit)
             .field("representation", &self.representation)
             .finish()
     }
@@ -834,10 +934,10 @@ impl SelectedSpectrumResult {
             ms_level: 1,
             retention_time: RetentionTime {
                 value: 0.0,
-                unit: UnitState::NotEmitted,
+                unit: RetentionTimeUnitState::NotEmitted,
             },
-            mz_low: mz_values.first().copied().unwrap_or(0.0),
-            mz_high: mz_values.last().copied().unwrap_or(0.0),
+            mz_low: Some(mz_values.first().copied().unwrap_or(0.0)),
+            mz_high: Some(mz_values.last().copied().unwrap_or(0.0)),
             base_peak_mz: mz_values.get(base_peak_index).copied().unwrap_or(0.0),
             base_peak_intensity: intensity_values
                 .get(base_peak_index)
@@ -850,12 +950,63 @@ impl SelectedSpectrumResult {
             mass_analyzer_type: None,
             scan_event: None,
             filter_string: None,
-            precision: NumericPrecisionEvidence {
+            value_origin: SpectrumValueOrigin::PrintedText(NumericPrecisionEvidence {
                 requested_fraction_digits: 0,
                 observed_maximum_fraction_digits: 0,
-            },
-            value_units: UnitState::NotEmitted,
+            }),
+            mz_unit: ValueUnitState::NotEmitted,
+            intensity_unit: ValueUnitState::NotEmitted,
             representation: SpectrumRepresentationState::NotEmitted,
+        }
+    }
+
+    /// One native spectrum (ADR 0056). The arrays are the stored values
+    /// widened to `f64`, which the reader has already checked are exact; the
+    /// representation, each array's unit and the retention-time unit are the
+    /// spectrum's own terms; base peak and total ion current are the terms the
+    /// table row reads; and the m/z range is MS:1000528 and MS:1000527 where
+    /// the spectrum states them.
+    #[must_use]
+    pub fn from_native(spectrum: MzmlSelectedSpectrum) -> Self {
+        let MzmlSelectedSpectrum {
+            row,
+            precursors,
+            mz,
+            intensity,
+        } = spectrum;
+        Self {
+            identity: row.identity().clone(),
+            ms_level: row.ms_level(),
+            retention_time: RetentionTime::native(row.retention_time()),
+            mz_values: mz.values,
+            intensity_values: intensity.values,
+            precursors: (0_u64..)
+                .zip(precursors)
+                .map(|(index, precursor)| SpectrumPrecursor {
+                    index,
+                    mz: precursor.selected_ion_mz(),
+                    intensity: precursor.selected_ion_intensity(),
+                })
+                .collect(),
+            mass_analyzer_type: None,
+            scan_event: None,
+            filter_string: None,
+            mz_low: row.lowest_observed_mz(),
+            mz_high: row.highest_observed_mz(),
+            base_peak_mz: row.base_peak_mz(),
+            base_peak_intensity: row.base_peak_intensity(),
+            total_ion_current: row.total_ion_current(),
+            value_origin: SpectrumValueOrigin::Stored {
+                mz: mz.stored_as,
+                intensity: intensity.stored_as,
+            },
+            mz_unit: ValueUnitState::native(mz.unit),
+            intensity_unit: ValueUnitState::native(intensity.unit),
+            representation: match row.representation() {
+                MzmlRepresentation::Centroid => SpectrumRepresentationState::Centroid,
+                MzmlRepresentation::Profile => SpectrumRepresentationState::Profile,
+                MzmlRepresentation::NotDeclared => SpectrumRepresentationState::NotDeclared,
+            },
         }
     }
 
@@ -904,13 +1055,15 @@ impl SelectedSpectrumResult {
         self.filter_string.as_deref()
     }
 
+    /// The lowest m/z the source states, never derived from the array.
     #[must_use]
-    pub const fn mz_low(&self) -> f64 {
+    pub const fn mz_low(&self) -> Option<f64> {
         self.mz_low
     }
 
+    /// The highest m/z the source states, never derived from the array.
     #[must_use]
-    pub const fn mz_high(&self) -> f64 {
+    pub const fn mz_high(&self) -> Option<f64> {
         self.mz_high
     }
 
@@ -930,13 +1083,18 @@ impl SelectedSpectrumResult {
     }
 
     #[must_use]
-    pub const fn precision(&self) -> NumericPrecisionEvidence {
-        self.precision
+    pub const fn value_origin(&self) -> SpectrumValueOrigin {
+        self.value_origin
     }
 
     #[must_use]
-    pub const fn value_units(&self) -> UnitState {
-        self.value_units
+    pub const fn mz_unit(&self) -> &ValueUnitState {
+        &self.mz_unit
+    }
+
+    #[must_use]
+    pub const fn intensity_unit(&self) -> &ValueUnitState {
+        &self.intensity_unit
     }
 
     #[must_use]
@@ -945,10 +1103,17 @@ impl SelectedSpectrumResult {
     }
 }
 
-/// Whether profile/centroid representation was emitted for a selected spectrum.
+/// What is known about a selected spectrum's representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpectrumRepresentationState {
+    /// The `msaccess` formatter prints no profile/centroid marker.
     NotEmitted,
+    /// The mzML spectrum states neither MS:1000127 nor MS:1000128.
+    NotDeclared,
+    /// MS:1000127.
+    Centroid,
+    /// MS:1000128.
+    Profile,
 }
 
 /// A successful typed preview value.
@@ -1497,7 +1662,7 @@ fn parse_run_summary(text: &str) -> Result<RunSummaryResult, PreviewMalformedKin
     }
     let retention_time = |value| RetentionTime {
         value,
-        unit: UnitState::NotEmitted,
+        unit: RetentionTimeUnitState::NotEmitted,
     };
 
     Ok(RunSummaryResult {
@@ -1564,7 +1729,7 @@ fn parse_spectrum_table(text: &str) -> Result<SpectrumTableResult, PreviewMalfor
         let ms_level = parse_ms_level_label(fields[4])?;
         let retention_time = RetentionTime {
             value: parse_finite(fields[5])?,
-            unit: UnitState::NotEmitted,
+            unit: RetentionTimeUnitState::NotEmitted,
         };
         let identity = SpectrumIdentity::from_raw(
             index,
@@ -1576,12 +1741,12 @@ fn parse_spectrum_table(text: &str) -> Result<SpectrumTableResult, PreviewMalfor
 
         rows.push(SpectrumTableRow {
             identity,
-            event: fields[2].to_owned(),
-            analyzer: fields[3].to_owned(),
+            event: emitted_text(fields[2]),
+            analyzer: emitted_text(fields[3]),
             ms_level,
             retention_time,
-            mz_low: parse_finite(fields[6])?,
-            mz_high: parse_finite(fields[7])?,
+            mz_low: Some(parse_finite(fields[6])?),
+            mz_high: Some(parse_finite(fields[7])?),
             base_peak_mz: parse_finite(fields[8])?,
             base_peak_intensity: parse_finite(fields[9])?,
             total_ion_current: parse_finite(fields[10])?,
@@ -1655,7 +1820,7 @@ fn parse_tic(text: &str, ms_level_filter: Option<u8>) -> Result<TicResult, Previ
             ms_level,
             retention_time: RetentionTime {
                 value: parse_finite(fields[5])?,
-                unit: UnitState::NotEmitted,
+                unit: RetentionTimeUnitState::NotEmitted,
             },
             summed_intensity: parse_finite(fields[6])?,
             source_ordinal,
@@ -1765,10 +1930,10 @@ fn parse_selected_spectrum(
 
     let retention_time = RetentionTime {
         value: parse_finite(header("retentionTime")?)?,
-        unit: UnitState::NotEmitted,
+        unit: RetentionTimeUnitState::NotEmitted,
     };
-    let mz_low = parse_finite(header("mzLow")?)?;
-    let mz_high = parse_finite(header("mzHigh")?)?;
+    let mz_low = Some(parse_finite(header("mzLow")?)?);
+    let mz_high = Some(parse_finite(header("mzHigh")?)?);
     let base_peak_mz = parse_finite(header("basePeakMZ")?)?;
     let base_peak_intensity = parse_finite(header("basePeakIntensity")?)?;
     let total_ion_current = parse_finite(header("totalIonCurrent")?)?;
@@ -1829,11 +1994,12 @@ fn parse_selected_spectrum(
         base_peak_mz,
         base_peak_intensity,
         total_ion_current,
-        precision: NumericPrecisionEvidence {
+        value_origin: SpectrumValueOrigin::PrintedText(NumericPrecisionEvidence {
             requested_fraction_digits: requested_precision,
             observed_maximum_fraction_digits,
-        },
-        value_units: UnitState::NotEmitted,
+        }),
+        mz_unit: ValueUnitState::NotEmitted,
+        intensity_unit: ValueUnitState::NotEmitted,
         representation: SpectrumRepresentationState::NotEmitted,
     })
 }
@@ -1866,8 +2032,8 @@ fn parse_precursor_line(line: &str) -> Result<SpectrumPrecursor, PreviewMalforme
     }
     Ok(SpectrumPrecursor {
         index: parse_index(index)?,
-        mz: parse_finite(values[0])?,
-        intensity: parse_finite(values[1])?,
+        mz: Some(parse_finite(values[0])?),
+        intensity: Some(parse_finite(values[1])?),
     })
 }
 
@@ -2281,7 +2447,7 @@ mod tests {
         let range = summary.retention_time_range().expect("range is emitted");
         assert_eq!(range.minimum().value(), 0.1);
         assert_eq!(range.maximum().value(), 0.5);
-        assert_eq!(range.minimum().unit(), UnitState::NotEmitted);
+        assert_eq!(range.minimum().unit(), RetentionTimeUnitState::NotEmitted);
     }
 
     #[test]
@@ -2322,8 +2488,11 @@ mod tests {
         );
         assert_eq!(first.identity().scan_number(), None);
         assert_eq!(first.ms_level(), 1);
-        assert_eq!(first.retention_time().unit(), UnitState::NotEmitted);
-        assert_eq!(first.mz_low(), 100.0);
+        assert_eq!(
+            first.retention_time().unit(),
+            RetentionTimeUnitState::NotEmitted
+        );
+        assert_eq!(first.mz_low(), Some(100.0));
         assert_eq!(first.charge(), None);
         let second = &table.rows()[1];
         assert_eq!(second.charge(), Some(2.0));
@@ -2437,9 +2606,15 @@ mod tests {
         assert_eq!(spectrum.mz_values(), [100.12345678, 200.12345678]);
         assert_eq!(spectrum.intensity_values(), [10.0, 20.0]);
         assert_eq!(spectrum.precursors().len(), 1);
-        assert_eq!(spectrum.precision().requested_fraction_digits(), 8);
-        assert_eq!(spectrum.precision().observed_maximum_fraction_digits(), 8);
-        assert_eq!(spectrum.value_units(), UnitState::NotEmitted);
+        assert_eq!(
+            spectrum.value_origin(),
+            SpectrumValueOrigin::PrintedText(NumericPrecisionEvidence {
+                requested_fraction_digits: 8,
+                observed_maximum_fraction_digits: 8,
+            })
+        );
+        assert_eq!(spectrum.mz_unit(), &ValueUnitState::NotEmitted);
+        assert_eq!(spectrum.intensity_unit(), &ValueUnitState::NotEmitted);
         assert_eq!(
             spectrum.representation(),
             SpectrumRepresentationState::NotEmitted
@@ -2460,7 +2635,11 @@ mod tests {
         assert!(spectrum.mz_values().is_empty());
         assert!(spectrum.intensity_values().is_empty());
         assert!(spectrum.precursors().is_empty());
-        assert_eq!(spectrum.precision().observed_maximum_fraction_digits(), 0);
+        assert!(matches!(
+            spectrum.value_origin(),
+            SpectrumValueOrigin::PrintedText(precision)
+                if precision.observed_maximum_fraction_digits() == 0
+        ));
         // Absent optional text stays absent rather than becoming empty content.
         assert_eq!(spectrum.mass_analyzer_type(), None);
         assert_eq!(spectrum.filter_string(), None);
