@@ -143,7 +143,8 @@ read polarity yet; branch `be/reader-meta` adds it.
       That compares one peak per spectrum, not every cell.
     - **Ion trap.** On the LTQ Velos run the same record finds the most
       intense of msconvert's vendor centroids 3.1–8.3 times the highest
-      profile sample (median 6.8 for MS1) and states that "the ion-trap vendor
+      profile sample over MS1 and MS2 (median 6.8 for MS1, 3.7 for MS2; its 29
+      MS1 spectra include the zoom scans) and states that "the ion-trap vendor
       intensity is not an apex height". The LTQ Velos conversion measured
       here also holds 15 MS1 full scans acquired as centroid
       (`ITMS + c`). Each was paired with the profile
