@@ -66,7 +66,7 @@ pub const MAX_RECORD_BYTES: u64 = 16 * 1024 * 1024;
 /// How long a replace refused by a reader holding the file is tried again.
 const PUBLISH_RETRY_WAITS_MS: [u64; 4] = [10, 30, 60, 100];
 
-/// How many runs are kept. The oldest ended ones go first.
+/// How many runs are kept. The ones that ended longest ago go first.
 pub const MAX_RUNS: usize = 200;
 
 /// How many bytes of runs are kept, whichever bound is reached first.
@@ -132,6 +132,9 @@ pub struct ItemTally {
     pub items: usize,
     pub finalized: usize,
     pub failed: usize,
+    /// Pending again in a retry pass: failed in an earlier one. Counted as
+    /// failed once the run is interrupted, as its items would be.
+    pub retrying: usize,
     /// Every item ran under ADR 0055's verified tier.
     pub settings_verified: bool,
     /// Every item ran on the measured build for its family.
@@ -150,6 +153,10 @@ impl ItemTally {
             items: items.len(),
             finalized: count(FINALIZED_ITEM),
             failed: count(FAILED_ITEM),
+            retrying: items
+                .iter()
+                .filter(|item| item.progress.state == PENDING_ITEM && item.progress.attempts > 0)
+                .count(),
             settings_verified: items.iter().all(|item| item.source.settings_verified),
             build_verified: items.iter().all(|item| item.source.build_verified),
         }
@@ -180,7 +187,8 @@ pub struct ItemSource {
     pub family: String,
     pub display_name: String,
     /// Primary first, with the identity admission recorded. Empty where the
-    /// row was no longer in the workspace when the run started.
+    /// row was no longer in the workspace when the run started, or where any
+    /// member's path is not Unicode: a set is recorded whole or not at all.
     pub members: Vec<SourceMember>,
     /// The folder its outputs were written into.
     pub destination: Option<String>,
@@ -453,7 +461,7 @@ pub enum RunHistoryWriteDto {
     /// Done. `keptInProgress` runs are still being written, by this session or
     /// another, or may be as far as this build can tell -- a later build's, or
     /// one it cannot read now -- and are kept so their end can still be
-    /// recorded.
+    /// recorded. Off keeps none.
     Done {
         kept_in_progress: usize,
     },
@@ -510,14 +518,37 @@ struct ActiveRun {
     /// `begin`, `update`, `list` or `read`, so an end a reader held off is
     /// not lost.
     unwritten: bool,
+    /// Its file has been written. One that is gone since was forgotten -- by
+    /// a Clear, an Off or a prune, in any instance -- and is never written
+    /// back.
+    written: bool,
+}
+
+impl ActiveRun {
+    fn forgotten(&self, directory: &Path) -> bool {
+        self.written
+            && fs::symlink_metadata(directory.join(file_name_of(&self.record.run_id))).is_err()
+    }
 }
 
 #[derive(Default)]
 struct Lane {
     active: Option<ActiveRun>,
-    /// The last write this session could not make, cleared by the next one
-    /// that succeeds.
+    /// Ended runs whose end has not reached their files, put by when a later
+    /// run began. Written like `active`'s owed state.
+    owed: Vec<ActiveRun>,
+    /// Why this session could not record, if it could not. A write still
+    /// owed is `notWritten` until it is made.
     problem: Option<&'static str>,
+}
+
+impl Lane {
+    fn owes(&self) -> bool {
+        self.active
+            .iter()
+            .chain(&self.owed)
+            .any(|run| run.unwritten)
+    }
 }
 
 /// The session's conversion run history.
@@ -576,23 +607,27 @@ impl ConversionHistory {
         };
         let mut lane = self.locked();
         self.flush(directory, &mut lane);
-        if recording_off(directory) {
-            return;
+        match switch_off(directory) {
+            Some(false) => {}
+            Some(true) => return,
+            None => {
+                lane.problem = Some("notWritten");
+                return;
+            }
         }
         let reopened = match lane.active.take() {
-            // Only while its file is there. A run that a Clear or an Off in
-            // any instance forgot is not written back by its retry, which
+            // Unless it was forgotten. A run that a Clear, an Off or a prune
+            // in any instance forgot is not written back by its retry, which
             // starts a new run instead.
-            Some(mut active)
-                if active.key == key
-                    && fs::symlink_metadata(
-                        directory.join(file_name_of(&active.record.run_id)),
-                    )
-                    .is_ok() =>
-            {
+            Some(mut active) if active.key == key && !active.forgotten(directory) => {
                 active.record.ended_at_ms = None;
                 active.record.state = RunState::Running;
                 Some(active)
+            }
+            // An end still owed is still written.
+            Some(previous) if previous.unwritten && previous.record.state != RunState::Running => {
+                lane.owed.push(previous);
+                None
             }
             // ponytail: a previous run still `running` here means its worker
             // left without a terminal answer; it stays `running` on disk and is
@@ -635,6 +670,7 @@ impl ConversionHistory {
                         .collect(),
                 },
                 unwritten: false,
+                written: false,
             }
         });
         let applied = apply(&mut active.record, progress);
@@ -668,44 +704,42 @@ impl ConversionHistory {
     }
 
     /// Writes the run being recorded as it is now, as the shared switch
-    /// allows, and prunes once its end is on disk. Called with the lane held,
-    /// so no run of this session can start meanwhile.
+    /// allows, and prunes once its end is on disk and nothing else is owed.
+    /// Called with the lane held, so no run of this session can start
+    /// meanwhile.
     fn write_active(&self, directory: &Path, lane: &mut Lane) {
-        let Some(active) = lane.active.as_mut() else {
-            return;
-        };
-        match switch_off(directory) {
-            // Turned off by any instance: this run is forgotten, not finished.
-            Some(true) => {
-                let name = file_name_of(&active.record.run_id);
-                lane.active = None;
-                let _ = remove(&directory.join(name));
-                return;
-            }
-            // A switch nobody can read: nothing is written, and nothing that
-            // is stored is removed on its account. A later write tries again.
-            None => {
-                active.unwritten = true;
-                return;
-            }
-            Some(false) => {
-                let written = publish(directory, &active.record);
-                active.unwritten = written.is_err();
-                lane.problem = written.err();
-            }
-        }
-        if let Some(active) = &lane.active
-            && !active.unwritten
-            && active.record.state != RunState::Running
+        if let Some(active) = lane.active.as_mut()
+            && !write_run(directory, active)
         {
-            prune(directory, self.owner_id());
+            lane.active = None;
+        }
+        self.settle(directory, lane);
+    }
+
+    /// Writes every state of this session's runs that has not reached its
+    /// file.
+    fn flush(&self, directory: &Path, lane: &mut Lane) {
+        if !lane.owes() {
+            return;
+        }
+        lane.owed
+            .retain_mut(|run| write_run(directory, run) && run.unwritten);
+        if lane.active.as_ref().is_some_and(|active| active.unwritten) {
+            self.write_active(directory, lane);
+        } else {
+            self.settle(directory, lane);
         }
     }
 
-    /// Writes a state of this session's run that has not reached its file.
-    fn flush(&self, directory: &Path, lane: &mut Lane) {
-        if lane.active.as_ref().is_some_and(|active| active.unwritten) {
-            self.write_active(directory, lane);
+    fn settle(&self, directory: &Path, lane: &mut Lane) {
+        lane.problem = lane.owes().then_some("notWritten");
+        if lane.problem.is_none()
+            && lane
+                .active
+                .as_ref()
+                .is_some_and(|active| active.record.state != RunState::Running)
+        {
+            prune(directory, self.owner_id());
         }
     }
 
@@ -803,8 +837,9 @@ impl ConversionHistory {
         self.sweep(false)
     }
 
-    /// Clear's removal. `everything` is Off's: a run this build cannot judge
-    /// goes too, since any build that honours the switch forgets it anyway.
+    /// Clear's removal. `everything` is Off's: every run goes, one in progress
+    /// in any instance and one this build cannot judge included. An instance
+    /// whose run went stops recording it at its next write.
     fn sweep(&self, everything: bool) -> RunHistoryWriteDto {
         let directory = match &self.directory {
             Ok(directory) => directory,
@@ -814,21 +849,24 @@ impl ConversionHistory {
             // An ended run is forgotten here with any write still owed, so
             // nothing writes it back.
             let mut lane = self.locked();
-            if lane
-                .active
-                .as_ref()
-                .is_some_and(|active| active.record.state != RunState::Running)
+            lane.owed.clear();
+            if everything
+                || lane
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.record.state != RunState::Running)
             {
                 lane.active = None;
             }
         }
         let (mut kept, mut not_removed) = (0, 0);
         for (name, _) in run_entries(directory) {
-            let in_progress = match read_record(&directory.join(&name)) {
-                Ok(Some(record)) => self.view(directory, record).state == RunState::Running,
-                Err(RecordProblem::NewerVersion | RecordProblem::Unreadable) => !everything,
-                Ok(None) | Err(RecordProblem::Malformed) => false,
-            };
+            let in_progress = !everything
+                && match read_record(&directory.join(&name)) {
+                    Ok(Some(record)) => self.view(directory, record).state == RunState::Running,
+                    Err(RecordProblem::NewerVersion | RecordProblem::Unreadable) => true,
+                    Ok(None) | Err(RecordProblem::Malformed) => false,
+                };
             if in_progress {
                 kept += 1;
             } else if remove(&directory.join(&name)).is_err() {
@@ -852,8 +890,8 @@ impl ConversionHistory {
     }
 
     /// The off switch, shared by every instance. Off stops recording and
-    /// forgets what is stored, this session's run in progress included; on
-    /// starts recording again from the next run.
+    /// forgets what is stored, every run in progress included; on starts
+    /// recording again from the next run.
     #[must_use]
     pub fn set_enabled(&self, enabled: bool) -> RunHistoryWriteDto {
         let directory = match &self.directory {
@@ -885,9 +923,6 @@ impl ConversionHistory {
                 not_removed: 0,
             };
         }
-        if let Some(active) = self.locked().active.take() {
-            let _ = remove(&directory.join(file_name_of(&active.record.run_id)));
-        }
         self.sweep(true)
     }
 
@@ -897,12 +932,12 @@ impl ConversionHistory {
 
     /// A stored run as a reader should be told it. Never written.
     ///
-    /// The run this session is recording is read from memory, where its
-    /// latest state is even when its file could not be written yet. A
-    /// `running` run whose session is gone -- or one of this session's own
-    /// that it is not recording, whose worker left without an end -- reads as
-    /// interrupted, its items included, whether or not a start has said so on
-    /// disk yet.
+    /// The run this session is recording, and an ended one whose end it still
+    /// owes, is read from memory, where its latest state is even when its
+    /// file could not be written yet. A `running` run whose session is gone --
+    /// or one of this session's own that it is not recording, whose worker
+    /// left without an end -- reads as interrupted, its items included,
+    /// whether or not a start has said so on disk yet.
     ///
     /// Takes the lane, so never call it holding the lane.
     fn view(&self, directory: &Path, mut record: RunRecord) -> RunRecord {
@@ -910,8 +945,14 @@ impl ConversionHistory {
             return record;
         }
         let interrupted = if Some(record.owner.as_str()) == self.owner_id() {
-            match &self.locked().active {
-                Some(active) if active.record.run_id == record.run_id => {
+            let lane = self.locked();
+            match lane
+                .active
+                .iter()
+                .chain(&lane.owed)
+                .find(|run| run.record.run_id == record.run_id)
+            {
+                Some(active) => {
                     let mut current = active.record.clone();
                     // As it is stored: without its items, where they did not
                     // fit.
@@ -921,7 +962,7 @@ impl ConversionHistory {
                     }
                     return current;
                 }
-                _ => true,
+                None => true,
             }
         } else {
             matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_))
@@ -967,6 +1008,10 @@ impl ConversionHistory {
                         let _ = publish(directory, &record);
                     }
                     // Off forgets what is stored, this too.
+                    // ponytail: Off removes every run when it is turned off,
+                    // so this is a write that was under way then and landed
+                    // just after; one whose instance is still alive is
+                    // removed by its next write, or by a list while off.
                     Some(true) => {
                         let _ = remove(&path);
                     }
@@ -1015,13 +1060,19 @@ fn apply(record: &mut RunRecord, progress: RunProgress) -> bool {
     true
 }
 
+/// As far as the run's last write that was made says. An item is written
+/// `running` before its process is launched; where that write was refused and
+/// still owed when the session ended, the item reads `notRun` although its
+/// process may have started (ADR 0065 §5).
 fn mark_interrupted(record: &mut RunRecord, now: u64) {
     record.state = RunState::Interrupted;
     record.interrupted_at_ms = Some(now);
+    if let Some(tally) = &mut record.omitted {
+        tally.failed += std::mem::take(&mut tally.retrying);
+    }
     for item in &mut record.items {
         match item.progress.state.as_str() {
             // Its outcome was never recorded; a file may or may not exist.
-            // An item is written `running` before its process is launched.
             RUNNING_ITEM => item.progress.state = INTERRUPTED_ITEM.to_owned(),
             // Never begun by this pass. A retry pass's pending item failed in
             // an earlier one, and that failure, still recorded, is what it is.
@@ -1032,6 +1083,34 @@ fn mark_interrupted(record: &mut RunRecord, now: u64) {
             _ => {}
         }
     }
+}
+
+/// Writes one of this session's runs as the shared switch allows. `false`
+/// where it is forgotten and must never be written again: turned off by any
+/// instance, or its file gone once written.
+///
+/// A run whose first write never landed has no file to miss, so an Off and an
+/// On in another instance before that write lands do not stop it.
+fn write_run(directory: &Path, run: &mut ActiveRun) -> bool {
+    match switch_off(directory) {
+        Some(true) => {
+            let _ = remove(&directory.join(file_name_of(&run.record.run_id)));
+            return false;
+        }
+        // A switch nobody can read: nothing is written, and nothing that is
+        // stored is removed on its account. A later write tries again.
+        None => {
+            run.unwritten = true;
+            return true;
+        }
+        Some(false) => {}
+    }
+    if run.forgotten(directory) {
+        return false;
+    }
+    run.unwritten = publish(directory, &run.record).is_err();
+    run.written |= !run.unwritten;
+    true
 }
 
 /// Writes one run's document, without its items where they would not fit.
@@ -1178,10 +1257,11 @@ fn run_entries(directory: &Path) -> Vec<(String, u64)> {
     entries
 }
 
-/// Keeps this build's newest runs within both bounds. A run another instance
-/// is still writing is never removed. Called only while this session is
-/// recording nothing else, so a `running` run of its own is one whose end was
-/// never written.
+/// Keeps this build's runs within both bounds, removing the ones that ended
+/// longest ago first: by end, detection for an interrupted run, else start. A
+/// run another instance is still writing is never removed. Called only while
+/// this session is recording nothing else and owes nothing, so a `running` run
+/// of its own is one whose end was never written.
 ///
 /// A run this build cannot judge -- a later build's, or one it cannot read
 /// now -- is neither removed nor counted: a later build's live instance may
@@ -1202,7 +1282,11 @@ fn prune(directory: &Path, own: Option<&str>) {
                 let in_progress = record.state == RunState::Running
                     && Some(record.owner.as_str()) != own
                     && !matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_));
-                judged.push((name, size, in_progress));
+                let ended = record
+                    .ended_at_ms
+                    .or(record.interrupted_at_ms)
+                    .unwrap_or(record.started_at_ms);
+                judged.push((ended, name, size, in_progress));
             }
             Err(RecordProblem::Malformed) => {
                 set_aside(directory, &name);
@@ -1210,9 +1294,11 @@ fn prune(directory: &Path, own: Option<&str>) {
             Ok(None) | Err(RecordProblem::NewerVersion | RecordProblem::Unreadable) => {}
         }
     }
+    // Stable, so runs that ended in the same millisecond go oldest first.
+    judged.sort_by_key(|(ended, ..)| *ended);
     let mut count = judged.len();
-    let mut bytes: u64 = judged.iter().map(|(_, size, _)| size).sum();
-    for (name, size, in_progress) in judged {
+    let mut bytes: u64 = judged.iter().map(|(_, _, size, _)| size).sum();
+    for (_, name, size, in_progress) in judged {
         if within(count, bytes) {
             break;
         }

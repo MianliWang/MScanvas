@@ -402,6 +402,15 @@ fn the_oldest_ended_runs_are_pruned_and_a_run_in_progress_never_is() {
             .count(),
         4
     );
+
+    // Started first and ended last, so a run that ended before it goes.
+    other.update(1, progress(RunState::Completed, &["finalized"]));
+    let kept = run_files(&scratch);
+    assert_eq!(kept.len(), MAX_RUNS + 1);
+    assert!(
+        kept.contains(&file_name_of(&in_progress)),
+        "the run that ended last is kept"
+    );
 }
 
 #[test]
@@ -641,51 +650,124 @@ fn clear_keeps_a_run_in_progress_and_off_forgets_everything_for_every_instance()
 }
 
 #[test]
-fn off_forgets_a_run_whose_instance_ended_before_its_next_write() {
-    let scratch = Scratch::new("history-off-dead-instance");
-    let turning_off = open(&scratch);
-    let ending = open(&scratch);
-    ending.begin(1, start(1), progress(RunState::Running, &["running"]));
-    assert_eq!(
-        turning_off.set_enabled(false),
-        RunHistoryWriteDto::Done {
-            kept_in_progress: 1
-        },
-        "a live instance's run is its own to forget, at its next write"
+fn off_in_another_instance_forgets_a_live_run_and_on_again_does_not_bring_it_back() {
+    let scratch = Scratch::new("history-off-on-live");
+    let recording = open(&scratch);
+    let switching = open(&scratch);
+    recording.begin(
+        1,
+        start(2),
+        progress(RunState::Running, &["finalized", "running"]),
     );
-    // It never makes one.
-    drop(ending);
+    assert_eq!(
+        switching.set_enabled(false),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+    assert!(
+        run_files(&scratch).is_empty(),
+        "off forgets a live instance's run at once"
+    );
+    assert_eq!(
+        switching.set_enabled(true),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+    // Its item settles while recording is on again.
+    recording.update(
+        1,
+        progress(RunState::Completed, &["finalized", "finalized"]),
+    );
+    assert!(
+        run_files(&scratch).is_empty(),
+        "its next write does not write it back"
+    );
+    assert!(runs(&recording).is_empty());
+    // It records again from its next run.
+    recording.begin(2, start(1), progress(RunState::Running, &["running"]));
+    assert_eq!(run_files(&scratch).len(), 1);
+}
+
+/// A running run of an instance with no owner lock left, as a write that was
+/// under way when Off removed the files leaves it.
+fn late_write(scratch: &Scratch, index: u64) {
+    let record = RunRecord {
+        schema_version: SCHEMA_VERSION,
+        run_id: format!("{index:013}-{}", "e".repeat(32)),
+        owner: "e".repeat(32),
+        state: RunState::Running,
+        started_at_ms: index,
+        ended_at_ms: None,
+        interrupted_at_ms: None,
+        passes: 1,
+        settings: start(0).settings,
+        build_release: None,
+        conflict_policy: "fail".to_owned(),
+        failure: None,
+        omitted: None,
+        items: Vec::new(),
+    };
+    publish(&history_directory(scratch), &record).expect("write the late run");
+}
+
+#[test]
+fn a_run_that_lands_after_off_is_removed_by_the_next_start_or_list() {
+    let scratch = Scratch::new("history-off-late-write");
+    let history = open(&scratch);
+    assert_eq!(
+        history.set_enabled(false),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+    late_write(&scratch, 1);
     let _ = open(&scratch);
     assert!(
         run_files(&scratch).is_empty(),
         "a start forgets it rather than writing it as interrupted"
     );
 
-    // And so does a list, where no start comes between.
-    let again = open(&scratch);
-    assert_eq!(
-        again.set_enabled(true),
-        RunHistoryWriteDto::Done {
-            kept_in_progress: 0
-        }
-    );
-    let ending = open(&scratch);
-    ending.begin(1, start(1), progress(RunState::Running, &["running"]));
-    assert_eq!(
-        again.set_enabled(false),
-        RunHistoryWriteDto::Done {
-            kept_in_progress: 1
-        }
-    );
-    drop(ending);
+    late_write(&scratch, 2);
     let RunHistoryListDto::Listed {
         runs, recording, ..
-    } = again.list()
+    } = history.list()
     else {
         panic!("listed");
     };
     assert!(!recording && runs.is_empty());
     assert!(run_files(&scratch).is_empty());
+}
+
+#[test]
+fn an_interrupted_run_without_its_items_counts_them_as_it_would_with_them() {
+    let scratch = Scratch::new("history-omitted-interrupted");
+    let history = open(&scratch);
+    // A retry pass cut short: the last item failed in the first pass and this
+    // one had not reached it again.
+    let mut retrying = progress(RunState::Running, &["finalized", "running", "pending"]);
+    retrying.passes = 2;
+    retrying.items[2].attempts = 1;
+    history.begin(1, start(3), retrying);
+    let mut with_items = history
+        .locked()
+        .active
+        .as_ref()
+        .map(|active| active.record.clone())
+        .expect("recorded");
+    let mut without = with_items.clone();
+    without.omitted = Some(ItemTally::of(&without.items));
+    without.items.clear();
+
+    mark_interrupted(&mut with_items, 1);
+    mark_interrupted(&mut without, 1);
+    let counts = |record: &RunRecord| {
+        let run = RunSummaryDto::of(record);
+        (run.item_count, run.finalized_count, run.failed_count)
+    };
+    assert_eq!(counts(&with_items), (3, 1, 1));
+    assert_eq!(counts(&without), counts(&with_items));
 }
 
 #[cfg(windows)]
@@ -722,6 +804,45 @@ fn an_end_a_reader_held_off_is_written_by_the_next_call() {
         read_record(&path).map(|record| record.map(|record| record.state)),
         Ok(Some(RunState::Completed)),
         "the owed write was made"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn an_end_still_owed_when_the_next_run_begins_is_still_written() {
+    let scratch = Scratch::new("history-owed-across-runs");
+    let history = open(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let first = active_id(&history);
+    let path = history_directory(&scratch).join(file_name_of(&first));
+    let on_disk = || read_record(&path).map(|record| record.map(|record| record.state));
+    let reader = fs::File::open(&path).expect("open the run");
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+    // The next queue begins while the end is still refused.
+    history.begin(2, start(1), progress(RunState::Running, &["running"]));
+    assert_eq!(on_disk(), Ok(Some(RunState::Running)), "still refused");
+    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    let listed = runs
+        .iter()
+        .find(|run| run.run_id == first)
+        .expect("the first run is listed");
+    assert_eq!(
+        (listed.state, problem),
+        (RunState::Completed, Some("notWritten")),
+        "not read as interrupted while its end is owed"
+    );
+
+    drop(reader);
+    let RunHistoryListDto::Listed { problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert_eq!(problem, None);
+    assert_eq!(
+        on_disk(),
+        Ok(Some(RunState::Completed)),
+        "the owed end was written"
     );
 }
 

@@ -67,7 +67,9 @@ One run is one queue: its first pass and every retry of it in place.
 - **Passes:** the first pass plus each retry.
 - **Sources:** for each item, every member, primary first, by locator (the
   path) and by the identity admission recorded: byte length, volume serial and
-  the 128-bit file ID. Also the family and the display name.
+  the 128-bit file ID. Also the family and the display name. A set is
+  recorded whole or not at all: where any member's path is not Unicode, no
+  member is recorded, as for a row no longer in the workspace.
 - **Destination:** the folder each item's outputs were written into.
 - **Settings:** the verified row's stable identifier where the settings were
   one, and the canonical structured intent in every case. Per item, whether
@@ -134,11 +136,15 @@ A refusal that ends a running queue is terminal too, with its code.
   session could not record (`problem`), and nothing else.
 - Windows refuses to replace a name another process holds open, which any
   list, read or start in another instance briefly does. A refused replace is
-  tried again a few times over about 200 ms. One still refused is owed: this
-  session's own list and read show the run as it is in memory, and its next
-  write, list or read makes the write. Only a session that ends while it
-  still owes one leaves the earlier state on disk, which then reads as
-  interrupted.
+  tried again a few times over about 200 ms. One still refused is owed, as is
+  any write while the off switch cannot be read: this session's own list and
+  read show the run as it is in memory, and its next write, list or read
+  makes the write, also after a later run has begun. Only a session that ends
+  while it still owes one leaves the earlier state on disk, which then reads
+  as interrupted (section 5).
+- A run whose file is gone once it has been written was forgotten, by a
+  Clear, an Off or a prune in any instance. It is never written back: its
+  next write stops recording it.
 - A retry in place reopens the same record: `passes` increases, and it is
   `running` again until it ends. A retry refused before it binds a build
   leaves the ended record as it was.
@@ -190,15 +196,20 @@ A refusal that ends a running queue is terminal too, with its code.
 
 - **Bounds:** keep the newest 200 runs and at most 64 MiB, whichever bound is
   reached first. One run's document is bounded at 16 MiB.
-- **Order:** the oldest ended runs go first.
+- **Order:** the runs that ended longest ago go first, by end time. An
+  interrupted run counts from when its interruption was detected, and a run
+  with neither from its start. A long run that ends last is therefore not the
+  first to go because it started first.
 - **Runs in progress:** a run still being written, by this or another
   instance, is never pruned.
-- **When:** pruning runs at start and after each run ends.
+- **When:** pruning runs at start and after each run ends, once nothing this
+  session owes is still unwritten.
 - **Oversized runs:** a run whose document, final newline included, would
   exceed 16 MiB is recorded without its items (`itemsOmitted`). Its run-level
-  facts are kept, and so are its items' counts (items, finalized, failed) and
-  whether every item was verified, taken before they were left out, so the
-  list's summary means the same. Nothing is truncated. 1,024 single-output
+  facts are kept, and so are its items' counts (items, finalized, failed, and
+  those a retry pass had moved back to pending) and whether every item was
+  verified, taken before they were left out, so the list's summary means the
+  same, an interrupted run's included. Nothing is truncated. 1,024 single-output
   items with long paths stay well under the bound; SCIEX items of 24 outputs
   each do not. By estimate (about 0.9 KiB per output with its checks, not
   measured on a real set), such a queue passes the bound at about 740 items.
@@ -237,12 +248,19 @@ its end was recorded.
 
 - The item that was running becomes `interrupted`. Its outcome is unknown: a
   file may or may not exist at its final name, and the interface claims
-  neither. An item is written `running` before its process is launched, so
-  an item whose process ever ran is never read as not run.
-- Items this pass never started become `notRun`, except an item a retry pass
-  had moved back to pending. That one failed in an earlier pass and this pass
-  never reached it, so it becomes `failed` again, with that failure's code,
-  which the record still holds.
+  neither. An item is written `running` before its process is launched.
+- Items still pending become `notRun`, except an item a retry pass had moved
+  back to pending. That one failed in an earlier pass and this pass never
+  reached it, so it becomes `failed` again, with that failure's code, which
+  the record still holds.
+- All of this is as of the last write that was made. Where an item's
+  pre-launch write was refused and was still owed when the session ended,
+  that item reads `notRun` (or `failed`, in a retry pass) although its
+  process may have started, and while writes keep failing so may the items
+  after it. *Alternative considered:* reading the first pending item of an
+  interrupted run as `interrupted`. It covers one owed write only, and it
+  would mark an item that never started as interrupted after every crash
+  between binding a build and the first launch.
 - There is no end time, because when it actually stopped is not known.
   `interruptedAtMs` is the time of detection.
 
@@ -281,11 +299,14 @@ and of G16, cross-session staging ownership, unchanged.
 - **Nothing leaves the machine.** History has no upload and no telemetry, and
   is not part of the diagnostics export (RUN-009 is unchanged).
 - **The off switch** is a marker file, so every running instance honours it.
-  Off forgets every stored run, including this session's run in progress, and
-  no instance records while it is off. Another live instance's run in
-  progress is forgotten by that instance at its next write. If that instance
-  ends first, the next start or list removes the run rather than writing it
-  as interrupted. On records from the next run onwards.
+  Off removes every stored run at once, every instance's run in progress
+  included, and no instance records while it is off. An instance whose run
+  was removed stops recording it at its next write, whether or not recording
+  is on again by then. A write already under way when Off removes the files
+  can land just after; the next start or list while it is off removes it. A
+  run whose first write never landed has no file to miss, so an Off and an On
+  in another instance before that write lands do not stop it. On records
+  from the next run onwards.
 - **Clear** forgets every ended run and everything kept aside. It keeps runs
   still in progress, so their end or interruption can still be recorded, and
   says how many it kept. A run this build cannot judge counts as one of them,

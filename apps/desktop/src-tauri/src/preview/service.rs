@@ -4820,7 +4820,8 @@ impl PreviewService {
             self.publish_conversion_busy(&self.conversion_slot());
             // Before anything is launched, so a session that ends while this
             // item converts leaves it `running` on disk, which the next start
-            // reads as interrupted rather than as never run (ADR 0065 §5).
+            // reads as interrupted rather than as never run -- where this
+            // write is made (ADR 0065 §5).
             if self.run_history.get().is_some() {
                 self.record_run_progress(operation, &self.conversion_state());
             }
