@@ -748,6 +748,14 @@ None can be delivered by engineering alone; each waits for one input.
     automatic adoption, preview, retry and relink refused: a restored row is
     re-checked by identity and length only (a match is not a content claim),
     and a changed or missing file stays a marked row. No interface calls it yet.
+  - *2026-10-31:* ADR 0061 is accepted. The owner answered its last open
+    questions (5 to 9) as recommended: off and clear keep kept-aside copies,
+    the later of two windows is refused, same-named restored rows show a
+    bounded collision-only parent-folder context (the ADR 0006 amendment is
+    approved in principle and written with the interface slice), an untaken
+    matching offer lasts one start while a marked row never expires, and a
+    save over 1,024 rows is refused with Start fresh offered. PR #177 stays a
+    draft and merges together with its interface slice.
 
 ## 8. Dates and external dependencies
 

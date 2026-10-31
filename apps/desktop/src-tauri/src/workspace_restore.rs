@@ -98,9 +98,9 @@ const MAX_PATH_UTF16: usize = 32_767;
 const RESTORED_PREFIX: &str = "restored-";
 
 /// How many sessions may decline a row that a read presented as matching
-/// (ADR 0061, decision 10, Proposed). A row declined this often is no longer
-/// offered by a session whose first read finds it matching, so untaken offers
-/// never become a growing history. A marked row could not be taken: it is
+/// (ADR 0061, decision 10; question 8, decided 2026-10-31). A row declined this
+/// often is no longer offered by a session whose first read finds it matching,
+/// so untaken offers never become a growing history. A marked row could not be taken: it is
 /// never counted, and one that reaches this count while marked is still shown.
 pub const MAX_OFFERS: u32 = 1;
 

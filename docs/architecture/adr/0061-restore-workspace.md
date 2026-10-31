@@ -1,11 +1,13 @@
 # ADR 0061 — Restore workspace
 
-Status: **Proposed** on 2026-10-30. The owner asked for every backend item that
+Status: **Accepted (2026-10-31)**, by the owner's answers to all ten questions
+(A0061 on 2026-10-30, and the two notes of 2026-10-31 below); proposed on
+2026-10-30. The owner asked for every backend item that
 can be done now to start in parallel and for open details to follow the
 recommendations; this record states them. The Rust side is implemented on
 branch `be/restore-workspace` (`apps/desktop/src-tauri/src/workspace_restore.rs`).
 No interface calls it yet, and the interface slice has prerequisites
-(decision 4). The questions for the owner are listed
+(decision 4). The questions put to the owner, all answered, are listed
 [at the end](#open-questions-for-the-owner).
 
 *2026-10-30, owner answers:* the
@@ -34,8 +36,35 @@ replied verbatim "全部按推荐" ("all as recommended"):
   then, as Add files does, and the interface says the row is added again, not
   verified against the last session.
 
-Questions 5 to 9 are not answered yet. The status stays Proposed until they
-are.
+*Owner decision, 2026-10-31 (questions 5-9):* shown questions 5 to 9, each
+with its recommendation, the owner replied verbatim "全部按推荐" ("all as
+recommended"):
+
+- Question 5: turning restore off or clearing it keeps the kept-aside copies
+  and leftover siblings, including those a crash left (decision 8). Every read
+  answer except `unavailable` counts them (`leftoverCopies`), and the
+  interface says they remain where it offers turning restore off.
+- Question 6: with two windows open, the later writer is refused
+  (`changedElsewhere`) and the earlier record is kept (decision 3); the
+  application stays not single-instance.
+- Question 7: same-named restored rows are told apart by a bounded number of
+  the parent folders above the file, shown only on a collision, never the
+  drive, share or root (decision 4). This needs the ADR 0006 amendment
+  decision 4 names; the amendment is approved in principle and is written with
+  the interface slice.
+- Question 8: a row a session saw as matching and saved without putting back
+  is no longer offered at the next start, and the user is told how many
+  (`expired`, `MAX_OFFERS` = 1, decision 10). A marked row (changed, missing,
+  unreachable, unreadable, unsafe) never expires; it waits until it is put
+  back, dismissed or cleared.
+- Question 9: when the current rows and the rows waiting to be restored
+  together pass 1,024, the save is refused (`tooManyRows`) and the interface
+  offers Start fresh; nothing is dropped silently (decision 5).
+
+Questions 6, 8 and 9 are implemented as decided, question 5 is implemented on
+the Rust side, and question 5's wording and question 7 belong to the
+interface slice, so only the `MAX_OFFERS` doc comment changed on
+`be/restore-workspace` for these answers. With questions 1 to 4 and 10 answered, no question remains open.
 
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the workspace
 boundary, its *Persistence exclusion* and its collision-only relative context),
@@ -87,8 +116,8 @@ queue or its history, an adoption, a group's collapsed state, search or sort,
 and a row's provenance (found under a folder, adopted from a conversion). A
 restored row is a plain row.
 
-*Recommendation, with the alternative:* conversion membership is restored,
-because it is part of the arrangement the user built, and checking a row starts
+*Decision (owner, 2026-10-30, question 3), with the alternative:* conversion
+membership is restored, because it is part of the arrangement the user built, and checking a row starts
 nothing: Convert still shows its scope before it runs (WSP-008). The
 alternative follows the two existing precedents: M8.1 restores "no conversion
 membership or queue authority" when a project opens, and the M7.5 preference
@@ -281,7 +310,10 @@ Prerequisites of the interface slice:
   live roster's collision-only relative context (ADR 0006, amended by M1.4.1)
   is a fragment below the folder the user chose and is never persisted; a
   restored row has no chosen folder. Showing anything more needs an amendment
-  of ADR 0006 (open question 7).
+  of ADR 0006. *Decision (owner, 2026-10-31, question 7):* a bounded number of
+  the parent folders above the file, shown only on a collision, never the
+  drive, share or root; the amendment is approved in principle and is written
+  with the interface slice.
 
 ### 5. Bounds
 
@@ -294,10 +326,11 @@ Prerequisites of the interface slice:
   restored row once that command exists (decision 4), does. Decision 10 ages
   out untaken matching offers, but a marked row stays until it is put back,
   dismissed or cleared, so marked rows can build up across sessions toward
-  this refusal. *Recommendation:* fail closed, as implemented. The refused
+  this refusal. *Decision (owner, 2026-10-31, question 9):* fail closed, as
+  implemented; nothing is dropped silently. The refused
   session records nothing, so the next start offers the last recorded document
   again; the interface answers `tooManyRows` by offering Start fresh (clear)
-  or, later, dismissing restored rows. The alternative is open question 9.
+  or, later, dismissing restored rows. The alternative was question 9's.
 - At most 1,024 named groups and exactly one Ungrouped; a group name follows the
   Workbench's own rule (not blank as the webview's `trim()` judges it, at most
   120 UTF-16 units).
@@ -369,8 +402,8 @@ because that record is closed and its schema is shared with the webview's
 preference contract, so the switch would live in one file and the paths it
 governs in another; with the fail-closed rule above, a refused document no
 longer loses an off choice. Off and clear could also remove the kept-aside
-copies and leftover siblings (open question 5); they do not, because removing a
-kept copy cannot be undone and a kept copy is what protects a newer build's
+copies and leftover siblings (question 5); they do not (owner, 2026-10-31),
+because removing a kept copy cannot be undone and a kept copy is what protects a newer build's
 document from a downgrade.
 
 ### 9. The Tauri boundary
@@ -418,8 +451,8 @@ without a read having reported it, and the interface shows the `expired` count
 of the read it saves after. Nothing is written at start, so a session that
 saves nothing ages nothing and the next start reports the same rows again.
 
-*Recommendation:* `MAX_OFFERS` = 1. A restored row is offered at the next start
-only: if that session presents it as matching and saves without taking it, the
+*Decision (owner, 2026-10-31, question 8):* `MAX_OFFERS` = 1. A restored row
+is offered at the next start only: if that session presents it as matching and saves without taking it, the
 start after that no longer offers it (when its first read finds it matching)
 and says so. The document is then the last session's Workbench, at most that
 session's untaken matching offer, and the marked rows still waiting, never a
@@ -498,21 +531,26 @@ answer is a one-line change.
    by default records the paths of every acquisition the user adds, and with it
    the roster, membership and group names, which the M7.5 preference record
    deliberately does not; this departure belongs to the whole decision, not to
-   either put-back route.
+   either put-back route. (Answered on 2026-10-30 as recommended, A0061.)
 3. Restore each row's conversion membership (recommended), or start every row
-   unchecked as M8.1 and M7.5 do?
+   unchecked as M8.1 and M7.5 do? (Answered on 2026-10-30 as recommended,
+   A0061.)
 4. Keep the off switch in the restore document (recommended), or add it to the
-   M7.5 preference record?
+   M7.5 preference record? (Answered on 2026-10-30 as recommended, A0061.)
 5. Should off and clear also remove kept-aside copies and leftover siblings,
    including one a crash left? Recommended: no, as implemented; the read answer
    counts them (`leftoverCopies`), so the interface says they exist when it
-   offers off.
+   offers off. (Decided on 2026-10-31 as recommended. See the notes under the
+   status.)
 6. With two windows, refuse the later writer (recommended, as implemented), or
-   make the application single-instance, or let the last writer win?
+   make the application single-instance, or let the last writer win? (Decided
+   on 2026-10-31 as recommended. See the notes under the status.)
 7. For same-named restored rows, amend ADR 0006 to show the folders above the
    file, without drive, share or root, bounded from the shallow end and only on
    a collision (recommended), or show only a `restored item N` tie-break as the
-   live roster does for rows added directly?
+   live roster does for rows added directly? (Decided on 2026-10-31 as
+   recommended; the amendment is approved in principle and is written with the
+   interface slice. See the notes under the status.)
 8. How long is a row that is not put back offered (decision 10)? Recommended:
    a row a read presented as matching is declined by one session that saves
    without taking it; the next start whose first read finds it matching no
@@ -522,12 +560,14 @@ answer is a one-line change.
    dismissed or cleared.
    Alternatives: more sessions; until put back or dismissed (the document then
    grows with every session); until the user's first Restore or Start fresh,
-   plus a bound; or age marked rows too.
+   plus a bound; or age marked rows too. (Decided on 2026-10-31 as
+   recommended. See the notes under the status.)
 9. When the live and the waiting restored rows together pass 1,024
    (decision 5), refuse the save (`tooManyRows`) and let the interface offer
    Start fresh (recommended, as implemented: fail closed, nothing dropped
    without the user), or record the live rows and retire untaken matching
-   offers, then marked rows, to make room, reporting how many?
+   offers, then marked rows, to make room, reporting how many? (Decided on
+   2026-10-31 as recommended. See the notes under the status.)
 10. Should `matching` mean unchanged content as well as the same object
     (decision 4)? Recommended: no, as implemented. A restored row is a locator
     and an arrangement; putting it back admits the bytes there then, as Add
