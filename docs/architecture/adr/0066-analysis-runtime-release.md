@@ -3,6 +3,19 @@
 Status: **Proposed**, 2026-10-30. Not accepted and not implemented. Every
 decision below is a recommendation with its alternatives; the owner decides
 ([open questions](#open-questions-for-the-owner)).
+
+> **Owner decision B-1, 2026-10-30** ([OWNER_DECISIONS_V511.md](../../development/OWNER_DECISIONS_V511.md),
+> B-1). Decisions 1 and 2 are accepted: a separate, verified runtime package
+> beside each release, which the user installs, per machine under
+> `%ProgramFiles%\MSCanvas Analysis Runtime\<digest>\`, with the work area
+> under `%ProgramData%\MSCanvas\work\<user SID>\`. Every fix to a shipped
+> runtime component is an application release (decisions 3 and 5). This
+> answers open questions 1, 2, 6 and 8, and question 9 by asking for a
+> reading, as recorded [under them](#open-questions-for-the-owner). Question 3
+> stays open, with a working default. Questions 4 (B-3), 5 and 7 (B-2) stay
+> open, and so does question 10, which no owner decision carries yet. The
+> record therefore stays Proposed; B-2 is decided before it is accepted.
+
 Related: [0002](0002-external-proteowizard.md),
 [0046](0046-post-m6-xic-provider-runtime-route-lock.md),
 [0047](0047-first-windows-beta-scope-and-implementation-route.md),
@@ -353,6 +366,10 @@ notice (decision 9), and asks for elevation only from analysis users. If the
 owner prefers one download, A works with the same location rule (decision 2),
 at the cost of elevation for every user.
 
+> **Decided by the owner, 2026-10-30 (B-1).** B1, as written: a separate,
+> verified runtime package beside each release, which the user installs. The
+> application downloads nothing.
+
 ### 2. Location: per machine, under Program Files, named by digest
 
 - **Runtime:** `%ProgramFiles%\MSCanvas Analysis Runtime\<first 16 hex digits of
@@ -414,6 +431,13 @@ is never chosen silently (open question 3). Its costs:
   only that value, never searches, and applies the same digest, manifest,
   ASCII, owner and DACL checks to the folder it names. Because the user can
   edit the pointer, it only ever selects a folder, never vouches for it.
+
+> **Decided by the owner, 2026-10-30 (B-1).** The location is accepted as
+> written: per machine under Program Files, with the work area under
+> ProgramData by user SID. The alternative above is not built for now. Until
+> the owner answers question 3, a user without administrator rights is
+> required to elevate; the user-folder route is added when such a user needs
+> it.
 
 ### 3. Integrity: the pinned manifest, and nothing silent
 
@@ -620,6 +644,12 @@ and the AppContainer measurement. If the engine cannot run in an
 AppContainer, the owner decides whether to ship with the firewall rule and a
 stated limit (open question 6).
 
+> **Decided by the owner, 2026-10-30 (B-1, question 6).** An AppContainer
+> worker is a release blocker only if A-06's measurement shows that it can be
+> enforced without administrator rights. Otherwise a release ships with the
+> stated limit and the measured mitigations: the Job additions, the
+> environment variable and the firewall rule above.
+
 ### 8. Engine and interpreter: pyOpenMS 3.5.0 on CPython 3.14
 
 Ship pyOpenMS 3.5.0: ANA-004 is qualified on it, and nothing in the first
@@ -684,6 +714,12 @@ for development (open question 4), so that its 41 alerts close.
 Provisioning becomes a release-workflow step that builds the package and its
 manifest offline from the hash-locked wheels; a release-workflow change also
 needs the owner's approval.
+
+> **Decided by the owner, 2026-10-30 (B-1, question 8).** The hash-pinned
+> shipped wheels and the release-workflow change are approved with this
+> record, effective at the first runtime release (A-05). Nothing ships before
+> then. Which wheels ship still depends on B-2 (questions 5 and 7), B-3
+> (question 4) and question 10.
 
 ### 11. Delivery order
 
@@ -752,6 +788,14 @@ needs the owner's approval.
   that ships the package records its own scope.
 
 ## Open questions for the owner
+
+> **Owner decision B-1, 2026-10-30.** Answered: 1 (B1), 2 (as recommended),
+> 6 (a blocker only if A-06 shows the container can be enforced without
+> administrator rights), 8 (approved, effective at the first runtime release)
+> and 9 (a reading is asked for, with B-2's Qt reading if that is still
+> needed; the reading itself is open and blocks A-05, not development).
+> Open: 3 (working default: require elevation), 4 (B-3), 5 and 7 (B-2), and
+> 10, which no owner decision carries yet.
 
 1. **Distribution.** A separate runtime package the user downloads (B1,
    recommended; elevation for analysis users only, with UAC's
